@@ -6,7 +6,7 @@ use super::HostedAgentOpenSettings;
 use crate::AdapterError;
 
 enum Greeting {
-    Fresh(serde_json::Value),
+    Fresh(super::retained_json::JsonFrame),
     Existing,
 }
 

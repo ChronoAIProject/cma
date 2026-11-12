@@ -66,6 +66,16 @@ impl Store {
         }
         Ok(())
     }
+
+    /// Check after acquiring the operation gate and before any admitted effect.
+    /// Startup's successful check cannot authorize work after a later intent.
+    pub(crate) async fn require_serving(&self) -> Result<()> {
+        self.verify()?;
+        if let Some(retirement) = &self.retirement {
+            retirement.require_ready().await?;
+        }
+        Ok(())
+    }
     pub(crate) async fn admit(&self, fence: u64, operations: &[Operation]) -> Result<()> {
         self.authorize_retirement(operations).await?;
         match &self.ledger {
@@ -126,7 +136,7 @@ impl Store {
         }
     }
     pub(crate) async fn started(&self, cursor: &mut Cursor) -> Result<Vec<Pending>> {
-        self.verify()?;
+        self.require_serving().await?;
         if cursor.done {
             return Ok(Vec::new());
         }
