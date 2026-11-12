@@ -2,6 +2,7 @@
 use std::{future::Future, sync::Arc, time::Instant};
 
 use super::HierarchyReadService;
+use crate::diagnostic_context::DiagnosticContext;
 
 #[derive(Clone, Copy)]
 pub enum SandboxDetailPhase {
@@ -27,6 +28,7 @@ impl SandboxDetailPhase {
 pub struct SandboxDetailTimer {
     start: Option<Instant>,
     phase: SandboxDetailPhase,
+    context: DiagnosticContext,
 }
 
 impl HierarchyReadService {
@@ -42,15 +44,20 @@ impl HierarchyReadService {
         SandboxDetailTimer {
             start: self.detail_timings.then(Instant::now),
             phase,
+            context: DiagnosticContext::current().with_phase(phase.label()),
         }
     }
 }
 
 impl SandboxDetailTimer {
     pub async fn result<T, E>(self, future: impl Future<Output = Result<T, E>>) -> Result<T, E> {
-        let result = future.await;
+        let result = self.context.clone().scope(future).await;
         self.record(&result);
         result
+    }
+
+    pub async fn scope<T>(&self, future: impl Future<Output = T>) -> T {
+        self.context.clone().scope(future).await
     }
 
     pub fn record<T, E>(mut self, result: &Result<T, E>) {
@@ -69,6 +76,9 @@ impl SandboxDetailTimer {
                 target: "sandbox_read_phase",
                 parent: None,
                 phase = self.phase.label(),
+                route = self.context.route.as_ref(),
+                request_hash = %self.context.request_hash,
+                worker = self.context.worker,
                 outcome,
                 elapsed_us = u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX),
                 "sandbox read phase"

@@ -19,6 +19,8 @@ pub(super) fn matches_path(path: &str) -> bool {
 }
 
 pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -> Response {
+    use crate::telemetry::request::{Consumer, Resolution};
+    let mut observation = Resolution::start(&request, "worker");
     if request.method() != Method::POST
         || request.uri().query().is_some()
         || request.headers().contains_key(header::COOKIE)
@@ -27,16 +29,18 @@ pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -
             .contains_key(super::resource_request::HEADER)
         || request.headers().contains_key(super::nyxid_proxy::HEADER)
     {
-        return rejected();
+        return observation.rejected(rejected());
     }
     let Some(token) = bearer::bearer_token(request.headers()) else {
-        return rejected();
+        return observation.rejected(rejected());
     };
     let Some(subject) = service_subject(&token) else {
-        return rejected();
+        return observation.rejected(rejected());
     };
     match tokio::time::timeout(Duration::from_secs(2), verify(auth, &token, &subject)).await {
         Ok(Ok(Some(subject))) => {
+            observation.finish("resolved", Consumer::Internal);
+            drop(observation);
             request
                 .extensions_mut()
                 .insert(layer1_public::AuthenticatedSubject(subject.clone()));
@@ -45,16 +49,19 @@ pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -
                 .insert(VerifiedGatewayService::new(subject));
             next.run(request).await
         }
-        Ok(Ok(None)) => failure(
+        Ok(Ok(None)) => observation.rejected(failure(
             StatusCode::FORBIDDEN,
             "worker_classifier_forbidden",
             "Current Gateway machine service authority is required.",
-        ),
-        _ => failure(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "worker_classifier_unavailable",
-            "Gateway machine service authority is temporarily unavailable.",
-        ),
+        )),
+        _ => {
+            observation.finish("unavailable", Consumer::Unknown);
+            failure(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "worker_classifier_unavailable",
+                "Gateway machine service authority is temporarily unavailable.",
+            )
+        }
     }
 }
 
