@@ -215,3 +215,42 @@ cleaned up on exit; verify own resources absent before the final report. Keep
 30 GB free. Current executable gates use immutable source 92ed; subsequent changes
 to only documentation or the blank composition separator are separately proved,
 never falsely labeled a different tested source hash. Production untouched.
+
+## S3 consumer matrix qualified — 2026-11-12 12:25 SGT
+
+Tested source `4e49697771e06db6539191162e83431d204cfcfa` on
+`tl/cma-log-segments/transcript-consumers`, based on integration `ce18603ca`.
+The publication descendant adds only this ledger receipt and the disposition
+note. This supersedes the provisional S3 implementation/matrix status above;
+exact-head review and combined integration are still required for closure.
+
+Transcript pages now seek indexed turn evidence and bounded original points,
+including continuations within long turns. Title reconstruction uses four
+certified originals; it never retains/refolds a growing first-turn prefix.
+Usage validates the captured source. TypeScript/Rust SDK hydration and browser
+REST preserve the complete result after a typed pagination-required response.
+Ordinary suggestion read/claim/completion propagates proof refusal in snapshot
+and transaction modes. Enqueue requires the exact already-published append;
+there is no unpublished-append or `!snapshot` proof bypass.
+
+The final locked run passes 199 selected core/public tests, 34 actual Mongo
+contracts and 52 Rust SDK REST tests. Strict API/core/public and Rust SDK Clippy
+pass with warnings denied on Rust 1.96.1. TypeScript passes 4,360 tests/one existing
+skip plus typecheck/lint/build/docs/format; browser passes 78 selected tests plus
+typecheck/lint/build. Fmt, canonical size 6,342, strict under 500 for all 41 changed
+source/test files, config/docs, whitespace and final secret history pass.
+
+Bounds fixtures at 1/10/100/1000 seals return 35 original rows/19,883 BSON bytes;
+profiled commands 53/56, with no sort/COLLSCAN/write. The largest history exceeds
+10,128 rows/4 MiB; a 20-seal long turn has exact serialized fold parity at page
+limits 1/20/32. Invalid proof, retained snapshot, final owner/shared authority,
+no writes and suggestion publication distinction are executable cases.
+
+Three preexisting response-route inventory failures remain a combined dependency
+for `GET /api/v2/responses/{response_id}/output`; the selected gate excludes
+exactly those checks and cannot certify them. The initial broader Mongo selector
+also included an unrelated opt-in real-model sample without its required local
+proxy; its failure is retained, and the corrected 34-case replica-set run passed.
+No gate is waived. Both owned Mongo fixtures/volumes are absent after execution.
+See `2026-11-12-transcript-matrix-disposition.md` and
+`../CMA_Segmented_Transcript_Pages.md` for contract, matrix and exact limits.
