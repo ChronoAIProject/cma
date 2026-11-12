@@ -70,7 +70,7 @@ async fn run(capacity: Capacity, visible: bool) -> Vec<AgentLogEntry> {
     let mut assembly = AgentMessageAssembly::default();
     let prefix_text = "Already visible partial output — 已显示。".repeat(64);
     let (acks, mut acknowledged) = tokio::sync::mpsc::channel(2);
-    let retained = |cursor, update| ConversationUpdate::RuntimeOutput {
+    let retained = |cursor, update: ConversationUpdate| ConversationUpdate::RuntimeOutput {
         receipt: RuntimeOutputReceipt::new(
             RuntimeOutputSource {
                 stream_id: "d9111111-1111-4111-8111-111111111111".into(),
