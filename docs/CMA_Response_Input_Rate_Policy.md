@@ -11,6 +11,12 @@ Real creation continues to use `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` (default 1
 No authentication, authorization, queue, command, idempotency or retry limit is
 removed, and no body or caller-supplied header selects a budget.
 
+Recovery and controls of admitted work use the independent Control tier in both
+flag modes. Control classification takes precedence over Input. In particular,
+Responses v2 interrupt uses Control even when the input flag is enabled; its
+replacement message still follows the existing domain admission checks. The flag
+continues to govern input submissions exactly as shown below.
+
 ## Route inventory
 
 Inventory checked against the registered routers, handlers and public API docs.
@@ -26,9 +32,12 @@ Parameterized entries require the router's exact `MatchedPath` template.
 | `/api/v1/agents/{id}/input` | Existing Agent message; `rest/agent_operate.rs`, `API_REST.md` | Input | Input |
 | `/api/v1/agents/{id}/steer` | Input to an existing active turn; same sources | Create | Input |
 | `/api/v2/agents/{agent_id}/responses/{response_id}/queued-input` | Edit an existing queued input; `responses/v2/{mod,queued_input}.rs`, `CMA_Public_APIs.md` | Create | Input |
-| `/api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | Cancel the selected turn and admit its replacement message; `responses/v2/{mod,interruption}.rs`, `API_Responses.md` | Create | Input |
+| `/api/v2/agents/{agent_id}/responses/{response_id}/interrupt` | Cancel the selected turn and admit its replacement message through existing domain admission; `responses/v2/{mod,interruption}.rs`, `API_Responses.md` | Control | Control |
+| `/api/v2/agents/{agent_id}/responses/{response_id}/controls` | Answer approvals or cancel admitted work; `responses/v2/{mod,controls}.rs`, `API_Responses.md` | Control | Control |
+| `/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation` | Cancel an existing queued input; `responses/v2/{mod,queued_cancellation}.rs`, `API_Responses.md` | Control | Control |
 
-Binding-key submissions retain Create while enabled. The authenticated middleware
+Binding-key input submissions retain Create while enabled. Recovery and controls
+use Control regardless of the input flag or authentication method. The middleware
 marks these requests with `AuthMethod::BindingKey`; `composition/event_routing.rs`
 can call `ensure_conversation_at_generation` for a new source-user conversation.
 Route identity alone cannot prove an existing Agent on that branch. The limiter
@@ -38,9 +47,11 @@ an existing Agent. A later narrower binding policy requires its own proof/review
 
 Sandbox, Workspace, Agent and conversation creation, Trigger Launch, binding
 preparation and unknown POST routes remain Create. Pure cancellation, mixed
-response controls, REST approval, stop and non-message interrupt routes are not
-new input aliases in this slice and retain their existing budgets. The previously
-special Default routes (repository resolution and connection check), health and
+response controls, REST approval/denial, stop, interrupt and recovery use the exact
+Control inventory in [Request rate tiers](CMA_Operations.md#request-rate-tiers).
+Sandbox revive, capacity-recovery resume and Revive commands retain their existing
+domain admission checks. The previously special Default routes (repository
+resolution and connection check), health and
 CORS preflight behavior are unchanged. Unknown paths ending in `input` retain the
 old suffix behavior while off; the enabled policy only admits the exact inventory.
 Query strings do not change a route's tier; extra segments, changed case, trailing
@@ -48,16 +59,18 @@ slashes, duplicate separators and encoded lookalikes do not match the allowlist.
 
 ## Activation and rollback
 
-Deployment OFF preserves existing policy. After exact-head security review and
-the owner's separate live policy go, converge all API processes on the same flag
+Deployment OFF preserves the input submission policy; recovery and controls still
+use Control. After exact-head security review and the owner's separate live policy
+go, converge all API processes on the same flag
 and observe tier/refusal aggregates with unchanged rates and admission controls.
 Do not run production probes alongside the designated acceptance campaign.
 Use its bounded harness slot; this implementation does not authorize model turns
 or resource creation. Preserve original keys and distinguish operation-limiter
 429 from queue-full, binding-not-ready and admission-conflict refusals.
 
-The input and create buckets already exist. There is no schema, collection,
-index, receipt or resource-format change, backfill, new writer or reader floor.
+The input and create buckets already exist. Control adds an opaque `control:` key
+namespace to the same store. There is no schema, collection, index, receipt or
+resource-format change, backfill, additional writer or changed reader floor.
 Switching tiers does not transfer prior bucket usage: during activation a caller
 can consume residual capacity in both existing buckets. Mixed flags during a
 rolling change also permit both allowances; this is a bounded policy transition,
@@ -66,7 +79,9 @@ converge promptly; do not clear shared buckets or alter TTLs to force success.
 
 Rollback sets the flag false on all compatible API processes. Retained Create
 usage still applies and may cause immediate refusal; Input usage is retained.
-Do not reset either budget. Request processing continues to fail closed with
+Recovery and controls remain in Control when only this flag is disabled; rolling
+back the executable to a predecessor loses that independent protection. Do not
+reset any budget. Request processing continues to fail closed with
 `request_budget_unavailable` if shared enforcement fails. A limiter refusal
 retains typed `rate_limited` and positive `Retry-After` through the current handler.
 
@@ -81,6 +96,8 @@ Focused tests exercise the registered templates through an Axum router, enabled
 and disabled policies, aliases sharing one budget, method/path negatives, binding
 provisioning protection, authenticated subject separation, anonymous fallback,
 120-input/10-create local boundaries, strict configuration and custom rates.
+Control tests cover both flag modes, precedence over Input, approval denial and
+recovery, including controls remaining available after ten creates are exhausted.
 Disposable real-Mongo tests exercise independent processes, restart, alias and
 tier sharing, retained Create policy and shared-store failure without local fallback.
 No live activation or production performance result is claimed by these tests.
