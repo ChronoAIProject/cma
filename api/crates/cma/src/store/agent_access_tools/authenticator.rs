@@ -23,9 +23,7 @@ impl AgentAccessToolAuthenticator for MongoAgentAccessToolSource {
 
 fn map(error: AdapterError) -> AgentAccessError {
     match error {
-        AdapterError::Rejected(detail) if detail == "account_deletion_in_progress" => {
-            AgentAccessError::AccountDeletionInProgress
-        }
+        AdapterError::AccessRevoked => AgentAccessError::AccountDeletionInProgress,
         AdapterError::Unavailable(_) => AgentAccessError::Unavailable,
         _ => AgentAccessError::Forbidden,
     }
@@ -34,9 +32,14 @@ fn map(error: AdapterError) -> AgentAccessError {
 #[test]
 fn account_deletion_is_a_typed_authentication_refusal() {
     assert_eq!(
+        map(AdapterError::AccessRevoked.context("current owner authority")),
+        AgentAccessError::AccountDeletionInProgress,
+    );
+    assert_eq!(
         map(AdapterError::Rejected(
             "account_deletion_in_progress".into()
         )),
-        AgentAccessError::AccountDeletionInProgress,
+        AgentAccessError::Forbidden,
+        "diagnostic text does not establish the refusal category",
     );
 }

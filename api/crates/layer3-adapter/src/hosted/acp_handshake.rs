@@ -409,6 +409,7 @@ impl Bridge {
 fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterError {
     let detail = format!("channel tool session setup did not complete (phase: {phase})");
     match error {
+        AdapterError::AccessRevoked => AdapterError::AccessRevoked,
         AdapterError::InputAuthorityUnavailable(_) => {
             AdapterError::InputAuthorityUnavailable(detail)
         }
@@ -425,6 +426,14 @@ fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterE
         AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
         AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),
     }
+}
+
+#[test]
+fn access_revoked_survives_protected_setup_diagnostics() {
+    assert_eq!(
+        protected_setup_failure(AdapterError::AccessRevoked, "current_authority"),
+        AdapterError::AccessRevoked,
+    );
 }
 
 fn unconfirmed_setup() -> AdapterError {

@@ -169,11 +169,7 @@ impl MongoAgentAccessToolSource {
                             }
                             return Err(unavailable(()));
                         }
-                        Error::Erasing => {
-                            return Err(AdapterError::Rejected(
-                                "account_deletion_in_progress".into(),
-                            ))
-                        }
+                        Error::Erasing => return Err(AdapterError::AccessRevoked),
                         Error::Refused => {
                             operation.diagnostic("read_write", "authority_rejected", attempt);
                             return Err(refused());

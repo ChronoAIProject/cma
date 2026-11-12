@@ -319,6 +319,9 @@ impl WorkerFailure {
 pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     tracing::warn!(error = %error, "agent-sandbox runtime operation failed");
     match error {
+        AdapterError::AccessRevoked => {
+            WorkerFailure::terminal_security("current runtime authority was revoked")
+        }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::Unavailable(_) => {
