@@ -129,3 +129,33 @@ new image cannot isolate the application regression from observer overhead.
 If observer overhead materially changes the diagnostic window, the release owner
 can disable command monitoring while retaining phase timings and the original
 pool summaries. This limitation does not establish a production root cause.
+
+## Local validation and unresolved overhead
+
+At source checkpoint `78629bc4c`, strict clippy passed for CMA, layer2-core and
+layer1-public across all targets/features. The targeted selection passed 132
+unit tests and two disposable-Mongo tests, including privacy, transaction/error
+paths, unchanged checkout counts and command-to-check-in hash correlation.
+
+The native debug ABBA fixture measured 40 reads per mode at each size, with nested
+1 KiB payload documents and monitoring as the only treatment:
+
+| Documents | Off mean | On mean | Added time | Relative increase | Checkouts per mode |
+| --- | --- | --- | --- | --- | --- |
+| 25 | 1.079 ms | 1.263 ms | 0.184 ms | 17.1% | 40 |
+| 200 | 4.351 ms | 6.441 ms | 2.090 ms | 48.0% | 40 |
+| 10,001 | 173.546 ms | 301.588 ms | 128.042 ms | 73.8% | 200 |
+
+These are local debug observations, not a production overhead estimate. The
+callback-only test measured approximately 1.025 microseconds per event, which
+excludes the driver's BSON conversion. The real-Mongo assertion is a catastrophic
+regression ceiling (less than twice baseline plus 5 ms), **not** proof of low
+overhead. Low overhead for large reads remains unresolved; the measured decoding
+cost must be considered before enabling this instrumentation in a diagnostic
+window. An optimized driver comparison is the next validation step.
+
+The driver's raw command-event interface is private. Its optional OpenTelemetry
+interface avoids whole-reply conversion with query text disabled, but does not
+expose cursor batch lengths or the exact `autocommit:false` marker. It cannot
+replace this observer while preserving every requested field without further
+work or a driver API change.
