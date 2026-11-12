@@ -197,3 +197,49 @@ async fn live_contract_examples_preserve_frame_order_and_explicit_lag() {
     replay_live_contract("agent-events-v2-live").await;
     replay_live_contract("agent-events-v2-lagged").await;
 }
+
+async fn replay_snapshot_with_separate_confirmation_time(id: &str, change_kind: bool) {
+    let corpus: super::Corpus = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/public-contract/agent-events-v2.json"
+    ))
+    .unwrap();
+    let mut case = corpus.cases.into_iter().find(|case| case.id == id).unwrap();
+    let mut actual = case.response.body.clone();
+    // Admission and write confirmation need not occur in the same wall-clock
+    // second. Distinct fixed timestamps expose an omitted capture reliably.
+    for index in 2..7 {
+        actual["items"][index]["appended_at"] = "2026-11-12T06:22:29Z".into();
+    }
+    actual["items"][7]["appended_at"] = "2026-11-12T06:22:30Z".into();
+    if change_kind {
+        actual["items"][7]["kind"]["state"] = "dispatch_fenced".into();
+    }
+    let scene = Scenario {
+        router: axum::Router::new().route(
+            "/api/v2/agents/agt_fixture/events/snapshot",
+            axum::routing::get(move || async move {
+                ([("cache-control", "private, no-store")], axum::Json(actual))
+            }),
+        ),
+        subject: None,
+        authorization: layer2_core::Authorization::new([]),
+        symbols: Default::default(),
+    };
+    super::replay::run(&scene, &mut super::Symbols::default(), &mut case, false).await;
+}
+
+#[tokio::test]
+async fn snapshot_contracts_capture_write_confirmation_in_a_later_second() {
+    for id in [
+        "agent-events-v2-snapshot-rich",
+        "agent-events-v2-snapshot-shared",
+    ] {
+        replay_snapshot_with_separate_confirmation_time(id, false).await;
+    }
+}
+
+#[tokio::test]
+#[should_panic(expected = "agent-events-v2-snapshot-shared response body")]
+async fn timestamp_capture_does_not_mask_changed_delivery_state() {
+    replay_snapshot_with_separate_confirmation_time("agent-events-v2-snapshot-shared", true).await;
+}
