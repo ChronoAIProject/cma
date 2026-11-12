@@ -6,6 +6,7 @@ use tokio::sync::{watch, Notify};
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::MissedTickBehavior;
 
+use super::capacity_scheduler::CapacityRecoverySweep;
 use super::worker::SandboxWorker;
 use super::workspace_worker::WorkspaceWorker;
 
@@ -27,6 +28,19 @@ trait SandboxSweep: Send + Sync {
 }
 
 #[async_trait::async_trait]
+impl SandboxSweep for CapacityRecoverySweep {
+    async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        CapacityRecoverySweep::run_due(self, now)
+            .await
+            .map_err(|_| {
+                SandboxStoreError::Unavailable(
+                    "accepted capacity recovery discovery unavailable".into(),
+                )
+            })
+    }
+}
+
+#[async_trait::async_trait]
 impl SandboxSweep for SandboxWorker {
     async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
         let _priority = crate::background::shared().foreground();
@@ -43,6 +57,15 @@ impl SandboxSweep for WorkspaceWorker {
 }
 
 impl SandboxScheduler {
+    pub(crate) fn for_capacity_recovery(worker: Arc<CapacityRecoverySweep>) -> Self {
+        Self {
+            worker,
+            sweep_interval: Duration::from_secs(5),
+            concurrent_sweeps: 1,
+            admitted: Arc::new(Notify::new()),
+        }
+    }
+
     pub(crate) fn new(worker: Arc<SandboxWorker>) -> Self {
         Self {
             worker,
@@ -102,11 +125,14 @@ impl SandboxScheduler {
                 Box::pin(async move {
                     let name = activity.snapshot().worker;
                     let telemetry = crate::telemetry::worker::Worker::start(name);
+                    let poll_interval = scheduler.sweep_interval.min(Duration::from_secs(1));
+                    let mut activity_tick = tokio::time::interval(poll_interval);
+                    activity_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
                     let mut ticker = tokio::time::interval(scheduler.sweep_interval);
                     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
                     loop {
                         activity.waiting(
-                            scheduler.sweep_interval,
+                            poll_interval,
                             if sweeps.len() >= scheduler.concurrent_sweeps {
                                 "execution_slots"
                             } else {
@@ -144,13 +170,14 @@ impl SandboxScheduler {
                                     }
                                 }
                             }
+                            _ = activity_tick.tick() => {}
                             _ = ticker.tick() => {
                                 if sweeps.len() < scheduler.concurrent_sweeps {
                                     let worker = Arc::clone(&scheduler.worker);
                                     // A slow transfer must not prevent another resource (or a
                                     // newly fenced cancellation) from claiming its due work.
                                     sweeps.spawn(async move {
-                                        worker.run_due(SystemTime::now()).await
+                                        layer2_core::diagnostic_context::DiagnosticContext::background("sandbox_scheduler").scope(worker.run_due(SystemTime::now())).await
                                     });
                                 }
                             }
@@ -158,7 +185,7 @@ impl SandboxScheduler {
                             _ = scheduler.admitted.notified(), if sweeps.len() < scheduler.concurrent_sweeps => {
                                 let worker = Arc::clone(&scheduler.worker);
                                 sweeps.spawn(async move {
-                                    worker.run_due(SystemTime::now()).await
+                                    layer2_core::diagnostic_context::DiagnosticContext::background("sandbox_scheduler").scope(worker.run_due(SystemTime::now())).await
                                 });
                             }
                         }

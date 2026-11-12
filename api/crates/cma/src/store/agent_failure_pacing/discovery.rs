@@ -15,7 +15,7 @@ pub(in crate::store) fn pipeline(
         .unwrap_or_else(|| now.to_owned());
     let hint = format!("${FIELD}");
     let candidate = doc! {"$and": [
-        {"$eq": [format!("{hint}.class"), CLASS]},
+        {"$in": [format!("{hint}.class"), [CLASS, PARENT_CLASS]]},
         {"$eq": ["$record.work.step", "publish_connection"]},
         {"$eq": [format!("{hint}.ready_at"), "$record.work.ready_at"]},
         {"$eq": [format!("{hint}.attempts"), "$record.work.attempts"]},
@@ -25,7 +25,9 @@ pub(in crate::store) fn pipeline(
         {"$lte": [format!("{hint}.until"), &latest]},
     ]};
     let available = doc! {
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION, "work_pending": true,
+        // Discovery supplies candidates only. The claim path validates the
+        // exact envelope and current parents before granting a writer lease.
+        "document_schema_version": {"$in": [1_i64, 2_i64]}, "work_pending": true,
         "$or": [{"work_lease_expires_at": Bson::Null}, {"work_lease_expires_at": {"$lte": now}}],
     };
     let mut ordinary = available.clone();
