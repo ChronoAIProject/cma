@@ -324,3 +324,65 @@ async fn real_activity_store_keeps_prefixed_and_concrete_path_resource_history()
         .unwrap();
     support::roundtrip((temp, store, request, bytes), expected).await;
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn document_origin_annotation_cannot_archive_another_accounts_body() {
+    use layer2_core::document_artifacts::{memory, CreateDocument, DocumentService};
+    use layer2_core::{Authorization, Caller, Capability, SubjectId};
+    use std::{collections::BTreeMap, sync::Arc};
+    let (client, name, _, access) =
+        crate::store::agent_access_requests::tests::approved_fixture().await;
+    let database = client.database(&name);
+    let fixture = support::prepare_source(
+        client,
+        database.clone(),
+        access.requester.sandbox_id.as_str(),
+    )
+    .await;
+    let documents = Arc::new(crate::document_artifacts::MongoDocumentStore::new(
+        database.clone(),
+    ));
+    let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
+    let service = DocumentService::new(documents, blobs.clone());
+    let owner = Caller::new(
+        access.requester.owner,
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let source = service
+        .create(
+            &owner,
+            "source",
+            CreateDocument {
+                title: "Retained source".into(),
+                markdown: "# Source body".into(),
+                origin_agent_id: Some(access.requester.agent_id.to_string()),
+            },
+        )
+        .await
+        .unwrap();
+    let foreign = Caller::new(
+        SubjectId::new("unrelated-account"),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    service
+        .create(
+            &foreign,
+            "foreign",
+            CreateDocument {
+                title: "Unrelated body".into(),
+                markdown: "# Never archive this account".into(),
+                origin_agent_id: Some(access.requester.agent_id.to_string()),
+            },
+        )
+        .await
+        .unwrap();
+    let row = database
+        .collection::<mongodb::bson::RawDocumentBuf>("cma_document_artifacts")
+        .find_one(doc! {"_id":source.id})
+        .await
+        .unwrap()
+        .unwrap();
+    let expected = BTreeMap::from([("cma_document_artifacts".into(), row.as_bytes().to_vec())]);
+    support::roundtrip_with_blobs(fixture, expected, Some(blobs.as_ref())).await;
+}
