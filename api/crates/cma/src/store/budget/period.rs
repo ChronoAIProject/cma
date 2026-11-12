@@ -91,7 +91,12 @@ pub(super) fn snapshot(
     let budget = settings.model_budget;
     Ok(PolicySnapshot {
         owner: owner.and_then(|owner| budget.for_owner(owner).cloned()),
-        platform: budget.platform.filter(|_| budget.enabled),
+        // Platform spend metering is enabled only with a configured cloud
+        // source (decision 31); without one, owner and turn budgets behave as
+        // #1621 alone and no period row exists.
+        platform: budget
+            .platform
+            .filter(|platform| budget.enabled && platform.cloud.is_some()),
         revision,
     })
 }
