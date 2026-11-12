@@ -85,8 +85,7 @@ pub(super) async fn resolve(auth: &AuthState, headers: &HeaderMap) -> Result<Cus
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
             .ok_or(StatusCode::UNAUTHORIZED)?;
-    if resolved.delegated_credential.is_none() || auth.owner_session_authority(&resolved).is_none()
-    {
+    if resolved.delegated_credential.is_none() {
         return Err(StatusCode::UNAUTHORIZED.into());
     }
     let custody = Custody {
