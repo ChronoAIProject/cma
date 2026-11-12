@@ -332,6 +332,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
+        sandbox_control_service.attach_platform_spend(stores.sandbox_model.clone());
         let deliverables = access::deliverables(
             &stores,
             projections.reads(),
