@@ -117,7 +117,7 @@ async fn all_aggregate_ports_succeed_unheld_and_refuse_both_holds_after_reopen()
         for hold in [0, 1, 2] {
             let (client, name, store) = database().await;
             let input = support::fixture(&store, true).await;
-            let source = input.accepted.plan().source;
+            let source = input.accepted.plan().source.clone();
             let proposed = mutation(&source, kind);
             if hold != 0 {
                 maintenance::hold(&store, &source.sandbox, hold == 1).await;
@@ -143,7 +143,12 @@ async fn missing_hold_audit_refuses_all_aggregate_ports_without_writes() {
     for kind in 0..3 {
         for v1 in [false, true] {
             let (client, name, store) = database().await;
-            let source = support::fixture(&store, true).await.accepted.plan().source;
+            let source = support::fixture(&store, true)
+                .await
+                .accepted
+                .plan()
+                .source
+                .clone();
             maintenance::hold(&store, &source.sandbox, v1).await;
             let audits = if v1 {
                 crate::store::ledger_maintenance_transaction::audit_collection(&store)
@@ -168,7 +173,12 @@ async fn missing_or_forged_custody_refuses_without_partial_event_or_children() {
     for kind in 0..3 {
         for missing in [false, true] {
             let (client, name, store) = database().await;
-            let source = support::fixture(&store, true).await.accepted.plan().source;
+            let source = support::fixture(&store, true)
+                .await
+                .accepted
+                .plan()
+                .source
+                .clone();
             let mut proposed = mutation(&source, kind);
             if missing {
                 store.sandboxes.delete_many(doc! {}).await.unwrap();
@@ -209,7 +219,12 @@ async fn missing_or_forged_custody_refuses_without_partial_event_or_children() {
 async fn event_failure_rolls_back_aggregate_children_metering_and_parent_fence() {
     for kind in 0..3 {
         let (client, name, store) = database().await;
-        let source = support::fixture(&store, true).await.accepted.plan().source;
+        let source = support::fixture(&store, true)
+            .await
+            .accepted
+            .plan()
+            .source
+            .clone();
         let proposed = mutation(&source, kind);
         client.database(&name).run_command(doc! {"collMod":store.sandbox_events.name(),"validator":{"reject_fixture":{"$exists":true}},"validationLevel":"strict","validationAction":"error"}).await.unwrap();
         let before = all_rows(&store).await;

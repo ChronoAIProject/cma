@@ -8,7 +8,12 @@ async fn committed_hold_invalidates_each_old_aggregate_snapshot_and_fresh_retry(
     for kind in 0..3 {
         for v1 in [false, true] {
             let (client, name, store) = database().await;
-            let source = support::fixture(&store, true).await.accepted.plan().source;
+            let source = support::fixture(&store, true)
+                .await
+                .accepted
+                .plan()
+                .source
+                .clone();
             let proposed = mutation(&source, kind);
             let mut session = client.start_session().await.unwrap();
             start_transaction(&mut session).await.unwrap();
@@ -47,7 +52,12 @@ async fn each_aggregate_commit_invalidates_old_hold_snapshot_and_original_plan()
     use layer2_core::sandbox::store::ledger_maintenance_pre_exclusion::LedgerPreExclusionStore;
     for kind in 0..3 {
         let (client, name, store) = database().await;
-        let source = support::fixture(&store, true).await.accepted.plan().source;
+        let source = support::fixture(&store, true)
+            .await
+            .accepted
+            .plan()
+            .source
+            .clone();
         let (policy, input) = support::pre_exclusion(&store, &source.sandbox, NOW).await;
         let mut session = client.start_session().await.unwrap();
         start_transaction(&mut session).await.unwrap();
