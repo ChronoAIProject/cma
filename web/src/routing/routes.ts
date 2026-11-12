@@ -293,6 +293,7 @@ export function useAppRouter(): AppRouter {
     if (options?.replace === true) window.history.replaceState(historyState, '', path);
     else if (current.kind !== 'usage' || next.kind !== 'usage')
       window.history.pushState(historyState, '', path);
+    queueMicrotask(() => window.dispatchEvent(new Event('cma:navigate')));
     setState((previous) => ({
       route: parseRoute(path),
       backgroundRoute:
