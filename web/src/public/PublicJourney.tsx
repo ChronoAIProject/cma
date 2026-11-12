@@ -147,7 +147,11 @@ function Entry({
             }
           } else if (!isUnsettledCommand(cause)) {
             forgetIntent(selected.id);
-            if (isSettledQuotaRefusal(cause)) setIntent(undefined);
+            if (isSettledQuotaRefusal(cause)) {
+              // The original entry gesture cannot start another request after a settled refusal.
+              entryApplied.current = true;
+              setIntent(undefined);
+            }
           }
         }
       } finally {

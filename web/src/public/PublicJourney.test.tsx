@@ -283,6 +283,48 @@ describe('public visitor admission', () => {
     expect(calls[2]?.[1]).toEqual(calls[1]?.[1]);
   });
 
+  it.each(['saved intent', 'pending entry check'] as const)(
+    'does not reuse entry evidence after a settled refusal with %s',
+    async (source) => {
+      if (source === 'saved intent') createIntent(route);
+      const client = publicClient();
+      vi.mocked(client.requests.preview).mockResolvedValue({
+        ...PUBLIC_PREVIEW,
+        always_review: false,
+      });
+      let settleEntry!: (entry: { accepted: true; placement_id: string }) => void;
+      const entry = new Promise<{ accepted: true; placement_id: string }>((resolve) => {
+        settleEntry = resolve;
+      });
+      vi.mocked(client.requests.entryIntent).mockReturnValue(entry);
+      vi.mocked(client.requests.createOrResume)
+        .mockRejectedValueOnce(
+          new ApiError(429, 'Daily allowance used.', 'resource_quota', undefined, undefined, {
+            resource: 'visitor_launches',
+            reset_at: '2026-11-14T00:00:00Z',
+          }),
+        )
+        .mockResolvedValue(PUBLIC_RECORD);
+      const test = setup(auth(signedIn), client);
+      if (source === 'pending entry check') {
+        await waitFor(() => expect(client.requests.entryIntent).toHaveBeenCalledOnce());
+        await test.user.click(screen.getByRole('button', { name: 'Open in CMA' }));
+      }
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('daily allowance');
+      await act(async () => settleEntry({ accepted: true, placement_id: route.placementId }));
+      expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+      expect(readIntent(path)).toBeUndefined();
+      expect(test.navigate).not.toHaveBeenCalled();
+
+      await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(test.navigate).toHaveBeenCalledOnce());
+      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1]?.[2].idempotencyKey).not.toBe(calls[0]?.[2].idempotencyKey);
+    },
+  );
+
   it.each([
     [429, 'resource_quota', { resource: 'visitor_launches' }],
     [429, 'resource_quota', { resource: 'visitor_launches', reset_at: 'unknown' }],
