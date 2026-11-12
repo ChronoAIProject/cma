@@ -30,6 +30,41 @@ async fn delete_surfaces_retry_after_on_429_without_inline_retry() {
 }
 
 #[tokio::test]
+async fn retry_after_is_capped_for_huge_seconds_and_far_future_dates() {
+    let far_future = httpdate::fmt_http_date(
+        std::time::SystemTime::now() + Duration::from_secs(365 * 24 * 60 * 60),
+    );
+    for list in [false, true] {
+        let mut peer = Peer::start().await;
+        let client = client(&peer, true);
+        for (index, (header, seconds)) in [
+            ("18446744073709551615", 3600),
+            (far_future.as_str(), 3600),
+            ("3601", 3600),
+            ("3600", 3600),
+            ("3599", 3599),
+            ("0", 0),
+            ("Thu, 01 Jan 1970 00:00:00 GMT", 0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let task = operation(&client, list);
+            if index == 0 {
+                authorize(&mut peer).await;
+            }
+            peer.next()
+                .await
+                .respond_with_headers(429, &[("retry-after", header)]);
+            let error = finish(task).await.unwrap_err();
+            assert_eq!(error.error, DocumentError::Unavailable);
+            assert_eq!(error.retry_after, Some(Duration::from_secs(seconds)));
+            assert_eq!(peer.count(), index + 2);
+        }
+    }
+}
+
+#[tokio::test]
 async fn maintenance_retry_after_date_is_request_local() {
     let mut peer = Peer::start().await;
     let client = client(&peer, true);

@@ -17,6 +17,7 @@ use tokio::time::Instant;
 // Provisional E1 scope names; storage-owner confirmation and NyxID grants are pending.
 const MAINTENANCE_SCOPE: &str = "proxy object:read object:list object:delete";
 const MAX_LIST_BYTES: usize = 256 * 1024;
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(3600);
 
 pub(crate) struct StorageMaintenance {
     http: Client,
@@ -208,6 +209,7 @@ fn unavailable(response: &Response) -> BlobMaintenanceError {
                         .map(|at| at.duration_since(SystemTime::now()).unwrap_or_default())
                 }
             })
+            .map(|delay| delay.min(MAX_RETRY_AFTER))
     } else {
         None
     };
