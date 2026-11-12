@@ -1,7 +1,12 @@
 //! Run only against a fresh disposable replica set, never production.
 use super::*;
 use futures_util::TryStreamExt;
-use mongodb::{bson::doc, event::EventHandler, options::ClientOptions, Client};
+use mongodb::{
+    bson::{doc, Document},
+    event::EventHandler,
+    options::ClientOptions,
+    Client,
+};
 
 #[derive(Default)]
 struct Counts {
@@ -13,10 +18,11 @@ struct Counts {
 async fn client(uri: &str, enabled: bool) -> (Client, Arc<Mutex<Counts>>) {
     let mut options = ClientOptions::parse(uri).await.unwrap();
     options.max_pool_size = Some(30);
+    options.tracing = Some(super::metadata_hook::disabled());
     let diagnostics = enabled.then(Diagnostics::default);
     if let Some(commands) = diagnostics.clone() {
         drop(super::periodic::start(&commands));
-        options.command_event_handler = Some(EventHandler::callback(move |e| commands.command(e)));
+        super::metadata_hook::install(&mut options, commands);
     }
     let counts = Arc::new(Mutex::new(Counts::default()));
     let observed = counts.clone();
@@ -160,6 +166,7 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
         })
         .await;
     drain(&on_counts).await;
+    super::output::flush();
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     for sensitive in [&name, &payload, "unknown_private_command", "127.0.0.1"] {
         assert!(!logs.contains(sensitive));
@@ -167,27 +174,49 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
     assert!(logs.contains("event=\"failed\""));
     // Check-in runs in the driver's pool task: prove its retained labels and
     // physical-hold hash still join to the originating command after that hop.
-    let returned = logs
+    let request_hash = format!("request_hash={}", "b".repeat(64));
+    let returned: Vec<_> = logs
         .lines()
-        .find(|line| {
+        .filter(|line| {
             line.contains("event=\"checked_in\"")
                 && line.contains("route=\"GET /api/v1/sandboxes/{id}\"")
                 && line.contains("phase=\"hierarchy\"")
         })
-        .expect("a sampled physical hold must retain its request context");
-    let hold_hash = returned
-        .split_whitespace()
-        .find_map(|field| field.strip_prefix("hold_hash="))
-        .unwrap();
-    assert_eq!(hold_hash.len(), 64);
-    let request_hash = format!("request_hash={}", "b".repeat(64));
-    assert!(returned.contains(&request_hash));
-    assert!(logs.lines().any(|line| {
-        line.contains("event=\"succeeded\"")
-            && line.contains(&format!("hold_hash={hold_hash}"))
-            && line.contains(&request_hash)
-            && line.contains("phase=\"hierarchy\"")
-            && line.contains("docs_returned_known=true")
-    }));
+        .collect();
+    assert!(
+        !returned.is_empty(),
+        "physical holds must retain request context"
+    );
+    // Hold time includes decoding/callback work. A slow hold can contain a fast,
+    // unsampled command, so the first hold need not have a logged completion.
+    let joined = returned
+        .iter()
+        .filter(|returned| {
+            let hold_hash = returned
+                .split_whitespace()
+                .find_map(|field| field.strip_prefix("hold_hash="))
+                .unwrap();
+            assert_eq!(hold_hash.len(), 64);
+            assert!(returned.contains(&request_hash));
+            logs.lines().any(|line| {
+                // getMore exposes an input cursor ID, not a positive result
+                // marker. Its completion is explicitly unknown, but must still
+                // join to the same physical hold and originating request.
+                (line.contains("event=\"succeeded\"")
+                    || (line.contains("event=\"completed\"")
+                        && line.contains("outcome_known=false")))
+                    && line.contains(&format!("hold_hash={hold_hash}"))
+                    && line.contains(&request_hash)
+                    && line.contains("phase=\"hierarchy\"")
+                    && line.contains("docs_returned_known=false")
+                    && line.contains("transaction_known=false")
+            })
+        })
+        .count();
+    eprintln!(
+        "MONITOR_CORRELATION holds={} joined={joined}",
+        returned.len()
+    );
+    assert!(joined > 0, "a sampled command and physical hold must join");
     database.drop().await.unwrap();
 }
