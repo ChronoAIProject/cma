@@ -28,6 +28,42 @@ async fn assert_deleted(response: Response) {
 }
 
 #[tokio::test]
+async fn existing_nonpersonal_custody_stays_usable_and_still_obeys_standing() {
+    use base64::Engine;
+    let token = format!(
+        "e30.{}.fixture",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(br#"{"sub":"owner","token_type":"access","act":{"sub":"agent"}}"#)
+    );
+    assert!(!crate::auth::bearer::permits_personal_authority(&token));
+    for deleting in [false, true] {
+        let standing = Arc::new(Standing::default());
+        let fixture = Fixture::with_standing(standing.clone()).await;
+        let mut state = fixture
+            .store
+            .subject(&SubjectId::new("owner"))
+            .await
+            .unwrap()
+            .unwrap();
+        state.tokens.as_mut().unwrap().access_token = SecretValue::new(token.clone());
+        fixture.store.put_subject(state).await.unwrap();
+        standing.0.store(deleting, Ordering::SeqCst);
+        let response = fixture
+            .send(fixture.request(Method::GET, "/v1/channels"))
+            .await;
+        if deleting {
+            assert_deleted(response).await;
+            assert_eq!(fixture.control.calls.load(Ordering::SeqCst), 0);
+        } else {
+            assert_eq!(response.status(), StatusCode::OK);
+            let seen = fixture.control.headers.read().await;
+            assert_eq!(seen[header::AUTHORIZATION], format!("Bearer {token}"));
+            assert!(!seen.contains_key(header::COOKIE));
+        }
+    }
+}
+
+#[tokio::test]
 async fn standing_portal_denies_reads_sends_and_stream_establishment() {
     let standing = Arc::new(Standing::default());
     let f = Fixture::with_standing(standing.clone()).await;
