@@ -33,14 +33,15 @@ struct StopRead {
 impl MongoSandboxStore {
     /// Whether period-row writers should be scheduled; unknown counts as enabled.
     pub(in crate::store) fn platform_enabled_hint(&self) -> bool {
-        self.platform_stop_cache
+        self.platform
+            .stop_cache
             .lock()
             .map(|cache| cache.platform_enabled.unwrap_or(true))
             .unwrap_or(true)
     }
 
     pub(super) fn note_platform_enabled(&self, enabled: bool) {
-        if let Ok(mut cache) = self.platform_stop_cache.lock() {
+        if let Ok(mut cache) = self.platform.stop_cache.lock() {
             cache.platform_enabled = Some(enabled);
         }
     }
@@ -72,7 +73,7 @@ impl MongoSandboxStore {
                 .any(|closure| closure.reason == ClosureReason::SpendStop),
             None => false,
         };
-        if let Ok(mut cache) = self.platform_stop_cache.lock() {
+        if let Ok(mut cache) = self.platform.stop_cache.lock() {
             cache.stop = Some(StopRead {
                 period_key: key,
                 closed,
@@ -83,7 +84,7 @@ impl MongoSandboxStore {
     }
 
     fn cached_stop(&self, key: &str) -> Option<bool> {
-        let cache = self.platform_stop_cache.lock().ok()?;
+        let cache = self.platform.stop_cache.lock().ok()?;
         cache
             .stop
             .as_ref()
@@ -93,7 +94,7 @@ impl MongoSandboxStore {
 
     #[cfg(test)]
     pub(in crate::store) fn age_platform_stop_cache(&self, by: Duration) {
-        if let Ok(mut cache) = self.platform_stop_cache.lock() {
+        if let Ok(mut cache) = self.platform.stop_cache.lock() {
             if let Some(read) = cache.stop.as_mut() {
                 read.read_at = read.read_at.checked_sub(by).unwrap_or(read.read_at);
             }

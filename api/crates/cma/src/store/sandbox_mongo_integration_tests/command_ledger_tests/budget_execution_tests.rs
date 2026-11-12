@@ -487,7 +487,7 @@ async fn stop_reads_are_served_from_the_cache_within_its_ttl() {
 async fn a_turn_end_through_the_message_checkpoint_waits_for_local_period_writers() {
     let (client, name) = database("budget_platform_turn_end").await;
     let (store, agent, generation, _) = running_turn(&client, &name).await;
-    let held = store.platform_writes.lock().await;
+    let held = store.platform.writes.lock().await;
     let recorder = DurableAgentUpdateRecorder::new(store.clone());
     let agent_id = agent.id.clone();
     let ending = tokio::spawn(async move {
