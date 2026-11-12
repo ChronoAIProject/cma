@@ -147,9 +147,10 @@ service access; autonomous execution does not add remote publication authority.
 Run these only through a fresh Sandbox's software-install phase, as `cma`
 UID/GID 10001, before credential delivery. The runtime image is Debian
 trixie-slim with a read-only system filesystem and writable `/home/cma`.
-Its Dockerfile supplies bash, curl, git, gzip, Python, tar, unzip, and xz, but
-does not explicitly install make, zstd, or ICU. `dpkg-deb` is supplied by Debian's
-essential `dpkg` package and is asserted before use. Extraction does not run
+Its Dockerfile supplies bash, curl, git, gzip, jq, ps (procps), Python, tar,
+unzip, and xz, but does not explicitly install make, zstd, or ICU. `dpkg-deb` is
+supplied by Debian's essential `dpkg` package and is asserted before use.
+Extraction does not run
 Debian maintainer scripts or alter the system package database.
 
 All writes below are confined to the version-specific home prefix. The recipe
