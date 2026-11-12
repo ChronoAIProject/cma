@@ -8,7 +8,9 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     Json,
 };
-use layer2_core::trigger_domain::{PlacementId, PublicTriggerId, TriggerAvailability};
+use layer2_core::trigger_domain::{
+    PlacementId, PublicTrigger, PublicTriggerId, TriggerAvailability,
+};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -29,49 +31,62 @@ pub(super) async fn open(
     Path((public_id, placement_id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Response {
-    if !valid_ids(&public_id, &placement_id) {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let trigger = match state
-        .triggers
-        .trigger_by_public_id(&PublicTriggerId(public_id.clone()))
-        .await
-    {
-        Ok(Some(trigger)) if trigger.availability == TriggerAvailability::Published => trigger,
-        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    let (mut response, value) = match navigation(&state, &public_id, &placement_id).await {
+        Ok(trigger) => {
+            let deliberate = header_is(&headers, "sec-fetch-user", "?1")
+                && header_is(&headers, "sec-fetch-mode", "navigate")
+                && header_is(&headers, "sec-fetch-dest", "document")
+                && !headers.contains_key("purpose")
+                && !headers.contains_key("sec-purpose");
+            let value = if deliberate && !trigger.revision.content.consent.always_review {
+                format!("{}.{placement_id}", now_seconds())
+            } else {
+                String::new()
+            };
+            (
+                Redirect::to(&format!("/t/{public_id}/{placement_id}")).into_response(),
+                value,
+            )
+        }
+        Err(status) => (status.into_response(), String::new()),
     };
-    match state.standing.erasing(&trigger.owner).await {
-        Ok(false) => {}
-        _ => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    if public_id.starts_with("pub_") && is_embed_identifier(&public_id) {
+        set_cookie(&state, &mut response, &public_id, &value);
     }
-    match state
+    private_headers(&mut response);
+    response
+}
+
+async fn navigation(
+    state: &TriggerAssetsState,
+    public_id: &str,
+    placement_id: &str,
+) -> Result<PublicTrigger, StatusCode> {
+    if !valid_ids(public_id, placement_id) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let trigger = state
+        .triggers
+        .trigger_by_public_id(&PublicTriggerId(public_id.to_owned()))
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .filter(|trigger| trigger.availability == TriggerAvailability::Published)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if !matches!(state.standing.erasing(&trigger.owner).await, Ok(false)) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    state
         .triggers
         .placement(
             &trigger.trigger_id,
             &trigger.owner,
-            &PlacementId(placement_id.clone()),
+            &PlacementId(placement_id.to_owned()),
         )
         .await
-    {
-        Ok(Some(placement)) if placement.retired_at.is_none() => {}
-        Ok(_) => return StatusCode::NOT_FOUND.into_response(),
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    }
-    let mut response = Redirect::to(&format!("/t/{public_id}/{placement_id}")).into_response();
-    let deliberate = header_is(&headers, "sec-fetch-user", "?1")
-        && header_is(&headers, "sec-fetch-mode", "navigate")
-        && header_is(&headers, "sec-fetch-dest", "document")
-        && !headers.contains_key("purpose")
-        && !headers.contains_key("sec-purpose");
-    let value = if deliberate && !trigger.revision.content.consent.always_review {
-        format!("{}.{placement_id}", now_seconds())
-    } else {
-        String::new()
-    };
-    set_cookie(&state, &mut response, &public_id, &value);
-    private_headers(&mut response);
-    response
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .filter(|placement| placement.retired_at.is_none())
+        .ok_or(StatusCode::NOT_FOUND)?;
+    Ok(trigger)
 }
 
 #[utoipa::path(post, path = "/api/v1/triggers/public/{public_id}/entry-intent", tag = "triggers", params(("public_id" = String, Path)), responses((status = 200, body = TriggerEntryIntentView), (status = 403)), security(()))]
@@ -305,39 +320,106 @@ mod tests {
     #[tokio::test]
     async fn opening_navigation_uses_existing_publisher_snapshot_without_extra_lookup() {
         use crate::rest::shared_stream_tests::ChangingStanding;
-        for deleting in [None, Some("publisher"), Some("outage")] {
-            let fixture = Fixture::no_review();
+        for (fixture, deleting, public_id, placement_id, expected_status) in [
+            (
+                Fixture::no_review(),
+                None,
+                PUBLIC_ID,
+                PLACEMENT_ID,
+                StatusCode::SEE_OTHER,
+            ),
+            (
+                Fixture::no_review(),
+                Some("publisher"),
+                PUBLIC_ID,
+                PLACEMENT_ID,
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Fixture::no_review(),
+                Some("outage"),
+                PUBLIC_ID,
+                PLACEMENT_ID,
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Fixture::no_review(),
+                None,
+                "pub_missing",
+                PLACEMENT_ID,
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Fixture::retired_trigger(),
+                None,
+                PUBLIC_ID,
+                PLACEMENT_ID,
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Fixture::no_review(),
+                None,
+                PUBLIC_ID,
+                "plc_missing",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                Fixture::retired_placement(),
+                None,
+                PUBLIC_ID,
+                PLACEMENT_ID,
+                StatusCode::NOT_FOUND,
+            ),
+        ] {
             let standing = std::sync::Arc::new(ChangingStanding::default());
             *standing.0.lock().unwrap() = deleting;
             let state = super::super::TriggerAssetsState::new(fixture.store.clone(), ORIGIN)
                 .unwrap()
                 .with_account_standing(standing);
+            let cookie_name = format!("__Host-cma_entry_{public_id}");
             let response = super::super::trigger_assets_router(state)
                 .oneshot(
                     Request::get(format!(
-                        "/api/v1/triggers/public/{PUBLIC_ID}/open/{PLACEMENT_ID}"
+                        "/api/v1/triggers/public/{public_id}/open/{placement_id}"
                     ))
                     .header("sec-fetch-user", "?1")
                     .header("sec-fetch-mode", "navigate")
                     .header("sec-fetch-dest", "document")
+                    .header(
+                        header::COOKIE,
+                        format!("{cookie_name}={}.{PLACEMENT_ID}", now_seconds()),
+                    )
                     .body(Body::empty())
                     .unwrap(),
                 )
                 .await
                 .unwrap();
-            if deleting.is_none() {
-                assert_eq!(response.status(), StatusCode::SEE_OTHER);
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "standing={deleting:?}, public_id={public_id}, placement_id={placement_id}"
+            );
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "private, no-store"
+            );
+            assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
+            let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap();
+            if expected_status == StatusCode::SEE_OTHER {
                 assert_eq!(
-                    response.headers()[header::CACHE_CONTROL],
-                    "private, no-store"
+                    response.headers()[header::LOCATION],
+                    format!("/t/{public_id}/{placement_id}")
                 );
-                assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
-                assert!(response.headers()[header::SET_COOKIE]
-                    .to_str()
-                    .unwrap()
-                    .contains("Max-Age=600"));
+                assert!(cookie.starts_with(&format!("{cookie_name}=")));
+                assert!(
+                    cookie.ends_with("; Path=/; Max-Age=600; HttpOnly; SameSite=Strict; Secure")
+                );
             } else {
-                assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+                assert!(!response.headers().contains_key(header::LOCATION));
+                assert_eq!(
+                    cookie,
+                    format!("{cookie_name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict; Secure")
+                );
             }
             assert_eq!(fixture.store.public_lookups(), 1);
         }
