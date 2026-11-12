@@ -36,11 +36,32 @@ fn normal_and_terminal_agent_log_capacity_are_distinct_and_bounded() {
         STOP_RESERVE_BYTES,
         AppendCapacity::StopOrFailure,
     ));
+    assert!(!capacity_allows(
+        NORMAL_AGENT_LOG_ENTRIES,
+        NORMAL_AGENT_LOG_BYTES,
+        STOP_RESERVE_ENTRIES + 1,
+        STOP_RESERVE_BYTES,
+        AppendCapacity::StopOrFailure,
+    ));
+    assert!(!capacity_allows(
+        NORMAL_AGENT_LOG_ENTRIES,
+        NORMAL_AGENT_LOG_BYTES,
+        STOP_RESERVE_ENTRIES,
+        STOP_RESERVE_BYTES + 1,
+        AppendCapacity::StopOrFailure,
+    ));
     assert!(capacity_allows(
         NORMAL_AGENT_LOG_ENTRIES,
         NORMAL_AGENT_LOG_BYTES,
         STOP_RESERVE_ENTRIES + DELETE_RESERVE_ENTRIES,
         STOP_RESERVE_BYTES + DELETE_RESERVE_BYTES,
+        AppendCapacity::Delete,
+    ));
+    assert!(!capacity_allows(
+        NORMAL_AGENT_LOG_ENTRIES,
+        NORMAL_AGENT_LOG_BYTES,
+        STOP_RESERVE_ENTRIES + DELETE_RESERVE_ENTRIES,
+        STOP_RESERVE_BYTES + DELETE_RESERVE_BYTES + 1,
         AppendCapacity::Delete,
     ));
     assert!(!capacity_allows(
