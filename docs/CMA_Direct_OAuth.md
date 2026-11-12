@@ -7,8 +7,10 @@ idempotency keys. The resource URI names the service; it does not require
 routing those requests through the NyxID HTTP proxy.
 
 Configure `CHRONO_NYXID_OAUTH_API_RESOURCE` on every CMA API replica to the exact
-canonical resource returned by provider introspection. The checked-in production
-value is `https://api.nyxid.ai/api/v1/proxy/s/cma`. This is a deployment audience,
+canonical resource returned by provider introspection. The checked-in value is
+empty, so restricted grants remain disabled until the separate #1760 rollout
+verification. The canonical audience is `https://api.nyxid.ai/api/v1/proxy/s/cma`.
+This is a deployment audience,
 not a client allowlist. No Metaverse client IDs or credentials are added to CMA
 or NyxID. Unconfigured readers refuse restricted third-party command custody.
 
