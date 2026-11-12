@@ -5,6 +5,8 @@ use super::super::{
 use super::*;
 use layer2_core::{budget::RequestBudget, sandbox::store::AgentStore};
 
+#[path = "census_budget_tests.rs"]
+mod budget;
 #[path = "census_test_support.rs"]
 mod support;
 
