@@ -36,10 +36,13 @@ pub(super) fn start(diagnostics: &Diagnostics) -> Option<JoinHandle<()>> {
             drop(shared);
             // Never hold an observer mutex while formatting or writing logs.
             summary::emit(Some(completed));
-            tracing::info!(target: "mongo_diagnostic_pool", parent: None,
-                pool, tracked_commands = commands, tracked_holds = holds,
-                oldest_tracked_hold_us = oldest_hold_us, untracked,
-                "MongoDB diagnostic heartbeat");
+            super::output::send(super::output::Record::Pool {
+                pool,
+                commands,
+                holds,
+                oldest_hold_us,
+                untracked,
+            });
         }
     }))
 }
@@ -70,6 +73,7 @@ mod tests {
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_secs(10)).await;
         tokio::task::yield_now().await;
+        super::super::output::flush();
         let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         assert!(logs.contains("MongoDB attributed totals"));
         assert!(logs.contains("total_us=2100000"));
