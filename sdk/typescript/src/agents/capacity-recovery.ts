@@ -1,6 +1,7 @@
 import type { ResolvedConfig } from '../config.js';
 import { ProtocolError, ValidationError } from '../errors.js';
-import { request, type OperationOptions } from '../http.js';
+import { errorFromBody, request, type OperationOptions } from '../http.js';
+import { requestOutcome } from '../http/outcome.js';
 import { input, segment } from '../resources.js';
 import { enumeration, integer, nullable, object, tagged, text, type Output } from '../schema.js';
 
@@ -44,7 +45,7 @@ const outcome = tagged(
   },
   'outcome',
 );
-export type CapacityRecoveryOutcome = Output<typeof outcome>;
+export type CapacityRecoveryOutcome = Output<typeof outcome> | { readonly outcome: 'known_abort' };
 
 /** Explicit recovery operations; never activates gates or replays Agent input. */
 export class CapacityRecovery {
@@ -108,14 +109,31 @@ export class CapacityRecovery {
   ): Promise<CapacityRecoveryOutcome> {
     return this.command('/resume', body, options);
   }
-  private async command(action: string, body: CapacityRecoveryRequest, options: OperationOptions) {
-    return outcome(
-      await request(this.config, this.path(action), {
-        ...options,
-        method: 'POST',
-        body: this.original(body),
-        expectedStatus: [200, 202],
-      }),
-    );
+  private async command(
+    action: string,
+    body: CapacityRecoveryRequest,
+    options: OperationOptions,
+  ): Promise<CapacityRecoveryOutcome> {
+    const reply = await requestOutcome(this.config, this.path(action), {
+      ...options,
+      method: 'POST',
+      body: this.original(body),
+      expectedStatus: [200, 202, 409],
+    });
+    if (reply.response.status === 409) {
+      if (
+        typeof reply.body === 'object' &&
+        reply.body !== null &&
+        Object.keys(reply.body).length === 1 &&
+        'outcome' in reply.body &&
+        reply.body.outcome === 'known_abort'
+      )
+        return { outcome: 'known_abort' };
+      throw errorFromBody(reply.response, reply.body);
+    }
+    const value = outcome(reply.body);
+    if ((reply.response.status === 202) !== (value.outcome === 'unknown'))
+      throw new ProtocolError('recovery outcome does not match its HTTP status');
+    return value;
   }
 }
