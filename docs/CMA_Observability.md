@@ -442,3 +442,11 @@ Worker supervision, progress-aware stall detection, safe recovery and readiness
 are tracked separately in [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740),
 a child of #1470. This metrics PR does not change worker restart or readiness
 policy; long inference and user waits must not become arbitrary failure deadlines.
+
+The #1805 sampler and #1770 readiness diagnostics share one one-second timing
+task, owned by the telemetry server. Runtime metrics consume the shared wake
+observation on every tick; the existing readiness timer record and metrics
+consume that same lag only when diagnostics are enabled. Dropping the server
+stops both, while a scrape-listener failure stops neither. The readiness check
+loop retains its independent check schedule and deadline; it is not a second
+lag probe. No new configuration is added.
