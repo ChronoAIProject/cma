@@ -21,6 +21,19 @@ pub(super) async fn ensure(store: &MongoAccountDeletionStore) -> Result<(), mong
                     .build(),
             ),
             index(
+                doc! {"status":1,"subject_hash":1},
+                IndexOptions::builder()
+                    .name("account_deletions_status_subject".to_owned())
+                    .build(),
+            ),
+            index(
+                doc! {"subject_hash":1},
+                IndexOptions::builder()
+                    .name("account_deletions_array_status_subject".to_owned())
+                    .partial_filter_expression(doc! {"status":{"$type":"array"}})
+                    .build(),
+            ),
+            index(
                 doc! {"subject_hash":1,"request_keys":1},
                 IndexOptions::builder()
                     .name("account_deletions_request_keys".to_owned())
