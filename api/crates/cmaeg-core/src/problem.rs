@@ -43,6 +43,17 @@ pub enum ProblemCode {
     MediaUnavailable,
 }
 
+/// Bounded metadata about a provider refusal. This is safe to expose to a
+/// gateway peer: it contains no provider response body, credentials or
+/// request data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamRefusal {
+    pub operation: String,
+    pub status: u16,
+    pub code: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Problem {
@@ -56,9 +67,15 @@ pub struct Problem {
     pub status: u16,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Immutable diagnostic storage keeps the shared error compact as optional
+    /// extensions are added; its JSON representation remains a string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub instance: Option<String>,
+    pub instance: Option<Box<str>>,
     pub code: ProblemCode,
+    /// Optional provider metadata for relay consumers. Older responses omit
+    /// this field and retain the existing RFC 9457 shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<Box<UpstreamRefusal>>,
 }
 
 fn default_type() -> String {
@@ -76,7 +93,13 @@ impl Problem {
             detail: Some(detail.into()),
             instance: None,
             code,
+            upstream: None,
         }
+    }
+
+    pub fn with_upstream(mut self, upstream: UpstreamRefusal) -> Self {
+        self.upstream = Some(Box::new(upstream));
+        self
     }
 }
 
@@ -100,6 +123,19 @@ impl fmt::Display for ProblemCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_problem_with_instance_round_trips_without_the_optional_extension() {
+        let original = serde_json::json!({
+            "type": "about:blank", "title": "provider rejected", "status": 502,
+            "code": "provider_rejected", "detail": "provider_rejected",
+            "instance": "urn:example:problem"
+        });
+        let problem: Problem = serde_json::from_value(original.clone()).unwrap();
+        assert_eq!(problem.instance.as_deref(), Some("urn:example:problem"));
+        assert!(problem.upstream.is_none());
+        assert_eq!(serde_json::to_value(problem).unwrap(), original);
+    }
 
     #[test]
     fn retry_guidance_is_http_only_and_does_not_change_retained_problem_json() {
