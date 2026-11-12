@@ -22,7 +22,7 @@ mod resource_execution;
 mod capacity_execution;
 
 #[path = "request_budget_tests.rs"]
-mod request_budget;
+pub(in crate::store) mod request_budget;
 
 mod bounded_admission_tests;
 mod bounded_audit_tests;

@@ -63,9 +63,9 @@ fn ready_is_preflighted_before_its_owned_fields_are_decoded() {
     lanes.extend(std::iter::repeat_n("other", 8192));
     let ready = serde_json::json!({"t":"ready", "wireVersion":1, "lanes":lanes,
         "agentId":"agent-1", "outputAcknowledgement":{"version":1,"streamId":stream()}});
-    assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false).is_ok());
+    assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false, None).is_ok());
     assert!(
-        matches!(validate_ready(Message::Text(ready.to_string()), "agent-1", true),
+        matches!(validate_ready(Message::Text(ready.to_string()), "agent-1", true, None),
         Err(AdapterError::Rejected(message)) if message.contains("node limit"))
     );
 }

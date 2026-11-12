@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED: "false"
+  CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED: "false"
   # Measured reporting is independent of allocated billing. Enable only after
   # monitoring service-account GET reachability and reader/schema readiness.
   CHRONO_USAGE_METRICS_ENABLED: "false"
@@ -88,6 +90,10 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  # Expand-only skill upgrade readers; enable new writers only after migration qualification.
+  CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
+  # Reconciliation remains on the existing cadence until a measured rollout.
+  CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.
   CHRONO_READ_FRAME_BUDGET_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
@@ -95,9 +101,13 @@ data:
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
+  CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  # Retained-context lookup remains opt-in until the compatible API path is
+  # deployed and its latency and authorization evidence is reviewed.
+  CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED: "false"
   CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED: "false"
   CHRONO_TASK_EXPERIENCE_POLICY: '{"mode":"disabled","accounts":[],"capabilities":[]}'
   # Independent placement rollout selections; these do not attest continuity.

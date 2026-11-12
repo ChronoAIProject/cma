@@ -11,6 +11,7 @@ pub(crate) enum HierarchyProblem {
     CredentialSetupRequired,
     ConnectionsRequired(Vec<layer2_core::ServiceId>),
     Forbidden,
+    AlwaysOnApprovalRequired,
     SandboxNotFound,
     WorkspaceNotFound,
     WorktreeNotFound,
@@ -52,6 +53,7 @@ impl HierarchyProblem {
                 Self::ConnectionsRequired(services)
             }
             SandboxServiceError::Forbidden => Self::Forbidden,
+            SandboxServiceError::AlwaysOnApprovalRequired => Self::AlwaysOnApprovalRequired,
             SandboxServiceError::ProfileNotFound => Self::ProfileNotFound("sandbox"),
             SandboxServiceError::NotFound => Self::SandboxNotFound,
             SandboxServiceError::TrustConfirmationRequired { commands_digest } => {
@@ -182,6 +184,13 @@ impl IntoResponse for HierarchyProblem {
                 "sandbox-credential-setup-required",
                 super::problems::SANDBOX_CREDENTIAL_SETUP_DETAIL,
                 "sandbox_credential_setup_required".to_owned(),
+                vec![],
+            ),
+            Self::AlwaysOnApprovalRequired => (
+                StatusCode::FORBIDDEN,
+                "always-on-approval-required",
+                "Always on requires approval by an administrator. Owners may only turn it off.",
+                "always_on_approval_required".to_owned(),
                 vec![],
             ),
             Self::Forbidden => (
