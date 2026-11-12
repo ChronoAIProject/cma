@@ -11,7 +11,7 @@ use super::super::agents::read_agent;
 use super::super::sandbox_mongo::MongoSandboxStore;
 use super::{lane_records, records, worker_apply, ApplyError};
 
-pub(super) async fn apply(
+pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     id: &AgentCommandId,
     session: &mut ClientSession,
