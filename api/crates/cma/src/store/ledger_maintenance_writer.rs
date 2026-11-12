@@ -26,6 +26,42 @@ pub(super) async fn fence_writer(
     fence: Option<LedgerWriterFence<'_>>,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
+    let parent = writable_parent(store, sandbox, class, fence, session).await?;
+    // This fence remains in the accepted source digest. An admitted writer with
+    // no aggregate change still invalidates a plan captured before that writer.
+    let result = store
+        .sandboxes
+        .update_one(
+            parent,
+            doc! {"$inc":{"ledger_writer_admission_fence_v1":1_i64}},
+        )
+        .session(session)
+        .await?;
+    if result.matched_count != 1 {
+        return Err(refused(LedgerMaintenanceAdmissionRefusal::Conflict));
+    }
+    Ok(())
+}
+
+/// Read-only refusal check, not authority to perform an effect. A writer must
+/// still call `fence_writer` in its mutation transaction after expensive reads.
+pub(super) async fn check_writer(
+    store: &MongoSandboxStore,
+    sandbox: &SandboxId,
+    class: LedgerWriterClass,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    writable_parent(store, sandbox, class, None, session).await?;
+    Ok(())
+}
+
+async fn writable_parent(
+    store: &MongoSandboxStore,
+    sandbox: &SandboxId,
+    class: LedgerWriterClass,
+    fence: Option<LedgerWriterFence<'_>>,
+    session: &mut ClientSession,
+) -> Result<mongodb::bson::Document, ApplyError> {
     let parent = store
         .sandboxes
         .find_one(doc! {"_id":sandbox.as_str()})
@@ -72,18 +108,5 @@ pub(super) async fn fence_writer(
         fence,
     )
     .map_err(Domain::from)?;
-    // This fence remains in the accepted source digest. An admitted writer with
-    // no aggregate change still invalidates a plan captured before that writer.
-    let result = store
-        .sandboxes
-        .update_one(
-            parent,
-            doc! {"$inc":{"ledger_writer_admission_fence_v1":1_i64}},
-        )
-        .session(session)
-        .await?;
-    if result.matched_count != 1 {
-        return Err(refused(LedgerMaintenanceAdmissionRefusal::Conflict));
-    }
-    Ok(())
+    Ok(parent)
 }

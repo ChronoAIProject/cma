@@ -8,9 +8,26 @@ use mongodb::ClientSession;
 use super::sandbox_mongo::MongoSandboxStore;
 use super::sandbox_unpublished_recovery::transaction::ApplyError;
 
-/// Call before recovery's history work and child/parent changes, in that same
-/// transaction. Original proof, ownership, consent and source checks stay in
-/// the existing recovery port. Exact immutable receipts return before this.
+/// Refuse a held or inconsistent parent before history work without taking a
+/// write lock across that scan. This check grants no effect authority; `fence`
+/// remains mandatory in the same transaction before child/parent changes.
+pub(super) async fn check(
+    store: &MongoSandboxStore,
+    sandbox: &SandboxId,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    super::ledger_maintenance_writer_ports::parent_check(
+        store,
+        sandbox,
+        LedgerWriterClass::Recovery,
+        session,
+    )
+    .await?;
+    Ok(())
+}
+
+/// The real parent write closes the race with maintenance admission. Keep it
+/// after read-only source/history decisions, immediately before publication.
 pub(super) async fn fence(
     store: &MongoSandboxStore,
     sandbox: &SandboxId,

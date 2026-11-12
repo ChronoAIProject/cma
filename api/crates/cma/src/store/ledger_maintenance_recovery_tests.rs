@@ -6,6 +6,9 @@ use layer2_core::sandbox::ledger_maintenance_admission::LedgerMaintenanceAdmissi
 use layer2_core::sandbox::store::ledger_maintenance::LedgerMaintenanceStoreError;
 use layer2_core::sandbox::store::ledger_maintenance_pre_exclusion::LedgerPreExclusionStore;
 
+#[path = "ledger_maintenance_recovery_contention_tests.rs"]
+mod contention;
+
 #[path = "ledger_maintenance_recovery_race_tests.rs"]
 mod races;
 

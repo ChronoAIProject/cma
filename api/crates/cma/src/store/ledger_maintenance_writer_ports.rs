@@ -149,23 +149,39 @@ pub(super) async fn parent_write(
     class: LedgerWriterClass,
     session: &mut ClientSession,
 ) -> Result<(), super::sandbox_events::TransactionEventError> {
-    use super::sandbox_events::TransactionEventError as EventError;
-    use layer2_core::sandbox::store::SandboxStoreError;
     super::ledger_maintenance_writer::fence_writer(store, sandbox, class, None, session)
         .await
-        .map_err(|error| match error {
-            ApplyError::Driver(error) => EventError::Driver(error),
-            ApplyError::Domain(error) => EventError::Domain(match error {
-                LedgerMaintenanceStoreError::WriterRefused(_) => SandboxStoreError::Conflict,
-                LedgerMaintenanceStoreError::Refused(
-                    LedgerMaintenanceAdmissionRefusal::NotFound,
-                ) => SandboxStoreError::NotFound,
-                LedgerMaintenanceStoreError::Corrupt => SandboxStoreError::Corrupt(
-                    "ledger maintenance authority is inconsistent".into(),
-                ),
-                _ => SandboxStoreError::Unavailable(
-                    "ledger maintenance authority is unavailable".into(),
-                ),
-            }),
-        })
+        .map_err(parent_error)
+}
+
+/// This read cannot replace `parent_write` before a committed effect.
+pub(super) async fn parent_check(
+    store: &MongoSandboxStore,
+    sandbox: &SandboxId,
+    class: LedgerWriterClass,
+    session: &mut ClientSession,
+) -> Result<(), super::sandbox_events::TransactionEventError> {
+    super::ledger_maintenance_writer::check_writer(store, sandbox, class, session)
+        .await
+        .map_err(parent_error)
+}
+
+fn parent_error(error: ApplyError) -> super::sandbox_events::TransactionEventError {
+    use super::sandbox_events::TransactionEventError as EventError;
+    use layer2_core::sandbox::store::SandboxStoreError;
+    match error {
+        ApplyError::Driver(error) => EventError::Driver(error),
+        ApplyError::Domain(error) => EventError::Domain(match error {
+            LedgerMaintenanceStoreError::WriterRefused(_) => SandboxStoreError::Conflict,
+            LedgerMaintenanceStoreError::Refused(LedgerMaintenanceAdmissionRefusal::NotFound) => {
+                SandboxStoreError::NotFound
+            }
+            LedgerMaintenanceStoreError::Corrupt => {
+                SandboxStoreError::Corrupt("ledger maintenance authority is inconsistent".into())
+            }
+            _ => {
+                SandboxStoreError::Unavailable("ledger maintenance authority is unavailable".into())
+            }
+        }),
+    }
 }
