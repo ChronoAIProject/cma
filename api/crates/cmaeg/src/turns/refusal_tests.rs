@@ -1,5 +1,6 @@
 use super::refusal::{classify_start_failure, ProviderCall};
 use crate::providers::ProviderError;
+use cmaeg_core::problem::ProblemCode;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
@@ -36,8 +37,8 @@ fn rejected_codes_are_logged_only_as_bounded_machine_tokens() {
     for code in [
         "a",
         "0",
-        "_-.:",
-        "quota.limit:guest-42_denied",
+        "_-.",
+        "quota.limit-guest-42_denied",
         &"a".repeat(64),
     ] {
         let line = logged(ProviderError::Rejected {
@@ -119,4 +120,48 @@ fn other_errors_log_only_static_variant_labels() {
             assert!(!line.contains(forbidden), "{line}");
         }
     }
+}
+
+#[test]
+fn rejected_provider_detail_is_carried_as_a_bounded_relay_contract() {
+    let refusal = classify_start_failure(
+        "nyxbot",
+        ProviderCall::Responses.failed(ProviderError::Rejected {
+            status: 403,
+            code: "media_source_refused".into(),
+        }),
+    );
+    assert_eq!(refusal.code, ProblemCode::ProviderRejected);
+    let upstream = refusal.upstream.expect("provider detail");
+    assert_eq!(upstream.operation, "responses");
+    assert_eq!(upstream.status, 403);
+    assert_eq!(upstream.code, "media_source_refused");
+    let body = cmaeg_core::problem::Problem::new(
+        refusal.code,
+        refusal.status,
+        refusal.detail,
+    )
+    .with_upstream(upstream);
+    let json = serde_json::to_value(body).unwrap();
+    assert_eq!(json["code"], "provider_rejected");
+    assert_eq!(json["upstream"]["operation"], "responses");
+    assert_eq!(json["upstream"]["status"], 403);
+    assert_eq!(json["upstream"]["code"], "media_source_refused");
+}
+
+#[test]
+fn malformed_provider_code_is_normalized_before_relay_serialization() {
+    let refusal = classify_start_failure(
+        "nyxbot",
+        ProviderCall::Conversation.failed(ProviderError::Rejected {
+            status: 403,
+            code: "secret detail with spaces".into(),
+        }),
+    );
+    let upstream = refusal.upstream.expect("provider detail");
+    assert_eq!(upstream.operation, "conversation");
+    assert_eq!(upstream.code, "unrecognized");
+    assert!(!serde_json::to_string(&upstream)
+        .unwrap()
+        .contains("secret detail"));
 }

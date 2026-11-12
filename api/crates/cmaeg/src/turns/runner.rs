@@ -4,7 +4,7 @@ use super::{
     outcomes::TurnOutcome,
     preparation,
     preparation::has_attachments,
-    refusal::{ProviderCall, StartFailure},
+    refusal::{ClassifiedFailure, ProviderCall, StartFailure},
     render_media::{self, Audience, RenderMedia},
     sequencer::{Sequencer, Ticket},
     tracker::TurnTracker,
@@ -175,10 +175,12 @@ impl TurnRunner {
                 &mut admitted,
             )
             .await
-            .map_err(|reason| (ProblemCode::ProviderUnavailable, reason, 503))
+            .map_err(|reason| {
+                super::refusal::failure(ProblemCode::ProviderUnavailable, reason, 503)
+            })
         })
         .await;
-        let error = match result {
+        let error: ClassifiedFailure = match result {
             Ok(Ok(outcome)) => {
                 observation.finish(outcome);
                 if !matches!(outcome, "completed" | "replayed" | "refused") {
@@ -187,20 +189,24 @@ impl TurnRunner {
                 return;
             }
             Ok(Err(error)) => error,
-            Err(_) => (ProblemCode::ProviderUnavailable, "turn_timeout", 503),
+            Err(_) => {
+                super::refusal::failure(ProblemCode::ProviderUnavailable, "turn_timeout", 503)
+            }
         };
-        observation.finish(error.1);
-        provider_error(&provider, error.1);
+        observation.finish(error.detail);
+        provider_error(&provider, error.detail);
         if let Some(sender) = admitted.take() {
-            let _ = sender.send(LaunchOutcome::Refused(Problem::new(
-                error.0, error.2, error.1,
-            )));
+            let problem = Problem::new(error.code, error.status, error.detail);
+            let problem = error
+                .upstream
+                .map_or(problem.clone(), |upstream| problem.with_upstream(upstream));
+            let _ = sender.send(LaunchOutcome::Refused(problem));
         }
         self.delivery.terminal(
             turn,
             TurnOutcome::Failed {
-                code: error.1.into(),
-                message: failure_message(error.1).into(),
+                code: error.detail.into(),
+                message: failure_message(error.detail).into(),
             },
         );
     }

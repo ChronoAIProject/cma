@@ -43,6 +43,17 @@ pub enum ProblemCode {
     MediaUnavailable,
 }
 
+/// Bounded metadata about a provider refusal. This is safe to expose to a
+/// gateway peer: it contains no provider response body, credentials or
+/// request data.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpstreamRefusal {
+    pub operation: String,
+    pub status: u16,
+    pub code: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Problem {
@@ -59,6 +70,10 @@ pub struct Problem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instance: Option<String>,
     pub code: ProblemCode,
+    /// Optional provider metadata for relay consumers. Older responses omit
+    /// this field and retain the existing RFC 9457 shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<UpstreamRefusal>,
 }
 
 fn default_type() -> String {
@@ -76,7 +91,13 @@ impl Problem {
             detail: Some(detail.into()),
             instance: None,
             code,
+            upstream: None,
         }
+    }
+
+    pub fn with_upstream(mut self, upstream: UpstreamRefusal) -> Self {
+        self.upstream = Some(upstream);
+        self
     }
 }
 
