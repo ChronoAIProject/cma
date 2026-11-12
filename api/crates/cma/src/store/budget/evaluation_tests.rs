@@ -88,7 +88,7 @@ async fn assert_stale_transition_discarded(change: &str) {
             .unwrap();
     }
     let read = store.period_ledger(start).await.unwrap().unwrap();
-    let mut decision = read.clone();
+    let mut decision = read.ledger.clone();
     assert!(decision
         .evaluate(&platform, 1, NOW)
         .unwrap()

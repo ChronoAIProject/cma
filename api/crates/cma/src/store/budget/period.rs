@@ -8,7 +8,9 @@ use layer2_core::SubjectId;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::{ClientSession, Collection};
 
-use super::{decode, domain, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+pub(super) use super::period_storage::read as read_period;
+use super::period_storage::PeriodState;
+use super::{domain, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use crate::store::sandbox_mongo::is_duplicate_key;
 
 /// One settings read: the owner's policy, the platform policy when budgets are
@@ -105,29 +107,6 @@ pub(in crate::store) fn period_key(period_start: u64) -> String {
     format!("platform:{}", layer2_core::rfc3339_at(start))
 }
 
-pub(super) fn period_document(ledger: &PlatformPeriodLedger) -> Result<Document, BudgetError> {
-    let record = mongodb::bson::serialize_to_bson(ledger).map_err(|_| BudgetError::Unavailable)?;
-    Ok(doc! {
-        "_id": period_key(ledger.period_start),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "record": record,
-    })
-}
-
-pub(super) async fn read_period(
-    rows: &Collection<Document>,
-    period_start: u64,
-    session: &mut ClientSession,
-) -> Result<Option<PlatformPeriodLedger>, ApplyError> {
-    rows.find_one(doc! {"_id": period_key(period_start)})
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .as_ref()
-        .map(decode)
-        .transpose()
-}
-
 /// The evaluator pre-creates the row (rule 6). An admission that still finds
 /// it missing inserts it; a concurrent insert surfaces as the callers' existing
 /// write-conflict or duplicate-key retry.
@@ -136,18 +115,20 @@ pub(super) async fn load_or_open(
     platform: &PlatformBudgetPolicy,
     revision: u64,
     session: &mut ClientSession,
-) -> Result<(PlatformPeriodLedger, bool), ApplyError> {
+) -> Result<(PeriodState, bool), ApplyError> {
     let (start, _) = platform
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
     if let Some(ledger) = read_period(&store.model_budget, start, session).await? {
         return Ok((ledger, false));
     }
-    let ledger = PlatformPeriodLedger::open(platform, revision)
-        .map_err(|_| domain(BudgetError::Unavailable))?;
+    let ledger = PeriodState::from(
+        PlatformPeriodLedger::open(platform, revision)
+            .map_err(|_| domain(BudgetError::Unavailable))?,
+    );
     store
         .model_budget
-        .insert_one(period_document(&ledger).map_err(domain)?)
+        .insert_one(ledger.document().map_err(domain)?)
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -159,11 +140,12 @@ pub(super) async fn load_or_open(
 /// conflict, so a miss here is an inconsistency and fails closed.
 pub(super) async fn save_period(
     store: &MongoSandboxStore,
-    ledger: &PlatformPeriodLedger,
+    state: &PeriodState,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    let mut next = ledger.clone();
-    next.revision = ledger
+    let ledger = &state.ledger;
+    let mut next = state.clone();
+    next.ledger.revision = ledger
         .revision
         .checked_add(1)
         .filter(|revision| *revision <= i64::MAX as u64)
@@ -172,7 +154,7 @@ pub(super) async fn save_period(
         .model_budget
         .replace_one(
             doc! {"_id": period_key(ledger.period_start), "record.revision": ledger.revision as i64},
-            period_document(&next).map_err(domain)?,
+            next.document().map_err(domain)?,
         )
         .session(&mut *session)
         .await
@@ -197,17 +179,20 @@ pub(super) async fn admit_liability(
         return Ok(None);
     };
     let (mut ledger, inserted) = load_or_open(store, platform, snapshot.revision, session).await?;
-    match ledger.admit(platform, snapshot.revision, liability, now) {
+    match ledger
+        .ledger
+        .admit(platform, snapshot.revision, liability, now)
+    {
         Ok(entered) => {
             save_period(store, &ledger, session).await?;
             entered.iter().for_each(alert);
-            Ok(Some(ledger.period_start))
+            Ok(Some(ledger.ledger.period_start))
         }
         Err(refusal) => Err(refuse(
             &store.budget_settings,
             &store.model_budget,
             snapshot.revision,
-            (!inserted).then_some(ledger.revision),
+            (!inserted).then_some(ledger.ledger.revision),
             ledger,
             refusal,
             session,
@@ -236,13 +221,15 @@ pub(crate) async fn require_open_with(
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
     let read = read_period(rows, start, session).await?;
-    let expected = read.as_ref().map(|ledger| ledger.revision);
+    let expected = read.as_ref().map(|state| state.ledger.revision);
     let mut ledger = match read {
         Some(ledger) => ledger,
-        None => PlatformPeriodLedger::open(&platform, revision)
-            .map_err(|_| domain(BudgetError::Unavailable))?,
+        None => PeriodState::from(
+            PlatformPeriodLedger::open(&platform, revision)
+                .map_err(|_| domain(BudgetError::Unavailable))?,
+        ),
     };
-    match ledger.admit(&platform, revision, 0, now) {
+    match ledger.ledger.admit(&platform, revision, 0, now) {
         Ok(_) => Ok(()),
         Err(refusal) => {
             Err(refuse(settings, rows, revision, expected, ledger, refusal, session).await)
@@ -287,7 +274,7 @@ async fn refuse(
     rows: &Collection<Document>,
     revision: u64,
     expected: Option<u64>,
-    mut ledger: PlatformPeriodLedger,
+    mut ledger: PeriodState,
     refusal: Refusal,
     session: &mut ClientSession,
 ) -> ApplyError {
@@ -297,7 +284,10 @@ async fn refuse(
         return domain(refusal.reason);
     }
     if !refusal.closures.is_empty() {
-        ledger.closures.extend(refusal.closures.iter().cloned());
+        ledger
+            .ledger
+            .closures
+            .extend(refusal.closures.iter().cloned());
         match super::transitions::persist(settings, rows, revision, expected, &ledger).await {
             Ok(true) => refusal.closures.iter().for_each(alert),
             Ok(false) => tracing::debug!(
@@ -352,7 +342,7 @@ pub(super) async fn mirror(
     let mut ledger = read_period(&store.model_budget, start, session)
         .await?
         .ok_or_else(|| domain(BudgetError::Unavailable))?;
-    change(&mut ledger).map_err(domain)?;
+    change(&mut ledger.ledger).map_err(domain)?;
     save_period(store, &ledger, session).await
 }
 
