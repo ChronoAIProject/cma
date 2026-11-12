@@ -422,3 +422,6 @@ mod history;
 
 #[path = "provider_binding.rs"]
 mod binding;
+
+#[path = "provider_capacity_proof.rs"]
+mod capacity_proof;

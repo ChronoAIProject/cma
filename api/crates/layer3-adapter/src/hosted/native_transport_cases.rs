@@ -334,3 +334,27 @@ async fn native_exec_readiness_failure_and_cancellation_never_send_runtime_crede
         assert!(fixture.state.requests.lock().unwrap().is_empty());
     }
 }
+
+#[tokio::test]
+async fn capacity_recovery_proof_uses_the_selected_authenticated_native_transport() {
+    use crate::hosted::HostedControlTransport as _;
+    for mode in [
+        NativeRuntimeTransport::KubernetesPortforward,
+        NativeRuntimeTransport::KubernetesExec,
+    ] {
+        let fixture = Fixture::start(Mode::Success, mode).await;
+        let endpoint = fixture.endpoint().await;
+        let mut request = crate::agent_capacity_recovery::tests::request(None);
+        request.target.runtime = handle();
+        let proof = fixture
+            .transport
+            .capacity_recovery_proof(&endpoint, &request)
+            .await
+            .unwrap();
+        proof.confirmation.validate_for(&request).unwrap();
+        assert_eq!(fixture.state.requests.lock().unwrap().len(), 1);
+        assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 1);
+        fixture.transport.retire(&handle()).await.unwrap();
+        fixture.drained().await;
+    }
+}
