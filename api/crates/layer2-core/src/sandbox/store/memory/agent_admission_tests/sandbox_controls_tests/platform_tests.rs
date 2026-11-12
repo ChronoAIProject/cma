@@ -8,6 +8,78 @@ use crate::budget::{
 
 struct Spend(Mutex<Vec<ClosureReason>>);
 
+#[tokio::test]
+async fn an_admitted_revive_receipt_is_recoverable_by_key_during_stop() {
+    let f = Fixture::new().await;
+    let spend = Arc::new(Spend(Mutex::new(vec![])));
+    f.service.attach_platform_spend(spend.clone());
+    let revision = f.store.lock().sandboxes[&sandbox(4).id].revision;
+    let admitted = f
+        .admit("owner", SandboxControl::Revive, "retained-revive", revision)
+        .await
+        .unwrap();
+    *spend.0.lock().unwrap() = vec![ClosureReason::SpendStop];
+    let before = f.store.lock().clone();
+    let replay = f
+        .admit("owner", SandboxControl::Revive, "retained-revive", revision)
+        .await
+        .expect("an exact retry must recover its durable receipt during STOP");
+    assert_eq!(replay, admitted);
+    assert!(matches!(
+        f.admit("owner", SandboxControl::Revive, "new-revive", revision)
+            .await,
+        Err(SandboxControlServiceError::Budget(
+            BudgetError::PlatformExhausted
+        ))
+    ));
+    assert!(matches!(
+        f.admit(
+            "owner",
+            SandboxControl::Revive,
+            "retained-revive",
+            revision + 1
+        )
+        .await,
+        Err(SandboxControlServiceError::Store(
+            SandboxControlError::IdempotencyConflict
+        ))
+    ));
+    let after = f.store.lock().clone();
+    assert_eq!(after.sandbox_controls, before.sandbox_controls);
+    assert_eq!(after.sandboxes, before.sandboxes);
+    assert_eq!(after.sandbox_events, before.sandbox_events);
+}
+
+#[tokio::test]
+async fn a_revive_replay_during_stop_still_requires_current_resource_authority() {
+    let f = Fixture::new().await;
+    f.share(ShareMode::OrgRoles, None).await;
+    let spend = Arc::new(Spend(Mutex::new(vec![])));
+    f.service.attach_platform_spend(spend.clone());
+    let revision = f.store.lock().sandboxes[&sandbox(4).id].revision;
+    f.admit(
+        "recipient",
+        SandboxControl::Revive,
+        "shared-revive",
+        revision,
+    )
+    .await
+    .unwrap();
+    *spend.0.lock().unwrap() = vec![ClosureReason::SpendStop];
+    *f.membership.0.lock().unwrap() = Err(MembershipError::NotMember);
+    assert!(matches!(
+        f.admit(
+            "recipient",
+            SandboxControl::Revive,
+            "shared-revive",
+            revision
+        )
+        .await,
+        Err(SandboxControlServiceError::Access(_))
+    ));
+    assert_eq!(f.store.lock().sandbox_controls.len(), 1);
+}
+
 #[async_trait::async_trait]
 impl PlatformSpendLedger for Spend {
     async fn admission_state(&self, _: u64) -> Result<PlatformAdmissionState, BudgetError> {
