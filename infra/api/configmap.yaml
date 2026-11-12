@@ -108,7 +108,9 @@ data:
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
-  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
+  # The release controller opts in with the planned diagnostic deployment.
+  CHRONO_MONGO_DIAGNOSTICS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
   CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"

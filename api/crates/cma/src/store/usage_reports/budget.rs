@@ -132,7 +132,11 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
         slow_checkouts: Mutex::new((0, None)),
     };
     use super::super::mongo_latency::connection_key;
+    let diagnostics = super::super::mongo_diagnostics::install(options, "reporting");
     options.cmap_event_handler = Some(EventHandler::callback(move |event: CmapEvent| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
         pool_observer(event.clone());
         match event {
             CmapEvent::ConnectionCheckedOut(e) => pressure.checkout(
