@@ -2106,6 +2106,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
+| `GET /api/v2/responses/{response_id}/output` | - | after, limit | 200 V2ResponseOutputPage |
 | `GET /api/v2/conversations/{conversation_id}` | - | - | 200 Conversation |
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
