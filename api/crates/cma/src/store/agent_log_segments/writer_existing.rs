@@ -53,13 +53,26 @@ pub(in crate::store) async fn publish_captured(
     input: PublicationInput<'_>,
     aggregate: AggregateUpdate,
 ) -> Result<Recorded, TransactionLogError> {
+    publish_prepared(store, scope, captured, input, aggregate, None).await
+}
+
+/// Publish original domain work with an optional completed legacy bootstrap.
+pub(in crate::store) async fn publish_prepared(
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    captured: &CapturedLog,
+    input: PublicationInput<'_>,
+    aggregate: AggregateUpdate,
+    adoption: Option<(&BootstrapPlan, &Admission)>,
+) -> Result<Recorded, TransactionLogError> {
     captured.validate_transaction(store, scope)?;
-    if captured.format() != CapturedFormat::Segmented {
+    if (captured.format() == CapturedFormat::Legacy) != adoption.is_some() {
         return Err(SandboxStoreError::Conflict.into());
     }
     // Rollover admission is serialized with the gate and consumed in this same
     // transaction. Existing-segment appends require no new activation admission.
-    let admission = if input.capacity == crate::store::agent_log_integrity::AppendCapacity::Normal
+    let rollover = if adoption.is_none()
+        && input.capacity == crate::store::agent_log_integrity::AppendCapacity::Normal
         && writer_plan::needs_normal_rollover(captured.active_head(), input.logs)?
     {
         Some(
@@ -80,7 +93,11 @@ pub(in crate::store) async fn publish_captured(
     let next = input.next.clone();
     let logs = input.logs.to_vec();
     let latest_before = captured.latest_entry().cloned();
-    let plan = prepare(store, scope, captured, input, None, admission.as_ref()).await?;
+    let (bootstrap, admission) = match adoption {
+        Some((bootstrap, admission)) => (Some(bootstrap), Some(admission)),
+        None => (None, rollover.as_ref()),
+    };
+    let plan = prepare(store, scope, captured, input, bootstrap, admission).await?;
     let publication = persist(store, scope, plan, aggregate).await?;
     Ok(Recorded {
         database: store.agents.namespace().db,
