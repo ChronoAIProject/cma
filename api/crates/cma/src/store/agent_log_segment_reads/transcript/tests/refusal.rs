@@ -39,6 +39,7 @@ async fn missing_foreign_stale_and_unsupported_projection_refuses_without_repair
                     .segment_logs
                     .projections
                     .update_one(filter.clone(), doc! {"$set":{field:value}})
+                    .bypass_document_validation(true)
                     .await
                     .unwrap();
             }
