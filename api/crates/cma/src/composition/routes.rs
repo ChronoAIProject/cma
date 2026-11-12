@@ -8,6 +8,13 @@ use crate::{
     rate_limit::RateLimiters, store::MongoStores, REQUEST_BODY_LIMIT_BYTES,
 };
 
+pub(super) fn stream_budget(resources: Router, limit: usize) -> Router {
+    resources.layer(axum::middleware::from_fn_with_state(
+        crate::public_streams::StreamBudget::new(limit),
+        crate::public_streams::enforce,
+    ))
+}
+
 pub(super) fn compose(
     resources: Router,
     connections: Arc<BrowserConnections>,
