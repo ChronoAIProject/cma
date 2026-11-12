@@ -2,8 +2,9 @@
 
 `GET /api/v1/sandboxes/{id}` retains the same authorization, hierarchy projection,
 optional enrichment, response, error concealment, and final revocation fence.
-The reader controls change how Mongo authorization and hierarchy readers hold
-their consistent views. Complete record validation remains intact.
+The independent controls below change how consistent Mongo reads are held and
+how optional presentation reads are scheduled. Record validation remains intact;
+Agent projection is a separate, gated change.
 
 ## Reader and diagnostic controls
 
@@ -11,6 +12,10 @@ their consistent views. Complete record validation remains intact.
   for each individual authorization snapshot, removing its abort command. Defaults
   to `false`; accepts only exact `true` or `false`. Initial authorization and the
   final release fence remain separate snapshots, including failure paths.
+- `CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED`: issue independent color
+  and public-name enrichment reads together after authorization succeeds. Defaults
+  to `false`; accepts only exact `true` or `false`. Their individual timers and
+  empty-data fallback remain; no shared `ClientSession` is used concurrently.
 - `CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED`: use a Mongo snapshot session for
   Sandbox hierarchy reads. Defaults to `false` in configuration and the API
   manifest. Only exact `true` and `false` are accepted.
@@ -98,12 +103,10 @@ contention; timing changes include local noise. The checkout reduction is exact.
 | colors | 0.492 / 0.793 | 0.499 / 0.594 |
 | names | 0.538 / 0.871 | 0.531 / 0.642 |
 
-The hierarchy remains the largest individual measured phase. Propose a separate
-default-off streaming aggregation of its three child collections, after the root
-read, with indexed filters and explicit per-type ordering. A tagged `$unionWith`
-cursor can retain individual document-size limits rather than building one large
-joined BSON row. This could save two more checkouts on the small fixture; it is
-not yet implemented or benchmarked. Require snapshot/cursor, corruption,
-concurrent-mutation, ordering, index and final-revocation parity before choosing
-it. Keep initial authorization and the fresh final fence separate. Never run
-parallel operations on the same ClientSession.
+The existing default-off batching implementation is described in
+[Sandbox hierarchy batching](CMA_Sandbox_Hierarchy_Batching.md). Its activation
+remains subject to #1743 attribution. The authorization-session and enrichment
+controls can be measured and rolled back independently of those hierarchy flags.
+Full Agent records and `validate_conversation()` remain in this change. Projected
+Agent summaries are kept on a separate branch until the production phase baseline
+and attribution support a reviewed scope decision.
