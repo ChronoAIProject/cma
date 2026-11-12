@@ -7,7 +7,7 @@ use layer2_core::trigger_domain::{
     Launch, LaunchPage, LaunchPageRequest, LaunchPlacementStats, LaunchStoreError,
     ServiceConnectionHandoff,
 };
-use mongodb::bson::{doc, Bson, Document};
+use mongodb::bson::{doc, Document};
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
@@ -295,32 +295,7 @@ pub(super) async fn due(
     let mut cursor = store
         .launch_data
         .launches
-        .find(doc! {
-            "work_step": { "$ne": "none" },
-            "work_ready_at": { "$lte": now },
-            "$and": [
-                {
-                    "$or": [
-                        { "blocked_reason": Bson::Null },
-                        {
-                            "blocked_reason.type": {
-                                "$in": [
-                                    "connection_required",
-                                    "orchestration_paused",
-                                    "sandbox_paused_reviving",
-                                ],
-                            },
-                        },
-                    ],
-                },
-                {
-                    "$or": [
-                        { "work_lease_expires_at": Bson::Null },
-                        { "work_lease_expires_at": { "$lte": now } },
-                    ],
-                },
-            ],
-        })
+        .find(super::due::filter(now))
         .sort(doc! { "work_ready_at": 1_i32, "_id": 1_i32 })
         .limit(i64::from(limit))
         .read_concern(ReadConcern::snapshot())
