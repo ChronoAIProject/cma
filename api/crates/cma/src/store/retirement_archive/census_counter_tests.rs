@@ -14,6 +14,17 @@ async fn platform_counter_keys_allow_capture_without_incidental_owner_selection(
     )
     .await;
     let rows = database.collection::<Document>("model_budget_reservations");
+    // Exercise #1754's period classification together with the new strict
+    // marker and its complete fixed counter set. Neither belongs to a Sandbox.
+    rows.insert_one(doc! {
+        "_id": "platform:2026-01-01T00:00:00Z", "document_schema_version": 1_i64,
+        "record": {"period_start": 1_767_225_600_i64, "period_end": 4_102_444_800_i64,
+            "settings_revision": 1_i64, "spent": 0_i64, "reserved": 0_i64,
+            "adjustments": 0_i64, "cloud": Bson::Null, "closures": [],
+            "evaluated_at": 0_i64, "revision": 1_i64, "counter_layout": 1_i32}
+    })
+    .await
+    .unwrap();
     for start in [0_i64, 1_767_225_600, i64::MAX] {
         for shard in 0..16 {
             rows.insert_one(doc! {
