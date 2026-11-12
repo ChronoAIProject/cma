@@ -1,4 +1,3 @@
-use serde::Deserialize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -291,7 +290,15 @@ pub(super) fn scoped_turn_outcome(
     }
 }
 
+#[cfg(test)]
 pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -> Outcome {
+    turn_outcome_with_policy(frame, false)
+}
+
+pub(super) fn turn_outcome_with_policy(
+    frame: impl std::borrow::Borrow<serde_json::Value>,
+    bounded_error_json: bool,
+) -> Outcome {
     let frame = frame.borrow();
     if let Some(error) = frame.get("error") {
         let message = error
@@ -299,7 +306,7 @@ pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -
             .and_then(serde_json::Value::as_str)
             .unwrap_or("agent refused the prompt without saying why")
             .to_string();
-        if let Some(failure) = super::acp_credit_failure::classify(&message) {
+        if let Some(failure) = super::acp_credit_failure::classify(&message, bounded_error_json) {
             return failure;
         }
         return Outcome::Failed {
@@ -324,7 +331,9 @@ pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -
             if let Some(failure) = failure
                 .get("title")
                 .and_then(serde_json::Value::as_str)
-                .and_then(super::acp_credit_failure::classify)
+                .and_then(|message| {
+                    super::acp_credit_failure::classify(message, bounded_error_json)
+                })
             {
                 return failure;
             }
@@ -339,7 +348,7 @@ pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -
             };
         }
     }
-    match PromptResponse::deserialize(result) {
+    match super::runtime_decode::decode::<PromptResponse>(result, bounded_error_json) {
         Ok(response) => Outcome::Ended(response),
         Err(error) => {
             tracing::warn!(%error, "turn ended in a newer ACP shape");

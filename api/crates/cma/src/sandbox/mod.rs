@@ -48,6 +48,8 @@ pub(crate) use credential::{
     ManagedSandboxCredentials, OwnerTokenSource, SandboxCredentialController,
     SandboxCredentialCustody,
 };
+#[cfg(test)]
+pub(crate) use live_agents::record_update_for_test;
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
