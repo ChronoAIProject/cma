@@ -2,7 +2,6 @@
 use super::*;
 use crate::store::agent_log::read_entry;
 use crate::store::agent_log_integrity::read::read_proven_agent;
-use crate::store::agent_log_segment_reads;
 use layer2_core::sandbox::AgentLogKind;
 use mongodb::ClientSession;
 
@@ -17,55 +16,10 @@ pub(super) async fn segmented_read(
     expected: &Agent,
     session: &mut ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
-    let mut entries = Vec::new();
-    let mut complete = false;
-    let Some(through) = agent_log_segment_reads::title_through(store, expected, session)
-        .await
-        .map_err(map_store_error)?
-    else {
-        return Ok(None);
-    };
-    let visited = agent_log_segment_reads::visit_selected(
-        store,
-        expected,
-        session,
-        through,
-        |kind| {
-            matches!(
-                kind,
-                AgentLogKind::Created { .. }
-                    | AgentLogKind::ConversationOpened { .. }
-                    | AgentLogKind::RuntimeGenerationRetired { .. }
-                    | AgentLogKind::TurnStarted { .. }
-                    | AgentLogKind::TurnMetadataSet { .. }
-                    | AgentLogKind::OwnerMessage { .. }
-                    | AgentLogKind::AgentMessage { .. }
-                    | AgentLogKind::TurnCompleted { .. }
-                    | AgentLogKind::TurnFailed { .. }
-                    | AgentLogKind::TurnInterrupted { .. }
-                    | AgentLogKind::ConversationGap { .. }
-                    | AgentLogKind::OperationDeliveryChanged {
-                        operation: layer2_core::sandbox::AgentOperationKind::Steer,
-                        state: layer2_core::sandbox::AgentOperationDelivery::DispatchFenced,
-                        ..
-                    }
-            )
-        },
-        |entry| {
-            if !complete {
-                entries.push(entry);
-                complete = AgentTitleTranscript::from_agent_log(expected, &entries).is_some();
-            }
-            Ok(())
-        },
-    )
-    .await
-    .map_err(map_store_error)?;
-    if visited.is_none() {
-        return Ok(None);
-    }
-    Ok(AgentTitleTranscript::from_agent_log(expected, &entries))
+    indexed::read(store, expected, session).await
 }
+
+mod indexed;
 
 /// None requests the existing complete fold; it never means that no title is
 /// eligible. In particular, setup and long first turns cannot be truncated or

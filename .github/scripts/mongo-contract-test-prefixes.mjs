@@ -62,6 +62,8 @@ export const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::agent_transaction_tests::',
   'store::sandbox_mongo_integration_tests::agent_log_read_tests::',
   'store::sandbox_mongo_integration_tests::response_projection_tests::',
+  'store::agent_log_segment_reads::transcript::tests::',
+  'store::suggestions::context::tests::',
   'store::agent_log_segments::mongo_tests::',
   'store::agent_log_segments::writer_commit::persistence::tests::',
   'store::sandbox_mongo_integration_tests::agent_capacity_recovery_tests::',

@@ -108,6 +108,11 @@ impl AgentWorker {
                         ConversationUpdate::SignInRequired { url, code, message } => {
                             self.record_startup_notice(agent, sandbox, AgentLogKind::SignInRequired { url, code, message }, now + started.elapsed()).await?;
                         }
+                        ConversationUpdate::RetainedEffect(ref effect)
+                            if matches!(effect.effect(), ConversationUpdate::SignInRequired { .. }) => {
+                            let ConversationUpdate::SignInRequired { url, code, message } = effect.effect() else { unreachable!() };
+                            self.record_startup_notice(agent, sandbox, AgentLogKind::SignInRequired { url: url.clone(), code: code.clone(), message: message.clone() }, now + started.elapsed()).await?;
+                        }
                         other => buffered.push(other),
                     }
                 }

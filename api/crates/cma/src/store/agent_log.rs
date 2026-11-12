@@ -403,31 +403,31 @@ impl AgentLogStore for MongoSandboxStore {
         self.read_transcript_log(expected).await
     }
 
-    async fn agent_log_transcript_projection(
+    async fn agent_log_transcript_page(
         &self,
         expected: &layer2_core::sandbox::Agent,
-    ) -> Result<Option<layer2_core::sandbox::AgentTranscript>, SandboxStoreError> {
-        if !self.bounded_transcript_reads
-            && std::env::var("CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED").as_deref()
-                != Ok("true")
-        {
-            return Ok(None);
-        }
+        request: &layer2_core::sandbox::AgentTranscriptPageRequest,
+    ) -> Result<Option<layer2_core::sandbox::AgentTranscriptPage>, SandboxStoreError> {
         let mut session = self
             .client
             .start_session()
             .snapshot(true)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        match super::agent_log_segment_reads::projected_transcript(self, expected, &mut session)
+        super::agent_log_segment_reads::transcript_page(self, expected, &mut session, request).await
+    }
+
+    async fn agent_log_transcript_projection(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<layer2_core::sandbox::AgentTranscript>, SandboxStoreError> {
+        let mut session = self
+            .client
+            .start_session()
+            .snapshot(true)
             .await
-        {
-            Ok(result) => Ok(result),
-            Err(SandboxStoreError::Corrupt(_))
-            | Err(SandboxStoreError::SequenceConflict)
-            | Err(SandboxStoreError::AgentLogCapacityExceeded) => Ok(None),
-            Err(error) => Err(error),
-        }
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        super::agent_log_segment_reads::projected_transcript(self, expected, &mut session).await
     }
 
     async fn agent_log_usage(
@@ -441,22 +441,13 @@ impl AgentLogStore for MongoSandboxStore {
         &self,
         expected: &layer2_core::sandbox::Agent,
     ) -> Result<Option<layer2_core::sandbox::AgentUsageReading>, SandboxStoreError> {
-        if !self.bounded_usage_reads {
-            return Ok(None);
-        }
         let mut session = self
             .client
             .start_session()
             .snapshot(true)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        match super::agent_log_segment_reads::projected_usage(self, expected, &mut session).await {
-            Ok(result) => Ok(result),
-            Err(SandboxStoreError::Corrupt(_))
-            | Err(SandboxStoreError::SequenceConflict)
-            | Err(SandboxStoreError::AgentLogCapacityExceeded) => Ok(None),
-            Err(error) => Err(error),
-        }
+        super::agent_log_segment_reads::projected_usage(self, expected, &mut session).await
     }
 }
 

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 279,
+  "openapi_operations": 280,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3859,6 +3859,15 @@
         "retained_recovery_not_proved",
         "retained_recovery_unavailable",
         "hierarchy_service_unavailable"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/routes_output.rs# pub(in crate::responses::v2) async fn output_page(",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_output_cursor"
       ]
     }
   }

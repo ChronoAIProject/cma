@@ -7,7 +7,7 @@
 
 use layer2_core::sandbox::{
     store::SandboxStoreError, Agent, AgentLogEntry, AgentLogKind, AgentTranscript,
-    AgentTranscriptFold, AgentUsageReading,
+    AgentUsageReading,
 };
 use mongodb::{bson::doc, options::ReadConcern, ClientSession};
 
@@ -76,96 +76,26 @@ async fn segmented_source(
     Ok(Some(head))
 }
 
-/// Visit only transcript-affecting rows from a certified segmented source.
-/// Source pages are validated one at a time; the visitor owns its projection
-/// state and no lifetime source vector is retained by this adapter.
-pub(super) async fn visit_selected<F, V>(
-    store: &MongoSandboxStore,
-    expected: &Agent,
-    session: &mut ClientSession,
-    through: u64,
-    mut keep: F,
-    mut visit: V,
-) -> Result<Option<()>, SandboxStoreError>
-where
-    F: FnMut(&AgentLogKind) -> bool + Send,
-    V: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send,
-{
-    let Some(head) = segmented_source(store, expected, session, true).await? else {
-        return Ok(None);
-    };
-    let through = through.min(expected.conversation.last_seq);
-    let mut after = 0_u64;
-    while after < through {
-        let through = after.checked_add(PAGE_SIZE).unwrap_or(through).min(through);
-        let mut expected_seq = after + 1;
-        segments::visit_range(
-            store,
-            &head,
-            LogRange {
-                after,
-                through,
-                limit: u16::try_from(through - after)
-                    .map_err(|_| SandboxStoreError::InvalidPage)?,
-            },
-            session,
-            true,
-            |entry| {
-                super::agent_log_reads::integrity::validate_lineage(
-                    &entry,
-                    &expected.workspace_id,
-                    expected.creation_worktree_id(),
-                )?;
-                if entry.agent_id != expected.id || entry.seq != expected_seq {
-                    return Err(SandboxStoreError::SequenceConflict);
-                }
-                expected_seq = expected_seq
-                    .checked_add(1)
-                    .ok_or(SandboxStoreError::SequenceConflict)?;
-                if keep(&entry.kind) {
-                    visit(entry)?;
-                }
-                Ok(())
-            },
-        )
-        .await
-        .map_err(segment_error)?;
-        if expected_seq != through + 1 {
-            return Err(SandboxStoreError::SequenceConflict);
-        }
-        after = through;
-    }
-    Ok(Some(()))
-}
-
-pub(super) async fn title_through(
-    store: &MongoSandboxStore,
-    expected: &Agent,
-    session: &mut ClientSession,
-) -> Result<Option<u64>, SandboxStoreError> {
-    let Some(head) = segmented_source(store, expected, session, true).await? else {
-        return Ok(None);
-    };
-    crate::store::agent_log_segments::projection::title_through(store, expected, &head, session)
-        .await
-        .map_err(segment_error)
-}
-
 pub(super) async fn projected_usage(
     store: &MongoSandboxStore,
     expected: &Agent,
     session: &mut ClientSession,
 ) -> Result<Option<AgentUsageReading>, SandboxStoreError> {
-    let Some(head) = segmented_source(store, expected, session, true).await? else {
+    let Some(_) = segmented_source(store, expected, session, true).await? else {
         return Ok(None);
     };
-    let projection = segments::projection::read(store, expected, &head, session)
-        .await
-        .map_err(segment_error)?;
+    let source = segments::capture::capture(
+        store,
+        expected,
+        session,
+        segments::capture::CaptureMode::Snapshot,
+    )
+    .await
+    .map_err(segment_error)?;
     Ok(Some(AgentUsageReading {
         agent_id: expected.id.clone(),
         through_seq: expected.conversation.last_seq,
-        usage: projection.usage(),
+        usage: source.projection().usage(),
     }))
 }
 
@@ -174,52 +104,11 @@ pub(super) async fn projected_transcript(
     expected: &Agent,
     session: &mut ClientSession,
 ) -> Result<Option<AgentTranscript>, SandboxStoreError> {
-    let Some(head) = segmented_source(store, expected, session, true).await? else {
-        return Ok(None);
-    };
-    segments::projection::read(store, expected, &head, session)
-        .await
-        .map_err(segment_error)?;
-    let mut fold = AgentTranscriptFold::default();
-    let result = visit_selected(
-        store,
-        expected,
-        session,
-        expected.conversation.last_seq,
-        |kind| {
-            matches!(
-                kind,
-                AgentLogKind::Created { .. }
-                    | AgentLogKind::ConversationOpened { .. }
-                    | AgentLogKind::RuntimeGenerationRetired { .. }
-                    | AgentLogKind::TurnStarted { .. }
-                    | AgentLogKind::TurnMetadataSet { .. }
-                    | AgentLogKind::OwnerMessage { .. }
-                    | AgentLogKind::AgentMessage { .. }
-                    | AgentLogKind::TurnCompleted { .. }
-                    | AgentLogKind::TurnFailed { .. }
-                    | AgentLogKind::TurnInterrupted { .. }
-                    | AgentLogKind::ConversationGap { .. }
-                    | AgentLogKind::OperationDeliveryChanged {
-                        operation: layer2_core::sandbox::AgentOperationKind::Steer,
-                        state: layer2_core::sandbox::AgentOperationDelivery::DispatchFenced,
-                        ..
-                    }
-            )
-        },
-        |entry| {
-            fold.push(expected, entry)
-                .map_err(SandboxStoreError::Corrupt)
-        },
-    )
-    .await?;
-    if result.is_none() {
-        return Ok(None);
-    }
-    fold.finish(expected)
-        .map(Some)
-        .map_err(SandboxStoreError::Corrupt)
+    transcript::complete(store, expected, session).await
 }
+
+mod transcript;
+pub(super) use transcript::page as transcript_page;
 
 /// Read one bounded source range from a certified format-2 history. A
 /// transaction-safe form is selected with `snapshot = false`; a transaction
@@ -265,9 +154,6 @@ pub(super) async fn range_with_snapshot(
         return Err(SandboxStoreError::SequenceConflict);
     }
     let count = through - after;
-    if count == 0 {
-        return Ok(Some(Vec::new()));
-    }
     let mut entries = Vec::new();
     let mut expected_seq = after + 1;
     segments::visit_range(
@@ -276,7 +162,7 @@ pub(super) async fn range_with_snapshot(
         LogRange {
             after,
             through,
-            limit: u16::try_from(count).map_err(|_| SandboxStoreError::InvalidPage)?,
+            limit: u16::try_from(count.max(1)).map_err(|_| SandboxStoreError::InvalidPage)?,
         },
         session,
         snapshot,
@@ -362,6 +248,11 @@ where
         return Ok(None);
     };
 
+    if head.last_seq > PAGE_SIZE {
+        return Err(SandboxStoreError::Unavailable(
+            "segmented semantic history requires pagination".into(),
+        ));
+    }
     let mut selected = Vec::new();
     let mut after = 0_u64;
     while after < head.last_seq {
