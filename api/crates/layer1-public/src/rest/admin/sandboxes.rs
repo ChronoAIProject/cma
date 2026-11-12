@@ -7,7 +7,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use layer2_core::sandbox::store::{PageRequest, SandboxStoreError};
+use layer2_core::sandbox::store::PageRequest;
 use layer2_core::sandbox::{
     AgentAdminSummary, AgentStatus, Sandbox, SandboxAdminQuery, SandboxAdminSummary,
     SandboxAdminView, SandboxEvent, SandboxStatus, WorkspaceAdminSummary, WorkspaceStatus,
@@ -37,6 +37,7 @@ pub(crate) struct SandboxPageParams {
     owner: Option<String>,
     status: Option<SandboxStatus>,
     runtime_version: Option<String>,
+    always_on: Option<bool>,
     cursor: Option<String>,
     limit: Option<u16>,
 }
@@ -52,6 +53,7 @@ impl SandboxPageParams {
             owner: self.owner.map(SubjectId),
             status: self.status,
             runtime_version: self.runtime_version,
+            always_on: self.always_on,
             page,
         })
     }
@@ -187,32 +189,25 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
     tag = "administration",
     params(("id" = String, Path)),
     request_body = AdminAlwaysOnRequest,
-    responses((status = 200, body = SandboxView), (status = 403, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument))
+    responses((status = 200, body = SandboxView), (status = 403, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument))
 )]
+/// Approve or revoke Always on with a revision check and a configure activity
+/// containing the actor, Sandbox id, new value and resulting revision.
 pub(crate) async fn always_on(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
     Json(body): Json<AdminAlwaysOnRequest>,
 ) -> Result<Json<SandboxView>, CollectionProblem> {
-    caller
-        .require(Capability::ControlAnySandbox)
-        .map_err(CollectionProblem::from)?;
-    let store = state
-        .maintenance
-        .as_ref()
-        .ok_or(CollectionProblem::Unavailable)?;
-    let sandbox = store
-        .set_sandbox_always_on(SandboxId(id), body.expected_revision, body.always_on)
-        .await
-        .map_err(|error| match error {
-            SandboxStoreError::NotFound => CollectionProblem::NotFound,
-            SandboxStoreError::Conflict => CollectionProblem::Conflict,
-            SandboxStoreError::Corrupt(_) | SandboxStoreError::Unavailable(_) => {
-                CollectionProblem::Unavailable
-            }
-            _ => CollectionProblem::Conflict,
-        })?;
+    let sandbox = state
+        .sandboxes
+        .set_always_on(
+            &caller,
+            &SandboxId(id),
+            body.expected_revision,
+            body.always_on,
+        )
+        .await?;
     Ok(Json(SandboxView::from(&sandbox)))
 }
 
@@ -224,6 +219,7 @@ pub(crate) async fn always_on(
         ("owner" = Option<String>, Query),
         ("status" = Option<String>, Query),
         ("runtime_version" = Option<String>, Query),
+        ("always_on" = Option<bool>, Query, description = "True selects explicit Always on exceptions; false includes unset preferences."),
         ("cursor" = Option<String>, Query),
         ("limit" = Option<u16>, Query)
     ),
@@ -322,3 +318,7 @@ pub(crate) async fn retire(
         .map(|result| Json(result.sandbox))
         .map_err(ProtectedProblem::sandbox)
 }
+
+#[cfg(test)]
+#[path = "always_on_tests.rs"]
+mod tests;

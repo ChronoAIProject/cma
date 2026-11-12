@@ -315,6 +315,38 @@
         }
       },
       "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/always-on-approval-required",
+          "title": "always on approval required",
+          "status": 403,
+          "detail": "Always on requires approval by an administrator. Owners may only turn it off.",
+          "code": "always_on_approval_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-owner-disable-unset",
+      "operation": "POST /api/v1/sandboxes/{id}/always-on",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/always-on",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "always-on-disable-unset"
+        },
+        "body": {
+          "always_on": false,
+          "expected_revision": 1
+        }
+      },
+      "response": {
         "status": 200,
         "headers": {
           "content-type": "application/json"
@@ -329,7 +361,6 @@
             "id": "sbp_route",
             "revision": 3
           },
-          "always_on": true,
           "nyxid_services": [
             "api-github"
           ],
@@ -349,14 +380,12 @@
           "runtime_version": "sha256:runtime",
           "last_activity_at": "2026-09-05T00:00:00Z",
           "created_at": "2026-09-05T00:00:00Z",
-          "updated_at": "$updated",
-          "revision": 2
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 1
         },
         "bodyKind": "json"
       },
-      "captures": {
-        "updated": "/updated_at"
-      }
+      "captures": {}
     },
     {
       "id": "auto-pause-admin-always-on",
@@ -416,6 +445,40 @@
       }
     },
     {
+      "id": "auto-pause-admin-approved-exceptions",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?always_on=true&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "sbx_contract",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "Sandbox sbx_contract",
+              "status": "active",
+              "runtime_version": "runtime-v1",
+              "agent_count": 0,
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "retired_at": null
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "auto-pause-preview",
       "operation": "GET /api/v1/admin/auto-pause/preview",
       "scenario": "admin_operator",
@@ -459,6 +522,119 @@
           "scheduled": 0,
           "already_satisfied": 0,
           "skipped": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-admin-revoke",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/always-on",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/always-on",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "always_on": false,
+          "expected_revision": 2
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_contract",
+          "owner": "owner-a",
+          "owner_name": null,
+          "name": "Sandbox sbx_contract",
+          "status": "active",
+          "profile": {
+            "id": "sbp_test",
+            "revision": 1
+          },
+          "always_on": false,
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "runtime-v1",
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "$updated",
+          "revision": 3
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "updated": "/updated_at"
+      }
+    },
+    {
+      "id": "auto-pause-admin-exceptions-after-revoke",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?always_on=true&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "auto-pause-admin-not-on",
+      "operation": "GET /api/v1/admin/sandboxes",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes?always_on=false&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "sbx_contract",
+              "owner": "owner-a",
+              "owner_name": "Alex Chen",
+              "name": "Sandbox sbx_contract",
+              "status": "active",
+              "runtime_version": "runtime-v1",
+              "agent_count": 0,
+              "last_activity_at": "2026-09-05T00:00:00Z",
+              "retired_at": null
+            }
+          ],
+          "next": null
         },
         "bodyKind": "json"
       },
