@@ -26,7 +26,22 @@ and verify refusal without startup effects or fabricated ACK. The common final
 activation guard still rejects invalid or changed identities with either policy.
 A maximal admitted reply measures fresh projection plus identity validation;
 the JSON tree and additional activation clones are outside that measurement.
-Local gate results and allocation values are recorded after qualification.
+Local qualification passed 677 focused tests, workspace formatting, strict
+all-target/all-feature CMA/core/adapter clippy, source-size, configuration/docs,
+whitespace and secret-history checks. All changed Rust files are below 500 lines.
+
+Qualified source and API tree, using Rust 1.96.1 on aarch64-apple-darwin:
+
+```text
+revision 04eaf9d48250fc33d5ff91f00a459f1260ce5685
+tree df971de007773a7182c0619a0cf470caf6a1e10e
+```
+
+The fixture encodes to 4,194,304 bytes and selects a 4,194,266-byte identity.
+Projection followed by common validation peaks at 4,194,316 requested bytes
+on the legacy path and 50 bytes with the policy enabled. The latter is the
+fixed rejection message. Both return to zero tracked bytes. This measures
+the selected projection, not the entire handshake or process RSS.
 
 Rollback follows the existing JSON-retention policy for new attachments. No
 production activation, live traffic or Sandbox/model work occurs in this slice.
