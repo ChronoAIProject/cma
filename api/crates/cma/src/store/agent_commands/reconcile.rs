@@ -42,7 +42,16 @@ pub(in crate::store) async fn apply(
         .await?
         .ok_or(CommandLedgerError::Corrupt)?;
     let mut lane = lane_records::read(&lane, agent_id.as_str())?;
-    let evidence = legacy_evidence(store, &agent, &agent_row, &command, session).await?;
+    let evidence = match super::super::agent_log_segments::command_evidence::read_transaction(
+        store, &agent, &agent_row, &command, session,
+    )
+    .await
+    .map_err(evidence_error)?
+    {
+        Some(evidence) => evidence,
+        // The segmented reader returns None exclusively for legacy roots.
+        None => legacy_evidence(store, &agent, &agent_row, &command, session).await?,
+    };
     let retry_current = if evidence.has_source_deferred() {
         let current = store
             .bindings
@@ -99,10 +108,7 @@ async fn legacy_evidence(
             false,
         )
         .await
-        .map_err(|error| match error {
-            TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
-            TransactionLogError::Driver(error) => ApplyError::Driver(error),
-        })?
+        .map_err(evidence_error)?
         .is_some();
     if bounded {
         use futures_util::TryStreamExt;
@@ -143,10 +149,17 @@ async fn legacy_evidence(
             },
         )
         .await
-        .map_err(|error| match error {
-            TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
-            TransactionLogError::Driver(error) => ApplyError::Driver(error),
-        })?;
+        .map_err(evidence_error)?;
     }
     Ok(evidence)
+}
+
+fn evidence_error(error: TransactionLogError) -> ApplyError {
+    match error {
+        TransactionLogError::Domain(SandboxStoreError::Unavailable(_)) => {
+            ApplyError::Domain(CommandLedgerError::Unavailable)
+        }
+        TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
+        TransactionLogError::Driver(error) => ApplyError::Driver(error),
+    }
 }
