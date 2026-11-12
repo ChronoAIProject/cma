@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 277,
+  "openapi_operations": 278,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3835,6 +3835,11 @@
         "usage_unavailable",
         "report_expired"
       ]
+    },
+    "POST /api/v1/telemetry/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/browser_telemetry.rs# Anonymous fixed-category diagnostics have a 256-byte body limit and no durable effects; success and malformed/private fields are covered by real-handler tests.",
+      "required_problems": []
     }
   }
 }

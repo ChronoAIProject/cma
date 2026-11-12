@@ -75,6 +75,7 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         || op.contains("/profile-authoring/")
         || [
             "GET /api/v1/conformance",
+            "POST /api/v1/telemetry/browser",
             "GET /api/v1/defaults",
             "GET /openapi.json",
             "POST /api/v1/mcp",
