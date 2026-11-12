@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, lstatSync, readdirSync, readlinkSync, rmSync, symlinkSync, existsSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -41,6 +41,43 @@ export const diagnosticStages = [
   ...checkpointFailures.map((code) => `checkpoint-refused-${code.replaceAll('_', '-')}`),
 ];
 export const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+// Repository harnesses call these by name: ps answers lock-owner liveness and
+// jq filters GitHub CLI output. Every runtime variant ships both on PATH.
+const requiredTools = {
+  psVersion: ['ps', /^ps from procps-ng ([0-9]+(?:\.[0-9]+)+)$/],
+  jqVersion: ['jq', /^jq-([0-9]+(?:\.[0-9]+)+)$/],
+};
+export const toolVersionPattern = /^[0-9]+(?:\.[0-9]+)+$/;
+// Beyond any real PID: the kernel keeps every PID below 4194304.
+const absentPid = '4194304';
+
+// Returns { status, stdout }; a command missing from PATH reports status null.
+export function localToolRunner(command, args, input = '') {
+  const { status, stdout, error } = spawnSync(command, args, {
+    input, encoding: 'utf8', timeout: 10000, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  return { status: error ? null : status, stdout: stdout ?? '' };
+}
+
+export function runtimeToolVersions(run) {
+  const versions = {};
+  for (const [field, [command, pattern]] of Object.entries(requiredTools)) {
+    const { status, stdout } = run(command, ['--version']);
+    assert.equal(status, 0, `${command} is not available on PATH`);
+    const version = pattern.exec(stdout.trim())?.[1];
+    assert.ok(version, `${command} is not the required implementation`);
+    versions[field] = version;
+  }
+  // Harnesses act on exit status, so prove both the positive and negative answer.
+  const live = run('ps', ['-o', 'pid=', '-p', '1']);
+  assert.ok(live.status === 0 && live.stdout.trim() === '1', 'ps did not report a live process');
+  assert.notEqual(run('ps', ['-o', 'pid=', '-p', absentPid]).status, 0, 'ps reported an absent process');
+  const filtered = run('jq', ['-ce', '.items | map(.n) | add'], '{"items":[{"n":1},{"n":2}]}');
+  assert.ok(filtered.status === 0 && filtered.stdout.trim() === '3', 'jq did not filter JSON');
+  assert.notEqual(run('jq', ['-e', '.missing'], '{}').status, 0, 'jq -e accepted a null result');
+  return versions;
+}
 
 export async function waitForWriterProgress(read, { timeoutMs = 5000, intervalMs = 25 } = {}) {
   const deadline = performance.now() + timeoutMs;
@@ -308,6 +345,7 @@ export async function probe(onStage = () => {}) {
   artifacts.acpVersion = JSON.parse(readFileSync('/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/package.json')).version;
   const ghVersion = execFileSync('/usr/local/bin/gh', ['--version'], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
   artifacts.ghVersion = /^gh version ([0-9]+\.[0-9]+\.[0-9]+) /.exec(ghVersion)?.[1];
+  Object.assign(artifacts, runtimeToolVersions(localToolRunner));
   complete('installed-artifacts');
   assert.equal(process.getuid(), 10001);
   assert.throws(() => writeFileSync('/usr/local/cma-ci-write-refusal', 'refused'));
