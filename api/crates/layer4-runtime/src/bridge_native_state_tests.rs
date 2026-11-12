@@ -247,3 +247,22 @@ fn malformed_or_conflicting_permissions_and_uncertain_sessions_fail_closed() {
         assert!(state.native_state.is_none());
     }
 }
+
+#[test]
+fn reloading_cannot_erase_work_or_uncertainty() {
+    for waiting in [false, true] {
+        let (mut state, _) = working();
+        if waiting {
+            output(&mut state, permission(json!(71)));
+        }
+        for _ in 0..2 {
+            input(
+                &mut state,
+                json!({"id":"reload", "method":"session/load", "params":{"sessionId":"conversation"}}),
+            );
+            output(&mut state, json!({"id":"reload", "result":{}}));
+            assert!(state.native_state.is_none());
+            assert!(state.conversation_id.is_none());
+        }
+    }
+}

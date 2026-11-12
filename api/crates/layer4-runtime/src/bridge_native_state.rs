@@ -10,12 +10,18 @@ pub(in crate::bridge) struct NativeObservation {
     pub conversation_id: Option<String>,
     pub native_state: Option<ConfirmedAgentState>,
     pending_open: Option<(Value, Option<String>)>,
+    uncertain: bool,
     approval: Option<(Value, Vec<String>)>,
 }
 
 impl NativeObservation {
     pub fn invalidate(&mut self) {
         tracing::debug!("native conversation observation is unconfirmed");
+        self.uncertain = true;
+        self.clear();
+    }
+
+    fn clear(&mut self) {
         self.conversation_id = None;
         self.native_state = None;
         self.pending_open = None;
@@ -30,16 +36,29 @@ impl NativeObservation {
         };
         match value.get("method").and_then(Value::as_str) {
             Some("session/load" | "session/new") => {
-                let overlapping = self.pending_open.is_some();
-                self.invalidate();
-                if overlapping {
+                // Loading does not prove that an existing or uncertain prompt
+                // stopped. Once correlation is lost, a later load cannot erase it.
+                if self.uncertain
+                    || self.pending_open.is_some()
+                    || matches!(
+                        self.native_state,
+                        Some(
+                            ConfirmedAgentState::Working { .. }
+                                | ConfirmedAgentState::WaitingApproval { .. }
+                        )
+                    )
+                {
+                    self.invalidate();
                     return;
                 }
+                self.clear();
                 let Some(id) = value.get("id").filter(|id| valid_call(id)) else {
+                    self.invalidate();
                     return;
                 };
                 let session = if value["method"] == "session/load" {
                     let Some(session) = session(&value) else {
+                        self.invalidate();
                         return;
                     };
                     Some(session.to_owned())
@@ -61,9 +80,13 @@ impl NativeObservation {
                     self.invalidate();
                     return;
                 }
-                self.native_state = prompt.map(|prompt| ConfirmedAgentState::Working {
-                    prompt_id: prompt.as_str().into(),
-                });
+                if let Some(prompt) = prompt {
+                    self.native_state = Some(ConfirmedAgentState::Working {
+                        prompt_id: prompt.as_str().into(),
+                    });
+                } else {
+                    self.invalidate();
+                }
             }
             Some("session/close" | "session/cancel") => self.invalidate(),
             None => self.answer_permission(&value),
@@ -106,8 +129,12 @@ impl NativeObservation {
                 (None, Some(returned)) if !returned.is_empty() => Some(returned.to_owned()),
                 _ => None,
             };
-            self.native_state = confirmed.as_ref().map(|_| ConfirmedAgentState::Idle);
-            self.conversation_id = confirmed;
+            if let Some(confirmed) = confirmed {
+                self.native_state = Some(ConfirmedAgentState::Idle);
+                self.conversation_id = Some(confirmed);
+            } else {
+                self.invalidate();
+            }
             return;
         }
         let prompt = match &self.native_state {
@@ -125,8 +152,12 @@ impl NativeObservation {
             && value.get("result").is_some_and(|result| {
                 serde_json::from_value::<PromptResponse>(result.clone()).is_ok()
             });
-        self.native_state = terminal.then_some(ConfirmedAgentState::Idle);
-        self.approval = None;
+        if terminal {
+            self.native_state = Some(ConfirmedAgentState::Idle);
+            self.approval = None;
+        } else {
+            self.invalidate();
+        }
     }
 
     fn permission(&mut self, value: &Value) {
@@ -202,6 +233,9 @@ impl NativeObservation {
             _ => None,
         };
         self.approval = None;
+        if self.native_state.is_none() {
+            self.invalidate();
+        }
     }
 }
 
