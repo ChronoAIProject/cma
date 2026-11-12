@@ -89,8 +89,9 @@ describe('public allowance guidance', () => {
     },
   );
 
-  it('explains that a full Sandbox allowance needs a completed deletion before starting again', () => {
+  it('explains that a full sandbox allowance needs a completed deletion before starting again', () => {
     const sentence = failureRemediation('sandbox_limit_reached');
+    expect(sentence).not.toContain('Sandbox');
     expect(sentence).toMatch(/delete.*sandbox/i);
     expect(sentence).toMatch(/wait.*deletion.*complete/i);
     expect(sentence).toMatch(/start again/i);
