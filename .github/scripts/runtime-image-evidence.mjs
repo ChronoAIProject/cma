@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checks as legacyChecks, diagnosticStages } from './runtime-image-probe.mjs';
+import { checks as legacyChecks, diagnosticStages, toolVersionPattern } from './runtime-image-probe.mjs';
 import { bootstrapChecks, bootstrapStages, validateBootstrapProof } from './runtime-bootstrap-probe.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -41,7 +41,7 @@ export function validateImage(image, commit, expectedId) {
 function validateProbeChecks(proof, expected, requiredChecks) {
   fields(proof, ['checks', 'artifacts']);
   assert.deepEqual(proof.checks, requiredChecks);
-  fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion', 'gh', 'ghVersion']);
+  fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion', 'gh', 'ghVersion', 'psVersion', 'jqVersion']);
   assert.match(proof.artifacts.runtime, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.launcher, expected.CODEX_LAUNCHER_SHA256);
   assert.equal(proof.artifacts.native, expected.CODEX_NATIVE_SHA256_AMD64);
@@ -50,6 +50,8 @@ function validateProbeChecks(proof, expected, requiredChecks) {
   assert.equal(proof.artifacts.acpVersion, expected.CODEX_ACP_VERSION);
   assert.match(proof.artifacts.gh, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.ghVersion, expected.GH_VERSION);
+  assert.match(proof.artifacts.psVersion, toolVersionPattern);
+  assert.match(proof.artifacts.jqVersion, toolVersionPattern);
 }
 
 export function validateProbe(proof, expected) { validateProbeChecks(proof, expected, checks); }
