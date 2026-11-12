@@ -95,6 +95,7 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
         },
     );
     diagnostics.returned(1, false);
+    super::output::flush();
     let bytes = output.0.lock().unwrap().clone();
     let logs = String::from_utf8(bytes).unwrap();
     let events: Vec<serde_json::Value> = logs
@@ -150,6 +151,7 @@ fn production_text_format_excludes_caller_fields_from_events_and_summaries() {
     let _guard = tracing::subscriber::set_default(subscriber);
     let span = tracing::info_span!("private_parent", owner = "private-owner-sentinel");
     let _entered = span.enter();
+    super::output::initialize();
     let command = metadata(
         "find",
         &doc! {"find":"agents", "filter":{"owner":"private-filter"}},
@@ -159,6 +161,7 @@ fn production_text_format_excludes_caller_fields_from_events_and_summaries() {
     let mut totals = Summary::default();
     totals.record(&command, "command", SLOW, None, true);
     summary::emit(Some(totals.drain()));
+    super::output::flush();
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     assert_eq!(logs.lines().count(), 2);
     assert!(logs.contains("MongoDB diagnostic event"));
