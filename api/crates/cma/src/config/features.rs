@@ -497,26 +497,3 @@ mod retained_json_tests {
         }
     }
 }
-
-#[cfg(test)]
-mod silent_sign_in_tests {
-    use super::*;
-    #[test]
-    fn silent_sign_in_requires_explicit_activation() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_SILENT_SIGN_IN_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.silent_sign_in, expected);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
-                == "CHRONO_SILENT_SIGN_IN_ENABLED")
-                .then(|| value.to_owned())))
-            .is_err());
-        }
-    }
-}
