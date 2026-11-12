@@ -65,6 +65,19 @@ pub(super) async fn open_with_json(
     ServerSocket,
     mpsc::Receiver<ConversationUpdate>,
 ) {
+    open_with_coordinator(bounded, permissions, json, false).await
+}
+
+pub(super) async fn open_with_coordinator(
+    bounded: bool,
+    permissions: bool,
+    json: bool,
+    coordinated: bool,
+) -> (
+    OpenedBridge,
+    ServerSocket,
+    mpsc::Receiver<ConversationUpdate>,
+) {
     let (client, mut server) = socket_pair().await;
     server
         .send(Message::Text(
@@ -77,6 +90,7 @@ pub(super) async fn open_with_json(
         .await
         .unwrap();
     let mut configured = settings(None, false);
+    configured.coordinated_ingress = coordinated;
     configured.retained_json = json;
     configured.bounded_raw_output = bounded;
     configured.bounded_permission_state = permissions;
