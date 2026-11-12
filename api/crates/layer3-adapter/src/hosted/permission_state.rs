@@ -5,8 +5,9 @@ use std::sync::{
     Arc, OnceLock,
 };
 
+use crate::ingress_budget::{IngressBudget, IngressReservation};
 use sha2::{Digest as _, Sha256};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 
 use crate::{AdapterError, PermissionDecision, PermissionOption, PermissionOptionKind, Result};
 
@@ -20,10 +21,11 @@ const LAYOUT_ALLOWANCE: usize = 128;
 pub(super) struct PermissionState {
     entries: Vec<Arc<Entry>>,
     budget: Arc<Semaphore>,
+    aggregate: Option<IngressBudget>,
     limit: usize,
     scope: [u8; 32],
     active_prompt: bool,
-    _table: OwnedSemaphorePermit,
+    _table: IngressReservation,
 }
 
 struct Choice {
@@ -38,26 +40,32 @@ pub(super) struct Entry {
     choices: Box<[Choice]>,
     selected: AtomicU8,
     pub(super) owns_prompt_waiter: bool,
-    _storage: OwnedSemaphorePermit,
+    _storage: IngressReservation,
 }
 
 impl PermissionState {
-    pub(super) fn new() -> Result<Self> {
+    pub(super) fn new(aggregate: Option<IngressBudget>) -> Result<Self> {
         static BUDGET: OnceLock<Arc<Semaphore>> = OnceLock::new();
         Self::with_budget(
             BUDGET
                 .get_or_init(|| Arc::new(Semaphore::new(PROCESS_BYTES)))
                 .clone(),
             MAX_ENTRIES,
+            aggregate,
         )
     }
 
-    fn with_budget(budget: Arc<Semaphore>, limit: usize) -> Result<Self> {
+    fn with_budget(
+        budget: Arc<Semaphore>,
+        limit: usize,
+        aggregate: Option<IngressBudget>,
+    ) -> Result<Self> {
         let bytes = size_of::<Self>() + LAYOUT_ALLOWANCE + limit * size_of::<Arc<Entry>>();
-        let table = reserve(&budget, bytes)?;
+        let table = reserve(&budget, aggregate.as_ref(), bytes)?;
         Ok(Self {
             entries: Vec::with_capacity(limit),
             budget,
+            aggregate,
             limit,
             scope: [0; 32],
             active_prompt: false,
@@ -119,7 +127,7 @@ impl PermissionState {
                 .map(|option| option.option_id.0.len())
                 .sum::<usize>();
         // Admission precedes all copies retained by the table or an in-flight replay.
-        let storage = reserve(&self.budget, bytes)?;
+        let storage = reserve(&self.budget, self.aggregate.as_ref(), bytes)?;
         let mut choices = Vec::with_capacity(options.len());
         for option in options {
             choices.push(Choice {
@@ -197,12 +205,12 @@ pub(super) fn validate(options: &[PermissionOption]) -> Result<()> {
     Ok(())
 }
 
-fn reserve(budget: &Arc<Semaphore>, bytes: usize) -> Result<OwnedSemaphorePermit> {
-    let bytes = u32::try_from(bytes).map_err(|_| capacity())?;
-    budget
-        .clone()
-        .try_acquire_many_owned(bytes)
-        .map_err(|_| capacity())
+fn reserve(
+    budget: &Arc<Semaphore>,
+    aggregate: Option<&IngressBudget>,
+    bytes: usize,
+) -> Result<IngressReservation> {
+    IngressReservation::try_acquire(budget, aggregate, bytes).ok_or_else(capacity)
 }
 
 fn capacity() -> AdapterError {

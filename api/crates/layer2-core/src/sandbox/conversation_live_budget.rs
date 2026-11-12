@@ -3,13 +3,14 @@
 use std::ops::Deref;
 use std::sync::{Arc, OnceLock};
 
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use layer3_adapter::ingress_budget::{IngressBudget, IngressReservation};
+use tokio::sync::Semaphore;
 
 use super::live::AgentLiveFragment;
 
 const PROCESS_BYTES: usize = 32 * 1024 * 1024;
 
-pub(super) struct LiveBudget(Arc<Semaphore>);
+pub(super) struct LiveBudget(Arc<Semaphore>, Option<IngressBudget>);
 
 impl LiveBudget {
     pub(super) fn process() -> Arc<Self> {
@@ -20,14 +21,21 @@ impl LiveBudget {
     }
 
     pub(super) fn new(bytes: usize) -> Self {
-        Self(Arc::new(Semaphore::new(bytes)))
+        Self(Arc::new(Semaphore::new(bytes)), None)
+    }
+
+    pub(super) fn process_coordinated() -> Arc<Self> {
+        Arc::new(Self(
+            Self::process().0.clone(),
+            Some(IngressBudget::process()),
+        ))
     }
 
     pub(super) fn retain(&self, fragment: AgentLiveFragment) -> Option<AgentLiveDelivery> {
         // The temporary producer fragment already exists. Reserve before moving
         // it into retained shared storage, using its actual owned capacities.
         let bytes = retained_bytes(&fragment)?;
-        let permit = self.0.clone().try_acquire_many_owned(bytes).ok()?;
+        let permit = IngressReservation::try_acquire(&self.0, self.1.as_ref(), bytes as usize)?;
         Some(AgentLiveDelivery(Delivery::Reserved(Arc::new(Reserved {
             fragment,
             _permit: permit,
@@ -53,7 +61,7 @@ pub(super) fn retained_bytes(fragment: &AgentLiveFragment) -> Option<u32> {
 
 struct Reserved {
     fragment: AgentLiveFragment,
-    _permit: OwnedSemaphorePermit,
+    _permit: IngressReservation,
 }
 
 #[derive(Clone)]

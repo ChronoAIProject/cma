@@ -44,6 +44,7 @@ mod home_volume;
 mod home_volume_router;
 mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
+pub mod ingress_budget;
 mod prompt_identity;
 mod provider_finality;
 pub mod recovery_diagnostics;
