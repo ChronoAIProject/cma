@@ -164,7 +164,10 @@ pub(super) async fn identities(
                         &value.id,
                         value.conversation.last_seq,
                         session,
-                        true,
+                        crate::store::agent_log_integrity::ScanOptions::new(
+                            true,
+                            Default::default(),
+                        ),
                         |entry| {
                             if let layer2_core::sandbox::AgentLogKind::Created {
                                 workspace_id,

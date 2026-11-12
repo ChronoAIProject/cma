@@ -1,5 +1,6 @@
 //! Complete-scan accounting on the shared periodic read-telemetry path.
-use super::execution_sections::{Clock, ExecutionSections, MonotonicClock};
+use super::cooperative_budget::{CooperativeBudget, Policy};
+use super::execution_sections::{Clock, MonotonicClock};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, LazyLock,
@@ -44,18 +45,21 @@ pub(super) struct Scan<C: Clock = MonotonicClock> {
     documents: u64,
     bytes: u64,
     success: bool,
-    execution: ExecutionSections<C>,
+    execution: CooperativeBudget<C>,
 }
 impl Scan {
     pub(super) fn new(caller: ScanCaller) -> Self {
         Self::with_counters(counters(), caller)
     }
     fn with_counters(counters: Arc<Counters>, caller: ScanCaller) -> Self {
-        Self::from_parts(counters, caller, MonotonicClock)
+        Self::from_parts(counters, caller, Policy::default(), MonotonicClock)
     }
 }
 impl<C: Clock> Scan<C> {
-    fn from_parts(counters: Arc<Counters>, caller: ScanCaller, clock: C) -> Self {
+    pub(super) fn with_clock(caller: ScanCaller, policy: Policy, clock: C) -> Self {
+        Self::from_parts(counters(), caller, policy, clock)
+    }
+    fn from_parts(counters: Arc<Counters>, caller: ScanCaller, policy: Policy, clock: C) -> Self {
         Self {
             counters,
             caller,
@@ -63,7 +67,7 @@ impl<C: Clock> Scan<C> {
             documents: 0,
             bytes: 0,
             success: false,
-            execution: ExecutionSections::new(clock),
+            execution: CooperativeBudget::new(policy, clock),
         }
     }
     pub(super) fn observe<'a, F>(
@@ -76,6 +80,9 @@ impl<C: Clock> Scan<C> {
     {
         self.execution.observe(future, record_poll)
     }
+    pub(super) async fn checkpoint(&mut self) {
+        self.execution.checkpoint().await;
+    }
     pub(super) fn document(&mut self, encoded_bytes: usize) {
         self.documents = self.documents.saturating_add(1);
         self.bytes = self.bytes.saturating_add(encoded_bytes as u64);
@@ -86,15 +93,19 @@ impl<C: Clock> Scan<C> {
 }
 impl<C: Clock> Drop for Scan<C> {
     fn drop(&mut self) {
-        let execution = self.execution.finish();
+        let (execution, yields) = self.execution.finish();
+        #[cfg(test)]
+        if let Ok(samples) = TEST_EXECUTION.try_with(Arc::clone) {
+            samples.lock().unwrap().push((execution, yields));
+        }
         metrics::histogram!("cma_agent_log_scan_longest_section_seconds", "caller" => self.caller.name())
             .record(execution.longest_section.as_secs_f64());
         metrics::histogram!("cma_agent_log_scan_driver_poll_seconds", "caller" => self.caller.name())
             .record(execution.longest_poll.as_secs_f64());
         metrics::counter!("cma_agent_log_scan_yields_total", "caller" => self.caller.name())
-            .increment(0);
+            .increment(yields);
         tracing::debug!(parent: None, caller = self.caller.name(), documents = self.documents, bytes = self.bytes,
-            outcome = if self.success { "success" } else { "failed" }, sections = execution.sections,
+            outcome = if self.success { "success" } else { "failed" }, sections = execution.sections, cooperative_yields = yields,
             longest_section_seconds = execution.longest_section.as_secs_f64(),
             longest_driver_poll_seconds = execution.longest_poll.as_secs_f64(),
             "Agent log scan execution sections");
@@ -167,3 +178,20 @@ pub(in crate::store) fn snapshot(caller: ScanCaller, success: bool) -> [u64; 4] 
 #[cfg(test)]
 #[path = "agent_log_telemetry_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_EXECUTION: Arc<std::sync::Mutex<Vec<(super::execution_sections::SectionStats, u64)>>>;
+}
+#[cfg(test)]
+pub(in crate::store) async fn recorded_execution<F: std::future::Future>(
+    future: F,
+) -> (
+    F::Output,
+    Vec<(super::execution_sections::SectionStats, u64)>,
+) {
+    let samples = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let output = TEST_EXECUTION.scope(samples.clone(), future).await;
+    let measured = samples.lock().unwrap().clone();
+    (output, measured)
+}
