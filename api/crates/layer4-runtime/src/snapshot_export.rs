@@ -70,7 +70,7 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         nyxid_url: None,
         allow_local_git: false,
         machine_included: false,
-            capacity_recovery_enabled: false,
+        capacity_recovery_enabled: false,
     })
 }
 
