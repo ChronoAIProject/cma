@@ -257,3 +257,48 @@ async fn unsupported_budget_keys_and_missing_nested_ownership_refuse_certificati
     );
     store.database.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn real_activity_store_keeps_prefixed_and_concrete_path_resource_history() {
+    use layer2_core::{
+        ActivityAction, ActivityOutcome, ActivityRecord, ActivityStore, ActivityTarget,
+    };
+    let (temp, store, request, bytes) = fixture().await;
+    let activity = crate::store::activity::MongoActivityStore::open(
+        &store.client,
+        store.database.name(),
+        std::time::Duration::from_secs(86_400),
+    )
+    .await
+    .unwrap();
+    for target in [
+        request.sandbox_id.clone(),
+        format!("sandbox:{}", request.sandbox_id),
+        format!("/api/v1/sandboxes/{}/workspaces", request.sandbox_id),
+        format!("/api/v1/admin/sandboxes/{}", request.sandbox_id),
+    ] {
+        activity
+            .append(
+                &ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded)
+                    .on(ActivityTarget::Resource(target)),
+            )
+            .await
+            .unwrap();
+    }
+    let expected = support::inventory(&store.database, &["activity"]).await;
+    for target in [
+        "/api/v1/sandboxes/{id}".to_string(),
+        format!("sandbox:{}_other", request.sandbox_id),
+        format!("/api/v1/sandboxes/{}_other", request.sandbox_id),
+    ] {
+        activity
+            .append(
+                &ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded)
+                    .on(ActivityTarget::Resource(target)),
+            )
+            .await
+            .unwrap();
+    }
+    support::roundtrip((temp, store, request, bytes), expected).await;
+}

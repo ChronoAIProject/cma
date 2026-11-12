@@ -47,8 +47,11 @@ Agent index for dependent authorization audits.
 Every supported namespace requires schema version 1 throughout the namespace;
 future or unversioned records refuse before a v1 ownership filter can hide them.
 The table's `Sandbox` and `Agent` paths compare only their corresponding typed
-identity sets. `Activity` selects `record.target.kind = resource` and the exact
-hierarchy IDs at `record.target.id`. `Command` includes the command key, retained
+identity sets. `Activity` selects resource targets by exact raw ID, the actual
+`sandbox:<ID>` administrative target, or literal source ID segments in concrete
+`/api/v1/` paths. Route templates and neighbouring IDs stay excluded. Encoded
+paths refuse because their ownership cannot be proved by literal comparison.
+`Command` includes the command key, retained
 `record.agent_id`, and `record.resources.sandbox_id` audit lineage.
 
 `Budget` includes `record.agent_id` command/turn reservations,
@@ -91,7 +94,7 @@ a nonempty collection; its source entry identifies the missing closure or decode
 | `native_warm_pool_targets` | `Independent` | native_warm_pools.rs |
 | `native_prepared_sandboxes` | `Empty` | native_prepared/model.rs; native_prepared.rs |
 | `runtime_backend_routes` | `Sandbox(&["sandbox_id"])` | runtime_routing.rs |
-| `activity` | `Activity` | activity.rs; layer2-core/activity.rs |
+| `activity` | `Activity` | activity.rs; activity/mod.rs; layer2-core/sandbox/admin.rs; rest/admin/runtime_update.rs |
 | `agent_artifacts` | `Agent(&["agent_id"])` | resource_access/artifacts.rs |
 | `agent_channel_usage` | `Agent(&["_id"])` | agent_channel_usage/records.rs |
 | `agent_suggestions` | `Agent(&["agent_id"])` | suggestions.rs |
