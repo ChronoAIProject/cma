@@ -97,7 +97,7 @@ impl StorageMaintenance {
         url.query_pairs_mut().append_pair("key", key);
         let response = self.send(Method::DELETE, url, deadline).await?;
         match response.status() {
-            status if status.is_success() => Ok(BlobDeletion::Deleted),
+            StatusCode::OK | StatusCode::NO_CONTENT => Ok(BlobDeletion::Deleted),
             StatusCode::NOT_FOUND => Ok(BlobDeletion::Absent),
             _ => Err(unavailable(&response)),
         }
