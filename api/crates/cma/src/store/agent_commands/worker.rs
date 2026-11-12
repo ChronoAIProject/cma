@@ -33,6 +33,13 @@ pub(super) enum Change {
 
 #[async_trait::async_trait]
 impl AgentCommandWorkerStore for MongoSandboxStore {
+    async fn command_reconcile_heads(
+        &self,
+        agent_ids: &[layer2_core::AgentId],
+    ) -> Result<Vec<layer2_core::sandbox::agent_io::CommandReconcileHead>, CommandLedgerError> {
+        super::reconcile_heads::read(self, agent_ids).await
+    }
+
     async fn reject_unclaimed_command(
         &self,
         id: &layer2_core::ids::AgentCommandId,
