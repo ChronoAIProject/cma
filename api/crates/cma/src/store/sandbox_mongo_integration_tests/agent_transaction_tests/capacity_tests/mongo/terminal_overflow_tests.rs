@@ -59,11 +59,12 @@ async fn overflow(bytes: bool, refused: bool) {
         &mut assembly,
         ConversationUpdate::RuntimeOutput {
             receipt: RuntimeOutputReceipt::new(source(1), acks.clone()),
-            update: Some(Box::new(ConversationUpdate::Said(
-                SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(
-                    "x".repeat(1024 * 1024),
-                ))),
-            ))),
+            update: Some(
+                Box::new(ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
+                    ContentChunk::new(ContentBlock::from("x".repeat(1024 * 1024))),
+                )))
+                .into(),
+            ),
         },
     )
     .await
@@ -100,7 +101,7 @@ async fn overflow(bytes: bool, refused: bool) {
     };
     let update = ConversationUpdate::RuntimeOutput {
         receipt: RuntimeOutputReceipt::new(source(2), acks),
-        update: Some(Box::new(inner)),
+        update: Some(Box::new(inner).into()),
     };
     let started = std::time::Instant::now();
     let result = crate::sandbox::record_update_for_test(
