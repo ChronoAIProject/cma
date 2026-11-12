@@ -78,10 +78,24 @@ async fn adopted_agent_publishes_runtime_output_after_restart_and_settles_comman
         })
         .collect();
     assert_eq!(answers, ["prefix suffix"]);
-    let settled = reopened
-        .reconcile_command(&command.receipt.envelope.command_id)
-        .await
-        .unwrap();
+    let settled = crate::store::agent_log_telemetry::isolated_test(async {
+        let settled = reopened
+            .reconcile_command(&command.receipt.envelope.command_id)
+            .await
+            .unwrap();
+        for success in [false, true] {
+            assert_eq!(
+                crate::store::agent_log_telemetry::snapshot(
+                    crate::store::agent_log_telemetry::ScanCaller::CommandAdmission,
+                    success,
+                )[0],
+                0,
+                "segmented settlement must never fall back to a lifetime scan",
+            );
+        }
+        settled
+    })
+    .await;
     assert_eq!(settled.status, AgentResponseStatus::Completed);
     assert!(settled.work.lease.is_none());
     let checkpoint = reopened
