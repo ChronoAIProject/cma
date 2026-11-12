@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use layer3_adapter::ConversationUpdate;
-use sha2::{Digest, Sha256};
 
 use crate::ids::AgentId;
 use crate::seconds_from_rfc3339;
@@ -189,18 +188,7 @@ impl DurableAgentUpdateRecorder {
             ),
             update => (None, Some(update), false),
         };
-        let fingerprint = source.map_or_else(
-            || {
-                format!(
-                    "{:x}",
-                    Sha256::digest(
-                        format!("{:?}", update.as_ref().expect("legacy update is present"))
-                            .as_bytes()
-                    )
-                )
-            },
-            |source| format!("{:x}", Sha256::digest(format!("{source:?}").as_bytes())),
-        );
+        let fingerprint = output::fingerprint(source, update);
         let update_id = if let Some(pending) = &assembly.pending_update {
             if pending.fingerprint != fingerprint
                 || pending.runtime_generation != runtime_generation
