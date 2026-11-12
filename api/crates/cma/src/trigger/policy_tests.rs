@@ -93,6 +93,7 @@ async fn policy_projects_both_trigger_controls_exactly() {
         Ok(LaunchPolicy {
             enabled: true,
             orchestration_paused: false,
+            visitor_launches_per_day: 5,
         })
     );
 }
@@ -106,6 +107,7 @@ async fn policy_reads_settings_again_and_observes_later_changes() {
         LaunchPolicy {
             enabled: true,
             orchestration_paused: false,
+            visitor_launches_per_day: 5,
         }
     );
 
@@ -116,6 +118,7 @@ async fn policy_reads_settings_again_and_observes_later_changes() {
         LaunchPolicy {
             enabled: false,
             orchestration_paused: true,
+            visitor_launches_per_day: 5,
         }
     );
     assert_eq!(store.read_count(), 2);
@@ -136,4 +139,30 @@ async fn settings_failures_return_one_sanitized_unavailable_error() {
     );
     assert!(!error.to_string().contains(BACKEND_DETAIL));
     assert_eq!(store.read_count(), 1);
+}
+
+#[tokio::test]
+async fn visitor_allowance_changes_share_the_trigger_settings_read() {
+    let store = CountedSettings::available(true, false);
+    let policy = live_policy(store.clone());
+    for limit in [7, 2] {
+        store
+            .result
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .settings
+            .limits
+            .visitor_max_launches_per_day = limit;
+        assert_eq!(
+            policy
+                .current_launch_policy()
+                .await
+                .unwrap()
+                .visitor_launches_per_day,
+            limit
+        );
+    }
+    assert_eq!(store.read_count(), 2);
 }

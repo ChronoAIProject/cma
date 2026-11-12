@@ -75,6 +75,14 @@ impl LaunchCollections {
 
 #[async_trait::async_trait]
 impl LaunchStore for MongoTriggerDefinitionStore {
+    async fn visitor_launches_admitted(
+        &self,
+        owner: &SubjectId,
+        utc_day: u64,
+    ) -> Result<u32, LaunchStoreError> {
+        visitor_quota::admitted(&self.launch_data, owner, utc_day).await
+    }
+
     async fn admit_launch(
         &self,
         admission: LaunchAdmission,

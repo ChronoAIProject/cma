@@ -14,7 +14,6 @@ use layer2_core::{
 };
 mod common_execution;
 mod input_protocol;
-
 struct Connected;
 #[async_trait::async_trait]
 impl ServiceConnectionBroker for Connected {
@@ -134,6 +133,7 @@ impl Fixture {
             Arc::new(LaunchPolicy {
                 enabled: true,
                 orchestration_paused: false,
+                visitor_launches_per_day: 5,
             }),
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         );

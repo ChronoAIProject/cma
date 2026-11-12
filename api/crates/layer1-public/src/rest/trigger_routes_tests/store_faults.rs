@@ -18,6 +18,7 @@ impl Default for FaultPolicy {
             current: Mutex::new(Ok(LaunchPolicy {
                 enabled: true,
                 orchestration_paused: false,
+                visitor_launches_per_day: 5,
             })),
         }
     }

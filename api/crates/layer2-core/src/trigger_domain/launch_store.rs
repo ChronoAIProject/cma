@@ -220,6 +220,17 @@ impl LaunchStoreError {
 
 #[async_trait]
 pub trait LaunchStore: Send + Sync {
+    /// Read the owner's admitted visitor count for early refusal only.
+    /// The admission transaction remains the authority, including when this
+    /// optional optimization returns its default count of zero.
+    async fn visitor_launches_admitted(
+        &self,
+        _owner: &SubjectId,
+        _utc_day: u64,
+    ) -> Result<u32, LaunchStoreError> {
+        Ok(0)
+    }
+
     /// Atomically verifies the exact published Trigger revision, inserts the
     /// Launch and its initial events, and increments the Trigger launch count
     /// plus the ready count when admission itself resolves an existing Agent.

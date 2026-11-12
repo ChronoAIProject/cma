@@ -43,6 +43,30 @@ impl InMemoryLaunchStore {
 
 #[async_trait]
 impl LaunchStore for InMemoryLaunchStore {
+    async fn visitor_launches_admitted(
+        &self,
+        owner: &SubjectId,
+        utc_day: u64,
+    ) -> Result<u32, LaunchStoreError> {
+        self.lock()
+            .launches
+            .values()
+            .filter(|launch| {
+                launch.owner == *owner
+                    && launch.authority == super::super::LaunchAuthorityClass::Visitor
+            })
+            .try_fold(0_u32, |used, launch| {
+                let timestamp = crate::seconds_from_rfc3339(&launch.created_at)
+                    .ok_or_else(|| corrupt("invalid Launch time"))?;
+                if super::super::visitor_launch_day(timestamp).0 == utc_day {
+                    used.checked_add(1)
+                        .ok_or_else(|| corrupt("visitor Launch count overflow"))
+                } else {
+                    Ok(used)
+                }
+            })
+    }
+
     async fn admit_launch(
         &self,
         admission: LaunchAdmission,

@@ -62,6 +62,7 @@ impl LaunchCreateResult {
 pub struct LaunchPolicy {
     pub enabled: bool,
     pub orchestration_paused: bool,
+    pub visitor_launches_per_day: u32,
 }
 
 #[async_trait]
@@ -259,10 +260,18 @@ impl LaunchService {
             return Ok(replay);
         }
         let result = async {
-            if !self.policy.current_launch_policy().await?.enabled {
+            let policy = self.policy.current_launch_policy().await?;
+            if !policy.enabled {
                 return Err(LaunchServiceError::Disabled);
             }
             let trigger = self.public_trigger(public_id).await?;
+            super::visitor_allowance::refuse_exhausted_visitor(
+                self.launches.as_ref(),
+                caller,
+                policy.visitor_launches_per_day,
+                crate::seconds_from_rfc3339(&now_rfc3339()).unwrap_or_default(),
+            )
+            .await?;
             let profiles = self
                 .profile_reader
                 .read_trigger_profiles(&trigger.revision.content.target)
