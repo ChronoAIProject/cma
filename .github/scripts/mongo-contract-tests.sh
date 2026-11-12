@@ -94,6 +94,7 @@ volume_owner=$(docker volume inspect --format '{{index .Labels "dev.chrono.cma.m
 [[ "$volume_owner" == "$contract_name" ]] || exit 1
 docker run --detach --name "$contract_name" --label "$contract_label" \
   --publish 127.0.0.1::27017 --memory 2g --memory-swap 2g --cpus 2 --pids-limit 256 \
+  --ulimit nofile=64000:64000 \
   --mount "type=volume,source=${contract_volume},target=/data/db" \
   --tmpfs /data/configdb:rw,size=16777216 \
   "$mongo_image" --replSet cma_ci --bind_ip_all \
