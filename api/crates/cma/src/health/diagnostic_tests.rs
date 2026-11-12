@@ -135,6 +135,64 @@ impl ReadinessProbe for Immediate {
 }
 
 #[tokio::test(start_paused = true)]
+async fn diagnostic_worker_refusal_preserves_dependency_reason_and_recovery() {
+    for store_available in [true, false] {
+        let capture = Capture::new();
+        let workers = crate::worker_supervision::Workers::new();
+        let app = monitored(
+            Arc::new(Immediate(store_available)),
+            Some(workers.clone()),
+            Some(capture.recorder.clone()),
+        );
+        tokio::task::yield_now().await;
+        let (status, body) = response(&app, "/ready").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(
+            body["reason"],
+            if store_available { "workers" } else { "store" }
+        );
+        let records = capture.records();
+        let check = records
+            .iter()
+            .find_map(|record| match record {
+                Record::Attempt {
+                    check,
+                    event: "completed",
+                    ..
+                } => Some(*check),
+                _ => None,
+            })
+            .unwrap();
+        assert!(records.iter().any(|record| matches!(record,
+            Record::Response { check: id, reason, age_known: true, .. }
+                if *id == check && *reason == if store_available { "workers" } else { "unavailable" }
+        )));
+        assert_eq!(response(&app, "/livez").await.0, StatusCode::OK);
+
+        for worker in workers.snapshot().iter().filter(|worker| worker.required) {
+            let activity = workers.get(worker.worker);
+            activity.scheduled();
+            activity.waiting(Duration::from_secs(1), "idle_scan");
+        }
+        let (status, body) = response(&app, "/ready").await;
+        if store_available {
+            assert_eq!(status, StatusCode::OK);
+            assert!(body["reason"].is_null());
+            assert!(!capture
+                .records()
+                .iter()
+                .any(|record| matches!(record, Record::Response { .. })));
+        } else {
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(body["reason"], "store");
+            assert!(capture.records().iter().any(|record| matches!(record,
+                Record::Response { check: id, reason: "unavailable", .. } if *id == check
+            )));
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn diagnostic_success_and_repeated_error_keep_existing_response_and_cadence() {
     for success in [true, false] {
         let capture = Capture::new();

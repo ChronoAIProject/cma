@@ -133,6 +133,8 @@ mod sandbox_mongo;
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;
 #[cfg(test)]
+mod worker_runtime_supervision_tests;
+#[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
