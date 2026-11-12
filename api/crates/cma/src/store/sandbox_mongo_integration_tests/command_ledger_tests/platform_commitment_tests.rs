@@ -1,8 +1,6 @@
 //! Zero-liability commitments read the platform admission state inside their
 //! transaction and never write the settings fence or the period row.
-use super::budget_tests::{
-    configure, configure_with_platform, observe, open_platform, period_row,
-};
+use super::budget_tests::{configure, configure_with_platform, observe, open_platform, period_row};
 use super::*;
 use layer2_core::budget::{BudgetError, Closure, ClosureReason};
 
@@ -86,7 +84,9 @@ async fn create_sandbox_is_refused_once_committed_equals_disposable_and_enters_t
     let observed_through = now - 43_200;
     observe(&store, &platform, 998, observed_through).await;
     assert!(matches!(
-        store.admit_sandbox(admission("sbx_platform_below", 8)).await,
+        store
+            .admit_sandbox(admission("sbx_platform_below", 8))
+            .await,
         Ok(SandboxAdmissionResult::Created(_))
     ));
     assert!(period_row(&store, &platform)
