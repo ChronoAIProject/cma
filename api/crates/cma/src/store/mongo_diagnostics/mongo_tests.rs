@@ -160,6 +160,7 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
         })
         .await;
     drain(&on_counts).await;
+    super::output::flush();
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     for sensitive in [&name, &payload, "unknown_private_command", "127.0.0.1"] {
         assert!(!logs.contains(sensitive));
