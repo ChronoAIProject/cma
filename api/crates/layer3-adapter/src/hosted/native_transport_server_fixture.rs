@@ -155,6 +155,16 @@ pub(super) async fn serve_runtime(
                     serde_json::to_string(&ResponseFrame::Resources(ResourceReading::default()))
                         .unwrap()
                 }
+            } else if request.starts_with("POST /runtime/agents/agent/capacity-recovery ") {
+                let request =
+                    serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap();
+                serde_json::to_string(
+                    &crate::agent_capacity_recovery::CapacityRecoveryNativeProof {
+                        confirmation: crate::agent_capacity_recovery::tests::confirmation(&request),
+                        cwd: "/workspace".into(),
+                    },
+                )
+                .unwrap()
             } else {
                 assert!(request.starts_with("GET /runtime/agents/agent-a/history "));
                 "{\"history\":[]}".into()
@@ -201,4 +211,3 @@ fn persistent_response(request: &str) -> String {
     };
     serde_json::to_string(&response).unwrap()
 }
-
