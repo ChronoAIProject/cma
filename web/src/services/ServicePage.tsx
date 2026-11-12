@@ -24,7 +24,7 @@ export function ServicePage({
     forbidden?: boolean;
   }>({});
   const [revision, setRevision] = useState(0);
-  const name = service === 'image-manager' ? 'Image Manager' : 'Event Gateway';
+  const name = 'Event Gateway';
   // Signed out and not permitted are different answers: offering sign-in for a
   // 403 only returns the same account to the same refusal.
   const denied = useCallback<Denied>((status) => {
@@ -112,14 +112,7 @@ export function ServicePage({
       {state.anonymous ? (
         <section className="service-panel">
           <p>Sign in with NyxID to open {name}.</p>
-          <a
-            className="service-link"
-            href={
-              service === 'event-gateway'
-                ? '/auth/login?return_to=%2Fevent-gateway'
-                : `/api/${service}/auth/login`
-            }
-          >
+          <a className="service-link" href="/auth/login?return_to=%2Fevent-gateway">
             Sign in with NyxID
           </a>
         </section>

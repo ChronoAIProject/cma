@@ -154,12 +154,6 @@ export function SignInLanding({
                 </Button>
               </article>
             ))}
-            <article className="sign-in-landing__card sign-in-landing__card--soon">
-              <h3>
-                Image Manager <span className="sign-in-landing__soon">Coming soon</span>
-              </h3>
-              <p>Build runtime images and share them privately, with your team, or publicly.</p>
-            </article>
           </div>
         </section>
       </div>

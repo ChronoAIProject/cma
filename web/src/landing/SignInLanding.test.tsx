@@ -25,7 +25,7 @@ describe('the signed-out landing', () => {
     expect(container.textContent).not.toMatch(/codex/i);
   });
 
-  it('introduces the services, marking Image Manager as not yet available', () => {
+  it('introduces the two available services', () => {
     render(<SignInLanding onSignIn={vi.fn()} />);
     const services = screen.getByRole('region', {
       name: 'Your work, connected.',
@@ -33,8 +33,7 @@ describe('the signed-out landing', () => {
     for (const name of ['Agent Manager', 'Event Gateway']) {
       expect(screen.getByRole('button', { name: `Open ${name}` })).toBeEnabled();
     }
-    expect(services).toHaveTextContent('Image Manager Coming soon');
-    expect(screen.queryByRole('button', { name: 'Open Image Manager' })).not.toBeInTheDocument();
+    expect(services.querySelectorAll('article')).toHaveLength(2);
   });
 
   it('explains how it works in three ordered steps', () => {

@@ -115,17 +115,6 @@ describe('application routes', () => {
   });
 });
 
-it('refuses direct Image Manager URLs while the portal is unavailable', () => {
-  expect(parseRoute('/image-manager')).toEqual({ kind: 'not_found', pathname: '/image-manager' });
-  expect(parseRoute('/image-manager/images')).toEqual({
-    kind: 'not_found',
-    pathname: '/image-manager/images',
-  });
-  const { result } = renderHook(() => useAppRouter());
-  act(() => result.current.navigate({ kind: 'image_manager' }));
-  expect(result.current.route).toEqual({ kind: 'not_found', pathname: '/image-manager' });
-});
-
 it.each(['/settings', '/settings/general', '/settings/usage'])(
   'replaces legacy %s without changing theme or discarding the query',
   (path) => {
