@@ -251,3 +251,57 @@ fn fixed_buckets_and_worker_labels_enforce_the_approved_series_cap() {
         assert!(!text.contains("le=\"0.001\""));
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn one_shared_wake_drives_runtime_and_optional_readiness_evidence() {
+    use crate::readiness_diagnostics::{fixture::Capture, record::Record};
+    for enabled in [false, true] {
+        let recorder = PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let capture = Capture::new();
+        let probe = probe([snapshot(&[(0, 0)])]);
+        let sampler = Sampler::new(probe.clone());
+        let task =
+            tokio::spawn(sampler.run_with_diagnostics(enabled.then(|| capture.recorder.clone())));
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_millis(1500)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(probe.calls.load(Ordering::Relaxed), 2);
+        let text = handle.render();
+        assert!(
+            text.contains("cma_runtime_wake_lag_seconds_sum 0.5"),
+            "{text}"
+        );
+        assert!(text.contains("cma_runtime_wake_lag_seconds_count 1"));
+        if enabled {
+            assert!(matches!(
+                capture.records().as_slice(),
+                [Record::Timer {
+                    lag_us: 500_000,
+                    ..
+                }]
+            ));
+            assert!(text.contains("cma_readiness_diagnostic_timer_lag_duration_seconds_sum 0.5"));
+            assert!(text.contains("cma_readiness_diagnostic_timer_lag_duration_seconds_count 1"));
+        } else {
+            assert!(capture.records().is_empty());
+            assert!(!text.contains("cma_readiness_diagnostic_timer_lag"));
+        }
+        tokio::time::advance(Duration::from_millis(500)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(probe.calls.load(Ordering::Relaxed), 3);
+        if enabled {
+            assert!(matches!(
+                capture.records().as_slice(),
+                [Record::Timer { lag_us: 0, .. }]
+            ));
+        }
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::advance(Duration::from_secs(5)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(probe.calls.load(Ordering::Relaxed), 3);
+        assert!(capture.records().is_empty());
+    }
+}
