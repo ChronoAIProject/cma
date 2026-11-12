@@ -123,9 +123,11 @@ impl AgentCommandWorkerStore for MongoSandboxStore {
         &self,
         id: &layer2_core::ids::AgentCommandId,
     ) -> Result<AdmittedAgentCommand, CommandLedgerError> {
-        transaction(self, Change::Reconcile(id.clone()))
-            .await?
-            .ok_or(CommandLedgerError::NotFound)
+        let (command, outcome) = transaction_observed(self, Change::Reconcile(id.clone())).await?;
+        if let Some(outcome) = outcome {
+            outcome.record();
+        }
+        command.ok_or(CommandLedgerError::NotFound)
     }
 
     async fn claim_next_command(
@@ -224,6 +226,20 @@ async fn transaction(
     store: &MongoSandboxStore,
     change: Change,
 ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+    transaction_observed(store, change)
+        .await
+        .map(|(command, _)| command)
+}
+
+pub(super) type TransactionResult = (
+    Option<AdmittedAgentCommand>,
+    Option<crate::telemetry::command_reconcile::Outcome>,
+);
+
+async fn transaction_observed(
+    store: &MongoSandboxStore,
+    change: Change,
+) -> Result<TransactionResult, CommandLedgerError> {
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store
             .client
