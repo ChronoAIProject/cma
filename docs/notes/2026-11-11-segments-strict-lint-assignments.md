@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 08:46 SGT. S2 owns
+Updated Thu 2026-11-12 08:55 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -12,8 +12,9 @@ Unsupported; source qualification does not claim supported production activation
 Combined production source `ff0f161b8` merges final S3 `e58162249` normally.
 Current checkpoint `c620ebbf2` changes only the discovery Mongo fixture and this
 ledger; production source is byte-identical. Strict CMA at ff0 passed with zero
-diagnostics (2m36s). Current fixture rerun is queued; no current-head pass is
-claimed before that execution.
+diagnostics (2m36s). The corrected retained/discovery Mongo selection now passes 4/4 at c620ebbf2;
+strict CMA also passes with zero diagnostics (2m28s), and adapter tests pass
+47/47. Authenticated Mongo and remaining contracts continue.
 All currently published handoffs are included:
 
 | Owner | Pin / branch | Included work |
@@ -97,6 +98,10 @@ feature-gate suppression or fake call is an acceptable closure.
 | `ff0f161b8` | Canonical authenticated Mongo | 1passed/0failed,2698skipped. |
 | `ff0f161b8` | Recovery Mongo | 31passed/0failed,2668skipped,74.194s; all four prior later-progress failures now pass. |
 | `ff0f161b8` | Retained/discovery Mongo | **3passed/1failed**,2695skipped,7.550s. Discovery fixture incorrectly expects recovery eligibility while PublishConnection remains pending. Supplemental gates stopped. |
+| `c620ebbf2` | Corrected retained/discovery Mongo | **4 passed / 0 failed**, 2695 skipped, 6.053s. Actual completed legacy and pending adopted eligibility, malformed envelope refusal and read-only state preservation. |
+| `c620ebbf2` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics, 2m28s. |
+| `c620ebbf2` | Adapter tests | 47 passed / 0 failed, 711 skipped, 0.356s. |
+| `c620ebbf2` | Canonical authenticated Mongo | 1 passed / 0 failed, 2698 skipped, 1.671s. Canonical migration and isolated runtime grants execute successfully. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -112,7 +117,7 @@ execution must actually select the cases.
 | Finding | Current disposition |
 | --- | --- |
 | P1-1 ordinary v2 roots | OPEN, S4; must qualify actual worker claim through ordinary/control admission and output. |
-| P1-2 canonical runtime roles/carrier/index | Source-closed, S2; canonical authenticated Mongo passed on final S3-inclusive ff0f161b8. Final candidate and reviewer readback remain. |
+| P1-2 canonical runtime roles/carrier/index | Source-closed, S2; canonical authenticated Mongo passed on final S3-inclusive ff0f161b8 and corrected c620ebbf2. Reviewer readback remains. |
 | P1-3 later-progress activation | Source qualified2144909ce; actual combined recovery selection31/31passed at ff0f161b8, including all four historical failures. Reviewer confirmation remains. Native Unsupported remains a separate activation prohibition. |
 | P1-4 / D6-2 large-history response/transcript | S1 source/author response gates handed off; S3 bounded transcript and final shared parity pending. |
 | P1-N1 segmented capacity admission | OPEN, S4writer + S5service tests; not covered by legacy bootstrap success. |
@@ -221,7 +226,8 @@ still returned3passed/1failed: the new legacy-completion helper omitted the
 normal WorkStepCompleted event and revision/sequence advance, so the worker
 store correctly returnedConflict. S2 corrected the fixture to match the normal
 AgentWorker::progress publication contract; the production guard is unchanged.
-The corrected fixture remains unqualified until its next actual Mongo run.
+The corrected fixture is now qualified at c620ebbf2: all four retained/discovery
+Mongo cases pass. The failed earlier runs remain in the ledger above.
 
 ## 08:46 source audit and train risk
 
@@ -254,3 +260,36 @@ stays in its separate authenticated fixture. The previous partition selector
 omitted these changed worker-publication modules; no old run is credited with
 that coverage. The actual nextest inventory will determine bounded partitions
 of at most 40 tests per disposable replica set.
+
+## 09:00 readiness report
+
+Strict CMA is green on the current code (`c620ebbf2`), with zero diagnostics;
+the current pushed integration head `f554507b3` adds only this ledger. The
+corrected retained/discovery selection passes 4/4 and adapter selection 47/47.
+Authenticated Mongo and the expanded partitioned contracts remain in progress.
+
+The 16:00 merge target remains conditional: S4 must publish the ordinary v2
+root and independently admitted segmented capacity-successor fixes; S3 must
+publish bounded transcript/title consumers and their refusal/scale matrix.
+S5 owns actual service admission tests once S4 freezes its successor contract;
+S1 owns final response/retained-reader qualification. Their last published final
+pins are integrated, but no follow-up source pin was available at the 08:57 fetch.
+No source blocker is downgraded because the settings default off. Owner source
+cutoff remains 10:30, qualification cutoff 11:30, combined gates 13:30 and PR
+14:00. An owner missing those cutoffs must report its outstanding item immediately
+so the lead can place it on the Friday train; no unsupported Friday-only estimate
+or activation promise is asserted now. Native recovery activation remains closed.
+
+Source equivalence is recorded in the local 0600 artifact
+`2026-11-12-segments-source-equivalence.json`: ff0f161b8 to c620ebbf2 changes only
+the named test fixture and ledger; c620ebbf2 to pushed f554507b3 changes only the
+ledger. The record makes no claim about unexecuted gates.
+
+S3 suggestion-refusal qualification detail: `suggestions::context::current` is
+called both with snapshot=true (`suggestions.rs:99`) and inside ordinary
+transactions with snapshot=false (`:134`, `:164`). Therefore `!snapshot` alone
+cannot identify the unpublished-append exception. If the enqueue boundary needs
+a raw interval before its new head is published, use an explicit, independently
+validated pending-publication context. The normal read/claim/completion paths
+must not turn a Corrupt or SequenceConflict proof failure into raw-read success.
+Cover both transaction and read-only snapshot callers in the S3 refusal matrix.
