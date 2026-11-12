@@ -308,3 +308,6 @@ mod verification_tests;
 
 #[path = "cookie_authorization_tests/provider_boundary_tests.rs"]
 mod provider_boundary_tests;
+
+#[path = "cookie_authorization_tests/joined_session_tests.rs"]
+mod joined_session_tests;

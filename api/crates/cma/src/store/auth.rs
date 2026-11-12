@@ -48,6 +48,8 @@ mod actor_links;
 mod api_bearers;
 #[path = "auth_browser_logins.rs"]
 mod browser_logins;
+#[path = "auth_browser_session.rs"]
+mod browser_session;
 #[path = "auth_login_documents.rs"]
 mod login_documents;
 #[path = "auth_proxy_grants.rs"]
@@ -299,6 +301,12 @@ impl AuthStore for MongoAuthStore {
     }
     async fn browser_login(&self, id: &SecretDigest) -> Result<Option<BrowserLogin>, StoreError> {
         self.browser_login_record(id).await
+    }
+    async fn browser_session(
+        &self,
+        id: &SecretDigest,
+    ) -> Result<Option<(BrowserLogin, Option<SubjectAuthState>)>, StoreError> {
+        self.browser_session_record(id).await
     }
     async fn delete_browser_login(&self, id: &SecretDigest) -> Result<(), StoreError> {
         self.delete_browser_login_record(id).await
