@@ -10,7 +10,6 @@ pub(crate) struct FeatureFlags {
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
     pub bounded_live_fragments: bool,
-    pub retain_read_frames: bool,
     pub bounded_permission_state: bool,
     pub retained_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
@@ -55,7 +54,6 @@ impl FeatureFlags {
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
             bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
-            retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
             bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
@@ -345,29 +343,6 @@ mod permission_bound_tests {
     }
 }
 
-#[cfg(test)]
-mod read_frame_tests {
-    use super::*;
-
-    #[test]
-    fn read_frame_ownership_requires_an_independent_strict_boolean() {
-        const KEY: &str = "CHRONO_READ_FRAME_BUDGET_ENABLED";
-        for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.retain_read_frames, enabled);
-            assert!(!flags.bounded_response_reads && !flags.bounded_title_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == KEY).then(|| value.to_owned()))
-            })
-            .is_err());
-        }
-    }
-}
 
 #[cfg(test)]
 mod live_buffer_tests {
