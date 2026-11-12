@@ -49,10 +49,6 @@ impl ControlPlaneComposition {
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
-        let default_capacity = layer3_adapter::SandboxCapacity {
-            cpu_millis: config.default_profiles.cpu_millis,
-            memory_mib: config.default_profiles.memory_mib,
-        };
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
         let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
@@ -288,7 +284,10 @@ impl ControlPlaneComposition {
             public_origin: config.public_url.clone(),
             worker_holder: worker_holder.clone(),
             profile_bounds: authoring_bounds,
-            capacity: default_capacity,
+            capacity: layer3_adapter::SandboxCapacity {
+                cpu_millis: config.default_profiles.cpu_millis,
+                memory_mib: config.default_profiles.memory_mib,
+            },
             profile_scanner: profile_scanner.clone(),
             image_resolver: image_resolver.clone(),
         })?;
