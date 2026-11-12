@@ -105,9 +105,20 @@ impl AgentOperationService {
             {
                 Ok(prepared) => return self.send_first_message(prepared).await,
                 Err(AgentOperationError::Conflict) => continue,
-                Err(AgentOperationError::Budget(reason)) => {
+                Err(
+                    error @ (AgentOperationError::Budget(_)
+                    | AgentOperationError::SessionCapacityUnavailable),
+                ) => {
+                    let reason = match error {
+                        AgentOperationError::Budget(reason) => {
+                            crate::admission::AdmissionRefusal::Budget(reason)
+                        }
+                        _ => crate::admission::AdmissionRefusal::Capacity(
+                            crate::admission::CapacityKind::ActiveSessions,
+                        ),
+                    };
                     match self
-                        .refuse_first_message_budget(&current, &authority, reason)
+                        .refuse_first_message_admission(&current, &authority, reason)
                         .await
                     {
                         Err(AgentOperationError::Conflict) => continue,

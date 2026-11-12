@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{budget::BudgetError, StoreError, SubjectId};
 
+mod ceilings;
+pub use ceilings::*;
 mod history;
 mod memory;
 mod service;
@@ -23,9 +25,11 @@ pub enum AdmissionCause {
     Continuation,
 }
 
-/// Future admission constraints can add their own typed refusal here.
+/// Typed refusal shared by public admission projections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum AdmissionRefusal {
+    #[error(transparent)]
+    Capacity(#[from] CapacityKind),
     #[error(transparent)]
     Budget(#[from] BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
@@ -36,6 +40,7 @@ impl AdmissionRefusal {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Budget(reason) => reason.code(),
+            Self::Capacity(kind) => kind.code(),
             Self::Paused => "admission_paused",
         }
     }
@@ -43,6 +48,7 @@ impl AdmissionRefusal {
     pub const fn guidance(&self) -> &'static str {
         match self {
             Self::Budget(reason) => reason.guidance(),
+            Self::Capacity(kind) => kind.guidance(),
             Self::Paused => ADMISSION_PAUSED_GUIDANCE,
         }
     }

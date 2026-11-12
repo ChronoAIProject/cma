@@ -129,9 +129,24 @@ impl IntoResponse for Problem {
     fn into_response(self) -> Response {
         let (status, slug) = match &self.0 {
             CoreError::AdmissionPaused => return super::admission_problem::paused(),
+            CoreError::AdmissionCapacity(_) => {
+                return problem_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    problem_document(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "runtime-unavailable",
+                        "A required service is unavailable.",
+                        "runtime_unavailable",
+                    ),
+                );
+            }
             CoreError::AdmissionControlWritesUnavailable => {
                 return super::admission_problem::writes_unavailable()
             }
+            CoreError::AdmissionCeilingsWritesUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "admission-ceilings-writes-unavailable",
+            ),
             CoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
             CoreError::InvalidState(_) => (StatusCode::CONFLICT, "invalid-state"),

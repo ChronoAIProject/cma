@@ -22,6 +22,40 @@ pub(crate) fn paused() -> Response {
     response
 }
 
+pub(crate) fn session_capacity() -> Response {
+    let status = StatusCode::SERVICE_UNAVAILABLE;
+    let mut response = super::problem_response(
+        status,
+        super::problem_document(
+            status,
+            "session-capacity-unavailable",
+            layer2_core::admission::CapacityKind::ActiveSessions.guidance(),
+            "session_capacity_unavailable",
+        ),
+    );
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
+    response
+}
+
+pub(crate) fn home_capacity() -> Response {
+    let status = StatusCode::SERVICE_UNAVAILABLE;
+    let mut response = super::problem_response(
+        status,
+        super::problem_document(
+            status,
+            "sandbox-capacity-unavailable",
+            layer2_core::admission::CapacityKind::RetainedHomes.guidance(),
+            "sandbox_capacity_unavailable",
+        ),
+    );
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from_static("60"));
+    response
+}
+
 pub(crate) fn writes_unavailable() -> Response {
     let status = StatusCode::SERVICE_UNAVAILABLE;
     super::problem_response(

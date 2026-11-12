@@ -36,12 +36,13 @@ impl AgentAdmission {
 }
 
 macro_rules! admission_error {
-    ($($error:ty),+ $(,)?) => {$(
+    ($($error:ty => $capacity:expr),+ $(,)?) => {$(
         impl From<AdmissionRefusal> for $error {
             fn from(refusal: AdmissionRefusal) -> Self {
                 match refusal {
                     AdmissionRefusal::Budget(reason) => Self::Budget(reason),
                     AdmissionRefusal::Paused => Self::AdmissionPaused,
+                    AdmissionRefusal::Capacity(kind) => ($capacity)(kind),
                 }
             }
         }
@@ -49,14 +50,79 @@ macro_rules! admission_error {
 }
 
 admission_error!(
-    super::store::SandboxStoreError,
-    super::SandboxServiceError,
-    super::SandboxLifecycleCommandError,
-    super::control::SandboxControlServiceError,
-    super::AgentServiceError,
-    super::WorkspaceServiceError,
-    super::AgentOperationError,
-    super::agent_io::CommandLedgerError,
-    crate::trigger_domain::LaunchServiceError,
-    crate::trigger_domain::LaunchStoreError,
+    super::store::SandboxStoreError => |kind| match kind {
+        crate::admission::CapacityKind::RetainedHomes => Self::GlobalCapacityReached,
+        crate::admission::CapacityKind::ActiveSessions => Self::SessionCapacityUnavailable,
+        kind => Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    },
+    super::SandboxServiceError => |kind| match kind {
+        crate::admission::CapacityKind::RetainedHomes => Self::GlobalCapacityReached,
+        kind => Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    },
+    super::SandboxLifecycleCommandError => |kind| Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    super::control::SandboxControlServiceError => |_| Self::Store(super::control::SandboxControlError::Unavailable),
+    super::AgentServiceError => |kind| Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    super::WorkspaceServiceError => |kind| Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    super::AgentOperationError => |kind| match kind {
+        crate::admission::CapacityKind::ActiveSessions => Self::SessionCapacityUnavailable,
+        kind => Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    },
+    super::agent_io::CommandLedgerError => |kind| match kind {
+        crate::admission::CapacityKind::ActiveSessions => Self::SessionCapacityUnavailable,
+        _ => Self::Unavailable,
+    },
+    crate::trigger_domain::LaunchServiceError => |kind| match kind {
+        crate::admission::CapacityKind::RetainedHomes => Self::GlobalCapacityReached,
+        kind => Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    },
+    crate::trigger_domain::LaunchStoreError => |kind| match kind {
+        crate::admission::CapacityKind::RetainedHomes => Self::GlobalCapacityReached,
+        kind => Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
+    },
 );
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+    use crate::admission::CapacityKind;
+
+    #[test]
+    fn capacity_refusals_preserve_the_runtime_domain_kind() {
+        assert_eq!(
+            crate::trigger_domain::LaunchStoreError::from(AdmissionRefusal::Capacity(
+                CapacityKind::RetainedHomes
+            )),
+            crate::trigger_domain::LaunchStoreError::GlobalCapacityReached,
+        );
+        assert_eq!(
+            crate::trigger_domain::LaunchServiceError::from(AdmissionRefusal::Capacity(
+                CapacityKind::RetainedHomes
+            )),
+            crate::trigger_domain::LaunchServiceError::GlobalCapacityReached,
+        );
+        assert_eq!(
+            super::super::store::SandboxStoreError::from(AdmissionRefusal::Capacity(
+                CapacityKind::RetainedHomes
+            )),
+            super::super::store::SandboxStoreError::GlobalCapacityReached,
+        );
+        assert_eq!(
+            super::super::store::SandboxStoreError::from(AdmissionRefusal::Capacity(
+                CapacityKind::ActiveSessions
+            )),
+            super::super::store::SandboxStoreError::SessionCapacityUnavailable,
+        );
+        assert_eq!(
+            super::super::AgentOperationError::from(AdmissionRefusal::Capacity(
+                CapacityKind::ActiveSessions
+            )),
+            super::super::AgentOperationError::SessionCapacityUnavailable,
+        );
+        assert_eq!(
+            super::super::agent_io::CommandLedgerError::from(AdmissionRefusal::Capacity(
+                CapacityKind::ActiveSessions
+            )),
+            super::super::agent_io::CommandLedgerError::SessionCapacityUnavailable,
+        );
+    }
+}
