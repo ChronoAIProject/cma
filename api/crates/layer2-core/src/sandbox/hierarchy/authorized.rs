@@ -35,7 +35,10 @@ impl HierarchyReadService {
         let target = ResourceTarget::Workspace {
             workspace_id: id.clone(),
         };
-        let held = self.authorize(context, credential, &target).await?;
+        let held = self
+            .detail_phase(SandboxDetailPhase::Auth)
+            .result(self.authorize(context, credential, &target))
+            .await?;
         let result = self.workspace_held(&held, id).await?;
         Ok(if personal(&held, &context.caller) {
             WorkspaceHierarchyReading::Personal(Box::new(result))
@@ -84,7 +87,10 @@ impl HierarchyReadService {
         let target = ResourceTarget::Workspace {
             workspace_id: id.clone(),
         };
-        let held = self.personal(caller, &target).await?;
+        let held = self
+            .detail_phase(SandboxDetailPhase::Auth)
+            .result(self.personal(caller, &target))
+            .await?;
         self.workspace_held(&held, id).await
     }
     pub(super) async fn worktree_personal(
@@ -169,13 +175,14 @@ impl HierarchyReadService {
         id: &SandboxId,
     ) -> Result<SandboxHierarchyView, HierarchyReadError> {
         let timer = self.detail_phase(SandboxDetailPhase::Hierarchy);
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            self.store.read_sandbox_hierarchy(id),
-        )
-        .await
-        .map_err(|_| HierarchyReadError::Unavailable("hierarchy read timed out".into()))
-        .and_then(|result| result.map_err(store_error));
+        let result = timer
+            .scope(tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                self.store.read_sandbox_hierarchy(id),
+            ))
+            .await
+            .map_err(|_| HierarchyReadError::Unavailable("hierarchy read timed out".into()))
+            .and_then(|result| result.map_err(store_error));
         let projected = (|| {
             let record = result?.ok_or(HierarchyReadError::NotFound)?;
             if record.sandbox.id != *id
@@ -203,13 +210,15 @@ impl HierarchyReadService {
         held: &AuthorizedResource,
         id: &WorkspaceId,
     ) -> Result<WorkspaceHierarchyView, HierarchyReadError> {
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(15),
-            self.store.read_workspace_hierarchy(id),
-        )
-        .await
-        .map_err(|_| HierarchyReadError::Unavailable("hierarchy read timed out".into()))
-        .and_then(|result| result.map_err(store_error));
+        let timer = self.detail_phase(SandboxDetailPhase::Hierarchy);
+        let result = timer
+            .scope(tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                self.store.read_workspace_hierarchy(id),
+            ))
+            .await
+            .map_err(|_| HierarchyReadError::Unavailable("hierarchy read timed out".into()))
+            .and_then(|result| result.map_err(store_error));
         let projected = (|| {
             let record = result?.ok_or(HierarchyReadError::NotFound)?;
             let lineage = ResourceLineage {
@@ -234,13 +243,15 @@ impl HierarchyReadService {
             }
             workspace_view(record)
         })();
-        self.finish(
-            held,
-            &ResourceTarget::Workspace {
-                workspace_id: id.clone(),
-            },
-        )
-        .await?;
+        timer.record(&projected);
+        self.detail_phase(SandboxDetailPhase::FinalFence)
+            .result(self.finish(
+                held,
+                &ResourceTarget::Workspace {
+                    workspace_id: id.clone(),
+                },
+            ))
+            .await?;
         projected
     }
 

@@ -10,11 +10,15 @@ use layer2_core::sandbox::{Agent, Sandbox, SandboxAgentActivity};
 use mongodb::bson::{doc, Document};
 use mongodb::{ClientSession, Collection};
 
+use super::agent_capacity_recovery::source::{capture_segmented, fence_agent};
 use super::agent_log::scan_complete_log_with_session;
 use super::agent_log_integrity::TransactionLogError;
 use super::lifecycle_execution::LifecycleLoadError;
 use super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::workspaces::read_workspace;
+
+mod scoped;
+pub(super) use scoped::validate_and_fence_begin_scoped;
 
 pub(super) async fn validate_and_fence_begin(
     store: &MongoSandboxStore,
@@ -49,23 +53,28 @@ pub(super) async fn validate_and_fence_begin(
 
     let mut activities = Vec::new();
     for agent in agents {
-        let mut newest = None;
-        scan_complete_log_with_session(
-            ScanCaller::Checkpoint,
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |entry| {
-                newest = Some(entry);
-                Ok(())
-            },
-        )
-        .await
-        .map_err(|error| match error {
-            TransactionLogError::Domain(error) => LifecycleLoadError::Domain(error),
-            TransactionLogError::Driver(error) => LifecycleLoadError::Driver(error),
-        })?;
+        let captured = capture_segmented(store, agent, session)
+            .await
+            .map_err(log_error)?;
+        let mut newest = captured
+            .as_ref()
+            .and_then(|source| source.latest_entry())
+            .cloned();
+        if captured.is_none() {
+            scan_complete_log_with_session(
+                ScanCaller::Checkpoint,
+                store,
+                &agent.id,
+                agent.conversation.last_seq,
+                session,
+                |entry| {
+                    newest = Some(entry);
+                    Ok(())
+                },
+            )
+            .await
+            .map_err(log_error)?;
+        }
         if agent.status.is_live() {
             activities.push(
                 SandboxAgentActivity::from_live_agent(agent, newest.as_ref()).map_err(|error| {
@@ -79,21 +88,15 @@ pub(super) async fn validate_and_fence_begin(
 
     // Rows fence callbacks and schedulers; the Sandbox write fences all new writer claims.
     for agent in agents {
-        fence_row(
-            &store.agents,
-            agent.id.as_str(),
-            agent.revision,
-            Some(agent.conversation.last_seq),
-            session,
-        )
-        .await?;
+        fence_agent(store, agent, "checkpoint_capture_fence", session)
+            .await
+            .map_err(log_error)?;
     }
     for workspace in &workspaces {
         fence_row(
             &store.workspaces,
             workspace.id.as_str(),
             workspace.revision,
-            None,
             session,
         )
         .await?;
@@ -101,26 +104,25 @@ pub(super) async fn validate_and_fence_begin(
     Ok(())
 }
 
+fn log_error(error: TransactionLogError) -> LifecycleLoadError {
+    match error {
+        TransactionLogError::Domain(error) => LifecycleLoadError::Domain(error),
+        TransactionLogError::Driver(error) => LifecycleLoadError::Driver(error),
+    }
+}
+
 async fn fence_row(
     collection: &Collection<Document>,
     id: &str,
     revision: u64,
-    last_seq: Option<u64>,
     session: &mut ClientSession,
 ) -> Result<(), LifecycleLoadError> {
-    let mut filter = doc! {
+    let filter = doc! {
         "_id": id,
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "revision": signed(revision, "checkpoint capture row revision")
             .map_err(|error| LifecycleLoadError::Domain(SandboxStoreError::Corrupt(error)))?,
     };
-    if let Some(last_seq) = last_seq {
-        filter.insert(
-            "last_seq",
-            signed(last_seq, "checkpoint capture Agent log head")
-                .map_err(|error| LifecycleLoadError::Domain(SandboxStoreError::Corrupt(error)))?,
-        );
-    }
     let fenced = collection
         .update_one(
             filter,
