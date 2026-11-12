@@ -6,6 +6,7 @@ fn request() -> WorkspaceRemovalRequest {
             agent_filesystem: false,
             agent_attachment_upload: false,
             agent_skill_install: false,
+            agent_skill_upgrade: false,
             agent_model_catalog: false,
             agent_browser: false,
             agent_resource_preparation: false,

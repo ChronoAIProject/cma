@@ -56,7 +56,8 @@ fn fixture() -> Fixture {
         profiles.clone(),
         retirement,
         ActivityService::new(activity.clone()),
-    );
+    )
+    .with_maintenance(sandboxes.clone());
     Fixture {
         service,
         sandboxes,
@@ -253,3 +254,5 @@ fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentP
 
 mod controls;
 mod reads;
+
+mod always_on;
