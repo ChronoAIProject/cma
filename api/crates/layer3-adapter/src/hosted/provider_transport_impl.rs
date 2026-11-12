@@ -19,6 +19,13 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         request
             .validate()
             .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)?;
+        // Close/retire during any discovery or attachment await must invalidate
+        // this attempt before it can replace a newer registered conversation.
+        let key = (
+            request.target.runtime.clone(),
+            crate::AgentSlot::new(&request.target.agent_id),
+        );
+        let epochs = self.open_epochs(&key).await;
         let endpoint = self
             .endpoint(&request.target.runtime)
             .await
@@ -144,11 +151,6 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             opened.relay.abort();
             return Err(crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict);
         }
-        let key = (
-            request.target.runtime.clone(),
-            crate::AgentSlot::new(&request.target.agent_id),
-        );
-        let epochs = self.open_epochs(&key).await;
         self.register_link(key, epochs, opened)
             .await
             .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)
