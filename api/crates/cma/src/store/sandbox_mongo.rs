@@ -1,17 +1,15 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
-
-use std::future::Future;
-use std::time::Duration;
-
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::error::{
     Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
 };
 use mongodb::options::{ReadConcern, WriteConcern};
-use mongodb::{Client, ClientSession, Collection, Database};
+use mongodb::{Client, ClientSession, Collection};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::future::Future;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
 use super::MongoCheckpointObjectStore;
@@ -19,10 +17,14 @@ use super::{durability::majority_collection, schema::initialize_collections};
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
+mod topology;
+pub(super) use topology::require_transaction_topology;
+#[cfg(test)]
+use topology::validate_transaction_server;
+
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
 const COMMIT_ATTEMPTS: usize = 5;
 const DUPLICATE_KEY: i32 = 11_000;
-const SNAPSHOT_READ_MIN_WIRE_VERSION: i64 = 13;
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PENDING_RECONCILIATIONS: usize = 16;
 static RECONCILIATION_SLOTS: Semaphore = Semaphore::const_new(MAX_PENDING_RECONCILIATIONS);
@@ -93,14 +95,19 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
     pub(super) global_sandbox_limit: u16,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(super) bounded_title_reads: bool,
+    pub(super) bounded_transcript_reads: bool,
+    pub(super) bounded_usage_reads: bool,
+    pub(super) access_snapshot_session: bool,
     pub(super) sandbox_snapshot_reads: bool,
     pub(super) sandbox_batched_reads: bool,
     pub(super) bounded_response_reads: bool,
@@ -189,14 +196,19 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
             global_sandbox_limit: 0,
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),
+            segment_adoption_enabled: false,
             bounded_approval_reads: false,
             bounded_close_retries: false,
             fleet_log_activation: Default::default(),
             bounded_title_reads: false,
+            bounded_transcript_reads: false,
+            bounded_usage_reads: false,
+            access_snapshot_session: false,
             sandbox_snapshot_reads: false,
             sandbox_batched_reads: false,
             bounded_response_reads: false,
@@ -298,39 +310,6 @@ impl MongoSandboxStore {
         tracing::info!(database = name, "sandbox-model Mongo store ready");
         Ok(store)
     }
-}
-
-pub(super) async fn require_transaction_topology(database: &Database) -> Result<(), StoreError> {
-    let reply = database
-        .run_command(doc! { "hello": 1_i32 })
-        .await
-        .map_err(|error| unavailable("inspect Mongo transaction topology", error))?;
-    validate_transaction_server(&reply)
-}
-
-fn validate_transaction_server(reply: &Document) -> Result<(), StoreError> {
-    if reply.get_str("setName").is_err()
-        && !matches!(reply.get_str("msg"), Ok(message) if message == "isdbgrid")
-    {
-        return Err(StoreError::Unavailable(
-            "sandbox-model transactions require a replica set or mongos".into(),
-        ));
-    }
-    let max_wire_version = match reply.get("maxWireVersion") {
-        Some(Bson::Int32(version)) => i64::from(*version),
-        Some(Bson::Int64(version)) => *version,
-        _ => {
-            return Err(StoreError::Unavailable(
-                "MongoDB did not report a usable maxWireVersion".into(),
-            ));
-        }
-    };
-    if max_wire_version < SNAPSHOT_READ_MIN_WIRE_VERSION {
-        return Err(StoreError::Unavailable(format!(
-            "snapshot reads require MongoDB 5.0 or later (maxWireVersion >= {SNAPSHOT_READ_MIN_WIRE_VERSION}); server reported {max_wire_version}"
-        )));
-    }
-    Ok(())
 }
 
 pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {

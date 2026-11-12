@@ -1,21 +1,38 @@
 use super::*;
 use crate::store::agent_log_integrity::TransactionLogError;
+use crate::store::agent_log_segment_reads;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, AgentLogEntry, AgentLogKind, Sandbox};
 
 async fn bounded_log(
     store: &MongoSandboxStore,
-    agent: &AgentId,
+    expected: &Agent,
     after: u64,
     through: u64,
     session: &mut ClientSession,
+    snapshot: bool,
 ) -> Result<Vec<AgentLogEntry>, AgentReadError> {
     if through.saturating_sub(after) > MAX_CONTEXT_EVENTS as u64 {
         return Ok(Vec::new());
     }
-    let mut cursor = store
-        .agent_log
-        .find(doc! {"agent_id":agent.as_str(),"seq":{"$gt":after as i64,"$lte":through as i64}})
+    match agent_log_segment_reads::range_with_snapshot(
+        store, expected, session, after, through, snapshot,
+    )
+    .await
+    {
+        Ok(Some(entries)) => return Ok(entries),
+        Ok(None) => {}
+        Err(error) => return Err(unavailable(error)),
+    }
+    let find = store.agent_log.find(
+        doc! {"agent_id":expected.id.as_str(),"seq":{"$gt":after as i64,"$lte":through as i64}},
+    );
+    let find = if snapshot {
+        find.read_concern(mongodb::options::ReadConcern::snapshot())
+    } else {
+        find
+    };
+    let mut cursor = find
         .sort(doc! {"seq":1})
         .limit(MAX_CONTEXT_EVENTS as i64)
         .session(&mut *session)
@@ -37,6 +54,7 @@ pub(super) async fn current(
     store: &MongoSandboxStore,
     work: &SuggestionWork,
     session: &mut ClientSession,
+    snapshot: bool,
 ) -> Result<bool, AgentReadError> {
     let Some(row) = store
         .agents
@@ -70,10 +88,11 @@ pub(super) async fn current(
         .is_some();
     let tail = bounded_log(
         store,
-        &agent.id,
+        &agent,
         work.completed_sequence,
         agent.conversation.last_seq,
         session,
+        snapshot,
     )
     .await?;
     Ok(work_is_current(work, &agent, &sandbox, &tail, newer))
@@ -110,9 +129,42 @@ pub(in crate::store) async fn enqueue(
             "suggestion outbox unavailable".into(),
         ))
     };
-    let entries = bounded_log(store, &agent.id, turn_sequence - 1, completed.seq, session)
-        .await
-        .map_err(map_error)?;
+    // Only enqueue receives the exact append batch. An ordinary transaction
+    // read/claim/completion never receives permission from `!snapshot`.
+    if logs.is_empty()
+        || logs
+            .last()
+            .is_none_or(|entry| entry.seq != agent.conversation.last_seq)
+        || logs.iter().any(|entry| entry.agent_id != agent.id)
+        || logs
+            .windows(2)
+            .any(|pair| pair[0].seq.checked_add(1) != Some(pair[1].seq))
+    {
+        return Err(TransactionLogError::Domain(
+            SandboxStoreError::SequenceConflict,
+        ));
+    }
+    let entries = bounded_log(
+        store,
+        agent,
+        turn_sequence - 1,
+        completed.seq,
+        session,
+        false,
+    )
+    .await
+    .map_err(map_error)?;
+    // The append must already be visible with its exact original identity in
+    // this transaction. There is no raw-source fallback after proof refusal.
+    if logs
+        .iter()
+        .filter(|entry| entry.seq >= turn_sequence && entry.seq <= completed.seq)
+        .any(|entry| !entries.iter().any(|stored| stored == entry))
+    {
+        return Err(TransactionLogError::Domain(
+            SandboxStoreError::SequenceConflict,
+        ));
+    }
     let Some(row) = store
         .sandboxes
         .find_one(doc! {"_id":agent.sandbox_id.as_str()})
@@ -139,3 +191,6 @@ pub(in crate::store) async fn enqueue(
         .map_err(TransactionLogError::Driver)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

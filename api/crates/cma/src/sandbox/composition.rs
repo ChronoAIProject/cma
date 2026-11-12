@@ -44,6 +44,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub parent_not_ready_pacing_enabled: bool,
     pub bounded_live_fragments: bool,
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
@@ -63,6 +64,8 @@ pub(crate) struct SandboxLifecycleComposition {
     sandbox: SandboxScheduler,
     workspace: SandboxScheduler,
     agent: AgentScheduler,
+    capacity_worker: Arc<AgentWorker>,
+    capacity_recovery: Option<SandboxScheduler>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
     updates: Arc<dyn AgentUpdateRecorder>,
@@ -154,6 +157,7 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
@@ -192,6 +196,8 @@ impl SandboxLifecycleComposition {
             reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
+            capacity_worker: agent_worker.clone(),
+            capacity_recovery: None,
             agent: AgentScheduler::new(agent_worker, agent_admitted)
                 .with_event_driven_reconciliation(
                     Arc::clone(&dependencies.store.agent_parent_ready),
@@ -207,6 +213,28 @@ impl SandboxLifecycleComposition {
         Arc::clone(&self.updates)
     }
 
+    pub(crate) fn capacity_recovery_commands(
+        &mut self,
+        store: Arc<MongoSandboxStore>,
+        service: Arc<crate::store::agent_capacity_recovery::RecoveryService>,
+    ) -> Arc<dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands>
+    {
+        assert!(
+            self.capacity_recovery.is_none(),
+            "capacity recovery is assembled once"
+        );
+        self.capacity_recovery = Some(SandboxScheduler::for_capacity_recovery(
+            super::capacity_scheduler::CapacityRecoverySweep::new(
+                store,
+                service.clone(),
+                self.capacity_worker.clone(),
+            ),
+        ));
+        self.capacity_worker
+            .clone()
+            .capacity_recovery_commands(service)
+    }
+
     pub(crate) async fn initialize(&self) -> Result<(), String> {
         self.reconciliation
             .initialize(std::time::SystemTime::now())
@@ -214,17 +242,33 @@ impl SandboxLifecycleComposition {
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
 
-    pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+    pub(crate) fn spawn(
+        self,
+        shutdown: &mut ShutdownCoordinator,
+        workers: &crate::worker_supervision::Workers,
+    ) {
+        if let Some(scheduler) = self.capacity_recovery {
+            shutdown.push(
+                scheduler
+                    .spawn_supervised(shutdown.subscribe(), workers.get("agent_capacity_recovery")),
+            );
+        }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
-        shutdown.push(self.reconciliation.spawn(signal));
-        shutdown.push(self.agent.spawn(shutdown.subscribe()));
+        shutdown.push(
+            self.reconciliation
+                .spawn_supervised(signal, workers.get("sandbox_reconciliation")),
+        );
+        shutdown.push(
+            self.agent
+                .spawn_supervised(shutdown.subscribe(), workers.get("agents")),
+        );
         shutdown.push(self.titles.spawn(shutdown.subscribe()));
         shutdown.push(self.funding_renewal.spawn(shutdown.subscribe()));
         shutdown.push(self.suggestions.spawn(shutdown.subscribe()));
-        for scheduler in [self.sandbox, self.workspace] {
+        for (scheduler, name) in [(self.sandbox, "sandboxes"), (self.workspace, "workspaces")] {
             let signal = shutdown.subscribe();
-            shutdown.push(scheduler.spawn(signal));
+            shutdown.push(scheduler.spawn_supervised(signal, workers.get(name)));
         }
     }
 }
