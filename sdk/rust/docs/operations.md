@@ -170,7 +170,7 @@ it grants no authority. Foreign/missing resources remain concealed.
 
 A recorded outcome contains only operation identity, phase, attempt count and
 retry/completion timestamps. An HTTP 202 `unknown` outcome means the commit
-still needs reconciliation. A known abort is an HTTP 409 API error retaining
-its `outcome` extension. Neither outcome proves input was not executed.
+still needs reconciliation. An HTTP 409 `known_abort` is a typed outcome.
+Other conflict problem documents remain typed API errors. Neither outcome proves input was not executed.
 Named admission, authority and service refusals use the SDK's normal API error.
 Native conversation, runtime and home identities are never response fields.

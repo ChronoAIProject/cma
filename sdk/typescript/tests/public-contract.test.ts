@@ -254,6 +254,13 @@ describe('shared public contract', () => {
         expect(fetch).toHaveBeenCalledTimes(exchange.length);
       } else if (
         fixture.response.status >= 400 &&
+        !(
+          fixture.response.status === 409 &&
+          /^POST \/api\/v1\/agents\/\{id\}\/capacity-recovery\/(admit|resume)$/.test(
+            fixture.operation,
+          ) &&
+          JSON.stringify(fixture.response.body) === JSON.stringify({ outcome: 'known_abort' })
+        ) &&
         !(fixture.operation === 'GET /auth/session' && fixture.response.status === 401)
       ) {
         const body = problemBody(fixture);

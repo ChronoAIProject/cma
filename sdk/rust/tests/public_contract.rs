@@ -264,6 +264,13 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                 case.id
             );
         } else if case.response.status >= 400
+            && !(case.response.status == 409
+                && matches!(
+                    case.operation.as_str(),
+                    "POST /api/v1/agents/{id}/capacity-recovery/admit"
+                        | "POST /api/v1/agents/{id}/capacity-recovery/resume"
+                )
+                && case.response.body == serde_json::json!({"outcome": "known_abort"}))
             && !(case.operation == "GET /auth/session" && case.response.status == 401)
         {
             check_error(case, result.expect_err(&case.id));
