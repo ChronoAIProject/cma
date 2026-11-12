@@ -117,22 +117,28 @@ pub(super) async fn assemble(
             (head, Some(permit), permission)
         }
         SourceFormat::Segmented => {
-            if bootstrap.is_some()
-                || stored_admission
-                    .as_ref()
-                    .is_some_and(|a| a.kind != AdmissionKind::Rollover)
-            {
+            if bootstrap.is_some() {
                 return Err(SandboxStoreError::Conflict.into());
             }
-            (
-                captured.active_head().clone(),
-                None,
-                if stored_admission.is_some() {
-                    RolloverPermission::Normal
-                } else {
-                    RolloverPermission::Closed
-                },
-            )
+            let permission = match stored_admission.as_ref().map(|admission| admission.kind) {
+                Some(AdmissionKind::Rollover) => RolloverPermission::Normal,
+                Some(AdmissionKind::CapacityRecovery) => {
+                    if !input.logs.is_empty()
+                        || next.conversation != current.conversation
+                        || next.worktree_id != current.worktree_id
+                        || next.status == layer2_core::sandbox::AgentStatus::Ready
+                    {
+                        return Err(SandboxStoreError::InvalidTransaction(
+                            "segmented storage recovery must preserve conversation state and remain non-ready",
+                        )
+                        .into());
+                    }
+                    RolloverPermission::SegmentedRecovery
+                }
+                Some(AdmissionKind::Activation) => return Err(SandboxStoreError::Conflict.into()),
+                None => RolloverPermission::Closed,
+            };
+            (captured.active_head().clone(), None, permission)
         }
     };
     certify_queued_sources(store, scope, captured, &before, input.logs).await?;
