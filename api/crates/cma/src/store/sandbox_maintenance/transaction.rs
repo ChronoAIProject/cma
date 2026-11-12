@@ -17,7 +17,7 @@ use super::super::sandbox_events::{
 };
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
-use super::evidence::{fence_live_agents, live_activities};
+use super::evidence::{fence_live_agents, live_activities, open_session};
 
 pub(super) enum MaintenanceRequest {
     Inactivity(SandboxInactivityPauseRequest),
@@ -92,7 +92,14 @@ pub(super) async fn apply(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&document).map_err(ApplyError::Domain)?;
+    // A platform stop overrides every keep-alive preference without reading
+    // or changing it (decision 26); an inactivity pause honours them.
+    let platform_stop = matches!(
+        request,
+        MaintenanceRequest::Inactivity(request) if !request.cause.honours_keep_alive()
+    );
     if matches!(request, MaintenanceRequest::Inactivity(_))
+        && !platform_stop
         && keep_alive_and_fence_policy(
             store,
             &current,
@@ -131,6 +138,16 @@ pub(super) async fn apply(
         MaintenanceRequest::Inactivity(request) => {
             let activities =
                 live_activities(store, &agents, session, request.requested_at.as_str()).await?;
+            if platform_stop
+                && activities.is_empty()
+                && open_session(store, &current, &request.requested_at, session).await?
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
             apply_inactivity_pause(&current, &activities, request)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
@@ -174,6 +191,17 @@ pub(super) async fn apply(
         }
         super::evidence::fence_agents(store, &agents, session).await?;
     } else {
+        // Pending or leased Workspace work is never interrupted by a platform
+        // stop, with or without live Agents.
+        if platform_stop
+            && !super::evidence::fence_idle_workspaces(store, &current, session).await?
+        {
+            return Ok(MaintenanceReceipt {
+                sandbox: current,
+                event: None,
+                outcome: SandboxMaintenanceOutcome::NotEligible,
+            });
+        }
         fence_live_agents(store, &agents, session).await?;
     }
     let mut revision_filter = doc! {
