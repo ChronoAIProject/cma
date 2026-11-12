@@ -354,3 +354,35 @@ on `auth_browser_logins` and one or two `find` commands respectively. Mongo
 attributes the aggregate to its outer collection; the joined subject read does
 not appear as a separate client command. Server explain evidence is needed to
 account for both indexed document reads.
+
+
+## Unsampled duration distributions
+
+Every `mongo_diagnostic_summary` row includes `duration_bucket_bounds_us` and
+`duration_bucket_counts` for its existing `pool, route, worker, phase, command,
+collection, metric` group. Bounds are fixed inclusive upper limits, in microseconds:
+`[1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000, 5000000]`.
+The eleven counts are **non-cumulative**: the first includes zero through 1 ms,
+the second is greater than 1 ms through 5 ms, and the last is greater than 5 s.
+Counts sum to the row's `count` unless the saturating counters have exhausted
+`u64`. Durations above a boundary by even one nanosecond enter the next bucket.
+Arrays use the tracing debug-array representation in both text and JSON fields.
+
+These counts include every recorded observation, including failures and unknown
+command outcomes; report the existing failure/unknown counts beside them. Sum
+matching buckets across complete windows and select the bucket containing the
+nearest-rank p50/p95 to report a **range**, not an exact percentile. For the
+#1806 25 ms threshold, the first four buckets divided by the total show the exact
+fraction at or below that boundary. This does not establish a percentile for
+command-plus-checkout latency: their sum requires correlated measurements and
+cannot be obtained by adding percentiles. Command rates and general-pool command
+shares continue to use unsampled `count` and the observation window duration.
+
+The histogram adds eleven `u64` counters (88 bytes) per existing bounded group;
+it adds no label dimensions, retained samples, payload inspection or independent
+configuration. It is present only when the existing default-off Mongo diagnostic
+observer is installed. The existing queue/drop/overflow caveats still apply:
+nonzero dropped or overflow rows make collection-specific conclusions incomplete.
+The histogram measures client-side command/checkout/hold durations. It does not
+identify majority acknowledgement as the sole cause of a write/read difference,
+and it does not enable Default-tier prepaid leases or change rate-limit behavior.
