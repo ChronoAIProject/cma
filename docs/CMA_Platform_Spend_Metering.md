@@ -292,9 +292,19 @@ liability and would strand admitted work.
    one-second monitor sends the guarded cancel; only the runtime's terminal
    evidence marks the turn failed; the failed receipt keeps its output and
    effects; same-key replay does not re-execute.
-2. The **pause sweep** then pauses every Active Sandbox whose Agents are all
-   quiet, using the quiet-pause eligibility predicate (no active turn, no
-   pending work, no queued messages, fenced live attachments). It ignores
+2. The **pause sweep** then pauses every Active Sandbox whose live Agents are
+   all quiet, using the quiet-pause eligibility predicate (no active turn, no
+   pending work, no queued messages, fenced live attachments), and every
+   Active Sandbox with no live Agent. Two inactivity exemptions do not apply
+   to this pause (decision 26): a Sandbox whose owner chose Always keep alive
+   (`always_on`, or a historical profile's availability) is paused too, and a
+   Sandbox without live Agents is a candidate. Every safety condition stays:
+   pending or leased Workspace work, or an open owner session on a Sandbox
+   without live Agents, leaves it running, and the maintenance transaction's
+   revision, `last_seq` and fence guards apply unchanged. The pause never
+   changes the owner's preference: `always_on` and the profile's availability
+   are left as they are, and once the closure lifts and the owner revives the
+   Sandbox, Always keep alive applies again. It ignores
    `inactivity.auto_pause_enabled`: this pause is a platform action, not an
    inactivity policy. The pause reason shown to the owner is fixed text:
    "Platform spend limit reached. Your work is saved; the Sandbox will be
@@ -608,10 +618,15 @@ Recorded during implementation:
     an owner out. Only a never-seen subject reads the state, and a failed read
     refuses its callback (fail closed). Without a configured directory every
     subject is never-seen.
-26. The pause sweep keeps an owner's Always keep alive preference and does
-    not pause Sandboxes with no live Agents (the quiet-pause predicate's
-    existing rule). Whether a platform pause should override keep-alive is
-    left to #1478.
+26. Pause both under `SpendStop` (user ruling, 2026-11-12). A platform pause
+    overrides an owner's Always keep alive preference (`always_on` or a
+    historical profile's availability) and also pauses an Active Sandbox with
+    no live Agent; an inactivity pause keeps both exemptions unchanged. Busy
+    work is never interrupted: live Agents must be quiet as before, and
+    pending or leased Workspace work, or an open owner session on a Sandbox
+    without live Agents, leaves the Sandbox running. The preference itself is
+    never changed, so it applies again once the owner revives the Sandbox
+    after the closure lifts.
 27. A failed evaluation is logged, keeps the last known stop answer and is
     retried on the next attempt; admission keeps failing closed on its own.
 28. The two admin spend routes are served behind `ConfigurePlatform` and the

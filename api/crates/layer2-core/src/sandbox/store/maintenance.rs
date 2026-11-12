@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use crate::ids::SandboxId;
 use crate::sandbox::{
     image_rotation_required, inactivity_pause_notice, is_inactivity_pause_candidate,
-    is_quiet_pause_candidate, Agent, Sandbox, SandboxAgentActivity, SandboxEventKind,
+    is_platform_stop_pause_candidate, Agent, Sandbox, SandboxAgentActivity, SandboxEventKind,
     SandboxLifecycleOperation, SandboxRotationIdentity, SandboxStatus, PLATFORM_SPEND_PAUSE_NOTICE,
 };
 use crate::{seconds_from_rfc3339, MAX_PAUSE_AFTER_SECONDS, MIN_PAUSE_AFTER_SECONDS};
@@ -35,6 +35,14 @@ pub enum InactivityPauseCause {
     PlatformSpendStop,
 }
 
+impl InactivityPauseCause {
+    /// A platform stop overrides every keep-alive preference without changing
+    /// it (decision 26); an inactivity pause always honours them.
+    pub const fn honours_keep_alive(self) -> bool {
+        matches!(self, Self::Inactivity)
+    }
+}
+
 impl SandboxInactivityPauseRequest {
     fn notice(&self) -> String {
         match self.cause {
@@ -52,7 +60,7 @@ impl SandboxInactivityPauseRequest {
                 self.pause_after_seconds,
             ),
             InactivityPauseCause::PlatformSpendStop => {
-                is_quiet_pause_candidate(current, live_agents, &self.requested_at, 0)
+                is_platform_stop_pause_candidate(current, live_agents, &self.requested_at)
             }
         }
     }
