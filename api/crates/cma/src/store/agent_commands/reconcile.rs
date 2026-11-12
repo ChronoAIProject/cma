@@ -42,7 +42,36 @@ pub(in crate::store) async fn apply(
         .await?
         .ok_or(CommandLedgerError::Corrupt)?;
     let mut lane = lane_records::read(&lane, agent_id.as_str())?;
-    let mut evidence = CommandEvidence::new(&command)?;
+    let evidence = legacy_evidence(store, &agent, &agent_row, &command, session).await?;
+    let retry_current = if evidence.has_source_deferred() {
+        let current = store
+            .bindings
+            .continuation_retry_authority(&command.receipt.envelope, session)
+            .await?;
+        let fenced = store.agents.update_one(doc! {"_id":agent.id.as_str(),"revision":i64::try_from(agent.revision).map_err(|_|CommandLedgerError::Corrupt)?},doc! {"$inc":{"agent_command_admission_fence":1_i64}}).session(&mut *session).await?;
+        if fenced.matched_count != 1 {
+            return Err(CommandLedgerError::Conflict.into());
+        }
+        current
+    } else {
+        false
+    };
+    let revision = command.revision;
+    if evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)? {
+        worker_apply::write(store, &command, revision, &lane, session).await?;
+    }
+    Ok(command)
+}
+
+async fn legacy_evidence(
+    store: &MongoSandboxStore,
+    agent: &layer2_core::sandbox::Agent,
+    agent_row: &mongodb::bson::Document,
+    command: &AdmittedAgentCommand,
+    session: &mut ClientSession,
+) -> Result<CommandEvidence, ApplyError> {
+    let agent_id = &agent.id;
+    let mut evidence = CommandEvidence::new(command)?;
     let dispatch = command
         .work
         .dispatch
@@ -63,8 +92,8 @@ pub(in crate::store) async fn apply(
         && suffix_length.is_some_and(|length| length <= 16)
         && super::super::agent_log_integrity::trusted_summary(
             store,
-            &agent,
-            &agent_row,
+            agent,
+            agent_row,
             ScanCaller::CommandAdmission,
             session,
             false,
@@ -77,7 +106,7 @@ pub(in crate::store) async fn apply(
         .is_some();
     if bounded {
         use futures_util::TryStreamExt;
-        evidence = CommandEvidence::from_trusted_message_prefix(&command)?;
+        evidence = CommandEvidence::from_trusted_message_prefix(command)?;
         let mut observation =
             crate::store::mongo_read_telemetry::Read::find(store.agent_log.name());
         let collection = store
@@ -119,22 +148,5 @@ pub(in crate::store) async fn apply(
             TransactionLogError::Driver(error) => ApplyError::Driver(error),
         })?;
     }
-    let retry_current = if evidence.has_source_deferred() {
-        let current = store
-            .bindings
-            .continuation_retry_authority(&command.receipt.envelope, session)
-            .await?;
-        let fenced = store.agents.update_one(doc! {"_id":agent.id.as_str(),"revision":i64::try_from(agent.revision).map_err(|_|CommandLedgerError::Corrupt)?},doc! {"$inc":{"agent_command_admission_fence":1_i64}}).session(&mut *session).await?;
-        if fenced.matched_count != 1 {
-            return Err(CommandLedgerError::Conflict.into());
-        }
-        current
-    } else {
-        false
-    };
-    let revision = command.revision;
-    if evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)? {
-        worker_apply::write(store, &command, revision, &lane, session).await?;
-    }
-    Ok(command)
+    Ok(evidence)
 }
