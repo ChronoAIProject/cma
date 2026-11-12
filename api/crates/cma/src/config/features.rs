@@ -72,7 +72,13 @@ impl FeatureFlags {
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
-            sandbox_detail_timings: flag(lookup, "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")?,
+            sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
+                None => true,
+                Some(value) => flag(
+                    &mut |_| Ok(Some(value.clone())),
+                    "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED",
+                )?,
+            },
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
@@ -248,38 +254,8 @@ mod close_retry_tests {
 }
 
 #[cfg(test)]
-mod sandbox_read_tests {
-    use super::*;
-
-    #[test]
-    fn sandbox_snapshot_and_timings_are_independent_strict_opt_ins() {
-        for key in [
-            "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED",
-            "CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED",
-        ] {
-            for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-                let flags = FeatureFlags::from_lookup(&mut |name| {
-                    Ok((name == key).then(|| value.map(str::to_owned)).flatten())
-                })
-                .unwrap();
-                assert_eq!(
-                    flags.sandbox_snapshot_reads,
-                    enabled && key.contains("SNAPSHOT")
-                );
-                assert_eq!(
-                    flags.sandbox_detail_timings,
-                    enabled && key.contains("TIMINGS")
-                );
-            }
-            for invalid in ["", "1", "TRUE", " true "] {
-                assert!(FeatureFlags::from_lookup(&mut |name| {
-                    Ok((name == key).then(|| invalid.to_owned()))
-                })
-                .is_err());
-            }
-        }
-    }
-}
+#[path = "sandbox_detail_diagnostics_tests.rs"]
+mod sandbox_read_tests;
 
 #[cfg(test)]
 mod reconciliation_tests;
