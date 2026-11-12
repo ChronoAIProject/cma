@@ -188,29 +188,46 @@ async fn measure(count: u64, enabled: bool) -> (u64, u64) {
             "the measurement must include discovery cycles after the first fold"
         );
     }
-    // At normal capacity, native completion must identify the dispatched prompt
-    // before the recorder can preserve it through the existing stop reserve.
+    // At normal capacity, native completion needs the exact prompt identity and
+    // durable output receipt before it can use the existing stop reserve.
     let dispatch = command.work.dispatch.as_ref().unwrap();
+    let terminal = layer3_adapter::ConversationUpdate::TurnEndedForPrompt {
+        prompt_id: layer3_adapter::PromptIdentity::new(
+            agent.conversation.conversation_id.as_deref().unwrap(),
+            dispatch.runtime_generation,
+            dispatch.turn_sequence,
+        ),
+        response: layer3_adapter::PromptResponse::new(layer3_adapter::TurnStopReason::EndTurn),
+    };
+    let (acks, mut received) = tokio::sync::mpsc::channel(1);
+    let terminal = layer3_adapter::ConversationUpdate::RuntimeOutput {
+        receipt: layer3_adapter::RuntimeOutputReceipt::new(
+            layer3_adapter::RuntimeOutputSource {
+                stream_id: uuid::Uuid::new_v4().to_string(),
+                cursor: 1,
+                native_conversation_id: agent.conversation.conversation_id.clone().unwrap(),
+                payload_sha256: "a".repeat(64),
+            },
+            acks,
+        ),
+        update: Some(Box::new(terminal).into()),
+    };
     let terminal_started = std::time::Instant::now();
-    DurableAgentUpdateRecorder::new(store.clone())
+    let outcome = DurableAgentUpdateRecorder::new(store.clone())
         .record_update(
             &agent.id,
             1,
             &mut AgentMessageAssembly::default(),
-            layer3_adapter::ConversationUpdate::TurnEndedForPrompt {
-                prompt_id: layer3_adapter::PromptIdentity::new(
-                    agent.conversation.conversation_id.as_deref().unwrap(),
-                    dispatch.runtime_generation,
-                    dispatch.turn_sequence,
-                ),
-                response: layer3_adapter::PromptResponse::new(
-                    layer3_adapter::TurnStopReason::EndTurn,
-                ),
-            },
+            terminal,
             layer2_core::now_rfc3339(),
         )
         .await
         .unwrap();
+    assert!(outcome.turn_closed);
+    assert!(
+        received.try_recv().is_err(),
+        "the recorder does not ACK for its caller"
+    );
     wait_terminal(&store, &command.receipt.envelope.command_id).await;
     println!(
         "reconcile_terminal rows={count} enabled={enabled} latency_us={}",
