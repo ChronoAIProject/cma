@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 mod summary;
+use sha2::{Digest, Sha256};
 use summary::Summary;
 const MAX_PENDING: usize = 4096;
 const SLOW: Duration = Duration::from_millis(100);
@@ -20,6 +21,7 @@ const SAMPLE_EVERY: u64 = 100;
 struct Command {
     context: DiagnosticContext,
     pool: &'static str,
+    hold_hash: Arc<str>,
     command: &'static str,
     collection: &'static str,
     session: bool,
@@ -27,6 +29,7 @@ struct Command {
     sampled: bool,
 }
 struct Hold {
+    hash: Arc<str>,
     start: Instant,
     context: DiagnosticContext,
     last: Option<Command>,
@@ -34,6 +37,7 @@ struct Hold {
     sampled: bool,
 }
 struct State {
+    salt: [u8; 16],
     commands: HashMap<(u64, i32), Command>,
     holds: HashMap<u64, Hold>,
     command_sequence: u64,
@@ -46,6 +50,7 @@ impl Default for Diagnostics {
     fn default() -> Self {
         Self(
             Arc::new(Mutex::new(State {
+                salt: *uuid::Uuid::new_v4().as_bytes(),
                 commands: HashMap::new(),
                 holds: HashMap::new(),
                 command_sequence: 0,
@@ -85,6 +90,7 @@ impl Diagnostics {
                 );
                 command.pool = self.1;
                 if let Some(hold) = state.holds.get_mut(&key) {
+                    command.hold_hash = hold.hash.clone();
                     hold.commands = hold.commands.saturating_add(1);
                     hold.last = Some(command.clone());
                 }
@@ -155,10 +161,15 @@ impl Diagnostics {
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
                 state.checkout_sequence = state.checkout_sequence.wrapping_add(1);
                 let sampled = state.checkout_sequence.is_multiple_of(SAMPLE_EVERY);
+                let mut hash = Sha256::new();
+                hash.update(state.salt);
+                hash.update(state.checkout_sequence.to_le_bytes());
+                let hold_hash: Arc<str> = format!("{:x}", hash.finalize()).into();
                 if state.holds.len() < MAX_PENDING {
                     state.holds.insert(
                         connection_key(&event.address, event.connection_id),
                         Hold {
+                            hash: hold_hash.clone(),
                             start: Instant::now(),
                             context: context.clone(),
                             last: None,
@@ -171,6 +182,7 @@ impl Diagnostics {
                 }
                 let mut metadata = context_command(context);
                 metadata.pool = self.1;
+                metadata.hold_hash = hold_hash;
                 let completed =
                     state
                         .summary
@@ -215,6 +227,7 @@ impl Diagnostics {
             .last
             .unwrap_or_else(|| context_command(hold.context.clone()));
         command.pool = self.1;
+        command.hold_hash = hold.hash;
         // A pinned transaction may run several commands/phases. Do not assign
         // its whole physical hold to the last command or count it repeatedly.
         if hold.commands > 1 {
@@ -246,6 +259,7 @@ fn context_command(context: DiagnosticContext) -> Command {
     Command {
         context,
         pool: "general",
+        hold_hash: "none".into(),
         command: "none",
         collection: "none",
         session: false,
@@ -295,6 +309,7 @@ fn metadata(name: &str, body: &Document, sampled: bool) -> Command {
     Command {
         context: DiagnosticContext::current(),
         pool: "general",
+        hold_hash: "none".into(),
         command,
         collection,
         session: body.contains_key("lsid"),
@@ -323,7 +338,7 @@ impl Command {
         deferred: bool,
     ) {
         tracing::info!(target: "mongo_diagnostic", parent: None,
-            event, pool = self.pool, route = %self.context.route, request_hash = %self.context.request_hash,
+            event, pool = self.pool, hold_hash = %self.hold_hash, route = %self.context.route, request_hash = %self.context.request_hash,
             worker = self.context.worker, phase = self.context.phase,
             command = self.command, collection = self.collection,
             duration_us = micros(duration), docs_returned = docs.unwrap_or(0), docs_returned_known = docs.is_some(), session = self.session,
