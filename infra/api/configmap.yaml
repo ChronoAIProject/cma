@@ -271,6 +271,7 @@ data:
   # Objects live only under documents/<owner-hash>/<document-id>/<source-hash>.md.
   # Activate in a later train only after compatible readers are the rollback floor.
   CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED: "false"
+  CHRONO_ACCOUNT_DELETION_ENABLED: "false"
   # Requires a complete, fenced storage inventory; never enable on unknown usage.
   CHRONO_DOCUMENT_QUOTAS_ENABLED: "false"
   # Off until capacity-owner headroom and all admission writers are verified.
