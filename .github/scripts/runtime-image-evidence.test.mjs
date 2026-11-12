@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import './runtime-image-evidence-compat.test.mjs';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,7 +28,7 @@ const proof = { checks, artifacts: {
   gh: '3'.repeat(64), ghVersion: expected.GH_VERSION,
   psVersion: '4.0.4', jqVersion: '1.7',
 } };
-const record = () => structuredClone({ schema: 'cma-runtime-image-v1', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
+const record = () => structuredClone({ schema: 'cma-runtime-image-v2', scope: 'local-contract-3-no-provider-or-model', commit, image, sourceReference: null, result: 'pass', cleanup: { containers: 0, volumes: 0 }, proof });
 
 test('public seed requires materialized NyxID aliases and preserves their exact content', () => {
   const root = mkdtempSync(join(tmpdir(), 'cma-public-seed-test-'));
@@ -442,6 +443,7 @@ test('campaign pins the execution ID and refuses either probe, incomplete restar
       if (failure) assert.throws(() => campaign('runtime:test', commit, output, command));
       else campaign('runtime:test', commit, output, command);
       const evidence = JSON.parse(readFileSync(output, 'utf8'));
+      assert.equal(evidence.schema, 'cma-runtime-image-v2');
       assert.equal(evidence.result, failure ? 'fail' : 'pass');
       assert.ok(calls.find((args) => args[0] === 'ps'));
       if (['probe', 'bootstrap', 'missing-restart', 'runtime-mismatch'].includes(failure)) assert.deepEqual(evidence.cleanup, { containers: 0, volumes: 0 });
