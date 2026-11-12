@@ -30,12 +30,15 @@ async fn recovery_fixture(
     let runtime = listener().await;
     let provider = listener().await;
     let address = runtime.local_addr().unwrap();
-    let mut transport = ProviderHostedControlTransport::for_retained_opensandbox(SandboxClient::new(
+    let mut transport =
+        ProviderHostedControlTransport::for_retained_opensandbox(SandboxClient::new(
             format!("http://{}", provider.local_addr().unwrap()),
             "fixture",
         ))
         .unwrap();
-    if let Some(state) = shared { transport.state = state; }
+    if let Some(state) = shared {
+        transport.state = state;
+    }
     let transport = Arc::new(transport);
     let task = tokio::spawn(async move {
         let (mut stream, _) = provider.accept().await.unwrap();
@@ -98,7 +101,8 @@ async fn recovery_fixture(
             match frame {
                 Ok(Message::Close(_)) | Err(_) => break,
                 Ok(Message::Binary(frame)) => assert_ne!(
-                    frame[0], crate::hosted::acp::LANE_CONVERSATION,
+                    frame[0],
+                    crate::hosted::acp::LANE_CONVERSATION,
                     "recovery must not replay input or load another session"
                 ),
                 _ => {}
@@ -165,25 +169,106 @@ async fn capacity_recovery_fences_every_opening_await_against_close_and_retire()
                     )
                     .await;
             }
-            let unpaused = Arc::new(Pause { stage: usize::MAX, reached: Notify::new(), release: Notify::new() });
-            let (newer, newer_server) = recovery_fixture(unpaused, Some(transport.state.clone())).await;
+            let unpaused = Arc::new(Pause {
+                stage: usize::MAX,
+                reached: Notify::new(),
+                release: Notify::new(),
+            });
+            let (newer, newer_server) =
+                recovery_fixture(unpaused, Some(transport.state.clone())).await;
             let (newer_updates, _newer_received) = tokio::sync::mpsc::channel(8);
-            newer.reattach_existing_capacity_recovery(&request, newer_updates).await.unwrap();
-            let key = (request.target.runtime.clone(), AgentSlot::new(&request.target.agent_id));
+            newer
+                .reattach_existing_capacity_recovery(&request, newer_updates)
+                .await
+                .unwrap();
+            let key = (
+                request.target.runtime.clone(),
+                AgentSlot::new(&request.target.agent_id),
+            );
             let newer_id = transport.state.lock().await.links[&key].id;
             pause.release.notify_one();
             let result = opening.await.unwrap();
             let accepted = result.is_ok();
-            let retained_id = transport.state.lock().await.links.get(&key).map(|link| link.id);
+            let retained_id = transport
+                .state
+                .lock()
+                .await
+                .links
+                .get(&key)
+                .map(|link| link.id);
             transport.retire(&request.target.runtime).await.unwrap();
             server.await.unwrap();
             newer_server.await.unwrap();
-            assert_eq!(retained_id, Some(newer_id), "stale recovery replaced a newer link");
+            assert_eq!(
+                retained_id,
+                Some(newer_id),
+                "stale recovery replaced a newer link"
+            );
             assert!(
                 !accepted,
                 "retire={retire}, stage={stage}: cancelled recovery installed a link"
             );
             assert!(transport.state.lock().await.links.is_empty());
         }
+    }
+}
+
+#[tokio::test]
+async fn capacity_recovery_proof_refuses_http_errors_oversize_and_uncorrelated_bodies() {
+    use crate::agent_capacity_recovery::CapacityRecoveryError as Error;
+    let request = request(None);
+    let mut foreign = confirmation(&request);
+    foreign.request.challenge = "a".repeat(32);
+    let cases = [
+        (
+            http_response(
+                "501 Not Implemented",
+                &[("Content-Length", "0".into())],
+                &[],
+            ),
+            Error::Unsupported,
+        ),
+        (
+            http_response("409 Conflict", &[("Content-Length", "0".into())], &[]),
+            Error::IdentityConflict,
+        ),
+        (
+            http_response(
+                "500 Internal Server Error",
+                &[("Content-Length", "0".into())],
+                &[],
+            ),
+            Error::Unavailable,
+        ),
+        (
+            http_response(
+                "200 OK",
+                &[("Content-Length", (256 * 1024 + 1).to_string())],
+                &[],
+            ),
+            Error::StateUnconfirmed,
+        ),
+        (
+            json_response(&serde_json::json!({"unknown":"proof"})),
+            Error::StateUnconfirmed,
+        ),
+        (
+            json_response(&CapacityRecoveryNativeProof {
+                confirmation: foreign,
+                cwd: "/workspace".into(),
+            }),
+            Error::StateUnconfirmed,
+        ),
+    ];
+    for (response, expected) in cases {
+        let (transport, provider, runtime) = transport_fixture(response).await;
+        let (updates, _received) = tokio::sync::mpsc::channel(8);
+        let result = transport
+            .reattach_existing_capacity_recovery(&request, updates)
+            .await;
+        assert!(matches!(result, Err(error) if error == expected));
+        provider.await.unwrap();
+        runtime.await.unwrap();
+        assert!(transport.state.lock().await.links.is_empty());
     }
 }

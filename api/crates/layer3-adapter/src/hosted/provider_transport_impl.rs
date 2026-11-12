@@ -1,7 +1,4 @@
 use super::*;
-use futures_util::StreamExt as _;
-
-const CAPACITY_RECOVERY_PROOF_BYTES: usize = 256 * 1024;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
@@ -30,52 +27,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             .endpoint(&request.target.runtime)
             .await
             .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
-        let url = endpoint
-            .capacity_recovery(&request.target.agent_id)
-            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
-        let (header_name, token) = self.auth_header(&endpoint);
-        let response = self
-            .http
-            .post(url)
-            .header(header_name, token)
-            .json(request)
-            .send()
-            .await
-            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(match status {
-                reqwest::StatusCode::NOT_FOUND | reqwest::StatusCode::NOT_IMPLEMENTED => {
-                    crate::agent_capacity_recovery::CapacityRecoveryError::Unsupported
-                }
-                reqwest::StatusCode::CONFLICT | reqwest::StatusCode::BAD_REQUEST => {
-                    crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict
-                }
-                _ => crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable,
-            });
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > CAPACITY_RECOVERY_PROOF_BYTES as u64)
-        {
-            return Err(crate::agent_capacity_recovery::CapacityRecoveryError::StateUnconfirmed);
-        }
-        let mut body = response.bytes_stream();
-        let mut proof_bytes = Vec::new();
-        while let Some(chunk) = body.next().await {
-            let chunk = chunk
-                .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
-            if chunk.len() > CAPACITY_RECOVERY_PROOF_BYTES.saturating_sub(proof_bytes.len()) {
-                return Err(
-                    crate::agent_capacity_recovery::CapacityRecoveryError::StateUnconfirmed,
-                );
-            }
-            proof_bytes.extend_from_slice(&chunk);
-        }
-        let proof = serde_json::from_slice::<
-            crate::agent_capacity_recovery::CapacityRecoveryNativeProof,
-        >(&proof_bytes)
-        .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::StateUnconfirmed)?;
+        let proof = self.capacity_recovery_proof(&endpoint, request).await?;
         proof
             .confirmation
             .validate_for(request)
