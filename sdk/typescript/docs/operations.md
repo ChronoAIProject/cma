@@ -120,3 +120,30 @@ authority. Closing new admission preserves exact accepted operations and request
 keys. Browser status/receipt recovery and explicit return remain available while
 new acquire/input/renew is disabled; do not hide a held browser or assume release.
 Replay eligibility affects presentation, not retained authorized history reads.
+
+## Agent capacity recovery
+
+Recovery remains disabled until the service operator completes its activation
+prerequisites. Metadata observation grants no permission to admit work. These
+methods use the existing personal authenticated HTTP boundary and perform no
+automatic retries. They never send or replay Agent input.
+
+Use `client.agents.capacityRecovery(agentId)` to obtain the resource. Its
+`dryRun()` reads current authorized metadata; `status()` reads current recovery
+status; `requestStatus(original)` inspects the unchanged original request.
+`admit(original)` explicitly requests new admission and `resume(original)`
+reconciles one bounded accepted-work attempt. Normal operation timeout and
+cancellation options apply to each method.
+
+The original request contains `agent_id`, `creation_key`,
+`creation_fingerprint`, `failure_seq` and `requested_at`. Obtain them through
+the supported recovery workflow and preserve every field on retry. Never create
+a replacement request to escape uncertainty. An operation key identifies work;
+it grants no authority. Foreign/missing resources remain concealed.
+
+A recorded outcome contains only operation identity, phase, attempt count and
+retry/completion timestamps. An HTTP 202 `unknown` outcome means the commit
+still needs reconciliation. A known abort is an HTTP 409 API error retaining
+its `outcome` extension. Neither outcome proves input was not executed.
+Named admission, authority and service refusals use the SDK's normal API error.
+Native conversation, runtime and home identities are never response fields.

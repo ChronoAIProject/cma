@@ -148,3 +148,29 @@ and accept limits from 1 through 200. Administrators use
 selects all owners. Individual Sandbox and history reads also accept current
 administrator authority. Cross-owner reads without that authority return 404.
 Deleted Sandboxes retain their metered history.
+
+## Agent capacity recovery
+
+Recovery remains disabled until the service operator completes its activation
+prerequisites. Metadata observation grants no permission to admit work. These
+methods use the existing personal authenticated HTTP boundary and perform no
+automatic retries. They never send or replay Agent input.
+
+Use `client.agents().capacity_recovery_preflight(agent_id)` for metadata and
+`capacity_recovery_status(agent_id)` for current status.
+`capacity_recovery_request_status(&original)` inspects the unchanged request.
+`admit_capacity_recovery(&original)` explicitly requests new admission and
+`resume_capacity_recovery(&original)` reconciles one bounded accepted-work attempt.
+
+The original request contains `agent_id`, `creation_key`,
+`creation_fingerprint`, `failure_seq` and `requested_at`. Obtain them through
+the supported recovery workflow and preserve every field on retry. Never create
+a replacement request to escape uncertainty. An operation key identifies work;
+it grants no authority. Foreign/missing resources remain concealed.
+
+A recorded outcome contains only operation identity, phase, attempt count and
+retry/completion timestamps. An HTTP 202 `unknown` outcome means the commit
+still needs reconciliation. A known abort is an HTTP 409 API error retaining
+its `outcome` extension. Neither outcome proves input was not executed.
+Named admission, authority and service refusals use the SDK's normal API error.
+Native conversation, runtime and home identities are never response fields.
