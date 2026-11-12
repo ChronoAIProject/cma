@@ -130,9 +130,13 @@ test('repository harness tools are required by name with procps ps and jq semant
     [{ 'ps --version': { status: 1, stdout: '' } }, /ps is not available on PATH/],
     [{ 'jq --version': { status: 0, stdout: 'gojq 0.12.16 (rev: HEAD/go1.22.0)\n' } }, /jq is not the required implementation/],
     [{ 'ps -o pid= -p 1': { status: 1, stdout: '' } }, /ps did not report a live process/],
-    [{ 'ps -o pid= -p 4194304': { status: 0, stdout: '' } }, /ps reported an absent process/],
+    ...[0, 2, null].map((status) => [
+      { 'ps -o pid= -p 4194304': { status, stdout: '' } }, /ps did not return the absent-process status/,
+    ]),
     [{ 'jq -ce .items | map(.n) | add': { status: 0, stdout: '[1,2]\n' } }, /jq did not filter JSON/],
-    [{ 'jq -e .missing': { status: 0, stdout: 'null\n' } }, /jq -e accepted a null result/],
+    ...[0, 2, null].map((status) => [
+      { 'jq -e .missing': { status, stdout: 'null\n' } }, /jq -e did not return the null-result status/,
+    ]),
   ]) assert.throws(() => runtimeToolVersions(toolOutputs(overrides)), message);
 });
 
