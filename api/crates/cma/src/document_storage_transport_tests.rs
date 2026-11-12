@@ -184,6 +184,7 @@ async fn connection_failure(write: bool) {
         }
     });
     let client = StorageDocuments::new(DocumentStorageConfig {
+        resilience_enabled: true,
         platform_origin: origin,
         bucket: "fixture".into(),
         client_id: "fixture-machine".into(),

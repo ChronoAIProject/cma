@@ -20,6 +20,7 @@ impl RateLimiters {
             Budget::Default => ("default", config.default_per_minute),
             Budget::Create => ("create", config.create_per_minute),
             Budget::Input => ("input", config.input_per_minute),
+            Budget::Control => ("control", config.control_per_minute),
             Budget::Admission | Budget::Health => unreachable!("admission remains per pod"),
         };
         use sha2::{Digest, Sha256};
