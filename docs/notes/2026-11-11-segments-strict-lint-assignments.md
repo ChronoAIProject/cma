@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 09:44 SGT. S2 owns
+Updated Thu 2026-11-12 09:53 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -11,12 +11,14 @@ Unsupported; source qualification does not claim supported production activation
 
 Current qualification source is `b13d84b5a`: develop archive safeguards merged
 at `be4f4ff0c`, followed by the ordinary/authenticated Mongo runner boundary fix
-`1902b7242` and selector-proof correction. This is new executable source and is
-not yet declared strict-green. The prior `c620ebbf2` strict/unit/Mongo results
+`1902b7242` and selector-proof correction. Strict CMA/core/public/adapter all-target/all-feature lint now passes with
+zero diagnostics (3m13s). The prior `c620ebbf2` strict/unit/Mongo results
 remain historical evidence for their exact source. Its first five Mongo
 partitions passed 192 cases; the remaining partitions were superseded before
-execution. New combined lint, units, authenticated Mongo and all required Mongo
-partitions are queued on an immutable b13d84b5a export.
+execution. Combined units are running; authenticated Mongo and all required Mongo
+partitions follow on the same immutable b13d84b5a export. Pushed checkpoint
+84e5352e6 differs only in this ledger, proved by the local source-equivalence
+artifact. No behavioral pass is inferred from the lint result.
 All currently published handoffs are included:
 
 | Owner | Pin / branch | Included work |
@@ -114,6 +116,7 @@ feature-gate suppression or fake call is an acceptable closure.
 | `be4f4ff0c` | Mocked runner after merge resolution | 31 passed / 0 failed, 162.626s; no real Mongo execution. |
 | `1902b7242` | Ordinary/authenticated mocked runner boundary | 48 passed / 1 failed: parser test still expected the old selector prefix. Corrected at b13d84b5a; focused rerun 1/1 passes. Final full rerun at b13d84b5a passes 49/49, zero skipped, 173.341s. |
 | `b13d84b5a` | Corrected ordinary/authenticated mocked runners | 49 passed / 0 failed / 0 skipped, 173.341s. Formatting and shell syntax also pass; combined Rust qualification is in progress. |
+| `b13d84b5a` | Consolidated strict CMA/core/public/adapter | PASS, all targets/features, zero diagnostics, 3m13s. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -396,3 +399,30 @@ boundaries. Current branch qualification is pending; old c620 evidence is not
 relabeled as a pass for the develop sync. Retired c620 source export and its
 supersession marker were removed after all its processes exited; one Cargo target
 and only the active source export remain. Shared locks were untouched.
+
+## Archive census integration failure — S2
+
+The b13d84b5a combined unit gate compiled and verified the caller/scheduler
+inventory, then stopped at 188 passes / 1 failure (392 selected tests not run;
+5046 outside selection/ignored). The failed test is
+`store::retirement_archive::tests::census_tests::every_declared_namespace_has_exactly_one_explicit_policy`.
+Develop's newly imported archive catalogue omitted all nine segmentation sidecars
+now required by the shared runtime collection inventory. S2 owns this registration
+failure; the prior strict pass does not turn it into a green behavioral gate.
+
+The integration correction registers all nine under the archive's existing
+`Empty` contract. Empty additive schema is compatible; any retained row refuses
+capture without omission, completion or source mutation. The archive currently
+requires v1 hierarchy/log proof, so no segmented archive compatibility is claimed.
+The existing actual-Mongo test iterates every unsupported namespace, proves each
+nonempty refusal and then verifies the empty/source-preserving success path.
+It must execute on the corrected combined source along with the catalogue test.
+
+Before writer/audit activation creates sidecar rows, a reviewed segmented
+archive/restore ownership closure is an additional activation dependency. This
+also includes rollout gate rows: closing a gate does not make it empty. S1 owns
+source/history closure design with the archive owner; S2 owns catalogue integration
+and qualification. This restriction does not authorize deletion or bypass, and is
+explicit in `docs/CMA_Retirement_Archive_Census.md` and the draft PR. Writer and
+recovery activation remain closed. Source correction is ready for rerun; no pass
+is inferred before execution.
