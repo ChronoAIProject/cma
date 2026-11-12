@@ -484,3 +484,11 @@ was copied by S4; the merge retains the identical source plus integration
 `83241035e` (contradictory-approval rejection and its regression).
 [Complete caller handoff](2026-11-12-segments-publication-checkpoints.md) records
 the exact source. Combined qualification starts now; activation stays closed.
+
+### Final settlement qualification source
+
+`88e293350` authenticates selected closed points and validates the active tail
+once per settlement, with fixed evidence-memory bounds and real-Mongo corruption
+refusal tests. S4 test-only pin `6b3c025db` is merged at `ae2bad370`; abandoned
+transaction cleanup preserves durable receipts and no-replay assertions. Combined
+qualification is running; final-source readiness is not yet claimed.
