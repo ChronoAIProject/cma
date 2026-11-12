@@ -60,7 +60,10 @@ async fn working(
         name,
         Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         active_sandbox("sbx_commands"),
-        Some((count, bounded)),
+        // Dispatch appends five admission records and one delivery record.
+        // Count them inside the measured log so the 10,000-row case can admit
+        // the command without crossing the normal history capacity first.
+        Some((count - 6, bounded)),
     )
     .await;
     let command = record(
@@ -81,6 +84,17 @@ async fn working(
         .unwrap();
     assert!(command.work.dispatch.is_some());
     assert!(!command.status.is_terminal());
+    assert_eq!(
+        store
+            .get_agent(&agent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .conversation
+            .last_seq,
+        count,
+        "measurement includes the durable dispatch and delivery records"
+    );
     (store, agent, command, execution)
 }
 
