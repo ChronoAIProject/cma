@@ -41,6 +41,7 @@ mod provider_metadata;
 mod public_contract_tests;
 mod records;
 mod refresh;
+pub(crate) mod registration;
 mod resource_request;
 mod sandbox_prerequisite;
 pub(crate) mod service_portal;
@@ -139,6 +140,7 @@ pub struct AuthState {
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
     spend: Option<Arc<dyn layer2_core::budget::PlatformSpendLedger>>,
+    registration_capacity: Option<Arc<dyn registration::RegistrationCapacity>>,
 }
 
 pub(super) struct RequestAuth {
@@ -204,6 +206,7 @@ impl AuthState {
             browser_origins,
             records,
             spend: None,
+            registration_capacity: None,
             store,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))

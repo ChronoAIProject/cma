@@ -136,6 +136,8 @@ data:
   CHRONO_PLATFORM_SPEND_WRITES_ENABLED: "false"
   # Open only after every replica understands the shared operator stop.
   CHRONO_ADMISSION_CONTROL_WRITES_ENABLED: "false"
+  # Open only after every serving and recovery API supports capacity ceilings.
+  CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
