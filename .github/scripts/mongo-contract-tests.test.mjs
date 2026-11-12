@@ -436,8 +436,8 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
   const {before, after} = JSON.parse(result);
   assert.equal(before['owner-allocation'], undefined);
-  assert.ok(before.ordinary.startsWith(`not test(=${scaleTest}) & (`));
-  assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & (`));
-  assert.ok(after['owner-allocation'].startsWith(`package(=cma) and test(=${ownerTest}) & (`));
+  assert.ok(before.ordinary.startsWith(`not test(=${scaleTest}) & ${fixturePredicate} & (`));
+  assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & ${fixturePredicate} & (`));
+  assert.ok(after['owner-allocation'].startsWith(`package(=cma) and test(=${ownerTest}) & ${fixturePredicate} & (`));
   for (const mode of ['all', 'scale', 'cpu-profile']) assert.equal(before[mode], after[mode]);
 });
