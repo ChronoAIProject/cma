@@ -91,15 +91,41 @@ pub(in crate::store) async fn read_proven_agent(
         return Ok(None);
     };
     let agent = crate::store::agents::read_agent(&row)?;
+    if crate::store::agent_log_segments::read_format(&row)?.is_some() {
+        return Err(SandboxStoreError::Unavailable(
+            "segmented history requires a bounded reader".into(),
+        ));
+    }
+    let trusted = legacy_proof(store, &agent, &row, session).await?;
+    Ok(Some((agent, trusted)))
+}
+
+pub(in crate::store) async fn legacy_proof(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    row: &Document,
+    session: &mut mongodb::ClientSession,
+) -> Result<bool, SandboxStoreError> {
+    legacy_proof_for_context(store, agent, row, session, true).await
+}
+
+pub(in crate::store) async fn legacy_proof_for_context(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    row: &Document,
+    session: &mut mongodb::ClientSession,
+    snapshot: bool,
+) -> Result<bool, SandboxStoreError> {
+    let agent_id = &agent.id;
     if store.bounded_log_enabled(agent_id) && row.contains_key(QUARANTINE_FIELD) {
         fleet::telemetry::record(fleet::telemetry::Event::Quarantined);
     }
-    let proof = proof::read_only_summary(store, &agent, &row, session, true)
+    let proof = proof::read_only_summary(store, agent, row, session, snapshot)
         .await
         .map_err(|error| match error {
             TransactionLogError::Domain(error) => error,
             TransactionLogError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
         })?;
     let trusted = proof.is_some() && store.bounded_log_enabled(agent_id);
-    Ok(Some((agent, trusted)))
+    Ok(trusted)
 }
