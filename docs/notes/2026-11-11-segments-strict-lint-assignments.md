@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 08:55 SGT. S2 owns
+Updated Thu 2026-11-12 09:26 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -14,7 +14,8 @@ Current checkpoint `c620ebbf2` changes only the discovery Mongo fixture and this
 ledger; production source is byte-identical. Strict CMA at ff0 passed with zero
 diagnostics (2m36s). The corrected retained/discovery Mongo selection now passes 4/4 at c620ebbf2;
 strict CMA also passes with zero diagnostics (2m28s), and adapter tests pass
-47/47. Authenticated Mongo and remaining contracts continue.
+47/47. Authenticated Mongo (1/1), segment/operator units (93/93) and recovery
+HTTP (8/8) pass. The 344-test Mongo selection is executing in nine partitions.
 All currently published handoffs are included:
 
 | Owner | Pin / branch | Included work |
@@ -103,6 +104,10 @@ feature-gate suppression or fake call is an acceptable closure.
 | `c620ebbf2` | Adapter tests | 47 passed / 0 failed, 711 skipped, 0.356s. |
 | `c620ebbf2` | Canonical authenticated Mongo | 1 passed / 0 failed, 2698 skipped, 1.671s. Canonical migration and isolated runtime grants execute successfully. |
 | `c620ebbf2` | Segment/operator/recovery units | 93 passed / 0 failed, 2606 skipped, 0.763s. Shared slot wait was about 16 minutes; compiled reuse took 0.33s. |
+| `c620ebbf2` | Recovery HTTP | 8 passed / 0 failed, 613 skipped, 0.098s; test binary build 1m11s. |
+| `c620ebbf2` | Mongo inventory | 344 ignored contract tests selected, 9 partitions of at most 39 tests. Inventory only, not 344 passes; execution in progress. |
+| `c620ebbf2` | Mongo partition 1/9 | 39 passed / 0 failed, 2660 skipped, 132.751s. Eight partitions remain. |
+| `c620ebbf2` | Mongo partition 2/9 | 39 passed / 0 failed, 2660 skipped, 96.194s. Seven partitions remain. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -343,3 +348,20 @@ Recovery HTTP and the partitioned Mongo inventory remain. Slot queue time is a
 schedule risk for final combined qualification; every gate still uses its own
 blocking shared-slot acquisition and releases it afterward. No unlocked run or
 second Cargo target is introduced to bypass the queue.
+
+At 09:23 the exact-source Mongo listing selects 344 ignored contract tests in
+nine bounded fixtures. The selected inventory explicitly contains 7 prepared-open
+worker cases, 1 prepared-replay race, 2 recovery-index migration cases, 2 discovery
+cases, all 31 capacity-recovery cases and 7 indexed-response reader cases. The
+authenticated case is correctly excluded from these ordinary fixtures and already
+passed in its dedicated fixture. Listing success is not execution success.
+
+For the next combined source, S2 prepared one strict command covering CMA/core/
+public/adapter with all targets/features and warnings denied, plus one nextest
+invocation containing the union of the existing caller/configuration, scheduler,
+response/core, adapter, segment/operator and HTTP selections. Mandatory caller
+and scheduler inventory checks remain. This reduces subsecond-suite lock queues
+without dropping selections; Mongo remains partitioned with a separate lock and
+owned disposable replica set per partition. These new consolidated commands are
+prepared, not yet executed or claimed passed. Current c620 qualification continues
+with its original step sequence.
