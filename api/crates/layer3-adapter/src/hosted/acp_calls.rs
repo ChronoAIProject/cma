@@ -2,6 +2,7 @@
 use std::time::Duration;
 
 use super::{Bridge, CALL_DEADLINE, SIGN_IN_DEADLINE};
+use crate::hosted::retained_json::JsonFrame;
 use crate::AdapterError;
 
 impl Bridge {
@@ -9,7 +10,7 @@ impl Bridge {
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> crate::Result<serde_json::Value> {
+    ) -> crate::Result<JsonFrame> {
         self.call_within(method, params, CALL_DEADLINE).await
     }
 
@@ -18,7 +19,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
         deadline: Duration,
-    ) -> crate::Result<serde_json::Value> {
+    ) -> crate::Result<JsonFrame> {
         let frame = self.call_frame_within(method, params, deadline).await?;
         rpc_result(method, frame)
     }
@@ -29,7 +30,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
         deadline: Duration,
-    ) -> crate::Result<serde_json::Value> {
+    ) -> crate::Result<JsonFrame> {
         let progress = if matches!(method, "initialize" | "session/load") {
             self.output_progress().await
         } else {
@@ -67,15 +68,9 @@ impl Bridge {
     }
 }
 
-pub(in crate::hosted) fn rpc_result(
-    method: &str,
-    frame: serde_json::Value,
-) -> crate::Result<serde_json::Value> {
+pub(in crate::hosted) fn rpc_result(method: &str, frame: JsonFrame) -> crate::Result<JsonFrame> {
     if let Some(error) = frame.get("error") {
         return Err(AdapterError::Rejected(format!("{method}: {error}")));
     }
-    Ok(frame
-        .get("result")
-        .cloned()
-        .unwrap_or(serde_json::Value::Null))
+    Ok(frame.into_result())
 }

@@ -51,14 +51,19 @@ impl ProviderHostedControlTransport {
                 ))
             })?;
         Ok(Self {
+            output_json_budget: false,
             client,
             http,
             archive_factory,
             state: Arc::new(Mutex::new(TransportState::default())),
             subscriptions: None,
+            retained_json: false,
+            bounded_raw_output: false,
+            shared_runtime_output: false,
             native_transport: NativeRuntimeTransport::Direct,
             native_http_budget: Arc::new(tokio::sync::Semaphore::new(32)),
             bounded_permission_state: false,
+            bounded_update_relay: false,
         })
     }
 
