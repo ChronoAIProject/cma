@@ -115,3 +115,64 @@ async fn concurrent_contexts_remain_distinct_and_operation_spans_are_ignored() {
     drop((a, b, operation));
     assert!(diagnostics.0.lock().unwrap().commands.is_empty());
 }
+
+#[tokio::test]
+async fn readiness_spans_keep_attempt_joins_and_never_promote_unknown_outcomes() {
+    use crate::readiness_diagnostics::{fixture::Capture, record::Record, Attempt};
+    use std::time::Duration;
+
+    for (event, phase) in [
+        ("command_succeeded", "command_completed"),
+        ("command_failed", "command_failed"),
+        ("command_completed", "command"),
+    ] {
+        let capture = Capture::new();
+        let diagnostics = Diagnostics {
+            2: Some(capture.recorder.clone()),
+            ..Default::default()
+        };
+        let provider = Provider(diagnostics.clone());
+        let mut attempt = Attempt::start(
+            Some(capture.recorder.clone()),
+            tokio::time::Instant::now(),
+            Duration::from_secs(2),
+        );
+        let check = attempt.check();
+        let mut span = attempt
+            .run(DiagnosticContext::background("health_monitor").scope(async { start(&provider) }))
+            .await;
+        match event {
+            "command_succeeded" => span.set_attribute(KeyValue::new("db.mongodb.cursor_id", 7_i64)),
+            "command_failed" => span.set_status(Status::error("private-driver-error")),
+            _ => (),
+        }
+        // Completion can run after the originating task-local scope is gone.
+        span.end();
+        drop(span);
+        attempt.finish("deadline");
+        let snapshots = capture.snapshots();
+        let snapshot = &snapshots[0];
+        assert!(snapshot.active.is_empty());
+        assert_eq!(snapshot.rows.len(), 2);
+        let started = &snapshot.rows[0];
+        let completed = &snapshot.rows[1];
+        assert_eq!(started.event, "command_started");
+        assert_eq!(completed.event, event);
+        assert_ne!(started.metadata.operation, 0);
+        assert_eq!(started.metadata.operation, completed.metadata.operation);
+        for row in &snapshot.rows {
+            assert_eq!(row.metadata.check, check);
+            assert_eq!(row.metadata.context.worker, "health_monitor");
+            assert!(!row.metadata.transaction_known);
+        }
+        assert_eq!(
+            completed.metadata.outcome_known,
+            event != "command_completed"
+        );
+        assert!(capture.records().iter().any(|r| matches!(
+            r,
+            Record::Attempt { outcome: "deadline", phase: actual, .. } if *actual == phase
+        )));
+        assert!(diagnostics.0.lock().unwrap().commands.is_empty());
+    }
+}
