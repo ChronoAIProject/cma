@@ -21,14 +21,7 @@ async fn bounded_log(
     .await
     {
         Ok(Some(entries)) => return Ok(entries),
-        Ok(None)
-        | Err(
-            SandboxStoreError::Corrupt(_)
-            | SandboxStoreError::SequenceConflict
-            | SandboxStoreError::AgentLogCapacityExceeded
-            | SandboxStoreError::InvalidPage
-            | SandboxStoreError::NotFound,
-        ) => {}
+        Ok(None) => {}
         Err(error) => return Err(unavailable(error)),
     }
     let find = store.agent_log.find(
@@ -136,6 +129,21 @@ pub(in crate::store) async fn enqueue(
             "suggestion outbox unavailable".into(),
         ))
     };
+    // Only enqueue receives the exact append batch. An ordinary transaction
+    // read/claim/completion never receives permission from `!snapshot`.
+    if logs.is_empty()
+        || logs
+            .last()
+            .is_none_or(|entry| entry.seq != agent.conversation.last_seq)
+        || logs.iter().any(|entry| entry.agent_id != agent.id)
+        || logs
+            .windows(2)
+            .any(|pair| pair[0].seq.checked_add(1) != Some(pair[1].seq))
+    {
+        return Err(TransactionLogError::Domain(
+            SandboxStoreError::SequenceConflict,
+        ));
+    }
     let entries = bounded_log(
         store,
         agent,
@@ -146,6 +154,17 @@ pub(in crate::store) async fn enqueue(
     )
     .await
     .map_err(map_error)?;
+    // The append must already be visible with its exact original identity in
+    // this transaction. There is no raw-source fallback after proof refusal.
+    if logs
+        .iter()
+        .filter(|entry| entry.seq >= turn_sequence && entry.seq <= completed.seq)
+        .any(|entry| !entries.iter().any(|stored| stored == entry))
+    {
+        return Err(TransactionLogError::Domain(
+            SandboxStoreError::SequenceConflict,
+        ));
+    }
     let Some(row) = store
         .sandboxes
         .find_one(doc! {"_id":agent.sandbox_id.as_str()})
@@ -172,3 +191,6 @@ pub(in crate::store) async fn enqueue(
         .map_err(TransactionLogError::Driver)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

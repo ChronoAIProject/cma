@@ -223,3 +223,33 @@ impl AgentTranscriptFold {
         })
     }
 }
+
+/// A bounded source page may split a turn. Merge messages by durable sequence;
+/// scalar turn metadata repeats, and a changed high-water mark refuses continuation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentTranscriptPageRequest {
+    pub turn: Option<u64>,
+    pub after: Option<u64>,
+    pub through: Option<u64>,
+    pub limit: u16,
+}
+impl AgentTranscriptPageRequest {
+    pub fn validate(&self) -> Result<(), super::AgentReadError> {
+        if self.limit == 0
+            || self.limit > 32
+            || self.turn.is_some() != self.after.is_some()
+            || self.turn.is_some() != self.through.is_some()
+            || self.turn == Some(0)
+            || self.after.zip(self.through).is_some_and(|(a, b)| a >= b)
+        {
+            return Err(super::AgentReadError::InvalidPage);
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AgentTranscriptPage {
+    pub transcript: AgentTranscript,
+    pub next: Option<AgentTranscriptPageRequest>,
+}

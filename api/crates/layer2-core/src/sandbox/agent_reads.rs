@@ -28,6 +28,8 @@ mod authorized;
 mod composition;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
+#[path = "agent_reads/transcript_pages.rs"]
+mod transcript_pages;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
 #[path = "agent_reads/history.rs"]
 mod history;

@@ -35,3 +35,6 @@ mod integrity;
 
 #[path = "indexed_tests/http.rs"]
 mod http;
+
+#[path = "indexed_tests/legacy_bounds.rs"]
+mod legacy_bounds;

@@ -41,7 +41,7 @@ a note or local assignment alone is not a delivered request.
 
 | Owner | Required item and owned files | Current state / dependency |
 | --- | --- | --- |
-| S1 cma-cost | P1-4/P2 response fixes and final disposition for `projections.rs`, `projections/response_readers_tests.rs`, allocated response/core/public paths and 01:55/05:20 shared callers. Reconcile legacy live replay's selected-turn cost with the declared request bound; do not omit intermediate updates. | Lead briefed; pin due 13:00. Existing response/factory/scale tests pass on 92ed. S1 owns any remaining response bound/parity fix and its explicit evidence. |
+| S1 cma-cost | P1-4/P2 response fixes and final disposition for `projections.rs`, `projections/response_readers_tests.rs`, allocated response/core/public paths and 01:55/05:20 shared callers. Reconcile legacy live replay's selected-turn cost with the declared request bound; do not omit intermediate updates. | Response source qualified at `9d59b39a4`: legacy quiet traversal yields after eight source pages, preserving all intermediate updates. Public response tests 111 passed, one existing ignored; three new regressions included. Strict public lint passes. [Response disposition](2026-11-12-response-matrix-disposition.md) maps inherited actual Mongo evidence and remaining shared route-inventory gates. Ready for integration and reviewer readback. |
 | S3 cma-seg-2 | P1-4/P2: `store/agent_log_segment_reads.rs`, transcript/usage/title projections, `store/agent_titles/bounded.rs`, selected Layer2 folds/tests and `store/suggestions/context.rs` proof-refusal handling. | Lead briefed; follow-up pin due 13:00. Bound requested-page work at 1/10/100/1000 segments, long first turns and over 10,128 rows / 4 MiB; add parity, continuation, final-authority, stale/corrupt proof and no-write matrix. |
 | S4 cma-seg-lead | P1-1: `store/child_writer_claims.rs`, `store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/apply.rs`; inventory ordinary roots. P1-N1: `store/agent_log_segments/writer_prepare.rs` and writer plan/persist permission. Own root tests under `store/sandbox_mongo_integration_tests/agent_segment_tests/`. | Lead briefed; follow-up pin due 13:00. Exact v2 capture authority must replace v1-only Agent predicates; parent stays independently qualified. Segmented CapacityRecovery needs an independent storage-only successor, never relabeled Rollover. Preserve `retirement_archive_pending()` guard. |
 | S5 cma-seg-3 | P1-N1service tests in new `store/sandbox_mongo_integration_tests/agent_capacity_recovery_tests/segmented_admission.rs`; necessary fixes in recovery preparation/admission/authority/records/receipts/restart/accepted_authority. | Lead briefed; follow-up pin due 13:00. Use existing frozen service/writer signatures below; success needs S4's implementation. Test actual segmented exhausted-source admit, atomic successor/carrier, abort, Unknown/restart, wrong/closed gate and original witness. S2 registers the child. |
@@ -59,9 +59,9 @@ No remaining compiler diagnostic is assigned from historical slice-only counts.
 | P1-1 ordinary v2 roots | **OPEN S4.** Agent CAS remains v1 at `store/child_writer_claims.rs:205`; reservation uses the same v1 filter for Agent and parent at `store/agent_commands/reserve.rs:154`; targeted control uses the legacy scanner. Require actual adoption→discovery→worker claim→ordinary/contextual/targeted admission→output, with refusal and abort cases. |
 | P1-2 runtime roles/carrier/index | Source and executable gates pass; reviewer confirmation remains. Canonical authenticated migration1/1; actual nonunique discovery/index drift and unregistered format-1 carrier refusal pass. |
 | P1-3 later progress | Source/executable closure ready for review: all 31 recovery Mongo cases pass, including all four historical later-service/restart failures. Production native confirmation remains typed Unsupported; that separately prohibits activation. |
-| P1-4/D6-2 large-history consumers | **OPEN S3**, with response disposition S1. Response compatibility refuses bounded-vector overflow and indexed pages succeed beyond both old limits. Transcript traversal still starts at zero and title reconstruction retains/refolds a growing first-turn prefix. No unlimited compatibility-vector closure is claimed. |
+| P1-4/D6-2 large-history consumers | **OPEN S3.** Response source qualified at `9d59b39a4`, pending reviewer readback: compatibility refuses bounded-vector overflow, indexed pages succeed beyond both old limits, and quiet legacy traversal yields within its source-page bound. Transcript traversal still starts at zero and title reconstruction retains/refolds a growing first-turn prefix. No unlimited compatibility-vector closure is claimed. See the response disposition for evidence and shared route-inventory follow-up. |
 | P1-N1 segmented capacity admission | **OPEN S4+S5.** `writer_prepare.rs:123` rejects supplied segmented admission unless Rollover. Existing 31 recovery tests do not cover successful already-segmented CapacityRecovery admission. |
-| P2/D6-5 parity/failure matrix | **OPEN S3**, response portion S1. Need segmented transcript/title/usage serialized parity, long turns, page bounds, invalid proof, snapshot/final-authority and no-write coverage. |
+| P2/D6-5 parity/failure matrix | **OPEN S3.** Response portion source qualified at `9d59b39a4`: serialized parity, long turns, page bounds, invalid proof, final authority and no-write coverage are mapped in the response disposition; snapshot/storage cases retain exact inherited Mongo pins. Need segmented transcript/title/usage serialized parity, long turns, page bounds, invalid proof, snapshot/final-authority and no-write coverage. Shared route-contract registration remains a combined gate. |
 | P2-N2 under500lines | Composition reaches 500 after develop sync; removing one empty import/impl separator makes 499, with every nonblank line unchanged. All 379 changed source files pass the strict under-500 check. Earlier store split retained. |
 | P2-5 unresolved keyed attempt; P2-6 total child budget; strict BSON/discovery; D6auth/enum/config | Source fixes retained; relevant combined units/Mongo pass. Reviewer final readback remains. |
 | P3 trailing blank | Corrected; working and base-to-head whitespace checks pass. |
@@ -215,3 +215,104 @@ cleaned up on exit; verify own resources absent before the final report. Keep
 30 GB free. Current executable gates use immutable source 92ed; subsequent changes
 to only documentation or the blank composition separator are separately proved,
 never falsely labeled a different tested source hash. Production untouched.
+
+## S3 consumer matrix qualified — 2026-11-12 12:25 SGT
+
+Tested source `4e49697771e06db6539191162e83431d204cfcfa` on
+`tl/cma-log-segments/transcript-consumers`, based on integration `ce18603ca`.
+The publication descendant adds only this ledger receipt and the disposition
+note. This supersedes the provisional S3 implementation/matrix status above;
+exact-head review and combined integration are still required for closure.
+
+Transcript pages now seek indexed turn evidence and bounded original points,
+including continuations within long turns. Title reconstruction uses four
+certified originals; it never retains/refolds a growing first-turn prefix.
+Usage validates the captured source. TypeScript/Rust SDK hydration and browser
+REST preserve the complete result after a typed pagination-required response.
+Ordinary suggestion read/claim/completion propagates proof refusal in snapshot
+and transaction modes. Enqueue requires the exact already-published append;
+there is no unpublished-append or `!snapshot` proof bypass.
+
+The final locked run passes 199 selected core/public tests, 34 actual Mongo
+contracts and 52 Rust SDK REST tests. Strict API/core/public and Rust SDK Clippy
+pass with warnings denied on Rust 1.96.1. TypeScript passes 4,360 tests/one existing
+skip plus typecheck/lint/build/docs/format; browser passes 78 selected tests plus
+typecheck/lint/build. Fmt, canonical size 6,342, strict under 500 for all 41 changed
+source/test files, config/docs, whitespace and final secret history pass.
+
+Bounds fixtures at 1/10/100/1000 seals return 35 original rows/19,883 BSON bytes;
+profiled commands 53/56, with no sort/COLLSCAN/write. The largest history exceeds
+10,128 rows/4 MiB; a 20-seal long turn has exact serialized fold parity at page
+limits 1/20/32. Invalid proof, retained snapshot, final owner/shared authority,
+no writes and suggestion publication distinction are executable cases.
+
+Three preexisting response-route inventory failures remain a combined dependency
+for `GET /api/v2/responses/{response_id}/output`; the selected gate excludes
+exactly those checks and cannot certify them. The initial broader Mongo selector
+also included an unrelated opt-in real-model sample without its required local
+proxy; its failure is retained, and the corrected 34-case replica-set run passed.
+No gate is waived. Both owned Mongo fixtures/volumes are absent after execution.
+See `2026-11-12-transcript-matrix-disposition.md` and
+`../CMA_Segmented_Transcript_Pages.md` for contract, matrix and exact limits.
+
+## S4 ordinary v2 admission allocation and 13:00 pin
+
+Branch `tl/cma-log-segments/ordinary-v2-admission` starts at `4b148fba5`.
+S4 owns the exact Agent envelope changes in `store/child_writer_claims.rs`,
+`store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/{apply,fences}.rs`,
+and the bounded transaction-local proof in `store/agent_log_segments/ordinary.rs`
+(with its single module registration). Parent fences and retirement archive guards
+remain independently enforced. Tests live under `store/sandbox_mongo_integration_tests/
+agent_segment_tests/{ordinary_roots,admission_contexts}.rs` and
+`admission_contexts/support.rs`; the existing discovery fixture exposes its
+connection-completion helper for the actual adopted claim/publication regression.
+
+P1-N1 uses a distinct `RolloverPermission::SegmentedRecovery`, supplied only by
+an exact durable CapacityRecovery admission. It forces a seal and empty successor,
+without event replay or sequence movement; it refuses legacy-source mismatch,
+empty source, appended events and terminal reserve classes. Writer preparation
+preserves conversation/worktree state and requires a non-Ready result. S5 keeps
+actual service admission success/refusal tests and the original dual-gate contract.
+
+Additional P1-1 inventory: `store/agent_conversation_store::apply_mutation`,
+`store/agent_conversation_store::checkpoint::{apply,write}` and
+`store/agent_commands::reconcile::apply` still use legacy publication/settlement.
+The three named claim/admission fixes alone therefore do not close P1-1's full
+post-adoption output requirement. Exact additional ownership/dependency was
+requested through the lead. Keep writer/recovery activation closed and both
+issues In Progress. Final-source gate counts and the exact pin are appended below;
+no unexecuted test or previous-pin pass is a qualification of this pin.
+
+### Published 13:00 checkpoint (12:56 SGT)
+
+Pushed executable head `256f455b9` normally merges develop `d08742c70`.
+The narrow CapacityRecovery permission commit is `ea8d89ef7`; ordinary claim/
+admission code and four new Mongo roots are `a56e1e025`. All are reachable from
+`tl/cma-log-segments/ordinary-v2-admission`. No PR is opened.
+
+Exact-head light gates: fmt/whitespace pass; canonical size 6,375 files pass;
+secret history 4,162 commits / zero findings. Prior working-source strict CMA
+all-targets/all-features passed with zero diagnostics, and the earlier planner
+selection passed 8/8. These are interim evidence only: additional tests and the
+develop merge require final-source strict/units/Mongo, now queued on shared slot 1.
+The queue uses `lockf -k -t 3600`, two jobs and a RAM pause below 10%; locks remain
+intact. An accidentally selected root-default toolchain build was cancelled and
+requeued with the repository's explicit 1.96.1 toolchain before any test executed.
+No final-source unit or Mongo count is claimed. Evidence remains in
+`notes/2026-11-12-ordinary-v2-evidence/` in the dedicated worktree.
+
+Full P1-1 closure remains blocked on the additional conversation/checkpoint/
+settlement paths named above; current proof is admission/worker publication only.
+P1-N1 writer permission is published for S5's service qualification, not declared
+service-qualified. Project 9 for #1350 and #1351 was verified In Progress.
+
+### S4 13:00 handoff to the new integrator
+
+Integrator is now cma-cost. Pushed `1b722a42ebb58d3568078084269b8f03f30ff18b`
+on `tl/cma-log-segments/ordinary-v2-admission`; develop `d08742c70` is included.
+This fixes duplicate pagination module/import declarations introduced by the
+normal develop merge. Final-source compilation stopped before executing tests
+on the duplicate declaration; that failure is retained as evidence. Corrected
+units/Mongo/strict gates are queued under shared slot 1. The previous light
+gates and P1-1 output/settlement gap above remain accurately scoped. The writer
+CapacityRecovery permission is available for S5 service qualification. No PR.

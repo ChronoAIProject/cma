@@ -54,7 +54,11 @@ const dispatch = {
 };
 
 function response(fixture: ContractCase): Response {
-  const { bodyKind, body, status, headers } = fixture.response;
+  const { bodyKind, body, status } = fixture.response;
+  const headers = new Headers(fixture.response.headers);
+  for (const cookie of fixture.response.setCookies ?? []) headers.append('set-cookie', cookie);
+  if (fixture.response.setCookies !== undefined)
+    expect(headers.getSetCookie()).toEqual(fixture.response.setCookies);
   if (bodyKind === 'sse') {
     const wire = (body as Record<string, unknown>[])
       .map(
