@@ -9,6 +9,13 @@ use super::{
 
 #[async_trait::async_trait]
 pub trait SandboxControlStore: Send + Sync {
+    /// Exact accepted retries remain available while new revival is paused.
+    async fn lookup_sandbox_control(
+        &self,
+        _candidate: &SandboxControlRecord,
+    ) -> Result<Option<SandboxControlRecord>, SandboxControlError> {
+        Ok(None)
+    }
     /// Persist a new record and admission evidence atomically with its current
     /// resource-policy guard. Replay never changes the old command or deadline.
     async fn reserve_sandbox_control(

@@ -115,6 +115,8 @@ pub enum LaunchServiceError {
     Conflict,
     #[error("model budget refused the Launch: {0}")]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("launch dependency is unavailable: {0}")]
     Unavailable(String),
     #[error("launch data is not usable: {0}")]
@@ -141,6 +143,7 @@ impl LaunchServiceError {
             Self::InvalidCursor => "invalid_launch_cursor",
             Self::Conflict => "launch_changed",
             Self::Budget(reason) => reason.code(),
+            Self::AdmissionPaused => "admission_paused",
             Self::Unavailable(_) => "launch_service_unavailable",
             Self::Corrupt(_) => "stored_launch_corrupt",
         }

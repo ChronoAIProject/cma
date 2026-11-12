@@ -33,6 +33,8 @@ pub enum SandboxControlServiceError {
     Store(#[from] SandboxControlError),
     #[error("model budget refused the revival: {0}")]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
 }
 
 pub struct SandboxControlService {
@@ -63,13 +65,20 @@ impl SandboxControlService {
         let _ = self.platform_spend.set(spend);
     }
 
-    async fn require_platform_open(&self) -> Result<(), crate::budget::BudgetError> {
+    async fn require_platform_open(
+        &self,
+        cause: crate::admission::AdmissionCause,
+    ) -> Result<(), crate::admission::AdmissionRefusal> {
         let Some(spend) = self.platform_spend.get() else {
             return Ok(());
         };
         let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
             .ok_or(crate::budget::BudgetError::Unavailable)?;
-        match spend.admission_state(now).await?.commitment_refusal() {
+        match spend
+            .admission_state(now)
+            .await?
+            .commitment_refusal_for(cause)
+        {
             Some(reason) => Err(reason),
             None => Ok(()),
         }
@@ -151,11 +160,6 @@ impl SandboxControlService {
             request_fingerprint: submission.command.fingerprint(submission.expected_revision),
         };
         envelope.validate()?;
-        if envelope.command == SandboxControl::Revive {
-            self.require_platform_open()
-                .await
-                .map_err(SandboxControlServiceError::Budget)?;
-        }
         let proof = SandboxControlAuthorization::bind(
             (*self.access).clone(),
             authorized,
@@ -177,6 +181,20 @@ impl SandboxControlService {
             admission_audit: proof.audit()?,
             execution_audit: None,
         };
+        if record.envelope.command == SandboxControl::Revive {
+            match self
+                .require_platform_open(crate::admission::AdmissionCause::Fresh)
+                .await
+            {
+                Err(crate::admission::AdmissionRefusal::Paused) => {
+                    if let Some(accepted) = self.store.lookup_sandbox_control(&record).await? {
+                        return Ok(accepted);
+                    }
+                    return Err(SandboxControlServiceError::AdmissionPaused);
+                }
+                result => result.map_err(SandboxControlServiceError::from)?,
+            }
+        }
         Ok(self.store.reserve_sandbox_control(record, proof).await?)
     }
 

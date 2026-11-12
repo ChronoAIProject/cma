@@ -5,6 +5,25 @@ use std::sync::Arc;
 
 #[async_trait]
 impl SandboxControlStore for InMemorySandboxStore {
+    async fn lookup_sandbox_control(
+        &self,
+        candidate: &SandboxControlRecord,
+    ) -> Result<Option<SandboxControlRecord>, SandboxControlError> {
+        let state = self.lock();
+        let key = (candidate.envelope.scope(), candidate.key_sha256.clone());
+        state
+            .sandbox_control_keys
+            .get(&key)
+            .map(|id| {
+                state
+                    .sandbox_controls
+                    .get(id)
+                    .cloned()
+                    .ok_or(SandboxControlError::Corrupt)
+                    .and_then(|old| candidate.replay(old))
+            })
+            .transpose()
+    }
     async fn reserve_sandbox_control(
         &self,
         record: SandboxControlRecord,
