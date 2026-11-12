@@ -34,6 +34,11 @@ controls when setting *behavioral* feature flags off for the experiment.
 
 Neither request headers nor BSON commands/replies, filters, database/server
 names, resource identities, error text or inherited request spans are emitted.
+The production full-text formatter respects each diagnostic event's explicit
+root scope. If configuring JSON output, disable both current-span and span-list
+inclusion: tracing-subscriber 0.3.23's JSON formatter otherwise falls back to the
+active span even for a root event. The tests cover the production formatter and
+JSON field capture with both inherited-span settings disabled.
 Request context is task-local and is reinstalled on streaming-body polls.
 Checkout context is retained until the asynchronous driver check-in callback.
 Spawned schedulers, reconciliation, recovery assessment, metrics and capacity
