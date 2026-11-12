@@ -18,23 +18,7 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
             3600.,
         ])
         .map_err(|error| error.to_string())?;
-    let mut builder = runtime::configure(builder)?;
-    // These thresholds distinguish #1787's sub-2 ms, 5 ms driver and 10 ms
-    // section cases; the general request histogram starts too coarsely.
-    for name in [
-        "cma_agent_log_scan_longest_section_seconds",
-        "cma_agent_log_scan_driver_poll_seconds",
-    ] {
-        builder = builder
-            .set_buckets_for_metric(
-                metrics_exporter_prometheus::Matcher::Full(name.into()),
-                &[
-                    0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.,
-                    2., 5., 10.,
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-    }
+    let builder = configure_histograms(builder)?;
     let recorder = builder.build_recorder();
     let handle = recorder.handle();
     metrics::set_global_recorder(recorder)
@@ -76,6 +60,27 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
     );
     sample();
     Ok(handle)
+}
+
+fn configure_histograms(builder: PrometheusBuilder) -> Result<PrometheusBuilder, String> {
+    let mut builder = runtime::configure(builder)?;
+    // These thresholds distinguish #1787's sub-2 ms, 5 ms driver and 10 ms
+    // section cases; the general request histogram starts too coarsely.
+    for name in [
+        "cma_agent_log_scan_longest_section_seconds",
+        "cma_agent_log_scan_driver_poll_seconds",
+    ] {
+        builder = builder
+            .set_buckets_for_metric(
+                metrics_exporter_prometheus::Matcher::Full(name.into()),
+                &[
+                    0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.,
+                    2., 5., 10.,
+                ],
+            )
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(builder)
 }
 
 pub(crate) fn timestamp() -> f64 {
