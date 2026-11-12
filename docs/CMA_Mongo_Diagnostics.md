@@ -50,7 +50,8 @@ gap to measure, not evidence of no background work.
 ## Sampling and accounting
 
 All command completions and physical connection returns at or above **100 ms**,
-and all failures, are logged. Every 100th fast command and checkout is sampled.
+and all failures, are selected for logging; queue overflow can drop any selected
+record, including slow records and summaries. Every 100th fast command and checkout is sampled.
 An unsampled command's started metadata is emitted at completion if it is slow
 or failed (`deferred=true`). Deferred starts are not live in-flight observations.
 No event writes command/reply bodies, including the failure path.
@@ -189,3 +190,29 @@ window. Preserve the required metadata and compare optimized fixture results
 before changing the implementation. Phase timers and existing pool metrics can
 remain enabled with command monitoring off; that mode loses collection/command
 attribution.
+
+## Nonblocking output and loss accounting
+
+Driver callbacks enqueue fixed metadata records with `try_send` into one bounded
+4,096-record queue. A dedicated OS thread performs tracing formatting and sink
+I/O. Detail events, attributed summaries, heartbeats, existing pool summaries and
+reporting-circuit messages all use this path. The callback retains only bounded
+metadata accounting and fixed-size hash work; it never waits for output capacity
+or formats a log line. No BSON payload is retained in the queue. Circuit decisions
+and existing metrics remain synchronous so logging pressure cannot defer them.
+
+A full or disconnected queue drops the record and increments an atomic loss
+counter. Every ten seconds the writer reports `mongo_diagnostic_output` with
+`dropped_total` (cumulative for this process, across both pools) and
+`queue_capacity`. If the sink stalls, that report waits on the writer thread;
+the counter remains available to that thread when output resumes. A permanently
+failed writer cannot report through the failed sink. Missing heartbeats are a
+coverage failure, not evidence of zero work.
+
+Each emitted record includes `queue_delay_us`. Log timestamps reflect emission;
+backlog can shift records into later wall-clock buckets. Nonzero drops mean even
+unsampled aggregates may be absent, and queued records are lost on abrupt process
+exit. Report loss and queue delay with comparisons. This is best-effort diagnostic
+output, never an audit trail. Command monitoring remains default off; if this fix
+misses the candidate cutoff, keep it off with detail timers on as directed by the
+release plan.
