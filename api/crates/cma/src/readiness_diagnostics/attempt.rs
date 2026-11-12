@@ -39,6 +39,9 @@ impl Progress {
             "command_succeeded" => 4,
             "checkout_failed" => 5,
             "command_failed" => 6,
+            // Span drop can mean cancellation or an unmarked driver result.
+            // Preserve the last confirmed phase instead of claiming success.
+            "command_completed" => return,
             _ => return,
         };
         if operation != 0 {
