@@ -5,6 +5,8 @@ use base64::Engine as _;
 mod owner_service_access;
 #[path = "api_bearer_refusal_tests.rs"]
 mod refusals;
+#[path = "scoped_oauth_tests.rs"]
+mod scoped_oauth;
 
 fn token(claims: Value) -> String {
     format!(
