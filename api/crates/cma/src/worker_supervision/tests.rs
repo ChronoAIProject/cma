@@ -158,6 +158,98 @@ async fn repeated_exits_are_rate_limited_and_shutdown_during_backoff_never_resta
 }
 
 #[tokio::test(start_paused = true)]
+async fn cooldown_expires_once_and_repeated_failure_starts_a_new_bounded_window() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let count = Arc::new(AtomicUsize::new(0));
+    let activity = Workers::new().get("launches");
+    let (stop, signal) = watch::channel(false);
+    let worker = spawn(
+        count.clone(),
+        activity.clone(),
+        signal,
+        |count, _, _| {
+            Box::pin(async move {
+                count.fetch_add(1, Ordering::SeqCst);
+            })
+        },
+        |_| Box::pin(async {}),
+    );
+    settle().await;
+    for delay in [1, 2, 4, 8] {
+        tokio::time::advance(Duration::from_secs(delay)).await;
+        settle().await;
+    }
+    tokio::time::advance(RESTART_WINDOW - Duration::from_millis(1)).await;
+    settle().await;
+    assert_eq!(count.load(Ordering::SeqCst), 5);
+    assert_eq!(activity.snapshot().state, "restart_limited");
+    tokio::time::advance(Duration::from_millis(1)).await;
+    settle().await;
+    assert_eq!(count.load(Ordering::SeqCst), 6);
+    assert_eq!(activity.snapshot().state, "backoff");
+    // All failures from the old window have expired; the new first delay is 1s.
+    for (delay, expected) in [(1, 7), (2, 8), (4, 9), (8, 10)] {
+        tokio::time::advance(Duration::from_secs(delay)).await;
+        settle().await;
+        assert_eq!(count.load(Ordering::SeqCst), expected);
+    }
+    assert_eq!(activity.snapshot().state, "restart_limited");
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn successful_retry_after_cooldown_requires_a_turn_and_resets_old_failure_backoff() {
+    let activity = Workers::new().get("launches");
+    let (stop, signal) = watch::channel(false);
+    let worker = spawn(
+        0,
+        activity.clone(),
+        signal,
+        |attempt, activity, shutdown| {
+            Box::pin(async move {
+                *attempt += 1;
+                if *attempt <= 5 {
+                    return;
+                }
+                let mut tick = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    activity.waiting(Duration::from_secs(1), "idle_scan");
+                    tokio::select! {
+                        _ = tick.tick() => activity.scheduled(),
+                        _ = crate::shutdown::signalled(shutdown.clone()) => return,
+                    }
+                }
+            })
+        },
+        |_| Box::pin(async {}),
+    );
+    settle().await;
+    for delay in [1, 2, 4, 8] {
+        tokio::time::advance(Duration::from_secs(delay)).await;
+        settle().await;
+    }
+    assert!(!activity.snapshot().available());
+    tokio::time::advance(RESTART_WINDOW).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "running");
+    for _ in 0..61 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        settle().await;
+        assert!(activity.snapshot().available());
+    }
+    panic_next_poll(&activity);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "backoff");
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert!(activity.snapshot().available());
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
 async fn discovery_deadline_releases_query_and_allows_later_scans() {
     let activity = Workers::new().get("agents");
     let scan = tokio::spawn(discover(
