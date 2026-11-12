@@ -142,6 +142,7 @@ pub(super) fn settings(
     own_credential: bool,
 ) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        coordinated_ingress: false,
         retained_json: false,
         bounded_raw_output: false,
         bounded_permission_state: false,
