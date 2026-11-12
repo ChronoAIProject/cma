@@ -63,7 +63,8 @@ pub struct Sandbox {
     pub status: SandboxStatus,
     /// Immutable source profile.
     pub profile: ProfileReference,
-    /// Explicit automatic-pause whitelist preference, when supplied by the server.
+    /// Explicit automatic-pause exception, when supplied by the server.
+    /// True alone does not establish approval provenance for retained records.
     #[serde(default)]
     pub always_on: Option<bool>,
     /// Effective creation and explicitly granted services; absent on older servers.
