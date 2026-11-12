@@ -219,3 +219,9 @@ documents. Do not mutate user conversations or owner-adopted fixtures merely
 to demonstrate the new feature. Record the actual deployed digests and measured
 results separately; source completion or passing local tests alone is not
 production acceptance.
+
+Source-bearing writes are bounded per API process. When all 16 source-write
+permits are in use, a create or Markdown update is rejected immediately with
+HTTP 429, code `document_write_busy`, and `Retry-After: 1`; callers should retry
+the same idempotent request after the advertised delay. Title-only edits,
+sharing, revocation and comments do not consume source-write permits.

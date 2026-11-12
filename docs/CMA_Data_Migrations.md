@@ -260,3 +260,26 @@ Follow-ups under [CMA data migration safety](https://github.com/ChronoAIProject/
 - [Service migration runner/ledger #1328](https://github.com/ChronoAIProject/cma/issues/1328).
 - [Planned startup DDL #1329](https://github.com/ChronoAIProject/cma/issues/1329).
 - [Backfill progress and completion surfaces #1331](https://github.com/ChronoAIProject/cma/issues/1331).
+
+## 2026-11-13-am-document-source-commit-state
+
+This release adds the `state` (`reserved`, `committed`, `condemned`) and
+`reserved_at` fields to `cma_document_quotas` object rows and makes source
+metadata commits atomic with the `reserved` to `committed` transition. The
+migration is additive and default-closed. Its reader floor is the identity-only
+quota comparison reader: that reader must first be deployed and pinned as the
+rollback target before any writer can emit the new fields. Rows from older
+writers without `state` are interpreted as `reserved`; they are not rewritten
+by this release and become `committed` only when a later metadata commit proves
+the reference. The reclaim worker introduced later owns the `condemned`
+transition.
+
+The affected writers are the document service create and Markdown update paths,
+the Mongo document store transaction helper, and the quota baseline importer.
+The transaction writes the expected metadata and the object state together;
+CAS conflicts abort without changing the object, and condemned objects abort
+without changing metadata. Unknown commit results are reconciled at the
+recorded operation time. Keep the compatible reader image, Mongo backups and
+activation manifest as recovery artifacts. Completion evidence includes exact
+retry identity, legacy-row reads, commit/CAS conflict behavior, condemned-row
+refusal and the per-process 16-slot busy refusal.

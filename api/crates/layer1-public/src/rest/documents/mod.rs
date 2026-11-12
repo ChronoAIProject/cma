@@ -110,20 +110,28 @@ impl From<DocumentError> for DocumentProblem {
 }
 impl IntoResponse for DocumentProblem {
     fn into_response(self) -> Response {
+        let busy = matches!(self.0, DocumentError::Busy);
         let (status, code) = match self.0 {
             DocumentError::Invalid => (StatusCode::BAD_REQUEST, "invalid_document_request"),
             DocumentError::NotFound => (StatusCode::NOT_FOUND, "document_not_found"),
             DocumentError::Conflict => (StatusCode::CONFLICT, "document_revision_conflict"),
             DocumentError::IdempotencyConflict => (StatusCode::CONFLICT, "idempotency_key_reused"),
             DocumentError::Capacity => (StatusCode::TOO_MANY_REQUESTS, "document_capacity"),
+            DocumentError::Busy => (StatusCode::TOO_MANY_REQUESTS, "document_write_busy"),
             DocumentError::Unavailable | DocumentError::Corrupt => {
                 (StatusCode::SERVICE_UNAVAILABLE, "document_unavailable")
             }
         };
-        super::problem_response(
+        let mut response = super::problem_response(
             status,
             super::problem_document(status, code, &self.0.to_string(), code),
-        )
+        );
+        if busy {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, "1".parse().unwrap());
+        }
+        response
     }
 }
 
@@ -170,4 +178,16 @@ impl IntoResponse for DocumentProblem {
 struct DocumentApi;
 pub(crate) fn document() -> utoipa::openapi::OpenApi {
     <DocumentApi as utoipa::OpenApi>::openapi()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_document_writes_map_to_retryable_429() {
+        let response = DocumentProblem(DocumentError::Busy).into_response();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers().get(header::RETRY_AFTER).unwrap(), "1");
+    }
 }

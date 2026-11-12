@@ -146,3 +146,53 @@ committed metadata replay remain available. Recovery is forward-only when the
 baseline is incomplete or uncertain. Storage-owner authorized orphan cleanup and
 any future reservation release must prove object finality and preserve exact
 operation replay in their own migration; neither is inferred from HTTP failure.
+
+## Source object commit states and bounded writers
+
+Each object ledger row now carries `state` and `reserved_at`. A newly reserved
+row is `reserved`; the metadata commit transaction changes it to `committed`,
+and the later reclaim workflow may move an unreferenced row to `condemned` before
+it is deleted. The writer and reclaim paths update the same object row, so a
+condemnation cannot race a metadata commit into a referenced deleted object.
+Rows written by older readers without `state` are read as `reserved` until a
+compatible writer observes and commits them.
+
+When the quota ledger is ready, a document create or Markdown update writes its
+metadata and marks its source object committed in one majority MongoDB
+transaction. A failed CAS aborts the transaction and leaves the object reserved;
+a condemned object makes the transaction unavailable and leaves metadata
+unchanged. Unknown commit outcomes are resolved by a snapshot read at the
+recorded operation time and succeed only when both the expected metadata and a
+committed object are visible. Title-only, sharing, revocation and comment
+mutations retain the plain metadata CAS path.
+
+Every API process admits at most 16 source writes at once. The permit covers
+reservation, object upload and metadata commit. A seventeenth source write is
+refused immediately with HTTP 429 `document_write_busy` and `Retry-After: 1`;
+it is never queued. Metadata-only mutations do not consume these permits.
+
+## Data migration record
+
+- **Migration ID:** `2026-11-13-am-document-source-commit-state`
+- **Stores and writers:** `cma_document_quotas` object rows and
+  `cma_document_artifacts` metadata rows; the Layer 2 document service, Mongo
+  document store, quota baseline importer and later reclaim worker are the
+  writers/readers.
+- **Format:** object rows add `state` (`reserved`, `committed`, or
+  `condemned`) and `reserved_at`. Metadata rows are unchanged.
+- **Reader floor and gates:** the identity-only quota reader must be deployed
+  and become the rollback target before any writer emits `state` or
+  `reserved_at`. Existing object rows without `state` are treated as
+  `reserved`; the first reclaim/commit observation may advance a referenced row
+  to `committed`. The quota and source-write switches remain default-off until
+  the ready activation is verified.
+- **Migration bounds:** this is additive and does not rewrite existing rows or
+  delete objects. It changes only source-bearing create and Markdown update
+  commits; metadata-only mutations keep their existing commands.
+- **Recovery and backup:** retain the Mongo snapshot/backup and the compatible
+  reader image. If a commit result is unknown, reconcile from the transaction's
+  snapshot time; if the object is not committed with the expected metadata,
+  return unavailable and leave the reservation for reclaim.
+- **Completion:** verify old rows, exact retries, condemned write rejection,
+  CAS conflict behavior and the 16-slot busy response before enabling any
+  production writer.
