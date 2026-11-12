@@ -14,9 +14,8 @@ This document is the procedure. The rules it implements are in [CLAUDE.md](../CL
 | `ghcr.io/chronoaiproject/cma-web:vX.Y.Z`       | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
 | `ghcr.io/chronoaiproject/cma-runtime:vX.Y.Z`   | GHCR, private                                                                | intended write-once; requires audited writer access and package history |
 | `ghcr.io/chronoaiproject/cma-cmaeg:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
-| `ghcr.io/chronoaiproject/cma-image-manager:vX.Y.Z` | GHCR, private | intended write-once; requires audited writer access and package history |
-| the same five at `:<short-sha>`               | GHCR, private                                                                | intended write-once under the same audited contract                     |
-| five OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload                             |
+| the same four at `:<short-sha>`               | GHCR, private                                                                | intended write-once under the same audited contract                     |
+| four OCI transfer archives with JSON metadata | the `Publish release` Actions run, readable under repository artifact access | yes; retained for up to one day from upload                             |
 | closed D-09 runtime-boundary evidence          | the same Actions run, readable under repository artifact access              | exact release commit and runtime digest; retained for 90 days           |
 | annotated tag `vX.Y.Z`                         | this repository                                                              | write-protected after creation by the required active ruleset           |
 | GitHub release `vX.Y.Z`                        | this repository                                                              | notes editable                                                          |
@@ -105,7 +104,7 @@ Branch protection on `main` requires these contexts, and `enforce_admins` is on 
 ```
 Repository structure   Secret scanning   Backend   Frontend   Manifests
 Images (api)           Images (web)      Images (runtime)
-Images (cmaeg)         Images (image-manager)
+Images (cmaeg)
 TypeScript SDK         Rust SDK          Source branch
 Release declaration    Commit hygiene    Trigger release contract
 Trigger provider smoke contract
@@ -131,9 +130,9 @@ is later absent or drifts.
 `Images (runtime)`, `TypeScript SDK`, and `Rust SDK` are required on both
 protected branches. The SDK jobs prove the repository-only packages build and
 work for source consumers; requiring them does not publish either SDK.
-The service split adds `Images (cmaeg)` and `Images (image-manager)` to the target
-required checks. Their remote branch-protection bindings and new package ACLs
-still need operator verification; this local change has not modified GitHub settings.
+The service split adds `Images (cmaeg)` to the target required checks. Its remote
+branch-protection binding and package ACL still need operator verification; this
+local change has not modified GitHub settings.
 
 ### Required release write fences
 
@@ -228,7 +227,7 @@ Then, on merge, `publish.yml`:
   fails if either appeared; this narrows the build-and-scan race window but is
   not a registry compare-and-swap, so it does not replace exclusive write
   access;
-- after all five images are in GHCR, exports each published digest to a one-day OCI transfer artifact without rebuilding it;
+- after all four images are in GHCR, exports each published digest to a one-day OCI transfer artifact without rebuilding it;
 - consumes the exact runtime transfer artifact, validates its complete metadata
   and archive checksum, pulls its immutable `sourceReference`, and runs the D-09
   runtime network-boundary campaign against the full release commit;
@@ -292,7 +291,7 @@ HEAD_SHA="$(jq -r '.headSha' <<<"$run_json")"
 test "$HEAD_SHA" = "$(gh api "repos/$REPOSITORY/commits/$VERSION" --jq '.sha')"
 REVISION="${HEAD_SHA:0:7}"
 
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg; do
   mkdir "$TRANSFER_DIR/$component"
   gh run download "$RUN_ID" --repo "$REPOSITORY" \
     --name "cma-${component}-${VERSION}-${REVISION}-oci" \
@@ -303,7 +302,7 @@ done
 Inspect and validate the JSON instead of sourcing it as shell code. This checks every selected identity, including the full and short commit revisions, the archive name and checksum, the source references, and the intended platform set. The exporter writes these files only after the version and revision tags have the same raw root-manifest digest, every source and archive platform config carries the exact version/full-revision labels, and the archive reproduces the root digest. `sourceDigest` is the GHCR digest observed and reproduced by the exporter at export time; accept it as the release identity only after the exclusive-writer and package-history checks above rule out a preseed or stale-read overwrite. Neither `archiveSha256` nor the checksum GitHub shows for its enclosing Actions artifact is an image digest.
 
 ```bash
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg; do
   base="cma-${component}-${VERSION}-${REVISION}"
   metadata="$TRANSFER_DIR/$component/$base.json"
   archive="$TRANSFER_DIR/$component/$base.oci.tar"

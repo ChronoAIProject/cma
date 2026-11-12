@@ -181,7 +181,7 @@ compiling jobs and rejects it in consumers. No public API contract changes here.
 
 ## Backend Shutdown Evidence
 
-The lint, test-build, three test shards, timing, Mongo and Image Manager jobs
+The lint, test-build, three test shards, timing, Mongo and service-auth jobs
 set `BASH_ENV` at job scope to
 `${{ github.workspace }}/.github/scripts/backend-resource-env.sh`. Their Bash
 steps source the hook, including the isolated timing budgets, as the former
@@ -227,14 +227,16 @@ Samples show observations, not automatic diagnoses. RSS may include shared
 pages, root cgroup counters have their own scope, and a ten-second sample can
 miss a short peak. A missing sample or an exit-143 runner shutdown alone does
 not prove OOM, disk exhaustion, or manual cancellation. Compare passing and
-failed timelines before proposing a fix. The Image Manager step's existing
-deadline remains a distinct failure mode.
+failed timelines before proposing a fix. A contract step's deadline remains a
+distinct failure mode.
 
-## Image Manager Deadline Margin
+## Historical Deadline Margin
 
-`Image Manager authenticated Mongo isolation` retains a finite **15-minute**
-step deadline. This deliberate CI policy change has its own commit: the former
-10-minute bound expired on #1419 and #1418, and a passing run took 9m57s. Measured
+The measurements below describe the former job. The service has been removed;
+retained authentication contracts now run in `Backend service authentication contracts`.
+The former `Image Manager authenticated Mongo isolation` job used a bounded
+**15-minute** step deadline, introduced in a separate CI policy commit.
+The former 10-minute bound expired on #1419 and #1418, and a passing run took 9m57s. Measured
 compilation took 242-434 seconds before a comparatively stable 150-166 seconds
 of tests, leaving no reliable setup/cleanup margin. Capacity measurement run
 42299517097 retained the old bound and reproduced the deadline: its final
@@ -243,13 +245,10 @@ eight-test success summary preceded the timeout error by 0.60 seconds, despite
 cancellation began, but does confirm that disk reclamation alone does not
 address the step's deadline margin.
 
-The split Image Manager job retains the 15-minute limit for fixture setup and
-cleanup, all 14 archived selection groups and the browser contract, with
-headroom and finite hang protection. This contract step no longer compiles;
-the compilation timings above describe the former monolithic job. Test
-assertions and serial group order are retained. The executable contract and
-mutation regressions reject removing the deadline, restoring 10 minutes, or silently
-extending it to 30. No reporting-circuit threshold or retry behavior changes.
+The retained Gateway/CMA authentication and browser contracts now run through
+`service-auth-mongo-contract.sh`, preserving their serial order, assertions and bounded deadlines.
+The compilation times above belong to the former combined job and do not establish
+the duration of the current archive consumption step.
 
 ## Historical Guarantee Mapping
 

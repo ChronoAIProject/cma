@@ -45,7 +45,7 @@ The existing manifest files now also declare these independent objects:
 
 | New HTTPRoute | Listener | Backend behavior |
 |---|---|---|
-| `cma-web-nyxid` | `https-nyxid` | Same path ownership as `cma-web`: SPA, Agent Manager, Image Manager and the Agent Manager login bridge |
+| `cma-web-nyxid` | `https-nyxid` | Same path ownership as `cma-web`: SPA, Agent Manager and the Agent Manager login bridge |
 | `cma-event-gateway-public-nyxid` | `https-nyxid` | Same `/event-gateway/*` protocol rewrites as the existing public Gateway route |
 | `cma-nyxid-http-redirect` | `http` | `http://cma.nyxid.ai/*` to the same host/path over HTTPS |
 
@@ -111,11 +111,9 @@ host-only transaction cookies and Origin checks still belong to the old host.
 |---|---|---|
 | `infra/api/configmap.yaml`: `CHRONO_SERVER_PUBLIC_URL` | `https://bot.chrono-ai.fun` | `https://cma.nyxid.ai`; affects OAuth callbacks, generated public links, discovery, runtime tool URLs and signed proxy JWT audience |
 | Same: `CHRONO_SERVER_CORS_ORIGIN` | `https://bot.chrono-ai.fun` | Retain old origin and add `https://cma.nyxid.ai`; exact browser Origin checks use both |
-| `infra/image-manager/configmap.yaml`: `CMA_IM_WEB_ORIGIN` | `https://bot.chrono-ai.fun` | `https://cma.nyxid.ai` before activating or rolling Image Manager |
 | `infra/web/configmap.yaml`: `CHRONO_API_BASE_URL`, `CHRONO_PUBLIC_ORIGIN` | Old API / web hosts | Target `https://cma.nyxid.ai` for both; these are currently unused metadata, not build/runtime inputs in the checked-in frontend |
 | NyxID CMA OAuth client | `c0cd33d2-27ba-4b8d-b38e-562364fadb72` | Read current registration; add new `/auth/callback` and `/connection-return` URIs, preserving existing entries |
 | NyxID CMA service registration | Existing origin / proxy JWT audience | Inspect and coordinate upstream URL, discovery URL and signed audience with the new CMA origin |
-| Image Manager OAuth client, if active | Exact browser callbacks | Inspect its actual client registration; add `https://cma.nyxid.ai/api/image-manager/auth/callback` if that independent browser flow is enabled |
 | `sdk/typescript/src/react.ts` and `sdk/typescript/docs/reference.md` | Trigger button default is old origin | Change default and regression expectation in `tests/react.test.ts` when new-host login is ready |
 | `README.md` and published Trigger snippets | Old production links | Update maintained entry links; retain old API/badge/open paths for already embedded snippets |
 | `docs/API_Agent_Manager.md`, `docs/CMA_Service_Connection_Callback.md`, `docs/CMA_Deployment_Readiness.md` | Old discovery / callback examples | Update current operational examples with phase 2; preserve dated historical evidence |
@@ -158,7 +156,7 @@ the new host still uses the old application's login/Origin configuration.
 | `/api/*`, including Trigger badge/open links and SDK requests | Direct service, same method/body/authentication; never a blanket cross-host redirect |
 | `/event-gateway/v1/*`, `/event-gateway/mcp`, protocol docs/discovery | Direct Gateway service; retain old callbacks and protocol clients |
 | `/event-gateway/connect*` and `/event-gateway/legacy-console*` | Preserve existing setup/console behavior and capability cookies |
-| `/openapi.json`, `/agent-manager/openapi.json`, `/image-manager/openapi.json`, `/.well-known/agent-card.json` | Direct discovery, retaining backend ownership |
+| `/openapi.json`, `/agent-manager/openapi.json`, `/.well-known/agent-card.json` | Direct discovery, retaining backend ownership |
 | `/auth/*`, `/connection-return`, `/assets/*` | Preserve direct routes during transition; handle login navigation explicitly and retain assets for old open tabs |
 | Any POST/PUT/PATCH/DELETE | No browser-navigation redirect |
 
@@ -179,8 +177,13 @@ do not move with DNS.
 Phase-2 acceptance: real owner login/logout, session renewal, service connection
 return, an authorized API read/write, streamed conversation and reconnect,
 Trigger landing plus explicit launch, and existing Agent continuity. Check
-NyxID proxy requests separately from browser login. Image Manager checks apply
-only when deployed; its checked-in replica count is zero. On the inspected
+NyxID proxy requests separately from browser login. The retired service
+discovery path returns 404; it must never return the SPA HTML fallback.
+Historical discovery observations below retain their original results.
+
+The discovery baseline below preserves the observations at that time, not current routing behavior:
+
+On the inspected
 deployment, `/image-manager/openapi.json` returns 503 on the old origin; record
 that baseline rather than treating it as a newly introduced routing failure.
 
@@ -242,7 +245,7 @@ retains the old issuer; changing a transport base can also change identity check
 | `CHRONO_NYXID_PROXY_ISSUER` | Provider-declared issuer | Keep the current declared issuer until NyxID changes it deliberately |
 | `CHRONO_NYXID_PROXY_JWKS_URL` | Eventually new discovery's `jwks_uri` | Verify keys and retained/new token validation independently of issuer |
 | `CMAEG_CONSOLE_NYXID_PUBLIC_URL` | `https://api.nyxid.ai` | Console-only OAuth/organization HTTP origin; discovery endpoints must match it. Keeps the shared creator authenticator and retained issuer unchanged. |
-| `CMAEG_NYXID_BASE_URL`, `CMA_IM_NYXID_ISSUER` | Coordinated NyxID endpoints | Shared service auth derives issuer and proxy resource URI from this base and compares introspection `iss` exactly |
+| `CMAEG_NYXID_BASE_URL` | Coordinated NyxID endpoints | Shared service auth derives issuer and proxy resource URI from this base and compares introspection `iss` exactly |
 | `CMAEG_PROVIDERS` entry `nyxbot` | Eventually `https://api.nyxid.ai` | Verify provider discovery, service authentication and calls at new endpoints |
 | `CHRONO_PLATFORM_BASE_URL`, `CHRONO_UPSTREAM_BASE_URL` | New API origin / same proxy path | Prove storage, skills, model calls and scoped AgentKey support; retained runtimes may keep their old endpoint configuration |
 

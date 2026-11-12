@@ -24,8 +24,8 @@ node .github/scripts/migration-matrix.mjs \
 ```
 
 The image reference must be an immutable
-`ghcr.io/chronoaiproject/cma-api@sha256:...` reference (or `cmaeg`, `image-manager`,
-`runtime`, `web`). Record the registry root digest, not a Docker image config ID.
+`ghcr.io/chronoaiproject/cma-api@sha256:...` reference (or `cmaeg`, `runtime`,
+`web`). Record the registry root digest, not a Docker image config ID.
 The source is the full 40-character Git SHA. Registry/source/build provenance
 must be independently verified by the release artifact workflow. Supplied hashes
 and assertions alone are not proof that a process executed that image.

@@ -19,8 +19,10 @@ not an id or a concurrency fence.
 
 ## Inline Agent creation
 
-`POST /api/v1/agents` accepts a name, an optional Image Manager reference,
-optional GitHub repository, and inline Agent settings. The browser's Agent
+`POST /api/v1/agents` accepts a name, optional GitHub repository, and inline
+Agent settings. New creation uses the system default runtime image. The public
+`image` field remains in the request shape; selecting a custom image is refused
+before persistence or side effects. The browser's Agent
 Manager proxy exposes this at `/api/agent-manager/v1/agents`. `Idempotency-Key`
 is required. A `202` receipt contains an **operation** ID; read
 `GET /api/v1/agent-lifecycle/{id}` for its exact `agent_id`. Once that Agent and
@@ -142,7 +144,7 @@ replaying it for another Workspace or for a new Sandbox conflicts.
 The permanent operation ledger binds a key to one owner's submitted request.
 Retries keep that exact body and key, including after a lost HTTP response.
 The originally resolved image digest and captured settings remain pinned even
-if the image catalogue advances. A different request under that key is refused.
+if the deployment runtime default changes. A different request under that key is refused.
 New operations also capture the configured CPU/memory allocation. Legacy
 operations retain their original minimum reservation and immutable limits.
 
@@ -169,9 +171,12 @@ Temporary dependency failures and readiness timeouts return the operation to
 discovery observes this delay. Child identities and completed stages survive
 each retry. Terminal resource conflicts remain `failed`.
 
-Image Manager authentication failures return `401 not_authenticated`; an image
-permission refusal returns `403 permission_denied`. These are distinct from a
-missing NyxID service connection and do not provide a connection-wizard target.
+Custom image selection returns HTTP 422 with problem type
+`agent-manager-image-selection-unsupported` and code `image_selection_unsupported`.
+Trigger create/update requests selecting `target.inline.image` return HTTP 422
+with code `trigger_image_selection_unsupported` and that field path. Bot creation
+also explicitly refuses custom image selection before persistence. Historical
+image references and already stored Trigger launch behavior remain unchanged.
 
 ## Authentication And HTTP
 

@@ -1,10 +1,10 @@
 # CMA Agent Manager API 草案
 
 状态：待定稿的目标契约，2026-10-12；尚未实现。服务边界见
-[三服务拆分方案](CMA_Service_Split.md)。本文中 `/v1` 是新 Agent Manager 的服务根路径，
+[service split](CMA_Service_Split.md). Here, `/v1` is the new Agent Manager service root;
 不修改既有 CMA `/api/v1` 或 `/api/v2` 的语义。统一 `web/` 的 Agent Manager 入口
 通过 `/api/agent-manager/v1/...` 访问本服务；本服务独立注册 NyxID 和管理自己的
-roles/permissions，不访问 Event Gateway 或 Image Manager 的数据库。详情见
+roles/permissions and does not access the Event Gateway database. See
 [服务隔离方案](CMA_Service_Isolation.md)。
 
 ## 1. 最常用的三个请求
@@ -153,10 +153,12 @@ Accept: text/event-stream
 
 环境配置归 Agent Manager：它直接把 CPU、memory 和持久卷挂载转成 agent-sandbox
 Sandbox CRD 的 podTemplate。默认配置服务普通 Agent 创建；高级配置属于可选的
-`environment`，可以引用 Image Manager 返回的不可变镜像版本和资源配置。镜像构建、
-共享和退役只由 Image Manager 负责，不引入 Sandbox Manager。当前兼容 API 仍通过
-Sandbox Profile 选择 CPU/memory，通过部署策略选择默认镜像和持久 home PVC；
-本篇简化创建 facade 和每次创建选择镜像的形状仍是目标契约，不能当作已上线 API。
+`environment` resource settings, without introducing a Sandbox Manager. New creation
+uses only the system default image. The public `image` field remains for compatibility,
+but custom image selection is rejected with `422 image_selection_unsupported` before
+persistence or side effects. The compatibility API still selects CPU/memory through Sandbox
+Profiles and the default image and persistent home PVC through deployment policy.
+The simplified creation facade remains a target contract, not a deployed API.
 
 ## 4. Agent 读取与状态
 

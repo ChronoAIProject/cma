@@ -25,7 +25,7 @@ Once delivered, changing that step requires a new reviewed ID/checksum. The
 ledger refuses a different checksum, unknown schema/history, unsupported manifest
 or a missing completion receipt. This is a single-step implementation, not a
 generic manifest interpreter: future ordering and new manifests require code,
-review and tests. Gateway and Image Manager runners are separate later slices.
+review and tests. Gateway runners are a separate later slice.
 
 ## Commands and authority
 

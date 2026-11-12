@@ -25,9 +25,8 @@ from local fixtures.
 The GCS dependency named in #1569 crosses **chrono-storage-service** in this
 candidate. CMA's source describes that service as S3-backed and contains no direct
 GCS object-client contract. The storage owner must identify the actual backend and
-provide its GCS/S3 mapping, version, scopes, quota and recovery evidence. The
-Cloud Build/logging client in Image Manager is a different dependency; it does
-not establish GCS object-storage acceptance. Retired Sandbox checkpoint schemas
+provide its GCS/S3 mapping, version, scopes, quota and recovery evidence. Retired
+Sandbox checkpoint schemas
 do not authorize new archive capture or substitute for document storage.
 
 ## Source and deterministic evidence map

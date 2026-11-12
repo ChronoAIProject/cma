@@ -524,9 +524,7 @@ follows the same defaults, and below 1024px the automatic collapse still applies
 **Service menu.** A button showing the current service's glyph and name, **Agent Manager** or
 **Event Gateway**, with a trailing chevron; its accessible name is `Service: <name>`. It opens the
 shared §12.3 menu titled **CMA services**. Agent Manager and Event Gateway are real links, so a
-modified or middle click opens a new tab, with the current one checked. **Image Manager** stays
-listed, `aria-disabled`, with the reason *Coming soon. Image Manager is not available yet.* under
-its label, and never routes. Consumer routes belong to Event Gateway. Collapsed, the button keeps
+modified or middle click opens a new tab, with the current one checked. Consumer routes belong to Event Gateway. Collapsed, the button keeps
 only its glyph. The build revision is no longer in the header; it is the **Copy build version · <version>**
 row of the account menu.
 
@@ -2372,8 +2370,7 @@ the centre column of the collapsed portal frame and scrolls as one page:
 - **How it works.** Three ordered steps in 12px-radius `layer-1` cards with a
   1px `border-l1`, each numbered in a 28px mono square.
 - **Services.** Agent Manager and Event Gateway cards each carry an outline
-  `Open …` Button that signs in and returns to that service. Image Manager is
-  a dashed card marked Coming soon, with no action, until its route exists.
+  `Open …` Button that signs in and returns to that service.
 - Section kickers are 12px code-face `brand-text`; section headings are 32/40,
   600, `-0.025em`, 24/32 under 760px.
 - Below 900px the hero stacks with the character first at most 220px wide;
@@ -6229,3 +6226,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-11 | Sandbox Overview identifies an enabled Always on exception as administrator-approved and explains that only an administrator can approve an exception when it is off. It offers only the existing compact Button to turn an enabled exception off; unset/disabled state directs the owner to an administrator. Keep the administrator detail switch. Use existing Sandbox bands and hint text; introduce no visual tokens. |
 
 | 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
+
+| 2026-11-12 | Removed the Image Manager portal, disabled service menu entry, sign-in placeholder and custom image selectors. New Bots, Triggers and Agents use only the system default image. Historical custom image drafts require an explicit switch to the system default before saving. Existing components and visual rules are retained. |

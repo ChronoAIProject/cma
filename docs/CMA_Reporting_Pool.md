@@ -92,7 +92,7 @@ sockets (444 with two processes). With primary-only application traffic and no
 topology transition, the corresponding cluster envelope is 68 application plus
 18 monitor sockets = 86 (172 with two processes). Actual connection demand is
 lazy and can be lower. Server limits are per node; a cluster sum cannot prove
-primary headroom. Add CMAEG, image-manager, other services, operators/exporters
+primary headroom. Add CMAEG, other services, operators/exporters
 and a failover/reconnect reserve to each node's budget. The saved evidence does
 not contain the Atlas limit or other-client peak, so it does not prove 148 fits.
 Before changing the value, the release executor records per-node connections,

@@ -139,8 +139,8 @@ Unit/socket tests cover strict identity evidence, every-request exclusion,
 provider-before-handoff ordering, sealed consumer coverage, owner permissions,
 cross-owner refusal and live-stream revocation. The ignored Mongo integration
 test runs in CI against the existing authenticated disposable replica set via
-`CMA_IM_TEST_MONGODB_URI`, selected exactly by
-`.github/scripts/image-manager-mongo-contract.sh` (and its local Python fallback).
+`CMA_SERVICE_AUTH_TEST_MONGODB_URI`, selected exactly by
+`.github/scripts/service-auth-mongo-contract.sh`.
 The shell runner retains a local source-build mode; CI uses its extracted-archive
 mode described in [Backend CI archive](Backend_CI_Archive.md).
 It checks separate-client visibility, exact runtime grants, retained markers and

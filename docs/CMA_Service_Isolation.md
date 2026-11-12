@@ -8,7 +8,6 @@ Revised deployment, 2026-10-13. See [architecture](CMA_Service_Split.md).
 |---|---|---|
 | Event Gateway | `cma-event-gateway` browser/management identity; legacy `cmaeg` tool identity retained; `cma-eg:` permissions | Channels, encrypted records and gateway delivery state |
 | Agent Manager | Existing CMA identity and `cma:` permissions retained for Agent API compatibility | Agents, runtime bindings, workspaces, profiles, turns, messages, approvals, checkpoints and application auth |
-| Image Manager | `cma-image-manager`; `cma-im:` | Image catalog, shares, versions, builds and retention references |
 
 Each service owns its OAuth client/secret, exact target resource, role catalog,
 encryption key, schema validators, indexes and migrations. The current deployment
@@ -20,8 +19,7 @@ an arbitrary owner field is not identity delegation.
 
 There is no Sandbox Manager, its permissions or a shared runtime database.
 Agent Manager directly uses Kubernetes Sandbox resources and owns its runtime
-mapping. Image Manager never reads Agent collections; Agent Manager never reads
-Image collections. Gateway's sealed records move out of the Agent database into
+mapping. Gateway's sealed records move out of the Agent database into
 Gateway's own schema. Cross-service transactions, lookup and change streams are
 prohibited. Copies obtained through APIs are projections, not another service's
 writable authority.
@@ -29,15 +27,14 @@ writable authority.
 ## Database isolation
 
 The deployment requested on 2026-10-13 uses the existing `chrono-bot` database
-and database-scoped credential for all three services. Agent Manager retains its
-exact collection catalog, Image Manager owns `im_*`, and Event Gateway owns
-`eg_*`. Their schema versions, validators, indexes, sessions and migrations
+and database-scoped credential for both services. Agent Manager retains its
+exact collection catalog, and Event Gateway owns `eg_*`. Their schema versions, validators, indexes, sessions and migrations
 remain independent. No service store opens another service's collections, and
 no cross-service database joins or transactions are introduced.
 
 Each binary defaults to `isolated`, which verifies exact collection-scoped
 effective grants. The checked-in deployment explicitly selects `shared-schema`
-with `CHRONO_MONGODB_AUTHORITY_MODE`, `CMA_IM_MONGODB_AUTHORITY_MODE`, and
+with `CHRONO_MONGODB_AUTHORITY_MODE` and
 `CMAEG_MONGODB_AUTHORITY_MODE`. All database names are `chrono-bot`. Shared mode
 checks authenticated database authority and all operations required by that
 service, permits the existing database-wide grants, and still refuses global or
@@ -46,7 +43,7 @@ services; schema and application boundaries enforce their ownership in this
 mode. Switching to separate restricted credentials and `isolated` requires no
 collection renaming or data movement.
 
-Image and Gateway migrations are explicit commands targeting only their own
+Gateway migrations are explicit commands targeting only their own
 collections; Agent Manager retains startup index/schema initialization confined
 to its named catalog. Its explicit [migration runner](CMA_Migration_Runner.md)
 owns `agent_manager_migrations` and initially supports only additive activity
@@ -57,9 +54,8 @@ mandatory in both authority modes. Copying the database URI into each service's
 Secret does not share browser keys or OAuth identities.
 
 Existing Agent collections can retain their names in an Agent-only database;
-renaming every table is not a substitute for permission isolation. New image
-collections use `im_`; gateway records use `eg_`. Migration must preserve IDs,
-versions, encrypted payloads, histories, unique indexes and retry identities.
+renaming every table is not a substitute for permission isolation. Gateway records
+use `eg_`. Migration must preserve IDs, versions, encrypted payloads, histories, unique indexes and retry identities.
 Legacy access is removed only after verified authority transfer.
 
 ## Optional Agent provenance progress
@@ -75,10 +71,9 @@ authority. Maintenance errors do not weaken API schema guards or claim completio
 
 ## Frontend and infrastructure
 
-Existing web supplies `/event-gateway`, `/agent-manager`, `/image-manager`
-entrances. Each has a distinct backend client and permission/query state. Shared
-login/design components do not merge authorization. An unavailable Image Manager
-must not hide Agent history or terminate an already running Agent.
+Existing web supplies `/event-gateway` and `/agent-manager` entrances. Each has a
+distinct backend client and permission/query state. Shared login/design components
+do not merge authorization.
 
 Agent Manager's Kubernetes service account accesses only its configured runtime
 namespace, with server-side CMA selectors and object ownership/UID verification.
@@ -86,8 +81,6 @@ Kubernetes RBAC cannot restrict list by labels; do not describe label filtering
 as RBAC enforcement. Use a dedicated CMA namespace where infra permits it, plus
 admission policies for deployment labels and privileged pod settings.
 
-Image Manager has its own Google build/registry identity, restricted to the
-configured Artifact Registry repository. The cluster's pull identity is separate.
 Registry credentials are never frontend configuration or sandbox environment.
 Sandbox controllers and CRDs remain infra-owned; manifests consume their API.
 
@@ -106,16 +99,8 @@ the bridge's exact-origin checks, token custody, and route contract. The canonic
 routes directly to Event Gateway with its own API credentials. It neither bypasses
 the cookie bridge nor grants another service's permissions.
 
-Image Manager retains its independent `/api/image-manager/auth/callback`, client,
-resource, encryption key and `__Host-` HttpOnly cookie for its later rollout.
-OAuth state and PKCE verifier are consumed once. Encrypted tokens remain in
-`im_auth_sessions`, with TTL indexes, a maximum one-hour lifetime, per-request
-introspection and exact-origin CSRF checks. Image Manager logout is local to it.
-
-The Image Manager schema is `im_images`, `im_builds`, `im_schema_migrations`,
-`im_auth_sessions`. Successful immutable builds are the version catalog; image
-retirement retains their registry blobs for already admitted Agents. The Gateway
-schema is `eg_channel_records`, `eg_connection_records`, `eg_interaction_records`,
+The Gateway schema is `eg_channel_records`, `eg_connection_records`,
+`eg_interaction_records`,
 `eg_schema_migrations` and `eg_auth_sessions` (schema marker 2). Each record kind
 uses its own collection; interactions preserve immutable expiration and a TTL
 index, and expired records are refused before asynchronous TTL cleanup.
@@ -134,9 +119,9 @@ that action is refused on every other collection. The catalog includes runtime
 retained availability, provider tool opens, actor links and lifecycle operations
 so the same restricted credential can initialize and operate the actual stores.
 
-`cma --print-runtime-role`, `cmaeg --print-runtime-role` and
-`cma-image-manager --print-runtime-role` emit collection-scoped roles. The latter
-two also support `--print-migration-role` and `--migrate`. None creates users or
+`cma --print-runtime-role` and `cmaeg --print-runtime-role` emit
+collection-scoped roles. Event Gateway also supports `--print-migration-role`
+and `--migrate`. None creates users or
 assigns NyxID roles implicitly. Agent Manager supports `--print-migration-role`,
 `--migration-plan`, `--migration-status` and checksum-bound `--migration-apply`.
 Provision the required identities before rollout.
@@ -153,7 +138,7 @@ The generated `cma_am_runtime` role therefore grants `find`, `insert`, `update`,
 `remove`, `createCollection`, `createIndex`, `listIndexes` and `collMod` on
 `sandbox_billing_state`, following Agent Manager's startup DDL policy. It grants
 no `dropIndex` on that collection and no database-wide data access. Agent Manager
-has no separate migrator role; Gateway and Image Manager runtime/migrator roles
+has no separate migrator role; Gateway runtime/migrator roles
 must not receive funding collection privileges.
 
 Before rolling out this binary with isolated credentials, regenerate the role
@@ -171,6 +156,6 @@ activate either billing adapter.
 
 
 兼容的 NyxID 个人 access token 可以没有 RFC 8707 resource 限制；这类 token
-仍必须具有目标服务自己的 `cma-eg:*` / `cma-im:*` permission。显式限制到其他
+The token must still hold the target service's own `cma-eg:*` permission. Tokens explicitly restricted to another
 resource 的 token 一律拒绝。AM 已受理的 Bot 工作可继续使用其保管的用户授权，
-但 `cma:admin` 不隐含 EG 或 IM 的权限；部署前须分配对应服务角色。
+However, `cma:admin` does not imply EG permissions; assign the corresponding service role before deployment.

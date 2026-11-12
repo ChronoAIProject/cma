@@ -106,7 +106,7 @@ may need the package registry; the tests themselves use no network.
   A historical wire corpus is not evidence that those executables ran.
 - All other REST operations, desktop capability/creation negotiation, full OpenAPI
   semantic compatibility, enum additions outside the selected responses, and the
-  complete auth, discovery/conformance, MCP/A2A and Image Manager surfaces.
+  complete auth, discovery/conformance and MCP/A2A surfaces.
 - AG-UI/Responses v1/v2 streams, official OpenAI Node/Python interoperability,
   two-turn identity, cursor replay, cancellation, 600-second streams, reconnect
   timing and raw proxy HTML 429/503 metadata preservation.

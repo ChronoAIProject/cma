@@ -23,7 +23,7 @@ traffic. A Sandbox is not an Agent: multiple Agents may work concurrently in
 distinct Worktrees inside one Sandbox.
 
 **Consumers.** CMA is a backend service for product frontends and backends.
-Its own `web/` frontend contains the Agent Manager, Image Manager and Event
+Its own `web/` frontend contains the Agent Manager and Event
 Gateway portals, operational dashboard, Trigger publisher, public visitor
 journey, and reference client for the public interfaces. The main working
 surface is one Agent conversation in its Worktree, Workspace, and Sandbox.
@@ -88,7 +88,8 @@ required by an external protocol.
 - 1.4 **CMA Agent** — the agent (e.g. a codex process) opened in one worktree; one worktree has one and only one agent.
 
 **2. CMA Environment Config (internal persistence)**
-Users select an image and inline Agent settings. Profiles are private immutable
+New creation uses the system default image and inline Agent settings; custom
+image selection is unsupported. Profiles are private immutable
 configuration records, not a user creation or marketplace concept. Historical
 profile APIs and records remain compatibility/recovery surfaces; they must not
 be reintroduced into the normal portal journey.
@@ -100,14 +101,15 @@ be reintroduced into the normal portal journey.
 **3. Mutability.** A Sandbox pins its immutable environment at provisioning.
 Owners add Workspaces from inline empty-directory or GitHub configuration and
 Agents from inline settings within its recorded limits. Existing-workspace
-Agent creation retains the parent image and service scope. Image Manager owns
-image builds, immutable versions and private/shared/public visibility.
+Agent creation retains the parent image and service scope. New environments
+use the system default image; custom image selection is unsupported.
 
 **4. Interaction.** A user always interacts with one agent, in one worktree, in one workspace, in one sandbox. The research use case is exactly: an agent in a worktree of `/home/cma/trureturing` (cloned from `https://github.com/the-omega-institute/trureturing`) inside a sandbox with the required software installed.
 
 **5. CMA Trigger.** An external button that brings the clicking user to an agent
-**of their own** (never the trigger owner's). New authoring selects an image,
-inline Agent settings and optional GitHub workspace. The backend stores the
+**of their own** (never the trigger owner's). New authoring uses the system
+default image, inline Agent settings and optional GitHub workspace; custom
+image selection is unsupported. The backend stores the
 immutable target under a trigger id and gives the owner integration snippets
 for web pages and Markdown. The owner lists permitted embedding origins.
 Historical profile-based targets retain their recorded reuse policy for replay.
@@ -142,14 +144,6 @@ infra/cmaeg/serviceaccount.yaml
 infra/cmaeg/httproute.yaml
 infra/cmaeg/healthcheckpolicy.yaml
 infra/cmaeg/gcpbackendpolicy.yaml
-infra/image-manager/Dockerfile
-infra/image-manager/configmap.yaml
-infra/image-manager/deployment.yaml
-infra/image-manager/gcpbackendpolicy.yaml
-infra/image-manager/healthcheckpolicy.yaml
-infra/image-manager/secret.yaml
-infra/image-manager/service.yaml
-infra/image-manager/serviceaccount.yaml
 infra/runtime/Dockerfile
 infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
@@ -221,7 +215,6 @@ api/crates/
   cma/               binary: composition, persistence and production adapters
   cmaeg-core/        pure CMA Event Gateway protocol library
   cmaeg/             CMA Event Gateway service binary
-  cma-image-manager/ independent image build, catalog and sharing service
   cma-service-auth/  technical NyxID transport with per-service sessions
 ```
 
@@ -382,22 +375,19 @@ A dependency edge not in this list is a CI failure, not a review comment.
 
 ### Service extraction in progress
 
-The revised authorized split is Event Gateway, Agent Manager and Image Manager,
+The revised authorized split is Event Gateway and Agent Manager,
 specified in `docs/CMA_Service_Split.md`. There is no CMA Sandbox Manager.
 Agent Manager integrates directly with infra-owned agent-sandbox CRDs/controllers,
 including resources, persistent mounts and exact CMA Sandbox/Pod UID authority.
 It never adopts, pauses or reclaims another application's workloads.
 
-Image Manager owns builds, catalog versions, sharing and image lifecycle in
-`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod`, using its own
-Google identity. The service names are `cma-agent-manager`,
-`cma-event-gateway` and `cma-image-manager`. Each has independent NyxID
+The service names are `cma-agent-manager` and `cma-event-gateway`. Each has independent NyxID
 permissions, schema and migrations. The current authorized deployment shares the
 existing `chrono-bot` database credential through explicit `shared-schema` mode;
 service stores still access only their named collections. Default `isolated` mode
 requires separate collection-scoped credentials. No cross-service collection
 access or domain/store implementation dependency is allowed. The old local `cma-sandbox-manager`
-foundation is superseded and must not become a fourth deployment.
+foundation is superseded and must not become another deployment.
 
 Agent Manager retains Agent homes, models, prompts, ACP and runtime/conversation
 recovery. New Agent creation uses the deployment runtime and an empty workspace;
@@ -551,7 +541,7 @@ owner to manually restart an Agent after deployment.
 
 **Cross-cutting**
 - Secret scanning — **gitleaks**. No credential, secret, or sensitive value may exist anywhere in the repository, including tests and fixtures. **Nothing may be allowlisted or bypassed.** If a test string trips gitleaks, change the string — never add an exception.
-- Docker build for all five images — `api`, `web`, `runtime`, `cmaeg`, `image-manager`
+- Docker build for all four images — `api`, `web`, `runtime`, `cmaeg`
 - Image vulnerability scan
 - Manifest validation — `kubeconform`, so malformed YAML or a bad `apiVersion` fails in CI rather than at `kubectl apply`
 - Manifest policy — `kube-linter`: resource requests and limits set, liveness and readiness probes present, no `:latest` tag, non-root user, read-only root filesystem
@@ -589,8 +579,8 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime,cmaeg,image-manager}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
-- After all five current GHCR digests pass the writer/history verification, each exact root digest is exported as
+- The four images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{api,web,runtime,cmaeg}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
+- After all four current GHCR digests pass the writer/history verification, each exact root digest is exported as
   an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
   These unencrypted archives are an additional, ephemeral distribution
   surface: anyone who can download this internal repository's Actions

@@ -227,21 +227,18 @@ The preceding `03cbd332` Agent Manager/shared Web release was Ready at
 cd37968d/ac837/cabfe Gateway flow passed in 42.624 seconds; that result remains
 associated with its original tested versions. Image Manager activation is deferred.
 
-The three portals ship from one web image: Agent Manager (`/agent-manager`),
-Image Manager (`/image-manager`) and Event Gateway (`/event-gateway`). Their
+The two portals ship from one web image: Agent Manager (`/agent-manager`)
+and Event Gateway (`/event-gateway`). Their
 backends remain separate services with their own collection schemas. This handoff
 defines application deployment against the infra-owned native runtime cluster.
 Infra continues to own its controllers, CRDs, RBAC, storage and network policy;
 CMA's completed application rollout did not change those resources.
 
 The combined rollout scope is Agent Manager, the shared web image and the
-system default runtime, retaining the verified Event Gateway. Image Manager is
-deferred: its Deployment is absent; keep it absent or at zero replicas and do
-not require its Cloud Build identity, OAuth client, migrations or builder digest to activate Agent
-Manager. Default-image Agent, Trigger and consumer creation does not call Image
-Manager. Its catalog may be unavailable while the system default remains
-selectable; custom image selection and builds require the later Image Manager
-activation described below.
+system default runtime, retaining the verified Event Gateway. New Agent, Trigger
+and consumer creation use the system default image. Custom image selection is
+unsupported and explicitly refused before persistence or side effects; public
+request fields and historical image references retain their existing shapes.
 
 | Authority | Kubernetes context | Namespace |
 |---|---|---|
@@ -255,7 +252,7 @@ production OpenSandbox resources retain their recorded provider and home
 bindings until normal retirement.
 
 The Kubernetes Deployment, Service and ConfigMap names are
-`cma-agent-manager`, `cma-event-gateway` and `cma-image-manager`, with matching
+`cma-agent-manager` and `cma-event-gateway`, with matching
 application labels and internal service DNS. The source directories `infra/api`
 and `infra/cmaeg`, image repositories `cma-api` and `cma-cmaeg`, and existing
 container/binary aliases remain compatible. Agent Manager keeps KSA
@@ -284,10 +281,8 @@ plane before enabling its replacement so there is only one Agent Manager;
 verify routing and retained-runtime recovery before retiring old resources.
 Applying a new name alone does not perform this migration.
 
-Create the three canonical Service objects before starting the new web image.
-Nginx resolves their static upstream names at startup, including
-`cma-image-manager`; its Service must exist even while its Deployment remains
-absent or at zero replicas. This creates no Image Manager worker. The API and
+Create the two canonical Service objects before starting the new web image.
+Nginx resolves their static upstream names at startup. The API and
 Gateway Service files also contain compatibility aliases: prepare the new
 canonical Services first, and retarget the aliases only when the replacement
 Pods are ready to receive traffic. Do not apply the complete bundled files
@@ -326,7 +321,7 @@ layout or creation latency.
 | Gateway feature coverage | Integrated source and complete CI include Console/Media/STT code and authenticated Mongo contracts | Selected live routing/channel/model checks do not establish full Console/media/STT, external reply sinks or Trigger acceptance; preserve existing configuration and Secrets |
 | Application image registry | Combined candidate 04ccbd6a passed all 15 CI jobs; API/Web registry digests are published and pinned from the completed receipt | Preserve Gateway cabfe; match immutable pins and provenance to publication and live readiness independently |
 | Native runtime registry | Combined cad2058f runtime is published and selected; two full-home v2 pool replicas were Ready at 18:04:03 SGT with exact runtime/mount/initializer proof | Live same-PVC whole-home persistence still needs separate acceptance; retained homes keep their original images |
-| Deferred Image Manager identity | The 2026-10-13 account lookup returned 404 and operator IAM lacked provisioning/build rights; Image Manager has no active Deployment | This is a separate later activation. Infra must provide the documented build identity/permissions before Image Manager migration, scale-up and live build acceptance |
+| Deferred Image Manager identity | The 2026-10-13 account lookup returned 404 and operator IAM lacked provisioning/build rights; Image Manager has no active Deployment | Retained historical observation; the service has been removed and is no longer a deployment prerequisite |
 
 ## C-001 implementation map
 
@@ -337,24 +332,23 @@ flows and final visual checks from deferred Cloud Build/OAuth coverage.
 
 | User flows | Prepared application behavior |
 |---|---|
-| UF-01, UF-13, UF-19, UF-20 | Agent Manager landing with three service descriptions and shared service navigation; optional repository with new, existing or contextual Sandbox creation; deployment runtime/model/scope defaults; settings in Agent details; durable three-stage provisioning and a NyxID connection modal |
+| UF-01, UF-13, UF-19, UF-20 | Agent Manager landing with two service descriptions and shared service navigation; optional repository with new, existing or contextual Sandbox creation; deployment runtime/model/scope defaults; settings in Agent details; durable three-stage provisioning and a NyxID connection modal |
 | UF-03, UF-10, UF-11 | User Profile creation and marketplace routes retired; private immutable configuration records remain internal persistence details |
 | UF-04 | Add an empty or GitHub workspace through the inline workspace API; contextual Agent creation retains that workspace and inherits its Sandbox image/key scope |
 | UF-05 | Agent menu downloads authenticated JSONL history from its recorded runtime provider |
 | UF-08, UF-09 | Native suspend/resume retains the same CRD and PVC; deletion waits for claim, CRD and Pod finality before disk/record cleanup; production CMA archive storage and scheduling retired |
 | UF-12 | Operations configures native pool capacity; durable worker stages select/claim/adopt the original member and recover after restarts; legacy Profile warmup only retires old reservations |
 | UF-14 | Sharing addresses the Sandbox and its Workspace/Agent descendants |
-| UF-17, UF-21 | Trigger and Event Gateway consumer setup use image plus inline Agent settings; consumer management is available from the account menu |
+| UF-17, UF-21 | Trigger and Event Gateway consumer setup use the system default image plus inline Agent settings; consumer management is available from the account menu |
 | UF-27 | Default owner Sandbox quota is ten |
-| UF-31 | Image Manager accepts bounded UTF-8 Dockerfile imports and reconciles the complete Cloud Build job |
-| All three portals | Shared dark default, navigation, input/button styling and responsive layouts |
+| Both portals | Shared dark default, navigation, input/button styling and responsive layouts |
 
 Agent, Trigger and consumer provisioning uses the deployment's configured CPU
 and memory defaults; pool forms initialize from those defaults. New Agent
 lifecycle operations preserve accepted capacity for
 restart/retry, alongside the selected immutable image. Pool administration is
-limited to the trusted deployment runtime image; custom images remain available
-for ordinary Agent/Trigger/consumer creation.
+limited to the trusted deployment runtime image. Ordinary Agent/Trigger/consumer
+creation also uses the system default; custom image selection is unsupported.
 
 Reaching the owner's Sandbox quota ends a new Agent lifecycle operation with an
 explicit limit conflict; it must not remain queued as a retryable dependency
@@ -504,8 +498,7 @@ to user workloads. CMA sets
 overrides the ServiceAccount default, so an unset or true ServiceAccount field
 does not fail preflight. Verify the admitted Pod retains that explicit false
 setting during activation. Registry pull identity needs reader access to each
-selected immutable image; this is
-separate from the Image Manager workload/build identity. Configure
+selected immutable image. Configure
 `CHRONO_AGENT_SANDBOX_IMAGE_PULL_SECRETS` only if the node's registry identity
 does not supply that access. Neither registry nor Kubernetes credentials belong
 in an Agent's environment.
@@ -735,10 +728,9 @@ with the four repository manifests. The verification report records exact
 per-component source/run/digest evidence. The following workflow applies to a
 future selected release; publication itself does not deploy workloads.
 
-The complete release workflow publishes all five components when selected;
-publication does not deploy workloads. Image Manager remains absent or at zero
-replicas. Replace its `:unreleased` image only for its later, separately verified
-activation. Pin application manifests only to actual verified registry digests.
+The complete release workflow publishes four components when selected: api, web,
+runtime and cmaeg. Publication does not deploy workloads. Pin application
+manifests only to actual verified registry digests.
 
 For an authorized direct application rollout, the CI `ci-native-image-*`
 artifacts provide the already tested Linux amd64 images. Require passing checks
@@ -834,7 +826,7 @@ configuration. Existing pool bindings retain their original Pod policy when a
 later release changes those defaults.
 
 The requested production topology uses the existing `chrono-bot` MongoDB
-database for all three services, with strictly separate service-owned collections
+database for both services, with strictly separate service-owned collections
 and schema migrations. Configure the explicit shared-schema authority mode
 described in [service isolation](CMA_Service_Isolation.md); the default isolated
 mode continues to require collection-scoped credentials. Reusing a database
@@ -845,7 +837,6 @@ another service's collections.
 |---|---|---|
 | Agent Manager | `CHRONO_MONGODB_DATABASE=chrono-bot` | `CHRONO_MONGODB_AUTHORITY_MODE=shared-schema` |
 | Event Gateway | `CMAEG_MONGODB_DATABASE=chrono-bot` | `CMAEG_MONGODB_AUTHORITY_MODE=shared-schema` |
-| Image Manager | `CMA_IM_MONGODB_DATABASE=chrono-bot` | `CMA_IM_MONGODB_AUTHORITY_MODE=shared-schema` |
 
 Each service still receives its own URI configuration from its Secret. The
 shared-schema mode verifies that the authenticated account has every required
@@ -870,66 +861,6 @@ flags false during this deployment. After the lead's rollout, confirm Agent
 Manager becomes ready without schema-authority or MongoDB Unauthorized errors
 using read-only workload status and logs. Paid activation and invoice acceptance
 remain a separate controlled verification.
-
-## Deferred Image Manager / Cloud Build activation
-
-This is a separate later activation, outside the current Agent Manager/Event
-Gateway rollout. Keep Image Manager absent or at zero replicas until its
-prerequisites are available. Its absence does not block the system-default runtime path.
-
-When Image Manager is activated, select the existing `chrono-bot`
-database and explicit shared-schema authority mode for Image Manager as well
-as Agent Manager and Event Gateway. Run the released
-`cma-image-manager --migrate` before starting the service; schema marker 2 is
-required. Migrations and runtime persistence operate only on Image Manager's
-declared collections. In the default isolated mode, retain a separate database
-and exact collection-scoped runtime/migrator credentials; broader credentials
-are accepted only by the explicitly selected shared-schema mode. Use
-`--print-runtime-role` and `--print-migration-role` to generate required
-collection grants without printing credentials.
-
-Provision the dedicated NyxID client and browser cookie key described in
-`infra/image-manager/secret.yaml`. Register the callback at
-`https://bot.chrono-ai.fun/api/image-manager/auth/callback`, the service resource
-`cma-image-manager`, and the documented `cma-im:` permissions. Event Gateway and
-Agent Manager keep their own clients and session keys; see
-[service isolation](CMA_Service_Isolation.md).
-
-Cloud Build is fixed to project `chronoai-501608`, location `asia-northeast1`
-and destination
-`asia-southeast1-docker.pkg.dev/chronoai-501608/chrono-pod`. Enable Cloud
-Build, Artifact Registry and Cloud Logging APIs. Before scaling Image Manager:
-
-1. Bind KSA `chrono-bot/cma-image-manager` to
-   `cma-image-manager@chronoai-501608.iam.gserviceaccount.com` through GKE Workload
-   Identity. The API obtains short-lived access through the metadata service.
-2. Grant that same identity Cloud Build create/get/list, Cloud Logging log-entry
-   read permissions and `iam.serviceAccounts.actAs` on itself. Use custom roles or
-   the corresponding reviewed predefined roles.
-3. Grant that same identity Artifact Registry writer on only `chrono-pod` and
-   Cloud Logging writer. Image Manager submits and reconciles the job while the
-   Cloud Build runner executes the Docker steps under this identity; do not give
-   it application or production-secret access. Check the Cloud Build service
-   agent's required service-account token permissions for that identity.
-4. Set `CMA_IM_BUILD_SERVICE_ACCOUNT` to
-   `projects/chronoai-501608/serviceAccounts/cma-image-manager@chronoai-501608.iam.gserviceaccount.com`
-   and
-   `CMA_IM_BUILDER_IMAGE` to a verified
-   `gcr.io/cloud-builders/docker@sha256:...` digest. The empty checked-in builder
-   digest deliberately prevents accidental activation.
-5. Keep `CMA_IM_GOOGLE_TOKEN_FILE` empty in production, replace the unreleased
-   service image, migrate the database, then scale the service and verify
-   `/readyz`. Confirm the same-origin `/api/image-manager` Gateway route works.
-
-Build input accepts a public GitHub repository, full lowercase commit SHA,
-repository-contained context/Dockerfile paths and optional UTF-8 imported
-`dockerfile_content` up to 16 KiB. Private source credentials and source-archive
-uploads are not implemented. Imported content is written into a dedicated
-Cloud Build volume, outside repository-controlled paths, then built against the
-selected checkout context. The dispatcher observes both import and build steps,
-their exact executable arguments/volume bindings and destination before
-publishing a successful immutable digest. A lost submission response is
-reconciled using its original unique build tag without submitting a second job.
 
 ## Read-only preflight and activation order
 
@@ -1189,7 +1120,7 @@ cleanup, protected-resource preservation and relevant historical failures.
 The checklist below remains the wider acceptance contract for future changes;
 it is not a claim that every feature received production coverage.
 
-Deferred coverage includes Image Manager/Cloud Build, fresh missing-service
+Deferred coverage includes fresh missing-service
 OAuth, NyxID frontend navigation/binding-key delivery, external reply sinks,
 broad failover, full Console/media/STT, Trigger and cross-user sharing. Native
 exec connectivity does not establish direct Pod-network isolation.
@@ -1206,8 +1137,7 @@ The earlier four-manifest synchronization for AM cd37968d, Web ac837, Gateway
 cabfe and default runtime 37d is retained in
 `/tmp/cma-final-repo-sync-01/resolved-receipts.json` and
 `/tmp/cma-final-repo-sync-01/final-manifests.patch`. Those historical hashes do
-not describe the new combined pins. The legacy storage seed example and
-deferred Image Manager are preserved. Updating manifests does not rebuild the
+not describe the new combined pins. The legacy storage seed example is preserved. Updating manifests does not rebuild the
 independently identified application images.
 
 Agent access-request tools use the existing auth encryption key to derive a
@@ -1255,20 +1185,14 @@ deployment; local fixtures do not substitute for them:
 
 - Sign into Agent Manager and Event Gateway with their own NyxID sessions.
   Verify the unified dark UI, service navigation, connection popup, the
-  selectable system default while Image Manager is unavailable, and
+  system default image and refusal of custom image selection, and
   permission denial for an unconnected or unauthorized service.
 - Prove direct authenticated native API access from the northeast CMA Pod into
   the assigned southeast namespace, with CA validation and credential rotation.
   Record both cluster contexts and verify native CRD/Pod/PVC creation remains in
   southeast while retained OpenSandbox recovery and cleanup remain in northeast.
-- Deferred Image Manager acceptance: sign into its own NyxID session and verify
-  private/public image selection. Run both a repository Dockerfile build and an imported Dockerfile build.
-  Observe running/success, owner-only bounded logs, exact Artifact Registry
-  digest, authorized resolution, private/share/public visibility and a failed
-  build that never publishes a version. Check unknown-response recovery without
-  duplicate Cloud Build submissions.
-- Create an Agent with the tested system default image; repeat with an
-  authorized custom image after Image Manager activation. For the default,
+- Create an Agent with the tested system default image; verify custom image
+  selection is explicitly refused without persistence or side effects. For the default,
   verify the three stages (Sandbox, Agent/workspace, scoped key), exact CRD/Pod/
   PVC identities, empty workspace, gpt-6/high/autonomous defaults and required
   chrono-llm-public/ornn-api scope. With an optional GitHub URL, verify it reaches

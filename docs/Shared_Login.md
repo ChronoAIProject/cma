@@ -4,7 +4,7 @@ The CMA portal uses Agent Manager's existing NyxID OAuth application and opaque,
 HttpOnly `cma_session` cookie for both Agent Manager and Event Gateway. The browser
 starts the existing `/auth/login?return_to=/event-gateway` authorization-code/PKCE
 flow and signs out through `/auth/logout`. It never receives a NyxID access or
-refresh token. Image Manager keeps its independent login until its later rollout.
+refresh token.
 
 Agent Manager serves the public `/api/event-gateway` portal bridge. It resolves
 exactly one CMA browser cookie, refreshes the stored credential with the existing
