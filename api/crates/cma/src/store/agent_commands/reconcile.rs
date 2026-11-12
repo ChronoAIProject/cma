@@ -1,4 +1,5 @@
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::telemetry::command_reconcile::Outcome;
 use layer2_core::ids::AgentCommandId;
 use layer2_core::sandbox::agent_io::{AdmittedAgentCommand, CommandEvidence, CommandLedgerError};
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -11,11 +12,22 @@ use super::super::agents::read_agent;
 use super::super::sandbox_mongo::MongoSandboxStore;
 use super::{lane_records, records, worker_apply, ApplyError};
 
+#[cfg(test)]
 pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     id: &AgentCommandId,
     session: &mut ClientSession,
 ) -> Result<AdmittedAgentCommand, ApplyError> {
+    apply_observed(store, id, session)
+        .await
+        .map(|(command, _)| command)
+}
+
+pub(super) async fn apply_observed(
+    store: &MongoSandboxStore,
+    id: &AgentCommandId,
+    session: &mut ClientSession,
+) -> Result<(AdmittedAgentCommand, Outcome), ApplyError> {
     let document = store
         .agent_commands
         .find_one(doc! { "_id": id.as_str() })
@@ -24,7 +36,7 @@ pub(in crate::store) async fn apply(
         .ok_or(CommandLedgerError::NotFound)?;
     let mut command = records::read(&document)?;
     if command.work.dispatch.is_none() || command.status.is_terminal() {
-        return Ok(command);
+        return Ok((command, Outcome::Unchanged));
     }
     let agent_id = &command.receipt.envelope.agent_id;
     let agent = store
@@ -66,10 +78,19 @@ pub(in crate::store) async fn apply(
         false
     };
     let revision = command.revision;
-    if evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)? {
+    let written =
+        evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)?;
+    if written {
         worker_apply::write(store, &command, revision, &lane, session).await?;
     }
-    Ok(command)
+    let outcome = if !written {
+        Outcome::Unchanged
+    } else if command.status.is_terminal() {
+        Outcome::Settled
+    } else {
+        Outcome::Advanced
+    };
+    Ok((command, outcome))
 }
 
 async fn legacy_evidence(
