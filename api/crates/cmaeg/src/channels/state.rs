@@ -45,6 +45,9 @@ pub struct ManagementState {
     /// Allows new native bot mention opt-ins once every reader and consumer
     /// supports the policy. Does not disable execution of retained opt-ins.
     pub native_bot_mentions_writes_enabled: bool,
+    /// Advertises and accepts NyxID turn trace metadata only after the reader
+    /// rollout is enabled on every gateway replica.
+    pub nyxid_turn_trace_enabled: bool,
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
     /// Inbound media switch. Off, a custom source's attachments setting is
@@ -198,6 +201,7 @@ impl ManagementState {
             cma_service_token: config.cma_service_token,
             telegram: None,
             native_bot_mentions_writes_enabled: false,
+            nyxid_turn_trace_enabled: false,
             thread_contract_writes_enabled: false,
             media_enabled: false,
             custom_durable_execution_enabled: false,

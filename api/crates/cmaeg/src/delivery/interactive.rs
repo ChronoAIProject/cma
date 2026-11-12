@@ -196,20 +196,31 @@ impl Sender {
         };
         effects.first_send_done = true;
         let (mut delivery, mut outbound) = if lark {
-            self.relay
-                .send_lark_card(&event.reply, key, &prepared.markup)
+                self.relay
+                .send_lark_card_with_trace(
+                    &event.reply,
+                    key,
+                    &prepared.markup,
+                    event.turn_trace.as_ref(),
+                )
                 .await
         } else if whatsapp {
             self.relay
-                .send_whatsapp_interactive(&event.reply, key, &prepared.markup)
+                .send_whatsapp_interactive_with_trace(
+                    &event.reply,
+                    key,
+                    &prepared.markup,
+                    event.turn_trace.as_ref(),
+                )
                 .await
         } else {
             self.relay
-                .send_rich(
+                .send_rich_with_trace(
                     &event.reply,
                     Credential::ChannelKey(key),
                     &parts[0].text,
                     Some(&prepared.markup),
+                    event.turn_trace.as_ref(),
                 )
                 .await
         };
@@ -226,7 +237,12 @@ impl Sender {
                 };
                 (delivery, outbound) = self
                     .relay
-                    .send_whatsapp_interactive(&event.reply, key, &prepared.markup)
+                    .send_whatsapp_interactive_with_trace(
+                        &event.reply,
+                        key,
+                        &prepared.markup,
+                        event.turn_trace.as_ref(),
+                    )
                     .await;
                 if let DeliveryOutcome::RateLimited { retry_after } = delivery {
                     slot.cooldown(retry_after);

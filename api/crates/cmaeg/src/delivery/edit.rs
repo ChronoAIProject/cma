@@ -345,8 +345,12 @@ impl Sender {
         let Some(key) = ctx.channel.definition.secrets.channel_key.as_ref() else {
             return unsupported();
         };
-        let (part, rendering) =
-            RelayText.whole(message, &Capabilities::relay(destination.platform));
+        let commonmark = self.relay.commonmark_for_platform(destination.platform);
+        let (part, rendering) = RelayText.whole_with_commonmark(
+            message,
+            &Capabilities::relay(destination.platform),
+            commonmark,
+        );
         if part.text.is_empty()
             || text_limit(destination.platform)
                 .is_none_or(|limit| part.text.encode_utf16().count() > limit)
@@ -383,11 +387,12 @@ impl Sender {
         };
         let delivery = self
             .relay
-            .edit_text(
+            .edit_text_with_commonmark(
                 key,
                 &reference.platform_message_id,
                 &destination.outbound_message_id,
                 &part.text,
+                commonmark,
             )
             .await;
         if let DeliveryOutcome::RateLimited { retry_after } = delivery {

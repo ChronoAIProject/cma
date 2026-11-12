@@ -45,6 +45,7 @@ fn channel_pointer_seals_and_opens() {
 fn event_reference_expires_and_redacts_debug() {
     let payload = EventRefPayload {
         telegram_admission: None,
+        turn_trace: None,
         v: 1,
         activity_sha256: None,
         channel_id: channel_id(),
@@ -71,6 +72,29 @@ fn event_reference_expires_and_redacts_debug() {
         Err(OpenError::Expired)
     ));
     assert_eq!(event_ref.open(&ring(), 99).unwrap().payload.expires_at, 100);
+}
+
+#[test]
+fn legacy_event_reference_without_turn_trace_still_deserializes() {
+    let payload = EventRefPayload {
+        telegram_admission: None,
+        turn_trace: None,
+        v: 1,
+        activity_sha256: None,
+        channel_id: channel_id(),
+        record_id: "record-1".parse().unwrap(),
+        event_id: "event-1".parse().unwrap(),
+        partition_key: "chat-1".into(),
+        conversation_id: conversation_id(),
+        expires_at: 100,
+        reply: ReplyAddress::None,
+        consumer: None,
+        lineage: None,
+    };
+    let mut wire = serde_json::to_value(&payload).unwrap();
+    wire.as_object_mut().unwrap().remove("turn_trace");
+    let decoded: EventRefPayload = serde_json::from_value(wire).unwrap();
+    assert_eq!(decoded.turn_trace, None);
 }
 
 #[test]
@@ -297,6 +321,7 @@ fn event_reference_retains_every_relay_platform_and_its_activity_binding() {
         activity.validate().expect("valid activity");
         let payload = EventRefPayload {
             telegram_admission: None,
+            turn_trace: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel_id(),

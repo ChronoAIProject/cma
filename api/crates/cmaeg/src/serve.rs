@@ -14,6 +14,8 @@ use crate::{
 pub(crate) async fn serve(
     config: Config,
     complete_replies: bool,
+    commonmark_relay: bool,
+    turn_trace: bool,
     native_media: bool,
     relay_text_edits: bool,
     native_discord_edits: bool,
@@ -62,6 +64,10 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    state.nyxid_turn_trace_enabled = turn_trace;
+    if turn_trace {
+        crate::telemetry::turn_trace::start();
+    }
     observers.activity = Arc::new(crate::activity::ObservedActivity::new(
         state.activity.clone(),
         observers.activity.clone(),
@@ -79,6 +85,7 @@ pub(crate) async fn serve(
             config.delivery.reply_timeout,
         )?
         .with_native_media(native_media)
+        .with_commonmark_relay(commonmark_relay)
         .with_whatsapp_templates(whatsapp_templates),
     );
     let whatsapp = crate::whatsapp::Client::production()?;
@@ -139,6 +146,7 @@ pub(crate) async fn serve(
             &config.management.nyxid_base_url,
             config.delivery.reply_timeout,
         )?
+        .with_commonmark_relay(commonmark_relay)
         .with_native_lark(
             crate::native_lark::Client::production()?,
             Arc::new(crate::native_lark::receipts::Store::new(
@@ -232,6 +240,7 @@ pub(crate) async fn serve(
     .with_whatsapp_receipts(whatsapp_receipts)
     .with_telegram(telegram.clone())
     .with_telegram_effects(telegram_effects || config.native_telegram_received_reactions_enabled)
+    .with_nyxid_turn_trace(turn_trace)
     .with_interactions(interactions)
     .with_native_intake_config(&config)
     .with_routed(

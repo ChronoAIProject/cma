@@ -88,6 +88,7 @@ fn payload() -> ThreadRefPayload {
         event: EventRefPayload {
             v: 1,
             telegram_admission: None,
+            turn_trace: None,
             activity_sha256: Some("a".repeat(64)),
             channel_id: "cmaeg1.ch.fixture".parse().unwrap(),
             record_id: "record-fixture".parse().unwrap(),

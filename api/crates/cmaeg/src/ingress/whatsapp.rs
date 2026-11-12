@@ -200,6 +200,7 @@ pub(crate) fn launch(
     };
     let payload = EventRefPayload {
         telegram_admission: None,
+        turn_trace: None,
         v: 1,
         activity_sha256: Some(activity_digest(&activity)),
         channel_id: verified.channel.id.clone(),

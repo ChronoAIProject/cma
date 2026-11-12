@@ -251,6 +251,7 @@ pub(super) fn connection(subject: &str, organization: bool) -> Connection {
         origin: Origin {
             event: EventRefPayload {
                 telegram_admission: None,
+                turn_trace: None,
                 v: 1,
                 activity_sha256: Some("fixture-activity-digest".into()),
                 channel_id: "cmaeg1.ch.fixture".parse().unwrap(),

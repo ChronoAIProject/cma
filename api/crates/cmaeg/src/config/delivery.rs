@@ -2,6 +2,9 @@ use super::{positive_duration, ConfigError};
 use std::{env, time::Duration};
 pub const CMAEG_NYXID_REPLY_TIMEOUT_MS: &str = "CMAEG_NYXID_REPLY_TIMEOUT_MS";
 pub const CMAEG_NYXID_COMPLETE_REPLIES: &str = "CMAEG_NYXID_COMPLETE_REPLIES";
+/// Reader-first rollout for NyxID's explicit CommonMark relay routes.
+pub const CMAEG_NYXID_COMMONMARK_RELAY_ENABLED: &str = "CMAEG_NYXID_COMMONMARK_RELAY_ENABLED";
+pub const CMAEG_NYXID_TURN_TRACE_ENABLED: &str = "CMAEG_NYXID_TURN_TRACE_ENABLED";
 pub const CMAEG_NYXID_NATIVE_MEDIA_ENABLED: &str = "CMAEG_NYXID_NATIVE_MEDIA_ENABLED";
 pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED";
 pub const CMAEG_NATIVE_DISCORD_EDITS_ENABLED: &str = "CMAEG_NATIVE_DISCORD_EDITS_ENABLED";
@@ -57,6 +60,20 @@ impl DeliveryConfig {
 }
 pub(crate) fn nyxid_complete_replies_from_env() -> Result<bool, ConfigError> {
     complete_replies(env::var(CMAEG_NYXID_COMPLETE_REPLIES))
+}
+
+pub(crate) fn nyxid_commonmark_relay_from_env() -> Result<bool, ConfigError> {
+    feature_switch(
+        env::var(CMAEG_NYXID_COMMONMARK_RELAY_ENABLED),
+        CMAEG_NYXID_COMMONMARK_RELAY_ENABLED,
+    )
+}
+
+pub(crate) fn nyxid_turn_trace_from_env() -> Result<bool, ConfigError> {
+    feature_switch(
+        env::var(CMAEG_NYXID_TURN_TRACE_ENABLED),
+        CMAEG_NYXID_TURN_TRACE_ENABLED,
+    )
 }
 
 pub(crate) fn nyxid_native_media_from_env() -> Result<bool, ConfigError> {
@@ -201,6 +218,19 @@ fn complete_replies(value: Result<String, env::VarError>) -> Result<bool, Config
     }
 }
 
+fn feature_switch(
+    value: Result<String, env::VarError>,
+    name: &'static str,
+) -> Result<bool, ConfigError> {
+    match value.as_deref() {
+        Ok("true") => Ok(true),
+        Ok("false") | Err(env::VarError::NotPresent) => Ok(false),
+        _ => Err(ConfigError::InvalidManagement {
+            detail: format!("{name} must be true or false"),
+        }),
+    }
+}
+
 fn text(name: &'static str, default: String) -> Result<String, ConfigError> {
     let value = env::var(name).unwrap_or(default);
     if value.trim().is_empty() || value.len() > 1024 || value.chars().any(char::is_control) {
@@ -296,5 +326,24 @@ mod tests {
             assert!(complete_replies(Ok(value.into())).is_err());
         }
         assert!(complete_replies(Err(env::VarError::NotUnicode("invalid".into()))).is_err());
+    }
+
+    #[test]
+    fn commonmark_relay_requires_explicit_reader_rollout() {
+        assert!(!feature_switch(Err(env::VarError::NotPresent), "flag").unwrap());
+        assert!(!feature_switch(Ok("false".into()), "flag").unwrap());
+        assert!(feature_switch(Ok("true".into()), "flag").unwrap());
+        for value in ["", "TRUE", "1", " true "] {
+            assert!(feature_switch(Ok(value.into()), "flag").is_err());
+        }
+        assert!(
+            feature_switch(Err(env::VarError::NotUnicode("invalid".into())), "flag").is_err()
+        );
+    }
+
+    #[test]
+    fn turn_trace_requires_explicit_reader_rollout() {
+        assert!(!feature_switch(Err(env::VarError::NotPresent), "flag").unwrap());
+        assert!(feature_switch(Ok("true".into()), "flag").unwrap());
     }
 }

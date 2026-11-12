@@ -19,6 +19,9 @@ pub struct EventRefPayload {
     /// Authenticated native Telegram admission evidence; absent before the reader rollout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub telegram_admission: Option<super::TelegramAdmissionProof>,
+    /// Optional NyxID turn correlation, diagnostic only and never an authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_trace: Option<TurnTraceContext>,
     pub v: u8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activity_sha256: Option<String>,
@@ -37,6 +40,53 @@ pub struct EventRefPayload {
     /// Present only on hand-off events.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lineage: Option<Lineage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TurnTraceContext {
+    /// Lowercase W3C trace-id bytes, bounded to the admitted upstream turn.
+    pub trace_id: String,
+    /// The authenticated caller span that led into CMAEG.
+    pub parent_span_id: String,
+}
+
+impl TurnTraceContext {
+    pub fn validate(&self) -> Result<(), ValidationError> {
+        if self.trace_id.len() != 32
+            || !self.trace_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || self.trace_id.bytes().all(|byte| byte == b'0')
+        {
+            return Err(ValidationError::new(
+                "/turn_trace/trace_id",
+                "invalid trace id",
+            ));
+        }
+        if self.parent_span_id.len() != 16
+            || !self.parent_span_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || self.parent_span_id.bytes().all(|byte| byte == b'0')
+        {
+            return Err(ValidationError::new(
+                "/turn_trace/parent_span_id",
+                "invalid parent span id",
+            ));
+        }
+        if self
+            .trace_id
+            .bytes()
+            .any(|byte| byte.is_ascii_uppercase())
+            || self
+                .parent_span_id
+                .bytes()
+                .any(|byte| byte.is_ascii_uppercase())
+        {
+            return Err(ValidationError::new(
+                "/turn_trace",
+                "trace ids must be lowercase",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, ToSchema)]
@@ -256,6 +306,9 @@ impl EventRefPayload {
     }
 
     pub fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(trace) = &self.turn_trace {
+            trace.validate()?;
+        }
         if let Some(proof) = &self.telegram_admission {
             proof.validate()?;
             if self.activity_sha256.is_none()

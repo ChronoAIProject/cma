@@ -193,6 +193,7 @@ impl Fixture {
         };
         activity.validate().unwrap();
         let event = EventRefPayload {
+            turn_trace: None,
             v: 1,
             channel_id: id,
             record_id: definition.record_id.clone(),

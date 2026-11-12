@@ -101,6 +101,7 @@ pub(crate) async fn prepare(
     let event_id = activity.event_id.clone();
     let event_ref = EventRef::seal(
         &EventRefPayload {
+            turn_trace: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),

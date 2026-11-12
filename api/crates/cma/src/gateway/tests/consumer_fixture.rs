@@ -276,6 +276,7 @@ fn ready_connection() -> Connection {
         origin: Origin {
             event: EventRefPayload {
                 telegram_admission: None,
+                turn_trace: None,
                 v: 1,
                 consumer: None,
                 lineage: None,

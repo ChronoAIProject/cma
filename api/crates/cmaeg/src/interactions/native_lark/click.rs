@@ -150,6 +150,7 @@ impl InteractionStore {
                 consumer: card.consumer.clone(),
                 lineage: None,
                 telegram_admission: None,
+                turn_trace: None,
                 activity_sha256: Some(activity_digest(&activity)),
             };
             let reference = EventRef::seal(&event, &self.keys).map_err(|_| Error::Unavailable)?;

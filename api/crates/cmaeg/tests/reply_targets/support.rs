@@ -275,6 +275,7 @@ impl App {
                     mentioned: Some(true),
                     replied_to_bot: Some(false),
                 }),
+            turn_trace: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: self.id.clone(),

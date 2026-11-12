@@ -206,6 +206,7 @@ fn native_discord_reference_cannot_enter_short_command_metadata() {
     let channel_id = pointer.seal_id(&keys).unwrap();
     let payload = EventRefPayload {
         telegram_admission: None,
+        turn_trace: None,
         v: 1,
         activity_sha256: Some("0".repeat(64)),
         channel_id,

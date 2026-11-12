@@ -19,10 +19,22 @@ impl RelayText {
         message: &OutboundMessage,
         capabilities: &Capabilities,
     ) -> (RenderedPart, RenderingReport) {
+        self.whole_with_commonmark(message, capabilities, false)
+    }
+
+    /// Render one logical reply for NyxID's CommonMark contract. NyxID owns
+    /// parsing, entity conversion and platform-sized splitting; preserving the
+    /// source bytes here is what prevents a second escaping pass.
+    pub fn whole_with_commonmark(
+        &self,
+        message: &OutboundMessage,
+        capabilities: &Capabilities,
+        commonmark: bool,
+    ) -> (RenderedPart, RenderingReport) {
         let (text, report) = sections(message, capabilities);
         (
             RenderedPart {
-                text: escaped(&text),
+                text: if commonmark { text } else { escaped(&text) },
             },
             report,
         )

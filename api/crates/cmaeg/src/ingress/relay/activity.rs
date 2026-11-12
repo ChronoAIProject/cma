@@ -27,6 +27,18 @@ pub(crate) fn launch_request(
     now: i64,
 ) -> Result<Built, &'static str> {
     super::lark_resources::bind(&channel, platform, &verified.payload, &mut facts);
+    let turn_trace = verified.turn_trace;
+    if let Some(trace) = turn_trace.as_ref() {
+        let context = crate::telemetry::turn_trace::Context::from_wire(trace.clone());
+        crate::telemetry::turn_trace::milestone(
+            Some(&context),
+            "ingress",
+            "link",
+            Some("completed"),
+            Some(202),
+            None,
+        );
+    }
     let payload = verified.payload;
     let event_id = EventId::new(if let Some(callback) = &facts.callback {
         use sha2::{Digest, Sha256};
@@ -103,6 +115,7 @@ pub(crate) fn launch_request(
     let event_ref = EventRef::seal(
         &EventRefPayload {
             telegram_admission: None,
+            turn_trace,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),

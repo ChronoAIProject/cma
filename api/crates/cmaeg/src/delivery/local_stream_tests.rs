@@ -13,6 +13,7 @@ fn fixture(opt_in: bool) -> (CustomDelivery, EventRefPayload, Waiter) {
     .unwrap();
     let event = EventRefPayload {
         telegram_admission: None,
+        turn_trace: None,
         v: 1,
         activity_sha256: None,
         channel_id: "cmaeg1.ch.stream-fixture".parse().unwrap(),

@@ -63,7 +63,8 @@ pub enum CallbackResponse {
 #[utoipa::path(post, path="/v1/callbacks/{channel_id}", operation_id="receiveRelayCallback", tag="ingress",
     params(("channel_id"=String, Path), ("x-nyxid-callback-token"=String, Header),
         ("x-nyxid-message-id"=String, Header), ("x-nyxid-platform"=String, Header),
-        ("x-nyxid-timestamp"=String, Header), ("x-nyxid-user-token"=Option<String>, Header)),
+        ("x-nyxid-timestamp"=String, Header), ("x-nyxid-user-token"=Option<String>, Header),
+        ("traceparent"=Option<String>, Header)),
     request_body=crate::ingress::relay::payload::CallbackPayload,
     responses((status=202, body=CallbackResponse), (status="default", body=cmaeg_core::problem::Problem, content_type="application/problem+json")))]
 pub async fn callback(
@@ -201,6 +202,7 @@ async fn admit_callback(
         headers,
         &body,
         time::OffsetDateTime::now_utc().unix_timestamp(),
+        state.nyxid_turn_trace_enabled,
     )
     .instrument(verify_span.clone())
     .await

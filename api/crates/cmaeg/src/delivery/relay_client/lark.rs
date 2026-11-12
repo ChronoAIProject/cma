@@ -26,6 +26,16 @@ impl RelayClient {
         secret: &Secret,
         card: &Value,
     ) -> (DeliveryOutcome, Option<String>) {
+        self.send_lark_card_with_trace(address, secret, card, None).await
+    }
+
+    pub(crate) async fn send_lark_card_with_trace(
+        &self,
+        address: &ReplyAddress,
+        secret: &Secret,
+        card: &Value,
+        turn_trace: Option<&cmaeg_core::seal::TurnTraceContext>,
+    ) -> (DeliveryOutcome, Option<String>) {
         let ReplyAddress::NyxidRelay {
             message_id,
             platform,
@@ -57,6 +67,8 @@ impl RelayClient {
             thread_reply: false,
             native_media: false,
             complete_text: false,
+            commonmark: false,
+            turn_trace: turn_trace.cloned(),
         };
         let result = self
             .send_prepared(Credential::ChannelKey(secret), &prepared)

@@ -75,6 +75,7 @@ fn assert_sealed_plaintext<T: Serialize>(name: &str, kind: TokenKind, payload: &
 fn event(reply: ReplyAddress) -> EventRefPayload {
     EventRefPayload {
         telegram_admission: None,
+        turn_trace: None,
         v: 1,
         activity_sha256: Some("a".repeat(64)),
         channel_id: ChannelId::new("cmaeg1.ch.golden-references").unwrap(),

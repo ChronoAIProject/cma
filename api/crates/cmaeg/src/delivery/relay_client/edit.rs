@@ -11,14 +11,29 @@ impl RelayClient {
         outbound_id: &str,
         text: &str,
     ) -> DeliveryOutcome {
+        self.edit_text_with_commonmark(secret, platform_id, outbound_id, text, false)
+            .await
+    }
+
+    pub async fn edit_text_with_commonmark(
+        &self,
+        secret: &Secret,
+        platform_id: &str,
+        outbound_id: &str,
+        text: &str,
+        commonmark: bool,
+    ) -> DeliveryOutcome {
         if !valid_id(platform_id) || !valid_id(outbound_id) || text.is_empty() {
             return DeliveryOutcome::Rejected {
                 reason: "relay_edit_invalid".into(),
             };
         }
-        let Ok(endpoint) = self.endpoint.join("reply/update") else {
-            return DeliveryOutcome::Unsupported;
-        };
+        let mut endpoint = self.endpoint.clone();
+        endpoint.set_path(if commonmark {
+            "/api/v1/channel-relay/reply/update/commonmark"
+        } else {
+            "/api/v1/channel-relay/reply/update"
+        });
         let Some(headers) = headers(secret) else {
             return unknown("edit_unconfirmed");
         };

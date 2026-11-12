@@ -13,7 +13,10 @@ mod whatsapp;
 
 use super::intents::DeliveryOutcome;
 use crate::net::exchange::{BodyError, HttpReply, TransportError};
-use cmaeg_core::{channel::Secret, seal::ReplyAddress};
+use cmaeg_core::{
+    channel::Secret,
+    seal::{ReplyAddress, TurnTraceContext},
+};
 use futures_util::future::BoxFuture;
 use reqwest::{header::HeaderMap, Client, StatusCode, Url};
 use serde::Deserialize;
@@ -38,6 +41,8 @@ pub(super) struct PreparedReply {
     thread_reply: bool,
     native_media: bool,
     complete_text: bool,
+    commonmark: bool,
+    turn_trace: Option<TurnTraceContext>,
 }
 
 pub enum Credential<'a> {
@@ -113,6 +118,7 @@ pub struct RelayClient {
     endpoint: Url,
     timeout: Duration,
     complete_replies: bool,
+    commonmark_relay: bool,
     native_media: bool,
     pub(super) native_lark_outbound_media: bool,
     pub(super) native_lark_sticker_replies: bool,
@@ -231,6 +237,25 @@ impl RelayClient {
     pub(super) fn complete_replies(&self) -> bool {
         self.complete_replies
     }
+    /// CommonMark is opt-in because old NyxID replicas intentionally answer
+    /// 404 for the new routes; callers must never fall back after submission.
+    pub fn with_commonmark_relay(mut self, enabled: bool) -> Self {
+        self.commonmark_relay = enabled;
+        self
+    }
+    pub(super) fn commonmark_for(&self, address: &ReplyAddress) -> bool {
+        self.commonmark_relay
+            && matches!(
+                address,
+                ReplyAddress::NyxidRelay {
+                    platform: cmaeg_core::channel::Platform::Telegram,
+                    ..
+                }
+            )
+    }
+    pub(super) fn commonmark_for_platform(&self, platform: cmaeg_core::channel::Platform) -> bool {
+        self.commonmark_relay && platform == cmaeg_core::channel::Platform::Telegram
+    }
     pub fn with_interactions(
         mut self,
         store: std::sync::Arc<crate::interactions::InteractionStore>,
@@ -256,6 +281,7 @@ impl RelayClient {
             endpoint,
             timeout,
             complete_replies: false,
+            commonmark_relay: false,
             native_media: false,
             native_lark_outbound_media: false,
             native_lark_sticker_replies: false,
@@ -327,6 +353,17 @@ impl RelayClient {
         text: &str,
         markup: Option<&serde_json::Value>,
     ) -> (DeliveryOutcome, Option<String>) {
+        self.send_rich_with_trace(address, credential, text, markup, None)
+            .await
+    }
+    pub(super) async fn send_rich_with_trace(
+        &self,
+        address: &ReplyAddress,
+        credential: Credential<'_>,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+        turn_trace: Option<&TurnTraceContext>,
+    ) -> (DeliveryOutcome, Option<String>) {
         let ReplyAddress::NyxidRelay {
             message_id,
             thread_reply,
@@ -341,7 +378,15 @@ impl RelayClient {
         };
         tokio::time::timeout(
             self.timeout,
-            self.post(message_id, secret, text, markup, *thread_reply),
+            self.post(
+                message_id,
+                secret,
+                text,
+                markup,
+                *thread_reply,
+                markup.is_none() && self.commonmark_for(address),
+                turn_trace,
+            ),
         )
         .await
         .unwrap_or_else(|_| (unknown("response_lost"), None))
@@ -350,6 +395,16 @@ impl RelayClient {
         address: &ReplyAddress,
         text: &str,
         markup: Option<&serde_json::Value>,
+        commonmark: bool,
+    ) -> Result<PreparedReply, DeliveryOutcome> {
+        Self::prepare_with_trace(address, text, markup, commonmark, None)
+    }
+    pub(super) fn prepare_with_trace(
+        address: &ReplyAddress,
+        text: &str,
+        markup: Option<&serde_json::Value>,
+        commonmark: bool,
+        turn_trace: Option<&TurnTraceContext>,
     ) -> Result<PreparedReply, DeliveryOutcome> {
         let ReplyAddress::NyxidRelay {
             message_id,
@@ -375,6 +430,8 @@ impl RelayClient {
             thread_reply: *thread_reply,
             native_media: false,
             complete_text: true,
+            commonmark,
+            turn_trace: turn_trace.cloned(),
         })
     }
     pub(super) async fn send_prepared(
@@ -388,7 +445,7 @@ impl RelayClient {
         };
         let timeout = if prepared.native_media {
             Duration::from_secs(60)
-        } else if self.complete_replies && prepared.complete_text {
+        } else if (self.complete_replies || prepared.commonmark) && prepared.complete_text {
             COMPLETE_REPLY_TIMEOUT
         } else {
             self.timeout
@@ -416,6 +473,8 @@ impl RelayClient {
         text: &str,
         markup: Option<&serde_json::Value>,
         thread_reply: bool,
+        commonmark: bool,
+        turn_trace: Option<&TurnTraceContext>,
     ) -> (DeliveryOutcome, Option<String>) {
         let Some(headers) = headers(secret) else {
             return (unknown("response_lost"), None);
@@ -423,7 +482,15 @@ impl RelayClient {
         let Ok(body) = serialize_reply(message_id, text, markup, thread_reply) else {
             return (unknown("response_lost"), None);
         };
-        self.post_serialized(message_id, headers, body, thread_reply, self.timeout)
+        self.post_serialized(
+            message_id,
+            headers,
+            body,
+            thread_reply,
+            commonmark,
+            turn_trace,
+            self.timeout,
+        )
             .await
     }
     async fn post_prepared(
@@ -440,6 +507,8 @@ impl RelayClient {
             headers,
             prepared.body.clone(),
             prepared.thread_reply,
+            prepared.commonmark,
+            prepared.turn_trace.as_ref(),
             timeout,
         )
         .await
@@ -447,21 +516,48 @@ impl RelayClient {
     async fn post_serialized(
         &self,
         message_id: &str,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
         body: Vec<u8>,
         thread_reply: bool,
+        commonmark: bool,
+        turn_trace: Option<&TurnTraceContext>,
         timeout: Duration,
     ) -> (DeliveryOutcome, Option<String>) {
+        let trace_context = turn_trace.map(|value| {
+            crate::telemetry::turn_trace::Context::from_wire(value.clone())
+        });
         let mut endpoint = self.endpoint.clone();
         if thread_reply {
             // Old NyxID replicas must fail before sending, never ignore the flag.
             endpoint.set_path("/api/v1/channel-relay/thread-reply");
         }
+        if commonmark {
+            endpoint.set_path(if thread_reply {
+                "/api/v1/channel-relay/thread-reply/commonmark"
+            } else {
+                "/api/v1/channel-relay/reply/commonmark"
+            });
+        }
+        if let Some(turn_trace) = turn_trace {
+            if let Ok(value) = crate::telemetry::turn_trace::child_traceparent(turn_trace).parse() {
+                headers.insert("traceparent", value);
+            }
+        }
         let reply = match self.transport.post(endpoint, headers, body, timeout).await {
             Ok(reply) => reply,
-            Err(_) => return (unknown("response_lost"), None),
+            Err(_) => {
+                relay_trace_milestone(trace_context.as_ref(), None, "unknown", "response_lost");
+                return (unknown("response_lost"), None);
+            }
         };
+        let status = reply.status.as_u16();
         if reply.status == StatusCode::TOO_MANY_REQUESTS {
+            relay_trace_milestone(
+                trace_context.as_ref(),
+                Some(status),
+                "rejected",
+                "rate_limited",
+            );
             return (
                 DeliveryOutcome::RateLimited {
                     retry_after: retry_after(&reply.headers),
@@ -470,14 +566,42 @@ impl RelayClient {
             );
         }
         if reply.status != StatusCode::OK {
+            relay_trace_milestone(
+                trace_context.as_ref(),
+                Some(status),
+                "rejected",
+                "provider_failure",
+            );
             return (unknown("provider_failure"), None);
         }
         let bytes = match reply.body {
             Ok(bytes) => bytes,
-            Err(BodyError::Oversized) => return (unknown("receipt_invalid"), None),
-            Err(BodyError::Lost) => return (unknown("response_lost"), None),
+            Err(BodyError::Oversized) => {
+                relay_trace_milestone(
+                    trace_context.as_ref(),
+                    Some(status),
+                    "unknown",
+                    "receipt_invalid",
+                );
+                return (unknown("receipt_invalid"), None);
+            }
+            Err(BodyError::Lost) => {
+                relay_trace_milestone(
+                    trace_context.as_ref(),
+                    Some(status),
+                    "unknown",
+                    "response_lost",
+                );
+                return (unknown("response_lost"), None);
+            }
         };
         let Ok(receipt) = serde_json::from_slice::<ReplyResponse>(&bytes) else {
+            relay_trace_milestone(
+                trace_context.as_ref(),
+                Some(status),
+                "unknown",
+                "receipt_invalid",
+            );
             return (unknown("receipt_invalid"), None);
         };
         if !valid_id(&receipt.message_id)
@@ -487,8 +611,22 @@ impl RelayClient {
                 .as_deref()
                 .is_some_and(|id| !valid_id(id))
         {
+            relay_trace_milestone(
+                trace_context.as_ref(),
+                Some(status),
+                "unknown",
+                "receipt_invalid",
+            );
             return (unknown("receipt_invalid"), None);
         }
+        crate::telemetry::turn_trace::milestone(
+            trace_context.as_ref(),
+            "gateway",
+            "milestone",
+            Some("confirmed"),
+            Some(status),
+            None,
+        );
         (
             DeliveryOutcome::Confirmed {
                 platform_message_id: receipt.platform_message_id,
@@ -496,4 +634,20 @@ impl RelayClient {
             Some(receipt.message_id),
         )
     }
+}
+
+fn relay_trace_milestone(
+    context: Option<&crate::telemetry::turn_trace::Context>,
+    status: Option<u16>,
+    outcome: &'static str,
+    code: &'static str,
+) {
+    crate::telemetry::turn_trace::milestone(
+        context,
+        "gateway",
+        "milestone",
+        Some(outcome),
+        status,
+        Some(code),
+    );
 }

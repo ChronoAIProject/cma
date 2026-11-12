@@ -39,7 +39,9 @@ impl Sender {
         if !interactive {
             capabilities.buttons = "numbered_text".into();
         }
-        let (part, rendering) = RelayText.whole(message, &capabilities);
+        let commonmark = self.relay.commonmark_for(&event.reply);
+        let (part, rendering) =
+            RelayText.whole_with_commonmark(message, &capabilities, commonmark);
         if part.text.is_empty()
             && message.native_attachments.is_empty()
             && message.whatsapp_template.is_none()
@@ -61,8 +63,31 @@ impl Sender {
             *thread_reply = message.thread_reply;
         }
         let prepared = match message.whatsapp_template.as_ref().map_or_else(
-            || RelayClient::prepare_native(&address, &part.text, &message.native_attachments),
-            |template| RelayClient::prepare_whatsapp_template(&address, template),
+            || {
+                if message.native_attachments.is_empty() {
+                    RelayClient::prepare_with_trace(
+                        &address,
+                        &part.text,
+                        None,
+                        commonmark,
+                        event.turn_trace.as_ref(),
+                    )
+                } else {
+                    RelayClient::prepare_native_with_trace(
+                        &address,
+                        &part.text,
+                        &message.native_attachments,
+                        event.turn_trace.as_ref(),
+                    )
+                }
+            },
+            |template| {
+                RelayClient::prepare_whatsapp_template_with_trace(
+                    &address,
+                    template,
+                    event.turn_trace.as_ref(),
+                )
+            },
         ) {
             Ok(prepared) => prepared,
             Err(outcome) => return (refused(rendering, outcome), effects),

@@ -70,6 +70,17 @@ impl RelayClient {
         secret: &cmaeg_core::channel::Secret,
         interactive: &serde_json::Value,
     ) -> (DeliveryOutcome, Option<String>) {
+        self.send_whatsapp_interactive_with_trace(address, secret, interactive, None)
+            .await
+    }
+
+    pub(crate) async fn send_whatsapp_interactive_with_trace(
+        &self,
+        address: &ReplyAddress,
+        secret: &cmaeg_core::channel::Secret,
+        interactive: &serde_json::Value,
+        turn_trace: Option<&cmaeg_core::seal::TurnTraceContext>,
+    ) -> (DeliveryOutcome, Option<String>) {
         let ReplyAddress::NyxidRelay {
             platform: Platform::Whatsapp,
             message_id,
@@ -98,6 +109,8 @@ impl RelayClient {
             thread_reply: false,
             native_media: false,
             complete_text: false,
+            commonmark: false,
+            turn_trace: turn_trace.cloned(),
         };
         let result = self
             .send_prepared(super::Credential::ChannelKey(secret), &prepared)
@@ -120,6 +133,14 @@ impl RelayClient {
     pub(in crate::delivery) fn prepare_whatsapp_template(
         address: &ReplyAddress,
         template: &WhatsappTemplate,
+    ) -> Result<PreparedReply, DeliveryOutcome> {
+        Self::prepare_whatsapp_template_with_trace(address, template, None)
+    }
+
+    pub(in crate::delivery) fn prepare_whatsapp_template_with_trace(
+        address: &ReplyAddress,
+        template: &WhatsappTemplate,
+        turn_trace: Option<&cmaeg_core::seal::TurnTraceContext>,
     ) -> Result<PreparedReply, DeliveryOutcome> {
         let rejected = |reason: &str| DeliveryOutcome::Rejected {
             reason: reason.into(),
@@ -153,6 +174,8 @@ impl RelayClient {
             thread_reply: false,
             native_media: template.has_media(),
             complete_text: false,
+            commonmark: false,
+            turn_trace: turn_trace.cloned(),
         })
     }
 }

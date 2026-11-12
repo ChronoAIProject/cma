@@ -3,6 +3,7 @@ use super::{DeliveryOutcome, PreparedReply, RelayClient, ReplyAddress, REQUEST_M
 use cmaeg_core::{
     channel::Platform,
     message::{validate_native_attachments, NativeAttachment, NativeMediaKind, NativeMediaSource},
+    seal::TurnTraceContext,
 };
 
 /// Platforms whose NyxID adapters implement each of the four declared media kinds.
@@ -32,9 +33,18 @@ impl RelayClient {
         text: &str,
         attachments: &[NativeAttachment],
     ) -> Result<PreparedReply, DeliveryOutcome> {
+        Self::prepare_native_with_trace(address, text, attachments, None)
+    }
+
+    pub(in crate::delivery) fn prepare_native_with_trace(
+        address: &ReplyAddress,
+        text: &str,
+        attachments: &[NativeAttachment],
+        turn_trace: Option<&TurnTraceContext>,
+    ) -> Result<PreparedReply, DeliveryOutcome> {
         // Preserve the complete legacy request bytes when native media is absent.
         if attachments.is_empty() {
-            return Self::prepare(address, text, None);
+            return Self::prepare_with_trace(address, text, None, false, turn_trace);
         }
         let rejected = |reason: &str| DeliveryOutcome::Rejected {
             reason: reason.into(),
@@ -93,6 +103,8 @@ impl RelayClient {
             thread_reply: *thread_reply,
             native_media: true,
             complete_text: false,
+            commonmark: false,
+            turn_trace: turn_trace.cloned(),
         })
     }
 }

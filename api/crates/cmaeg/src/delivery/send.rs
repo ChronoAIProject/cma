@@ -256,7 +256,10 @@ impl Sender {
         if interactive && crate::interactions::has_controls(message) {
             return Box::pin(self.interactive_reply(ctx, event, message, None)).await;
         }
-        if self.relay.complete_replies() || !message.native_attachments.is_empty() {
+        if self.relay.complete_replies()
+            || (self.relay.commonmark_for(&event.reply) && message.native_attachments.is_empty())
+            || !message.native_attachments.is_empty()
+        {
             return Box::pin(self.complete_reply(ctx, event, message, interactive)).await;
         }
         // The send's own view of the event's first-send flag, returned as its effect.
@@ -340,7 +343,13 @@ impl Sender {
             first_send_done = true;
             let (mut outcome, mut outbound) = self
                 .relay
-                .send_rich(&address, credential, &part.text, None)
+                .send_rich_with_trace(
+                    &address,
+                    credential,
+                    &part.text,
+                    None,
+                    event.turn_trace.as_ref(),
+                )
                 .await;
             drop(permit);
             if let DeliveryOutcome::RateLimited { retry_after } = outcome {
@@ -357,7 +366,13 @@ impl Sender {
                 (outcome, outbound) = match ctx.channel.definition.secrets.channel_key.as_ref() {
                     Some(key) => {
                         self.relay
-                            .send_rich(&address, Credential::ChannelKey(key), &part.text, None)
+                            .send_rich_with_trace(
+                                &address,
+                                Credential::ChannelKey(key),
+                                &part.text,
+                                None,
+                                event.turn_trace.as_ref(),
+                            )
                             .await
                     }
                     None => (

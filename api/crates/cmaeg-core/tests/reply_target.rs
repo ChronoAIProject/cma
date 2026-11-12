@@ -28,6 +28,7 @@ fn payload(keys: &MasterKeyRing) -> ReplyTargetPayload {
         expires_at: 86500,
         event: EventRefPayload {
             telegram_admission: None,
+            turn_trace: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel_id.clone(),

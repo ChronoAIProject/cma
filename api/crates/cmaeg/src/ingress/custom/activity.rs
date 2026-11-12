@@ -65,6 +65,7 @@ pub fn launch_request(
     let event_ref = EventRef::seal(
         &EventRefPayload {
             telegram_admission: None,
+            turn_trace: None,
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),

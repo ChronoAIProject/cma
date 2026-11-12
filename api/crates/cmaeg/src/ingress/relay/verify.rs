@@ -19,17 +19,34 @@ pub struct CallbackHeaders<'a> {
     pub message_id: &'a str,
     pub platform: &'a str,
     pub timestamp: &'a str,
+    pub traceparent: Option<&'a str>,
+    pub traceparent_invalid: bool,
 }
 impl<'a> CallbackHeaders<'a> {
     pub fn read(headers: &'a HeaderMap) -> Result<Self, VerificationError> {
+        let (traceparent, traceparent_invalid) = traceparent(headers);
         Ok(Self {
             callback_token: single(headers, "x-nyxid-callback-token", true)?.unwrap(),
             message_id: single(headers, "x-nyxid-message-id", true)?.unwrap(),
             timestamp: single(headers, "x-nyxid-timestamp", true)?.unwrap(),
             platform: single(headers, "x-nyxid-platform", true)?.unwrap(),
             user_token: single(headers, "x-nyxid-user-token", false)?,
+            traceparent,
+            traceparent_invalid,
         })
     }
+}
+fn traceparent<'a>(headers: &'a HeaderMap) -> (Option<&'a str>, bool) {
+    let mut values = headers.get_all("traceparent").iter();
+    let first = values.next();
+    let duplicate = values.next().is_some();
+    let value = first.and_then(|value| {
+        value
+            .to_str()
+            .ok()
+            .filter(|value| !value.is_empty() && !value.contains(','))
+    });
+    (value, duplicate || first.is_some() && value.is_none())
 }
 pub fn single<'a>(
     headers: &'a HeaderMap,
@@ -92,6 +109,7 @@ pub struct VerifiedCallback {
     pub reply_token: Secret,
     pub reply_expires_at: i64,
     pub callback_deadline: i64,
+    pub turn_trace: Option<cmaeg_core::seal::TurnTraceContext>,
 }
 pub async fn verify(
     channel: &ResolvedChannel,
@@ -100,6 +118,7 @@ pub async fn verify(
     headers: CallbackHeaders<'_>,
     body: &[u8],
     now: i64,
+    trace_enabled: bool,
 ) -> Result<VerifiedCallback, VerificationError> {
     let Some(Source::NyxidRelay {
         issuer,
@@ -201,11 +220,27 @@ pub async fn verify(
     if reply.standard.exp <= now {
         return Err(VerificationError("reply_expired"));
     }
+    let parsed_trace = if !trace_enabled {
+        Ok(None)
+    } else if headers.traceparent_invalid {
+        Err(crate::telemetry::turn_trace::GapReason::InvalidParent)
+    } else {
+        crate::telemetry::turn_trace::parse_parent(headers.traceparent)
+    };
+    let turn_trace = match parsed_trace {
+        Ok(Some(context)) => Some(context.wire()),
+        Ok(None) => None,
+        Err(reason) => {
+            crate::telemetry::turn_trace::ingress_gap(reason);
+            None
+        }
+    };
     Ok(VerifiedCallback {
         payload,
         reply_token,
         reply_expires_at: reply.standard.exp,
         callback_deadline: claims.standard.exp.saturating_add(60),
+        turn_trace,
     })
 }
 async fn authenticated<T: DeserializeOwned>(
@@ -218,4 +253,37 @@ async fn authenticated<T: DeserializeOwned>(
     keys.keys_for(channel, source_index, &token.kid)
         .await?
         .verify(&token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::HeaderValue;
+
+    fn required() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-nyxid-callback-token", HeaderValue::from_static("token"));
+        headers.insert("x-nyxid-message-id", HeaderValue::from_static("message"));
+        headers.insert("x-nyxid-platform", HeaderValue::from_static("telegram"));
+        headers.insert("x-nyxid-timestamp", HeaderValue::from_static("1"));
+        headers
+    }
+
+    #[test]
+    fn malformed_or_duplicate_trace_headers_are_ignored_after_authentication() {
+        let mut headers = required();
+        headers.insert(
+            "traceparent",
+            HeaderValue::from_static(
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            ),
+        );
+        let parsed = CallbackHeaders::read(&headers).unwrap();
+        assert!(!parsed.traceparent_invalid);
+        assert!(parsed.traceparent.is_some());
+
+        headers.append("traceparent", HeaderValue::from_static("another"));
+        let duplicate = CallbackHeaders::read(&headers).unwrap();
+        assert!(duplicate.traceparent_invalid);
+    }
 }

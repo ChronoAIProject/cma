@@ -94,6 +94,7 @@ async fn native_media_refreshes_exact_metadata_keeps_token_off_cdn_and_honors_re
     let current = channel();
     let payload = EventRefPayload {
         telegram_admission: None,
+        turn_trace: None,
         v: 1,
         activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
         channel_id: current.id.clone(),

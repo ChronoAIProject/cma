@@ -31,6 +31,8 @@ pub struct IngressState {
     pub native_whatsapp_groups_enabled: bool,
     pub native_whatsapp_message_events_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
+    /// Accept NyxID turn trace headers only after the negotiated reader rollout.
+    pub nyxid_turn_trace_enabled: bool,
     /// Receives authenticated refusals, producers and authentication
     /// failures; a no-op unless the console is on.
     pub activity: Arc<dyn ActivityObserver>,
@@ -70,6 +72,10 @@ impl IngressState {
     }
     pub fn with_telegram_effects(mut self, enabled: bool) -> Self {
         self.telegram_effects_issuance_enabled = enabled;
+        self
+    }
+    pub fn with_nyxid_turn_trace(mut self, enabled: bool) -> Self {
+        self.nyxid_turn_trace_enabled = enabled;
         self
     }
     pub fn with_activity_observer(mut self, observer: Arc<dyn ActivityObserver>) -> Self {
@@ -147,6 +153,7 @@ impl IngressState {
             native_whatsapp_groups_enabled: false,
             native_whatsapp_message_events_enabled: false,
             telegram_effects_issuance_enabled: false,
+            nyxid_turn_trace_enabled: false,
             activity: Arc::new(NoopObserver),
             resolver,
             master_keys,

@@ -46,16 +46,21 @@ use std::{
 };
 
 #[derive(Default)]
-struct Transport(Mutex<Vec<usize>>, Mutex<Vec<(Url, serde_json::Value)>>);
+struct Transport(
+    Mutex<Vec<usize>>,
+    Mutex<Vec<(Url, serde_json::Value)>>,
+    Mutex<Vec<HeaderMap>>,
+);
 impl RelayTransport for Transport {
     fn post(
         &self,
         url: Url,
-        _: HeaderMap,
+        headers: HeaderMap,
         body: Vec<u8>,
         _: Duration,
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
         self.0.lock().unwrap().push(body.len());
+        self.2.lock().unwrap().push(headers);
         self.1
             .lock()
             .unwrap()
@@ -94,6 +99,7 @@ fn setup() -> (
     });
     let event = EventRefPayload {
         telegram_admission: None,
+        turn_trace: None,
         v: 1,
         activity_sha256: None,
         channel_id: channel.id.clone(),
@@ -129,6 +135,55 @@ fn setup() -> (
         observer: Arc::new(NoopObserver),
     };
     (sender, transport, channel, event)
+}
+
+#[tokio::test(start_paused = true)]
+async fn commonmark_telegram_replies_use_dedicated_routes_and_preserve_source() {
+    let source = "**bold**\\ [literal]\n```text\nC:\\qa\\menu_01.txt\n```";
+    for thread in [false, true] {
+        let (mut sender, transport, channel, mut event) = setup();
+        sender.relay = sender.relay.clone().with_commonmark_relay(true);
+        if let ReplyAddress::NyxidRelay {
+            platform,
+            thread_reply,
+            ..
+        } = &mut event.reply
+        {
+            *platform = Platform::Telegram;
+            *thread_reply = thread;
+        }
+        event.turn_trace = Some(cmaeg_core::seal::TurnTraceContext {
+            trace_id: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
+            parent_span_id: "00f067aa0ba902b7".into(),
+        });
+        let trace = tracing::Span::none();
+        let gate = RecordingGate::new(true);
+        let ctx = SendContext {
+            trace: &trace,
+            channel: &channel,
+            first_send_done: false,
+            gate: &gate,
+        };
+        let mut outbound = message(source.into());
+        outbound.thread_reply = thread;
+        let (receipt, _) = sender.reply(&ctx, &event, &outbound).await;
+        assert!(matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }));
+        let requests = transport.1.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].0.path(),
+            if thread {
+                "/api/v1/channel-relay/thread-reply/commonmark"
+            } else {
+                "/api/v1/channel-relay/reply/commonmark"
+            }
+        );
+        assert_eq!(requests[0].1["reply"]["text"], source);
+        let headers = transport.2.lock().unwrap();
+        let traceparent = headers[0].get("traceparent").unwrap().to_str().unwrap();
+        assert!(traceparent.starts_with("00-"));
+        assert_eq!(traceparent.len(), 55);
+    }
 }
 fn message(text: String) -> OutboundMessage {
     OutboundMessage {

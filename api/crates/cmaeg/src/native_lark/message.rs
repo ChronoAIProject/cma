@@ -455,6 +455,7 @@ pub(crate) fn launch(
             consumer: None,
             lineage: None,
             telegram_admission: None,
+            turn_trace: None,
         },
         keys,
     )

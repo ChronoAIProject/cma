@@ -81,6 +81,28 @@ async fn a_fake_transport_receives_what_the_loopback_relay_receives() {
     assert_eq!(sent.timeout, Duration::from_secs(5));
 }
 
+#[tokio::test]
+async fn commonmark_rollout_keeps_interactive_markup_on_the_legacy_route() {
+    let fake = Arc::new(FakeHttp::relay());
+    let client = faked(&fake, Duration::from_secs(5)).with_commonmark_relay(true);
+    let markup = json!({"inline_keyboard":[[{"text":"One","callback_data":"one"}]]});
+
+    let outcome = client
+        .send_rich(
+            &address(),
+            Credential::ChannelKey(&Secret::new("route-key-fixture")),
+            "hello",
+            Some(&markup),
+        )
+        .await;
+
+    assert!(matches!(outcome.0, DeliveryOutcome::Confirmed { .. }));
+    assert_eq!(
+        fake.sent()[0].url.path(),
+        "/api/v1/channel-relay/reply"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_fake_sleeping_past_the_timeout_loses_the_response() {
     let fake =

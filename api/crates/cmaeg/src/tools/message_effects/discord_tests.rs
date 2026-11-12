@@ -113,6 +113,7 @@ impl App {
         let event = EventRefPayload {
             v: 1,
             telegram_admission: None,
+            turn_trace: None,
             activity_sha256: Some(activity_digest(&activity)),
             channel_id: id,
             record_id: definition.record_id.clone(),

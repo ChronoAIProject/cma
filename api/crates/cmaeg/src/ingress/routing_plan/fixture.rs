@@ -69,6 +69,7 @@ pub fn request(edit: impl FnOnce(&mut Value), activity: Activity) -> LaunchReque
     let partition_key = activity.partition_key(&channel.definition.partition);
     let conversation_id = ConversationId::derive(&keys(), &channel.id, 1, &partition_key);
     let payload = EventRefPayload {
+        turn_trace: None,
         v: 1,
         activity_sha256: Some(activity_digest(&activity)),
         channel_id: channel.id.clone(),
