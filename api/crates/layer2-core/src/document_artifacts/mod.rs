@@ -8,7 +8,10 @@ mod runtime;
 mod service;
 mod types;
 mod validation;
-pub use blob_maintenance::*;
+pub use blob_maintenance::{
+    valid_document_blob_prefix, BlobDeletion, BlobMaintenanceError, BlobPage,
+    DocumentBlobMaintenance, MAX_BLOB_CURSOR_BYTES, MAX_BLOB_PAGE_KEYS,
+};
 pub use quota::*;
 pub use service::DocumentService;
 pub use types::*;
