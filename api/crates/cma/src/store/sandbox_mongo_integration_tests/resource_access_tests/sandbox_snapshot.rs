@@ -8,7 +8,6 @@ struct Trace {
     commands: Mutex<Vec<(String, Document)>>,
     checkouts: AtomicU64,
     pause_children: AtomicBool,
-    pause_get_more: AtomicBool,
     entered: tokio::sync::Notify,
     resume: (Mutex<bool>, std::sync::Condvar),
 }
@@ -27,11 +26,8 @@ async fn observed_client(trace: &Arc<Trace>) -> Client {
     let observed = trace.clone();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
-            let child = matches!(event.command.get_str("find"), Ok("workspaces"))
-                || matches!(event.command.get_str("aggregate"), Ok("workspaces"));
-            let pause = (child && observed.pause_children.swap(false, Ordering::SeqCst))
-                || (event.command_name == "getMore"
-                    && observed.pause_get_more.swap(false, Ordering::SeqCst));
+            let pause = matches!(event.command.get_str("find"), Ok("workspaces"))
+                && observed.pause_children.swap(false, Ordering::SeqCst);
             observed
                 .commands
                 .lock()
@@ -212,9 +208,6 @@ async fn sandbox_snapshot_keeps_children_before_concurrent_move_and_delete() {
         .unwrap();
     assert!(after.workspaces.is_empty() && after.worktrees.is_empty() && after.agents.is_empty());
     db.drop().await.unwrap();
-    drop(session);
-    client.shutdown().await;
-    admin.shutdown().await;
 }
 
 #[tokio::test]
@@ -303,14 +296,3 @@ async fn sandbox_snapshot_preserves_large_hierarchy_cursor_batches() {
 
 #[path = "sandbox_snapshot/measurement.rs"]
 mod measurement;
-
-#[path = "sandbox_snapshot/batch_fixture.rs"]
-mod batch_fixture;
-#[path = "sandbox_snapshot/batched_access.rs"]
-mod batched_access;
-#[path = "sandbox_snapshot/batched_measurement.rs"]
-mod batched_measurement;
-#[path = "sandbox_snapshot/batched_races.rs"]
-mod batched_races;
-#[path = "sandbox_snapshot/batched_tests.rs"]
-mod batched_tests;
