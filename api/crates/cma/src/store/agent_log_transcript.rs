@@ -32,11 +32,8 @@ impl MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
 
-        // Format-2 reads validate every source row and seal in this snapshot,
-        // retaining only transcript-affecting rows. This path has no lifetime
-        // 10,128-row or 4 MiB cap; the exact fold remains the semantic check in
-        // layer2-core. Legacy histories continue through the trusted proof and
-        // compatibility query below.
+        // The public segmented transcript uses indexed source pages before
+        // this legacy adapter. Retain only its fixed compatibility budget here.
         let segmented = agent_log_segment_reads::is_segmented(self, expected, &mut session).await?;
         match agent_log_segment_reads::selected(self, expected, &mut session, is_transcript_entry)
             .await

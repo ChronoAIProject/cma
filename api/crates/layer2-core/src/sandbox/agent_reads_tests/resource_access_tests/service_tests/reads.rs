@@ -8,6 +8,8 @@ mod history_tests;
 mod response;
 #[path = "reads/stream.rs"]
 mod stream;
+#[path = "reads/transcript_pages.rs"]
+mod transcript_pages;
 #[path = "reads/window.rs"]
 mod window;
 #[path = "reads/window_probe_tests.rs"]

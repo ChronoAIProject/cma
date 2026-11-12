@@ -142,24 +142,6 @@ pub(in crate::store) async fn read(
     Ok(projection.record)
 }
 
-pub(in crate::store) async fn title_through(
-    store: &MongoSandboxStore,
-    agent: &Agent,
-    head: &Head,
-    session: &mut ClientSession,
-) -> Result<Option<u64>, TransactionLogError> {
-    let state = read(store, agent, head, session).await?;
-    let Some(turn) = state.title_turn else {
-        return Ok(None);
-    };
-    let Some(EvidenceRecord::Turn { facts }) =
-        evidence(store, head, "turn", &turn.to_string(), session).await?
-    else {
-        return Err(corrupt().into());
-    };
-    Ok(facts.end_sequence)
-}
-
 pub(in crate::store) async fn evidence(
     store: &MongoSandboxStore,
     head: &Head,

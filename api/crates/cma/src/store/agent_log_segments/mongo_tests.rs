@@ -13,7 +13,7 @@ use mongodb::{
     Client,
 };
 const NOW: &str = "2026-11-01T00:00:00Z";
-mod fixtures;
+pub(in crate::store) mod fixtures;
 use fixtures::*;
 mod audit_bounds;
 mod audit_movement;
