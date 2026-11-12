@@ -279,6 +279,12 @@ closed — remains the authority, because an identity can also be created at the
 provider directly. Existing owners are never affected: the callback finds them
 in the user directory before it reads the admission state (decision 25).
 
+Revival reaches a Paused Sandbox through the owner's lifecycle route, a
+message's command, a Launch, or a `Revive` Sandbox control
+(`POST /api/v1/sandboxes/{id}/commands`, also used by bot delegation); each
+reads the admission state before it schedules anything. `Pause` and `Retire` controls carry no new commitment and stay
+available.
+
 Approval decisions remain allowed under `SpendStop` because the turn they
 continue has already reserved its full allowance; refusing them would not reduce
 liability and would strand admitted work.
