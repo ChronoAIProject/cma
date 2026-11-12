@@ -31,7 +31,8 @@ export default defineConfig({
     baseURL,
     viewport: { width: 1440, height: 1000 },
     serviceWorkers: 'block',
-    trace: 'off',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
     video: 'off',
   },
 });
