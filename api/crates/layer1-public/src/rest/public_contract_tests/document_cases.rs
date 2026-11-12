@@ -127,10 +127,19 @@ impl DocumentStore for Faults {
     ) -> Result<Vec<DocumentListing>, DocumentError> {
         Err(DocumentError::Unavailable)
     }
-    async fn insert(&self, _: &StoredDocument) -> Result<bool, DocumentError> {
+    async fn insert(
+        &self,
+        _: &StoredDocument,
+        _: Option<(&DocumentSourceReservation, SourceTicket)>,
+    ) -> Result<bool, DocumentError> {
         Err(DocumentError::Unavailable)
     }
-    async fn compare_exchange(&self, _: u64, _: &StoredDocument) -> Result<bool, DocumentError> {
+    async fn compare_exchange(
+        &self,
+        _: u64,
+        _: &StoredDocument,
+        _: Option<(&DocumentSourceReservation, SourceTicket)>,
+    ) -> Result<bool, DocumentError> {
         Err(DocumentError::Capacity)
     }
 }
