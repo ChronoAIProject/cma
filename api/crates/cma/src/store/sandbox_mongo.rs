@@ -1,8 +1,4 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
-
-use std::future::Future;
-use std::time::Duration;
-
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::error::{
@@ -12,6 +8,8 @@ use mongodb::options::{ReadConcern, WriteConcern};
 use mongodb::{Client, ClientSession, Collection, Database};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::future::Future;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
 use super::MongoCheckpointObjectStore;
@@ -97,6 +95,7 @@ pub struct MongoSandboxStore {
     pub(super) global_sandbox_limit: u16,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
@@ -197,6 +196,7 @@ impl MongoSandboxStore {
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),
+            segment_adoption_enabled: false,
             bounded_approval_reads: false,
             bounded_close_retries: false,
             fleet_log_activation: Default::default(),
