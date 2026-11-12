@@ -142,9 +142,11 @@ async fn verify_with_timeout(
     let epoch = auth.identity_store.epoch();
     // The whole retry sequence and its deadline belong to the shared flight.
     // Completed verification is never used to skip the next provider check.
+    let led = std::sync::atomic::AtomicBool::new(false);
     let verified = match tokio::time::timeout(
         timeout,
         flight.get_or_init(|| {
+            led.store(true, std::sync::atomic::Ordering::Relaxed);
             super::identity_retry::verify(
                 auth,
                 None,
@@ -167,6 +169,14 @@ async fn verify_with_timeout(
             ))
         }
     };
+    let source = if led.load(std::sync::atomic::Ordering::Relaxed) {
+        "led"
+    } else {
+        "shared"
+    };
+    metrics::counter!("cma_cookie_identity_resolutions_total", "source" => source).increment(1);
+    tracing::debug!(parent: None, event = "cookie_identity_resolution", source, count = 1u64,
+        "Cookie identity verification resolved");
     if flight.initialized() {
         auth.cookie_verifications.release(&key, &flight).await;
     }
