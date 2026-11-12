@@ -1,7 +1,12 @@
 //! Run only against a fresh disposable replica set, never production.
 use super::*;
 use futures_util::TryStreamExt;
-use mongodb::{bson::doc, event::EventHandler, options::ClientOptions, Client};
+use mongodb::{
+    bson::{doc, Document},
+    event::EventHandler,
+    options::ClientOptions,
+    Client,
+};
 
 #[derive(Default)]
 struct Counts {
@@ -13,10 +18,11 @@ struct Counts {
 async fn client(uri: &str, enabled: bool) -> (Client, Arc<Mutex<Counts>>) {
     let mut options = ClientOptions::parse(uri).await.unwrap();
     options.max_pool_size = Some(30);
+    options.tracing = Some(super::metadata_hook::disabled());
     let diagnostics = enabled.then(Diagnostics::default);
     if let Some(commands) = diagnostics.clone() {
         drop(super::periodic::start(&commands));
-        options.command_event_handler = Some(EventHandler::callback(move |e| commands.command(e)));
+        super::metadata_hook::install(&mut options, commands);
     }
     let counts = Arc::new(Mutex::new(Counts::default()));
     let observed = counts.clone();
@@ -193,11 +199,17 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
             assert_eq!(hold_hash.len(), 64);
             assert!(returned.contains(&request_hash));
             logs.lines().any(|line| {
-                line.contains("event=\"succeeded\"")
+                // getMore exposes an input cursor ID, not a positive result
+                // marker. Its completion is explicitly unknown, but must still
+                // join to the same physical hold and originating request.
+                (line.contains("event=\"succeeded\"")
+                    || (line.contains("event=\"completed\"")
+                        && line.contains("outcome_known=false")))
                     && line.contains(&format!("hold_hash={hold_hash}"))
                     && line.contains(&request_hash)
                     && line.contains("phase=\"hierarchy\"")
-                    && line.contains("docs_returned_known=true")
+                    && line.contains("docs_returned_known=false")
+                    && line.contains("transaction_known=false")
             })
         })
         .count();
