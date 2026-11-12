@@ -1,9 +1,9 @@
 use layer3_adapter::{ConversationUpdate, SessionUpdate};
 
 use super::conversation_fold_support::{
-    active_turn, append_bounded, approval_detail, bounded, complete_first_message,
-    fail_first_message, flush_message, observe_first_message, observe_operation, plain_text,
-    prompt_evidence, recorded_tool_output, validate_prompt_identity, wire_name,
+    active_turn, append_bounded, approval_detail, bounded_ref as bounded, complete_first_message,
+    fail_first_message, flush_message, observe_first_message, observe_operation, prompt_evidence,
+    recorded_initial_tool_output, recorded_tool_output, validate_prompt_identity, wire_name,
 };
 use super::{
     Agent, AgentAvailableCommand, AgentConfigOption, AgentConversationError, AgentLogKind,
@@ -25,7 +25,7 @@ pub(super) enum FoldedConversationUpdate {
 pub(super) fn fold_update(
     current: &Agent,
     assembly: &AgentMessageAssembly,
-    update: ConversationUpdate,
+    update: impl std::borrow::Borrow<ConversationUpdate>,
     appended_at: &str,
     durable_tool_output: bool,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
@@ -34,28 +34,12 @@ pub(super) fn fold_update(
             "conversation updates require a live agent",
         ));
     }
-    let (update, prompt_evidence) = prompt_evidence(update);
-    let update = match update {
-        ConversationUpdate::TurnEndedForPrompt {
-            prompt_id,
-            response,
-        } => {
-            validate_prompt_identity(current, &prompt_id)?;
-            ConversationUpdate::TurnEnded(response)
-        }
-        ConversationUpdate::FailedForPrompt {
-            prompt_id,
-            message,
-            capability,
-        } => {
-            validate_prompt_identity(current, &prompt_id)?;
-            ConversationUpdate::Failed {
-                message,
-                capability,
-            }
-        }
-        update => update,
-    };
+    let (update, prompt_evidence) = prompt_evidence(update.borrow());
+    if let ConversationUpdate::TurnEndedForPrompt { prompt_id, .. }
+    | ConversationUpdate::FailedForPrompt { prompt_id, .. } = update
+    {
+        validate_prompt_identity(current, prompt_id)?;
+    }
     if !prompt_evidence
         && current.conversation.active_turn.is_none()
         && update.turn_evidence().is_some()
@@ -74,16 +58,15 @@ pub(super) fn fold_update(
             super::conversation_observation_fold::usage(current, assembly, usage, appended_at)
         }
         ConversationUpdate::Said(SessionUpdate::SessionInfoUpdate(info)) => {
-            let description = serde_json::to_value(&info).ok().and_then(|value| {
-                value
-                    .get("title")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
-            });
+            let description = info
+                .title
+                .value()
+                .filter(|title| title.len() <= 4096)
+                .cloned();
             super::conversation_observation_fold::metadata(
                 current,
                 assembly,
-                layer3_adapter::ConversationMetadata {
+                &layer3_adapter::ConversationMetadata {
                     description,
                     working_directory: None,
                     ..Default::default()
@@ -121,10 +104,13 @@ pub(super) fn fold_update(
             observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
             observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
             logs.push(AgentLogKind::ApprovalRequested {
-                approval_id: request.id,
-                action: request.request.tool_call.fields.title,
+                approval_id: request.id.clone(),
+                action: request.request.tool_call.fields.title.clone(),
                 detail: approval_detail(&request.request.options),
-                runtime_locator: request.locator.map(|locator| locator.as_str().to_owned()),
+                runtime_locator: request
+                    .locator
+                    .as_ref()
+                    .map(|locator| locator.as_str().to_owned()),
             });
             let status =
                 (current.status == AgentStatus::Working).then_some(AgentStatus::WaitingApproval);
@@ -144,7 +130,11 @@ pub(super) fn fold_update(
                 appended_at,
             )
         }
-        ConversationUpdate::TurnEnded(completed) => {
+        ConversationUpdate::TurnEnded(completed)
+        | ConversationUpdate::TurnEndedForPrompt {
+            response: completed,
+            ..
+        } => {
             let turn = active_turn(current)?;
             let mut agent = current.clone();
             let mut logs = flush_message(assembly);
@@ -158,6 +148,7 @@ pub(super) fn fold_update(
             )?;
             if let Some(usage) = completed
                 .usage
+                .as_ref()
                 .filter(|_| agent.conversation.observations.usage.is_none())
             {
                 logs.push(AgentLogKind::Usage {
@@ -201,13 +192,20 @@ pub(super) fn fold_update(
         ConversationUpdate::Failed {
             message,
             capability,
+        }
+        | ConversationUpdate::FailedForPrompt {
+            message,
+            capability,
+            ..
         } => {
             let turn = active_turn(current)?;
             let mut agent = current.clone();
             let mut logs = flush_message(assembly);
             observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
-            let class = capability.unwrap_or_else(|| "agent_turn_failed".into());
-            fail_first_message(&mut agent, &class, &message, appended_at, &mut logs)?;
+            let class = capability
+                .clone()
+                .unwrap_or_else(|| "agent_turn_failed".into());
+            fail_first_message(&mut agent, &class, message, appended_at, &mut logs)?;
             logs.push(AgentLogKind::TurnFailed {
                 turn_sequence: turn,
                 failure: super::TypedFailure {
@@ -231,7 +229,7 @@ pub(super) fn fold_update(
         }
         ConversationUpdate::Lost { frames } => changed(
             current.clone(),
-            vec![AgentLogKind::ConversationGap { frames }],
+            vec![AgentLogKind::ConversationGap { frames: *frames }],
             assembly.clone(),
             None,
             current.conversation.active_turn,
@@ -242,8 +240,8 @@ pub(super) fn fold_update(
             current.clone(),
             vec![AgentLogKind::SignInRequired {
                 url: bounded(url, 4 * 1024),
-                code: code.map(|value| bounded(value, 512)),
-                message: message.map(|value| bounded(value, 4 * 1024)),
+                code: code.as_ref().map(|value| bounded(value, 512)),
+                message: message.as_ref().map(|value| bounded(value, 4 * 1024)),
             }],
             assembly.clone(),
             None,
@@ -251,10 +249,8 @@ pub(super) fn fold_update(
             false,
             appended_at,
         ),
-        ConversationUpdate::WithoutPromptEvidence(_) => unreachable!("wrapper removed"),
-        ConversationUpdate::TurnEndedForPrompt { .. }
-        | ConversationUpdate::FailedForPrompt { .. } => {
-            unreachable!("prompt-scoped terminal was normalized before folding")
+        ConversationUpdate::WithoutPromptEvidence(_) | ConversationUpdate::RetainedEffect(_) => {
+            unreachable!("wrapper removed")
         }
         ConversationUpdate::RuntimeOutput { .. } => Err(AgentConversationError::InvalidState(
             "runtime output receipt must be recorded before folding",
@@ -265,15 +261,15 @@ pub(super) fn fold_update(
 fn fold_message_chunk(
     current: &Agent,
     assembly: &AgentMessageAssembly,
-    chunk: layer3_adapter::ContentChunk,
+    chunk: &layer3_adapter::ContentChunk,
     prompt_evidence: bool,
     appended_at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     active_turn(current)?;
-    let Some(text) = plain_text(&chunk.content) else {
+    let layer3_adapter::ContentBlock::Text(text) = &chunk.content else {
         return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
     };
-    let message_id = chunk.message_id.map(|id| id.0.to_string());
+    let message_id = chunk.message_id.as_ref().map(|id| id.0.to_string());
     let mut agent = current.clone();
     let mut next_assembly = assembly.clone();
     let mut logs = Vec::new();
@@ -286,7 +282,7 @@ fn fold_message_chunk(
         (next_assembly.content.is_empty() || next_assembly.prompt_evidence) && prompt_evidence;
     append_bounded(
         &mut next_assembly.content,
-        &text,
+        &text.text,
         MAX_DURABLE_AGENT_MESSAGE_BYTES,
     );
     observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
@@ -308,7 +304,7 @@ fn fold_message_chunk(
 fn fold_semantic_update(
     current: &Agent,
     assembly: &AgentMessageAssembly,
-    update: SessionUpdate,
+    update: &SessionUpdate,
     prompt_evidence: bool,
     appended_at: &str,
     durable_tool_output: bool,
@@ -317,16 +313,11 @@ fn fold_semantic_update(
     let mut logs = flush_message(assembly);
     observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
     observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
-    let initial_output = match &update {
+    let initial_output = match update {
         SessionUpdate::ToolCall(call)
             if durable_tool_output && layer3_adapter::has_reported_file_changes(call) =>
         {
-            recorded_tool_output(
-                &layer3_adapter::ToolCallUpdateFields::new()
-                    .content(call.content.clone())
-                    .raw_output(call.raw_output.clone()),
-            )
-            .map(|output| AgentLogKind::ToolOutputReported {
+            recorded_initial_tool_output(call).map(|output| AgentLogKind::ToolOutputReported {
                 call_id: call.tool_call_id.0.to_string(),
                 output,
             })
@@ -336,7 +327,7 @@ fn fold_semantic_update(
     let kind = match update {
         SessionUpdate::ToolCall(call) => AgentLogKind::ToolCallStarted {
             call_id: call.tool_call_id.0.to_string(),
-            title: bounded(call.title, 4 * 1024),
+            title: bounded(&call.title, 4 * 1024),
             kind: wire_name(&call.kind),
             status: wire_name(&call.status),
         },
@@ -354,7 +345,11 @@ fn fold_semantic_update(
                 output: durable_tool_output
                     .then(|| recorded_tool_output(&update.fields))
                     .flatten(),
-                title: update.fields.title.map(|value| bounded(value, 4 * 1024)),
+                title: update
+                    .fields
+                    .title
+                    .as_ref()
+                    .map(|value| bounded(value, 4 * 1024)),
             }
         }
         SessionUpdate::ToolCallUpdate(update) => {
@@ -393,9 +388,9 @@ fn fold_semantic_update(
         SessionUpdate::Plan(plan) => AgentLogKind::PlanSet {
             entries: plan
                 .entries
-                .into_iter()
+                .iter()
                 .map(|entry| AgentPlanStep {
-                    title: bounded(entry.content, 4 * 1024),
+                    title: bounded(&entry.content, 4 * 1024),
                     status: wire_name(&entry.status),
                 })
                 .collect(),
@@ -403,10 +398,10 @@ fn fold_semantic_update(
         SessionUpdate::ConfigOptionUpdate(update) => AgentLogKind::ConfigOptionsSet {
             options: update
                 .config_options
-                .into_iter()
+                .iter()
                 .map(|option| AgentConfigOption {
                     id: option.id.0.to_string(),
-                    name: bounded(option.name, 512),
+                    name: bounded(&option.name, 512),
                     kind: wire_name(&option.kind),
                 })
                 .collect(),
@@ -414,10 +409,10 @@ fn fold_semantic_update(
         SessionUpdate::AvailableCommandsUpdate(update) => AgentLogKind::AvailableCommandsSet {
             commands: update
                 .available_commands
-                .into_iter()
+                .iter()
                 .map(|command| AgentAvailableCommand {
-                    name: bounded(command.name, 512),
-                    description: bounded(command.description, 4 * 1024),
+                    name: bounded(&command.name, 512),
+                    description: bounded(&command.description, 4 * 1024),
                 })
                 .collect(),
         },

@@ -7,6 +7,7 @@ mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 pub mod agent_browser_control;
+pub mod agent_capacity_recovery;
 mod agent_context;
 pub mod agent_environment;
 pub mod agent_filesystem;
@@ -14,6 +15,7 @@ pub mod agent_io;
 pub mod agent_live_skills;
 mod agent_managed_context;
 mod agent_operation;
+pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
@@ -33,8 +35,17 @@ mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
 pub use admission_checkpoint::AgentLogCheckpoint;
+mod agent_log_projection;
 mod agent_reads_fold;
+mod agent_reads_transcript;
 mod agent_reads_usage;
+pub use agent_log_projection::{
+    AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
+    AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
+};
+pub use agent_reads_transcript::{
+    AgentTranscriptFold, AgentTranscriptPage, AgentTranscriptPageRequest,
+};
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
@@ -68,12 +79,14 @@ mod conversation_fold_support;
 mod conversation_recorder;
 mod creation_admission;
 pub mod ledger_census;
+pub mod ledger_collection_artifact;
 pub mod ledger_maintenance;
 mod ledger_retirement;
 mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
 mod provenance_service;
+pub mod retirement_archive;
 pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
 pub use provenance_inventory::{
     AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
@@ -113,11 +126,26 @@ mod pending_approvals;
 mod provision;
 mod queued_message;
 mod restored_connection;
+mod retained_recovery;
+mod retained_reopen;
+mod retained_reopen_service;
+#[cfg(test)]
+mod retained_reopen_tests;
+pub use retained_reopen::{
+    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
+    RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+};
+pub use retained_reopen_service::{RetainedReopenError, RetainedReopenService};
 mod revive;
 mod rotate;
 mod runtime_generation;
 mod runtime_health;
 mod runtime_recovery;
+pub use retained_recovery::{
+    RetainedRecoveryAssessment, RetainedRecoveryDisposition, RetainedRecoveryError,
+    RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
+    RetainedRecoverySource,
+};
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
@@ -198,9 +226,10 @@ pub use agent_read_types::{
 };
 pub use agent_reads::{
     AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
-    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentReadService,
-    AgentReplayEntry, AgentReplayWindow, AgentResponseBinding, AgentSourceReadError,
-    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
+    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentOutputObservation,
+    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
+    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
+    SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
@@ -228,7 +257,8 @@ pub use conversation::{
     MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription, DurableAgentUpdateRecorder,
+    AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
+    DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -251,12 +281,13 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyReading, SandboxHierarchyRecord,
-    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
-    SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
-    SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
-    WorkspaceHierarchyReading, WorkspaceHierarchyRecord, WorkspaceHierarchySummary,
-    WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxDetailPhase, SandboxDetailTimer,
+    SandboxHierarchyReading, SandboxHierarchyRecord, SandboxHierarchySummary, SandboxHierarchyView,
+    SandboxInventoryReading, SandboxInventoryRecord, SandboxSnapshotDownload, SharedHierarchyAgent,
+    SharedSandboxHierarchy, SharedSandboxSummary, SharedWorkspaceHierarchy, SharedWorkspaceSummary,
+    SharedWorktreeSummary, WorkspaceHierarchyReading, WorkspaceHierarchyRecord,
+    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchyReading,
+    WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
 pub use inactivity::{
@@ -382,3 +413,6 @@ mod runtime_update_tests;
 
 #[cfg(test)]
 mod runtime_update_resume_tests;
+
+#[cfg(test)]
+mod always_on_tests;

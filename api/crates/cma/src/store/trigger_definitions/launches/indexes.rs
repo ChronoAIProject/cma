@@ -8,6 +8,10 @@ use super::LaunchCollections;
 pub(super) fn launch_indexes() -> Vec<IndexModel> {
     vec![
         named_index(
+            doc! { "work_step": 1, "work_ready_at": 1, "work_lease_expires_at": 1, "blocked_reason": 1, "blocked_reason.type": 1 },
+            "trigger_launches_observations",
+        ),
+        named_index(
             doc! { "owner": 1, "record.resolution.agent.id": 1, "created_at": 1, "_id": 1 },
             "trigger_launches_owned_agent_source",
         ),

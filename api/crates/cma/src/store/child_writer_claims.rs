@@ -7,6 +7,7 @@ use mongodb::bson::{doc, Document, Timestamp};
 use mongodb::options::ReadConcern;
 use mongodb::{ClientSession, Collection};
 
+use super::agent_capacity_recovery::source::envelope_filter;
 use super::agent_log_integrity::carry_integrity_for_revision;
 use super::agent_title_state::record_title_value;
 use super::agents::{agent_replacement_fields, read_agent};
@@ -153,7 +154,8 @@ async fn apply(
     if parent.owner != *owner {
         return Err(ClaimError::Domain(SandboxStoreError::NotFound));
     }
-    if parent.lifecycle.checkpoint_capture.is_some()
+    if parent.retirement_archive_pending()
+        || parent.lifecycle.checkpoint_capture.is_some()
         || (parent.status == layer2_core::sandbox::SandboxStatus::Rotating
             && !matches!(claim, ChildWriterClaim::Agent(agent) if parent.restored_connection_is_ready(agent)))
     {
@@ -199,13 +201,40 @@ async fn apply(
     } else {
         None
     };
-    let mut filter = doc! {
-        "_id": id,
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "revision": revision,
-        "channel_reuse_cleanup_execution": { "$exists": false },
-                "owned_workspace_cleanup_admission_v1": { "$exists": false },
+    let mut filter = if let (ChildWriterClaim::Agent(agent), Some(current_row)) =
+        (claim, current_agent_row.as_ref())
+    {
+        let current = read_agent(current_row).map_err(ClaimError::Domain)?;
+        if current.revision != expected_revision
+            || current.conversation.last_seq != agent.conversation.last_seq
+        {
+            return Err(ClaimError::Domain(SandboxStoreError::Conflict));
+        }
+        super::agent_log_segments::ordinary::source(store, &current, current_row, session)
+            .await
+            .map_err(|error| match error {
+                super::agent_log_integrity::TransactionLogError::Domain(error) => {
+                    ClaimError::Domain(error)
+                }
+                super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                    ClaimError::Driver(error)
+                }
+            })?;
+        envelope_filter(&current, current_row).map_err(ClaimError::Domain)?
+    } else {
+        doc! {
+            "_id": id,
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "revision": revision,
+            "channel_reuse_cleanup_execution": { "$exists": false },
+            "owned_workspace_cleanup_admission_v1": { "$exists": false },
+        }
     };
+    filter.insert("channel_reuse_cleanup_execution", doc! { "$exists": false });
+    filter.insert(
+        "owned_workspace_cleanup_admission_v1",
+        doc! { "$exists": false },
+    );
     if let ChildWriterClaim::Agent(agent) = claim {
         filter.insert(
             "last_seq",

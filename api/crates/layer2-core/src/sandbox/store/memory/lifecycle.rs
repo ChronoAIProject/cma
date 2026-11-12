@@ -127,7 +127,10 @@ impl SandboxWorkerStore for InMemorySandboxStore {
         let Some(current) = state.sandboxes.get(id) else {
             return Ok(None);
         };
-        if !current.work.is_due(&now) || current.lifecycle.checkpoint_capture.is_some() {
+        if !current.work.is_due(&now)
+            || current.lifecycle.checkpoint_capture.is_some()
+            || current.retirement_archive_pending()
+        {
             return Ok(None);
         }
         let mut claimed = current.clone();
@@ -155,7 +158,8 @@ impl SandboxWorkerStore for InMemorySandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let mut state = self.lock();
         let sandbox = state.sandboxes.get(id).ok_or(SandboxStoreError::NotFound)?;
-        if sandbox.revision != expected_revision
+        if sandbox.retirement_archive_pending()
+            || sandbox.revision != expected_revision
             || sandbox.status != SandboxStatus::Retired
             || !sandbox.credential.revoke_debt.is_empty()
             || sandbox
