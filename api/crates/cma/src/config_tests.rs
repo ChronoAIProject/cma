@@ -165,6 +165,25 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
 }
 
 #[test]
+fn account_deletion_config_defaults_off() {
+    assert!(!configured(&[]).unwrap().account_deletion_enabled);
+    assert!(!configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "false")])
+        .unwrap().account_deletion_enabled);
+    assert!(configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", "true")])
+        .unwrap().account_deletion_enabled);
+}
+
+#[test]
+fn account_deletion_config_rejects_non_boolean_values() {
+    for value in ["", "1", "TRUE", "False", " true ", "enabled"] {
+        assert_eq!(
+            configured(&[("CHRONO_ACCOUNT_DELETION_ENABLED", value)]).unwrap_err(),
+            "CHRONO_ACCOUNT_DELETION_ENABLED must be true or false"
+        );
+    }
+}
+
+#[test]
 fn runtime_values_are_required_and_nonblank() {
     for key in REQUIRED_RUNTIME_KEYS {
         let missing = configured_without(key).unwrap_err();
