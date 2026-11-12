@@ -141,3 +141,57 @@ fn direct_oauth_resource_is_optional_and_requires_a_fixed_secure_audience() {
         assert!(configured(&[(key, value)]).is_err());
     }
 }
+
+#[test]
+fn control_rate_rejects_invalid_values_at_startup() {
+    let key = "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE";
+    for invalid in ["", "0", "-1", "1.5", "nope", " 20", "4294967296"] {
+        let error = configured(&[(key, invalid)]).unwrap_err();
+        assert!(error.contains(key), "{error}");
+    }
+}
+
+#[test]
+fn control_rate_defaults_to_120_and_accepts_positive_u32_values() {
+    let defaults = configured(&[]).unwrap().rate_limits;
+    assert!(!defaults.control_tier_enabled);
+    assert_eq!(defaults.control_per_minute.get(), 120);
+    assert_eq!(defaults.create_per_minute.get(), 10);
+    assert_eq!(defaults.input_per_minute.get(), 120);
+    assert!(!defaults.response_input_tier_enabled);
+    let key = "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE";
+    for value in [1, 20, 120, u32::MAX] {
+        let raw = value.to_string();
+        let limits = configured(&[(key, &raw)]).unwrap().rate_limits;
+        assert_eq!(limits.control_per_minute.get(), value);
+        assert_eq!(
+            limits.create_per_minute.get(),
+            defaults.create_per_minute.get()
+        );
+        assert_eq!(
+            limits.input_per_minute.get(),
+            defaults.input_per_minute.get()
+        );
+        assert_eq!(
+            limits.response_input_tier_enabled,
+            defaults.response_input_tier_enabled
+        );
+    }
+}
+
+#[test]
+fn control_policy_requires_an_explicit_strict_boolean() {
+    let key = "CHRONO_SERVER_RATE_CONTROL_ENABLED";
+    for (value, expected) in [("false", false), ("true", true)] {
+        assert_eq!(
+            configured(&[(key, value)])
+                .unwrap()
+                .rate_limits
+                .control_tier_enabled,
+            expected
+        );
+    }
+    for invalid in ["", "1", "TRUE", " true", "false "] {
+        assert!(configured(&[(key, invalid)]).unwrap_err().contains(key));
+    }
+}
