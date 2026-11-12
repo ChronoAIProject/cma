@@ -18,7 +18,7 @@ use support::*;
 async fn adopted_agent_publishes_runtime_output_after_restart_and_settles_command() {
     let (client, name, store, current, command) = working("v2_output_settlement").await;
     let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
-    recorder
+    let prefix = recorder
         .record_update(
             &current.id,
             1,
@@ -28,15 +28,33 @@ async fn adopted_agent_publishes_runtime_output_after_restart_and_settles_comman
         )
         .await
         .unwrap();
+    let observed = store.get_agent(&current.id).await.unwrap().unwrap();
+    assert_eq!(observed.revision, current.revision + 1);
     assert_eq!(
-        store.get_agent(&current.id).await.unwrap(),
-        Some(current.clone())
+        observed.conversation.last_seq,
+        current.conversation.last_seq + 1
+    );
+    assert_eq!(prefix.appended.len(), 1);
+    assert!(matches!(
+        prefix.appended[0].kind,
+        AgentLogKind::OperationDeliveryChanged {
+            state: layer2_core::sandbox::AgentOperationDelivery::ExecutionObserved,
+            ..
+        }
+    ));
+    assert_eq!(
+        store
+            .agent_log(&current.id, current.conversation.last_seq, 10)
+            .await
+            .unwrap(),
+        prefix.appended,
     );
     let private = store
         .agent_message_checkpoint(&current.id)
         .await
         .unwrap()
         .unwrap();
+    assert!(private.matches(&observed));
     assert_eq!(
         serde_json::to_value(&private.assembly).unwrap()["content"],
         "prefix "
