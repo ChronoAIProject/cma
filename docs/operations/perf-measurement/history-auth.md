@@ -24,6 +24,9 @@ active-turn head. Compare exact serialized response bytes. Warm both modes
 first, then alternate mode order for 20 complete traversals per mode, following
 the paired method used for #1797. Report per-request p50, nearest-rank p95 and
 maximum, with sample counts; keep distinct page command budgets visible.
+Measure idle heads separately after clearing the active-turn pointer, preserving
+the same retained history. Their unchanged baseline uses four snapshots and no
+log or binding reads; never pool their timings with active heads.
 
 Observe Mongo command name/collection, physical checkout count, returned BSON
 documents/bytes, and the existing `PublicWindowPrefix` scan count/documents/bytes.
@@ -84,6 +87,33 @@ and head route p50/p95/max, command/checkout distributions, authorization
 snapshots and commands per request, error rates, dropped diagnostics, complete
 history scans and scanned bytes. Repeat the attribution after bounded-history
 activation, because the log-read share changes.
+
+The packet uses these concrete observations, checked against the metric emitters:
+
+| Observation | Metric/event and selection | Comparison |
+| --- | --- | --- |
+| Route latency | `cma_http_response_headers_seconds`, `method="GET"`, each `route="/api/v2/agents/{agent_id}/events/snapshot"` or `route="/api/v2/agents/{agent_id}/events/head"` | Histogram p50/p95/p99 plus count deltas for each complete window; response-completion logs supply per-request maximum when available. |
+| Requests/errors | `cma_http_attempts_total` and `cma_http_responses_total`, same method/route, preserving `status` | Compare success, 4xx and 5xx counts/rates; account separately for `cma_http_cancelled_before_headers_seconds`. |
+| Mongo commands | `mongo_diagnostic_summary`, `pool="general"`, `worker="request"`, `metric="command"`, route labels prefixed with `GET ` | Sum `count` by `command,collection,phase`; divide by matched route request counts. Separate error traffic and middleware collections when attributing the page reduction. |
+| Authorization snapshots | Same command summaries, `command="aggregate",collection="agents"` | For successful personal-owner requests, baseline snapshot/active-head/idle-head counts are 8/7/4; target is 3/3/3. Mixed ownership or failed requests require stratification and cannot establish the exact per-owner count. |
+| Pool cost | Same summaries, `metric="checkout"` and `metric="hold"`, preserving phase | Compare count, total and maximum separately; command, wait and physical hold durations overlap and must not be added. Use the integration image's bounded duration buckets for percentile bounds where available. |
+| Full scans | `cma_agent_log_scans_total`, `cma_agent_log_scan_documents_total`, `cma_agent_log_scan_bytes_total`, `cma_agent_log_scan_duration_microseconds_total`; `caller="public_window_prefix",worker_step="not_applicable"`, separate `outcome="success"`/`"failed"` | Counter deltas normalized by eligible history requests; unchanged #1648 settings and comparable history sizes are required. |
+| Coverage/loss | `mongo_diagnostic_output`, `mongo_diagnostic_pool`, summary overflow/untracked/unknown fields | Record losses and attribution gaps. Sampled details cannot replace unsampled totals; unknown returned-document counts remain unknown. |
+
+The baseline's `phase="request"` is the actual request context, not an
+authorization timer. Its authorization command grouping is derived from the
+allowlisted command/collection pairs documented above. Preserve actual phases
+from the candidate, and retain both original groups and the derived comparison.
+Do not export raw request, Agent, credential or database identities in the packet.
+
+The local pass gate is exact byte parity, three snapshots on the enabled personal
+path, at least 40% fewer page commands, and no added complete scans. The operator's
+activation gate additionally requires staging security/rollback evidence, no
+content or authorization inconsistency, no unexplained error increase, and a
+same-image production comparison with adequate natural request counts. Report
+latency changes without promising a fixed number of milliseconds. If workload,
+sample size or diagnostics loss prevents attribution, mark the production result
+inconclusive and leave the issue's production verification open.
 
 Compare the measured results with #1538's management-read p95 <=500 ms and
 p99 <=2 s objectives, while explicitly reporting missing or insufficient samples.
