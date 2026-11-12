@@ -56,7 +56,7 @@ let logout = client.auth().logout_url()?;
 Login and logout helpers construct explicit browser navigation URLs only. The
 OAuth callback belongs to browser authentication and is not an SDK token
 exchange. Return targets must be canonical CMA workflow paths; absolute URLs,
-fragments, query strings, and arbitrary redirects are refused before transport.
+fragments, unknown query strings, and arbitrary redirects are refused before transport.
 
 ## Renewable Sandbox Authority
 
@@ -80,3 +80,21 @@ sign-in, but an ambiguous creation failure is not automatically safe to replay.
 admission checks setup again; store and provider outages remain dependency
 errors. The SDK does not perform an OAuth token exchange or obtain refresh
 credentials for a backend client.
+
+Return destinations also support `/agent-manager`, `/event-gateway`, `/image-manager`,
+Bot pages and the public actor-link completion path. A single `setup` query on
+`/bots/new` and a single `tab` query on `/sandboxes/{id}` are preserved; duplicate
+or unknown keys and fragments and raw non-ASCII bytes are rejected. Paths are limited to 256 bytes and
+the complete encoded absolute login URL to 4,096 ASCII bytes (including origin and options). The anonymous `silent_sign_in` hint is
+controlled by the API startup flag, default false; the SDK continues projecting
+`SignedOut`. Logout is server-owned and emits separate session/suppression cookies.
+
+Explicit preference recovery is backed by durable custody, with a separate
+non-authenticating reference cookie. Same-origin logout revokes that proof;
+cross-site logout revokes the session without changing the preference.
+
+Browser binding cookies last 660 seconds: the ten-minute authorization attempt
+plus a one-minute callback-processing margin. Attempt expiry is unchanged.
+Predecessor attempts complete inline after reservation, and logout tombstones
+last at least as long as the binding cookie. Neither SDK handles the OAuth code
+exchange; browser cookies remain server-owned.

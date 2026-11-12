@@ -91,7 +91,7 @@ mod marketplace_visibility;
 mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
-mod mongo_latency;
+pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
 pub mod operation;
@@ -108,6 +108,7 @@ mod profiles;
 pub(crate) mod request_limits;
 mod resource_access;
 mod retained_reopen;
+pub(crate) mod retirement_archive;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;
@@ -120,6 +121,10 @@ mod sandbox_maintenance;
 mod sandbox_mongo;
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
 #[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
@@ -141,6 +146,7 @@ mod suggestions;
 mod trigger_definitions;
 mod trigger_first_messages;
 mod warm_sandboxes;
+pub(crate) mod worker_observations;
 pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
 mod workspace_admission;
 mod workspace_prepare_recovery;

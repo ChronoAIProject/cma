@@ -106,6 +106,7 @@ impl Counters {
                         &totals.duration_us,
                     ),
                 ] {
+                    metrics::counter!(metric, "caller" => caller.name(), "worker_step" => caller.worker_step(), "outcome" => outcome).absolute(counter.load(Ordering::Relaxed));
                     tracing::info!(parent: None, metric, caller = caller.name(),
                         worker_step = caller.worker_step(), outcome,
                         value = counter.load(Ordering::Relaxed), "complete Agent log scan counter");

@@ -141,6 +141,8 @@ async fn open_with_output_policy(shared: bool, retained: bool) {
             fenced,
             None,
             HostedAgentOpenSettings {
+                coordinated_ingress: false,
+                retained_json: false,
                 bounded_raw_output: false,
                 bounded_permission_state: false,
                 output_json_budget: true, // Disabled transport overrides renderer policy.

@@ -1,6 +1,6 @@
 use futures_util::StreamExt;
 use serde_json::Value;
-use tokio::sync::{mpsc, OwnedSemaphorePermit};
+use tokio::sync::mpsc;
 
 use super::{
     malformed, timeout_error, ProviderError, RecoveryEvent, RecoveryIdentity, ResponsesEvent,
@@ -14,7 +14,7 @@ pub(super) async fn forward(
     mut identity: RecoveryIdentity,
     starting_after: Option<u64>,
     sender: mpsc::Sender<Result<RecoveryEvent, ProviderError>>,
-    _permit: OwnedSemaphorePermit,
+    _permit: super::super::permits::Permit,
     deadline: tokio::time::Instant,
 ) {
     let mut bytes = 0usize;

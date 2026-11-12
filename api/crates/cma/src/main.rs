@@ -28,10 +28,12 @@ mod provider_tool_relay;
 mod public_streams;
 mod rate_limit;
 mod read_telemetry;
+mod retirement_archive;
 mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
 mod store;
+mod telemetry;
 mod trigger;
 mod usage_billing;
 mod warm_pools;
@@ -73,6 +75,16 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 #[tokio::main]
 async fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if retirement_archive::is_command(&arguments) {
+        match retirement_archive::command(&arguments).await {
+            Ok(summary) => println!("{summary}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
         if let Err(error) = store::ledger_collection::command(
             std::path::Path::new(&arguments[1]),
@@ -170,6 +182,8 @@ async fn main() {
 async fn serve() -> Result<(), String> {
     let config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
+    let recorder = telemetry::install()?;
+    let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
     let composition = ControlPlaneComposition::build(&config).await?;
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
@@ -218,6 +232,13 @@ async fn serve() -> Result<(), String> {
         composition
             .sandbox_control_scheduler
             .spawn(shutdown.subscribe()),
+    );
+    shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
+    shutdown.push(
+        composition
+            .native_warm_pools
+            .clone()
+            .spawn_observations(shutdown.subscribe()),
     );
     shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
     shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
@@ -397,6 +418,7 @@ fn add_preflight_vary(headers: &mut HeaderMap) {
 
 fn with_request_context(router: Router) -> Router {
     router
+        .layer(axum::middleware::from_fn(telemetry::http::observe))
         .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
         .layer(
             TraceLayer::new_for_http()
