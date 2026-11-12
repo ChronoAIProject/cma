@@ -25,8 +25,10 @@ mod profile_authoring;
 mod profile_policy;
 mod projections;
 mod provider_tool_relay;
+mod public_streams;
 mod rate_limit;
 mod read_telemetry;
+mod retirement_archive;
 mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
@@ -73,6 +75,40 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 #[tokio::main]
 async fn main() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if retirement_archive::is_command(&arguments) {
+        match retirement_archive::command(&arguments).await {
+            Ok(summary) => println!("{summary}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
+        if let Err(error) = store::ledger_collection::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if arguments.len() == 3 && arguments[0] == "--ledger-census" {
+        if let Err(error) = store::ledger_census::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-retirement-snapshot" {
         if let Err(error) =
             store::ledger_retirement::command(&arguments[1], std::path::Path::new(&arguments[2]))
@@ -93,6 +129,16 @@ async fn main() {
         )
         .init();
 
+    if document_artifacts::quota_cli::is_command(&arguments) {
+        match document_artifacts::quota_cli::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("document quota command refused: {reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if store::migrations::is_command(&arguments) {
         match store::migrations::command(&arguments).await {
             Ok(result) => println!("{result}"),
@@ -124,7 +170,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE]");
+        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

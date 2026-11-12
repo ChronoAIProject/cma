@@ -335,6 +335,7 @@ impl AgentRuntimeRegistry for TestRuntimeRegistry {
 pub(super) struct RejectingConversationStore {
     pub(super) inner: InMemorySandboxStore,
     pub(super) reject_commits: AtomicBool,
+    pub(super) conflict_commits: AtomicBool,
     pub(super) commit_attempts: AtomicUsize,
 }
 
@@ -470,6 +471,9 @@ impl AgentConversationStore for RejectingConversationStore {
         mutation: AgentConversationMutation,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
         self.commit_attempts.fetch_add(1, Ordering::SeqCst);
+        if self.conflict_commits.load(Ordering::SeqCst) {
+            return Err(SandboxStoreError::Conflict);
+        }
         if self.reject_commits.load(Ordering::SeqCst) {
             return Err(SandboxStoreError::Unavailable("write unavailable".into()));
         }
