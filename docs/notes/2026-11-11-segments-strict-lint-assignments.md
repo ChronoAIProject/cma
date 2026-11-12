@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 09:26 SGT. S2 owns
+Updated Thu 2026-11-12 09:44 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -9,13 +9,14 @@ Unsupported; source qualification does not claim supported production activation
 
 ## Final handoffs normally integrated
 
-Combined production source `ff0f161b8` merges final S3 `e58162249` normally.
-Current checkpoint `c620ebbf2` changes only the discovery Mongo fixture and this
-ledger; production source is byte-identical. Strict CMA at ff0 passed with zero
-diagnostics (2m36s). The corrected retained/discovery Mongo selection now passes 4/4 at c620ebbf2;
-strict CMA also passes with zero diagnostics (2m28s), and adapter tests pass
-47/47. Authenticated Mongo (1/1), segment/operator units (93/93) and recovery
-HTTP (8/8) pass. The 344-test Mongo selection is executing in nine partitions.
+Current qualification source is `b13d84b5a`: develop archive safeguards merged
+at `be4f4ff0c`, followed by the ordinary/authenticated Mongo runner boundary fix
+`1902b7242` and selector-proof correction. This is new executable source and is
+not yet declared strict-green. The prior `c620ebbf2` strict/unit/Mongo results
+remain historical evidence for their exact source. Its first five Mongo
+partitions passed 192 cases; the remaining partitions were superseded before
+execution. New combined lint, units, authenticated Mongo and all required Mongo
+partitions are queued on an immutable b13d84b5a export.
 All currently published handoffs are included:
 
 | Owner | Pin / branch | Included work |
@@ -25,7 +26,7 @@ All currently published handoffs are included:
 | S5 cma-seg-3 | `2144909ce` capacity-recovery (ancestor of S4 final pin) | Sequence-only progress correction `00426512f`, original-witness recovery, later-turn fixture and qualified restart/loss cases. |
 | S3 cma-seg-2 | `e58162249` transcript-consumers | Final published checkpoint normally merged. Title-format and suggestion snapshot fixes retained; P1-4 bounded transcript/title work and selected parity/scale evidence remain open. |
 | S2 cma-db-contention | `c4e4b995a` proof; `3fc57ec55` config split | Positive transaction-bound current publication, canonical schema/checksum/runtime roles, scheduler and integration. |
-| Develop | `3aee1ff68` | Retained-context and decoded-JSON policies normally included. |
+| Develop | `e50792611` | Retained-context/decoded-JSON policies and #1726 archive holds normally included. |
 
 Conflicts preserve every flag/parser/test once. Shared response reader attaches
 before either router is built. The response binding helper consumes the existing
@@ -108,6 +109,11 @@ feature-gate suppression or fake call is an acceptable closure.
 | `c620ebbf2` | Mongo inventory | 344 ignored contract tests selected, 9 partitions of at most 39 tests. Inventory only, not 344 passes; execution in progress. |
 | `c620ebbf2` | Mongo partition 1/9 | 39 passed / 0 failed, 2660 skipped, 132.751s. Eight partitions remain. |
 | `c620ebbf2` | Mongo partition 2/9 | 39 passed / 0 failed, 2660 skipped, 96.194s. Seven partitions remain. |
+| `c620ebbf2` | Mongo partitions 3/9, 4/9, 5/9 | 38/38, 38/38, 38/38 passed; each skipped 2661 outside its partition; 267.988s / 76.353s / 135.147s. Five completed partitions total 192 distinct passes. |
+| `c620ebbf2` | Mongo remainder | Partition 6 stopped before Cargo/Mongo with supersession status 143; 6–9 not executed. This is not a failed test or a full 344-test pass. |
+| `be4f4ff0c` | Mocked runner after merge resolution | 31 passed / 0 failed, 162.626s; no real Mongo execution. |
+| `1902b7242` | Ordinary/authenticated mocked runner boundary | 48 passed / 1 failed: parser test still expected the old selector prefix. Corrected at b13d84b5a; focused rerun 1/1 passes. Final full rerun at b13d84b5a passes 49/49, zero skipped, 173.341s. |
+| `b13d84b5a` | Corrected ordinary/authenticated mocked runners | 49 passed / 0 failed / 0 skipped, 173.341s. Formatting and shell syntax also pass; combined Rust qualification is in progress. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -365,3 +371,28 @@ without dropping selections; Mongo remains partitioned with a separate lock and
 owned disposable replica set per partition. These new consolidated commands are
 prepared, not yet executed or claimed passed. Current c620 qualification continues
 with its original step sequence.
+
+## Develop sync and fixture dispatch — S2
+
+Merged develop `e50792611` normally at `be4f4ff0c`. The only conflict was the
+canonical Mongo runner selector: preserve the broader segmentation/reconciliation
+selection and add the archive selection. Mechanical predicate comparison proves
+both parent test sets remain covered; 31 mocked runner regressions passed.
+S4 must preserve the new `retirement_archive_pending` guard in ordinary child
+claims while repairing the schema-v2 publication boundary.
+
+Source audit found the ordinary runner's broad migration prefix also selected
+`segments_runtime`, which requires `CMA_IM_TEST_MONGODB_URI` and authenticated
+principals. The authenticated runner already selects that module. S2 fixed the
+ordinary selector and discards inherited authenticated URI authority; source and
+archive regression cases assert both boundaries. A stale parser-prefix assertion
+was the only failure among 49 mocked cases, was corrected, and its focused rerun
+passed. The full corrected suite passes 49/49 with zero skipped (173.341s). This is CI fixture routing, not
+removal of the authenticated contract, whose actual Mongo proof already passed.
+
+Source b13d84b5a now has consolidated strict/unit gates, authenticated Mongo and
+bounded partitions queued. The new selection includes the imported archive
+boundaries. Current branch qualification is pending; old c620 evidence is not
+relabeled as a pass for the develop sync. Retired c620 source export and its
+supersession marker were removed after all its processes exited; one Cargo target
+and only the active source export remain. Shared locks were untouched.
