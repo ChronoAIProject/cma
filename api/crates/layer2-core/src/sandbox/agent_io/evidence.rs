@@ -8,6 +8,9 @@ use super::{
     CommandFailureCode, CommandLane, CommandLedgerError, CommandObservation,
 };
 
+mod certified;
+pub use certified::CertifiedCommandSource;
+
 /// A bounded streaming fold of an Agent's complete durable log. The log is the
 /// recovery source after a worker crash; live fragments never establish outcome.
 pub struct CommandEvidence {
@@ -26,6 +29,7 @@ pub struct CommandEvidence {
     prewrite_marker: Option<(u64, String)>,
     deferred_expected: Option<String>,
     deferred: Option<(u64, String)>,
+    sealed: bool,
 }
 
 impl CommandEvidence {
@@ -61,6 +65,7 @@ impl CommandEvidence {
             .clone()
             .ok_or(CommandLedgerError::Conflict)?;
         Ok(Self {
+            sealed: false,
             deferred_expected: command.receipt.envelope.continuation.as_ref().map(|_| {
                 super::continuation_retry::deferred_detail(
                     &command.receipt.envelope,
@@ -92,7 +97,8 @@ impl CommandEvidence {
     }
 
     pub fn observe(&mut self, entry: &AgentLogEntry) -> Result<(), CommandLedgerError> {
-        if entry.agent_id != self.dispatch.claim.agent_id
+        if self.sealed
+            || entry.agent_id != self.dispatch.claim.agent_id
             || self.cursor.checked_add(1) != Some(entry.seq)
             || seconds_from_rfc3339(&entry.appended_at).is_none()
         {
