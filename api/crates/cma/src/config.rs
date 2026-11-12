@@ -13,9 +13,11 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 mod access_migration;
 mod access_origins;
 mod admission_log;
+mod anonymous_public;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
+pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
 mod agent_sandbox;
 mod execution;
@@ -71,6 +73,7 @@ pub struct RateLimitConfig {
     pub create_per_minute: NonZeroU32,
     pub input_per_minute: NonZeroU32,
     pub response_input_tier_enabled: bool,
+    pub anonymous_public: AnonymousPublicConfig,
 }
 
 impl RateLimitConfig {
@@ -109,6 +112,7 @@ impl RateLimitConfig {
             )?,
             create_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_CREATE_PER_MINUTE", 10, 1)?,
             input_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_INPUT_PER_MINUTE", 120, 1)?,
+            anonymous_public: anonymous_public::from_lookup(lookup)?,
         })
     }
 }

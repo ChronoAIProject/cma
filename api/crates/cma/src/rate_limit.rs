@@ -43,8 +43,11 @@ use axum::{
 use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
+mod anonymous;
 mod shared;
 mod visitor;
+
+use anonymous::{is_anonymous_public_route, uses_client_operation_key, AnonymousPublicBudget};
 
 #[allow(unused_imports)] // Consumed by the Trigger route composition that injects this slice.
 pub(crate) use visitor::CmaLaunchQuota;
@@ -106,6 +109,7 @@ pub(crate) struct RateLimiters {
     create: KeyedLimiter,
     input: KeyedLimiter,
     response_input_tier_enabled: bool,
+    anonymous_public: AnonymousPublicBudget,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
@@ -126,6 +130,10 @@ impl RateLimiters {
             Quota::per_minute(config.create_per_minute),
             Quota::per_minute(config.input_per_minute),
             trusted_proxies,
+        );
+        limiters.anonymous_public = AnonymousPublicBudget::new(
+            config.anonymous_public.per_minute,
+            config.anonymous_public.concurrency,
         );
         limiters.response_input_tier_enabled = config.response_input_tier_enabled;
         limiters.shared = Some((shared, config));
@@ -148,6 +156,7 @@ impl RateLimiters {
             create: RateLimiter::keyed(create),
             input: RateLimiter::keyed(input),
             response_input_tier_enabled: false,
+            anonymous_public: AnonymousPublicBudget::default(),
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),
@@ -211,6 +220,22 @@ pub(crate) async fn admit(
     }
 
     let tier = request_tier(&request, limiters.response_input_tier_enabled);
+    let _anonymous_permit = if is_anonymous_public_route(request.uri().path()) {
+        match limiters.anonymous_public.try_admit() {
+            Ok(permit) => Some(permit),
+            Err(retry_after_seconds) => {
+                return limited_response(
+                    &limiters,
+                    &request,
+                    retry_after_seconds,
+                    "anonymous_public",
+                    tier,
+                )
+            }
+        }
+    } else {
+        None
+    };
     let client = resolve_client(&request, &limiters.trusted_proxies);
     request.extensions_mut().insert(client.clone());
     let budget = if tier == RequestTier::Health {
@@ -336,27 +361,6 @@ fn request_tier(request: &Request, response_inputs: bool) -> RequestTier {
     RequestTier::Create
 }
 
-/// Routes that never require identity keep a network budget even when a
-/// browser happens to attach a cookie. Otherwise the same public operation
-/// changes buckets based on ambient credentials and can be used to exhaust a
-/// subject's protected-route allowance.
-fn uses_client_operation_key(path: &str) -> bool {
-    // These authenticated endpoints coordinate one owner's connections. Keep
-    // users behind the same network from consuming each other's login budget.
-    if matches!(
-        path,
-        "/auth/connections/check" | "/auth/connections/start" | "/auth/connections/cancel"
-    ) {
-        return false;
-    }
-    path == "/openapi.json"
-        || path == "/api/v1/conformance"
-        || is_public_trigger_preview(path)
-        || path == "/.well-known/agent-card.json"
-        || path == "/auth"
-        || path.starts_with("/auth/")
-}
-
 fn is_rest_path(path: &str) -> bool {
     if path == "/openapi.json" {
         return true;
@@ -369,20 +373,6 @@ fn is_rest_path(path: &str) -> bool {
         && path != "/api/v1/mcp"
         && path != "/api/v1/a2a"
         && path != "/api/v1/responses"
-}
-
-fn is_public_trigger_preview(path: &str) -> bool {
-    exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
-        || exact_path_segments(path, &["api", "v1", "triggers", "public", "*", "badge.svg"])
-}
-
-fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    expected.iter().all(|expected| {
-        segments
-            .next()
-            .is_some_and(|actual| *expected == "*" || actual == *expected)
-    }) && segments.next().is_none()
 }
 
 fn resolve_client(request: &Request, trusted: &TrustedProxyConfig) -> ClientKey {
@@ -497,3 +487,7 @@ mod tests;
 #[cfg(test)]
 #[path = "rate_limit_input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/anonymous_tests.rs"]
+mod anonymous_tests;

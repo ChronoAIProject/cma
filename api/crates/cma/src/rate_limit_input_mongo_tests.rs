@@ -21,6 +21,10 @@ async fn replica(database: &Database, enabled: bool) -> Router {
         create_per_minute: n(10),
         input_per_minute: n(3),
         response_input_tier_enabled: enabled,
+        anonymous_public: crate::config::AnonymousPublicConfig {
+            per_minute: n(1_200),
+            concurrency: n(16),
+        },
     };
     router(RateLimiters::from_config(
         config,
