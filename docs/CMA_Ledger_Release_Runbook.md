@@ -243,3 +243,11 @@ path and usability check succeed. Report preserved/migrated/recovered/held/unkno
 counts, both-store margins, stale-replay refusal, exact images, evidence hashes and
 retention/restore result. Project status remains In Progress until acceptance and
 production verification are complete; only close with the relayed evidence.
+
+## Full-data retirement archives
+
+The default-off full-data archive command and durable archive-before-retirement
+requirement are specified in [CMA Retirement Archives](CMA_Retirement_Archives.md).
+Its command, custody and reader-floor gates are additional to this runbook's
+physical old-writer/provider exclusion. Production execution remains HOLD until
+all actual source, permanent-custody and restore qualifications are reviewed.
