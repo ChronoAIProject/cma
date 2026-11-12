@@ -2,11 +2,13 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
+import { browserProjects } from './browser-projects';
 
 const baseURL = process.env.CMA_USAGE_PREVIEW_URL ?? 'http://127.0.0.1:4351';
 if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
   throw new Error('Usage browser checks require a loopback preview.');
 export default defineConfig({
+  projects: browserProjects(),
   testDir: '.',
   testMatch: [
     'account-usage.check.ts',
@@ -14,6 +16,7 @@ export default defineConfig({
     'usage-settings.check.ts',
     'usage-redesign.check.ts',
     'usage-backoff.check.ts',
+    'spend-controls.check.ts',
   ],
   workers: 1,
   retries: 0,
@@ -33,6 +36,5 @@ export default defineConfig({
     trace: 'off',
     video: 'off',
     serviceWorkers: 'block',
-    launchOptions: { executablePath: process.env.CMA_E2E_BROWSER_PATH },
   },
 });

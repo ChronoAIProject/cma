@@ -320,6 +320,7 @@ struct GatedInventory {
     store: Arc<InMemorySandboxStore>,
     entered: Arc<tokio::sync::Notify>,
     resume: Arc<tokio::sync::Notify>,
+    batch_reads: Arc<AtomicUsize>,
 }
 #[async_trait]
 impl ResourceAccessStore for GatedInventory {
@@ -361,6 +362,13 @@ impl ResourceAccessStore for GatedInventory {
         target: &ResourceTarget,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
         self.store.resource_access_snapshot(target).await
+    }
+    async fn resource_access_snapshots(
+        &self,
+        targets: &[ResourceTarget],
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.batch_reads.fetch_add(1, Ordering::SeqCst);
+        self.store.resource_access_snapshots(targets).await
     }
 }
 #[async_trait]
@@ -418,11 +426,13 @@ async fn revoking_only_the_hidden_lookahead_rejects_a_buffered_next_cursor() {
         .share;
     let entered = Arc::new(tokio::sync::Notify::new());
     let resume = Arc::new(tokio::sync::Notify::new());
+    let batch_reads = Arc::new(AtomicUsize::new(0));
     let gated = ResourceAccessService::new(
         Arc::new(GatedInventory {
             store,
             entered: entered.clone(),
             resume: resume.clone(),
+            batch_reads: batch_reads.clone(),
         }),
         authority,
     );
@@ -451,4 +461,5 @@ async fn revoking_only_the_hidden_lookahead_rejects_a_buffered_next_cursor() {
             ResourceAccessStoreError::Conflict
         ))
     ));
+    assert_eq!(batch_reads.load(Ordering::SeqCst), 1);
 }

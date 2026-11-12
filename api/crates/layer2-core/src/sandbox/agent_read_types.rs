@@ -173,6 +173,8 @@ pub enum AgentReadError {
     NotFound,
     #[error("invalid page request")]
     InvalidPage,
+    #[error("transcript exceeds the complete result budget; request limit=32 and follow next")]
+    TranscriptPaginationRequired,
     #[error("agent was not granted runtime capability: {capability:?}")]
     CapabilityUnsupported {
         capability: crate::RuntimeCapability,
@@ -192,6 +194,7 @@ impl AgentReadError {
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
             Self::InvalidPage => "invalid_page",
+            Self::TranscriptPaginationRequired => "transcript_pagination_required",
             Self::CapabilityUnsupported { .. } => "agent_capability_unsupported",
             Self::ResourcesUnsupported(_) => "agent_resources_unsupported",
             Self::Corrupt(_) => "stored_agent_corrupt",

@@ -11,13 +11,21 @@ use layer2_core::sandbox::{
 use mongodb::bson::{doc, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::scan_complete_log_with_snapshot_session;
-use super::agent_log_integrity::TransactionLogError;
+use super::agent_log_integrity::{read::read_proven_agent, scan_collection, TransactionLogError};
 use super::agent_title_claims::acquire_claim;
 use super::agent_title_state::read_title_state;
 use super::agent_title_writes::{complete_title, set_user_title};
 use super::agents::read_agent;
 use super::sandbox_mongo::MongoSandboxStore;
+
+mod bounded;
+
+impl MongoSandboxStore {
+    pub(crate) fn with_bounded_title_reads(mut self, enabled: bool) -> Self {
+        self.bounded_title_reads = enabled;
+        self
+    }
+}
 
 #[async_trait::async_trait]
 impl AgentTitleStore for MongoSandboxStore {
@@ -117,12 +125,15 @@ async fn title_candidates(
         let agent = read_agent(&document).map_err(map_store_error)?;
         last_raw_id = Some(agent.id.to_string());
         let title_state = read_title_state(&document, &agent)?;
+        let segmented = crate::store::agent_log_segments::read_format(&document)
+            .map_err(map_store_error)?
+            .is_some();
         if title_state.retry.eligible(mongodb::bson::DateTime::now())
             && title_state
                 .stored
                 .as_ref()
                 .is_none_or(|title| title.source == AgentTitleSource::Fallback)
-            && transcript_at_snapshot(store, &agent, &mut session)
+            && transcript_at_snapshot_with_format(store, &agent, &mut session, segmented)
                 .await?
                 .is_some()
         {
@@ -150,22 +161,77 @@ async fn title_transcript(
         .ok_or(AgentTitleStoreError::NotFound)?;
     let agent = read_agent(&document).map_err(map_store_error)?;
     read_title_state(&document, &agent)?;
-    transcript_at_snapshot(store, &agent, &mut session).await
+    let segmented = crate::store::agent_log_segments::read_format(&document)
+        .map_err(map_store_error)?
+        .is_some();
+    transcript_at_snapshot_with_format(store, &agent, &mut session, segmented).await
 }
 
-async fn transcript_at_snapshot(
+#[cfg(test)]
+pub(super) async fn transcript_at_snapshot(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    let segmented = crate::store::agent_log_segment_reads::is_segmented(store, agent, session)
+        .await
+        .map_err(map_store_error)?;
+    transcript_at_snapshot_with_format(store, agent, session, segmented).await
+}
+
+async fn transcript_at_snapshot_with_format(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    session: &mut mongodb::ClientSession,
+    segmented: bool,
+) -> Result<Option<AgentTitleTranscript>, AgentTitleStoreError> {
+    if segmented {
+        if let Some(transcript) = bounded::segmented_read(store, agent, session).await? {
+            return Ok(Some(transcript));
+        }
+        // A certified segmented projection may prove that no title-eligible
+        // turn exists. Do not route that valid result through the legacy
+        // complete reader, which intentionally rejects format-2 metadata.
+        return Ok(None);
+    }
+    if let Some(transcript) = bounded::read(store, agent, session).await? {
+        return Ok(Some(transcript));
+    }
+    // Complete fallback is still a reader. Validate shared proof without the
+    // explicit audit wrapper, whose corruption path persists quarantine.
+    let (proven, _) = read_proven_agent(store, &agent.id, session)
+        .await
+        .map_err(map_store_error)?
+        .ok_or(AgentTitleStoreError::NotFound)?;
+    if &proven != agent {
+        return Err(AgentTitleStoreError::SequenceConflict);
+    }
     let mut logs = Vec::new();
-    scan_complete_log_with_snapshot_session(
+    scan_collection(
         ScanCaller::TitleDiscovery,
-        store,
+        &store.agent_log,
         &agent.id,
         agent.conversation.last_seq,
         session,
+        true,
         |entry| {
+            if entry.agent_id != agent.id {
+                return Err(SandboxStoreError::SequenceConflict);
+            }
+            if let layer2_core::sandbox::AgentLogKind::Created {
+                workspace_id,
+                worktree_id,
+            } = &entry.kind
+            {
+                if entry.seq != 1
+                    || workspace_id != &agent.workspace_id
+                    || worktree_id != agent.creation_worktree_id()
+                {
+                    return Err(SandboxStoreError::Corrupt(
+                        "Agent creation log lineage does not match".into(),
+                    ));
+                }
+            }
             logs.push(entry);
             Ok(())
         },

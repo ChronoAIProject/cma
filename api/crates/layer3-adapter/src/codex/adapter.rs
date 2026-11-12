@@ -13,48 +13,28 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         request: &crate::AgentFileListRequest,
     ) -> crate::Result<crate::AgentFileListReceipt> {
-        let mut request = request.clone();
-        filesystem::protect_provider_credentials(
-            request.owner_access,
-            &mut request.protected_paths,
-        );
-        self.hosted.list_agent_files(handle, &request).await
+        self.list_agent_files_protected(handle, request).await
     }
     async fn read_agent_file(
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileReadRequest,
     ) -> crate::Result<crate::AgentFileReadReceipt> {
-        let mut request = request.clone();
-        filesystem::protect_provider_credentials(
-            request.owner_access,
-            &mut request.protected_paths,
-        );
-        self.hosted.read_agent_file(handle, &request).await
+        self.read_agent_file_protected(handle, request).await
     }
     async fn write_agent_file(
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileWriteRequest,
     ) -> crate::Result<crate::AgentFileWriteReceipt> {
-        let mut request = request.clone();
-        filesystem::protect_provider_credentials(
-            request.owner_access,
-            &mut request.protected_paths,
-        );
-        self.hosted.write_agent_file(handle, &request).await
+        self.write_agent_file_protected(handle, request).await
     }
     async fn delete_agent_file(
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileDeleteRequest,
     ) -> crate::Result<crate::AgentFileDeleteReceipt> {
-        let mut request = request.clone();
-        filesystem::protect_provider_credentials(
-            request.owner_access,
-            &mut request.protected_paths,
-        );
-        self.hosted.delete_agent_file(handle, &request).await
+        self.delete_agent_file_protected(handle, request).await
     }
 
     async fn upload_agent_attachment(
@@ -377,6 +357,18 @@ impl SandboxAdapter for CodexAdapter {
     ) -> crate::Result<ConversationChannel> {
         self.hosted
             .reconnect_agent(handle, authority_fence, request, conversation_id, updates)
+            .await
+    }
+
+    async fn reconnect_agent_for_capacity_recovery(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<
+        crate::agent_capacity_recovery::CapacityRecoveryConnection,
+    > {
+        self.hosted
+            .reconnect_agent_for_capacity_recovery(request, updates)
             .await
     }
 

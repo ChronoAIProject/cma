@@ -4,17 +4,17 @@ use axum::{http::StatusCode, response::Response};
 use layer2_core::{resource_access::CredentialSource, sandbox::binding::BindingError, AgentId};
 
 impl ResponsesV2State {
-    pub(super) async fn submission_generation(
+    pub(super) async fn submission_policy(
         &self,
         auth: &AuthenticatedResourceCaller,
         expected: Option<u64>,
-    ) -> Result<u64, Box<Response>> {
+    ) -> Result<layer2_core::sandbox::binding::BindingSubmissionPolicy, Box<Response>> {
         let bindings = self
             .bindings
             .as_ref()
             .ok_or_else(|| Box::new(error::unavailable()))?;
         bindings
-            .submission_generation(&auth.context.credential.credential_id, expected)
+            .submission_policy(&auth.context.credential.credential_id, expected)
             .await
             .map_err(|value| match value {
                 layer2_core::sandbox::binding::BindingError::Conflict => Box::new(error::error(

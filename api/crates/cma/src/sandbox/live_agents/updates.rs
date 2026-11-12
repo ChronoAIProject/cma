@@ -41,6 +41,8 @@ pub(super) fn spawn_update_task(
             }
             return;
         }
+        let _budget_monitor =
+            super::budget::monitor(registry.clone(), attachment.clone(), recorder.clone());
         while let Some(update) = updates.recv().await {
             if record_update(
                 recorder.as_ref(),
@@ -86,7 +88,7 @@ async fn restore_assembly(
     }
 }
 
-async fn record_update(
+pub(crate) async fn record_update(
     recorder: &dyn AgentUpdateRecorder,
     agent_id: &AgentId,
     runtime_generation: u64,
@@ -108,7 +110,15 @@ async fn record_update(
             )
             .await
         {
-            Ok(_) => {
+            Ok(outcome) => {
+                if outcome.appended.iter().any(|entry| matches!(&entry.kind,
+                    layer2_core::sandbox::AgentLogKind::TurnFailed { failure, .. }
+                        if failure.class == layer2_core::sandbox::store::AGENT_LOG_CAPACITY_FAILURE
+                )) {
+                    // The task is durably failed, but its refused output has not
+                    // been recorded. Leave the native journal receipt unacked.
+                    return Err(AgentConversationError::CapacityExceeded);
+                }
                 if let Some(receipt) = receipt {
                     receipt
                         .acknowledge()

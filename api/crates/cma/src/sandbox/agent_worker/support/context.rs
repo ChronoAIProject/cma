@@ -68,6 +68,40 @@ impl AgentWorker {
                 "checkpoint writer resumption is pending",
             ));
         }
+        let command_generation = if agent.work.step == AgentWorkStep::PublishConnection {
+            self.dependencies
+                .store
+                .agent_command_admission_generation(&agent.id)
+                .await
+                .map_err(parent_store_failure)?
+        } else {
+            None
+        };
+        // This feature only observes parent readiness. It performs no native
+        // operation, so a delayed retry cannot conceal an uncertain effect.
+        // Capture command and parent revisions before inspection; the existing
+        // advisory hint wakes immediately if any of those authorities changes.
+        if self.config.parent_not_ready_pacing_enabled
+            && agent.work.step == AgentWorkStep::PublishConnection
+            && ((sandbox.status != SandboxStatus::Active
+                && !sandbox.restored_connection_is_ready(agent))
+                || workspace.status != WorkspaceStatus::Ready
+                || worktree.status != WorktreeStatus::Ready)
+        {
+            let mut failure = WorkerFailure::retryable(
+                "agent_parent_not_ready",
+                "the sandbox, workspace, or worktree is not ready for connection publication",
+            );
+            failure.observation =
+                command_generation.map(|command_admission_generation| AgentRetryObservation {
+                    agent_revision: agent.revision,
+                    command_admission_generation,
+                    sandbox_revision: sandbox.revision,
+                    workspace_revision: workspace.revision,
+                    worktree_revision: worktree.revision,
+                });
+            return Err(failure);
+        }
         let inspection_started = std::time::Instant::now();
         let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime(
             self.dependencies.adapter.as_ref(),
@@ -83,7 +117,23 @@ impl AgentWorker {
             succeeded = attached.is_ok(),
             "Agent runtime inspection completed"
         );
-        let (attached, status) = attached.map_err(adapter_failure)?;
+        let (attached, status) = attached.map_err(|error| {
+            // Inspection is read-only. A timeout here cannot hide an uncertain
+            // mutation outcome. Other operation failures retain their cadence.
+            let eligible = agent.work.step == AgentWorkStep::PublishConnection
+                && matches!(error, AdapterError::Unavailable(_));
+            let mut failure = adapter_failure(error);
+            if let Some(command_admission_generation) = command_generation.filter(|_| eligible) {
+                failure.observation = Some(AgentRetryObservation {
+                    agent_revision: agent.revision,
+                    command_admission_generation,
+                    sandbox_revision: sandbox.revision,
+                    workspace_revision: workspace.revision,
+                    worktree_revision: worktree.revision,
+                });
+            }
+            failure
+        })?;
         Ok(AgentContext {
             sandbox,
             workspace,

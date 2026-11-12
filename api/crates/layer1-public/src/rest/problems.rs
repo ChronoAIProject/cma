@@ -55,24 +55,32 @@ pub enum HttpProblem {
     RequestBudgetUnavailable,
     RequestTooLarge,
     RateLimited { retry_after_seconds: u64 },
+    PublicStreamCapacityExhausted,
     NotFound,
     MethodNotAllowed,
 }
 
 impl IntoResponse for HttpProblem {
     fn into_response(self) -> Response {
-        if let Self::RateLimited {
-            retry_after_seconds,
-        } = self
-        {
+        let limited = match self {
+            Self::RateLimited { retry_after_seconds } => Some((
+                retry_after_seconds,
+                "rate-limited",
+                "This caller has exhausted the request budget for this route.",
+                "rate_limited",
+            )),
+            Self::PublicStreamCapacityExhausted => Some((
+                1,
+                "public-stream-capacity-exhausted",
+                "Public observation capacity is busy. Retry with the original request key or cursor.",
+                "public_stream_capacity_exhausted",
+            )),
+            _ => None,
+        };
+        if let Some((retry_after_seconds, slug, detail, code)) = limited {
             let mut response = problem_response(
                 StatusCode::TOO_MANY_REQUESTS,
-                problem_document(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "rate-limited",
-                    "This caller has exhausted the request budget for this route.",
-                    "rate_limited",
-                ),
+                problem_document(StatusCode::TOO_MANY_REQUESTS, slug, detail, code),
             );
             response.headers_mut().insert(
                 header::RETRY_AFTER,
@@ -106,7 +114,9 @@ impl IntoResponse for HttpProblem {
                 "This REST route does not accept the request method.",
                 "method_not_allowed",
             ),
-            Self::RateLimited { .. } => unreachable!("handled above"),
+            Self::RateLimited { .. } | Self::PublicStreamCapacityExhausted => {
+                unreachable!("handled above")
+            }
         };
         problem_response(status, problem_document(status, slug, detail, code))
     }
@@ -135,6 +145,10 @@ impl IntoResponse for Problem {
             CoreError::SkillCatalogUnavailable(_) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "skill-catalogue-unavailable",
+            ),
+            CoreError::ModelBudgetWritesUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "model-budget-writes-unavailable",
             ),
             CoreError::InvalidPressurePolicy(_) => {
                 (StatusCode::UNPROCESSABLE_ENTITY, "invalid-pressure-policy")

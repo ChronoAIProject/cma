@@ -8,6 +8,9 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use utoipa::ToSchema;
 
+#[path = "indexed_projection.rs"]
+pub(in crate::responses) mod indexed;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum V2ResponseStatus {
@@ -99,7 +102,12 @@ pub(super) fn project(
         background: false,
         error: command.failure.map(|code| ResponseError {
             code: failure_code(code).into(),
-            message: "The admitted Agent command could not complete.".into(),
+            message: code
+                .budget_error()
+                .map_or("The admitted Agent command could not complete.", |reason| {
+                    reason.guidance()
+                })
+                .into(),
         }),
         incomplete_details: (command.status == AgentResponseStatus::Cancelled)
             .then(|| json!({"reason":"interrupted"})),
@@ -231,6 +239,9 @@ pub(super) fn project(
 }
 fn failure_code(code: CommandFailureCode) -> &'static str {
     match code {
+        CommandFailureCode::OwnerBudgetExhausted => "owner_budget_exhausted",
+        CommandFailureCode::TurnBudgetExhausted => "turn_budget_exhausted",
+        CommandFailureCode::BudgetUnavailable => "budget_unavailable",
         CommandFailureCode::QueueTimeout => "agent_command_queue_timeout",
         CommandFailureCode::AuthorityRevoked => "agent_command_authority_revoked",
         CommandFailureCode::AuthorityUnavailable => "agent_command_authority_unavailable",
