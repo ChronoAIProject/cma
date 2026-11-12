@@ -70,7 +70,17 @@ async fn repeated_failure_full_and_bounded_proofs_refuse_damage() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn repeated_failure_missing_stale_or_untrusted_proofs_fully_scan() {
-    for mode in ["off", "cohort_off", "missing", "stale", "untrusted"] {
+    for mode in [
+        "off",
+        "cohort_off",
+        "missing",
+        "unsupported",
+        "stale",
+        "untrusted",
+    ] {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let metrics = recorder.handle();
+        let _observation = metrics::set_default_local_recorder(&recorder);
         let mut f = seeded().await;
         let marker = f
             .store
@@ -90,6 +100,10 @@ async fn repeated_failure_missing_stale_or_untrusted_proofs_fully_scan() {
             "off" => f.store = f.store.with_bounded_close_retries(false),
             "cohort_off" => f.store.bounded_admission_agents.clear(),
             "missing" => f.change(doc! {"$unset": {INTEGRITY_FIELD: ""}}).await,
+            "unsupported" => {
+                f.change(doc! {"$set": {"agent_log_integrity_v1.format": 99_i64}})
+                    .await
+            }
             "stale" => {
                 f.change(doc! {"$inc": {"agent_log_integrity_v1.bound_agent_revision": -1_i64}})
                     .await
@@ -118,6 +132,26 @@ async fn repeated_failure_missing_stale_or_untrusted_proofs_fully_scan() {
             assert_eq!(scans::snapshot(CALLER, true)[0], 1, "{mode}");
         })
         .await;
+        let rendered = metrics.render();
+        let full = rendered
+            .lines()
+            .find(|line| {
+                line.starts_with("cma_agent_retry_audits_total{")
+                    && line.contains("outcome=\"completed_full\"")
+            })
+            .unwrap();
+        assert!(full.ends_with(" 2"), "{full}");
+        let fallbacks: Vec<_> = rendered
+            .lines()
+            .filter(|line| line.starts_with("cma_agent_retry_audit_fallbacks_total{"))
+            .collect();
+        if matches!(mode, "off" | "cohort_off") {
+            assert!(fallbacks.is_empty(), "{rendered}");
+        } else {
+            assert_eq!(fallbacks.len(), 1, "{rendered}");
+            assert!(fallbacks[0].contains(&format!("reason=\"{mode}\"")));
+            assert!(fallbacks[0].ends_with(" 1"));
+        }
         f.cleanup().await;
     }
 }

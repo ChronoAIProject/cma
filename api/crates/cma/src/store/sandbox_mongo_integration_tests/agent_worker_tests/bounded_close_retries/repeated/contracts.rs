@@ -50,6 +50,8 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
         AgentWorkStep::RemoveWorktree,
     ] {
         for conflict in [false, true] {
+            let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+            let metrics = recorder.handle();
             let mut f = seeded_step(step).await;
             let initial_head = f.agent.conversation.last_seq;
             let caller = ScanCaller::WorkerPublication(step);
@@ -98,6 +100,7 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
                 let start_commands = f.commands.load(Ordering::SeqCst);
                 let start_attempts = f.attempts.load(Ordering::SeqCst);
                 let start = Instant::now();
+                let observation = metrics::set_default_local_recorder(&recorder);
                 let scan = scans::isolated_test(async {
                     f.store
                         .commit_agent_work_repeated_failure(retry.clone(), None)
@@ -106,6 +109,7 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
                     scans::snapshot(caller, true)
                 })
                 .await;
+                drop(observation);
                 let micros = start.elapsed().as_micros();
                 elapsed += micros;
                 latencies.push(micros);
@@ -134,6 +138,24 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
                 initial_head
             );
             assert_eq!(attempts, if conflict { 8 } else { 4 });
+            let rendered = metrics.render();
+            for (outcome, expected) in [
+                ("completed_full", 1),
+                ("skipped_proof", 3),
+                ("skipped_conflict_reuse", if conflict { 4 } else { 0 }),
+            ] {
+                let line = rendered.lines().find(|line| {
+                    line.starts_with("cma_agent_retry_audits_total{")
+                        && line.contains(&format!("outcome=\"{outcome}\""))
+                });
+                if expected == 0 {
+                    assert!(line.is_none());
+                } else {
+                    let line = line.expect("retry verification counter must be exported");
+                    assert!(line.contains(&format!("worker_step=\"{}\"", step.operation_name())));
+                    assert!(line.ends_with(&format!(" {expected}")), "{line}");
+                }
+            }
             latencies.sort_unstable();
             let p50_us = latencies[1];
             let p95_us = latencies[3];

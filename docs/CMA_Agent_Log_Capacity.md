@@ -156,6 +156,23 @@ reuse contract in [Admission append](CMA_Admission_Append.md). Without that gate
 every zero-entry retry still fully scans. The 10,000-entry/64-MiB normal limits,
 stop/delete reserves and counting of every actual retained row are unchanged.
 
+The exception requires a complete audit on the first eligible retry after
+process start or audit-cache eviction, and on the next retry when audit age is
+at least one hour. This is a fixed code constant, not an environment setting.
+Store clones share a monotonic clock record; only confirmed commits advance it.
+Aborted and unknown commits cannot defer the next required audit. Between audits,
+trusted metadata and exact same-snapshot tail proofs are mandatory; missing,
+stale or untrusted proof falls back, while corruption and quarantine refuse.
+First failures, successful effects and step advances retain full verification.
+Middle-history corruption missed by point reads is detected at the next complete
+audit under the existing verifier; immutability of retained history is assumed
+between audits. Unknown commits still use full receipt reconciliation.
+
+For activation, enable the default-off single-marker switch alone, holding the
+existing bounded-close/cohort, pool and worker settings fixed for the measurement
+packet. Use the retry audit and reason-labelled fallback counters documented in
+[Admission append](CMA_Admission_Append.md), alongside scan bytes and latency.
+
 ### Selecting an already-marked cleanup retry (#1583)
 
 Related to #1421 and #1321. The failed-work retry path may select the existing
