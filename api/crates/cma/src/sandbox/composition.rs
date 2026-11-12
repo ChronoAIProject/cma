@@ -48,7 +48,6 @@ pub(crate) struct SandboxLifecycleConfig {
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
-    pub event_driven_reconciliation: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -168,7 +167,7 @@ impl SandboxLifecycleComposition {
                     Arc::clone(&workspace_worker),
                 )),
                 agents: Arc::new(DurableLiveAgentStopper::new(
-                    dependencies.store.clone(),
+                    dependencies.store,
                     Arc::clone(&registry),
                 )),
                 registry,
@@ -192,11 +191,7 @@ impl SandboxLifecycleComposition {
             reconciliation,
             sandbox: SandboxScheduler::new(sandbox_worker).with_admission_wake(sandbox_admitted),
             workspace: SandboxScheduler::for_workspaces(workspace_worker),
-            agent: AgentScheduler::new(agent_worker, agent_admitted)
-                .with_event_driven_reconciliation(
-                    Arc::clone(&dependencies.store.agent_parent_ready),
-                    config.event_driven_reconciliation,
-                ),
+            agent: AgentScheduler::new(agent_worker, agent_admitted),
             titles,
             funding_renewal,
             suggestions,
