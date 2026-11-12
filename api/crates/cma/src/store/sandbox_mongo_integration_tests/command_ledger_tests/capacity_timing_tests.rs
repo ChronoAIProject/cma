@@ -12,6 +12,7 @@ struct Trace {
     start: Option<std::time::Instant>,
     transactions: Vec<(String, u128)>,
     commands: usize,
+    gate_queries: usize,
 }
 
 #[tokio::test]
@@ -31,6 +32,9 @@ async fn sixty_four_mib_terminal_settlement_measures_trusted_and_full_fallback_t
             match event {
                 CommandEvent::Started(event) => {
                     trace.commands += 1;
+                    if event.command.get_str("find").ok() == Some("agent_log_gates") {
+                        trace.gate_queries += 1;
+                    }
                     if event.command.get_bool("startTransaction").unwrap_or(false) {
                         assert!(trace.start.is_none());
                         trace.start = Some(std::time::Instant::now());
@@ -118,6 +122,7 @@ async fn sixty_four_mib_terminal_settlement_measures_trusted_and_full_fallback_t
             assert_eq!(scans[0],if enabled {0} else {2});
             let mut t=trace.lock().unwrap();t.enabled=false;
             assert_eq!(t.transactions.len(),2);
+            assert_eq!(t.gate_queries,0,"default publication must not discover adoption gates");
             assert_eq!(t.transactions[0].0,"abortTransaction");
             assert_eq!(t.transactions[1].0,"commitTransaction");
             assert!(t.transactions.iter().all(|(_,micros)| *micros<60_000_000));

@@ -215,7 +215,12 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
     );
     let mut options = ClientOptions::parse(uri).await.unwrap();
     attach(&mut options, observer.clone());
-    assert!(options.command_event_handler.is_some());
+    assert!(options.command_event_handler.is_none());
+    assert_eq!(options.tracing.as_ref().unwrap().enabled, Some(true));
+    assert_eq!(
+        options.tracing.as_ref().unwrap().query_text_max_length,
+        Some(0)
+    );
     assert!(options.cmap_event_handler.is_some());
     let client = Client::with_options(options).unwrap();
     let name = format!("cma_latency_{}", uuid::Uuid::new_v4().simple());
