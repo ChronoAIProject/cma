@@ -203,6 +203,7 @@ pub trait AuthStore: Send + Sync {
     async fn due_actor_links(
         &self,
         _renewed_before: u64,
+        _after_actor_key: Option<&str>,
         _limit: usize,
     ) -> Result<Vec<super::actor_links::ActorLinkRecord>, StoreError> {
         Err(StoreError::Unavailable(

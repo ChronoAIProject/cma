@@ -24,6 +24,7 @@ pub(super) async fn production_adapter(
     subscriptions: Arc<crate::connections::CodexSubscriptions>,
     access_tools: Arc<dyn layer3_adapter::hosted::HostedAccessToolSource>,
     provider_tools: Arc<crate::store::MongoProviderToolSource>,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 ) -> Result<ProductionAdapters, String> {
     use layer3_adapter::codex::{CodexAdapter, CodexSandboxSpec};
     use layer3_adapter::hosted::{
@@ -31,7 +32,8 @@ pub(super) async fn production_adapter(
     };
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
-    let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
+    let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions)
+        .with_account_standing(standing);
 
     let mut routing_options = mongodb::options::ClientOptions::parse(&config.mongodb_uri)
         .await

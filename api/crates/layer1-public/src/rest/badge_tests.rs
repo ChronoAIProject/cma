@@ -317,3 +317,59 @@ fn public_origin_and_identifier_validation_are_exact() {
     assert!(!super::is_embed_identifier("contains.dot"));
     assert!(!super::is_embed_identifier(&"a".repeat(129)));
 }
+
+struct ErasingPublisher;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ErasingPublisher {
+    async fn erasing(
+        &self,
+        _: &layer2_core::SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+async fn deleting_publisher_badge_and_entry_are_unavailable() {
+    let fixture = Fixture::no_review();
+    let state = super::TriggerAssetsState::new(
+        fixture.store.clone(),
+        super::trigger_assets_test_support::ORIGIN,
+    )
+    .unwrap()
+    .with_account_standing(std::sync::Arc::new(ErasingPublisher));
+    let router = super::trigger_assets_router(state);
+    let badge = router
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/triggers/public/{PUBLIC_ID}/badge.svg"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(badge.status(), StatusCode::OK);
+    let svg = String::from_utf8(to_bytes(badge.into_body(), 4096).await.unwrap().to_vec()).unwrap();
+    assert!(svg.contains("Unavailable"));
+    let entry = router
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/triggers/public/{PUBLIC_ID}/open/{PLACEMENT_ID}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(entry.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let consume = router
+        .oneshot(
+            Request::post(format!("/api/v1/triggers/public/{PUBLIC_ID}/entry-intent"))
+                .header(header::ORIGIN, super::trigger_assets_test_support::ORIGIN)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(consume.status(), StatusCode::SERVICE_UNAVAILABLE);
+}

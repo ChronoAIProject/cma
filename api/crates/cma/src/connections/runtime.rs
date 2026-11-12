@@ -18,6 +18,7 @@ use crate::store::MongoSandboxStore;
 use super::CodexSubscriptions;
 
 pub(crate) struct RuntimeSubscriptions {
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     store: Arc<MongoSandboxStore>,
     subscriptions: Arc<CodexSubscriptions>,
 }
@@ -28,9 +29,19 @@ impl RuntimeSubscriptions {
         subscriptions: Arc<CodexSubscriptions>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             store,
             subscriptions,
         })
+    }
+    pub(crate) fn with_account_standing(
+        mut self: Arc<Self>,
+        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("subscription standing configured before sharing")
+            .standing = standing;
+        self
     }
 }
 
@@ -51,6 +62,16 @@ impl HostedSubscriptionSource for RuntimeSubscriptions {
             .await
             .map_err(|_| unavailable())?
         {
+            if self
+                .standing
+                .authoritative(&sandbox.owner)
+                .await
+                .map_err(|_| unavailable())?
+            {
+                return Err(AdapterError::Rejected(
+                    "account_deletion_in_progress".into(),
+                ));
+            }
             if sandbox.profile.content.model_access != ModelAccess::OwnCredentials
                 || matches!(
                     sandbox.status,

@@ -1633,6 +1633,53 @@ above applies even when an operation annotates only its principal responses.
 
 <!-- openapi-operations:start -->
 
+
+### Account deletion
+
+| Operation | Behavior |
+|---|---|
+| `POST /api/v1/account/deletion` | Accept the authenticated human owner's irreversible CMA account deletion request; return 202 with a durable receipt. |
+| `GET /api/v1/account/deletion` | Read the authenticated owner's deletion receipt, including while the access gate denies ordinary account data. |
+
+A deletion request requires `Idempotency-Key` and the JSON body
+`{"acknowledge":"irreversible"}`. Retain that key after an uncertain response.
+A repeated accepted key recovers the same deletion identity. Once the access
+gate is active, a new or different key receives `403 account_deletion_in_progress`.
+The 202 response includes
+`Location: /api/v1/account/deletion` and `Cache-Control: private, no-store`.
+Status reads also use `Cache-Control: private, no-store`.
+
+The receipt contains `id`, `status` (`running`, `blocked`, or `completed`),
+`step`, `requested_at`, `deadline_at`, nullable `completed_at`, and `steps`.
+Each completed-step entry contains `step`, `completed_at`, and a `counts` map.
+The deadline is seven days after acceptance. This release accepts requests and
+records `running` / `inventory`; cascade execution is delivered in later PRs.
+Acceptance is never a claim that account data has already been erased.
+
+The writer is disabled by default. A disabled request returns
+`503 account_deletion_unavailable`; a status read remains available. Missing
+acknowledgement returns `422 account_deletion_acknowledgement_required`.
+Binding credentials and other non-owner actors receive
+`403 account_deletion_requires_owner_session`. No receipt returns
+`404 account_deletion_not_found`; dependency failures remain explicit typed
+failures and never imply completion. Browser sessions advertise
+`delete_own_account` only while the writer is enabled. CMA deletion does not
+delete the external identity account.
+
+After acceptance the access gate returns `403 account_deletion_in_progress`
+for ordinary account access. New document grants and selected-recipient Agent
+share links reject a recipient undergoing deletion with
+`409 share_recipient_unavailable`. The accepting replica updates its snapshot
+synchronously after the transaction commits; other replicas refresh every second.
+A snapshot that has not refreshed successfully for more than ten seconds uses
+an authoritative point read. `GET /auth/session`, `/auth/logout`, and this
+status route remain available. A narrow `POST /api/v1/account/deletion`
+exception permits a human owner's exact already-persisted request key to recover
+the existing receipt after an uncertain response; a new or different key is
+still refused while deletion is active. This exception adds no deletion effect.
+See [Account deletion](CMA_Account_Deletion.md)
+for gate coverage, reader-floor deployment order, and remaining deliveries.
+
 ### Event Worker Profiles
 
 These owner-scoped resources compose three published CMA profile revisions into

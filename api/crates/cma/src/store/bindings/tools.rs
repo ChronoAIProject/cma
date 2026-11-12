@@ -24,13 +24,27 @@ use transaction::{Operation, Outcome};
 use validation::Scope;
 
 pub(crate) struct MongoProviderToolSource {
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
     store: Arc<MongoSandboxStore>,
     relay: Option<relay::Authority>,
 }
 
 impl MongoProviderToolSource {
     pub(crate) fn new(store: Arc<MongoSandboxStore>) -> Arc<Self> {
-        Arc::new(Self { store, relay: None })
+        Arc::new(Self {
+            store,
+            relay: None,
+            standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
+        })
+    }
+    pub(crate) fn with_account_standing(
+        mut self: Arc<Self>,
+        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("relay standing configured before sharing")
+            .standing = standing;
+        self
     }
 
     async fn resolve_in(

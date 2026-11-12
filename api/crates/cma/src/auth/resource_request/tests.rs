@@ -545,3 +545,30 @@ async fn request_proof_metrics_cover_verified_refused_and_unavailable_paths() {
     assert!(text.contains("status=\"200\",consumer=\"nyxid\",protocol=\"rest\""));
     assert!(text.contains("status=\"503\",consumer=\"unknown\",protocol=\"rest\""));
 }
+
+struct ErasingSubject;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ErasingSubject {
+    async fn erasing(
+        &self,
+        _: &layer2_core::SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+async fn standing_gate_denies_verified_resource_request_before_early_return() {
+    let fixture = Fixture::new().await;
+    let auth = fixture
+        .auth(true)
+        .await
+        .with_account_standing(Arc::new(ErasingSubject));
+    let response = app(auth)
+        .oneshot(request(Method::GET, "/api/v1/agents"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(body["code"], "account_deletion_in_progress");
+}

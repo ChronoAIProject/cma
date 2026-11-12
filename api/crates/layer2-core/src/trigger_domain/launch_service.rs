@@ -78,6 +78,8 @@ impl LaunchPolicySource for LaunchPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchServiceError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error("daily visitor Launch allowance exhausted")]
     VisitorQuota {
         limit: u32,
@@ -122,6 +124,7 @@ pub enum LaunchServiceError {
 impl LaunchServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AccountDeletionInProgress => "account_deletion_in_progress",
             Self::VisitorQuota { .. } => "resource_quota",
             Self::CredentialSetupRequired => "sandbox_credential_setup_required",
             Self::Forbidden => "forbidden",
@@ -145,6 +148,7 @@ impl LaunchServiceError {
 }
 
 pub struct LaunchService {
+    pub(super) standing: Arc<dyn crate::account_deletion::AccountStanding>,
     pub(super) common_first_messages: bool,
     pub(super) definitions: Arc<dyn TriggerStore>,
     pub(super) profile_reader: Arc<dyn TriggerProfileReader>,
@@ -180,6 +184,7 @@ impl LaunchService {
         let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles;
         Arc::new(Self {
             common_first_messages: false,
+            standing: Arc::new(crate::account_deletion::AvailableAccounts),
             definitions,
             profile_reader,
             sandbox_profiles,
@@ -429,6 +434,7 @@ impl LaunchService {
             .await
             .map_err(trigger_error)?
             .ok_or(LaunchServiceError::TriggerNotFound)?;
+        self.require_public_owner(&trigger.owner).await?;
         if trigger.availability != TriggerAvailability::Published {
             return Err(LaunchServiceError::TriggerRetired);
         }

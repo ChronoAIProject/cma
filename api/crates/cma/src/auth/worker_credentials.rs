@@ -39,6 +39,18 @@ pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -
     };
     match tokio::time::timeout(Duration::from_secs(2), verify(auth, &token, &subject)).await {
         Ok(Ok(Some(subject))) => {
+            if let Some(response) = auth
+                .account_gate(
+                    request.method().as_str(),
+                    request.uri().path(),
+                    request.headers(),
+                    &subject,
+                    false,
+                )
+                .await
+            {
+                return observation.rejected(response);
+            }
             observation.finish("resolved", Consumer::Internal);
             drop(observation);
             request

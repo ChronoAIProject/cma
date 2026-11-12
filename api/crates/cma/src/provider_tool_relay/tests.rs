@@ -200,3 +200,32 @@ async fn relay_rejects_bad_protocol_batches_destination_overrides_and_large_requ
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     task.abort();
 }
+#[tokio::test]
+async fn relay_account_deletion_is_a_typed_forbidden_problem() {
+    struct Erasing;
+    #[async_trait::async_trait]
+    impl Authenticate for Erasing {
+        async fn current(
+            &self,
+            _: &str,
+            _: bool,
+        ) -> layer3_adapter::Result<(url::Url, SecretValue)> {
+            Err(layer3_adapter::AdapterError::Rejected(
+                "account_deletion_in_progress".into(),
+            ))
+        }
+    }
+    let response = routes(Arc::new(Erasing))
+        .oneshot(request(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    let value: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(value["code"], "account_deletion_in_progress");
+}

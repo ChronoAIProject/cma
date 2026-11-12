@@ -91,6 +91,11 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     } else {
         service
     };
+    let service = if mode == "recipient_erasing" {
+        service.with_account_standing(Arc::new(super::account_deletion_cases::ErasingRecipient))
+    } else {
+        service
+    };
     Some(Scenario {
         router: super::super::documents_router(service),
         subject: match mode {

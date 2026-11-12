@@ -134,6 +134,11 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     } else {
         service.with_directory(UserDirectory::new(Arc::new(Directory)))
     };
+    let service = if name.contains("_erasing") {
+        service.with_account_standing(Arc::new(super::account_deletion_cases::ErasingRecipient))
+    } else {
+        service
+    };
     let router = super::super::resource_access_router(Arc::new(service))
         .layer(Extension(context.clone()))
         .layer(Extension(crate::DelegatedCredential::new(

@@ -4,6 +4,7 @@ use layer2_core::{Authorization, Capability};
 
 pub(crate) fn wire_name(capability: Capability) -> &'static str {
     match capability {
+        Capability::DeleteOwnAccount => "delete_own_account",
         Capability::CreateSandbox => "create_sandbox",
         Capability::UseOwnSandboxes => "use_own_sandboxes",
         Capability::DeleteOwnSandbox => "delete_own_sandbox",
@@ -32,7 +33,8 @@ pub(crate) fn reported(authorization: &Authorization) -> Vec<&'static str> {
 mod tests {
     use super::*;
 
-    const ALL: [Capability; 17] = [
+    const ALL: [Capability; 18] = [
+        Capability::DeleteOwnAccount,
         Capability::CreateSandbox,
         Capability::UseOwnSandboxes,
         Capability::DeleteOwnSandbox,

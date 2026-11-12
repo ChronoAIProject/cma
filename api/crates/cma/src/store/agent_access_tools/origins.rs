@@ -58,6 +58,7 @@ impl MongoAgentAccessToolSource {
             }
         }
         Ok(Arc::new(Self {
+            standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             store,
             origin: primary.origin,
             signing_key: primary.signing_key,

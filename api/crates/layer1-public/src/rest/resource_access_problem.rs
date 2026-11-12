@@ -17,6 +17,8 @@ impl IntoResponse for ResourceProblem {
         super::dependency_diagnostics::resource_failure(&self.0);
         use ResourceAccessError::*;
         let (status, code, detail) = match self.0 {
+            AccountDeletionInProgress => (StatusCode::FORBIDDEN, "account_deletion_in_progress", "Account deletion is in progress."),
+            Store(ResourceAccessStoreError::ShareRecipientUnavailable) => (StatusCode::CONFLICT, "share_recipient_unavailable", "The share recipient is unavailable."),
             Access(AccessError::NotFound) | Store(ResourceAccessStoreError::NotFound) => (StatusCode::NOT_FOUND, "resource_not_found", "Resource not found."),
             Access(AccessError::Forbidden) | Membership(MembershipError::NotMember) => (StatusCode::FORBIDDEN, "resource_forbidden", "Current authority does not permit this operation."),
             Access(AccessError::UnsafeInteractiveShare) | Store(ResourceAccessStoreError::UnsafeInteractiveShare) => (StatusCode::CONFLICT, "unsafe_interactive_share", "Interactive Agent sharing requires independent isolation or an explicit compatible whole-Sandbox grant. Use view sharing for this Agent."),

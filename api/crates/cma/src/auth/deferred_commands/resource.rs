@@ -14,6 +14,8 @@ impl AuthState {
         ResourceCommandAuthorizationError,
     > {
         let envelope = &command.receipt.envelope;
+        self.require_actor_owner_accounts(&envelope.actor, &envelope.owner)
+            .await?;
         if envelope.authorization.authority_id.starts_with("binding:") {
             let context = self.retained_binding_context(envelope).await?;
             return Ok(access
@@ -42,6 +44,8 @@ impl AuthState {
         &self,
         envelope: &AgentCommandEnvelope,
     ) -> Result<super::custody::CommandCustody, CommandAuthorizationError> {
+        self.require_actor_owner_accounts(&envelope.actor, &envelope.owner)
+            .await?;
         envelope
             .validate_integrity()
             .map_err(|_| CommandAuthorizationError::Revoked)?;
@@ -104,6 +108,8 @@ impl AuthState {
         access: &ResourceAccessService,
         envelope: &AgentCommandEnvelope,
     ) -> Result<CommandExecutionAuthorization, ResourceCommandAuthorizationError> {
+        self.require_actor_owner_accounts(&envelope.actor, &envelope.owner)
+            .await?;
         if envelope.authorization.authority_id.starts_with("binding:") {
             let context = self.retained_binding_context(envelope).await?;
             return Ok(access

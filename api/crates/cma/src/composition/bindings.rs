@@ -84,6 +84,7 @@ impl BindingComposition {
 pub(super) fn resource_access(
     stores: &MongoStores,
     auth: Arc<AuthState>,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 ) -> Arc<layer2_core::resource_access::ResourceAccessService> {
     Arc::new(
         layer2_core::resource_access::ResourceAccessService::new(
@@ -93,7 +94,8 @@ pub(super) fn resource_access(
         .with_bindings(layer2_core::sandbox::binding::BindingAccessService::new(
             stores.sandbox_model.clone(),
         ))
-        .with_directory(layer2_core::UserDirectory::new(stores.users.clone())),
+        .with_directory(layer2_core::UserDirectory::new(stores.users.clone()))
+        .with_account_standing(standing),
     )
 }
 

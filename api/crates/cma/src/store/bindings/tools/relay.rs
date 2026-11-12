@@ -41,6 +41,7 @@ impl MongoProviderToolSource {
             serde_json::to_string(&[store.bindings.tool_relays.namespace().db.as_str(), &origin])
                 .map_err(|_| "invalid provider relay namespace")?;
         Ok(Arc::new(Self {
+            standing: Arc::new(layer2_core::account_deletion::AvailableAccounts),
             store,
             relay: Some(Authority {
                 config,

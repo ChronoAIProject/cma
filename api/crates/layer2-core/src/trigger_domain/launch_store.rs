@@ -170,6 +170,8 @@ pub struct LaunchCommit {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchStoreError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error("daily visitor Launch allowance exhausted")]
     VisitorQuota {
         limit: u32,
@@ -202,6 +204,7 @@ pub enum LaunchStoreError {
 impl LaunchStoreError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::AccountDeletionInProgress => "account_deletion_in_progress",
             Self::VisitorQuota { .. } => "resource_quota",
             Self::NotFound => "launch_not_found",
             Self::Duplicate => "launch_already_exists",

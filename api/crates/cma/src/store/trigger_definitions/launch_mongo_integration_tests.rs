@@ -735,3 +735,6 @@ async fn ready_admission_handoffs_indexes_and_corruption_are_strict() {
     ));
     database.drop().await.unwrap();
 }
+
+#[path = "launch_deletion_mongo_tests.rs"]
+mod account_deletion;

@@ -1,5 +1,6 @@
 //! Durable document metadata. Source objects are supplied by the independently
 //! configured object repository; no document content is stored in this collection.
+mod grants;
 mod mongo;
 mod quota;
 mod quota_baseline;

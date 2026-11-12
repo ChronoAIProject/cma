@@ -149,6 +149,12 @@ fn trigger_problem(error: TriggerServiceError) -> ProblemParts {
 
 fn launch_problem(error: LaunchServiceError) -> ProblemParts {
     match error {
+        LaunchServiceError::AccountDeletionInProgress => (
+            StatusCode::FORBIDDEN,
+            "account_deletion_in_progress",
+            "Account deletion is in progress.",
+            vec![],
+        ),
         LaunchServiceError::VisitorQuota { .. } => {
             unreachable!("quota response carries Retry-After above")
         }

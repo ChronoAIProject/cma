@@ -415,7 +415,7 @@ impl AuthState {
         if grant.subject != *subject || grant.credential_incarnation != incarnation {
             return Err(BotError::Forbidden);
         }
-        self.link_token(&row).await?;
+        self.retained_link_token(&row).await?;
         let token = self
             .bot_owner_token_fenced(subject, Some(incarnation))
             .await?;
@@ -450,14 +450,15 @@ impl AuthState {
     }
     async fn link_token(&self, row: &ActorLinkRecord) -> Result<SecretValue, BotError> {
         let grant = row.grant()?;
-        let token = self
-            .actor_token_fenced(&grant.subject, Some(&grant.credential_incarnation))
-            .await?;
-        let latest = self.link_record(&grant.grant_id).await?;
-        if !latest.same_active_authority(row) {
-            return Err(BotError::Forbidden);
+        if self
+            .standing
+            .authoritative(&grant.subject)
+            .await
+            .map_err(|_| BotError::Unavailable)?
+        {
+            return Err(BotError::AccountDeletionInProgress);
         }
-        Ok(token)
+        self.retained_link_token(row).await
     }
 }
 

@@ -17,6 +17,23 @@ use layer2_core::dependency_diagnostics::{
 };
 
 pub async fn attach_subject(
+    state: State<Arc<AuthState>>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let account_route = request.uri().path() == "/api/v1/account/deletion"
+        && matches!(request.method().as_str(), "GET" | "POST");
+    let mut response = attach_subject_inner(state, request, next).await;
+    if account_route {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
+}
+
+async fn attach_subject_inner(
     State(auth): State<Arc<AuthState>>,
     mut request: axum::extract::Request,
     next: Next,
@@ -98,7 +115,22 @@ pub async fn attach_subject(
             return response;
         }
     };
-    if let Some(resolved) = resolved {
+    if let Some(mut resolved) = resolved {
+        resolved.authorization = auth.account_authorization(&resolved);
+        if let Some(response) = auth
+            .account_gate(
+                request.method().as_str(),
+                request.uri().path(),
+                request.headers(),
+                &resolved.subject,
+                resolved
+                    .authorization
+                    .allows(layer2_core::Capability::DeleteOwnAccount),
+            )
+            .await
+        {
+            return response;
+        }
         if request.uri().path() == "/api/v1/bots"
             || request.uri().path().starts_with("/api/v1/bots/")
         {

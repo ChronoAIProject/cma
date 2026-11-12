@@ -23,6 +23,10 @@ pub(super) async fn read(
     // provider IO without adding a new authorization boundary.
     match caller {
         Some(AuthenticatedCaller(caller)) => {
+            let erasing = match auth.standing.erasing(&caller.subject).await {
+                Ok(erasing) => erasing,
+                Err(_) => return super::account_standing::unavailable(),
+            };
             let usage_reporting = match auth.usage_reporting().await {
                 Ok(settings) => settings,
                 Err(_) => {
@@ -43,16 +47,18 @@ pub(super) async fn read(
                 "authenticated": true,
                 "usage_reporting": usage_reporting,
                 "subject": caller.subject.as_str(),
-                "capabilities": entitlements::reported(&caller.authorization),
+                "capabilities": entitlements::reported(&auth.session_authorization(&caller.authorization)),
                 "visitor": is_visitor(&caller.authorization),
             });
-            let profile = profile
-                .map(|Extension(profile)| profile)
-                .unwrap_or_default();
-            if let (Some(map), Ok(serde_json::Value::Object(profile))) =
-                (body.as_object_mut(), serde_json::to_value(profile))
-            {
-                map.extend(profile);
+            if !erasing {
+                let profile = profile
+                    .map(|Extension(profile)| profile)
+                    .unwrap_or_default();
+                if let (Some(map), Ok(serde_json::Value::Object(profile))) =
+                    (body.as_object_mut(), serde_json::to_value(profile))
+                {
+                    map.extend(profile);
+                }
             }
             Json(body).into_response()
         }

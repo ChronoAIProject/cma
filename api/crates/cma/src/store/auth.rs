@@ -265,9 +265,11 @@ impl AuthStore for MongoAuthStore {
     async fn due_actor_links(
         &self,
         renewed_before: u64,
+        after_actor_key: Option<&str>,
         limit: usize,
     ) -> Result<Vec<crate::auth::actor_links::ActorLinkRecord>, StoreError> {
-        self.actor_links_due(renewed_before, limit).await
+        self.actor_links_due(renewed_before, after_actor_key, limit)
+            .await
     }
     async fn actor_link_for_actor(
         &self,

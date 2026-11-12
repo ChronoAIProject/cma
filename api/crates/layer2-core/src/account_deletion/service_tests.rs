@@ -1,6 +1,6 @@
 use super::*;
 use crate::{Authorization, Caller, Capability, SubjectId};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 fn owner() -> Caller {
     Caller::new(
         SubjectId::new("owner"),
@@ -100,4 +100,109 @@ async fn rejected_request_never_updates_local_standing() {
     assert!(service.request(&owner(), "first", false).await.is_err());
     assert!(!standing.erasing(&owner().subject).await.unwrap());
     assert!(store.active(&owner().subject).await.unwrap().is_none());
+}
+
+struct FailingRequestStore {
+    inner: Arc<MemoryAccountDeletionStore>,
+    commit_before_error: bool,
+    error: AccountDeletionError,
+}
+
+#[async_trait::async_trait]
+impl AccountDeletionStore for FailingRequestStore {
+    async fn request(
+        &self,
+        subject: &SubjectId,
+        key: &str,
+        at: &str,
+    ) -> Result<AccountDeletion, AccountDeletionError> {
+        if self.commit_before_error {
+            self.inner.request(subject, key, at).await?;
+        }
+        Err(self.error.clone())
+    }
+
+    async fn active(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
+        self.inner.active(subject).await
+    }
+
+    async fn latest(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
+        self.inner.latest(subject).await
+    }
+
+    async fn get(
+        &self,
+        id: &AccountDeletionId,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
+        self.inner.get(id).await
+    }
+
+    async fn claim_due(
+        &self,
+        holder: &str,
+        now: &str,
+        lease: Duration,
+    ) -> Result<Option<AccountDeletion>, AccountDeletionError> {
+        self.inner.claim_due(holder, now, lease).await
+    }
+
+    async fn commit(
+        &self,
+        deletion: AccountDeletion,
+        events: Vec<ErasureEvent>,
+        expected_revision: u64,
+    ) -> Result<(), AccountDeletionError> {
+        self.inner.commit(deletion, events, expected_revision).await
+    }
+}
+
+async fn assert_failed_request_standing(
+    error: AccountDeletionError,
+    committed: bool,
+    expected_erasing: bool,
+) {
+    let inner = Arc::new(MemoryAccountDeletionStore::default());
+    let standing = Arc::new(LocalStanding::default());
+    let store = Arc::new(FailingRequestStore {
+        inner: inner.clone(),
+        commit_before_error: committed,
+        error: error.clone(),
+    });
+    let service = AccountDeletionService::new(store, standing.clone(), true);
+    assert_eq!(service.request(&owner(), "first", true).await, Err(error));
+    assert_eq!(
+        standing.erasing(&owner().subject).await.unwrap(),
+        expected_erasing
+    );
+    assert!(!standing.erasing(&SubjectId::new("other")).await.unwrap());
+    assert_eq!(
+        inner.active(&owner().subject).await.unwrap().is_some(),
+        committed
+    );
+}
+
+#[tokio::test]
+async fn unknown_committed_request_blocks_locally_without_claiming_success() {
+    assert_failed_request_standing(AccountDeletionError::RecoveryRequired, true, true).await;
+}
+
+#[tokio::test]
+async fn unknown_uncommitted_request_conservatively_blocks_locally() {
+    assert_failed_request_standing(AccountDeletionError::RecoveryRequired, false, true).await;
+}
+
+#[tokio::test]
+async fn definite_store_failure_does_not_update_local_standing() {
+    assert_failed_request_standing(
+        AccountDeletionError::Store("request failed before commit".into()),
+        false,
+        false,
+    )
+    .await;
 }

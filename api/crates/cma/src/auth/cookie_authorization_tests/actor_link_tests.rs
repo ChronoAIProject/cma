@@ -84,6 +84,8 @@ async fn candidate(f: &Fixture) -> (crate::auth::actor_links::ActorLinkStatus, S
 
 #[path = "actor_browser_tests.rs"]
 mod browser_tests;
+#[path = "actor_link_renewal_tests.rs"]
+mod renewal_tests;
 
 #[tokio::test]
 async fn actor_link_requires_both_browser_and_same_sender_and_replays_without_new_authority() {
@@ -220,4 +222,138 @@ async fn wrong_confirmation_proof_does_not_activate_and_limits_attempts() {
         .await
         .is_err());
     assert!(status.grant_id.is_none());
+}
+
+struct ErasingAccount;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ErasingAccount {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+async fn actor_link_renewal_refuses_erasing_subject_and_keeps_erasure_token_path() {
+    let f = fixture().await;
+    let (status, code) = candidate(&f).await;
+    let subject = &status.candidate.as_ref().unwrap().subject;
+    let grant = f
+        .auth
+        .confirm_actor_link(&actor(), status.revision, subject, &code)
+        .await
+        .unwrap();
+    let auth = AuthState::with_store(f.auth.mode.clone(), None, f.store.clone())
+        .with_account_standing(Arc::new(ErasingAccount));
+    *auth.metadata.write().await = f.auth.metadata.read().await.clone();
+    assert!(auth
+        .credential_for_grant(&grant.grant_id, &actor())
+        .await
+        .is_err());
+    assert!(auth
+        .delegated_credential_for(subject)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(auth.ensure_actor_link(&actor()).await.is_err());
+    let retained = auth.link_record(&grant.grant_id).await.unwrap();
+    assert!(retained.active && !retained.revoked);
+    assert!(retained.grant().is_ok());
+    assert!(auth
+        .linked_bot_token(&grant.grant_id, subject, &grant.credential_incarnation)
+        .await
+        .is_ok());
+}
+
+struct DeletingSubject(SubjectId);
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for DeletingSubject {
+    async fn erasing(
+        &self,
+        subject: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(subject == &self.0)
+    }
+}
+
+#[tokio::test]
+async fn standing_gate_actor_link_renewal_skips_deleting_owner_in_batch() {
+    let f = fixture().await;
+    let (status, code) = candidate(&f).await;
+    let grant = f
+        .auth
+        .confirm_actor_link(&actor(), status.revision, &SubjectId::new("owner"), &code)
+        .await
+        .unwrap();
+    let mut first = f.auth.link_record(&grant.grant_id).await.unwrap();
+    let revision = first.revision;
+    first.renewed_at = 0;
+    first.revision += 1;
+    assert!(f
+        .store
+        .replace_actor_link(Some(revision), first.clone())
+        .await
+        .unwrap());
+
+    let mut other_state = f.store.subject(&grant.subject).await.unwrap().unwrap();
+    other_state.subject = SubjectId::new("other-owner");
+    other_state.incarnation = "other-owner-login".into();
+    f.store.put_subject(other_state.clone()).await.unwrap();
+    let mut other_actor = actor();
+    other_actor.actor_id = "other-sender".into();
+    let initial = f.auth.ensure_actor_link(&other_actor).await.unwrap();
+    let unstarted = f.auth.link_record(&initial.link_id).await.unwrap();
+    let mut second = first;
+    second.actor = other_actor;
+    second.actor_key = unstarted.actor_key;
+    second.link_id = initial.link_id;
+    second.revision = initial.revision + 1;
+    second.subject = Some(other_state.subject);
+    second.incarnation = Some(other_state.incarnation);
+    assert!(f
+        .store
+        .replace_actor_link(Some(initial.revision), second)
+        .await
+        .unwrap());
+
+    // Gate the first actual batch entry, independent of the memory store's map order.
+    let due = f.store.due_actor_links(u64::MAX, None, 100).await.unwrap();
+    assert_eq!(due.len(), 2);
+    let deleting = due[0].clone();
+    let healthy = due[1].clone();
+    let healthy_subject = healthy.subject.as_ref().unwrap();
+    *f.control.introspection.write().await = Reply::json(json!({
+        "active":true,"sub":healthy_subject.as_str(),"permissions":["cma:bot:manage"]
+    }));
+    *f.control.userinfo.write().await = Reply::json(json!({
+        "sub":healthy_subject.as_str(),"permissions":["cma:bot:manage"]
+    }));
+    let auth = AuthState::with_store(f.auth.mode.clone(), None, f.store.clone())
+        .with_account_standing(Arc::new(DeletingSubject(deleting.subject.clone().unwrap())));
+    *auth.metadata.write().await = f.auth.metadata.read().await.clone();
+    auth.credential_for_grant(&healthy.link_id, &healthy.actor)
+        .await
+        .unwrap();
+
+    let (shutdown, signal) = tokio::sync::watch::channel(false);
+    let worker = auth.clone().spawn_actor_link_renewal(signal);
+    let renewed = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let row = auth.link_record(&healthy.link_id).await.unwrap();
+            if row.revision > healthy.revision && row.renewed_at > healthy.renewed_at {
+                break row;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    shutdown.send(true).unwrap();
+    worker.await.unwrap();
+    let renewed = renewed.expect("a deleting owner must not stop another owner's renewal");
+    assert!(renewed.active && !renewed.revoked);
+    let retained = auth.link_record(&deleting.link_id).await.unwrap();
+    assert_eq!(retained.revision, deleting.revision);
+    assert_eq!(retained.renewed_at, deleting.renewed_at);
+    assert!(retained.active && !retained.revoked);
 }

@@ -242,6 +242,15 @@ fn unauthorized() -> Response {
 }
 fn auth_error(error: AgentAccessError) -> Response {
     match error {
+        AgentAccessError::AccountDeletionInProgress => crate::rest::problem_response(
+            StatusCode::FORBIDDEN,
+            crate::rest::problem_document(
+                StatusCode::FORBIDDEN,
+                "account-deletion-in-progress",
+                "Account deletion is in progress.",
+                "account_deletion_in_progress",
+            ),
+        ),
         AgentAccessError::Unavailable => http_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Agent access service is temporarily unavailable",

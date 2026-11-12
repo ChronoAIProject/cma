@@ -154,6 +154,15 @@ async fn admit_once(
             "new Launch ID already has orphan event rows",
         )));
     }
+    let database = store.client.database(&store.definitions.namespace().db);
+    if crate::store::account_deletions::fence_subject_in_session(&database, &launch.owner, session)
+        .await
+        .map_err(AttemptError::Driver)?
+    {
+        return Err(AttemptError::Domain(
+            LaunchStoreError::AccountDeletionInProgress,
+        ));
+    }
     super::visitor_quota::admit(&store.launch_data, launch, session).await?;
     let trigger =
         counters::record_admission(store, trigger, launch.state == LaunchState::Ready, session)

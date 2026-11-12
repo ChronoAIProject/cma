@@ -17,7 +17,7 @@ pub trait AccountStanding: Send + Sync {
     ) -> Result<bool, AccountDeletionError> {
         Ok(false)
     }
-    /// Called synchronously after an accepted request has durably committed.
+    /// Block locally after an accepted or uncertain commit until authoritative reconciliation.
     fn insert_local(&self, _hash: &str) {}
 }
 /// An explicitly ungated account source, useful for independent domain fixtures.

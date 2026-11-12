@@ -16,6 +16,10 @@ pub(super) const REVOCATION_RECEIPT_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DocumentError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
+    #[error("share recipient is unavailable")]
+    ShareRecipientUnavailable,
     #[error("Document request is invalid")]
     Invalid,
     #[error("Document is unavailable to this caller")]
@@ -248,6 +252,15 @@ pub trait DocumentStore: Send + Sync {
         expected_revision: u64,
         record: &StoredDocument,
     ) -> Result<bool, DocumentError>;
+    /// Persist a grant while checking the recipient at the same atomic boundary.
+    async fn compare_exchange_grant(
+        &self,
+        expected_revision: u64,
+        record: &StoredDocument,
+        _recipient: &str,
+    ) -> Result<bool, DocumentError> {
+        self.compare_exchange(expected_revision, record).await
+    }
     /// Owner or explicit recipient grants only; links never make a document searchable.
     /// Return ordered limit+1 matching rows after the cursor.
     async fn list(

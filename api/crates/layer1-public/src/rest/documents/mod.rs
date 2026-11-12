@@ -111,6 +111,12 @@ impl From<DocumentError> for DocumentProblem {
 impl IntoResponse for DocumentProblem {
     fn into_response(self) -> Response {
         let (status, code) = match self.0 {
+            DocumentError::AccountDeletionInProgress => {
+                (StatusCode::FORBIDDEN, "account_deletion_in_progress")
+            }
+            DocumentError::ShareRecipientUnavailable => {
+                (StatusCode::CONFLICT, "share_recipient_unavailable")
+            }
             DocumentError::Invalid => (StatusCode::BAD_REQUEST, "invalid_document_request"),
             DocumentError::NotFound => (StatusCode::NOT_FOUND, "document_not_found"),
             DocumentError::Conflict => (StatusCode::CONFLICT, "document_revision_conflict"),
