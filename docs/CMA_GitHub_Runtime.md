@@ -111,3 +111,32 @@ the explicitly authorized Sandbox grant, tested GitHub operations through `gh`,
 and the Trigger Connect/Verify flow; REST/GraphQL transport alone is not full
 contribution acceptance. Production deployment and verification are recorded in
 `CMA_Unattended_Acceptance.md` separately from local test results.
+
+## Repository harness tools
+
+Repository PR helpers and report harnesses shell out to `ps` and `jq` by name:
+`ps` answers whether a lock owner is still alive and `jq` filters `gh` output.
+Every runtime image built from `infra/runtime/Dockerfile` therefore provides both
+on the Agent `PATH`:
+
+| Command | Package | Variants |
+| --- | --- | --- |
+| `ps` | Debian `procps` (procps-ng) | `runtime`, `runtime-desktop` |
+| `jq` | Debian `jq` | `runtime`, `runtime-desktop` |
+| `ps`, `jq` | Arch `procps-ng`, `jq` | Omarchy prototype |
+
+The two Debian variants share one package list, and the build fails if either
+command is missing. CI then proves both commands in the built image without a
+live Sandbox or GitHub credential. The runtime image evidence records the
+`procps-ng` and `jq` versions in its installed artifacts. It requires `ps` to
+report PID 1 and to exit non-zero for an absent PID, and `jq -e` to filter JSON
+and to exit non-zero on a null result. The desktop evidence runs the same check
+through `docker exec`, and the Omarchy contract reruns the default probe. A
+missing command, another implementation, or wrong exit status fails the
+evidence.
+
+This guarantee covers images built from this revision onward. A Sandbox keeps
+its recorded runtime image, so an existing Sandbox gains these commands only when
+it adopts a newer released runtime through the managed update or revival path.
+Neither command is installed at run time, and their presence does not change how
+a repository interprets their exit status.
