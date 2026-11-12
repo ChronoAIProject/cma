@@ -1,6 +1,7 @@
 //! Bounded process observations. Durable admission/terminal accounting belongs
 //! to the Mongo ledger; these counters never assert exactly-once work effects.
 pub(crate) mod browser;
+pub(crate) mod command_reconcile;
 pub(crate) mod http;
 pub(crate) mod request;
 pub(crate) mod server;
@@ -41,6 +42,7 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
     work::initialize();
     browser::initialize();
     worker::initialize();
+    command_reconcile::initialize();
     sample();
     Ok(handle)
 }
