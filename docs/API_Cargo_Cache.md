@@ -25,7 +25,7 @@ job; other images and the release publisher keep their existing behavior.
 5. Save the archive only after the API job has scanned and exported its tested
    native image. An exact cache hit does not need a second immutable upload.
 
-All 15 check names and their dependencies remain unchanged. Cache hits never
+All check names and their dependencies remain unchanged. Cache hits never
 skip a build, scan, runtime check or native image export, and cache contents
 are not acceptance evidence. Only cache-service restore/save failures are
 optional; all existing image checks retain their failure behavior.
