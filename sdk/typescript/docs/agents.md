@@ -415,9 +415,13 @@ export async function addSkill(
 
 Choose an explicit skill and version from `profileAuthoring.searchSkills`. A `202`
 response records accepted installation work. Reuse the unchanged body and key
-after an uncertain reply, then read `skills` again until the selected item is
-`installed` or `failed`. Only `installed` confirms runtime acknowledgement.
-Installation is additive and preserves the immutable creation profile.
+after an uncertain reply, then read `skills` until `pending` is false. The same
+operation upgrades an installed ID on a capable idle runtime. During an upgrade,
+the single row retains the old effective version and `installed` status; a failed
+upgrade retains that version and reports the attempted target in `error`. Confirm
+the requested version and inspect `error` after polling. The immutable creation
+profile remains unchanged. A definitive busy or unsupported-runtime refusal is
+replayed for its key; retry after recovery as a new attempt with a new key.
 
 ## Service access decisions
 

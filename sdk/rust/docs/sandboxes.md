@@ -273,3 +273,24 @@ an immutable operation receipt; follow the same Sandbox's lifecycle progress.
 Refusals preserve the saved environment. Lost replies must reuse the original
 revision and key, including after progress or gate closure. Operator authority
 does not replace the owner's consent.
+
+## Always on exceptions
+
+Only an administrator can approve Always on. `sandboxes().set_always_on(id, &AlwaysOnRequest { always_on: false, expected_revision }, &key)` relinquishes an existing
+exception. Sending `true` returns HTTP 403 with `always_on_approval_required`,
+even when the exception is already enabled. A revision-matching `false` on an
+unset or already-false preference returns the current Sandbox unchanged, without
+advancing its revision or creating a persisted preference. Keep the same owner
+idempotency key and body through an uncertain response.
+
+Administrators use `admin().set_sandbox_always_on(id, &admin::AlwaysOnRequest { always_on, expected_revision })` to approve or revoke with revision CAS. Every successful
+write emits a `configure` activity with the administrator actor, resource target
+`sandbox:<id>`, and string details `setting=always_on`, `status=true|false`, and
+`revision=<resulting revision>`. A stale admin revision returns HTTP 409
+`operator_conflict`; missing operator capability returns HTTP 403 `forbidden`.
+
+Enumerate explicit exceptions with `admin().list_sandboxes(&admin::SandboxListOptions { always_on: Some(true), ..Default::default() })`. Follow `next` with the same filter; `always_on=false` includes unset
+preferences. Read each admin detail for its current revision before a change.
+Retained true values may predate administrator approval: listing identifies the
+current exceptions, not their provenance. Re-approve or revoke each retained
+exception through the audited admin method before enabling auto-pause.
