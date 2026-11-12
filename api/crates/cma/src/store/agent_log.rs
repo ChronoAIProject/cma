@@ -319,7 +319,10 @@ impl AgentLogStore for MongoSandboxStore {
                 }
             };
             match commit_transaction(&mut session).await {
-                CommitOutcome::Committed => return Ok(entry),
+                CommitOutcome::Committed => {
+                    crate::telemetry::work::published(std::slice::from_ref(&entry), "committed");
+                    return Ok(entry);
+                }
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
                     let snapshot_time = session.operation_time().ok_or_else(|| {
@@ -331,13 +334,19 @@ impl AgentLogStore for MongoSandboxStore {
                     let unresolved_error = commit_error.clone();
                     let store = self.clone();
                     return wait_for_reconciliation("agent log commit", async move {
-                        reconcile_append_after_unknown(&store, &entry, snapshot_time)
-                            .await?
-                            .ok_or_else(|| {
-                                SandboxStoreError::Unavailable(format!(
-                                    "agent log commit remained unknown: {unresolved_error}"
-                                ))
-                            })
+                        let confirmed =
+                            reconcile_append_after_unknown(&store, &entry, snapshot_time)
+                                .await?
+                                .ok_or_else(|| {
+                                    SandboxStoreError::Unavailable(format!(
+                                        "agent log commit remained unknown: {unresolved_error}"
+                                    ))
+                                })?;
+                        crate::telemetry::work::published(
+                            std::slice::from_ref(&confirmed),
+                            "reconciled",
+                        );
+                        Ok(confirmed)
                     })
                     .await
                     .map_err(|deadline| {

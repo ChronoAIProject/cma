@@ -44,6 +44,10 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    pub(crate) fn worker_observations(&self) -> super::worker_observations::Observations {
+        super::worker_observations::Observations::new(self.client.database(&self.database))
+    }
+
     pub(crate) fn with_writer_policy(
         mut self,
         policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,

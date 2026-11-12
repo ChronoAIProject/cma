@@ -7,6 +7,25 @@ use crate::sandbox::store::{
 use crate::sandbox::{Agent, AgentConversationError, AgentUpdateOutcome};
 use sha2::{Digest, Sha256};
 
+pub(super) fn update_parts(
+    update: &layer3_adapter::ConversationUpdate,
+) -> (
+    Option<&layer3_adapter::RuntimeOutputSource>,
+    Option<&layer3_adapter::ConversationUpdate>,
+    bool,
+) {
+    use layer3_adapter::ConversationUpdate;
+    let retained_effect = matches!(update, ConversationUpdate::RetainedEffect(_));
+    match update.effect() {
+        ConversationUpdate::RuntimeOutput { receipt, update } => (
+            Some(&receipt.source),
+            update.as_deref().map(ConversationUpdate::effect),
+            update.as_ref().is_some_and(|update| update.is_shared()),
+        ),
+        update => (None, Some(update), retained_effect),
+    }
+}
+
 impl DurableAgentUpdateRecorder {
     pub(super) async fn commit_output(
         &self,

@@ -2,6 +2,42 @@ use super::*;
 use crate::hosted::acp::rpc_result;
 
 #[test]
+fn aggregate_refusal_rolls_back_scratch_and_projection_retains_global_charge() {
+    let root = IngressBudget::new(1024 * 1024);
+    let pools = JsonPools::new(TREE_BYTES, SCRATCH_BYTES).with_aggregate(Some(root.clone()));
+    let external = Arc::new(Semaphore::new(1024 * 1024));
+    let blocker = IngressReservation::try_acquire(&external, Some(&root), 1024 * 1024).unwrap();
+    assert!(matches!(
+        pools.decode(b"{}"),
+        Err(AdapterError::AtCapacity(_))
+    ));
+    assert_eq!(pools.available(), (TREE_BYTES, SCRATCH_BYTES));
+    drop(blocker);
+    // Scratch succeeds but the tree cannot fit alongside it; both must return.
+    let partial = JsonPools::new(TREE_BYTES, SCRATCH_BYTES)
+        .with_aggregate(Some(IngressBudget::new(1024 + 3 * 2)));
+    assert!(matches!(
+        partial.decode(b"{}"),
+        Err(AdapterError::AtCapacity(_))
+    ));
+    assert_eq!(partial.available(), (TREE_BYTES, SCRATCH_BYTES));
+    assert_eq!(partial.aggregate.as_ref().unwrap().available_bytes(), 1030);
+    let payload = br#"{"result":7,"sibling":"retained"}"#;
+    let frame = pools.decode(payload).unwrap();
+    let charged = root.available_bytes();
+    assert!(charged < 1024 * 1024);
+    assert_eq!(pools.available().1, SCRATCH_BYTES);
+    let clone = frame.clone();
+    let result = frame.into_result();
+    drop(clone);
+    assert_eq!(root.available_bytes(), charged);
+    assert_eq!(*result, serde_json::json!(7));
+    drop(result);
+    assert_eq!(root.available_bytes(), 1024 * 1024);
+    assert_eq!(pools.available(), (TREE_BYTES, SCRATCH_BYTES));
+}
+
+#[test]
 fn projection_and_clones_keep_the_entire_root_until_final_drop() {
     let payload = br#"{"result":{"answer":42},"sibling":"held with root"}"#;
     let weight = tree_allowance(
