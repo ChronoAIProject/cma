@@ -44,6 +44,7 @@ struct HeldOutput {
     decoded: Option<crate::hosted::retained_json::JsonFrame>,
     /// Bootstrap RPCs must run now; their domain effect still owns this cursor.
     prepared: Option<Option<ConversationUpdate>>,
+    sign_in: Option<crate::hosted::sign_in_retention::Admission>,
     // Last field: release only after the payload and queued node are gone.
     _storage: Option<IngressReservation>,
 }
@@ -161,20 +162,27 @@ impl Bridge {
             .as_ref()
             .map(|pools| pools.decode(&bytes[HEADER_BYTES..]))
             .transpose()?;
+        let sign_in = match (&state.json_pools, &decoded) {
+            (Some(pools), Some(frame)) => pools.admit_sign_in(frame)?,
+            _ => None,
+        };
         let mut held = HeldOutput {
             cursor,
             payload: bytes[HEADER_BYTES..].to_vec(),
             decoded,
             prepared: None,
+            sign_in,
             _storage: storage,
         };
         state.last_received = Some(cursor);
         if state.session.is_none() {
             if self.bootstrap_output(&held).await {
-                let effect = self.capture_output(&held).await?;
+                let effect = self.capture_output(&mut held).await?;
                 held.prepared = Some(match effect {
                     // Owner authentication must remain visible before session creation.
-                    Some(notice @ ConversationUpdate::SignInRequired { .. }) => {
+                    Some(notice)
+                        if matches!(notice.effect(), ConversationUpdate::SignInRequired { .. }) =>
+                    {
                         updates.send(notice).await;
                         None
                     }
@@ -208,10 +216,17 @@ impl Bridge {
         }
     }
 
-    async fn capture_output(&self, held: &HeldOutput) -> crate::Result<Option<ConversationUpdate>> {
+    async fn capture_output(
+        &self,
+        held: &mut HeldOutput,
+    ) -> crate::Result<Option<ConversationUpdate>> {
         let (capture, mut effects) = UpdateRelay::capture();
+        let sign_in = held.sign_in.take();
         match &held.decoded {
-            Some(frame) => self.receive_frame(frame.clone(), &capture).await?,
+            Some(frame) => {
+                self.receive_admitted_frame(frame.clone(), &capture, sign_in)
+                    .await?
+            }
             None => self.receive(&held.payload, &capture).await?,
         }
         let effect = effects.try_recv().ok();
@@ -263,7 +278,7 @@ impl Bridge {
         }
         let update = match held.prepared.take() {
             Some(effect) => effect,
-            None => self.capture_output(&held).await?,
+            None => self.capture_output(&mut held).await?,
         };
         let source = RuntimeOutputSource {
             stream_id: state.stream.to_string(),
@@ -276,8 +291,11 @@ impl Bridge {
         updates
             .send(ConversationUpdate::RuntimeOutput {
                 receipt: RuntimeOutputReceipt::new(source, state.acknowledgements.clone()),
-                update: update.map(|update| {
-                    crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output)
+                update: update.map(|update| match update {
+                    // Transfer the already admitted owner without another box
+                    // or an independent clone policy around its string payload.
+                    ConversationUpdate::RetainedEffect(effect) => effect,
+                    update => crate::RuntimeOutputUpdate::new(update, self.shared_runtime_output),
                 }),
             })
             .await;
@@ -331,3 +349,7 @@ mod json_retention_tests;
 #[cfg(test)]
 #[path = "acp_output_coordinator_tests.rs"]
 mod coordinator_tests;
+
+#[cfg(test)]
+#[path = "acp_sign_in_retention_tests.rs"]
+mod sign_in_retention_tests;
