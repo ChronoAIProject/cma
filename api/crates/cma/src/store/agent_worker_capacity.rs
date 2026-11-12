@@ -53,6 +53,23 @@ pub(super) fn capacity_failure_evidence_matches(
         && transition_event_matches(current, mutation, AgentStatus::Failed)
 }
 
+/// Owner-requested stop is a prerequisite for deletion of a live Agent. Only
+/// its validated finite completions (or single bounded retry marker) may cross
+/// the stop ceiling; ordinary work and conversation settlement never may.
+pub(super) fn stop_can_use_delete_reserve(current: &Agent, mutation: &AgentWorkMutation) -> bool {
+    current.requested_stop_reason.is_some()
+        && matches!(
+            current.work.step,
+            AgentWorkStep::FenceInteraction
+                | AgentWorkStep::CloseProcess
+                | AgentWorkStep::PublishStopped
+        )
+        && (stop_evidence_matches(current, mutation)
+            || cleanup_completion_capacity(current, mutation)
+                == Some(AppendCapacity::StopOrFailure)
+            || agent_cleanup_capacity_retry(current, mutation))
+}
+
 /// The final terminal write is unreachable unless its preceding cleanup steps
 /// can also complete. Only finite, forward progress gets this headroom; retry
 /// records must not consume the reserve indefinitely. The transaction validates
