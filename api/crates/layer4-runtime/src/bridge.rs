@@ -2,14 +2,20 @@ use std::collections::BTreeMap;
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use layer3_adapter::agent_capacity_recovery::{
+    CapacityRecoveryConfirmation, CapacityRecoveryError, CapacityRecoveryNativeProof,
+    CapacityRecoveryRequest, ConfirmedAgentState,
+};
 use layer3_adapter::AgentLaunch;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::sync::{mpsc, Mutex};
 
+#[path = "bridge_observation.rs"]
+mod observation;
 #[path = "bridge_output.rs"]
 mod retained_output;
 pub(crate) use retained_output::OutputRetention;
@@ -19,6 +25,7 @@ const INPUT_BUFFER: usize = 256;
 pub(crate) const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 const CLOSE_POLL: Duration = Duration::from_millis(10);
+const CAPACITY_RECOVERY_LEASE: Duration = Duration::from_secs(30);
 const OUTPUT_UNSELECTED: u8 = 0;
 const OUTPUT_LEGACY: u8 = 1;
 const OUTPUT_ACKNOWLEDGED: u8 = 2;
@@ -83,6 +90,9 @@ pub(crate) struct Bridge {
     reader: tokio::task::AbortHandle,
     ended: tokio::sync::watch::Sender<bool>,
     writer_session_root: Option<i32>,
+    conversation_id: Arc<Mutex<Option<String>>>,
+    native_state: Arc<Mutex<Option<ConfirmedAgentState>>>,
+    capacity_recovery: Mutex<Option<(String, u64, Instant)>>,
 }
 
 impl Bridge {
@@ -131,15 +141,19 @@ impl Bridge {
         let pending = Arc::new(Mutex::new(Pending::default()));
         let retained_output = Arc::new(OutputRetention::default());
         let (ended, _) = tokio::sync::watch::channel(false);
+        let conversation_id = Arc::new(Mutex::new(None));
+        let native_state = Arc::new(Mutex::new(Some(ConfirmedAgentState::Idle)));
         spawn_writer(stdin, input_rx);
         let reader = spawn_reader(
             stdout,
             output.clone(),
             Arc::clone(&pending),
             Arc::clone(&retained_output),
+            Arc::clone(&conversation_id),
+            Arc::clone(&native_state),
         );
-        spawn_diagnostics(stderr);
-        spawn_reaper(child, managed, ended.clone());
+        observation::spawn_diagnostics(stderr);
+        observation::spawn_reaper(child, managed, ended.clone());
         tracing::info!(agent = %launch.agent_id.as_str(), program = %launch.program, "agent bridge started");
         Ok(Self {
             input,
@@ -150,11 +164,102 @@ impl Bridge {
             reader,
             ended,
             writer_session_root,
+            conversation_id,
+            native_state,
+            capacity_recovery: Mutex::new(None),
         })
     }
 
     pub(crate) async fn send(&self, frame: Vec<u8>) -> bool {
+        observation::observe_input(&self.conversation_id, &self.native_state, &frame).await;
         frame.len() <= MAX_FRAME_BYTES && self.input.send(frame).await.is_ok()
+    }
+
+    pub(crate) async fn reserve_capacity_recovery(
+        &self,
+        challenge: &str,
+        writer_fence: u64,
+    ) -> Result<(), CapacityRecoveryError> {
+        let mut lease = self.capacity_recovery.lock().await;
+        if lease
+            .as_ref()
+            .is_some_and(|(_, _, expires_at)| *expires_at <= Instant::now())
+        {
+            lease.take();
+        }
+        if let Some((current, fence, _)) = &*lease {
+            if current != challenge || *fence != writer_fence {
+                return Err(CapacityRecoveryError::IdentityConflict);
+            }
+        } else {
+            *lease = Some((
+                challenge.to_owned(),
+                writer_fence,
+                Instant::now() + CAPACITY_RECOVERY_LEASE,
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn consume_capacity_recovery(&self, challenge: &str) -> bool {
+        let mut lease = self.capacity_recovery.lock().await;
+        if lease
+            .as_ref()
+            .is_some_and(|(_, _, expires_at)| *expires_at <= Instant::now())
+        {
+            lease.take();
+        }
+        if lease
+            .as_ref()
+            .is_some_and(|(current, _, _)| current == challenge)
+        {
+            lease.take();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) async fn capacity_recovery_proof(
+        &self,
+        request: &CapacityRecoveryRequest,
+        cwd: String,
+    ) -> Result<CapacityRecoveryNativeProof, CapacityRecoveryError> {
+        let lease_matches = self.capacity_recovery.lock().await.as_ref().is_some_and(
+            |(challenge, fence, expires_at)| {
+                challenge == &request.challenge
+                    && *fence == request.writer_fence
+                    && *expires_at > Instant::now()
+            },
+        );
+        if !lease_matches {
+            return Err(CapacityRecoveryError::IdentityConflict);
+        }
+        if self.is_ended() || self.select_output_acknowledgement(true) != Ok(true) {
+            return Err(CapacityRecoveryError::Unavailable);
+        }
+        let conversation_id = self.conversation_id.lock().await.clone();
+        if conversation_id.as_deref() != Some(request.target.conversation_id.as_str()) {
+            return Err(CapacityRecoveryError::IdentityConflict);
+        }
+        let native_state = self
+            .native_state
+            .lock()
+            .await
+            .clone()
+            .ok_or(CapacityRecoveryError::StateUnconfirmed)?;
+        let output = self
+            .retained_output
+            .recovery_boundary()
+            .await
+            .ok_or(CapacityRecoveryError::OutputUnconfirmed)?;
+        let confirmation = CapacityRecoveryConfirmation {
+            request: request.clone(),
+            native_state,
+            output,
+        };
+        confirmation.validate_for(request)?;
+        Ok(CapacityRecoveryNativeProof { confirmation, cwd })
     }
 
     /// Legacy recording has no durable cursor. Never replay that history into a
@@ -240,6 +345,8 @@ fn spawn_reader(
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
     retained_output: Arc<OutputRetention>,
+    conversation_id: Arc<Mutex<Option<String>>>,
+    native_state: Arc<Mutex<Option<ConfirmedAgentState>>>,
 ) -> tokio::task::AbortHandle {
     let reader = tokio::spawn(async move {
         let mut stdout = BufReader::new(stdout);
@@ -267,6 +374,8 @@ fn spawn_reader(
                             &output,
                             &pending,
                             &retained_output,
+                            &conversation_id,
+                            &native_state,
                         )
                         .await;
                     }
@@ -286,7 +395,15 @@ fn spawn_reader(
             retained_output.gap().await;
             pending.lock().await.gap();
         } else if !frame.is_empty() {
-            publish(frame, &output, &pending, &retained_output).await;
+            publish(
+                frame,
+                &output,
+                &pending,
+                &retained_output,
+                &conversation_id,
+                &native_state,
+            )
+            .await;
         }
         retained_output.finish().await;
     });
@@ -298,39 +415,14 @@ async fn publish(
     output: &tokio::sync::broadcast::Sender<Outbound>,
     pending: &Arc<Mutex<Pending>>,
     retained_output: &OutputRetention,
+    conversation_id: &Arc<Mutex<Option<String>>>,
+    native_state: &Arc<Mutex<Option<ConfirmedAgentState>>>,
 ) {
+    observation::observe_output(conversation_id, native_state, &frame).await;
     retained_output.retain(&frame).await;
     if output.send(Outbound::Frame(frame.clone())).is_err() {
         pending.lock().await.push(frame);
     }
-}
-
-fn spawn_diagnostics(stderr: tokio::process::ChildStderr) {
-    tokio::spawn(async move {
-        let mut stderr = BufReader::new(stderr);
-        let mut buffer = [0_u8; 8 * 1024];
-        while let Ok(read) = stderr.read(&mut buffer).await {
-            if read == 0 {
-                break;
-            }
-            tracing::debug!(bytes = read, "agent bridge wrote diagnostics");
-        }
-    });
-}
-
-fn spawn_reaper(
-    mut child: tokio::process::Child,
-    managed: crate::writer_fence::ManagedChild,
-    ended: tokio::sync::watch::Sender<bool>,
-) {
-    tokio::spawn(async move {
-        match child.wait().await {
-            Ok(status) => tracing::info!(%status, "agent bridge exited"),
-            Err(error) => tracing::warn!(%error, "agent bridge wait failed"),
-        }
-        drop(managed);
-        ended.send_replace(true);
-    });
 }
 
 #[cfg(unix)]

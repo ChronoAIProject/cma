@@ -1,4 +1,6 @@
+use layer3_adapter::agent_capacity_recovery::{CapacityRecoveryRequest, RetainedAgentTarget};
 use layer3_adapter::AgentSlot;
+use layer3_adapter::RuntimeHandle;
 
 use super::*;
 
@@ -15,6 +17,27 @@ fn launch() -> AgentLaunch {
             "while IFS= read -r line; do printf '%s\\n' \"$line\"; done".into(),
         ],
         env: BTreeMap::new(),
+    }
+}
+
+fn recovery_request(challenge: &str, writer_fence: u64) -> CapacityRecoveryRequest {
+    CapacityRecoveryRequest {
+        operation_key: "agent:test-agent:open:v1".into(),
+        target: RetainedAgentTarget {
+            sandbox_id: "sandbox".into(),
+            agent_id: "test-agent".into(),
+            runtime: RuntimeHandle::new("runtime"),
+            boot_id: "a".repeat(32),
+            provision_generation: 1,
+            home_identity: "a".repeat(43),
+            conversation_id: "conversation".into(),
+            conversation_generation: 1,
+            original_open_operation: "agent:test-agent:open:v1".into(),
+            original_open_sha256: "b".repeat(64),
+            active_turn: None,
+        },
+        writer_fence,
+        challenge: challenge.into(),
     }
 }
 
@@ -162,4 +185,55 @@ async fn retiring_a_detached_bridge_cancels_a_backpressured_stdout_reader() {
     })
     .await
     .expect("retired detached bridge must not leave a capacity waiter behind");
+}
+
+#[tokio::test]
+async fn recovery_lease_is_single_use_and_binds_the_writer_fence() {
+    let bridge = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    let request = recovery_request("a".repeat(32).as_str(), 7);
+    assert!(bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .is_ok());
+    assert!(matches!(
+        bridge
+            .reserve_capacity_recovery(&request.challenge, request.writer_fence + 1)
+            .await,
+        Err(layer3_adapter::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)
+    ));
+    assert!(bridge.consume_capacity_recovery(&request.challenge).await);
+    assert!(!bridge.consume_capacity_recovery(&request.challenge).await);
+    bridge.terminate().await.unwrap();
+}
+
+#[tokio::test]
+async fn recovery_proof_requires_the_reserved_lease_and_preserves_no_input_path() {
+    let bridge = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    let request = recovery_request("c".repeat(32).as_str(), 9);
+    assert!(matches!(
+        bridge
+            .capacity_recovery_proof(&request, "/tmp".into())
+            .await,
+        Err(layer3_adapter::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)
+    ));
+    bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .unwrap();
+    assert!(
+        bridge
+            .send(br#"{"method":"session/load","params":{"sessionId":"conversation"}}"#.to_vec())
+            .await
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
+    let proof = bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await
+        .unwrap();
+    assert_eq!(proof.confirmation.request, request);
+    assert_eq!(proof.confirmation.output.acknowledged_through, 0);
+    assert_eq!(proof.confirmation.output.first_retained, 1);
+    assert_eq!(proof.confirmation.output.observed_through, 1);
+    bridge.terminate().await.unwrap();
 }
