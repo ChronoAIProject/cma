@@ -49,6 +49,9 @@ type Pending = Arc<Mutex<HashMap<String, PendingCall>>>;
 mod declaration;
 use declaration::validate_ready;
 
+#[path = "acp_open.rs"]
+mod open;
+
 #[path = "acp_calls.rs"]
 mod calls;
 pub(super) use calls::rpc_result;
@@ -63,7 +66,7 @@ mod output;
 mod reader;
 
 pub(super) struct PendingCall {
-    pub(super) answer: tokio::sync::oneshot::Sender<serde_json::Value>,
+    pub(super) answer: tokio::sync::oneshot::Sender<super::retained_json::JsonFrame>,
     pub(super) prompt: bool,
 }
 
@@ -81,6 +84,11 @@ struct ConversationState {
 }
 
 pub(super) struct Bridge {
+    pub(super) json_pools: Option<super::retained_json::JsonPools>,
+    pub(super) bounded_raw_output: bool,
+    pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
+    output_json_budget: bool,
+    shared_runtime_output: bool,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
@@ -129,156 +137,6 @@ impl Drop for OpeningTasks {
 }
 
 impl Bridge {
-    #[cfg(test)]
-    pub(super) async fn open(
-        stream: Socket,
-        expected_agent: &str,
-        cwd: String,
-        settings: HostedAgentOpenSettings,
-        resume_conversation: Option<String>,
-        updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<OpenedBridge> {
-        Self::open_with_subscription(
-            stream,
-            expected_agent,
-            cwd,
-            (settings, None),
-            resume_conversation,
-            updates_tx,
-        )
-        .await
-    }
-
-    #[cfg(test)]
-    pub(super) async fn open_with_subscription(
-        stream: Socket,
-        expected_agent: &str,
-        cwd: String,
-        (settings, subscription): (
-            HostedAgentOpenSettings,
-            Option<super::subscriptions::HostedSubscriptionBinding>,
-        ),
-        resume_conversation: Option<String>,
-        updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<OpenedBridge> {
-        Self::open_with_subscription_and_prompt(
-            stream,
-            expected_agent,
-            cwd,
-            (settings, subscription),
-            resume_conversation,
-            None,
-            updates_tx,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn open_with_subscription_and_prompt(
-        stream: Socket,
-        expected_agent: &str,
-        cwd: String,
-        (settings, subscription): (
-            HostedAgentOpenSettings,
-            Option<super::subscriptions::HostedSubscriptionBinding>,
-        ),
-        resume_conversation: Option<String>,
-        recovered_prompt: Option<PromptIdentity>,
-        updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<OpenedBridge> {
-        if settings.recovered_context_sequence.is_some()
-            && (resume_conversation.is_none() || recovered_prompt.is_some())
-        {
-            return Err(AdapterError::Rejected(
-                "context recovery requires one quiet retained conversation".into(),
-            ));
-        }
-        if recovered_prompt.is_some() && resume_conversation.is_none() {
-            return Err(AdapterError::Rejected(
-                "prompt recovery requires a held conversation".into(),
-            ));
-        }
-        // Quiet recovery already has an exact durable identity. Its receipts
-        // must be available even before initialize replies: a failed load may
-        // have left a full retained backlog on this same bridge.
-        let startup_session = resume_conversation
-            .clone()
-            .filter(|_| recovered_prompt.is_none());
-        let (sink, mut source) = stream.split();
-        let declaration = tokio::time::timeout(DECLARATION_DEADLINE, source.next())
-            .await
-            .map_err(|_| AdapterError::Unavailable("runtime sent no Ready declaration".into()))?
-            .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
-            .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
-        let output_stream = validate_ready(declaration, expected_agent)?;
-        let (acknowledgements, acknowledged) = mpsc::channel(128);
-
-        let bridge = Arc::new(Self {
-            subscription,
-            sink: Arc::new(Mutex::new(sink)),
-            pending: Arc::new(Mutex::new(HashMap::new())),
-            request_namespace: uuid::Uuid::new_v4().to_string(),
-            next_id: AtomicI64::new(1),
-            recovery: Mutex::new(recovery::PromptRecovery::new(recovered_prompt)),
-            conversation: Mutex::new(ConversationState::default()),
-            output: output_stream
-                .map(|stream| Mutex::new(output::ReliableOutput::new(stream, acknowledgements))),
-            blocked: Mutex::new(HashMap::new()),
-            answered: Arc::new(Mutex::new(HashMap::new())),
-            owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
-            orphaned_prompt_response: AtomicBool::new(false),
-            retired: AtomicBool::new(false),
-            instructions_support: AtomicU8::new(0),
-            context_refresh: settings.context_refresh.clone(),
-            context_goal: Mutex::new(None),
-            retained_history_deadline: tokio::sync::watch::channel(None).0,
-            recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
-        });
-        let (updates, relay) = super::update_relay::spawn(updates_tx);
-        if let Some(session) = &startup_session {
-            bridge.activate_session(session.clone(), &updates).await?;
-            bridge.activate_output(session, &updates).await?;
-        }
-        let writer = Arc::clone(&bridge);
-        let writer_updates = updates.clone();
-        let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
-            let writer = Arc::clone(&writer);
-            let updates = writer_updates.clone();
-            async move { writer.drive(input, &updates).await }
-        })
-        .with_settings_support(bridge.clone());
-
-        let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
-        let mut opening_tasks = OpeningTasks {
-            bridge: Arc::clone(&bridge),
-            reader: reader_task.abort_handle(),
-            relay: relay.abort_handle(),
-            armed: true,
-        };
-
-        bridge
-            .handshake(resume_conversation, cwd, settings, &updates)
-            .await?;
-        if reader_task.is_finished() {
-            return Err(AdapterError::Unavailable(
-                "conversation link ended while opening".into(),
-            ));
-        }
-        let conversation_id = bridge.session().await?;
-        bridge.release_recovered_prompt(&updates).await;
-        bridge.activate_output(&conversation_id, &updates).await?;
-        opening_tasks.armed = false;
-        Ok(OpenedBridge {
-            channel: ConversationChannel {
-                input,
-                conversation_id: Some(conversation_id),
-            },
-            bridge,
-            reader: reader_task,
-            relay,
-        })
-    }
-
     pub(super) async fn session(&self) -> crate::Result<String> {
         self.conversation
             .lock()
@@ -311,13 +169,15 @@ impl Bridge {
         state.active = Some(session.clone());
         for (candidate, update) in std::mem::take(&mut state.startup) {
             if candidate == session {
-                updates.send(update.without_prompt_evidence());
+                updates.send(update.without_prompt_evidence()).await;
             }
         }
         if state.startup_lost > 0 {
-            updates.send(ConversationUpdate::Lost {
-                frames: state.startup_lost,
-            });
+            updates
+                .send(ConversationUpdate::Lost {
+                    frames: state.startup_lost,
+                })
+                .await;
             state.startup_lost = 0;
         }
         Ok(())
@@ -333,7 +193,7 @@ impl Bridge {
         match state.active.as_deref() {
             Some(active) if active == session => {
                 drop(state);
-                updates.send(self.scope_activity(update));
+                updates.send(self.scope_activity(update)).await;
             }
             Some(_) => tracing::warn!("discarding update for another conversation"),
             None if state.startup.len() < STARTUP_UPDATE_LIMIT => {
@@ -352,7 +212,7 @@ impl Bridge {
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_inner(method, params, false).await
     }
 
@@ -360,7 +220,7 @@ impl Bridge {
         &self,
         params: serde_json::Value,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_with_id("session/prompt", params, true, prompt_id)
             .await
     }
@@ -370,7 +230,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
         prompt: bool,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         self.begin_with_id(method, params, prompt, None).await
     }
 
@@ -380,9 +240,9 @@ impl Bridge {
         params: serde_json::Value,
         prompt: bool,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<serde_json::Value>> {
+    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
         if self.retired.load(Ordering::SeqCst) {
-            return Err(retired_before_write(prompt));
+            return Err(write::retired_before_write(prompt));
         }
         let remembered_prompt = prompt_id.clone();
         let id = prompt_id.map_or_else(
@@ -407,6 +267,9 @@ impl Bridge {
             .await
             .insert(id.clone(), PendingCall { answer, prompt });
         if prompt {
+            if let Some(state) = &self.permission_state {
+                state.lock().await.begin_prompt(&id);
+            }
             if let Some(prompt_id) = remembered_prompt.clone() {
                 self.remember_prompt(prompt_id).await;
             }
@@ -421,56 +284,6 @@ impl Bridge {
             return Err(error);
         }
         Ok(waiting)
-    }
-
-    pub(super) async fn send(&self, frame: &serde_json::Value) -> crate::Result<()> {
-        self.send_frame(frame, false).await
-    }
-
-    async fn send_frame(&self, frame: &serde_json::Value, prompt: bool) -> crate::Result<()> {
-        if self.retired.load(Ordering::SeqCst) {
-            return Err(retired_before_write(prompt));
-        }
-        let body = serde_json::to_vec(frame)
-            .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
-        if body.len() > MAX_FRAME_BYTES {
-            return Err(AdapterError::Rejected(
-                "ACP frame exceeds the size limit".into(),
-            ));
-        }
-        let mut framed = Vec::with_capacity(body.len() + 1);
-        framed.push(LANE_CONVERSATION);
-        framed.extend_from_slice(&body);
-        self.sink
-            .lock()
-            .await
-            .send(Message::Binary(framed))
-            .await
-            .map_err(|error| {
-                AdapterError::Unavailable(format!("conversation write failed: {error}"))
-            })
-    }
-
-    pub(super) async fn retire(&self) {
-        if !self.retired.swap(true, Ordering::SeqCst) {
-            self.pending.lock().await.clear();
-            self.blocked.lock().await.clear();
-            let _ = self.sink.lock().await.close().await;
-        }
-    }
-
-    async fn finish(&self) {
-        self.retired.store(true, Ordering::SeqCst);
-        self.pending.lock().await.clear();
-        self.blocked.lock().await.clear();
-    }
-}
-
-fn retired_before_write(prompt: bool) -> AdapterError {
-    if prompt {
-        AdapterError::PromptNotWritten("conversation link has retired".into())
-    } else {
-        AdapterError::Unavailable("conversation link has retired".into())
     }
 }
 
@@ -492,6 +305,9 @@ pub(super) enum Outcome {
         capability: Option<String>,
     },
 }
+
+#[path = "acp_write.rs"]
+mod write;
 
 #[cfg(test)]
 #[path = "acp_tests.rs"]
