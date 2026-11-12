@@ -149,3 +149,19 @@ remained below 5 ms here, so no optional batch-size setting was added. The switc
 stays off until the release owner collects the required production baseline,
 checks scan failures and publication retries, and verifies activation/rollback
 under the procedure in [Operations](CMA_Operations.md#cooperative-full-scan-activation-and-rollback).
+
+The full-contract repeat after develop integration used the same scan and
+benchmark implementation and preserved all of those work and command counts,
+but did not reproduce the first run's sub-10 ms section tail. Disabled section
+p99 was 469.99 and 443.17 ms; enabled section p99 was 23.84 and 28.76 ms.
+Mean scan latency was 806.03 ms off and 512.75 ms on
+(-36.39%). Enabled point-read pair p95 was 14.79 and 43.29 ms, versus 430.99 and
+427.25 ms disabled; enabled checkout-wait p99 was 3.21 and 2.97 ms, versus
+436.93 and 423.64 ms disabled. Driver-poll p95 stayed below 4.76 ms in all four
+rounds, although one enabled round contained a 22.84 ms driver poll. The cause
+of these wall-time outliers has not been isolated. With only 48 scans per phase,
+the reported nearest-rank p99 is also that phase's maximum. Both runs support
+keeping the measurements and the default-off option; neither establishes a
+reliable 10 ms section bound or substitutes for the required production study.
+The full-contract repeat log SHA-256 is
+`9638f1a4e0fdc5b54aedfac01478fd8063d12db7fbbc816d753b8996ba4b3570`.
