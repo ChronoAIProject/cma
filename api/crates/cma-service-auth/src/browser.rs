@@ -67,18 +67,15 @@ impl BrowserAuth {
         let url = url::Url::parse(origin).map_err(|_| AuthError::Configuration)?;
         if url.scheme() != "https"
             || url.origin().ascii_serialization() != origin
-            || !["/api/event-gateway", "/api/image-manager"].contains(&prefix)
-            || !["/event-gateway", "/image-manager"].contains(&landing)
-            || !["eg_auth_sessions", "im_auth_sessions"].contains(&collection)
+            || prefix != "/api/event-gateway"
+            || landing != "/event-gateway"
+            || collection != "eg_auth_sessions"
         {
             return Err(AuthError::Configuration);
         }
         let expected = match auth.service {
             crate::Service::EventGateway => {
                 ("eg_auth_sessions", "/api/event-gateway", "/event-gateway")
-            }
-            crate::Service::ImageManager => {
-                ("im_auth_sessions", "/api/image-manager", "/image-manager")
             }
         };
         if (collection, prefix, landing) != expected {

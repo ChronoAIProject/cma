@@ -108,7 +108,6 @@ fn return_targets_are_only_canonical_cma_workflows() {
         "/",
         "/agent-manager",
         "/event-gateway",
-        "/image-manager",
         "/t/pub_123",
         "/t/pub_123/plc_456",
         "/triggers/manage",
@@ -129,6 +128,7 @@ fn return_targets_are_only_canonical_cma_workflows() {
         assert_eq!(app_return_target(valid).as_deref(), Ok(valid));
     }
     for invalid in [
+        concat!("/image", "-manager"),
         "",
         "//example.com/t/pub_123",
         "https://example.com/t/pub_123",
@@ -149,6 +149,31 @@ fn return_targets_are_only_canonical_cma_workflows() {
     ] {
         assert!(app_return_target(invalid).is_err(), "accepted {invalid}");
     }
+}
+
+#[tokio::test]
+async fn login_rejects_removed_portal_before_starting_authorization() {
+    let auth = AuthState::in_memory(
+        AuthMode::Trusted {
+            subject: "developer".into(),
+        },
+        None,
+    );
+    let app = router(auth);
+    let response = app
+        .oneshot(
+            Request::get(concat!("/auth/login?return_to=%2Fimage", "-manager"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(!response.headers().contains_key(header::LOCATION));
+    assert!(!response.headers().contains_key(header::SET_COOKIE));
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(body["title"], "Invalid sign-in return target");
 }
 
 #[tokio::test]

@@ -216,7 +216,7 @@ mod tests {
     fn auth() -> NyxIdAuth {
         NyxIdAuth::new(
             "https://identity.example",
-            Service::ImageManager,
+            Service::EventGateway,
             "sandbox-client",
             "unused".into(),
         )
@@ -231,9 +231,9 @@ mod tests {
             exp: Some(200),
             token_type: Some("access".into()),
             resource: Some(vec![
-                "https://identity.example/api/v1/proxy/s/cma-image-manager".into(),
+                "https://identity.example/api/v1/proxy/s/cma-event-gateway".into(),
             ]),
-            permissions: Some(vec!["cma-im:images:create".into()]),
+            permissions: Some(vec!["cma-eg:channels:create".into()]),
         }
     }
 
@@ -242,10 +242,10 @@ mod tests {
         let auth = auth();
         let mut claim = evidence();
         claim.resource = None;
-        claim.permissions = Some(vec!["cma:admin".into(), "cma-eg:admin".into()]);
+        claim.permissions = Some(vec!["cma:admin".into(), "cma-am:admin".into()]);
         let principal = auth.validate(claim, 100).unwrap();
         assert_eq!(
-            principal.require("cma-im:images:read"),
+            principal.require("cma-eg:channels:read"),
             Err(AuthError::Forbidden)
         );
     }
@@ -255,7 +255,7 @@ mod tests {
         let auth = auth();
         auth.validate(evidence(), 100)
             .unwrap()
-            .require("cma-im:images:create")
+            .require("cma-eg:channels:create")
             .unwrap();
         for field in [
             "active",
@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(
             auth.validate(claim, 100)
                 .unwrap()
-                .require("cma-im:images:create"),
+                .require("cma-eg:channels:create"),
             Err(AuthError::Forbidden)
         );
     }
