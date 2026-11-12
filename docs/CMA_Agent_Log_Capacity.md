@@ -150,8 +150,11 @@ fenced snapshot. Segmented publication uses the same marker validation and its
 existing zero-entry publication receipt. No schema migration or new persisted
 field is needed; an older or flag-off worker resumes ordinary failure appends.
 
-Every zero-entry retry still fully verifies the retained history. The normal
-limits and stop/delete reserves continue to count every actual retained row.
+The separate bounded-close switch and cohort may bound zero-entry verification,
+including at-capacity markers, under the first/hourly full audit and conflict
+reuse contract in [Admission append](CMA_Admission_Append.md). Without that gate,
+every zero-entry retry still fully scans. The 10,000-entry/64-MiB normal limits,
+stop/delete reserves and counting of every actual retained row are unchanged.
 
 ### Selecting an already-marked cleanup retry (#1583)
 
@@ -176,6 +179,8 @@ its exact tail, reconstructs the only permitted retry, and validates the expecte
 revision, identity, status/work, holder/fence and lease. A changed observation,
 gap, invalid schema or extra tail cannot turn the hint into a publication.
 Transaction conflicts use the existing retry budget and revalidate each snapshot.
+The opt-in #1788 policy above can reuse identical verified history within a
+publication and bound repeated marker verification between complete audits.
 Unknown commits keep exact receipt reconciliation and refusal; they never grant
 permission for a normal append, another settlement or an external effect replay.
 
@@ -189,7 +194,8 @@ delay. No capacity, event schema, retained history or recovery eligibility chang
 
 Real-Mongo regressions count actual scanner `find` commands through worker/store
 paths: two traversals for a first marker and the known-abort control, one for an
-eligible repeat, and fresh traversals on transaction retries. They retain full
+eligible repeat with bounded verification disabled, and fresh traversals on
+transaction retries with that gate disabled. They retain full
 validation while exercising changed observations, authority/lease refusals,
 corruption and physical limits, committed/uncommitted unknown outcomes, seventy
 unchanged failed closes, and successful cleanup continuation. These tests prove

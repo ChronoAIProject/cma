@@ -11,6 +11,7 @@ pub(super) async fn commit(
     let mut timing = contention::PublicationTiming::new(&mutation);
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
     timing.acquired();
+    let mut history_cache = publication_history::AttemptHistory::default();
     let mut last_transient = None;
     let jitter = uuid::Uuid::new_v4().as_u128() as u64;
     for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -34,8 +35,15 @@ pub(super) async fn commit(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
-        let publication =
-            apply_publication_observed(store, &mutation, observed, repeated_marker, scope).await;
+        let publication = apply_publication_observed(
+            store,
+            &mutation,
+            observed,
+            repeated_marker,
+            &mut history_cache,
+            scope,
+        )
+        .await;
         let receipt = match publication {
             Ok(receipt) => receipt,
             Err(ApplyError::PreparedIneligible) => {
@@ -58,6 +66,7 @@ pub(super) async fn commit(
         };
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
+                history_cache.committed(store);
                 timing.committed();
                 crate::telemetry::work::published(&receipt.logs, "committed");
                 return Ok(true);
