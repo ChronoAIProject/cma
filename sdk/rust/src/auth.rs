@@ -30,6 +30,8 @@ pub struct UsageReporting {
 /// Public profile and capability evidence for an authenticated caller.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Identity {
+    /// Exact verified bearer command readiness; absence on older servers grants nothing.
+    pub api_commands: Option<bool>,
     /// Absent on older servers; treat absence as false.
     pub usage_reporting: Option<UsageReporting>,
     /// Authenticated subject identity.

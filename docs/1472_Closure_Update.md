@@ -1,6 +1,7 @@
 # #1472 closure update — 2026-11-11
 
-This supplements the [initial gap plan](https://github.com/ChronoAIProject/cma/blob/tl/cma-abuse/integration/docs/1472_Gap_Plan.md).
+This preserves the November 11 source and acceptance snapshot. Current source
+disposition and remaining ownership are in the [updated gap plan](1472_Gap_Plan.md).
 The deadline remains Friday 2026-11-13 15:00 SGT; unknown/blocked cells remain open.
 
 ## Source delivery and freeze
