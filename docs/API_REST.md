@@ -2645,3 +2645,26 @@ in addition to normal pre-auth network admission. No identity or durable
 activity record is created. This untrusted signal is diagnostic only. Send no
 exception text, stack, page URL, credentials or resource identifiers. The web
 bootstrap reports each category at most once per page and does not retry.
+
+## Agent capacity recovery
+
+These personal authenticated routes expose current metadata and explicit original
+recovery requests. New recovery admission remains default-off. Every response,
+including authentication refusals, has `Cache-Control: private, no-store`.
+
+| Method and path | Request | Result |
+| --- | --- | --- |
+| `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | None | Authorized metadata only; no history scan, write or runtime call |
+| `GET /api/v1/agents/{id}/capacity-recovery` | None | Current personal recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/status` | Original recovery request | Status of that original request |
+| `POST /api/v1/agents/{id}/capacity-recovery/admit` | Original recovery request | Explicit admission, subject to current gates and authority |
+| `POST /api/v1/agents/{id}/capacity-recovery/resume` | Original recovery request | One bounded accepted-work attempt or exact result reconciliation |
+
+The original request contains `agent_id`, `creation_key`, `creation_fingerprint`,
+`failure_seq` and `requested_at`. Preserve every field on retry. It identifies
+the original failure and grants no authority. Routes reject foreign or missing
+resources without revealing native conversation, runtime or home identities.
+A recorded outcome is HTTP 200; an uncertain commit is HTTP 202 with
+`outcome: unknown`. HTTP 409 may carry `outcome: known_abort` or a named problem.
+A missing receipt never proves abort. Neither result authorizes replaying Agent
+input. Admission refusal does not prevent reconciling already accepted work.

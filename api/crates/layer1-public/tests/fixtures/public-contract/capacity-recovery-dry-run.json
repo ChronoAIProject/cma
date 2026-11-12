@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "capacity-dry-run-owner",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery/dry-run",
+      "scenario": "capacity_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/dry-run",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "disposition": "not_capacity_failure",
+          "observed_revision": 9,
+          "through_seq": 9,
+          "evaluated_at": "2026-11-11T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "capacity_evaluated_at": "/evaluated_at"
+      }
+    },
+    {
+      "id": "capacity-dry-run-foreign",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery/dry-run",
+      "scenario": "capacity_contract_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/dry-run",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-dry-run-missing",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery/dry-run",
+      "scenario": "capacity_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_absent/capacity-recovery/dry-run",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-dry-run-anonymous",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery/dry-run",
+      "scenario": "capacity_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/dry-run",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
