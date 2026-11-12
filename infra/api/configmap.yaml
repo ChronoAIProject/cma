@@ -94,6 +94,7 @@ data:
   CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
+  CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Expand-only skill upgrade readers; enable new writers only after migration qualification.

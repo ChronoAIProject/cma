@@ -10,6 +10,16 @@ use layer3_adapter::hosted::InMemoryHostedBackend;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn failure_pacing_worker_records_only_read_only_inspection_observations() {
+    exercise_worker(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn repeated_failure_worker_preserves_connection_pacing() {
+    exercise_worker(true).await;
+}
+
+async fn exercise_worker(single_marker: bool) {
     let (client, name) = database("failure_pacing_worker").await;
     let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
     let agent = ready_conversation_fixture(&store, "worker_observation").await;
@@ -41,7 +51,8 @@ async fn failure_pacing_worker_records_only_read_only_inspection_observations() 
             operations: AgentOperationService::new(store.clone(), registry.clone()),
             registry,
         },
-        AgentWorkerConfig::new("inspection-worker", "inspection-test"),
+        AgentWorkerConfig::new("inspection-worker", "inspection-test")
+            .with_retry_single_marker(single_marker),
     );
     let mut at = NOW.to_owned();
     for _ in 0..2 {
@@ -65,7 +76,7 @@ async fn failure_pacing_worker_records_only_read_only_inspection_observations() 
         .agent_log(&agent.id, agent.conversation.last_seq, 10)
         .await
         .unwrap();
-    assert_eq!(logs.len(), 2);
+    assert_eq!(logs.len(), if single_marker { 1 } else { 2 });
     assert!(logs.iter().all(|entry| matches!(&entry.kind, AgentLogKind::WorkStepFailed { failure, .. } if failure.class == CLASS)));
     assert!(!worker
         .run_one(&agent.id, as_time(&saved.work.ready_at))
