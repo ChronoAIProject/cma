@@ -1775,6 +1775,11 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
+| `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | - | - | 200 authorized recovery metadata |
+| `GET /api/v1/agents/{id}/capacity-recovery` | - | - | 200 authorized recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/status` | Original recovery request | - | 200 original recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/admit` | Original recovery request | - | 200 recorded result; 202 unknown commit |
+| `POST /api/v1/agents/{id}/capacity-recovery/resume` | Original recovery request | - | 200 recorded result; 202 unknown commit |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/{id}/suggestions` | - | turn_sequence, answer_sequence | 200 SuggestionReadingView |

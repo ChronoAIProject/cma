@@ -3877,7 +3877,7 @@
     },
     "GET /api/v1/agents/{id}/capacity-recovery/dry-run": {
       "classification": "openapi",
-      "source": "agent_capacity_recovery",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
       "required_problems": [
         "not_authenticated",
         "resource_not_found"
@@ -3885,7 +3885,7 @@
     },
     "GET /api/v1/agents/{id}/capacity-recovery": {
       "classification": "openapi",
-      "source": "agent_capacity_recovery",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
       "required_problems": [
         "capacity_recovery_conflict",
         "capacity_recovery_unavailable",
@@ -3894,7 +3894,7 @@
     },
     "POST /api/v1/agents/{id}/capacity-recovery/status": {
       "classification": "openapi",
-      "source": "agent_capacity_recovery",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
       "required_problems": [
         "capacity_recovery_conflict",
         "capacity_recovery_unavailable",
@@ -3903,7 +3903,7 @@
     },
     "POST /api/v1/agents/{id}/capacity-recovery/admit": {
       "classification": "openapi",
-      "source": "agent_capacity_recovery",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
       "required_problems": [
         "capacity_recovery_conflict",
         "capacity_recovery_disabled",
@@ -3911,19 +3911,19 @@
         "not_authenticated"
       ],
       "non_problem_statuses": {
-        "409": "A recorded known-abort disposition preserves the original request identity."
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
       }
     },
     "POST /api/v1/agents/{id}/capacity-recovery/resume": {
       "classification": "openapi",
-      "source": "agent_capacity_recovery",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
       "required_problems": [
         "capacity_recovery_conflict",
         "capacity_recovery_unavailable",
         "not_authenticated"
       ],
       "non_problem_statuses": {
-        "409": "A recorded known-abort disposition preserves the original request identity."
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
       }
     }
   }

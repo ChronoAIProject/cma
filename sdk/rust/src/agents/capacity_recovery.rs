@@ -1,6 +1,10 @@
 //! Explicit capacity-recovery requests. Never invent or retry an original input.
 use super::Agents;
-use crate::{Result, http::Request, resources::identity};
+use crate::{
+    Error, Result,
+    http::{Request, receive},
+    resources::identity,
+};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 
@@ -52,6 +56,8 @@ pub struct CapacityRecoveryStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum CapacityRecoveryOutcome {
+    /// The exact recovery attempt is known to have aborted; never replays input.
+    KnownAbort,
     /// Commit must be reconciled using the unchanged original request.
     Unknown,
     /// Durable result projected without native/home identities.
@@ -131,6 +137,36 @@ impl Agents<'_> {
         ];
         let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?;
         request.statuses.push(StatusCode::ACCEPTED);
-        self.client.request(request).await
+        request.statuses.push(StatusCode::CONFLICT);
+        let response = receive(&self.client.inner, request).await?;
+        if response.status == StatusCode::CONFLICT {
+            if serde_json::from_slice::<serde_json::Value>(&response.body).ok()
+                == Some(serde_json::json!({"outcome": "known_abort"}))
+            {
+                return Ok(CapacityRecoveryOutcome::KnownAbort);
+            }
+            return Err(Error::from_http_problem(
+                response.status.as_u16(),
+                response
+                    .headers
+                    .get("x-request-id")
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned),
+                response
+                    .headers
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok()),
+                &response.body,
+            ));
+        }
+        let value = serde_json::from_slice(&response.body)
+            .map_err(|_| Error::protocol("invalid capacity recovery outcome"))?;
+        match (&value, response.status) {
+            (CapacityRecoveryOutcome::Recorded { .. }, StatusCode::OK)
+            | (CapacityRecoveryOutcome::Unknown, StatusCode::ACCEPTED) => Ok(value),
+            _ => Err(Error::protocol(
+                "recovery outcome does not match its HTTP status",
+            )),
+        }
     }
 }
