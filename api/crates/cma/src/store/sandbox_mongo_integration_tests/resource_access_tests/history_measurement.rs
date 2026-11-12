@@ -79,7 +79,7 @@ async fn measure(rows: u64) {
                     f.meter.clear();
                     let scan_before = scans();
                     let start = Instant::now();
-                    assert_eq!(f.request(&apps[mode], &path).await, *expected);
+                    assert_eq!(f.request(&apps[mode], path).await, *expected);
                     samples[mode].push(start.elapsed().as_micros());
                     let stats = f.meter.stats.lock().unwrap().clone();
                     let scan_after = scans();
