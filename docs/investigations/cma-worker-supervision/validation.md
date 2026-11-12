@@ -361,3 +361,122 @@ The synchronized commands/results and identity are in
 `/tmp/cma-1740-evidence/supplement-synchronized/`. The service-fault and ordinary
 service measurements above remain bound to their original source and identical
 executables rather than being described as new post-merge measurements.
+
+## Native runtime continuity verification (2026-11-12)
+
+This follow-up supplies the local native continuity evidence that the previous
+section deliberately left open. Source is
+`e664dfa0f24ab0c84acd2cb472497b13a60b84fe`, on macOS arm64, Rust 1.96.1,
+Node 25.8.0 and the disposable MongoDB 8.0.13 replica set. The opt-in runner
+installs Codex CLI 0.147.0 and ACP 1.4.0 into a new private temporary directory,
+then applies the same reviewed ACP patches, in the same order, as the runtime
+Dockerfile. It does not use the globally installed Codex or the owner's account.
+
+The actual executables and evidence are pinned as follows:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| CMA test executable | `0dcc1b9cebaff6851276b8207435972f2db5086f3e4146dca66ab855269a50f4` |
+| Layer 4 runtime executable | `93275bf1558c29c3d21d9b3a850c0731c057cc9e0d00a883f2a9be21d54c9564` |
+| Patched ACP bundle | `ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66` |
+
+### Exercised boundary and assertions
+
+Each test launches the real Layer 4 executable, uses the production hosted HTTP
+and ACP WebSocket transport to prepare a workspace/worktree and Agent home, and
+opens an actual Codex/ACP conversation. The Mongo fixture binds that native
+conversation identity from its first Agent/log insertion. Actual
+`ResourceCommandExecution`, authorization and command scheduling dispatch the
+admitted message; `DurableAgentUpdateRecorder` consumes the real native updates.
+The model endpoint and provider endpoint discovery are controlled loopback
+fixtures. No fabricated terminal update or manual command-completion call is
+used.
+
+The controlled model invokes Codex's real shell tool. The shell records its PID
+and a single side effect, then waits for a release file. While it is alive, the
+test injects a panic or suspension into only the command scheduling future.
+Both cases establish required-worker unavailability, subsequent real scheduling
+activity, the same runtime boot identity, the same live shell PID and unchanged
+Mongo dispatch identity. The task is then released. Its actual native turn stays
+pending at the controlled model endpoint for 65 seconds in the panic case and
+10 seconds in the suspension case. During that wait the scheduler remains
+running and the original command remains in progress with the same dispatch.
+This exercises legitimate native waiting beyond the watchdog and, in the panic
+case, beyond the sixty-second failure window; it makes no claim of model
+inference quality or actual model reasoning.
+
+After releasing the model response, the actual recorder/scheduler must persist
+completion. A second admitted message completes in the same conversation, and
+the model fixture verifies its input still includes the original answer.
+Production history export retains the same conversation ID and both answers.
+Assertions also retain the worktree's dirty file, actual Agent CODEX_HOME inode,
+a home sentinel and exact config bytes. Reopening Mongo and replaying both
+commands leaves exactly two dispatch sends, two durable command records and two
+owner-message logs; both replies are present in the durable conversation log.
+The original shell effect remains exactly one.
+
+### Final reproducible run
+
+Both native tests passed in **96.42 seconds** using fresh pinned tool installs.
+These are host-local observations, not deployment bounds:
+
+| Scheduler fault | Fault to detection | Fault to resumed scheduling | Healthy native wait | Model release to original durable completion |
+| --- | ---: | ---: | ---: | ---: |
+| Panic | 0.167 s | 1.179 s | 65 s | 0.353 s |
+| Suspension | 5.892 s | 6.901 s | 10 s | 0.350 s |
+
+The full continuity proofs ended 67.343 and 17.965 seconds after injection,
+respectively, including the intentionally held native turn, continuation,
+history and replay assertions. Those totals must not be reported as an
+unconditional thirty-second work-recovery result. The existing universal-work
+target remains conditional on admitted work, claims and dependencies allowing
+progress.
+
+Reproduce with a disposable local replica set:
+
+```bash
+CHRONO_TEST_MONGODB_URI='mongodb://127.0.0.1:58481/?directConnection=true&replicaSet=cma1740service' \
+  bash .github/scripts/worker-runtime-supervision.sh
+```
+
+The script records source HEAD, hashes of all eight affected source/runner
+files, runtime and ACP hashes and host/tool versions. It retains all artifacts
+and prints their directory even on failure. Each fixture has a sixty-second
+setup deadline and each case a 240-second overall deadline. Cleanup bounds the
+Agent close, fixture HTTP requests and child wait; EOF/exception handlers release
+the test's gates and close only its owned Agent/runtime. Both final runtime
+processes exited zero, and no fixture/runtime process remained at the final
+process check.
+
+The original private runner directory is
+`/private/var/folders/gq/xbl9r0417sx7r9tm494fsw8m0000gn/T/cma-worker-runtime.E3W2MH`.
+An evidence copy is retained at `/tmp/cma-1740-evidence/native-final/`:
+`index.json`, `identity.json`, `tests.log`, install/build logs and per-case
+`manifest.json`, `result.json`, `history.ndjson`, model requests, runtime logs and
+exit records. These are local artifacts, not uploaded CI artifacts or a
+persistent external evidence archive.
+
+An additional **21 existing regressions passed** on the same executable: ten
+supervisor cases, two composed Mongo scheduler recovery cases and nine resource
+execution/authority cases. Five resource cases passed in the initial sweep;
+four require `CHRONO_TEST_MONGODB_FAILPOINT_URI` and passed after supplying that
+separate disposable failpoint-enabled URI. The initial missing-variable
+failures and correctly configured rerun are both retained. Nine documentation
+contract tests, strict pinned Clippy for all CMA targets/features, formatting,
+script syntax, source-size and diff checks passed. The earlier 203-test result
+remains bound to the previous section; it is not claimed as rerun here.
+The persistent ordinary inspection service still returned readiness 200 with
+all eight loops running at final verification.
+
+### Remaining qualification limits
+
+This closes local host-native active task/runtime/home/conversation continuity
+for command-scheduler panic and suspension. It is separate from the previous
+whole-service HTTP readiness matrix and does not replace that evidence. The
+controlled model response wait does not qualify real remote inference. Provider
+discovery is synthetic; no Kubernetes provider lifecycle, retained PVC,
+deployment rollout or candidate image digest was exercised. Exact candidate
+image qualification and isolated real-provider/model journeys remain open.
+External production journey/monitoring acceptance remains in chrono-probe#18.
+No production Kubernetes context was used, and #1740 is not declared fully
+accepted by this local run.
