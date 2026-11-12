@@ -30,6 +30,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_bounded_close_retries(config.features.bounded_close_retries)
             .with_bounded_approval_reads(config.features.bounded_approval_reads)
             .with_fleet_log_percentage(config.agent_log_fleet_percent)
+            .with_segment_adoption_enabled(config.features.segment_adoption_enabled)
             .with_bounded_title_reads(config.features.bounded_title_reads)
             .with_sandbox_snapshot_reads(config.features.sandbox_snapshot_reads)
             .with_sandbox_batched_reads(config.features.sandbox_batched_reads)
