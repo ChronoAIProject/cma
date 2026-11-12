@@ -102,6 +102,7 @@ feature-gate suppression or fake call is an acceptable closure.
 | `c620ebbf2` | Strict CMA all targets/features, -D warnings | PASS, zero diagnostics, 2m28s. |
 | `c620ebbf2` | Adapter tests | 47 passed / 0 failed, 711 skipped, 0.356s. |
 | `c620ebbf2` | Canonical authenticated Mongo | 1 passed / 0 failed, 2698 skipped, 1.671s. Canonical migration and isolated runtime grants execute successfully. |
+| `c620ebbf2` | Segment/operator/recovery units | 93 passed / 0 failed, 2606 skipped, 0.763s. Shared slot wait was about 16 minutes; compiled reuse took 0.33s. |
 
 Original failed recovery cases: S4
 `capacity_later_service_retries_crash_and_refuses_foreign_or_stale_activation`,
@@ -231,8 +232,8 @@ Mongo cases pass. The failed earlier runs remain in the ledger above.
 
 ## 08:46 source audit and train risk
 
-Develop merge freeze is active from 08:30 until the explicit lift relay. Current
-develop `3aee1ff68` is already merged; all published final slice pins remain
+The develop merge freeze from 08:30 was explicitly lifted at 09:12 SGT.
+The 13:00 candidate `3aee1ff68` is pinned and already merged here; all published final slice pins remain
 ancestors of `c620ebbf2`. No additional owner fix pin is published as of this audit.
 The 14:00 PR / 16:00 merge target depends on the 10:30 source and 11:30 owner-gate
 cutoffs. Ordinary v2 writer roots, segmented capacity admission and selected
@@ -293,3 +294,52 @@ a raw interval before its new head is published, use an explicit, independently
 validated pending-publication context. The normal read/claim/completion paths
 must not turn a Corrupt or SequenceConflict proof failure into raw-read success.
 Cover both transaction and read-only snapshot callers in the S3 refusal matrix.
+
+Lead relay at 09:12 SGT lifted the develop merge freeze after retaining the
+13:00 candidate bytes. Normal rules resume: explicit merge relay, exact reviewed
+head, no failed job, and the standing conflict-free develop-sync rule. This
+integration branch has no combined PR or merge relay yet; qualification and
+source-blocker closure continue. Writer/recovery activation remains closed.
+
+## P1-N1 test handoff: existing signatures remain frozen
+
+Source audit at `c620ebbf2` confirms S5 can write the segmented-admission service
+tests now; a new public signature is not required. Keep these existing entries:
+
+```rust
+// agent_capacity_recovery/service.rs, within impl RecoveryService
+pub(crate) async fn admit(
+    &self,
+    caller: &Caller,
+    request: &RecoveryRequest,
+) -> Result<CommitOutcome<RecoveryWork>, RecoveryError>;
+
+// agent_log_segments/writer_commit.rs
+pub(in crate::store) async fn prepare(
+    store: &MongoSandboxStore,
+    scope: &mut TransactionScope<'_>,
+    captured: &CapturedLog,
+    input: PublicationInput<'_>,
+    bootstrap: Option<&BootstrapPlan>,
+    admission: Option<&Admission>,
+) -> Result<PreparedPublication, TransactionLogError>;
+```
+
+S5's service test uses the actual `RecoveryService::admit` entry with a certified
+segmented exhausted source and both independently enabled durable gates. It must
+preserve the `AdmissionKind::CapacityRecovery` witness; no relabeling as Rollover
+and no legacy bootstrap plan for an already-segmented source. S4 owns the internal
+planner permission and publication implementation that makes this existing call
+succeed. No change to S5's `AdmissionRequest` or frozen format-2 carrier is needed.
+The success assertion proves one atomic seal/successor/Agent/carrier/publication
+commit, original request/result identity and no event/input replay. Existing
+KnownAbort/Unknown semantics, fresh source authority and disabled native activation
+remain mandatory. S5 can prepare the tests in parallel; passing them awaits S4's
+implementation pin. This confirms the current signatures, not source closure.
+
+At 09:19 the segment/operator unit gate passed 93/93 on c620ebbf2. Its shared-slot
+wait was about 16 minutes while the actual test execution took under one second.
+Recovery HTTP and the partitioned Mongo inventory remain. Slot queue time is a
+schedule risk for final combined qualification; every gate still uses its own
+blocking shared-slot acquisition and releases it afterward. No unlocked run or
+second Cargo target is introduced to bypass the queue.
