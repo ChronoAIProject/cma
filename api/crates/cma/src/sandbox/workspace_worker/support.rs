@@ -95,6 +95,10 @@ impl WorkerFailure {
 
 pub(super) fn failure(error: AdapterError) -> WorkerFailure {
     match error {
+        AdapterError::AccessRevoked => WorkerFailure::terminal(
+            "workspace_access_revoked",
+            "current runtime authority was revoked",
+        ),
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::Unavailable(_) => {

@@ -313,6 +313,10 @@ pub(super) fn bump_log_sequence(agent: &mut Agent, count: usize) -> Result<(), S
 
 pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     match error {
+        AdapterError::AccessRevoked => WorkerFailure::terminal(
+            "agent_access_revoked",
+            "current runtime authority was revoked",
+        ),
         AdapterError::InputAuthorityUnavailable(detail)
         | AdapterError::PromptNotWritten(detail)
         | AdapterError::Unavailable(detail) => {

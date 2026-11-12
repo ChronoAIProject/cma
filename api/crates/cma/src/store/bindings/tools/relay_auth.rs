@@ -47,7 +47,7 @@ impl MongoProviderToolSource {
             .await
             .map_err(unavailable)?
         {
-            return Err(AdapterError::Rejected("account_deletion_in_progress".into()).into());
+            return Err(AdapterError::AccessRevoked.into());
         }
         if record.confirmed {
             let published = matches!(

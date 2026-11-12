@@ -116,9 +116,7 @@ async fn accept(state: RelayState, request: Request) -> Response {
     };
     let (upstream, credential) = match state.source.current(&capability, setup).await {
         Ok(authority) => authority,
-        Err(layer3_adapter::AdapterError::Rejected(detail))
-            if detail == "account_deletion_in_progress" =>
-        {
+        Err(layer3_adapter::AdapterError::AccessRevoked) => {
             return layer1_public::rest::account_deletion_problem(
                 layer2_core::account_deletion::AccountDeletionError::InProgress,
             )
