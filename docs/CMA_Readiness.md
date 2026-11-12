@@ -8,6 +8,11 @@ capabilities are available. See [worker supervision](CMA_Worker_Supervision.md)
 for the worker inventory, recovery limits and bounded `workers` response. Startup, dependency errors,
 expired checks and stale results return 503.
 
+Required capabilities include the independent Sandbox runtime reconciliation
+loop that detects runtime loss and admits recovery. Its long resumable batches
+are owned separately from the scheduling loop; a busy batch alone does not fail
+readiness. Native warm-pool capacity remains optional.
+
 Each composed health router owns one background check loop, shared by all its
 requests and clones. The check uses the application's Mongo client and has a
 two-second application deadline covering server selection, connection checkout
