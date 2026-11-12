@@ -16,6 +16,7 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 hyper-timeout = "0.5"
 ipnet = { workspace = true }
+libc = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 reqwest = { workspace = true }
@@ -35,5 +36,6 @@ url = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+tracking-allocator = { version = "=0.4.0", default-features = false }
 flate2 = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

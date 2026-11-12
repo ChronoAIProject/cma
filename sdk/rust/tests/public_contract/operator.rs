@@ -64,6 +64,7 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                     owner: c.q("owner"),
                     status: c.tag("status")?,
                     runtime_version: c.q("runtime_version"),
+                    always_on: c.q("always_on").map(|value| value == "true"),
                     page: c.page()?,
                 })
                 .await,

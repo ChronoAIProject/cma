@@ -1047,10 +1047,21 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_UPSTREAM_WIRE_API` | Exactly `responses` |
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
+| `CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED` | Strict boolean, default `false`. Shares immutable retained live fragments under one 32 MiB process budget; exhaustion uses the existing live-gap/catch-up path. Decoder, assembly, serialized replay and RSS qualification remain separate. See [Live fragment budget](CMA_Live_Fragment_Budget.md). |
+| `CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED` | Strict boolean, default `false`. Before owned decoding, validates Ready and retained ACP JSON against 4 MiB, 8,192 nodes and 64 container levels. Requires retained-output capability; refused output is never ACKed. See [Hosted output JSON budget](CMA_Runtime_Output_JSON_Budget.md) for recovery and accounting limits. |
+| `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
 | `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication within the shared cohort. Capacity settlement, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_AGENT_SKILL_UPGRADE_ENABLED` | Strict boolean, default `false`. Gates new installed-skill version replacements for owner-authorized idle Agents on capable runtimes. Keep closed until migration `2026-11-11-am-agent-skill-upgrade` reader/drain and recovery evidence is approved. Closing admission preserves reads, global exact-key replay, and already-admitted worker/recovery settlement. It does not remove the reader floor. See [skill upgrade migration record](CMA_Agent_Skills_Runtime.md#reader-floor-and-rollback-record-2026-11-11-am-agent-skill-upgrade). |
+| `CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED` | Strict boolean, default `false`. Enables the CMAEG retained-context API path that carries one buffered command through current authorization and the final release fence, with phase timing and no second command lookup. Keep disabled until the compatible API image is deployed and matched success/failure, binding-rotation and latency evidence is reviewed; disable and restart to roll back. The CMAEG three-second client deadline is unchanged. |
+| `CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED` | `false` | Require retained runtime output and bound compact pending/replay permission state across attachments. See [permission state bounds](CMA_Permission_State_Bounds.md). |
+| `CHRONO_READ_FRAME_BUDGET_ENABLED` | Strict boolean, default `false`. Keeps expensive-read admission attached to returned buffer storage through final frame/clone/slice drop, including after body EOF. The existing two-slot, size/deadline, route and control policies remain in place. No schema or wire change. See [Read frame ownership](CMA_Read_Frame_Budget.md). |
 | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables a proven 200-row/4-MiB suffix for pending-approval reads only for the shared trusted cohort. A missing reset boundary, oversized suffix or untrusted metadata retains complete validation. Independent of admission/public-window and title activation. Disable and restart the API for rollback; keep all original history and metadata. See [Bounded pending-approval recovery](CMA_Bounded_Approval_Reads.md). |
 | `CHRONO_AGENT_LOG_FLEET_PERCENT` | Canonical integer 0–100, default `0`; positive percentages require the explicit admission ID list to be empty. Stable Agent-hash buckets stage 10/50/100. Preparation is lazy and bounded before eligible writes; public reads never prepare. Stage changes/kill switch require a same-image API rollout; preserve quarantine and compatible-image floor. See [Fleet log activation](CMA_Fleet_Log_Activation.md). |
+| `CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED` | `false` | Strict opt-in for admitted decoded JSON and immutable RPC reply ownership; see [JSON retention bounds](CMA_JSON_Retention_Bounds.md). |
+| `CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED` | `false` | Strict opt-in for shared retained raw-output storage; see [raw output bounds](CMA_Raw_Output_Bounds.md). |
+| `CHRONO_SANDBOX_GLOBAL_LIMIT` | Default `0` (off); integer `1..4096` enables a shared transactional ceiling on all nonretired Sandboxes across owners/replicas. Paused/provisioning/retiring rows retain capacity; exact-origin retries bypass new-capacity refusal. Requires all writers upgraded and a capacity-owner limit with unclaimed pool/prepared and failure headroom reserved separately. See [global admission](CMA_Global_Admission.md). |
 | `CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED` | Strict boolean, default `false` in code and manifests. All writes retain 1,024 receipts / 12 MiB while off; compatible readers always accept bounded expanded aggregates. Enable only in a later train after the compatible reader is deployed, older workers have drained and that image is the pinned rollback target. Only owner grant/link revocations may spend the reserve; ordinary writes retain the old limits. Disabling it preserves expanded reads and exact retries. See [Document artifacts](Document_Artifacts.md) for activation and rollback. |
+| `CHRONO_DOCUMENT_QUOTAS_ENABLED` | Strict boolean, default `false`. With a complete installed storage baseline, reserves at most 100 document identities, 1 GiB retained source bytes and 32,768 immutable objects per owner before upload. Failed or uncertain writes retain their reservation. Unknown inventory refuses activation. After preparation, `false` refuses new source puts; it cannot bypass durable accounting. Reads, revocations and exact metadata retries stay available. See [Document quotas](CMA_Document_Quotas.md) for the operator fence, import and compatible rollback contract. |
 | `CHRONO_STORAGE_CLIENT_ID` | Deployment-owned machine identity for the existing `chrono-storage-service` proxy. Required when the document bucket is configured. Never passed to runtime Agents or browsers. |
 | `CHRONO_STORAGE_CLIENT_SECRET` | Secret reference for the storage machine identity; required with a configured document bucket. Issued tokens are cached in memory and renewed before expiry or once after a 401. |
 | `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
@@ -1070,6 +1081,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` | Creation request budget/burst; default 10 |
 | `CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED` | Strict boolean, default `false`. Opts exact registered existing-Agent input submissions into the existing Input budget, including Responses v2 and its Agent alias; preserves local and Mongo enforcement. See [Response input rate policy](CMA_Response_Input_Rate_Policy.md) for the route inventory and separate activation/rollback. |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
+| `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
+| `CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED` | Strict default-off hosted output backpressure; requires retained ACK support. See [hosted update backpressure](CMA_Hosted_Update_Backpressure.md). |
 | `CHRONO_USAGE_BILLING_ENABLED` | Default false. Enables durable delivery of recorded Sandbox resource-time to NyxID's existing Lago organization; metering remains active when false. |
 | `CHRONO_USAGE_LAGO_API_URL` | Complete HTTPS API base ending `/api/v1`; required when usage billing is enabled. Supply the effective API path used by NyxID, including any reverse-proxy prefix. |
 | `CHRONO_USAGE_LAGO_PLAN_CODE` | Existing NyxID Lago plan code, normally `starter`. Never creates customers, subscriptions, prices or wallets. |
@@ -1108,6 +1121,10 @@ Always on default retain their original inactivity behavior. Creating Agents or
 Workspaces inside an existing Sandbox never changes that Sandbox's reservation
 or availability. The deployment-owned system Profile defaults remain independent
 so a new inline default cannot rewrite old Profiles or fail their startup checks.
+When platform automatic pause is enabled, this legacy `always_keep_alive` value
+does not exempt a Sandbox. Only an explicit per-Sandbox `always_on=true` exception
+remains exempt; new approvals require an administrator. Review retained exceptions
+through the audited process in [CMA automatic pause](CMA_Auto_Pause.md).
 
 New Agent admissions, including Agents added to existing Sandboxes, capture the
 versioned GitHub workflow and memory-management guidance together. Prepared
@@ -2253,3 +2270,34 @@ with the tested source, image labels and promoted digest. Retain all prior hashe
 web assets needed by open tabs and the batch's compatible reader floor through
 normal deployment procedures. Verify an existing tab continues working and names
 its original bundle. This UI change does not authorize deployment or asset removal.
+
+## Sandbox detail read rollout
+
+`CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED` defaults to `false` and accepts only exact
+`true` or `false`. When enabled, Sandbox hierarchy reads use one consistent Mongo
+snapshot session instead of a read-only transaction plus abort. Workspace reads,
+record validation and the fresh final authorization fence retain their existing
+behavior. Disable the flag to return to the transaction reader; no data migration
+or writer change is involved.
+
+`CHRONO_SANDBOX_BATCHED_READS_ENABLED` separately defaults to `false` and accepts
+only exact `true` or `false`. Enabling it requires the snapshot reader above;
+startup rejects batching without snapshot sessions. It streams the three child
+collections through one indexed aggregation after reading the root, at the same
+snapshot time. Existing decoders, ordering and the fresh final fence still apply.
+Rows near the BSON document limit select the original child queries at that same
+snapshot, without hiding database errors. Disable batching alone to return to
+four snapshot reads; disable both reader flags to restore transactions. See
+[Sandbox hierarchy batching](CMA_Sandbox_Hierarchy_Batching.md) for bounds,
+compatibility tests and local volume measurements. Activation is release-owned.
+
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
+accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
+colors, names and final-fence durations and completion/error/cancellation outcome,
+without identifiers, error strings or inherited request spans. Enable it before
+reader activation to collect a baseline, and disable it after the measurement
+window. Optional enrichment retains its existing fallback behavior.
+
+See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
+boundaries, local comparison, security/concurrency tests and the next batching
+proposal. Production flag changes remain part of the approved release process.

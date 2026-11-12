@@ -56,12 +56,15 @@ impl ControlPlaneComposition {
         let profile_scanner = Arc::clone(&profile_policy.public_value_scanner);
         profiles::seed_profiles(&stores, config, &profile_policy).await?;
         let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
-        let sandbox_operators = Arc::new(SandboxOperatorService::new(
-            stores.sandbox_model.clone(),
-            stores.sandbox_profiles.clone(),
-            retirement,
-            Arc::clone(&activity),
-        ));
+        let sandbox_operators = Arc::new(
+            SandboxOperatorService::new(
+                stores.sandbox_model.clone(),
+                stores.sandbox_profiles.clone(),
+                retirement,
+                Arc::clone(&activity),
+            )
+            .with_maintenance(stores.sandbox_model.clone()),
+        );
         let settings = Arc::new(
             PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity))
                 .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
@@ -132,6 +135,7 @@ impl ControlPlaneComposition {
             Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
             runtime_capabilities(adapter.capabilities()),
         )
+        .with_skill_upgrades(config.features.agent_skill_upgrade_enabled)
         .with_connections(connection_prerequisite.clone())
         .with_message_feedback(stores.message_feedback.clone())
         .with_suggestions(stores.sandbox_model.clone())
@@ -177,6 +181,7 @@ impl ControlPlaneComposition {
             authoring_bounds,
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
+            .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
         let native_warm_pools = runtime.warm_pools;
@@ -203,6 +208,8 @@ impl ControlPlaneComposition {
             Arc::clone(&operations),
         )
         .with_runtime_updates(runtime.updates)
+        .with_retained_recovery(runtime.recovery)
+        .with_retained_reopening(runtime.reopen)
         .with_user_directory(Arc::clone(&users))
         .with_sandbox_colors(layer2_core::sandbox::colors::SandboxColorService::new(
             stores.sandbox_colors.clone(),
@@ -246,8 +253,10 @@ impl ControlPlaneComposition {
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
             SandboxLifecycleConfig {
+                bounded_live_fragments: config.features.bounded_live_fragments,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
+                event_driven_reconciliation: config.features.event_driven_reconciliation,
                 home_policy: config
                     .runtime
                     .home_policy
@@ -350,6 +359,7 @@ impl ControlPlaneComposition {
             agent_page_origin,
             &bindings,
             config.gateway.as_ref(),
+            config.features.retained_context_lookup,
         )?;
         let event_workers = layer2_core::event_workers::EventWorkerProfileService::new(
             stores.event_workers.clone(),
@@ -396,6 +406,11 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
+        // Apply before cloning for delegated dispatch: all entry points share slots.
+        let resource_routes = resource_routes.layer(axum::middleware::from_fn_with_state(
+            crate::public_streams::StreamBudget::new(config.public_stream_limit),
+            crate::public_streams::enforce,
+        ));
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,
@@ -446,7 +461,10 @@ impl ControlPlaneComposition {
             browser_connections,
             auth.clone(),
             recorder,
-            limits,
+            (
+                limits,
+                crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
+            ),
             stores,
             tool_routes.merge(service_portal::router(
                 auth.clone(),

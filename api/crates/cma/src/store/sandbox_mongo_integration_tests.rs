@@ -80,9 +80,10 @@ use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 mod background_checkpoint_tests;
-mod command_ledger_tests;
+pub(in crate::store) mod command_ledger_tests;
 mod conversation_fixtures;
-mod ledger_retirement_tests;
+mod ledger_census_tests;
+pub(in crate::store) mod ledger_retirement_tests;
 mod live_sandbox_pages;
 mod read_telemetry_tests;
 pub(in crate::store) mod resource_access_tests;
