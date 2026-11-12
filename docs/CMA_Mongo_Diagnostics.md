@@ -2,17 +2,16 @@
 
 Mongo command and attributed connection diagnostics are **off by default** in code
 and the checked-in API ConfigMap. Only exact
-`CHRONO_MONGO_DIAGNOSTICS_ENABLED=true` installs the command observer when the
+`CHRONO_MONGO_DIAGNOSTICS_ENABLED=true` installs the metadata observer when the
 client starts. Missing, false or other values leave it off and retain the existing
 pool telemetry. Detail-phase timers remain independently on by default;
 `CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED=false` disables them.
 
-The release controller explicitly enables command diagnostics in the planned
-fix-candidate deployment and keeps them on through tonight's observation. Set the
-environment together with that deployment; no additional diagnostic-only rollout
-is required in the critical chain. Both controls are read at startup. They do not
-enable optimized readers, admission, reconciliation or recovery behavior. Do not
-include diagnostic controls when setting behavioral feature flags off.
+Tonight's candidate keeps command diagnostics **off**. The metadata-hook fix
+requires review and a later image before the release controller enables it for a
+diagnostic window. Both controls are read at startup. They do not enable optimized
+readers, admission, reconciliation or recovery behavior. Do not include diagnostic
+controls when setting behavioral feature flags off.
 
 ## Event fields and privacy
 
@@ -20,7 +19,7 @@ include diagnostic controls when setting behavioral feature flags off.
 
 | Field | Meaning |
 | --- | --- |
-| `event` | `started`, `succeeded`, `failed`, `checked_out`, `checked_in`, `connection_closed`, or `checkout_failed` |
+| `event` | `started`, `succeeded`, `failed`, `completed` (outcome unknown), `checked_out`, `checked_in`, `connection_closed`, or `checkout_failed` |
 | `pool` | `general` or `reporting`; never combine reporting-pool demand with general-pool contention; existing Prometheus pool label `application` corresponds to diagnostic `general` |
 | `route` | HTTP method plus matched route **template**; `unmatched` is used without a template, never the raw URI |
 | `request_hash` | SHA-256 of a process-random salt and the normalized request ID; correlation is confined to a process lifetime |
@@ -29,10 +28,18 @@ include diagnostic controls when setting behavioral feature flags off.
 | `phase` | Fixed operation phase, including `auth`, `hierarchy`, `colors`, `names`, `final_fence` |
 | `command`, `collection` | Allowlisted Mongo command and schema collection; unknown values become `other` |
 | `duration_us` | Command duration, checkout wait or completed physical hold, according to `event` |
-| `docs_returned`, `docs_returned_known` | Cursor batch length when available; zero plus false means unavailable, not a measured zero |
-| `session`, `transaction` | Presence of an `lsid` and `autocommit:false`, respectively; no session/transaction identifiers |
+| `docs_returned`, `docs_returned_known` | The metadata hook has no batch-length field: zero plus false means unavailable, not a measured zero |
+| `session` | Presence of session metadata; the session identifier is discarded |
+| `transaction`, `transaction_known` | False plus false: the hook does not expose exact `autocommit:false`; retryable-write transaction numbers are not treated as transactions |
+| `outcome_known` | True for a reported error or a successful cursor result; false for other completions, including cancellation |
+| `command_duration_scope` | `driver_command_span`; includes driver command processing, not server execution time alone |
 | `connection_hold_elapsed_us` | Hold elapsed at command completion, or total hold on check-in/close; **not additive across command events** |
 | `sample_every`, `slow`, `deferred` | Fast-event period, duration at least 100 ms, and delayed started-event emission |
+
+A per-client OpenTelemetry provider consumes a fixed set of allowlisted driver
+attributes and has no exporter or global-provider registration. Query text is
+explicitly disabled (`query_text_max_length=0`), including when an environment
+variable requests it. The eager public BSON command handler is never installed.
 
 Neither request headers nor BSON commands/replies, filters, database/server
 names, resource identities, error text or inherited request spans are emitted.
@@ -54,12 +61,22 @@ and all failures, are selected for logging; queue overflow can drop any selected
 record, including slow records and summaries. Every 100th fast command and checkout is sampled.
 An unsampled command's started metadata is emitted at completion if it is slow
 or failed (`deferred=true`). Deferred starts are not live in-flight observations.
-No event writes command/reply bodies, including the failure path.
+No event writes command/reply bodies, including the failure path. The driver
+redacts some sensitive command spans entirely. Completed spans without a positive
+result marker use `completed` with `outcome_known=false`; this includes dropped
+operations, so cancellation never fabricates a successful command. A driver
+cursor-result marker establishes success for find/aggregate. The driver exposes
+only the input cursor ID for getMore, so its completion is unknown too. Other
+successful commands have no equivalent marker in this API. Pool accounting remains complete
+independently of command-span coverage.
 
 `mongo_diagnostic_summary` reports **unsampled** totals every ten seconds
 while the client exists, with an activity-triggered fallback. Group by `pool, route, worker, phase, command, collection,
 metric`. `metric` is `command`, `checkout`, or `hold`; `count`, `total_us`, `max_us`,
-`docs_returned`, `failures` and `window_us` are numeric. Sum `total_us / 1e6` for
+`docs_returned`, `docs_returned_known_count`, `outcomes_unknown`, `failures` and
+`window_us` are numeric. The metadata hook has zero known document counts; do not
+interpret its document total as a measured zero. Unknown outcomes are counted
+separately from observed failures. Sum `total_us / 1e6` for
 `metric=hold` to rank physical hold-seconds. Do not add command time, checkout
 wait, phase time or scan time to physical hold time: these measurements overlap.
 Use summaries for totals and sampled/slow details for request correlation. Join
@@ -117,23 +134,31 @@ Ready/old-gone timestamps, pool configuration, diagnostic controls and behaviora
 flags. Compare matched post-ready ages and representative route samples. Keep
 request IDs and resource identities out of evidence; retain only hashes and
 aggregate values. Compare general-pool hold-seconds by route/phase/command,
-checkout totals, returned-document counts and detail-phase p50/p95. Report
+checkout totals and detail-phase p50/p95. Returned-document counts are unavailable
+from this observer and need separate evidence. Report
 `unattributed`, overflow, command failures and route sample counts explicitly.
 
-The driver version currently decodes complete BSON commands/replies before
-calling a command observer, even though this observer reads metadata only.
-Fast-event sampling reduces logging cost **but not that decoding cost**. The
-local disposable-Mongo gate compares monitoring off/on with identical 25-, 200-
-and 10,001-document reads in ABBA order; retain relative and absolute overhead,
-command/check-out parity and hold measurements. Compare diagnostic builds with
-the same observer setting. An uninstrumented old image versus an instrumented
-new image cannot isolate the application regression from observer overhead.
+The public BSON command handler in MongoDB 3.9.1 copies and decodes complete
+replies before invoking a callback. This implementation instead uses the driver's
+supported OpenTelemetry metadata hook with query text disabled. The callback
+never receives reply documents. It retains only allowlisted names, bounded
+tracking keys and task-local labels, with no payload sizing or hashing.
 
-If observer overhead materially changes the diagnostic window, the release owner
-can disable command monitoring while retaining phase timings and the original
-pool summaries. This limitation does not establish a production root cause.
+This changes diagnostic coverage: exact returned-document counts and transaction
+markers are unavailable, and some completion outcomes are unknown as described
+above. Command duration now covers the driver's command span, including response
+handling. Compare diagnostic windows only with matching observer implementations;
+do not mix the old callback's timings with the new span timings as if identical.
+Physical hold timing still comes from the same CMAP checkout/check-in boundary.
 
-## Local validation and accepted diagnostic overhead
+Compiling the driver's OpenTelemetry feature also constructs bounded session and
+command metadata even with tracing disabled. This is independent of reply size;
+the off/on ABBA fixture uses the same build, and does not establish zero change
+against an older binary compiled without that driver feature. The control remains
+default off and overrides the driver's environment defaults. Server-side query
+plans and returned-row counts still require separate evidence.
+
+## Historical public-callback measurements
 
 At source checkpoint `78629bc4c`, strict clippy passed for CMA, layer2-core and
 layer1-public across all targets/features. The targeted selection passed 132
@@ -153,14 +178,14 @@ These are local debug observations, not a production overhead estimate. The
 callback-only test measured approximately 1.025 microseconds per event, which
 excludes the driver's BSON conversion. The real-Mongo assertion is a catastrophic
 regression ceiling (less than twice baseline plus 5 ms), **not** proof of low
-overhead. The measured decoding cost remains a limitation, accepted for the
-planned diagnostic night. An optimized comparison is recorded below.
+overhead. This historical observer was superseded after the isolated CI failure
+below. An optimized historical comparison is recorded below.
 
 The driver's raw command-event interface is private. Its optional OpenTelemetry
 interface avoids whole-reply conversion with query text disabled, but does not
 expose cursor batch lengths or the exact `autocommit:false` marker. It cannot
-replace this observer while preserving every requested field without further
-work or a driver API change.
+preserve every original field without a driver API change. The replacement
+therefore marks those fields unknown explicitly, as described above.
 
 An optimized standalone harness then included the actual observer source and
 production text formatter writing to a sink, with the same driver, a disposable
@@ -178,16 +203,16 @@ allowlisted in the harness; no production data is used.
 The negative small-read mean is measurement noise, not a speedup claim; its p50
 increased. A separate minimal callback measured 8.615 ms added for 10,001
 documents, confirming a driver-level cost without the observer. Neither
-comparison establishes a production overhead bound. The lead accepted this cost
-for tonight's diagnostic deployment: the measured approximately 0.2 ms on
+comparison establishes a production overhead bound. The original rollout
+decision accepted this local cost: the measured approximately 0.2 ms on
 200-document reads is small, while production full scans are reported at
 1.3–1.7 seconds and are targeted by segmentation. That production context is a
 rollout decision, not a conversion of the local fixture into a production
-measurement. Full command coverage is needed to diagnose from real logs.
+measurement. The subsequent exclusive CI failure invalidated that overhead
+expectation; tonight's candidate keeps diagnostics off.
 
-A cheaper observer is tracked in #1765, not a prerequisite for this diagnostic
-window. Preserve the required metadata and compare optimized fixture results
-before changing the implementation. Phase timers and existing pool metrics can
+The metadata-only replacement is tracked in #1765 and requires its own
+review and a later image. Phase timers and existing pool metrics can
 remain enabled with command monitoring off; that mode loses collection/command
 attribution.
 
@@ -216,3 +241,96 @@ exit. Report loss and queue delay with comparisons. This is best-effort diagnost
 output, never an audit trail. Command monitoring remains default off; if this fix
 misses the candidate cutoff, keep it off with detail timers on as directed by the
 release plan.
+
+## CI overhead isolation
+
+The real-Mongo diagnostics contract runs once on its own disposable replica set,
+after report scale, owner allocation and audit bounds, before the concurrent ordinary Mongo
+partitions. The coordinator waits for fixture cleanup before starting the next
+phase. `bash .github/scripts/mongo-contract-tests.sh --diagnostics` selects the
+same test directly; CI retains successful output as well as failure output.
+The 40 reads per mode, ABBA order, three document sizes, privacy and correlation
+checks, equal checkout counts and `on_mean < 2 * off_mean + 5,000 us` ceiling are
+unchanged. This is a test-scheduling change, not a runtime optimization or a
+relaxation of the guard. There is no retry-until-pass policy.
+
+PR #1779 job 131174448380 failed with unchanged diagnostics code and driver:
+
+| Documents | Off mean (us) | On mean (us) | Off/on p50 (us) | Checkouts per mode |
+| --- | ---: | ---: | --- | ---: |
+| 25 | 2,030 | 3,181 | 1,974 / 3,327 | 40 |
+| 200 | 9,818 | 19,454 | 9,673 / 20,177 | 40 |
+| 10,001 | 428,278 | 871,132 | 417,531 / 863,294 | 200 |
+
+The large-read mean exceeded the 861,556 us limit by 9,576 us. Its p50 also
+exceeded the analogous relative bound, so replacing the mean with a median
+would not explain that sample. The same test passed in develop run 43200000706,
+attempt 2, job 131136521321, in 26.798 seconds versus 55.560 seconds here.
+Successful-test output was suppressed, so that run's means are unavailable;
+the complete develop Mongo job failed for a different contract.
+Both runs overlapped two disposable Mongo fixtures. This supports investigating
+load sensitivity but does not establish a production regression or prove runner
+contention caused the failure. The exclusive run removes this known confounder
+and makes the next measurements available for comparison. A failure in that
+controlled run must still be investigated; the threshold remains a hard gate.
+
+## Isolated CI failure and metadata replacement
+
+The exclusive fixture failed again in job 131225672805: 10,001-document means
+were 211.169 ms off / 440.221 ms on, physical holds 8.952 s / 18.102 s, and both
+modes used 200 checkouts. Thus fixture contention does not explain the overhead.
+A local no-op public callback still raised the same ABBA read from 202.359 ms to
+337.557 ms (holds 3.224 s to 8.660 s). No application queue, hashing or logging
+existed in that treatment; the driver event copy/decode path causes the scaling.
+In MongoDB 3.9.1 this is the raw reply clone in `src/client/executor.rs:698`,
+the pre-handler conversion in `src/client.rs:373`, and owned BSON conversion
+in `src/event/command/raw.rs:53`. The application queue contains metadata only.
+Neither payload hashing nor payload sizing caused this observed cost.
+
+The replacement keeps the 40-read ABBA workload and the exact
+`on_mean < 2 * off_mean + 5,000 us` assertion. The collector's completed spans
+carry only metadata and use the existing nonblocking queue. Privacy, error,
+cancellation, context separation, pool correlation and explicit unknown fields
+have targeted tests. The measurements below use the complete installed observer; a no-op telemetry
+probe alone is not release evidence.
+
+
+## Complete metadata-hook fixture
+
+Rust 1.96.1 native debug, MongoDB 3.9.1/BSON 3.1.0, disposable MongoDB 8.0.13
+replica set (2 CPUs, 2 GiB, 0.25 GiB WiredTiger cache). Each mode reads 40 times
+in the same ABBA blocks, with nested 1 KiB documents, batch size 2,048 and pool
+size 30. The measured source head after merging develop is `137703e39`. The observer
+includes task-local attribution, CMAP tracking, hashes,
+summaries and the nonblocking production text formatter. The API, remote
+transport and production log-sink I/O are outside this fixture.
+
+| Documents | Off/on mean ms | Mean change | Off/on p50 ms | Off/on physical hold total s | Checkouts each |
+| --- | --- | --- | --- | --- | --- |
+| 25 | 1.294 / 1.584 | +22.4% | 1.066 / 1.242 | 0.050556 / 0.062151 | 40 |
+| 200 | 4.921 / 4.342 | -11.8% | 3.993 / 3.985 | 0.198674 / 0.174826 | 40 |
+| 10,001 | 167.825 / 164.746 | -1.8% | 165.155 / 161.951 | 6.855596 / 6.711591 | 200 |
+
+The unchanged overhead ceiling passed at every size; results and checkout counts
+matched, privacy checks passed, and both sampled physical holds joined to their
+originating command completion, request hash and phase (2/2). The separate
+real-driver insert/update/find, transaction commit and failure fixture also
+passed, as did 25 targeted diagnostics/pool/read-telemetry unit tests.
+
+An earlier timing trial measured off/on means of 2.126/3.264, 4.907/4.680 and
+188.123/182.270 ms at the same sizes. Its overhead assertions passed, but its
+later correlation assertion still selected only `succeeded`; it failed on the
+explicitly unknown getMore outcomes. The final assertion above includes
+`completed` only with `outcome_known=false` and still requires the same hash and
+phase joins. Neither the ABBA workload nor its latency ceiling changed.
+
+The qualifying run before merging develop also passed all checks, with off/on
+means 1.776/1.298, 5.025/6.120 and 172.505/170.826 ms respectively.
+
+Small-read means varied in direction between trials; negative differences are
+not speedup claims, and this is not a production overhead bound. All three large-read
+trials remove the previously measured doubling. On successful reads, allocation
+work is limited to command/session metadata in the driver and fixed fields/Arc
+labels in the observer; no heap-allocation profiler was run. Driver error handling
+can still construct error strings internally; the observer discards them. Server-side stalls and the
+application's original regression still require the planned production window.
