@@ -74,7 +74,8 @@ impl Inventory {
         let owners = usage.into_iter().map(|(hash, (documents, bytes, objects))| {
             let id = owner_id(&hash);
             (id.clone(), doc! {"_id": id, "document_schema_version": 1_i64, "kind": "owner", "fence": 0_i64,
-                "documents": documents.len() as i64, "bytes": bytes as i64, "objects": objects as i64})
+                "documents": documents.len() as i64, "bytes": bytes as i64, "objects": objects as i64,
+                "baseline_documents": documents.len() as i64, "baseline_bytes": bytes as i64, "baseline_objects": objects as i64})
         }).collect();
         Ok(Self {
             digest: digest(bytes),
@@ -271,7 +272,7 @@ impl MongoDocumentQuotaStore {
         }
         inventory.check_references(database).await?;
         let result = self.rows.update_one(doc! {"_id": STATE, "phase": "preparing", "activation_id": &inventory.activation, "inventory_sha256": &inventory.digest},
-            doc! {"$set": {"phase": "ready", "baseline_rows": inventory.row_count() as i64, "next_row": inventory.row_count() as i64}}).await.map_err(unavailable)?;
+            vec![doc! {"$set": {"phase": "ready", "baseline_rows": inventory.row_count() as i64, "next_row": inventory.row_count() as i64, "activated_at": "$$NOW"}}]).await.map_err(unavailable)?;
         if result.matched_count != 1 {
             return Err(DocumentError::Conflict);
         }
@@ -294,6 +295,17 @@ impl MongoDocumentQuotaStore {
         let matches = match actual.as_ref() {
             Some(actual) if row.get_str("kind").ok() == Some("object") => {
                 object_identity_matches(actual, &row)
+            }
+            Some(actual) if row.get_str("kind").ok() == Some("owner") => {
+                // Older interrupted imports did not record immutable baseline
+                // counters. Preserve that unknown state when resuming them.
+                let mut expected = row.clone();
+                for key in ["baseline_documents", "baseline_bytes", "baseline_objects"] {
+                    if !actual.contains_key(key) {
+                        expected.remove(key);
+                    }
+                }
+                actual == &expected
             }
             Some(actual) => actual == &row,
             None => false,
