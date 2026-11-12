@@ -51,7 +51,6 @@ expected_web = {
   ["PathPrefix", "/auth"] => api_backend,
   ["Exact", "/openapi.json"] => api_backend,
   ["Exact", "/agent-manager/openapi.json"] => api_backend,
-  ["Exact", "/image-manager/openapi.json"] => [{ "group" => "", "kind" => "Service", "name" => "cma-image-manager", "port" => 80, "weight" => 1 }],
   ["Exact", "/.well-known/agent-card.json"] => api_backend,
   ["PathPrefix", "/"] => web_backend,
 }
@@ -59,7 +58,6 @@ expected_web = {
 expected_api.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 expected_web.transform_values! { |backend| { "backends" => backend, "filters" => [] } }
 {
-  "/api/image-manager" => ["cma-image-manager", "/"],
   "/api/agent-manager" => ["cma-agent-manager", "/api"],
 }.each do |prefix, (service, replacement)|
   expected_web[["PathPrefix", prefix]] = {

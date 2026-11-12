@@ -83,10 +83,8 @@ module GatewaySourceContract
         "parentRefs" => parent("https"), "hostnames" => ["bot.chrono-ai.fun"],
         "rules" => [
           { "matches" => [path("PathPrefix", "/api/event-gateway")], "backendRefs" => backend("cma-agent-manager") },
-          service_route("image-manager", "cma-image-manager", "/"),
           service_route("agent-manager", "cma-agent-manager", "/api"),
           { "matches" => [path("PathPrefix", "/api"), path("PathPrefix", "/auth"), path("Exact", "/openapi.json"), path("Exact", "/agent-manager/openapi.json"), path("Exact", "/.well-known/agent-card.json")], "backendRefs" => backend("cma-agent-manager") },
-          { "matches" => [path("Exact", "/image-manager/openapi.json")], "backendRefs" => backend("cma-image-manager") },
           { "matches" => all, "backendRefs" => backend("cma-web") },
         ],
       }),
