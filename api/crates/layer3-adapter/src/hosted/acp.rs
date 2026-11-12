@@ -149,11 +149,7 @@ impl Bridge {
         session: String,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
-        if session.is_empty() || session.len() > 1_024 || session.chars().any(char::is_control) {
-            return Err(AdapterError::Rejected(
-                "bridge returned an invalid conversation identifier".into(),
-            ));
-        }
+        super::acp_session_identity::validate(&session)?;
         let mut state = self.conversation.lock().await;
         if state
             .active
