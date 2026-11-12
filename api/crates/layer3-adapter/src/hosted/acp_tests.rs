@@ -10,7 +10,7 @@ use crate::{
     ToolCallUpdateFields, TurnStopReason,
 };
 
-type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+pub(super) type ServerSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
 
 #[path = "acp_permission_tests.rs"]
 mod permission_tests;
@@ -34,6 +34,8 @@ mod buffered_recovery_tests;
 mod fresh_bridge_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
+#[path = "acp_recovery_deadline_tests.rs"]
+mod recovery_deadline_tests;
 
 #[path = "acp_backpressure_tests.rs"]
 mod backpressure_tests;
@@ -48,7 +50,7 @@ mod steering_tests;
 #[path = "acp_transport_refresh_tests.rs"]
 mod transport_refresh_tests;
 
-async fn socket_pair() -> (Socket, ServerSocket) {
+pub(super) async fn socket_pair() -> (Socket, ServerSocket) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("WebSocket fixture binds");
@@ -67,7 +69,7 @@ async fn socket_pair() -> (Socket, ServerSocket) {
     )
 }
 
-async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
+pub(super) async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
     server
         .send(Message::Text(
             serde_json::json!({
@@ -82,7 +84,7 @@ async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
         .expect("Ready sends");
 }
 
-async fn receive_json(server: &mut ServerSocket) -> serde_json::Value {
+pub(super) async fn receive_json(server: &mut ServerSocket) -> serde_json::Value {
     let frame = tokio::time::timeout(Duration::from_secs(2), server.next())
         .await
         .expect("client frame arrives")
@@ -135,8 +137,13 @@ async fn reject(server: &mut ServerSocket, request: &serde_json::Value) {
     .await;
 }
 
-fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentOpenSettings {
+pub(super) fn settings(
+    permission_mode: Option<&str>,
+    own_credential: bool,
+) -> HostedAgentOpenSettings {
     HostedAgentOpenSettings {
+        retained_json: false,
+        bounded_raw_output: false,
         bounded_permission_state: false,
         output_json_budget: false,
         shared_runtime_output: false,
@@ -156,7 +163,7 @@ fn settings(permission_mode: Option<&str>, own_credential: bool) -> HostedAgentO
     }
 }
 
-async fn stop(opened: OpenedBridge) {
+pub(super) async fn stop(opened: OpenedBridge) {
     opened.bridge.retire().await;
     opened.reader.abort();
     opened.relay.abort();
@@ -172,7 +179,7 @@ fn ready_declaration_requires_exact_version_agent_and_lanes() {
         "lanes": ["ctl", "conv"],
         "agentId": "agent-1",
     });
-    validate_ready(Message::Text(valid.to_string()), "agent-1", false)
+    validate_ready(Message::Text(valid.to_string()), "agent-1", false, None)
         .expect("exact Ready is accepted");
 
     let invalid = [
@@ -194,9 +201,15 @@ fn ready_declaration_requires_exact_version_agent_and_lanes() {
         }),
     ];
     for declaration in invalid {
-        assert!(validate_ready(Message::Text(declaration.to_string()), "agent-1", false).is_err());
+        assert!(validate_ready(
+            Message::Text(declaration.to_string()),
+            "agent-1",
+            false,
+            None
+        )
+        .is_err());
     }
-    assert!(validate_ready(Message::Binary(vec![1, 2, 3]), "agent-1", false).is_err());
+    assert!(validate_ready(Message::Binary(vec![1, 2, 3]), "agent-1", false, None).is_err());
 }
 
 #[tokio::test]

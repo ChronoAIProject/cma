@@ -242,7 +242,7 @@ pub trait SandboxMaintenanceStore: Send + Sync {
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
 
-    /// Change the durable owner preference through an operator-authorized
+    /// Change the durable automatic-pause exception through an operator-authorized
     /// path. The caller performs capability checks; the store supplies the
     /// same revision compare-and-swap used by owner controls.
     async fn set_sandbox_always_on(
