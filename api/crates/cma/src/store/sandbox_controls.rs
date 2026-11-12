@@ -62,6 +62,22 @@ impl From<super::resource_access::ReadError> for ApplyError {
 
 #[async_trait::async_trait]
 impl SandboxControlStore for MongoSandboxStore {
+    async fn lookup_sandbox_control(
+        &self,
+        candidate: &SandboxControlRecord,
+    ) -> Result<Option<SandboxControlRecord>, SandboxControlError> {
+        self.sandbox_controls
+            .find_one(
+                doc! {"scope": candidate.envelope.scope(), "key_sha256": &candidate.key_sha256},
+            )
+            .await
+            .map_err(|_| SandboxControlError::Unavailable)?
+            .as_ref()
+            .map(records::read)
+            .transpose()?
+            .map(|old| candidate.replay(old))
+            .transpose()
+    }
     async fn reserve_sandbox_control(
         &self,
         record: SandboxControlRecord,

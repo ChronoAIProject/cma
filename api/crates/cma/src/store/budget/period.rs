@@ -1,9 +1,10 @@
 //! The platform period row: one document per period in the reservation
 //! collection, moved in the same transactions as the owner rows (contract §4).
 
+use layer2_core::admission::AdmissionCause;
 use layer2_core::budget::{
-    BudgetError, BudgetPolicy, Closure, ClosureReason, PlatformBudgetPolicy, PlatformPeriodLedger,
-    Refusal,
+    BudgetError, BudgetPolicy, Closure, ClosureReason, OperatorAdmissionState,
+    PlatformBudgetPolicy, PlatformPeriodLedger, Refusal,
 };
 use layer2_core::SubjectId;
 use mongodb::bson::{doc, Bson, Document};
@@ -18,6 +19,7 @@ pub(super) struct PolicySnapshot {
     pub(super) owner: Option<BudgetPolicy>,
     pub(super) platform: Option<PlatformBudgetPolicy>,
     pub(super) revision: u64,
+    pub(super) operator_control: OperatorAdmissionState,
 }
 
 /// Liability-bearing reservations only: the foundation's fence write plus the
@@ -90,6 +92,10 @@ pub(super) fn snapshot(
     settings.model_budget.validate()?;
     let budget = settings.model_budget;
     Ok(PolicySnapshot {
+        operator_control: match crate::store::admission_control::from_document(document) {
+            Ok(control) => control.operator_stop.into(),
+            Err(_) => OperatorAdmissionState::Unreadable,
+        },
         owner: owner.and_then(|owner| budget.for_owner(owner).cloned()),
         // Platform spend metering is enabled only with a configured cloud
         // source (decision 31); without one, owner and turn budgets behave as
@@ -227,28 +233,52 @@ pub(crate) async fn require_open_with(
     settings: &Collection<Document>,
     rows: &Collection<Document>,
     now: u64,
+    cause: AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    let Some(PolicySnapshot {
-        platform: Some(platform),
-        revision,
-        ..
-    }) = read_snapshot(settings, None, session).await?
-    else {
+    let Some(snapshot) = read_snapshot(settings, None, session).await? else {
         return Ok(());
     };
+    require_snapshot_open(rows, &snapshot, now, cause, session).await
+}
+
+/// Reuse the settings document already read by message admission. Operator
+/// control is independent of whether spend metering is configured.
+pub(super) async fn require_snapshot_open(
+    rows: &Collection<Document>,
+    snapshot: &PolicySnapshot,
+    now: u64,
+    cause: AdmissionCause,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    let Some(platform) = &snapshot.platform else {
+        return require_operator_open(snapshot, cause);
+    };
+    let revision = snapshot.revision;
     let (start, _) = platform
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
     let mut ledger = match read_period(rows, start, session).await? {
         Some(ledger) => ledger,
-        None => PlatformPeriodLedger::open(&platform, revision)
+        None => PlatformPeriodLedger::open(platform, revision)
             .map_err(|_| domain(BudgetError::Unavailable))?,
     };
-    match ledger.admit(&platform, revision, 0, now) {
-        Ok(_) => Ok(()),
-        Err(refusal) => Err(refuse(rows, &platform, revision, start, refusal).await),
+    match ledger.admit(platform, revision, 0, now) {
+        Ok(_) => require_operator_open(snapshot, cause),
+        Err(refusal) => Err(refuse(rows, platform, revision, start, refusal).await),
     }
+}
+
+pub(super) fn require_operator_open(
+    snapshot: &PolicySnapshot,
+    cause: AdmissionCause,
+) -> Result<(), ApplyError> {
+    if cause == AdmissionCause::Fresh && !snapshot.operator_control.is_open() {
+        return Err(ApplyError::Domain(
+            layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused,
+        ));
+    }
+    Ok(())
 }
 
 /// Wall-clock seconds for zero-liability checks; an unreadable clock is far
@@ -260,9 +290,17 @@ pub(in crate::store) fn now_seconds() -> u64 {
 pub(in crate::store) async fn require_open(
     store: &MongoSandboxStore,
     now: u64,
+    cause: AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    require_open_with(&store.budget_settings, &store.model_budget, now, session).await
+    require_open_with(
+        &store.budget_settings,
+        &store.model_budget,
+        now,
+        cause,
+        session,
+    )
+    .await
 }
 
 /// Enter a refusal's closures after (or regardless of) the abort, then return
