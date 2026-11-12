@@ -14,7 +14,10 @@ async fn writer_caller_unknown_admission_keeps_original_identity_and_retry_adopt
     let (admin, name, _, current) = legacy("caller_admit_unknown").await;
     gate(&admin, &name, &current, true, true).await;
     let (client, app) = super::super::uncertain::client_for("caller_admit").await;
-    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name)
+        .await
+        .unwrap()
+        .with_segment_adoption_enabled(true);
     let mutation = output(&current, "original admission");
     let before = snapshot_raw(&store).await;
     super::super::uncertain::fail_commit(&admin, &app, true).await;
@@ -108,7 +111,10 @@ async fn writer_caller_unknown_publication_reconciles_exact_adoption_receipt_or_
         let (admin, name, _, current) = legacy("caller_final_unknown").await;
         gate(&admin, &name, &current, true, true).await;
         let (client, fired, original) = publication_fault_client(committed).await;
-        let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+        let store = MongoSandboxStore::open(&client, &name)
+            .await
+            .unwrap()
+            .with_segment_adoption_enabled(true);
         let mutation = output(&current, "original final publication");
         let result = store.commit_agent_conversation(mutation.clone()).await;
         super::super::uncertain::clear(&admin).await;
