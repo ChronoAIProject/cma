@@ -41,8 +41,16 @@ pub(super) async fn read(
                 }
             };
             let api_commands = resource.as_ref().is_some_and(|r| {
-                matches!(r.context.credential_source, layer2_core::resource_access::CredentialSource::Independent { expires_at: Some(expiry) } if expiry > std::time::SystemTime::now())
-                    && r.credential.as_ref().is_some_and(|c| auth.permits_oauth_or_key_commands(c.value()))
+                r.credential.as_ref().is_some_and(|credential| {
+                    use layer2_core::resource_access::CredentialSource;
+                    // 中间件已核验这个凭据；只有普通 Key 可以没有过期时间。
+                    let lifetime = match r.context.credential_source {
+                        CredentialSource::Independent { expires_at: Some(expiry) } => expiry > std::time::SystemTime::now(),
+                        CredentialSource::Independent { expires_at: None } => super::agent_keys::is_agent_key(credential.value()),
+                        _ => false,
+                    };
+                    lifetime && auth.permits_oauth_or_key_commands(credential.value())
+                })
                     && caller.authorization.allows(Capability::UseOwnSandboxes)
             });
             let mut body = serde_json::json!({
