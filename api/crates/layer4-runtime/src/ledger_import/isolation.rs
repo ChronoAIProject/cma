@@ -1,5 +1,7 @@
 //! Prove separation using live directory identities before any output creation.
-use super::{changed, invalid, io::Directory};
+#[cfg(target_os = "linux")]
+use super::invalid;
+use super::{changed, invalid_guard, invalid_io, io::Directory};
 use crate::failure::Result;
 use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::MetadataExt;
@@ -20,7 +22,9 @@ impl Proof {
         Ok(Self { roots })
     }
     pub(super) fn parent(&self, destination: &Path) -> Result<Directory> {
-        let parent_path = destination.parent().ok_or_else(invalid)?;
+        let parent_path = destination
+            .parent()
+            .ok_or_else(|| invalid_guard("isolation.parent.present"))?;
         let parent = Directory::open(parent_path)?;
         let ancestors = lineage(&parent)?;
         for (path, expected) in &self.roots {
@@ -32,7 +36,7 @@ impl Proof {
                 || path.starts_with(destination)
                 || ancestors.contains(expected)
             {
-                return Err(invalid());
+                return Err(invalid_guard("isolation.parent.no_protected_overlap"));
             }
         }
         #[cfg(target_os = "linux")]
@@ -51,31 +55,32 @@ impl Proof {
             if id.0 == output.0 && mount_id(&Directory::open(path)?)? != output_mount {
                 // Different views of one filesystem can hide the physical
                 // ancestry of a bind-mounted subtree. Do not infer separation.
-                return Err(invalid());
+                return Err(invalid_guard("isolation.linux_mounts.same_filesystem_view"));
             }
         }
         let mut bytes = Vec::new();
         std::fs::File::open("/proc/self/mountinfo")
-            .map_err(|_| invalid())?
+            .map_err(|e| invalid_io("isolation.linux_mounts.open_mountinfo", e))?
             .take(1024 * 1024 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| invalid())?;
+            .map_err(|e| invalid_io("isolation.linux_mounts.read_mountinfo", e))?;
         if bytes.len() > 1024 * 1024 {
-            return Err(invalid());
+            return Err(invalid_guard("isolation.linux_mounts.mountinfo_byte_bound"));
         }
-        let text = std::str::from_utf8(&bytes).map_err(|_| invalid())?;
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| invalid_guard("isolation.linux_mounts.mountinfo_utf8"))?;
         self.mount_layout(text, &devices, output.0)
     }
 
     #[cfg(target_os = "linux")]
     fn mount_layout(&self, text: &str, devices: &[u64], output: u64) -> Result<()> {
         if text.lines().count() > 4096 {
-            return Err(invalid());
+            return Err(invalid_guard("isolation.mount_layout.mount_count_bound"));
         }
         for line in text.lines() {
             let fields = line.split(' ').take(6).collect::<Vec<_>>();
             if fields.len() != 6 {
-                return Err(invalid());
+                return Err(invalid_guard("isolation.mount_layout.mount_fields"));
             }
             let (major, minor) = fields[2].split_once(':').ok_or_else(invalid)?;
             let dev = libc::makedev(
@@ -85,13 +90,13 @@ impl Proof {
             if devices.contains(&dev) && fields[3] != "/" {
                 // Conservative refusal of subtree aliases anywhere on a relevant
                 // filesystem. The importer has no mount/exclusion authority.
-                return Err(invalid());
+                return Err(invalid_guard("isolation.mount_layout.no_subtree_alias"));
             }
             if dev == output {
                 let path = mount_path(fields[4])?;
                 // File mounts cannot contain an output directory.
                 if std::fs::symlink_metadata(&path)
-                    .map_err(|_| invalid())?
+                    .map_err(|e| invalid_io("isolation.mount_layout.symlink_metadata", e))?
                     .is_file()
                 {
                     continue;
@@ -102,7 +107,10 @@ impl Proof {
                     .iter()
                     .any(|(_, root)| ancestors.iter().skip(1).any(|id| id == root))
                 {
-                    return Err(invalid()); // A nested mount imports this FS into a protected root.
+                    // A nested mount imports this FS into a protected root.
+                    return Err(invalid_guard(
+                        "isolation.mount_layout.no_nested_protected_mount",
+                    ));
                 }
             }
         }
@@ -110,22 +118,30 @@ impl Proof {
     }
 }
 fn identity(directory: &Directory) -> Result<(u64, u64)> {
-    let metadata = directory.0.metadata().map_err(|_| invalid())?;
+    let metadata = directory
+        .0
+        .metadata()
+        .map_err(|e| invalid_io("isolation.identity.fstat", e))?;
     Ok((metadata.dev(), metadata.ino()))
 }
 fn lineage(directory: &Directory) -> Result<Vec<(u64, u64)>> {
     let mut result = Vec::new();
-    let mut directory = Directory(directory.0.try_clone().map_err(|_| invalid())?);
+    let mut directory = Directory(
+        directory
+            .0
+            .try_clone()
+            .map_err(|e| invalid_io("isolation.lineage.clone", e))?,
+    );
     loop {
         if result.len() == 256 {
-            return Err(invalid());
+            return Err(invalid_guard("isolation.lineage.depth_bound"));
         }
         let current = identity(&directory)?;
         if result.last() == Some(&current) {
             return Ok(result);
         }
         if result.contains(&current) {
-            return Err(invalid());
+            return Err(invalid_guard("isolation.lineage.no_cycle"));
         }
         result.push(current);
         // Walk from the exact retained destination descriptor, never reopen a
@@ -138,7 +154,10 @@ fn lineage(directory: &Directory) -> Result<Vec<(u64, u64)>> {
             )
         };
         if fd < 0 {
-            return Err(invalid());
+            return Err(invalid_io(
+                "isolation.lineage.openat",
+                std::io::Error::last_os_error(),
+            ));
         }
         directory = Directory(unsafe { std::fs::File::from_raw_fd(fd) });
     }
@@ -157,11 +176,14 @@ fn mount_id(directory: &Directory) -> Result<u64> {
         )
     };
     if result != 0 {
-        return Err(invalid());
+        return Err(invalid_io(
+            "isolation.mount_id.statx",
+            std::io::Error::last_os_error(),
+        ));
     }
     let stat = unsafe { stat.assume_init() };
     if stat.stx_mask & libc::STATX_MNT_ID == 0 {
-        return Err(invalid());
+        return Err(invalid_guard("isolation.mount_id.supported"));
     }
     Ok(stat.stx_mnt_id)
 }

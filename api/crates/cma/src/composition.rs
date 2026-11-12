@@ -45,7 +45,10 @@ impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
         let activity = ActivityService::new(stores.activity.clone());
-        let documents = documents::compose(config, &stores)?;
+        let documents::DocumentComposition {
+            service: documents,
+            maintenance: document_blob_maintenance,
+        } = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -460,6 +463,7 @@ impl ControlPlaneComposition {
             )?),
         );
         Ok(Self {
+            document_blob_maintenance,
             worker_observations,
             router,
             auth,
