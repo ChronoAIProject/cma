@@ -281,3 +281,35 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
     .await;
     database.drop().await.unwrap();
 }
+
+#[test]
+fn scan_execution_export_is_once_per_attempt_including_failure() {
+    for complete in [false, true] {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let mut scan = Scan::new(ScanCaller::Other);
+            for _ in 0..100 {
+                scan.document(128);
+            }
+            if complete {
+                scan.complete();
+            }
+            drop(scan);
+        });
+        let text = handle.render();
+        for metric in [
+            "cma_agent_log_scan_longest_section_seconds",
+            "cma_agent_log_scan_driver_poll_seconds",
+        ] {
+            assert!(
+                text.contains(&format!(r#"{metric}_count{{caller="other"}} 1"#)),
+                "{text}"
+            );
+        }
+        assert!(text.contains(r#"cma_agent_log_scan_yields_total{caller="other"} 0"#));
+        for private in ["agent_id", "sandbox_id", "request_id", "user_id"] {
+            assert!(!text.contains(private));
+        }
+    }
+}

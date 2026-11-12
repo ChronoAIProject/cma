@@ -1,4 +1,5 @@
 //! Complete-scan accounting on the shared periodic read-telemetry path.
+use super::execution_sections::{Clock, ExecutionSections, MonotonicClock};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, LazyLock,
@@ -36,19 +37,25 @@ fn counters() -> Arc<Counters> {
 
 /// One complete validation attempt. No atomics or log events per document;
 /// Drop retains consumed work and elapsed wall time on failure/cancellation.
-pub(super) struct Scan {
+pub(super) struct Scan<C: Clock = MonotonicClock> {
     counters: Arc<Counters>,
     caller: ScanCaller,
     started: Instant,
     documents: u64,
     bytes: u64,
     success: bool,
+    execution: ExecutionSections<C>,
 }
 impl Scan {
     pub(super) fn new(caller: ScanCaller) -> Self {
         Self::with_counters(counters(), caller)
     }
     fn with_counters(counters: Arc<Counters>, caller: ScanCaller) -> Self {
+        Self::from_parts(counters, caller, MonotonicClock)
+    }
+}
+impl<C: Clock> Scan<C> {
+    fn from_parts(counters: Arc<Counters>, caller: ScanCaller, clock: C) -> Self {
         Self {
             counters,
             caller,
@@ -56,7 +63,18 @@ impl Scan {
             documents: 0,
             bytes: 0,
             success: false,
+            execution: ExecutionSections::new(clock),
         }
+    }
+    pub(super) fn observe<'a, F>(
+        &'a mut self,
+        future: F,
+        record_poll: bool,
+    ) -> impl std::future::Future<Output = F::Output> + Send + 'a
+    where
+        F: std::future::Future + Send + 'a,
+    {
+        self.execution.observe(future, record_poll)
     }
     pub(super) fn document(&mut self, encoded_bytes: usize) {
         self.documents = self.documents.saturating_add(1);
@@ -66,8 +84,20 @@ impl Scan {
         self.success = true;
     }
 }
-impl Drop for Scan {
+impl<C: Clock> Drop for Scan<C> {
     fn drop(&mut self) {
+        let execution = self.execution.finish();
+        metrics::histogram!("cma_agent_log_scan_longest_section_seconds", "caller" => self.caller.name())
+            .record(execution.longest_section.as_secs_f64());
+        metrics::histogram!("cma_agent_log_scan_driver_poll_seconds", "caller" => self.caller.name())
+            .record(execution.longest_poll.as_secs_f64());
+        metrics::counter!("cma_agent_log_scan_yields_total", "caller" => self.caller.name())
+            .increment(0);
+        tracing::debug!(parent: None, caller = self.caller.name(), documents = self.documents, bytes = self.bytes,
+            outcome = if self.success { "success" } else { "failed" }, sections = execution.sections,
+            longest_section_seconds = execution.longest_section.as_secs_f64(),
+            longest_driver_poll_seconds = execution.longest_poll.as_secs_f64(),
+            "Agent log scan execution sections");
         let totals = &self.counters.0[self.caller.index()][usize::from(self.success)];
         add(&totals.scans, 1);
         add(&totals.documents, self.documents);
