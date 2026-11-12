@@ -33,12 +33,17 @@ mod usage;
 #[path = "support/wire.rs"]
 mod wire;
 
+#[path = "public_contract/capacity_recovery.rs"]
+mod capacity_recovery;
+
 use cma_sdk::{Error, Result};
 use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.ends_with("/browser/control") && op.contains("/api/v1/agents/") {
+    if op.contains("/capacity-recovery") {
+        capacity_recovery::dispatch(c).await
+    } else if op.ends_with("/browser/control") && op.contains("/api/v1/agents/") {
         browser_control::dispatch(c).await
     } else if op.ends_with("/browser") && op.contains("/api/v1/agents/") {
         agent_browser::dispatch(c).await
@@ -75,6 +80,7 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         || op.contains("/profile-authoring/")
         || [
             "GET /api/v1/conformance",
+            "POST /api/v1/telemetry/browser",
             "GET /api/v1/defaults",
             "GET /openapi.json",
             "POST /api/v1/mcp",
@@ -258,6 +264,13 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                 case.id
             );
         } else if case.response.status >= 400
+            && !(case.response.status == 409
+                && matches!(
+                    case.operation.as_str(),
+                    "POST /api/v1/agents/{id}/capacity-recovery/admit"
+                        | "POST /api/v1/agents/{id}/capacity-recovery/resume"
+                )
+                && case.response.body == serde_json::json!({"outcome": "known_abort"}))
             && !(case.operation == "GET /auth/session" && case.response.status == 401)
         {
             check_error(case, result.expect_err(&case.id));

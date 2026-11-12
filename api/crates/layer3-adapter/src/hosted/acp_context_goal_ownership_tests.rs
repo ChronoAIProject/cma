@@ -1,8 +1,8 @@
 use super::super::tests::stop;
 use super::budget_tests::{open_with_json, retained};
 use super::*;
-use crate::hosted::retained_json::JsonPools;
-use futures_util::StreamExt as _;
+use crate::hosted::retained_json::{JsonFrame, JsonPools};
+use futures_util::{FutureExt as _, StreamExt as _};
 use std::time::Duration;
 
 const CAPACITY: usize = 1024 * 1024;
@@ -31,6 +31,59 @@ async fn configure(bridge: &Bridge, startup: bool) -> JsonPools {
 
 fn payload(goal: serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({"method":"session/update","params":{"sessionId":"conversation-1","update":{"sessionUpdate":"session_info_update","_meta":{"goal":goal}}}})).unwrap()
+}
+
+#[tokio::test]
+async fn unrelated_context_updates_do_not_wait_for_goal_state_with_either_policy() {
+    for admitted in [false, true] {
+        let (opened, _server, _received) = open_with_json(true, true, admitted).await;
+        let pools = JsonPools::new(CAPACITY, CAPACITY);
+        let held = opened.bridge.context_goal.lock().await;
+        for value in [
+            serde_json::json!({"params":{"sessionId":"conversation-1","update":{"sessionUpdate":"usage_update","_meta":{"goal":null}}}}),
+            serde_json::Value::Null,
+            serde_json::json!({"params":{"sessionId":false,"update":{"sessionUpdate":"session_info_update","_meta":{"goal":null}}}}),
+            serde_json::json!({"params":{"sessionId":"conversation-1"}}),
+            serde_json::json!({"params":{"sessionId":"conversation-1","update":{"sessionUpdate":"session_info_update","_meta":{}}}}),
+        ] {
+            let frame = if admitted {
+                pools.decode(&serde_json::to_vec(&value).unwrap()).unwrap()
+            } else {
+                JsonFrame::legacy(value)
+            };
+            assert_eq!(
+                opened
+                    .bridge
+                    .observe_context_frame_goal(&frame)
+                    .now_or_never(),
+                Some(()),
+                "unrelated or malformed updates must finish without locking goal state"
+            );
+        }
+        let frame = if admitted {
+            pools.decode(&payload(serde_json::Value::Null)).unwrap()
+        } else {
+            JsonFrame::legacy(serde_json::from_slice(&payload(serde_json::Value::Null)).unwrap())
+        };
+        assert!(opened
+            .bridge
+            .observe_context_frame_goal(&frame)
+            .now_or_never()
+            .is_none());
+        drop(held);
+        opened.bridge.observe_context_frame_goal(&frame).await;
+        assert!(opened
+            .bridge
+            .context_goal
+            .lock()
+            .await
+            .as_ref()
+            .unwrap()
+            .is_safe_for("conversation-1"));
+        drop(frame);
+        stop_after_final_owner(opened).await;
+        assert_eq!(pools.available(), (CAPACITY, CAPACITY));
+    }
 }
 
 #[tokio::test]

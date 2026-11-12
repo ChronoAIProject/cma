@@ -59,6 +59,14 @@ where
         .transpose()
         .map_err(TransactionLogError::Domain)?;
     if let (Some(row), Some(agent)) = (row.as_ref(), agent.as_ref()) {
+        if crate::store::agent_log_segments::read_format(row)?.is_some() {
+            // Legacy callers must migrate to the format-aware reader. Never
+            // audit or quarantine a valid segmented prefix as an oversized v1 log.
+            return Err(SandboxStoreError::Unavailable(
+                "segmented history requires a bounded reader".into(),
+            )
+            .into());
+        }
         let proof = proof::validate_summary(store, agent, row, caller, session, snapshot).await;
         if let Err(error) = proof {
             if matches!(

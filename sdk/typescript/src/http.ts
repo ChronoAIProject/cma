@@ -206,7 +206,7 @@ export function throwIfSignalAborted(signal: AbortSignal): void {
   }
 }
 
-async function send(
+export async function send(
   config: ResolvedConfig,
   path: string,
   options: RequestOptions,
@@ -243,7 +243,7 @@ async function send(
   return { response, metadata };
 }
 
-async function requireSuccess(
+export async function requireSuccess(
   response: Response,
   expected: number | readonly number[] | undefined,
   signal?: AbortSignal,

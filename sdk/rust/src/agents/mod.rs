@@ -12,7 +12,9 @@ pub use access_requests::*;
 mod artifacts;
 mod attachments;
 pub use attachments::*;
+mod capacity_recovery;
 mod channel_usage;
+pub use capacity_recovery::*;
 mod deliverables;
 mod desktop;
 mod events;
@@ -32,6 +34,7 @@ pub use feedback_reasons::*;
 pub use message_feedback::*;
 mod shared;
 mod skills;
+mod transcript;
 mod types;
 pub use artifacts::*;
 pub use channel_usage::*;
@@ -44,6 +47,7 @@ pub use provider_associations::*;
 pub use settings::*;
 pub use shared::*;
 pub use skills::*;
+pub use transcript::*;
 pub use types::*;
 
 /// Owner Agent list filters and opaque pagination.
@@ -290,9 +294,7 @@ impl Agents<'_> {
     }
     /// Read the durable transcript through its returned sequence.
     pub async fn transcript(&self, id: &str) -> Result<AgentTranscript> {
-        let value: AgentTranscript = self.client.get(&["agents", id, "transcript"], &[]).await?;
-        identity(&value.agent_id, id)?;
-        Ok(value)
+        self.complete_transcript(id).await
     }
     #[doc = "Read durable events including bounded reported tool output when supported."]
     pub async fn events_with_output(

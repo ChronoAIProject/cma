@@ -5,6 +5,8 @@ use mongodb::bson::{DateTime, Document};
 mod collection;
 mod failpoints;
 mod key_order;
+mod segments;
+mod segments_runtime;
 
 fn identity() -> ledger::Identity {
     ledger::Identity::new(

@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  # Private pod scrape listener; never routed by the public Service/Gateway.
+  CHRONO_METRICS_BIND: "0.0.0.0:9091"
   CHRONO_INGRESS_COORDINATOR_ENABLED: "false"
   # Enable only after this compatible API image serves every replica.
   CHRONO_SILENT_SIGN_IN_ENABLED: "false"
@@ -93,6 +95,7 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Expand-only skill upgrade readers; enable new writers only after migration qualification.
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
@@ -105,9 +108,18 @@ data:
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
-  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
+  # The release controller opts in with the planned diagnostic deployment.
+  CHRONO_MONGO_DIAGNOSTICS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
   CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED: "false"
+  CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED: "false"
+  # New recovery admission also requires both durable gates; accepted work survives closure.
+  CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED: "false"
+  # Avoid any adoption discovery on the default publication path.
+  CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED: "false"
+  CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
+  CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
   # deployed and its latency and authorization evidence is reviewed.
   CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED: "false"
@@ -212,6 +224,10 @@ data:
   CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
   CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
+  # Independent allowance for recovery and controls of admitted work.
+  CHRONO_SERVER_RATE_CONTROL_PER_MINUTE: "120"
+  # Activate only after the separate recovery/control policy review.
+  CHRONO_SERVER_RATE_CONTROL_ENABLED: "false"
   # Separate policy activation after exact-route classification review.
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # Per-process public stream lifetimes; zero keeps admission disabled.
@@ -265,6 +281,8 @@ data:
   CHRONO_DOCUMENT_QUOTAS_ENABLED: "false"
   # Off until capacity-owner headroom and all admission writers are verified.
   CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
+  # Separately activate only after dependency qualification; preserve the online policy while off.
+  CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED: "false"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.

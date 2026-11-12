@@ -300,20 +300,7 @@ impl MongoAgentLifecycleStore {
         let now = DateTime::from_system_time(SystemTime::now());
         let mut cursor = self
             .operations
-            .find(doc! {
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "$or": [
-                    { "status": "queued", "$or": [
-                        { "retry_at": Bson::Null },
-                        { "retry_at": { "$lte": now } },
-                    ] },
-                    { "status": { "$in": ["running", "ready"] }, "$or": [
-                        { "lease_expires_at": { "$exists": false } },
-                        { "lease_expires_at": Bson::Null },
-                        { "lease_expires_at": { "$lte": now } },
-                    ] },
-                ],
-            })
+            .find(pending_filter(now))
             .sort(doc! { "created_at": 1, "_id": 1 })
             .limit(DISCOVERY_BATCH as i64)
             .await
@@ -432,4 +419,22 @@ fn is_duplicate_key(error: &Error) -> bool {
         error.kind.as_ref(),
         ErrorKind::Write(WriteFailure::WriteError(write)) if write.code == 11_000
     )
+}
+
+/// Shared discovery boundary; future retries and live leases are not due work.
+pub(super) fn pending_filter(now: DateTime) -> mongodb::bson::Document {
+    doc! {
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "$or": [
+            { "status": "queued", "$or": [
+                { "retry_at": Bson::Null },
+                { "retry_at": { "$lte": now } },
+            ] },
+            { "status": { "$in": ["running", "ready"] }, "$or": [
+                { "lease_expires_at": { "$exists": false } },
+                { "lease_expires_at": Bson::Null },
+                { "lease_expires_at": { "$lte": now } },
+            ] },
+        ],
+    }
 }

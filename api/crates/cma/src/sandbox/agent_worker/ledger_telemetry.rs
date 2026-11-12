@@ -13,6 +13,7 @@ fn record(counter: &AtomicU64, failure: &WorkerFailure) {
     if !failure.is_ledger_hold() {
         return;
     }
+    metrics::counter!("cma_runtime_ledger_holds_total").increment(1);
     let previous = counter
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
             Some(count.saturating_add(1))

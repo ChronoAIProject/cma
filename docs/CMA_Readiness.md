@@ -37,6 +37,11 @@ success from reporting readiness indefinitely. A healthy cached result can
 remain visible while the next check is in progress, until that check fails or
 the freshness limit is reached.
 
+Readiness-check result, completion timestamp and duration are also exported on
+the private metrics listener. Query result and freshness together; these metrics
+do not establish worker progress. See [CMA observability](CMA_Observability.md)
+for the worker signals and collection/alert integration contract.
+
 ## Background Mongo budget
 
 Agent connection reconciliation, Sandbox maintenance/reconciliation and online

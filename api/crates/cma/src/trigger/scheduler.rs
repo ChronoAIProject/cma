@@ -1,5 +1,6 @@
 //! Independent, bounded Launch scheduling: a slow dependency must not delay other visitors.
 
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -32,11 +33,17 @@ trait LaunchScheduleWork: Send + Sync {
 #[async_trait::async_trait]
 impl LaunchScheduleWork for LaunchWorker {
     async fn due(&self, now: SystemTime) -> Result<Vec<LaunchId>, LaunchWorkerError> {
-        self.due_work(now, WORK_BATCH_SIZE).await
+        DiagnosticContext::background("launch_scheduler")
+            .with_phase("discovery")
+            .scope(self.due_work(now, WORK_BATCH_SIZE))
+            .await
     }
 
     async fn run_one(&self, id: &LaunchId, now: SystemTime) -> Result<bool, LaunchWorkerError> {
-        self.run_scheduled(id, now).await
+        DiagnosticContext::background("launch_scheduler")
+            .with_phase("execution")
+            .scope(self.run_scheduled(id, now))
+            .await
     }
 }
 
@@ -52,10 +59,13 @@ impl LaunchScheduler {
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
+            let telemetry = crate::telemetry::worker::Worker::start("launches");
             let mut work = ScheduledWork::new(self.worker, self.concurrency);
             let mut ticker = tokio::time::interval(self.sweep_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
+                telemetry.heartbeat();
+                telemetry.queue(work.queued.len(), work.in_flight.len());
                 if *shutdown.borrow() {
                     break;
                 }
@@ -162,6 +172,21 @@ impl ScheduledWork {
     }
 
     fn completed(&mut self, result: Result<(Id, TaskResult), JoinError>) {
+        let id = match &result {
+            Ok((id, _)) => *id,
+            Err(error) => error.id(),
+        };
+        let phase = if matches!(self.kinds.get(&id), Some(TaskKind::Due)) {
+            "discovery"
+        } else {
+            "execution"
+        };
+        let outcome = match &result {
+            Ok((_, Ok(_))) => "ok",
+            Ok((_, Err(_))) => "error",
+            Err(_) => "terminated",
+        };
+        crate::telemetry::worker::completed("launches", phase, outcome);
         let task_id = match &result {
             Ok((id, _)) => *id,
             Err(error) => error.id(),
