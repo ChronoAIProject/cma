@@ -27,8 +27,31 @@ escapes, numbers, invalid containers, missing IDs and maximal 4 MiB rejected
 fixtures. Allocation checks include the fixed serializer failure cost and verify
 zero final tracked bytes. Valid boundary IDs copy only their selected payload.
 Retained-flow contracts cover permission publication/refusal, subscription reply
-identity, disabled behavior and absence of fabricated ACKs. Local gate results
-and allocation values are recorded after qualification.
+identity, disabled behavior and absence of fabricated ACKs. Local qualification
+passed 683 focused tests, workspace formatting, strict all-target/all-feature
+CMA/core/adapter clippy, source-size, configuration/docs, whitespace and
+secret-history checks. All seven changed Rust files are below 500 lines.
+
+Qualified source and API tree, with Rust 1.96.1 on aarch64-apple-darwin:
+
+```text
+revision 360065003263b606e0d05b93d9530a16ca719e34
+tree 2a4877c187fbf2e95a7639967fbdf7d0a01460ce
+```
+
+Each rejected fixture encodes to 4,194,304 bytes. Requested allocation peaks:
+
+| ID fixture | Legacy peak | Enabled peak | Final bytes, either policy |
+| --- | ---: | ---: | ---: |
+| Text | 16,776,655 | 40 | 0 |
+| Escaped text | 6,990,484 | 40 | 0 |
+| Invalid container | 4,194,233 | 0 | 0 |
+
+The 40-byte peak is the serializer's fixed write-failure allocation. An accepted
+256-byte encoded boundary string copies exactly its 254-byte payload and returns
+to zero on drop. Measurements cover correlation selection/validation, excluding
+the admitted JSON tree, general typed request decoding, allocator/OS overhead
+and process RSS.
 
 This change covers selected inbound rejection work. General typed permission
 decoding, accepted response construction, codec/write buffers, restored-locator
