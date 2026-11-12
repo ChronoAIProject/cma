@@ -1,4 +1,5 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
+mod fence;
 pub(crate) mod receipts;
 use super::{
     context,
