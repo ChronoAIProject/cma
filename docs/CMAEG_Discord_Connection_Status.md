@@ -52,6 +52,13 @@ errors never replace the primary reason. `retry_at` is null for terminal failure
 terminal authentication/configuration failures retain the existing requirement
 for a source revision change before reconnecting.
 
+`session_limit_invalid` is a transient discovery refusal, not terminal source
+configuration. The same revision retries after 5–7.5, 10–15, 20–30, then 40–60
+seconds, with fresh jitter on each attempt. An upstream REST cooldown can extend
+those delays and is never shortened. Shutdown interrupts the wait. Discovery
+401/403 and a mismatched bot identity remain terminal for that revision; lease
+contention is a separate retryable authority refusal.
+
 Failure codes are bounded to:
 
 - Authority/resolution: `unavailable`, `authority_refused`, `invalid_configuration`,
@@ -82,10 +89,40 @@ transitions can bypass that throttle. All status and cleanup/inbox-scan diagnost
 share a limit of 64 lines per minute per runtime registry. Logs may be suppressed
 by that limit; the current status snapshot continues to update.
 
+`native Discord session limit observed` uses the same 64-line budget and has no
+parent span. It logs only `stage=discovery`, a fixed `reason`, boolean `refused`,
+and unsigned 64-bit `shards`, `total`, `remaining`, `reset_after`,
+`max_concurrency`. Each matching predicate gets its own event; `refused` applies
+to that predicate. Several predicates can appear for one response:
+
+| Reason | Refused | Meaning |
+| --- | --- | --- |
+| `total_zero` | true | No session starts allowed by the observation |
+| `remaining_gt_total` | true | Inconsistent available budget |
+| `max_concurrency_zero` | true | No Identify allowed in the five-second bucket |
+| `reset_after_zero` | false | Zero-duration boundary; retain consumed local reservations |
+| `reset_after_gt_7d` | false | Long duration; use saturating deadline arithmetic |
+
+[Discord's session-start contract](https://docs.discord.com/developers/events/gateway#session-start-limit-object)
+defines `reset_after` in milliseconds, without a positive minimum or seven-day
+maximum. The previous reset checks were local restrictions, not documented
+Discord bounds. Zero is accepted without assuming an unused or unlimited bucket:
+repeated zero observations cannot replenish locally consumed Identify reservations.
+A positive observation establishes a future reset without refunding reservations;
+that boundary is persisted even while budget is exhausted. Long durations never
+wrap into an expired deadline. The durable single-bot lease, remaining budget and
+five-second shard-zero bucket still fence every Identify. No source hash is added.
+
+Use these observations to distinguish upstream quota shape from a credential or
+intents refusal. Do not infer a bot count from log rows or treat this recovery
+change as production delivery acceptance; verify committed READY and natural
+MESSAGE_CREATE/dispatch evidence after an authorized rollout.
+
 ## Verification and deployment
 
 This change introduces no flags, migrations, persisted fields or new credential
-access. It preserves existing retry, Identify, lease, admission and dispatch rules.
+access. Session-limit recovery changes discovery validation and retry; Identify,
+lease ownership, admission and dispatch remain fenced by their existing authority.
 Use a verified CI artifact in an owner-approved CMAEG-only rollout; do not build
 production images locally. Deployment is a separate owner/lead decision.
 
