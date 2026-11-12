@@ -118,23 +118,29 @@ pub(super) fn observe(options: &mut ClientOptions, circuit: Arc<AtomicU64>) {
         slow_checkouts: Mutex::new((0, None)),
     };
     use super::super::mongo_latency::connection_key;
-    options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
-        CmapEvent::ConnectionCheckedOut(e) => pressure.checkout(
-            connection_key(&e.address, e.connection_id),
-            e.duration,
-            false,
-            Instant::now(),
-        ),
-        CmapEvent::ConnectionCheckoutFailed(e) => {
-            pressure.checkout(0, e.duration, true, Instant::now())
+    let diagnostics = super::super::mongo_diagnostics::install(options, "reporting");
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
         }
-        CmapEvent::ConnectionCheckedIn(e) => {
-            pressure.returned(connection_key(&e.address, e.connection_id), Instant::now())
+        match event {
+            CmapEvent::ConnectionCheckedOut(e) => pressure.checkout(
+                connection_key(&e.address, e.connection_id),
+                e.duration,
+                false,
+                Instant::now(),
+            ),
+            CmapEvent::ConnectionCheckoutFailed(e) => {
+                pressure.checkout(0, e.duration, true, Instant::now())
+            }
+            CmapEvent::ConnectionCheckedIn(e) => {
+                pressure.returned(connection_key(&e.address, e.connection_id), Instant::now())
+            }
+            CmapEvent::ConnectionClosed(e) => {
+                pressure.returned(connection_key(&e.address, e.connection_id), Instant::now())
+            }
+            _ => {}
         }
-        CmapEvent::ConnectionClosed(e) => {
-            pressure.returned(connection_key(&e.address, e.connection_id), Instant::now())
-        }
-        _ => {}
     }));
 }
 pub(super) fn check(circuit: &AtomicU64, at: u64) -> Result<()> {
