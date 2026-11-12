@@ -39,6 +39,7 @@ pub(crate) struct FeatureFlags {
     pub document_quotas: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
+    pub retry_single_marker_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
 }
@@ -83,6 +84,7 @@ impl FeatureFlags {
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
+            retry_single_marker_enabled: flag(lookup, "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED")?,
             retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
             event_driven_reconciliation: flag(
                 lookup,
@@ -183,3 +185,6 @@ mod raw_output_tests;
 
 #[cfg(test)]
 mod retained_json_tests;
+
+#[cfg(test)]
+mod retry_single_marker_tests;

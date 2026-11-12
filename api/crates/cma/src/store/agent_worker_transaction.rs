@@ -2,7 +2,7 @@
 
 use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
-    agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log,
+    agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log_with_retry,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
     SandboxStoreError,
 };
@@ -78,7 +78,7 @@ pub(super) async fn commit_agent_work(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(store, mutation, None)
+    publication_transaction::commit(store, mutation, None, None)
         .await
         .map(|_| ())
 }
@@ -88,21 +88,32 @@ pub(super) async fn commit_prepared_agent_open_ready(
     mutation: AgentWorkMutation,
     observed: layer2_core::sandbox::store::PreparedAgentOpenContext,
 ) -> Result<bool, SandboxStoreError> {
-    publication_transaction::commit(store, mutation, Some(&observed)).await
+    publication_transaction::commit(store, mutation, Some(&observed), None).await
 }
 
+#[cfg(test)]
 async fn apply_publication(
     store: &MongoSandboxStore,
     mutation: &AgentWorkMutation,
     scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
-    apply_publication_observed(store, mutation, None, scope).await
+    apply_publication_observed(store, mutation, None, None, scope).await
+}
+
+pub(super) async fn commit_repeated_failure(
+    store: &MongoSandboxStore,
+    retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
+) -> Result<(), SandboxStoreError> {
+    publication_transaction::commit(store, retry.mutation.clone(), None, Some(&retry.marker))
+        .await
+        .map(|_| ())
 }
 
 async fn apply_publication_observed(
     store: &MongoSandboxStore,
     mutation: &AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
+    repeated_marker: Option<&AgentLogEntry>,
     mut scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
     let current_row = scope
@@ -162,7 +173,7 @@ async fn apply_publication_observed(
         .as_ref()
         .and_then(|r| r.latest_before.as_ref())
         .or_else(|| history.as_ref().and_then(|h| h.last.as_ref()));
-    validate_agent_cleanup_capacity_log(&current, mutation, last_log)
+    validate_agent_cleanup_capacity_log_with_retry(&current, mutation, last_log, repeated_marker)
         .map_err(ApplyError::Domain)?;
     if current.work.step == AgentWorkStep::WaitForWorkspace
         && mutation.agent.work.step == AgentWorkStep::AddWorktree

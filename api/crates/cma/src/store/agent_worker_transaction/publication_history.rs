@@ -12,6 +12,11 @@ pub(super) struct History {
 }
 
 impl MongoSandboxStore {
+    pub(crate) fn with_retry_single_marker(mut self, enabled: bool) -> Self {
+        self.retry_single_marker_enabled = enabled;
+        self
+    }
+
     pub(crate) fn with_bounded_close_retries(mut self, enabled: bool) -> Self {
         self.bounded_close_retries = enabled;
         self
@@ -26,7 +31,8 @@ pub(super) async fn read(
     ordinary: bool,
     session: &mut mongodb::ClientSession,
 ) -> Result<History, ApplyError> {
-    let needs_marker = agent_cleanup_capacity_retry(current, mutation);
+    let needs_marker =
+        agent_cleanup_capacity_retry(current, mutation) || mutation.agent_logs.is_empty();
     let caller = if needs_marker
         || crate::store::agent_worker_capacity::capacity_failure_evidence_matches(current, mutation)
     {
@@ -46,6 +52,7 @@ pub(super) async fn read(
             if ordinary
                 && store.bounded_close_retries
                 && store.bounded_log_enabled(&current.id)
+                && !store.retry_single_marker_enabled
                 && eligible(current, mutation)
             {
                 if let Some(summary) =
