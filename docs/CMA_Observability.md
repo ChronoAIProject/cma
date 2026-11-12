@@ -243,9 +243,9 @@ Before claiming #1470 complete:
    synthetic deadlines must not become arbitrary-user inference deadlines.
 5. Complete the remaining issue families and #1486 reconciliation. This change
    does not implement durable admission/terminal SLIs, native-to-public lag,
-   cancellation-safe Mongo pending/oldest-age observations, provider permits, the
-   claimed/available capacity beyond the provider ready-replica contract, or
-   inbound EG oldest-item age. Browser diagnostics and EG worker queue/delivery
+   cancellation-safe Mongo pending/oldest-age observations or
+   claimed/available capacity beyond the provider ready-replica contract.
+   Provider permits, browser diagnostics and EG queue/delivery
    observations are described below with their actual boundaries. Remaining
    gaps are explicit, not zero-valued successes.
 
@@ -319,20 +319,38 @@ The existing public `/api` Gateway prefix carries this diagnostic endpoint;
 `/metrics` remains private.
 
 EG adds `cmaeg_delivery_queue_depth{stage}`, capacity and sample timestamps for
-its `inbound` and aggregate `worker` queues. Inbound depth is a one-second
-capacity snapshot (queued/reserved slots); worker depth is guard-based and
-excludes blocked producers and active sends. Worker residence starts only after
-capacity is reserved. `cmaeg_delivery_queue_oldest_seconds{stage="worker"}`
-continues aging at one-second intervals while workers are blocked;
-`cmaeg_delivery_queue_residence_seconds` samples successful dequeue.
-`cmaeg_delivery_queue_waiters`, `cmaeg_delivery_queue_wait_seconds` and
-`cmaeg_delivery_queue_submissions_total{stage,outcome}` distinguish accepted,
-full, closed and cancelled producers. Cancelled sends and discarded/panicked
-receivers release their gauges. Gate snapshots on fresh
-`cmaeg_delivery_queue_sample_timestamp_seconds`; inbound oldest age is not
-available because the existing unwrapped inbound command contract has no
-enqueue timestamp. These local queues do not represent all durable/routed
-turns or the provider-permit backlog.
+its `inbound` and aggregate `worker` queues. Production uses guarded entries at
+both stages: residence starts after capacity reservation and ends at dequeue or
+receiver loss/panic. Depth excludes blocked producers and active sends.
+`cmaeg_delivery_queue_oldest_seconds{stage}` continues aging at one-second
+intervals while consumption is blocked; `cmaeg_delivery_queue_residence_seconds`
+samples successful dequeue. Waiters, `wait_seconds` and
+`submissions_total{stage,outcome}` distinguish accepted, full, closed and cancelled
+producers without double counting. Gate snapshots on fresh
+`cmaeg_delivery_queue_sample_timestamp_seconds`. The legacy raw-channel scheduler
+constructor retains sampled depth/capacity only, without oldest/residence.
+These local queues do not represent all durable/routed turns.
+
+Provider concurrency observations use the configured allowlisted `provider` slug,
+with no request identity. `cmaeg_provider_permit_capacity` is the smaller of the
+provider limit and deployment limit **for each provider**, not a shared global
+pool. `cmaeg_provider_permits_in_use` and `cmaeg_provider_permits_available`
+track held permits and configured capacity minus held permits.
+`cmaeg_provider_permit_waiters` counts acquisition attempts still pending;
+`cmaeg_provider_permit_oldest_wait_timestamp_seconds` is zero when empty.
+For nonempty waiters, query `time() - oldest_wait_timestamp_seconds` for current
+age, allowing for wall-clock skew. `cmaeg_provider_permit_acquisitions_total`
+and `cmaeg_provider_permit_wait_seconds` classify acquired, full, timeout, closed
+and cancelled attempts. `cmaeg_provider_permit_held_seconds` measures the original
+permit lifetime, including streaming. Cancellation, request errors, disconnects
+and task unwinding release ownership. Existing 50ms waits and immediate admission
+remain unchanged; a long held permit alone is not evidence of a dead worker.
+
+Mongo checkout callbacks expose no per-acquisition identity, and dropping an
+acquisition future can omit the ending event. Starts minus ends would leak
+phantom pending work, so exact pending/oldest metrics remain unavailable until
+there is a supported cancellation-safe driver boundary. Do not substitute
+application operations in flight for driver checkout waiters.
 
 `cmaeg_delivery_outcomes_total{platform,step,destination,outcome}` reports
 bounded logical delivery-step outcomes for native/relay transports, actual
@@ -350,3 +368,8 @@ in [chrono-probe #18](https://github.com/ChronoAIProject/chrono-probe/issues/18)
 It reuses the existing collector and probe checks, and coordinates versioned
 rules/dashboards in the platform repository. Creating it neither closes #1470
 nor implements #1486's complete durable request/terminal accounting.
+
+Worker supervision, progress-aware stall detection, safe recovery and readiness
+are tracked separately in [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740),
+a child of #1470. This metrics PR does not change worker restart or readiness
+policy; long inference and user waits must not become arbitrary failure deadlines.
