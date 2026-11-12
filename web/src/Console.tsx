@@ -58,6 +58,7 @@ function ConsoleContent({
   user,
   route,
   onSignOut,
+  onDeleteAccount,
   onNavigate,
   onCreate,
   hierarchyRevision = 0,
@@ -463,6 +464,7 @@ function ConsoleContent({
                 user={user}
                 collapsed={collapsed}
                 onSignOut={onSignOut}
+                onDeleteAccount={onDeleteAccount}
                 onNavigate={(next) => {
                   if (next.kind !== 'usage') onSidebarNavigate();
                   onNavigate(next);

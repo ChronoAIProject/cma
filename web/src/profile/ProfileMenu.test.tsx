@@ -47,6 +47,34 @@ describe('account menu', () => {
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
     expect(screen.getByRole('menuitem', { name: 'Operations' })).toBeInTheDocument();
   });
+
+  it('hides the Delete account row without the entitlement', async () => {
+    const actor = userEvent.setup();
+    render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    expect(screen.queryByRole('menuitem', { name: 'Delete account' })).not.toBeInTheDocument();
+  });
+
+  it('shows Delete account immediately before Sign out with the entitlement', async () => {
+    const actor = userEvent.setup();
+    const onDeleteAccount = vi.fn();
+    render(
+      <ProfileMenu
+        user={{ ...user, capabilities: ['delete_own_account'] }}
+        onSignOut={vi.fn()}
+        onDeleteAccount={onDeleteAccount}
+      />,
+    );
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    const menu = screen.getByRole('menu');
+    const deleteRow = within(menu).getByRole('menuitem', { name: 'Delete account' });
+    const signOut = within(menu).getByRole('menuitem', { name: 'Sign out' });
+    expect(
+      deleteRow.compareDocumentPosition(signOut) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    await actor.click(deleteRow);
+    expect(onDeleteAccount).toHaveBeenCalledOnce();
+  });
 });
 
 it('derives stable initials from the display name', () => {
