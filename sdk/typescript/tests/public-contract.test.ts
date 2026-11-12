@@ -1,3 +1,4 @@
+import { accountDeletionDispatch } from './public-contract/account-deletion.js';
 import { capacityRecoveryDispatch } from './public-contract/capacity-recovery.js';
 import { documentDispatch } from './public-contract/documents.js';
 import { metricsDispatch } from './public-contract/metrics.js';
@@ -40,6 +41,7 @@ import { verifyDesktopUpgrade } from './public-contract/desktop.js';
 
 const corpus = loadCorpus();
 const dispatch = {
+  ...accountDeletionDispatch,
   ...capacityRecoveryDispatch,
   ...deliverableDispatch(corpus),
   ...usageDispatch,

@@ -144,6 +144,19 @@ const protectedQueries = new Map([
 export function expectation(
   fixture: ContractCase,
 ): 'wire' | 'preflight-validation' | 'serializer-protection' | 'browser-only' | 'raw-wire-only' {
+  if (
+    [
+      'account-deletion-acknowledgement-required',
+      'account-deletion-invalid-json',
+      'account-deletion-unknown-field',
+    ].includes(fixture.id)
+  ) {
+    assert.equal(fixture.operation, 'POST /api/v1/account/deletion');
+    assert.notDeepStrictEqual(fixture.request.body, { acknowledge: 'irreversible' });
+    assert(fixture.response.status >= 400);
+    // The typed command supplies the sole supported acknowledgement and has no body argument.
+    return 'raw-wire-only';
+  }
   if (fixture.id === 'desktop-capability-owner-400') {
     assert.equal(fixture.operation, 'GET /api/v1/desktop-capability');
     assert.equal(problemBody(fixture).code, 'invalid_instance_query');
