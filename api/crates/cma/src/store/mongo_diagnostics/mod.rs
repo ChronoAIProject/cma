@@ -12,6 +12,9 @@ use std::{
 };
 pub(super) mod output;
 mod periodic;
+mod readiness;
+#[cfg(test)]
+pub(crate) use readiness::attach as attach_readiness_fixture;
 mod summary;
 use sha2::{Digest, Sha256};
 use summary::Summary;
@@ -29,6 +32,8 @@ pub(super) struct Command {
     session: bool,
     transaction: bool,
     sampled: bool,
+    check: Option<Arc<crate::readiness_diagnostics::Progress>>,
+    operation: u64,
 }
 struct Hold {
     hash: Arc<str>,
@@ -37,6 +42,7 @@ struct Hold {
     last: Option<Command>,
     commands: u64,
     sampled: bool,
+    check: Option<Arc<crate::readiness_diagnostics::Progress>>,
 }
 struct State {
     salt: [u8; 16],
@@ -47,7 +53,11 @@ struct State {
     summary: Summary,
 }
 #[derive(Clone)]
-pub(super) struct Diagnostics(Arc<Mutex<State>>, &'static str);
+pub(super) struct Diagnostics(
+    Arc<Mutex<State>>,
+    &'static str,
+    Option<Arc<crate::readiness_diagnostics::Recorder>>,
+);
 impl Default for Diagnostics {
     fn default() -> Self {
         output::initialize();
@@ -61,6 +71,7 @@ impl Default for Diagnostics {
                 summary: Summary::default(),
             })),
             "general",
+            None,
         )
     }
 }
@@ -79,7 +90,11 @@ pub(super) fn install_configured(
     if value != Some("true") || !output::initialize() {
         return None;
     }
-    let diagnostics = Diagnostics(Diagnostics::default().0, pool);
+    let diagnostics = Diagnostics(
+        Diagnostics::default().0,
+        pool,
+        crate::readiness_diagnostics::configured(),
+    );
     let commands = diagnostics.clone();
     options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
         commands.command(event)
@@ -101,8 +116,12 @@ impl Diagnostics {
                     state.command_sequence.is_multiple_of(SAMPLE_EVERY),
                 );
                 command.pool = self.1;
+                command.operation = self.2.as_ref().map_or(0, |r| r.next_id());
                 if let Some(hold) = state.holds.get_mut(&key) {
                     command.hold_hash = hold.hash.clone();
+                    if command.check.is_none() {
+                        command.check = hold.check.clone();
+                    }
                     hold.commands = hold.commands.saturating_add(1);
                     hold.last = Some(command.clone());
                 }
@@ -114,6 +133,7 @@ impl Diagnostics {
                     state.summary.untracked = state.summary.untracked.saturating_add(1);
                 }
                 drop(state);
+                readiness::event(self.2.as_ref(), &command, "command_started", Duration::ZERO);
                 if command.sampled {
                     command.emit("started", Duration::ZERO, None, 0, false);
                 }
@@ -150,6 +170,16 @@ impl Diagnostics {
             .summary
             .record(&command, "command", duration, docs, failed);
         drop(state);
+        readiness::event(
+            self.2.as_ref(),
+            &command,
+            if failed {
+                "command_failed"
+            } else {
+                "command_succeeded"
+            },
+            duration,
+        );
         summary::emit(completed);
         if command.sampled || duration >= SLOW || failed {
             // Unsampled starts are deferred until completion so every slow command
@@ -168,6 +198,16 @@ impl Diagnostics {
     }
     pub(super) fn cmap(&self, event: &CmapEvent) {
         match event {
+            CmapEvent::ConnectionCheckoutStarted(_) => {
+                let mut metadata = context_command(DiagnosticContext::current());
+                metadata.pool = self.1;
+                readiness::event(
+                    self.2.as_ref(),
+                    &metadata,
+                    "checkout_started",
+                    Duration::ZERO,
+                );
+            }
             CmapEvent::ConnectionCheckedOut(event) => {
                 let context = DiagnosticContext::current();
                 let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -187,6 +227,7 @@ impl Diagnostics {
                             last: None,
                             commands: 0,
                             sampled,
+                            check: crate::readiness_diagnostics::Progress::current(),
                         },
                     );
                 } else {
@@ -200,6 +241,7 @@ impl Diagnostics {
                         .summary
                         .record(&metadata, "checkout", event.duration, None, false);
                 drop(state);
+                readiness::event(self.2.as_ref(), &metadata, "checked_out", event.duration);
                 summary::emit(completed);
                 if sampled || event.duration >= SLOW {
                     metadata.emit("checked_out", event.duration, None, 0, false);
@@ -221,9 +263,10 @@ impl Diagnostics {
                     .summary
                     .record(&command, "checkout", event.duration, None, true);
                 summary::emit(completed);
+                readiness::event(self.2.as_ref(), &command, "checkout_failed", event.duration);
                 command.emit("checkout_failed", event.duration, None, 0, false);
             }
-            _ => {}
+            _ => readiness::lifecycle(self.2.as_ref(), self.1, event),
         }
     }
     fn returned(&self, key: u64, closed: bool) {
@@ -240,6 +283,7 @@ impl Diagnostics {
             .unwrap_or_else(|| context_command(hold.context.clone()));
         command.pool = self.1;
         command.hold_hash = hold.hash;
+        command.check = hold.check;
         // A pinned transaction may run several commands/phases. Do not assign
         // its whole physical hold to the last command or count it repeatedly.
         if hold.commands > 1 {
@@ -251,6 +295,16 @@ impl Diagnostics {
             .summary
             .record(&command, "hold", duration, None, closed);
         drop(state);
+        readiness::event(
+            self.2.as_ref(),
+            &command,
+            if closed {
+                "connection_closed"
+            } else {
+                "checked_in"
+            },
+            duration,
+        );
         summary::emit(completed);
         if hold.sampled || duration >= SLOW || closed {
             command.emit(
@@ -277,6 +331,8 @@ fn context_command(context: DiagnosticContext) -> Command {
         session: false,
         transaction: false,
         sampled: false,
+        check: crate::readiness_diagnostics::Progress::current(),
+        operation: 0,
     }
 }
 fn metadata(name: &str, body: &Document, sampled: bool) -> Command {
@@ -327,6 +383,8 @@ fn metadata(name: &str, body: &Document, sampled: bool) -> Command {
         session: body.contains_key("lsid"),
         transaction: matches!(body.get_bool("autocommit"), Ok(false)),
         sampled,
+        check: crate::readiness_diagnostics::Progress::current(),
+        operation: 0,
     }
 }
 fn docs_returned(reply: &Document) -> Option<u64> {
