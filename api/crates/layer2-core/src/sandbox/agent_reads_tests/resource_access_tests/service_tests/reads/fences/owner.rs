@@ -3,8 +3,9 @@ use super::*;
 #[tokio::test]
 async fn owner_transcript_pages_complete_transcript_and_usage_recheck_buffered_authority() {
     for projection in ["page", "complete", "usage"] {
-        let (store, authority, _, _) = setup(Reply::Role(OrganizationRole::Viewer)).await;
-        let mut agent = history(&store).await;
+        let (store, authority, access, selector) =
+            setup(Reply::Role(OrganizationRole::Viewer)).await;
+        let agent = history(&store).await;
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
         let policy_store = Arc::new(PolicyStore {
@@ -45,11 +46,14 @@ async fn owner_transcript_pages_complete_transcript_and_usage_recheck_buffered_a
         tokio::time::timeout(Duration::from_secs(2), entered.notified())
             .await
             .unwrap();
-        let revision = agent.revision;
-        agent.status = AgentStatus::Deleted;
-        agent.deleted_at = Some(NOW.into());
-        agent.revision += 1;
-        store.save_agent(revision, agent).await.unwrap();
+        access
+            .change_share(
+                &context("owner"),
+                Some("request-credential"),
+                create(&selector, "policy-change"),
+            )
+            .await
+            .unwrap();
         resume.notify_one();
         assert!(task.await.unwrap().is_err(), "{projection}");
     }
