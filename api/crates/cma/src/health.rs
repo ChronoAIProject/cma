@@ -69,6 +69,10 @@ async fn monitor(probe: Arc<dyn ReadinessProbe>, result: watch::Sender<Option<Co
                     Err(_) => Some("deadline"),
                 };
                 let completed = Instant::now();
+                metrics::gauge!("cma_readiness_check_success").set(if failure.is_none() { 1. } else { 0. });
+                metrics::gauge!("cma_readiness_check_timestamp_seconds").set(crate::telemetry::timestamp());
+                metrics::histogram!("cma_readiness_check_seconds", "outcome" => failure.unwrap_or("ready"))
+                    .record(completed.duration_since(started).as_secs_f64());
                 let check = CompletedCheck {
                     completed,
                     checked_at: layer2_core::rfc3339_at(std::time::SystemTime::now()),

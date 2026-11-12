@@ -42,6 +42,7 @@ axum = { version = "0.8", features = ["ws", "macros"] }
 bytes = "1"
 h2 = "0.4.19"
 http-body-util = "0.1"
+http-body = "1"
 hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

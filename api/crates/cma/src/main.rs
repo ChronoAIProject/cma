@@ -34,6 +34,7 @@ mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
 mod store;
+mod telemetry;
 mod trigger;
 mod usage_billing;
 mod warm_pools;
@@ -182,6 +183,8 @@ async fn main() {
 async fn serve() -> Result<(), String> {
     let config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
+    let recorder = telemetry::install()?;
+    let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
     let composition = ControlPlaneComposition::build(&config).await?;
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
@@ -230,6 +233,13 @@ async fn serve() -> Result<(), String> {
         composition
             .sandbox_control_scheduler
             .spawn(shutdown.subscribe()),
+    );
+    shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
+    shutdown.push(
+        composition
+            .native_warm_pools
+            .clone()
+            .spawn_observations(shutdown.subscribe()),
     );
     shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
     shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
@@ -409,6 +419,7 @@ fn add_preflight_vary(headers: &mut HeaderMap) {
 
 fn with_request_context(router: Router) -> Router {
     router
+        .layer(axum::middleware::from_fn(telemetry::http::observe))
         .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
         .layer(
             TraceLayer::new_for_http()
