@@ -89,7 +89,7 @@ a nonempty collection; its source entry identifies the missing closure or decode
 | `sandbox_usage_report_control` | `Independent` | usage_reports/schema.rs |
 | `request_rate_limits` | `Independent` | request_limits.rs |
 | `visitor_launch_days` | `Independent` | trigger_definitions/launches/visitor_quota.rs |
-| `cma_document_artifacts` | `Agent(&["record.metadata.origin_agent_id","record.runtime_author_agent_id",])` | document_artifacts/mongo.rs; layer2-core/document_artifacts/records.rs |
+| `cma_document_artifacts` | `Agent(&["record.metadata.origin_agent_id","record.runtime_author_agent_id",])` | document_artifacts/mongo.rs; layer2-core/document_artifacts/types.rs |
 | `cma_document_quotas` | `Independent` | document_artifacts/quota.rs |
 | `native_warm_pool_targets` | `Independent` | native_warm_pools.rs |
 | `native_prepared_sandboxes` | `Empty` | native_prepared/model.rs; native_prepared.rs |
@@ -216,7 +216,7 @@ a nonempty collection; its source entry identifies the missing closure or decode
 | `trigger_launch_input_protocols` | `Empty` | trigger_definitions/launches/documents.rs; trigger_first_messages.rs (indirect Launch/definition closure) |
 | `trigger_launches` | `Empty` | trigger_definitions/launches/documents.rs; trigger_first_messages.rs (indirect Launch/definition closure) |
 | `users` | `Independent` | directory.rs |
-| `warm_sandboxes` | `Empty` | warm_sandboxes.rs; layer2-core/sandbox/warm.rs |
+| `warm_sandboxes` | `Empty` | warm_sandboxes.rs; layer2-core/sandbox/warmup.rs |
 | `workspace_profile_revisions` | `Independent` | profile_documents.rs; layer2-core/profiles snapshots |
 | `workspace_profiles` | `Independent` | profile_documents.rs; layer2-core/profiles snapshots |
 | `workspaces` | `Sandbox(&["sandbox_id"])` | workspaces.rs |
