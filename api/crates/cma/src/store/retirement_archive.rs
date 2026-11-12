@@ -16,6 +16,8 @@ use mongodb::{
     Client, ClientSession, Collection, Database,
 };
 
+mod census;
+mod census_catalog;
 mod completion;
 mod export;
 pub(crate) use export::{capture, schema_sha256};
