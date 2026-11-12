@@ -7,7 +7,7 @@ use mongodb::bson::{Bson, Document, Timestamp};
 use super::*;
 use crate::store::sandbox_mongo::record_bson;
 
-pub(super) const FIELD: &str = "agent_message_checkpoint";
+pub(in crate::store) const FIELD: &str = "agent_message_checkpoint";
 
 pub(in super::super) fn carry_fields(
     row: &Document,
@@ -24,7 +24,9 @@ pub(in super::super) fn carry_fields(
     Ok(())
 }
 
-pub(super) fn read(row: &Document) -> Result<Option<AgentMessageCheckpoint>, SandboxStoreError> {
+pub(in crate::store) fn read(
+    row: &Document,
+) -> Result<Option<AgentMessageCheckpoint>, SandboxStoreError> {
     let Some(value) = row.get(FIELD) else {
         return Ok(None);
     };
@@ -64,7 +66,7 @@ pub(super) async fn carry(
     Ok(())
 }
 
-pub(super) enum Authority {
+pub(in crate::store) enum Authority {
     Live,
     Reopen(Box<layer2_core::sandbox::store::AgentReopenGuard>),
     Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
@@ -106,24 +108,26 @@ pub(super) async fn commit(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
+        let mut scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => {
                 last_transient = Some(error.to_string());
                 continue;
             }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let (outcome, published) = match apply(
+            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+        };
+        let applied = scoped::checkpoint::apply(
             store,
             &current,
             previous.as_ref(),
             &next,
             mutation.as_ref(),
             &authority,
-            &mut session,
+            &mut scope,
         )
-        .await
-        {
+        .await;
+        scope.release();
+        let (outcome, publication) = match applied {
             Ok(outcome) => outcome,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -139,6 +143,10 @@ pub(super) async fn commit(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
+        if let Some(mutation) = &mutation {
+            admission::require_current(mutation, &mut session).await?;
+        }
+        let published = publication.is_some();
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
                 if published {
@@ -168,6 +176,7 @@ pub(super) async fn commit(
                         snapshot_time,
                         reanchor,
                         capacity.as_deref(),
+                        publication.as_ref(),
                     )
                     .await?
                     .ok_or_else(|| {
@@ -198,115 +207,7 @@ pub(super) async fn commit(
     )))
 }
 
-async fn apply(
-    store: &MongoSandboxStore,
-    current: &Agent,
-    previous: Option<&AgentMessageCheckpoint>,
-    next: &AgentMessageCheckpoint,
-    mutation: Option<&AgentConversationMutation>,
-    authority: &Authority,
-    session: &mut mongodb::ClientSession,
-) -> Result<(AgentUpdateOutcome, bool), ApplyError> {
-    let guard = match authority {
-        Authority::Reopen(guard) => Some(guard.as_ref()),
-        _ => None,
-    };
-    let capacity = match authority {
-        Authority::Capacity(proof) => Some(proof.as_ref()),
-        _ => None,
-    };
-    let row = store
-        .agents
-        .find_one(doc! { "_id": current.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let actual_agent = read_agent(&row).map_err(ApplyError::Domain)?;
-    let actual = read(&row).map_err(ApplyError::Domain)?;
-    if let Some(guard) = guard {
-        if actual_agent != *current {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
-        super::reopen::validate_and_fence(store, &actual_agent, guard, session).await?;
-    } else if actual.as_ref().is_some_and(|checkpoint| {
-        Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
-    }) {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    let project = |agent: &Agent| match guard {
-        Some(guard) => guard.project(agent).map_err(ApplyError::Domain),
-        None => Ok(agent.clone()),
-    };
-    if mutation.is_none()
-        && previous
-            .and_then(|value| value.reanchored(current))
-            .as_ref()
-            == Some(next)
-    {
-        if let Some(outcome) =
-            replay_at_anchor(actual.as_ref(), next, true).map_err(ApplyError::Domain)?
-        {
-            return Ok((outcome, false));
-        }
-        if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
-        write(store, current, Some(next), session).await?;
-        return Ok((next.outcome.clone(), false));
-    }
-    if let Some(outcome) = replay(actual.as_ref(), next).map_err(ApplyError::Domain)? {
-        return Ok((outcome, false));
-    }
-    if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    let updated = if let Some(mutation) = mutation {
-        if mutation.agent.id != current.id || !next.matches(&project(&mutation.agent)?) {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
-        if let Some(proof) = capacity {
-            proof
-                .validate_snapshot(&actual_agent, actual.as_ref())
-                .map_err(ApplyError::Domain)?;
-        }
-        let receipt = apply_mutation_with_capacity(
-            ScanCaller::Checkpoint,
-            store,
-            mutation,
-            session,
-            capacity,
-        )
-        .await?;
-        if receipt.logs != next.outcome.appended {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
-        &mutation.agent
-    } else {
-        if !next.matches(&project(current)?)
-            || !next.outcome.appended.is_empty()
-            || next.outcome.turn_closed
-        {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
-        current
-    };
-    write(store, updated, Some(next), session).await?;
-    if let Some(proof) = capacity {
-        // Replace the active checkpoint with the compact receipt before adding
-        // the retained prefix, avoiding two large checkpoints in one document.
-        // Both writes remain part of this same transaction.
-        capacity_prefix::preserve(store, &row, proof, session).await?;
-    }
-    if let Some(mutation) = mutation {
-        admission::require_current(mutation, session)
-            .await
-            .map_err(ApplyError::Domain)?;
-    }
-    Ok((next.outcome.clone(), mutation.is_some()))
-}
-
-fn replay(
+pub(in crate::store) fn replay(
     actual: Option<&AgentMessageCheckpoint>,
     next: &AgentMessageCheckpoint,
 ) -> Result<Option<AgentUpdateOutcome>, SandboxStoreError> {
@@ -319,7 +220,7 @@ fn replay(
     }
 }
 
-pub(super) fn replay_at_anchor(
+pub(in crate::store) fn replay_at_anchor(
     actual: Option<&AgentMessageCheckpoint>,
     next: &AgentMessageCheckpoint,
     require_anchor: bool,
@@ -330,17 +231,28 @@ pub(super) fn replay_at_anchor(
     replay(actual, next)
 }
 
-async fn write(
+pub(in crate::store) async fn write(
     store: &MongoSandboxStore,
     current: &Agent,
     checkpoint: Option<&AgentMessageCheckpoint>,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
-    let revision = signed(current.revision, "agent revision")
-        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
-    let last_seq = signed(current.conversation.last_seq, "agent log sequence")
-        .map_err(SandboxStoreError::Corrupt)
+    let row = store
+        .agents
+        .find_one(doc! {"_id":current.id.as_str()})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    super::super::agent_log_segments::ordinary::source(store, current, &row, session).await?;
+    let mut filter = super::super::agent_capacity_recovery::source::envelope_filter(current, &row)
         .map_err(ApplyError::Domain)?;
+    filter.insert(
+        "record.conversation.last_seq",
+        signed(current.conversation.last_seq, "checkpoint sequence")
+            .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
+    );
+    filter.insert("channel_history_seal", doc! {"$exists":false});
     let update = match checkpoint {
         Some(checkpoint) => {
             checkpoint.validate().map_err(ApplyError::Domain)?;
@@ -353,17 +265,7 @@ async fn write(
     };
     let result = store
         .agents
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": revision,
-                "last_seq": last_seq,
-                "record.conversation.last_seq": last_seq,
-                "channel_history_seal": { "$exists": false },
-            },
-            update,
-        )
+        .update_one(filter, update)
         .session(session)
         .await
         .map_err(classify_write)?;
@@ -380,6 +282,7 @@ async fn reconcile(
     snapshot_time: Timestamp,
     require_anchor: bool,
     capacity: Option<&layer2_core::sandbox::store::AgentConversationCapacitySettlement>,
+    publication: Option<&ConversationReceipt>,
 ) -> Result<Option<AgentUpdateOutcome>, SandboxStoreError> {
     let mut session = snapshot_session(store, Some(snapshot_time)).await?;
     let row = store
@@ -394,15 +297,29 @@ async fn reconcile(
     };
     read_agent(&row)?;
     let actual = read(&row)?;
+    if super::super::agent_log_segments::read_format(&row)?.is_some()
+        && actual.as_ref() != Some(next)
+    {
+        return Ok(None);
+    }
+    if let Some(receipt) = publication {
+        if actual.as_ref() != Some(next)
+            || !reconcile_conversation_snapshot(store, receipt, &mut session).await?
+        {
+            return Ok(None);
+        }
+    }
     if let Some(proof) = capacity {
         let receipt = ConversationReceipt {
+            segmented: None,
             command_dispatch: None,
             agent: proof.mutation().agent.clone(),
             logs: proof.checkpoint().outcome.appended.clone(),
         };
         if actual.as_ref() != Some(proof.checkpoint())
             || !capacity_prefix::matches(&row, proof)?
-            || !reconcile_conversation_snapshot(store, &receipt, &mut session).await?
+            || (publication.is_none()
+                && !reconcile_conversation_snapshot(store, &receipt, &mut session).await?)
         {
             return Ok(None);
         }

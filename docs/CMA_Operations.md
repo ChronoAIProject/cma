@@ -1010,6 +1010,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AUTH_ENCRYPTION_KEY` | Secret reference: standard-base64 encoding of exactly 32 random bytes |
 | `CHRONO_MONGODB_URI` | Required secret reference, `mongodb://` or `mongodb+srv://` |
 | `CHRONO_MONGODB_DATABASE` | Database name; code default `chrono_bot`, production explicitly `chrono-bot` |
+| `CHRONO_MONGO_DIAGNOSTICS_ENABLED` | Default off in code and ConfigMap. Exact `true` enables metadata command monitoring and attributed pool summaries at client startup; existing pool telemetry remains available when off. The release controller explicitly enables it in the fix-candidate deployment and keeps it on for the diagnostic night. Set it with the planned deployment to avoid another rollout. See [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for privacy, accounting and measured large-read overhead. |
 | `CHRONO_MONGODB_AUTHORITY_MODE` | `isolated` by default verifies exact collection grants; production `shared-schema` allows the existing database-scoped credential while AM opens only its own collection catalog. Neither mode changes validators, indexes or resource authorization. |
 | `CHRONO_DEPLOYMENT_ID` | Required stable Kubernetes-label-compatible CMA ownership identity |
 | `CHRONO_SANDBOX_BASE_URL` | Required canonical HTTP(S) provider origin |
@@ -1058,6 +1059,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED` | `false` | Require retained runtime output and bound compact pending/replay permission state across attachments. See [permission state bounds](CMA_Permission_State_Bounds.md). |
 | `CHRONO_READ_FRAME_BUDGET_ENABLED` | Strict boolean, default `false`. Keeps expensive-read admission attached to returned buffer storage through final frame/clone/slice drop, including after body EOF. The existing two-slot, size/deadline, route and control policies remain in place. No schema or wire change. See [Read frame ownership](CMA_Read_Frame_Budget.md). |
 | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables a proven 200-row/4-MiB suffix for pending-approval reads only for the shared trusted cohort. A missing reset boundary, oversized suffix or untrusted metadata retains complete validation. Independent of admission/public-window and title activation. Disable and restart the API for rollback; keep all original history and metadata. See [Bounded pending-approval recovery](CMA_Bounded_Approval_Reads.md). |
+| `CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED` | Strict boolean, default `false`. Enables scoped retry pacing for parent-not-ready capacity attempts after compatible workers and the durable attempt receipt are deployed. It only delays eligible retries; it never changes terminal state, input authority, recovery receipts or attachment ownership. Disable and restart to restore the prior scheduling cadence; accepted attempts continue from their recorded fence. |
+| `CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables the trusted format-2 transcript projection and paged source reads for the shared cohort. The reader validates the maintained projection and falls back to the exact legacy fold for legacy, corrupt or unsupported histories; it never disables decoding of already segmented records. Disable and restart for rollback while retaining readable history and cursors. See [Bounded transcript reads](CMA_Bounded_Title_Transcript.md). |
+| `CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED` | Strict boolean, default `false`. Enables trusted format-2 usage projection reads after projection/head publication and compatibility readers are deployed. A failed proof or parity check falls back to the exact complete fold; disabling preserves accepted history and usage values. Disable and restart for rollback. |
+| `CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED` | Strict boolean, default `false`. Independent capacity-only recovery admission gate; enable only after compatible recovery readers, native proof and durable recovery-work migration are verified. Closing the gate blocks new recovery admissions while accepted receipts, cleanup and retry reconciliation continue; it never replays input or changes a parent disposition. Disable and restart for rollback. See [Agent log capacity recovery](CMA_Agent_Log_Capacity_Recovery.md). |
 | `CHRONO_AGENT_LOG_FLEET_PERCENT` | Canonical integer 0–100, default `0`; positive percentages require the explicit admission ID list to be empty. Stable Agent-hash buckets stage 10/50/100. Preparation is lazy and bounded before eligible writes; public reads never prepare. Stage changes/kill switch require a same-image API rollout; preserve quarantine and compatible-image floor. See [Fleet log activation](CMA_Fleet_Log_Activation.md). |
 | `CHRONO_INGRESS_COORDINATOR_ENABLED` | `false` | Share one process reservation pool across raw output, parsed JSON/scratch, permission state and retained live fragments; requires all covered component flags. See [scope and rollout](CMA_Ingress_Coordinator.md). |
 | `CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED` | `false` | Strict opt-in for admitted decoded JSON and immutable RPC reply ownership; see [JSON retention bounds](CMA_JSON_Retention_Bounds.md). |
@@ -2294,12 +2299,13 @@ four snapshot reads; disable both reader flags to restore transactions. See
 [Sandbox hierarchy batching](CMA_Sandbox_Hierarchy_Batching.md) for bounds,
 compatibility tests and local volume measurements. Activation is release-owned.
 
-`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `true` and
 accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
 colors, names and final-fence durations and completion/error/cancellation outcome,
-without identifiers, error strings or inherited request spans. Enable it before
-reader activation to collect a baseline, and disable it after the measurement
-window. Optional enrichment retains its existing fallback behavior.
+with route templates and opaque request hashes, without raw identifiers, error
+strings or inherited request spans. Keep it enabled for the diagnostic comparison.
+Optional enrichment retains its existing fallback behavior. See
+[Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
