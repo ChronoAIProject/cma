@@ -22,6 +22,14 @@ use layer2_core::{
 };
 use serde::Deserialize;
 const DEFAULT_EVENT_LIMIT: u16 = 200;
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TranscriptParams {
+    turn: Option<u64>,
+    after: Option<u64>,
+    through: Option<u64>,
+    limit: Option<u16>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -112,7 +120,13 @@ pub(crate) async fn events(
     get,
     path = "/api/v1/agents/{id}/transcript",
     tag = "agents",
-    params(("id" = String, Path)),
+    params(
+        ("id" = String, Path),
+        ("limit" = Option<u16>, Query, description = "Source rows per page (1..32). Omit all query parameters for complete legacy-compatible output."),
+        ("turn" = Option<u64>, Query, description = "Continuation turn from next."),
+        ("after" = Option<u64>, Query, description = "Continuation source sequence from next."),
+        ("through" = Option<u64>, Query, description = "Fixed source high-water mark from next. Changed histories require a fresh first page.")
+    ),
     responses((status = 200, body = AgentTranscriptView))
 )]
 pub(crate) async fn transcript(
@@ -120,8 +134,42 @@ pub(crate) async fn transcript(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
+    Query(params): Query<TranscriptParams>,
 ) -> Result<Json<AgentTranscriptView>, InstanceProblem> {
     let id = AgentId(id);
+    if params.limit.is_some()
+        || params.turn.is_some()
+        || params.after.is_some()
+        || params.through.is_some()
+    {
+        let request = layer2_core::sandbox::AgentTranscriptPageRequest {
+            turn: params.turn,
+            after: params.after,
+            through: params.through,
+            limit: params.limit.unwrap_or(32),
+        };
+        let page = if let Some(resource) = resource {
+            state
+                .reads
+                .transcript_page_authorized(
+                    &resource.context,
+                    resource.credential.as_ref().map(DelegatedCredential::value),
+                    &id,
+                    &request,
+                )
+                .await
+        } else {
+            state.reads.transcript_page(&caller, &id, &request).await
+        };
+        let page = page.map_err(InstanceProblem::from)?;
+        let mut value = public_transcript(page.transcript)?;
+        value.next = page
+            .next
+            .map(|next| serde_json::to_value(next).map_err(|_| InstanceProblem::Unavailable))
+            .transpose()?;
+        return Ok(Json(value));
+    }
+
     let value = if let Some(resource) = resource {
         state
             .reads
@@ -322,6 +370,7 @@ fn public_transcript(value: AgentTranscript) -> Result<AgentTranscriptView, Inst
         agent_id: value.agent_id.to_string(),
         through_seq: value.through_seq,
         turns,
+        next: None,
     })
 }
 

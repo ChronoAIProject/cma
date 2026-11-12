@@ -108,12 +108,35 @@ impl DurableAgentUpdateRecorder {
     where
         S: AgentConversationUpdateStore + 'static,
     {
+        Self::with_ingress_budget(
+            store,
+            writer_policy,
+            spend_source,
+            bounded_live_fragments,
+            false,
+        )
+    }
+
+    pub fn with_ingress_budget<S>(
+        store: Arc<S>,
+        writer_policy: Arc<super::super::task_experience::TaskExperiencePolicy>,
+        spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
+        bounded_live_fragments: bool,
+        coordinated_ingress: bool,
+    ) -> Arc<Self>
+    where
+        S: AgentConversationUpdateStore + 'static,
+    {
         Arc::new(Self {
             store,
             writer_policy,
             spend_source,
             live: if bounded_live_fragments {
-                live::AgentLiveHub::with_budget(super::live_budget::LiveBudget::process())
+                live::AgentLiveHub::with_budget(if coordinated_ingress {
+                    super::live_budget::LiveBudget::process_coordinated()
+                } else {
+                    super::live_budget::LiveBudget::process()
+                })
             } else {
                 live::AgentLiveHub::default()
             },

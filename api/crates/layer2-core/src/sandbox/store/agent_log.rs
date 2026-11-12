@@ -228,6 +228,15 @@ pub trait AgentLogStore: Send + Sync {
         }
     }
 
+    /// Segmented bounded transcript page. None selects legacy compatibility.
+    async fn agent_log_transcript_page(
+        &self,
+        _agent: &Agent,
+        _request: &crate::sandbox::AgentTranscriptPageRequest,
+    ) -> Result<Option<crate::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Read a trusted transcript projection while visiting source pages. The
     /// returned transcript owns only public output; stores that cannot prove a
     /// bounded projection return `None` and retain the compatibility path.

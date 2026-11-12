@@ -246,6 +246,7 @@ for (const reuse of [false, true]) {
           assert.equal(run.args.filter(value => value === '--tmpfs').length, 1);
           assert.equal(run.args[run.args.indexOf('--memory') + 1], '2g');
           assert.equal(run.args[run.args.indexOf('--memory-swap') + 1], '2g');
+          assert.equal(run.args[run.args.indexOf('--ulimit') + 1], 'nofile=64000:64000');
           assert.equal(run.args[run.args.indexOf('--wiredTigerCacheSizeGB') + 1], '0.25');
           const removedVolume = calls.find(row => row.args[0] === 'volume' && row.args[1] === 'rm' && row.args[2] === `${name}-data`);
           assert.deepEqual(removedVolume.args, ['volume', 'rm', `${name}-data`]);

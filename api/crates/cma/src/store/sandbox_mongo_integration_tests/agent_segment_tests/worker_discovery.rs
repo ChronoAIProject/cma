@@ -2,7 +2,7 @@
 use super::retained_assessment::{fixture, ready_source};
 use super::*;
 
-async fn finish_legacy_connection(store: &MongoSandboxStore, agent: Agent) -> Agent {
+pub(super) async fn finish_legacy_connection(store: &MongoSandboxStore, agent: Agent) -> Agent {
     assert_eq!(agent.work.step, AgentWorkStep::PublishConnection);
     let mut claimed = store
         .claim_agent_work(&agent.id, "worker", NOW.into(), MINUTE.into())
