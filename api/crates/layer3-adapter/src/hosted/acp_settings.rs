@@ -152,7 +152,7 @@ impl Bridge {
         // instruction write and native unsubscribe, before resume can start.
         // Load the same persisted thread with full bound MCP definitions. Never
         // close/cancel here: recovery must not interrupt unrelated native work.
-        let loaded = self.call("session/load", parameters).await?;
+        let loaded = self.load_retained_session(parameters).await?;
         if loaded
             .get("sessionId")
             .and_then(serde_json::Value::as_str)
@@ -174,7 +174,7 @@ impl Bridge {
                 .lock()
                 .await
                 .as_ref()
-                .is_some_and(|(id, safe)| id != session || !safe)
+                .is_some_and(|goal| !goal.is_safe_for(session))
         {
             return Err(AdapterError::OperationIdentityConflict(
                 "conversation must settle before instructions can recover".into(),
@@ -247,6 +247,11 @@ fn legacy_instruction_resume_failed(error: &AdapterError) -> bool {
 impl crate::ConversationSettingsSupport for Bridge {
     async fn managed_context_may_be_ready(&self) -> bool {
         self.context_readiness_session().await.is_some()
+    }
+    async fn retained_history_deadline(
+        &self,
+    ) -> Option<tokio::sync::watch::Receiver<Option<tokio::time::Instant>>> {
+        Some(self.retained_history_deadline.subscribe())
     }
     async fn managed_context_progress(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
         self.output_progress().await

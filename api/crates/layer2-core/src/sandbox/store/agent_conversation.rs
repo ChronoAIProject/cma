@@ -184,6 +184,15 @@ fn admits_input(current: &Agent, mutation: &AgentConversationMutation) -> bool {
 /// Durable agent conversation state and its gap-free semantic log.
 #[async_trait]
 pub trait AgentConversationStore: Send + Sync {
+    /// Settle a known-aborted output append without admitting new work. A store
+    /// must verify the exact snapshot and normal-capacity refusal transactionally.
+    async fn commit_agent_capacity_update(
+        &self,
+        _settlement: super::AgentConversationCapacitySettlement,
+    ) -> Result<crate::sandbox::AgentUpdateOutcome, SandboxStoreError> {
+        Err(SandboxStoreError::AgentLogCapacityExceeded)
+    }
+
     /// Record a quiet original conversation under the exact current lifecycle lease.
     /// Implementations without a parent write fence must refuse this operation.
     async fn commit_agent_reopen_update(

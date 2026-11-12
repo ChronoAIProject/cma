@@ -13,8 +13,12 @@ axum = { workspace = true }
 base64 = { workspace = true }
 cma-service-auth = { path = "../cma-service-auth" }
 futures-util = { workspace = true }
+http-body = { workspace = true }
+metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 flate2 = { workspace = true }
 governor = { workspace = true }
+http-body-util = { workspace = true }
 httpdate = { workspace = true }
 ipnet = { workspace = true }
 sha2 = { workspace = true }
@@ -22,7 +26,8 @@ sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
-mongodb = { workspace = true }
+mongodb = { workspace = true, features = ["opentelemetry"] }
+opentelemetry = { workspace = true }
 reqwest = { workspace = true }
 ring = { workspace = true }
 serde = { workspace = true }
@@ -41,6 +46,8 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+tracing-subscriber = { workspace = true, features = ["json"] }
+http-body-util = { workspace = true }
 kube = { workspace = true }
 cmaeg-core = { path = "../cmaeg-core" }
 cmaeg = { path = "../cmaeg" }

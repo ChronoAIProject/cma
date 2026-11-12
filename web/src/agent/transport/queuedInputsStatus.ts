@@ -142,12 +142,16 @@ export function useQueuedInputs(
         setStored({ session, items });
         bump();
         retry = 2000;
-        return { next: items.length > 0 || active.current ? retry : undefined, cooldown: retry };
+        return {
+          next: items.length > 0 ? retry : active.current ? 10000 : undefined,
+          cooldown: retry,
+        };
       } catch (error) {
         if (signal.aborted || onIdentityChange(error)) return;
         // An older serving instance may lack discovery during a rolling deploy.
-        // Stay idle but recover on later hints/focus/refresh without remounting.
-        if (error instanceof ApiError && error.status === 404) return { cooldown: 2000 };
+        // Retry slowly even without new events, and recover on focus/refresh.
+        if (error instanceof ApiError && error.status === 404)
+          return { next: 30000, cooldown: 2000 };
         setStored((previous) => ({
           session,
           items: previous?.session === session ? previous.items : [],

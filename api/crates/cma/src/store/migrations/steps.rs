@@ -1,15 +1,20 @@
 //! The explicit manifest registry is also the migrator's reader floor.
-use super::{activity_indexes, collection_indexes, Result};
+use super::{activity_indexes, agent_log_segments, collection_indexes, Result};
 use mongodb::bson::{doc, Document};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {
     Activity,
     LedgerCollection,
+    AgentLogSegments,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 2] = [Self::Activity, Self::LedgerCollection];
+    pub(super) const ALL: [Self; 3] = [
+        Self::Activity,
+        Self::LedgerCollection,
+        Self::AgentLogSegments,
+    ];
     pub(super) fn parse(id: &str) -> Result<Self> {
         Self::ALL
             .into_iter()
@@ -20,12 +25,14 @@ impl Step {
         match self {
             Self::Activity => activity_indexes::ID,
             Self::LedgerCollection => collection_indexes::ID,
+            Self::AgentLogSegments => agent_log_segments::ID,
         }
     }
     pub(super) fn checksum(self) -> String {
         match self {
             Self::Activity => activity_indexes::checksum(),
             Self::LedgerCollection => collection_indexes::checksum(),
+            Self::AgentLogSegments => agent_log_segments::checksum(),
         }
     }
     pub(super) fn manifest(self) -> String {
@@ -35,12 +42,20 @@ impl Step {
         match self {
             Self::Activity => 2,
             Self::LedgerCollection => 5,
+            Self::AgentLogSegments => agent_log_segments::MAX_SCHEMA_STEPS,
         }
     }
     pub(super) fn collections(self) -> &'static [&'static str] {
         match self {
             Self::Activity => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
+            Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
+        }
+    }
+    pub(super) fn effect_field(self) -> &'static str {
+        match self {
+            Self::AgentLogSegments => "applied_schema_steps",
+            Self::Activity | Self::LedgerCollection => "created_indexes",
         }
     }
     pub(super) async fn inspect(
@@ -54,6 +69,7 @@ impl Step {
                 .map(|index| ("activity", index))
                 .collect()),
             Self::LedgerCollection => collection_indexes::inspect(database).await,
+            Self::AgentLogSegments => Err("segment migration requires schema-unit inspection"),
         }
     }
     pub(super) async fn create(

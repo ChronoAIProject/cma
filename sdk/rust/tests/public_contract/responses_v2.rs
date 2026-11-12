@@ -101,6 +101,10 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
             .await,
         ),
         "GET /api/v2/responses/{response_id}" => c.check(api.read(c.param("response_id")).await),
+        "GET /api/v2/responses/{response_id}/output" => c.check(
+            api.read_output_page(c.param("response_id"), c.q("after").as_deref())
+                .await,
+        ),
         operation => {
             let key = c
                 .case

@@ -117,26 +117,17 @@ impl DiscordApi {
         let user: User = self.get("users/@me", token).await?;
         if !user.bot || user.id != expected_bot {
             self.status.failure(FailureCode::BotIdentityMismatch);
-            return Err(GatewayError::Authority);
+            return Err(GatewayError::Authentication);
         }
         let discovery: Discovery = self.get("gateway/bot", token).await?;
         endpoint(&discovery.url)?;
-        let limit = &discovery.session_start_limit;
         // This transport is deliberately one shard. Discord may require sharding
         // for larger bots; refusing is safer than missing guilds silently.
         if discovery.shards != 1 {
             self.status.failure(FailureCode::ShardingUnsupported);
             return Err(GatewayError::InvalidConfiguration);
         }
-        if limit.total == 0
-            || limit.remaining > limit.total
-            || limit.max_concurrency == 0
-            || limit.reset_after == 0
-            || limit.reset_after > 7 * 86_400_000
-        {
-            self.status.failure(FailureCode::SessionLimitInvalid);
-            return Err(GatewayError::InvalidConfiguration);
-        }
+        super::discovery_limits::validate(&discovery, &self.status)?;
         Ok(discovery)
     }
     pub(super) async fn get<T: serde::de::DeserializeOwned>(
@@ -185,6 +176,7 @@ impl DiscordApi {
         if matches!(status, 401 | 403) {
             if matches!(path, "users/@me" | "gateway/bot") {
                 self.status.failure(FailureCode::DiscoveryUnauthorized);
+                return Err(GatewayError::Authentication);
             }
             return Err(GatewayError::Authority);
         }

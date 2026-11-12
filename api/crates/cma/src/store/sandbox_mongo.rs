@@ -1,8 +1,4 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
-
-use std::future::Future;
-use std::time::Duration;
-
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::error::{
@@ -12,6 +8,8 @@ use mongodb::options::{ReadConcern, WriteConcern};
 use mongodb::{Client, ClientSession, Collection, Database};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
+use std::future::Future;
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
 use super::MongoCheckpointObjectStore;
@@ -93,13 +91,20 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
+    pub(super) global_sandbox_limit: u16,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(super) bounded_title_reads: bool,
+    pub(super) bounded_transcript_reads: bool,
+    pub(super) bounded_usage_reads: bool,
+    pub(super) sandbox_snapshot_reads: bool,
+    pub(super) sandbox_batched_reads: bool,
     pub(super) bounded_response_reads: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -186,13 +191,20 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
+            global_sandbox_limit: 0,
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),
+            segment_adoption_enabled: false,
             bounded_approval_reads: false,
             bounded_close_retries: false,
             fleet_log_activation: Default::default(),
             bounded_title_reads: false,
+            bounded_transcript_reads: false,
+            bounded_usage_reads: false,
+            sandbox_snapshot_reads: false,
+            sandbox_batched_reads: false,
             bounded_response_reads: false,
             writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 277,
+  "openapi_operations": 286,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -2771,7 +2771,9 @@
       "required_problems": [
         "agent_not_found",
         "agent_not_ready",
-        "agent_operation_in_flight",
+        "agent_skill_history_full",
+        "agent_skill_install_unsupported",
+        "agent_skill_upgrade_disabled",
         "agent_skill_version_upgrade_unsupported",
         "connections_required",
         "forbidden",
@@ -3777,15 +3779,16 @@
     },
     "POST /api/v1/sandboxes/{id}/always-on": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/sandbox_always_on.rs# Owner Sandbox Always on preference is an idempotent, CAS-protected control projected through the hierarchy service.",
+      "source": "api/crates/layer1-public/src/rest/sandbox_always_on.rs# Owners may only relinquish Always on; approval requires an administrator. Disable retains revision and idempotency checks.",
       "required_problems": [
         "forbidden",
-        "not_authenticated"
+        "not_authenticated",
+        "always_on_approval_required"
       ]
     },
     "POST /api/v1/admin/sandboxes/{id}/always-on": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/admin/sandboxes.rs# Operator Sandbox Always on override is a CAS-protected maintenance control.",
+      "source": "api/crates/layer1-public/src/rest/admin/sandboxes.rs# Administrator Always on approval and revocation use revision CAS and record configure activities.",
       "required_problems": [
         "forbidden",
         "not_authenticated",
@@ -3832,6 +3835,96 @@
         "usage_unavailable",
         "report_expired"
       ]
+    },
+    "GET /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Owner-only bounded read-only assessment; explicit POST repeats stronger admission proof.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Explicit owner consent and fresh proof admit the existing same-image reopening suffix with immutable request receipts.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "missing_idempotency_key",
+        "retained_recovery_consent_required",
+        "retained_recovery_authority_changed",
+        "retained_recovery_not_proved",
+        "retained_recovery_unavailable",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/routes_output.rs# pub(in crate::responses::v2) async fn output_page(",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_output_cursor"
+      ]
+    },
+    "POST /api/v1/telemetry/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/browser_telemetry.rs# Anonymous fixed-category diagnostics have a 256-byte body limit and no durable effects; success and malformed/private fields are covered by real-handler tests.",
+      "required_problems": []
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery/dry-run": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/status": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/admit": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_disabled",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
     }
   }
 }

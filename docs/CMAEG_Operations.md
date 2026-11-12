@@ -369,6 +369,7 @@ applies with all media flags off.**
 | `CMAEG_INGRESS_MAX_BODY` | positive integer | `1048576` | Callback body limit, configurable from 1 byte through 16 MiB. |
 | `CMAEG_INGRESS_INFLIGHT` | positive integer | `256` | Concurrent callbacks per replica; overflow returns immediate 429 with `Retry-After: 1`. |
 | `CMAEG_ACCEPT_BUDGET_MS` | positive integer, ms | `20000` | Time from the last inbound body byte to acknowledgment; a pending provider request continues after the gateway returns 202. |
+| `CMAEG_CONTEXT_RETRY_ENABLED` | boolean | `false` | Opt in to at most two sequential retained-context GETs for legacy CMA Custom ingress, with a three-second attempt bound, jittered backoff, eight-second total bound and HTTP Retry-After on transient exhaustion. Does not acknowledge uncommitted work as queued. |
 | `CMAEG_TURN_TIMEOUT_MS` | positive integer, ms | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
@@ -571,7 +572,9 @@ for exact identity and source restrictions.
 
 CMAEG serves Prometheus text at `/metrics` on `CMAEG_METRICS_LISTEN`
 (`0.0.0.0:9091` by default). The public listener does not expose that path.
-Keep the scrape listener private to the cluster. Registration is process-wide
+Keep the scrape listener private to the cluster. The deployment declares the
+platform Pod discovery metadata described in [CMA observability](CMA_Observability.md);
+verify active collector coverage separately. Registration is process-wide
 and idempotent. All duration histograms use seconds with buckets
 `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10`, except those named
 `cmaeg_media_*`, which use `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60, 90`:
@@ -3384,3 +3387,31 @@ current consent and authority. See [the full contract](CMAEG_Native_WhatsApp_Mes
 ## Optional media continuation scheduling storage
 
 The continuation worker uses a separate expiring active-head collection, bounded keyset scans and a preserved original retention deadline. It never treats a scheduling head as admission authority. Base Gateway startup does not require the optional migration or role. Deploy compatible readers, then review the optional role/migration and readiness before enabling a worker; older isolated readers reject unrecognized optional grants. See [media continuation storage](CMAEG_Media_Continuation_Storage.md) for exact commands, retention, rollback and verification.
+
+### Delivery queue and outcome observations
+
+The private exporter additionally exposes `cmaeg_delivery_queue_{depth,capacity,waiters,sample_timestamp_seconds}`
+by `inbound` / `worker` stage, both stages’ `oldest_seconds` and
+`residence_seconds`, queue `wait_seconds` and `submissions_total` by bounded
+result, and `cmaeg_delivery_outcomes_total{platform,step,destination,outcome}`.
+Production inbound and worker queues retain cancellation-safe residence guards;
+old entries disappear on dequeue or receiver loss/panic. Queue depth excludes
+active sends and blocked producers. The legacy raw-channel constructor supports
+sampled depth/capacity only. Require fresh sample
+timestamps before interpreting snapshots. Local `buffered` does not mean a
+recipient received a message; unknown outcomes are not failures safe to resend.
+Default webhook groups are logical group outcomes. Turn duration buckets cover
+long inference through 3600 seconds. Full semantics and production follow-up
+are in [CMA Observability](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
+
+
+Provider permits expose per-provider capacity, held/available permits, waiter
+count and oldest waiter timestamp, acquisition outcomes/wait duration and held
+duration. These observe the existing per-provider gates and retain their 50ms
+wait, immediate-capacity refusals and stream ownership. The deployment cap is
+applied separately to each provider; it is not one shared aggregate pool.
+Use `time() - cmaeg_provider_permit_oldest_wait_timestamp_seconds` only with
+`cmaeg_provider_permit_waiters > 0`. Long held permits can be healthy inference.
+See [permit semantics](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
+Worker/readiness changes belong to [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740)
+and a separate PR.

@@ -13,6 +13,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 mod access_migration;
 mod access_origins;
 mod admission_log;
+mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -21,6 +22,7 @@ mod execution;
 mod gateway;
 mod home;
 mod profiles;
+mod public_streams;
 mod runtime;
 
 mod features;
@@ -44,6 +46,7 @@ const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
+pub(crate) const MONGO_DIAGNOSTICS_ENABLED: &str = "CHRONO_MONGO_DIAGNOSTICS_ENABLED";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
 pub(crate) const REQUIRED_BASELINE_SERVICES: &[&str] = &["chrono-llm-public", "ornn-api"];
 const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm-public,ornn-api";
@@ -67,6 +70,8 @@ pub struct RateLimitConfig {
     pub default_per_minute: NonZeroU32,
     pub create_per_minute: NonZeroU32,
     pub input_per_minute: NonZeroU32,
+    pub control_per_minute: NonZeroU32,
+    pub control_tier_enabled: bool,
     pub response_input_tier_enabled: bool,
 }
 
@@ -75,6 +80,11 @@ impl RateLimitConfig {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         Ok(Self {
+            control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => return Err("CHRONO_SERVER_RATE_CONTROL_ENABLED must be true or false".into()),
+            },
             response_input_tier_enabled: match lookup("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED")?
                 .as_deref()
             {
@@ -106,6 +116,12 @@ impl RateLimitConfig {
             )?,
             create_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_CREATE_PER_MINUTE", 10, 1)?,
             input_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_INPUT_PER_MINUTE", 120, 1)?,
+            control_per_minute: positive_u32(
+                lookup,
+                "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE",
+                120,
+                1,
+            )?,
         })
     }
 }
@@ -161,9 +177,11 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -179,6 +197,7 @@ pub struct Config {
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) public_stream_limit: usize,
     pub trusted_proxies: TrustedProxyConfig,
     pub mongodb_uri: String,
     pub mongodb_database: String,
@@ -218,6 +237,7 @@ impl std::fmt::Debug for Config {
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
             .field("rate_limits", &self.rate_limits)
+            .field("public_stream_limit", &self.public_stream_limit)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("mongodb_uri", &"<redacted>")
             .field("mongodb_database", &self.mongodb_database)
@@ -251,6 +271,12 @@ impl Config {
         let bind = value_or(&mut lookup, "CHRONO_SERVER_BIND", DEFAULT_BIND)?
             .parse::<SocketAddr>()
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
+        let metrics_bind = value_or(&mut lookup, "CHRONO_METRICS_BIND", "0.0.0.0:9091")?
+            .parse::<SocketAddr>()
+            .map_err(|error| format!("CHRONO_METRICS_BIND is not a socket address: {error}"))?;
+        if metrics_bind == bind && bind.port() != 0 {
+            return Err("CHRONO_METRICS_BIND must differ from CHRONO_SERVER_BIND".into());
+        }
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
         let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
@@ -292,6 +318,7 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
             admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
@@ -388,7 +415,10 @@ impl Config {
             );
         }
         Ok(Self {
+            global_sandbox_limit,
             bind,
+            metrics_bind,
+            public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             public_url,
             agent_access_retained_origins,
             agent_access_transport_migration,

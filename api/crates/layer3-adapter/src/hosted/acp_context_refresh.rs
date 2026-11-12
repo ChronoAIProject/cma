@@ -15,9 +15,14 @@ impl Bridge {
             return None;
         }
         let binding = self.context_refresh.as_ref()?;
-        let observed = self.context_goal.lock().await.clone();
+        let observed = self
+            .context_goal
+            .lock()
+            .await
+            .as_ref()
+            .map(|goal| goal.is_safe_for(&session));
         match observed {
-            Some((id, true)) if id == session => {}
+            Some(true) => {}
             None if transport && binding.transport_goal_absent(&session).await.is_ok() => {}
             _ => return None,
         }
@@ -35,7 +40,7 @@ impl Bridge {
                 .lock()
                 .await
                 .as_ref()
-                .is_some_and(|(id, safe)| id == &session && *safe)
+                .is_some_and(|goal| goal.is_safe_for(&session))
         {
             return None;
         }
@@ -49,29 +54,18 @@ impl Bridge {
             || self.pending.lock().await.values().any(|call| call.prompt)
     }
 
+    pub(super) async fn observe_context_frame_goal(&self, frame: &super::retained_json::JsonFrame) {
+        if let Some(observation) = super::context_goal::Observation::read(frame) {
+            observation.record(&mut *self.context_goal.lock().await);
+        }
+    }
+
+    #[cfg(test)]
     pub(super) async fn observe_context_goal(&self, session: &str, update: &serde_json::Value) {
-        if update
-            .get("sessionUpdate")
-            .and_then(serde_json::Value::as_str)
-            != Some("session_info_update")
-        {
-            return;
-        }
-        let Some(goal) = update.pointer("/_meta/goal") else {
-            return;
-        };
-        let mut observed = self.context_goal.lock().await;
-        if observed.as_ref().is_some_and(|(id, _)| id != session) {
-            return;
-        }
-        // A native goal can continue without a CMA prompt waiter. Even a later
-        // pause/clear may arrive while its current turn is still running, so a
-        // goal seen on this attachment vetoes maintenance until reconnection.
-        let safe = goal.is_null()
-            && !observed
-                .as_ref()
-                .is_some_and(|(id, safe)| id == session && !safe);
-        *observed = Some((session.to_owned(), safe));
+        let frame = super::retained_json::JsonFrame::legacy(serde_json::json!({
+            "params": {"sessionId": session, "update": update},
+        }));
+        self.observe_context_frame_goal(&frame).await;
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -94,7 +88,7 @@ impl Bridge {
                 .lock()
                 .await
                 .as_ref()
-                .is_some_and(|(id, safe)| id != session || !safe)
+                .is_some_and(|goal| !goal.is_safe_for(session))
         {
             return Err(AdapterError::OperationIdentityConflict(
                 "conversation must settle before managed context refresh".into(),
@@ -135,7 +129,7 @@ impl Bridge {
                     .lock()
                     .await
                     .as_ref()
-                    .is_some_and(|(id, safe)| id != session || !safe)
+                    .is_some_and(|goal| !goal.is_safe_for(session))
             {
                 return Err(AdapterError::OperationIdentityConflict(
                     "conversation became busy before managed context reload".into(),
@@ -144,8 +138,7 @@ impl Bridge {
             self.call("session/close", serde_json::json!({"sessionId":session}))
                 .await?;
             let loaded = self
-                .call(
-                    "session/load",
+                .load_retained_session(
                     serde_json::json!({"sessionId":session,"cwd":cwd,"mcpServers":tools}),
                 )
                 .await?;
