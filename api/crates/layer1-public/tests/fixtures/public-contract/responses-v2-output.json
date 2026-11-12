@@ -4,7 +4,7 @@
     {
       "id": "responses-v2-output-success",
       "operation": "GET /api/v2/responses/{response_id}/output",
-      "scenario": "responses_v2_owner",
+      "scenario": "responses_v2_output_owner",
       "request": {
         "method": "GET",
         "path": "/api/v2/responses/resp_contract/output",
@@ -81,7 +81,7 @@
     {
       "id": "responses-v2-output-invalid-cursor",
       "operation": "GET /api/v2/responses/{response_id}/output",
-      "scenario": "responses_v2_owner",
+      "scenario": "responses_v2_output_owner",
       "request": {
         "method": "GET",
         "path": "/api/v2/responses/resp_contract/output?after=foreign",
