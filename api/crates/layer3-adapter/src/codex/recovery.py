@@ -99,7 +99,7 @@ def validate_services(plan, processes):
 
 def validate(request):
     require(isinstance(request, dict) and request.get("version") == 1, "request_invalid")
-    require(request.get("action") in ("inspect", "inspect_idle", "quiesce"), "request_invalid")
+    require(request.get("action") in ("inspect", "quiesce"), "request_invalid")
     keys = {"version", "action", "runtime", "agents"}
     if request["action"] == "quiesce":
         keys |= {"operationId", "expectedPlan"}
@@ -236,7 +236,6 @@ def topology(agent, processes, supervisor):
 
 def inspect(request):
     with boot_guard(request["runtime"]):
-        ledger = idle_ledger(request["runtime"]) if request["action"] == "inspect_idle" else None
         processes = inventory()
         retained_services = services(processes)
         service_pids = {p["pid"] for p in retained_services}
@@ -263,21 +262,6 @@ def inspect(request):
                 "supervisor": supervisor, "topology": agents, "services": retained_services,
                 "baseline": [{"pid": p["pid"], "start": p["start"]} for p in processes.values() if p["pid"] != os.getpid()],
                 "histories": history}
-        if request["action"] == "inspect_idle":
-            # This proof authorizes only reconnecting the original conversations.
-            # No signaling, journal write, synthetic terminal row or input replay.
-            require(all(not a["processes"] for a in agents), "process_reappeared")
-            require(all(not f["openTurns"] for h in history for f in h["files"]), "native_turn_unsettled")
-            require(proc_identity(supervisor["pid"]) == supervisor, "supervisor_changed")
-            require(absent(plan, inventory()), "process_reappeared")
-            for agent, previous in zip(request["agents"], history):
-                fresh = history_summary(agent, previous["files"])
-                require(fresh["historySha256"] == previous["historySha256"], "history_prefix_changed")
-                require(all(not f["openTurns"] for f in fresh["files"]), "native_turn_unsettled")
-            require(absent(plan, inventory()), "process_reappeared")
-            require(idle_ledger(request["runtime"]) == ledger, "ledger_changed")
-            plan["idleReopen"] = True
-            plan["idleLedger"] = ledger
         require(len(encode(plan)) <= 56 * 1024, "plan_limit")
         verify_boot(request["runtime"])
         return {"version": 1, "status": "inspected", "plan": plan, "planSha256": sha(encode(plan))}
@@ -444,7 +428,7 @@ def main():
         require(len(raw) <= LIMIT, "request_limit")
         request = json.loads(raw)
         validate(request)
-        response = quiesce(request) if request["action"] == "quiesce" else inspect(request)
+        response = inspect(request) if request["action"] == "inspect" else quiesce(request)
         require(len(encode(response)) <= LIMIT, "response_limit")
     except Refused as error:
         response = {"version": 1, "status": "refused", "code": str(error)}

@@ -389,7 +389,6 @@ fn nyxid_browser_origin_is_canonical_https() {
 #[test]
 fn interface_feature_flags_are_strict_independent_booleans() {
     let config = configured(&[]).expect("existing configuration starts");
-    assert!(!config.features.retained_reopen_enabled);
     assert!(!config.features.model_budget_writes_enabled);
     assert!(!config.features.model_request_budget_writes_enabled);
     assert!(!config.features.v2_ui_transport);
@@ -399,7 +398,6 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     assert!(!config.features.retained_context_lookup);
     assert!(!config.features.event_driven_reconciliation);
     for key in [
-        "CHRONO_RETAINED_REOPEN_ENABLED",
         "CHRONO_MODEL_BUDGET_WRITES_ENABLED",
         "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
@@ -410,8 +408,6 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
     ] {
         let config = configured(&[(key, "true")]).unwrap();
-        assert_eq!(config.features.retained_reopen_enabled, key == "CHRONO_RETAINED_REOPEN_ENABLED");
-        assert!(!configured(&[(key, "false")]).unwrap().features.retained_reopen_enabled);
         assert_eq!(
             config.features.model_budget_writes_enabled,
             key == "CHRONO_MODEL_BUDGET_WRITES_ENABLED"

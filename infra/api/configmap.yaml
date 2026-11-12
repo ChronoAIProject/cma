@@ -86,8 +86,6 @@ data:
   # New file admissions only; supporting readers/workers must precede enablement.
   CHRONO_V2_UI_TRANSPORT_ENABLED: "true"
   CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
-  # Owner-consented same-image reopening only; admission remains off until qualified.
-  CHRONO_RETAINED_REOPEN_ENABLED: "false"
   # Independent pending-approval reader; also requires trusted cohort membership.
   CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"

@@ -28,8 +28,6 @@ pub enum Reason {
     RestorePending,
     MissingHistory,
     CorruptHistory,
-    LedgerHeld,
-    LedgerFormatUnproved,
     PublishedGeneration,
     StaleChildren,
     Ineligible,

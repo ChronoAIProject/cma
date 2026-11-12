@@ -2294,16 +2294,7 @@ conversation, and listing does not download file bodies. See
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/always-on` | AlwaysOnRequest | - | 200 SandboxView |
 | `POST /api/v1/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest; key | - | 202 SandboxView |
-| `GET /api/v1/sandboxes/{id}/runtime-recovery` | - | - | 200 RetainedRecoveryView |
-| `POST /api/v1/sandboxes/{id}/runtime-recovery` | Idempotency-Key | RecoverRetainedRequest | 202 RetainedReopenView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
-
-The read-only `runtime-recovery` assessment returns a fixed `disposition` and
-`admission_enabled`, which describes the deployment gate rather than eligibility.
-GET never schedules recovery. The explicit owner POST repeats stronger native and
-history proof and requires consent, the reviewed revision and an original request
-key. See [Same-image retained recovery](CMA_Retained_Recovery.md) for supported
-states, refusal categories, atomic admission and rollback qualification.
 
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's

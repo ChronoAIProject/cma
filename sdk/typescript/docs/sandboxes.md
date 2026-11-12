@@ -300,22 +300,6 @@ Display `label`, and show `disambiguator` only as secondary duplicate-name conte
 partial `complete` flags, retain loaded/total counts on failures, and handle
 429/503 retries and 410 report expiry explicitly.
 
-## Same-image retained recovery
-
-`client.sandboxes.inspectRuntimeRecovery(id)` calls the owner-only
-`GET /api/v1/sandboxes/{id}/runtime-recovery` endpoint. It returns a bounded
-`disposition` and the deployment's `admission_enabled` flag. GET is read-only;
-it does not authorize reopening or establish that a later POST will qualify.
-
-After explicit owner consent, call `client.sandboxes.recoverRetained(id, body,
-options)` with `{ expected_revision, confirm_same_image_recovery: true }` and a
-persisted `options.idempotencyKey`. The default-off POST repeats complete proof
-and preserves the exact image, home and original conversations. It returns 202
-with an immutable `operation_id`, `revision` and `accepted_at`; follow the same
-Sandbox's lifecycle progress. A refusal retains the environment. After any lost
-reply, resend the same revision and key, including after progress or gate closure.
-An operator cannot substitute for the owning person's consent.
-
 ## Always on exceptions
 
 Only an administrator can approve Always on. `sandboxes.setAlwaysOn(id, { always_on: false, expected_revision }, { idempotencyKey })` relinquishes an existing

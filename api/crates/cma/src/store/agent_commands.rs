@@ -16,11 +16,11 @@ use super::sandbox_mongo::{
 pub(super) mod audit;
 pub(super) mod binding;
 mod interrupting_message;
-pub(in crate::store) mod lane_records;
+mod lane_records;
 mod queued_cancellation;
 mod queued_input;
 mod reconcile;
-pub(in crate::store) mod records;
+mod records;
 pub(in crate::store) mod reserve;
 mod retry;
 mod targeted_control;

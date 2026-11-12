@@ -19,18 +19,6 @@ const LIMIT: usize = 64 * 1024;
 
 #[async_trait::async_trait]
 impl RuntimeRecovery for CodexAdapter {
-    async fn inspect_idle_reopen(
-        &self,
-        request: &RuntimeRecoveryInspectionRequest,
-    ) -> Result<RuntimeRecoveryInspection> {
-        self.verify_recovery_identity(request).await?;
-        let mut input = recovery_input(request)?;
-        input["action"] = json!("inspect_idle");
-        let output = self.provider_recovery_command(request, &input).await?;
-        self.verify_recovery_identity(request).await?;
-        checked_inspection(request, &input, output)
-    }
-
     async fn inspect_nonexecuting_recovery(
         &self,
         request: &RuntimeAdoptionRequest,
@@ -180,8 +168,6 @@ impl CodexAdapter {
                 concat!(
                     include_str!("recovery_io.py"),
                     "\n",
-                    include_str!("recovery_ledger.py"),
-                    "\n",
                     include_str!("recovery.py")
                 )
                 .into(),
@@ -222,8 +208,6 @@ fn checked_inspection(
     if output["status"] != "inspected"
         || plan["runtime"] != input["runtime"]
         || plan["agents"] != input["agents"]
-        || (input["action"] == "inspect_idle"
-            && (plan["idleReopen"] != true || !valid_idle_ledger(&plan["idleLedger"])))
     {
         return Err(invalid());
     }
@@ -240,15 +224,6 @@ fn checked_inspection(
         // needs separate provider absence evidence and must not use this.
         runtime_process_absent: false,
     })
-}
-
-fn valid_idle_ledger(ledger: &Value) -> bool {
-    ledger["format"] == "legacy_v1_unused_process_scope"
-        && ledger["sha256"].as_str().is_some_and(|hash| hex(hash, 64))
-        && ledger["journals"]
-            .as_u64()
-            .zip(ledger["authorities"].as_u64())
-            .is_some_and(|(journals, authorities)| journals <= 128 && authorities <= 128 - journals)
 }
 
 fn recovery_input(request: &RuntimeRecoveryInspectionRequest) -> Result<Value> {
@@ -358,12 +333,6 @@ fn provider_refusal(code: &str) -> Reason {
         | "native_turn_restarted" => Reason::CorruptHistory,
         "boot_changed" => Reason::BootMismatch,
         "home_changed" => Reason::HomeChanged,
-        "ledger_format_unproved" => Reason::LedgerFormatUnproved,
-        "ledger_capacity"
-        | "ledger_unproved"
-        | "ledger_unsettled"
-        | "ledger_process_scope_used" => Reason::LedgerHeld,
-        "ledger_changed" => Reason::NativeChanged,
         "supervisor_changed" | "pid_reused" | "untracked_process" | "process_reappeared" => {
             Reason::NativeChanged
         }
