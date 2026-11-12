@@ -2,11 +2,41 @@
 use super::retained_assessment::{fixture, ready_source};
 use super::*;
 
+async fn finish_legacy_connection(store: &MongoSandboxStore, agent: Agent) -> Agent {
+    assert_eq!(agent.work.step, AgentWorkStep::PublishConnection);
+    let mut claimed = store
+        .claim_agent_work(&agent.id, "worker", NOW.into(), MINUTE.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let expected_agent_revision = claimed.revision;
+    let fence = claimed.work.lease.as_ref().unwrap().fence;
+    claimed
+        .work
+        .advance("worker", fence, AgentWorkStep::None, NOW.into())
+        .unwrap();
+    store
+        .commit_agent_work(AgentWorkMutation {
+            expected_agent_revision,
+            holder: "worker".into(),
+            fence,
+            agent: claimed,
+            worktree: None,
+            appended_at: NOW.into(),
+            sandbox_event: None,
+            agent_logs: Vec::new(),
+        })
+        .await
+        .unwrap();
+    store.get_agent(&agent.id).await.unwrap().unwrap()
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn live_discovery_pages_legacy_and_adopted_agents_without_rewriting_them() {
     let (client, name, store, adopted) = fixture("discovery_adopted").await;
-    let legacy = ready_source(&store, "discovery_legacy").await;
+    let legacy =
+        finish_legacy_connection(&store, ready_source(&store, "discovery_legacy").await).await;
     store
         .agents
         .update_one(
@@ -42,6 +72,12 @@ async fn live_discovery_pages_legacy_and_adopted_agents_without_rewriting_them()
             .unwrap(),
         None
     );
+    let legacy_original = store
+        .agents
+        .find_one(doc! {"_id": legacy.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
     let mut cursor = None;
     let mut seen = Vec::new();
     loop {
@@ -51,14 +87,23 @@ async fn live_discovery_pages_legacy_and_adopted_agents_without_rewriting_them()
             .unwrap();
         assert_eq!(page.items.len(), 1);
         let candidate = &page.items[0];
-        assert!(candidate.recovery_eligible);
+        // Storage format must not grant recovery while ordinary connection
+        // publication is still pending. A completed legacy connection is idle.
+        if candidate.agent_id == adopted.id {
+            assert!(!candidate.recovery_eligible);
+            assert_eq!(candidate.work_step, AgentWorkStep::PublishConnection);
+        } else {
+            assert_eq!(candidate.agent_id, legacy.id);
+            assert!(candidate.recovery_eligible);
+            assert_eq!(candidate.work_step, AgentWorkStep::None);
+        }
         assert_eq!(candidate.runtime_generation, 1);
         seen.push(candidate.agent_id.clone());
         assert!(seen.len() <= 2, "discovery must advance its cursor");
         let Some(next) = page.next else { break };
         cursor = Some(next);
     }
-    let mut expected = vec![adopted.id.clone(), legacy.id];
+    let mut expected = vec![adopted.id.clone(), legacy.id.clone()];
     expected.sort();
     assert_eq!(seen, expected);
     assert_eq!(
@@ -69,6 +114,15 @@ async fn live_discovery_pages_legacy_and_adopted_agents_without_rewriting_them()
             .unwrap()
             .unwrap(),
         original
+    );
+    assert_eq!(
+        store
+            .agents
+            .find_one(doc! {"_id": legacy.id.as_str()})
+            .await
+            .unwrap()
+            .unwrap(),
+        legacy_original
     );
     client.database(&name).drop().await.unwrap();
 }
