@@ -264,6 +264,13 @@ The set is the **platform admission state**. It is not a budget-private flag:
 path, so the 60-second switch, the registration ceiling and the spend stop are
 one mechanism with several reasons.
 
+Admission reads also derive closures from the current policy, clock and period
+evidence. A missing period is an unobserved period, never an open meter. Missing
+or stale observations, finished periods and crossed spend thresholds therefore
+refuse admission even when the evaluator has not run or cannot persist its
+result. These reads perform no writes and never lift a persisted closure; only
+the evaluator can commit a lift under the revision rules in section 6.
+
 ### 5.1 What each closure refuses
 
 | Operation | Open | `SpendWarning` | `SpendStop` / `MeteringUnavailable` |

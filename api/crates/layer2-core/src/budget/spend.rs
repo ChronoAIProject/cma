@@ -2,7 +2,7 @@
 
 use super::{BudgetError, Closure, ClosureReason, PlatformPeriodLedger, SpendLevels};
 
-/// The closures on the current period row: one mechanism with several reasons.
+/// Persisted closures plus closures derived from the current metering evidence.
 /// An unconfigured platform (no enabled policy) is open.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PlatformAdmissionState {
