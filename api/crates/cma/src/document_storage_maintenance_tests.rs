@@ -7,6 +7,7 @@ use serde_json::json;
 
 fn config(peer: &Peer) -> DocumentStorageConfig {
     DocumentStorageConfig {
+        resilience_enabled: false,
         platform_origin: peer.origin.clone(),
         bucket: "fixture".into(),
         client_id: "fixture-machine".into(),
@@ -79,13 +80,17 @@ async fn maintenance_token_requests_maintenance_scope_and_online_token_keeps_ori
 #[tokio::test]
 async fn deletion_disabled_never_contacts_storage() {
     let peer = Peer::start().await;
-    let client = client(&peer, false);
-    assert!(!client.deletion_supported());
-    for list in [false, true] {
-        assert_eq!(
-            finish(operation(&client, list)).await.unwrap_err().error,
-            DocumentError::Unavailable
-        );
+    for resilience_enabled in [false, true] {
+        let mut settings = config(&peer);
+        settings.resilience_enabled = resilience_enabled;
+        let client = StorageMaintenance::new(settings, false).unwrap();
+        assert!(!client.deletion_supported());
+        for list in [false, true] {
+            assert_eq!(
+                finish(operation(&client, list)).await.unwrap_err().error,
+                DocumentError::Unavailable
+            );
+        }
     }
     assert_eq!(peer.count(), 0);
 }
