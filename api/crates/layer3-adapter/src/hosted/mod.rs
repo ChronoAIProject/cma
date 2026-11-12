@@ -113,7 +113,7 @@ pub fn observed_permission_id(
     request: &crate::RequestPermissionRequest,
     call: &serde_json::Value,
 ) -> Option<String> {
-    if !acp_inbound::valid_call(call)
+    if !acp_correlation::valid_call(call)
         || permission_state::validate(&request.options).is_err()
         || request.options.is_empty()
         || request.options.iter().any(|option| {
