@@ -2,6 +2,7 @@
 use super::*;
 pub(crate) struct ControlPlaneComposition {
     pub router: Router,
+    pub workers: crate::worker_supervision::Workers,
     pub worker_observations: crate::store::worker_observations::Observations,
     pub bindings: bindings::BindingComposition,
     pub bots: Option<bots::BotComposition>,

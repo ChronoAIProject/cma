@@ -1,15 +1,19 @@
 //! Local scheduler liveness and phase health. Success can include an idle scan.
-const WORKERS: [&str; 5] = [
+const WORKERS: [&str; 7] = [
     "launches",
     "agent_commands",
     "sandbox_commands",
     "agents",
+    "sandboxes",
+    "workspaces",
     "native_warm_pools",
 ];
 
 pub(super) fn initialize() {
     for worker in WORKERS {
         metrics::gauge!("cma_worker_alive", "worker" => worker).set(0);
+        metrics::gauge!("cma_worker_execution_available", "worker" => worker).set(0);
+        metrics::counter!("cma_worker_restarts_total", "worker" => worker).absolute(0);
         metrics::gauge!("cma_worker_heartbeat_timestamp_seconds", "worker" => worker).set(0);
         for phase in ["discovery", "execution", "reconciliation"] {
             metrics::gauge!("cma_worker_phase_success_timestamp_seconds", "worker" => worker, "phase" => phase).set(0);
