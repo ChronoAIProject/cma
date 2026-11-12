@@ -11,6 +11,7 @@ use mongodb::{
     ClientSession, Collection, Database,
 };
 
+mod delete;
 mod queries;
 mod transactions;
 
@@ -36,16 +37,9 @@ impl MongoDocumentReclaimStore {
     async fn run(
         &self,
         candidate: &ObjectCandidate,
-        action: Action,
+        action: Action<'_>,
     ) -> Result<Applied, DocumentError> {
-        candidate.source.validate()?;
-        if candidate
-            .reservation_id
-            .as_deref()
-            .is_some_and(|id| !super::quota_baseline::valid_activation(id))
-        {
-            return Err(DocumentError::Corrupt);
-        }
+        validate_candidate(candidate)?;
         tokio::time::timeout(IO, async {
             for attempt in 0..8 {
                 let mut session = self
@@ -65,8 +59,8 @@ impl MongoDocumentReclaimStore {
                         .judge_transaction(candidate, &mut session)
                         .await
                         .map(Applied::Judged),
-                    Action::Finalize => self
-                        .finalize_transaction(candidate, &mut session)
+                    Action::Finalize(claim) => self
+                        .finalize_transaction(claim, &mut session)
                         .await
                         .map(Applied::Finalized),
                 };
@@ -188,8 +182,17 @@ impl DocumentReclaimStore for MongoDocumentReclaimStore {
             _ => Err(DocumentError::Corrupt),
         }
     }
-    async fn finalize(&self, candidate: &ObjectCandidate) -> Result<bool, DocumentError> {
-        match self.run(candidate, Action::Finalize).await? {
+    async fn claim_delete(
+        &self,
+        candidate: &ObjectCandidate,
+        holder: &str,
+        now: i64,
+    ) -> Result<Option<DeleteClaim>, DocumentError> {
+        self.claim_deletion(candidate, holder, now).await
+    }
+    async fn finalize(&self, claim: &DeleteClaim) -> Result<bool, DocumentError> {
+        delete::claim_filter(claim)?;
+        match self.run(&claim.candidate, Action::Finalize(claim)).await? {
             Applied::Finalized(result) => Ok(result),
             _ => Err(DocumentError::Corrupt),
         }
@@ -200,9 +203,9 @@ impl DocumentReclaimStore for MongoDocumentReclaimStore {
 }
 
 #[derive(Clone, Copy)]
-enum Action {
+enum Action<'a> {
     Judge,
-    Finalize,
+    Finalize(&'a DeleteClaim),
 }
 enum Applied {
     Judged(Judgement),
@@ -221,6 +224,17 @@ fn id(candidate: &ObjectCandidate) -> Result<String, DocumentError> {
         .get_str("_id")
         .map_err(|_| DocumentError::Corrupt)?
         .into())
+}
+fn validate_candidate(candidate: &ObjectCandidate) -> Result<(), DocumentError> {
+    candidate.source.validate()?;
+    if candidate
+        .reservation_id
+        .as_deref()
+        .is_some_and(|id| !super::quota_baseline::valid_activation(id))
+    {
+        return Err(DocumentError::Corrupt);
+    }
+    Ok(())
 }
 fn incarnation_filter(candidate: &ObjectCandidate) -> Document {
     match &candidate.reservation_id {

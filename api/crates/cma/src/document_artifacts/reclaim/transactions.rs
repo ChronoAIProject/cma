@@ -76,9 +76,10 @@ impl MongoDocumentReclaimStore {
 
     pub(super) async fn finalize_transaction(
         &self,
-        candidate: &ObjectCandidate,
+        claim: &DeleteClaim,
         session: &mut ClientSession,
     ) -> Result<bool, TransactionError> {
+        let candidate = &claim.candidate;
         let owner_id = owner_id(&candidate.source.owner_hash);
         // The same owner fence used by reserve serializes release and admission.
         let fence = self
@@ -89,9 +90,7 @@ impl MongoDocumentReclaimStore {
         if fence.matched_count != 1 {
             return Err(DocumentError::Corrupt.into());
         }
-        let object_id = id(candidate)?;
-        let mut condemned = doc! {"_id": &object_id, "state": "condemned"};
-        condemned.extend(incarnation_filter(candidate));
+        let condemned = delete::claim_filter(claim)?;
         let Some(object) = self
             .rows
             .find_one(condemned.clone())

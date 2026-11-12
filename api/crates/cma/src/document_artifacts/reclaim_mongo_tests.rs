@@ -6,6 +6,10 @@ use mongodb::{
 };
 use std::sync::Arc;
 
+#[path = "reclaim_delete_mongo_tests.rs"]
+mod delete;
+use delete::{claimed, unclaimed};
+
 async fn fixture() -> (Database, MongoDocumentQuotaStore, MongoDocumentReclaimStore) {
     let uri =
         std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo replica set required");
@@ -109,7 +113,10 @@ async fn document_reclaim_writer_commit_and_judgement_serialize_without_dangling
         Err(DocumentError::Unavailable)
     );
     assert!(store.get(&metadata.metadata.id).await.unwrap().is_none());
-    assert!(reclaim.finalize(&c).await.unwrap());
+    assert!(reclaim
+        .finalize(&claimed(&reclaim, &c).await)
+        .await
+        .unwrap());
     quota.reserve(&reservation).await.unwrap();
     age(&quota, &reservation).await;
     let c = candidate(&reclaim).await;
@@ -121,7 +128,7 @@ async fn document_reclaim_writer_commit_and_judgement_serialize_without_dangling
         reclaim.judge(&c).await.unwrap(),
         Judgement::Skipped | Judgement::Committed
     ));
-    assert!(!reclaim.finalize(&c).await.unwrap());
+    assert!(!reclaim.finalize(&unclaimed(&c)).await.unwrap());
     assert!(store.get(&metadata.metadata.id).await.unwrap().is_some());
     db.drop().await.unwrap();
 }
@@ -135,8 +142,9 @@ async fn document_reclaim_release_is_exactly_once_across_two_stores() {
     age(&quota, &reservation).await;
     let c = candidate(&reclaim).await;
     assert_eq!(reclaim.judge(&c).await.unwrap(), Judgement::Condemned);
+    let claim = claimed(&reclaim, &c).await;
     let other = MongoDocumentReclaimStore::new(&db, true);
-    let (a, b) = tokio::join!(reclaim.finalize(&c), other.finalize(&c));
+    let (a, b) = tokio::join!(reclaim.finalize(&claim), other.finalize(&claim));
     assert_eq!(u8::from(a.unwrap()) + u8::from(b.unwrap()), 1);
     let usage = owner(&quota, &reservation).await;
     for key in ["bytes", "objects", "documents"] {
@@ -154,9 +162,10 @@ async fn document_reclaim_finalize_serializes_with_reserve_on_owner_fence() {
     age(&quota, &reservation).await;
     let c = candidate(&reclaim).await;
     reclaim.judge(&c).await.unwrap();
+    let claim = claimed(&reclaim, &c).await;
     reservation.sha256 = digest(b"next");
     reservation.bytes = 4;
-    let (released, reserved) = tokio::join!(reclaim.finalize(&c), quota.reserve(&reservation));
+    let (released, reserved) = tokio::join!(reclaim.finalize(&claim), quota.reserve(&reservation));
     assert!(released.unwrap());
     assert_eq!(reserved.unwrap(), SourceTicket::Ledgered);
     let usage = owner(&quota, &reservation).await;
@@ -180,7 +189,10 @@ async fn document_reclaim_condemned_retry_is_refused_until_finalized_then_reserv
         quota.reserve(&reservation).await,
         Err(DocumentError::Unavailable)
     );
-    assert!(reclaim.finalize(&c).await.unwrap());
+    assert!(reclaim
+        .finalize(&claimed(&reclaim, &c).await)
+        .await
+        .unwrap());
     assert_eq!(
         quota.reserve(&reservation).await.unwrap(),
         SourceTicket::Ledgered
@@ -242,7 +254,7 @@ async fn document_reclaim_legacy_time_fallback_repairs_referenced_baseline() {
         .unwrap();
     let c = candidate(&reclaim).await;
     assert_eq!(reclaim.judge(&c).await.unwrap(), Judgement::Committed);
-    assert!(!reclaim.finalize(&c).await.unwrap());
+    assert!(!reclaim.finalize(&unclaimed(&c)).await.unwrap());
     quota
         .rows
         .update_one(
@@ -277,7 +289,10 @@ async fn document_reclaim_release_never_makes_counters_negative() {
         )
         .await
         .unwrap();
-    assert_eq!(reclaim.finalize(&c).await, Err(DocumentError::Corrupt));
+    assert_eq!(
+        reclaim.finalize(&claimed(&reclaim, &c).await).await,
+        Err(DocumentError::Corrupt)
+    );
     assert!(quota
         .rows
         .find_one(doc! {"_id":object_id(&reservation)})
@@ -364,42 +379,6 @@ async fn document_reclaim_legacy_partial_baseline_resumes_without_inventing_base
 
 #[tokio::test]
 #[ignore = "requires disposable MongoDB replica set"]
-async fn document_reclaim_stale_candidate_never_releases_a_new_reservation_incarnation() {
-    for legacy in [false, true] {
-        let (db, quota, reclaim) = fixture().await;
-        let reservation = source(&record().await, b"source");
-        quota.reserve(&reservation).await.unwrap();
-        if legacy {
-            quota
-                .rows
-                .update_one(
-                    doc! {"_id":object_id(&reservation)},
-                    doc! {"$unset":{"reservation_id":""}},
-                )
-                .await
-                .unwrap();
-        }
-        age(&quota, &reservation).await;
-        let old = candidate(&reclaim).await;
-        reclaim.judge(&old).await.unwrap();
-        assert!(reclaim.finalize(&old).await.unwrap());
-        quota.reserve(&reservation).await.unwrap();
-        age(&quota, &reservation).await;
-        let new = candidate(&reclaim).await;
-        assert_ne!(old.reservation_id, new.reservation_id);
-        assert_eq!(reclaim.judge(&old).await.unwrap(), Judgement::Skipped);
-        assert_eq!(reclaim.judge(&new).await.unwrap(), Judgement::Condemned);
-        assert!(!reclaim.finalize(&old).await.unwrap());
-        let usage = owner(&quota, &reservation).await;
-        assert_eq!(usage.get_i64("objects").unwrap(), 1);
-        assert_eq!(usage.get_i64("bytes").unwrap(), 6);
-        assert!(reclaim.finalize(&new).await.unwrap());
-        db.drop().await.unwrap();
-    }
-}
-
-#[tokio::test]
-#[ignore = "requires disposable MongoDB replica set"]
 async fn document_reclaim_unknown_commits_use_snapshot_reconciliation_without_double_release() {
     use mongodb::{
         event::{command::CommandEvent, EventHandler},
@@ -448,9 +427,10 @@ async fn document_reclaim_unknown_commits_use_snapshot_reconciliation_without_do
         snapshots.load(Ordering::SeqCst) > 0,
         "unknown judgement must reconcile through a snapshot"
     );
+    let claim = claimed(&reclaim, &c).await;
     let before = snapshots.load(Ordering::SeqCst);
     admin.run_command(injection).await.unwrap();
-    let released = reclaim.finalize(&c).await;
+    let released = reclaim.finalize(&claim).await;
     admin
         .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
         .await
@@ -463,7 +443,7 @@ async fn document_reclaim_unknown_commits_use_snapshot_reconciliation_without_do
         snapshots.load(Ordering::SeqCst) > before,
         "unknown release must reconcile through a snapshot"
     );
-    assert!(!reclaim.finalize(&c).await.unwrap());
+    assert!(!reclaim.finalize(&claim).await.unwrap());
     let usage = owner(&quota, &reservation).await;
     for field in ["documents", "bytes", "objects"] {
         assert_eq!(usage.get_i64(field).unwrap(), 0);

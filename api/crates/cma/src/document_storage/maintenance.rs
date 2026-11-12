@@ -18,6 +18,11 @@ use tokio::time::Instant;
 const MAINTENANCE_SCOPE: &str = "proxy object:read object:list object:delete";
 const MAX_LIST_BYTES: usize = 256 * 1024;
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(3600);
+// Reclaim's lease admission must cover the adapter's entire token/HTTP budget.
+const _: () = assert!(
+    OPERATION_TIMEOUT.as_secs()
+        <= layer2_core::document_artifacts::DELETE_OPERATION_TIMEOUT.as_secs()
+);
 
 pub(crate) struct StorageMaintenance {
     http: Client,
