@@ -223,3 +223,82 @@ async fn recovered_full_schedulers_become_ready_before_long_children_finish() {
         assert_eq!(probe.calls.load(Ordering::SeqCst), capacity);
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn capacity_cadence_keeps_watchdog_active_and_retains_owned_sweep() {
+    let probe = blocking_probe(true);
+    let activity = crate::worker_supervision::Workers::new().get("agent_capacity_recovery");
+    let (shutdown, receiver) = watch::channel(false);
+    let first = probe.called.notified();
+    let scheduler = SandboxScheduler::with_interval(Arc::clone(&probe), Duration::from_secs(5))
+        .spawn_supervised(receiver, activity.clone());
+    first.await;
+    for _ in 0..30 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        settle_scheduler().await;
+        assert!(activity.snapshot().available());
+    }
+    crate::worker_supervision::stall_next_poll(&activity);
+    let fault = tokio::time::Instant::now();
+    for _ in 0..7 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        settle_scheduler().await;
+        if activity.snapshot().state == "backoff" {
+            break;
+        }
+    }
+    assert_eq!(activity.snapshot().state, "backoff");
+    assert!(fault.elapsed() <= Duration::from_secs(7));
+    assert!(!activity.snapshot().available());
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(probe.active.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle_scheduler().await;
+    assert!(activity.snapshot().available());
+    shutdown.send(true).unwrap();
+    probe.release.notify_waiters();
+    scheduler.await.unwrap();
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(probe.active.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn five_second_sweep_cadence_is_preserved_with_one_second_activity() {
+    let probe = Arc::new(SweepProbe::default());
+    let activity = crate::worker_supervision::Workers::new().get("agent_capacity_recovery");
+    let (shutdown, receiver) = watch::channel(false);
+    let first = probe.called.notified();
+    let scheduler = SandboxScheduler::with_interval(Arc::clone(&probe), Duration::from_secs(5))
+        .spawn_supervised(receiver, activity.clone());
+    first.await;
+    for _ in 0..4 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        settle_scheduler().await;
+        assert!(activity.snapshot().available());
+        assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+    }
+    let second = probe.called.notified();
+    tokio::time::advance(Duration::from_secs(1)).await;
+    second.await;
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn delayed_wakeup_does_not_shift_the_next_planned_sweep() {
+    let probe = Arc::new(SweepProbe::default());
+    let (shutdown, receiver) = watch::channel(false);
+    let first = probe.called.notified();
+    let scheduler =
+        SandboxScheduler::with_interval(Arc::clone(&probe), Duration::from_secs(1)).spawn(receiver);
+    first.await;
+    tokio::time::advance(Duration::from_millis(1100)).await;
+    settle_scheduler().await;
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 2);
+    tokio::time::advance(Duration::from_millis(900)).await;
+    settle_scheduler().await;
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 3);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}

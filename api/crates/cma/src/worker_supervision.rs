@@ -32,6 +32,7 @@ impl Workers {
                 ("sandboxes", true),
                 ("workspaces", true),
                 ("sandbox_reconciliation", true),
+                ("agent_capacity_recovery", true),
                 ("native_warm_pools", false),
             ]
             .into_iter()
