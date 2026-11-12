@@ -967,6 +967,17 @@ retained allowlisted Kubernetes metadata and reservation SHA-256 must bind that
 `0 before / 1 live / 0 after stop` result to the reviewed deployment before
 rollout advances.
 
+### Lifecycle reopen, skill upgrade and Always on adoption
+
+The release carrying #1164, #1209 and #1330 is deployed API-first with
+`CHRONO_AGENT_SKILL_UPGRADE_ENABLED=false`; the runtime is promoted afterwards
+through the normal `CHRONO_SANDBOX_IMAGE` adoption. It raises the API
+authorization rollback floor (administrator-only Always on) and, once the
+runtime is promoted, the Agent Manager rollback floor. Follow the
+[lifecycle acceptance runbook](CMA_Lifecycle_Acceptance_Runbook.md) for the
+order, the pre-enable Always on review and the TC-047, TC-048, TC-057 and
+TC-130 evidence.
+
 ---
 
 ## 5. Historical first production MongoDB cutover

@@ -44,6 +44,7 @@ import {
 } from './instances/commands.js';
 
 const alwaysOnRequest = object({ always_on: boolean, expected_revision: integer });
+/** Owners may send false only; true receives 403 always_on_approval_required. */
 export type AlwaysOnRequest = Output<typeof alwaysOnRequest>;
 
 export interface SandboxListOptions extends PageOptions {
@@ -172,7 +173,11 @@ export class Sandboxes {
     return this.lifecycle(id, '/revive', 'POST', options);
   }
 
-  /** Set the owner-controlled per-Sandbox automatic-pause whitelist value. */
+  /**
+   * Relinquish an existing exception with `always_on: false`. Unset/false is a
+   * revision-checked no-op. `true` returns 403 `always_on_approval_required`.
+   * Only admin.setSandboxAlwaysOn can approve an exception.
+   */
   setAlwaysOn(id: string, body: AlwaysOnRequest, options: CommandOptions) {
     return read(this.config, `/api/v1/sandboxes/${segment(id)}/always-on`, identity(sandbox, id), {
       ...command(options),

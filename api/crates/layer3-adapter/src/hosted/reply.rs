@@ -64,8 +64,29 @@ pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
         AdapterError::RuntimeLedgerHold(detail)
     } else if failure.retryable {
         AdapterError::Unavailable(detail)
-    } else if failure.code == "attachment_upload_conflict" {
+    } else if matches!(
+        failure.code.as_str(),
+        "attachment_upload_conflict" | "agent_skill_upgrade_conflict"
+    ) {
         AdapterError::OperationIdentityConflict(detail)
+    } else if failure.operation == WireOperation::InstallAgentSkill
+        && matches!(
+            failure.code.as_str(),
+            "agent_skill_upgrade_modified"
+                | "agent_skill_upgrade_previous_unavailable"
+                | "agent_skill_upgrade_retention_full"
+                | "agent_skill_upgrade_recovery_conflict"
+                | "agent_skill_upgrade_preparation_exhausted"
+        )
+    {
+        use crate::AgentSkillUpgradeRefusal as Refusal;
+        AdapterError::SkillUpgradeRefused(match failure.code.as_str() {
+            "agent_skill_upgrade_modified" => Refusal::Modified,
+            "agent_skill_upgrade_previous_unavailable" => Refusal::PreviousUnavailable,
+            "agent_skill_upgrade_retention_full" => Refusal::RetentionFull,
+            "agent_skill_upgrade_recovery_conflict" => Refusal::RecoveryConflict,
+            _ => Refusal::PreparationExhausted,
+        })
     } else if failure.code == "at_capacity" {
         AdapterError::AtCapacity(detail)
     } else {
@@ -205,6 +226,36 @@ mod tests {
             retryable: false,
         });
         assert!(matches!(terminal, AdapterError::Rejected(_)));
+    }
+
+    #[test]
+    fn skill_upgrade_refusals_are_typed_only_for_terminal_skill_operations() {
+        for reason in [
+            crate::AgentSkillUpgradeRefusal::Modified,
+            crate::AgentSkillUpgradeRefusal::PreviousUnavailable,
+            crate::AgentSkillUpgradeRefusal::RetentionFull,
+            crate::AgentSkillUpgradeRefusal::RecoveryConflict,
+            crate::AgentSkillUpgradeRefusal::PreparationExhausted,
+        ] {
+            let mut failure = WireFailure {
+                operation: WireOperation::InstallAgentSkill,
+                code: reason.code().into(),
+                detail: "owner action required".into(),
+                retryable: false,
+            };
+            assert_eq!(
+                failure_error(failure.clone()),
+                AdapterError::SkillUpgradeRefused(reason)
+            );
+            failure.retryable = true;
+            assert!(matches!(
+                failure_error(failure.clone()),
+                AdapterError::Unavailable(_)
+            ));
+            failure.retryable = false;
+            failure.operation = WireOperation::Install;
+            assert!(matches!(failure_error(failure), AdapterError::Rejected(_)));
+        }
     }
 
     #[test]
