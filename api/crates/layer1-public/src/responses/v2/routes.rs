@@ -19,6 +19,10 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 
 type Auth = Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>;
+
+#[path = "routes_output.rs"]
+pub(super) mod output;
+
 #[derive(utoipa::ToSchema)]
 #[allow(dead_code)]
 pub(super) struct CreateV2ResponseRequest {

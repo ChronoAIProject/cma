@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "capacity-request-status-owner",
+      "operation": "POST /api/v1/agents/{id}/capacity-recovery/status",
+      "scenario": "capacity_contract_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/status",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "creation_key": "creation",
+          "creation_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "failure_seq": 10001,
+          "requested_at": "2026-11-11T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "disposition": "evidence_required",
+          "phase": "completed",
+          "attempts": 1,
+          "retry_at": null,
+          "operation_key": "capacity-recovery:5a09827ead0e2306912d8472abd32a860ee7fd1586d7ef350383bc8715c499d2"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-request-status-foreign",
+      "operation": "POST /api/v1/agents/{id}/capacity-recovery/status",
+      "scenario": "capacity_contract_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/status",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "creation_key": "creation",
+          "creation_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "failure_seq": 10001,
+          "requested_at": "2026-11-11T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 404,
+          "detail": "Agent recovery is unavailable.",
+          "code": "capacity_recovery_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-request-status-missing",
+      "operation": "POST /api/v1/agents/{id}/capacity-recovery/status",
+      "scenario": "capacity_contract_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_absent/capacity-recovery/status",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_absent",
+          "creation_key": "creation",
+          "creation_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "failure_seq": 10001,
+          "requested_at": "2026-11-11T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 404,
+          "detail": "Agent recovery is unavailable.",
+          "code": "capacity_recovery_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-request-status-anonymous",
+      "operation": "POST /api/v1/agents/{id}/capacity-recovery/status",
+      "scenario": "capacity_contract_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/status",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "creation_key": "creation",
+          "creation_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "failure_seq": 10001,
+          "requested_at": "2026-11-11T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-request-status-unavailable",
+      "operation": "POST /api/v1/agents/{id}/capacity-recovery/status",
+      "scenario": "capacity_contract_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/status",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "creation_key": "creation",
+          "creation_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "failure_seq": 10001,
+          "requested_at": "2026-11-11T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 503,
+          "detail": "Retry the unchanged original request to reconcile its outcome.",
+          "code": "capacity_recovery_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-request-status-conflict",
+      "operation": "POST /api/v1/agents/{id}/capacity-recovery/status",
+      "scenario": "capacity_contract_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery/status",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "creation_key": "creation",
+          "creation_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "failure_seq": 10001,
+          "requested_at": "2026-11-11T00:00:00Z"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 409,
+          "detail": "Current recovery prerequisites do not permit this operation.",
+          "code": "capacity_recovery_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
