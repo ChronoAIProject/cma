@@ -48,8 +48,8 @@ impl SandboxReconciler {
 
     /// Whether `SpendStop` is in force, re-evaluated at most once per
     /// interval. Never fails the sweep: an evaluation error keeps the last
-    /// known answer and retries on the next call; admission fails closed on
-    /// its own.
+    /// known hint and retries on the next call. Maintenance admission checks
+    /// current STOP authority in the transaction before persisting a pause.
     pub(super) async fn platform_spend_stop(&self, now: SystemTime) -> bool {
         let Some(sweep) = &self.platform_spend else {
             return false;
