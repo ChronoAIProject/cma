@@ -2771,7 +2771,9 @@
       "required_problems": [
         "agent_not_found",
         "agent_not_ready",
-        "agent_operation_in_flight",
+        "agent_skill_history_full",
+        "agent_skill_install_unsupported",
+        "agent_skill_upgrade_disabled",
         "agent_skill_version_upgrade_unsupported",
         "connections_required",
         "forbidden",
@@ -3777,15 +3779,16 @@
     },
     "POST /api/v1/sandboxes/{id}/always-on": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/sandbox_always_on.rs# Owner Sandbox Always on preference is an idempotent, CAS-protected control projected through the hierarchy service.",
+      "source": "api/crates/layer1-public/src/rest/sandbox_always_on.rs# Owners may only relinquish Always on; approval requires an administrator. Disable retains revision and idempotency checks.",
       "required_problems": [
         "forbidden",
-        "not_authenticated"
+        "not_authenticated",
+        "always_on_approval_required"
       ]
     },
     "POST /api/v1/admin/sandboxes/{id}/always-on": {
       "classification": "openapi",
-      "source": "api/crates/layer1-public/src/rest/admin/sandboxes.rs# Operator Sandbox Always on override is a CAS-protected maintenance control.",
+      "source": "api/crates/layer1-public/src/rest/admin/sandboxes.rs# Administrator Always on approval and revocation use revision CAS and record configure activities.",
       "required_problems": [
         "forbidden",
         "not_authenticated",

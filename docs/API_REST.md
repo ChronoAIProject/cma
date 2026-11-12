@@ -2623,3 +2623,11 @@ Reads use the reporting pool/circuit, a two-second Mongo deadline and a five-sec
 HTTP deadline. Open circuits return 429 before database access; source failures
 return 503. Responses are `private, no-store`. An unavailable page is not zero
 allocation; consumers should retain the loaded count and offer a bounded retry.
+
+Always on exceptions require administrator approval. The owner Always on route
+only accepts relinquishment (`false`); enabling returns HTTP 403
+`always_on_approval_required`. Administrators approve/revoke through the audited
+admin route and enumerate current exceptions with
+`GET /api/v1/admin/sandboxes?always_on=true`. See
+[CMA automatic pause](CMA_Auto_Pause.md) for revision rules, audit fields and the
+required review of legacy exceptions before enablement.

@@ -75,6 +75,7 @@ mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
 mod provenance_service;
+pub mod retirement_archive;
 pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
 pub use provenance_inventory::{
     AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
@@ -400,3 +401,6 @@ mod runtime_update_tests;
 
 #[cfg(test)]
 mod runtime_update_resume_tests;
+
+#[cfg(test)]
+mod always_on_tests;

@@ -53,6 +53,25 @@ fn reporting_pool_setting_is_validated_by_startup_configuration() {
     }
 }
 
+#[test]
+fn skill_upgrades_require_an_explicit_strict_boolean() {
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = super::FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")
+                .then(|| value.map(str::to_owned))
+                .flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.agent_skill_upgrade_enabled, expected);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(super::FeatureFlags::from_lookup(&mut |key| Ok((key
+            == "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")
+            .then(|| value.to_owned())))
+        .is_err());
+    }
+}
+
 #[cfg(test)]
 mod silent_sign_in_tests {
     use super::*;
