@@ -1,11 +1,8 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
 use layer2_core::StoreError;
 use mongodb::bson::{doc, Bson, Document};
-use mongodb::error::{
-    Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
-};
-use mongodb::options::{ReadConcern, WriteConcern};
-use mongodb::{Client, ClientSession, Collection, Database};
+use mongodb::error::Error;
+use mongodb::{Client, Collection, Database};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::future::Future;
@@ -15,11 +12,15 @@ use tokio::sync::Semaphore;
 use super::MongoCheckpointObjectStore;
 use super::{durability::majority_collection, schema::initialize_collections};
 
+#[path = "sandbox_mongo_transactions.rs"]
+mod transactions;
+pub(super) use transactions::{
+    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+};
+
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
-const COMMIT_ATTEMPTS: usize = 5;
-const DUPLICATE_KEY: i32 = 11_000;
 const SNAPSHOT_READ_MIN_WIRE_VERSION: i64 = 13;
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PENDING_RECONCILIATIONS: usize = 16;
@@ -381,50 +382,6 @@ pub(super) fn string_field_matches(document: &Document, field: &str, expected: &
 
 pub(super) fn i64_field_matches(document: &Document, field: &str, expected: i64) -> bool {
     matches!(document.get_i64(field), Ok(actual) if actual == expected)
-}
-
-pub(super) fn is_duplicate_key(error: &Error) -> bool {
-    match error.kind.as_ref() {
-        ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == DUPLICATE_KEY,
-        ErrorKind::Command(command) => command.code == DUPLICATE_KEY,
-        _ => false,
-    }
-}
-
-pub(super) fn is_transient(error: &Error) -> bool {
-    error.contains_label(TRANSIENT_TRANSACTION_ERROR)
-}
-
-pub(super) enum CommitOutcome {
-    Committed,
-    Retry(Error),
-    Unknown(Error),
-    Failed(Error),
-}
-
-pub(super) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
-    session
-        .start_transaction()
-        .read_concern(ReadConcern::snapshot())
-        .write_concern(WriteConcern::majority())
-        .await
-}
-
-pub(super) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
-    for attempt in 0..COMMIT_ATTEMPTS {
-        match session.commit_transaction().await {
-            Ok(()) => return CommitOutcome::Committed,
-            Err(error) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
-                if attempt + 1 == COMMIT_ATTEMPTS {
-                    return CommitOutcome::Unknown(error);
-                }
-                tokio::task::yield_now().await;
-            }
-            Err(error) if is_transient(&error) => return CommitOutcome::Retry(error),
-            Err(error) => return CommitOutcome::Failed(error),
-        }
-    }
-    unreachable!("the bounded commit loop always returns")
 }
 
 /// Bound reconciliation without cancelling a Mongo driver future mid-command.
