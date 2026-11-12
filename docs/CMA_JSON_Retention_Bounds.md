@@ -155,3 +155,7 @@ separate work under #1702.
 Sign-in notice strings have their own pre-allocation reservation under this
 policy, including early bootstrap delivery. See [sign-in storage](CMA_Sign_In_Retention.md)
 for the selected-field allowance, final-owner contract and remaining scope.
+
+Typed session, permission and terminal decoding also use bounded Serde diagnostic
+construction under this policy. See [typed diagnostics](CMA_Typed_Diagnostics.md)
+for compatibility tests and the remaining typed allocation scope.
