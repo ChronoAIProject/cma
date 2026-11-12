@@ -6,11 +6,15 @@ use mongodb::error::{
 };
 use mongodb::options::{ReadConcern, WriteConcern};
 use mongodb::{Client, ClientSession, Collection, Database};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use std::future::Future;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+
+mod record;
+pub(super) use record::{
+    i64_field_matches, nullable, read_record, record_bson, require_version, signed,
+    string_field_matches, unsigned,
+};
 
 use super::MongoCheckpointObjectStore;
 use super::{durability::majority_collection, schema::initialize_collections};
@@ -337,48 +341,6 @@ fn validate_transaction_server(reply: &Document) -> Result<(), StoreError> {
         )));
     }
     Ok(())
-}
-
-pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {
-    mongodb::bson::serialize_to_bson(record).map_err(|error| error.to_string())
-}
-
-pub(super) fn read_record<T: DeserializeOwned>(document: &Document) -> Result<T, String> {
-    require_version(document)?;
-    let record = document
-        .get("record")
-        .cloned()
-        .ok_or_else(|| "stored document has no aggregate record".to_string())?;
-    mongodb::bson::deserialize_from_bson(record).map_err(|error| error.to_string())
-}
-
-pub(super) fn require_version(document: &Document) -> Result<(), String> {
-    match document.get("document_schema_version") {
-        Some(Bson::Int32(version)) if i64::from(*version) == DOCUMENT_SCHEMA_VERSION => Ok(()),
-        Some(Bson::Int64(version)) if *version == DOCUMENT_SCHEMA_VERSION => Ok(()),
-        Some(version) => Err(format!("unsupported document schema version {version}")),
-        None => Err("stored document has no schema version".into()),
-    }
-}
-
-pub(super) fn signed(value: u64, field: &str) -> Result<i64, String> {
-    i64::try_from(value).map_err(|_| format!("{field} exceeds the BSON integer range"))
-}
-
-pub(super) fn unsigned(value: i64, field: &str) -> Result<u64, String> {
-    u64::try_from(value).map_err(|_| format!("{field} must not be negative"))
-}
-
-pub(super) fn nullable(value: Option<&String>) -> Bson {
-    value.cloned().map(Bson::String).unwrap_or(Bson::Null)
-}
-
-pub(super) fn string_field_matches(document: &Document, field: &str, expected: &str) -> bool {
-    matches!(document.get_str(field), Ok(actual) if actual == expected)
-}
-
-pub(super) fn i64_field_matches(document: &Document, field: &str, expected: i64) -> bool {
-    matches!(document.get_i64(field), Ok(actual) if actual == expected)
 }
 
 pub(super) fn is_duplicate_key(error: &Error) -> bool {
