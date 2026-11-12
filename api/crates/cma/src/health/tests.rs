@@ -116,8 +116,9 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
         checked_at: "2026-11-05T00:00:00Z".into(),
         duration_ms: 5,
         failure: None,
+        diagnostic_check: 0,
     }));
-    let app = routes(state);
+    let app = routes(state, None);
     assert_eq!(response(&app, "/ready").await.0, StatusCode::OK);
     tick(MAX_CHECK_AGE).await;
     let (status, body) = response(&app, "/ready").await;
