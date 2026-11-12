@@ -22,6 +22,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::failure::RuntimeError;
 use crate::supervisor::{Phase, Supervisor};
+use layer3_adapter::agent_capacity_recovery::CapacityRecoveryRequest;
 
 const CONTROL_BODY_BYTES: usize = 384 * 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
@@ -37,6 +38,10 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route(
+            "/runtime/agents/{agent_id}/capacity-recovery",
+            post(capacity_recovery),
+        )
         .route("/runtime/desktop", get(desktop::websocket))
         .route("/runtime/agents/{agent_id}/history", get(history))
         .route(
@@ -86,6 +91,25 @@ async fn history(
                 .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
             response
         }
+        Err(error) => runtime_failure(error),
+    }
+}
+
+async fn capacity_recovery(
+    Path(agent_id): Path<String>,
+    State(supervisor): State<Arc<Supervisor>>,
+    Json(request): Json<CapacityRecoveryRequest>,
+) -> Response {
+    if request.target.agent_id != agent_id {
+        return protocol_failure(
+            StatusCode::CONFLICT,
+            "capacity_recovery_identity",
+            "capacity recovery request names another Agent",
+            false,
+        );
+    }
+    match supervisor.capacity_recovery(request).await {
+        Ok(proof) => Json(proof).into_response(),
         Err(error) => runtime_failure(error),
     }
 }
