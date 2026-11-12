@@ -25,7 +25,19 @@ pub(super) async fn exhausted(store: &MongoSandboxStore) -> (Agent, Caller, Reco
     store.agent_log.insert_many(rows).await.unwrap();
     agent.conversation.last_seq = 9_999;
     agent.revision += 1;
-    replace_agent_fixture(store, &agent).await;
+    // The generic replacement helper deliberately excludes writer-owned last_seq.
+    // This pre-adoption bulk fixture must advance both coordinates together.
+    let mut fields = agent_replacement_fields(&agent).unwrap();
+    fields.insert("last_seq", 9_999_i64);
+    store
+        .agents
+        .update_one(doc! {"_id":agent.id.as_str()}, doc! {"$set":fields})
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap(),
+        Some(agent.clone())
+    );
     store
         .append_agent_log_keyed(
             &agent.id,
