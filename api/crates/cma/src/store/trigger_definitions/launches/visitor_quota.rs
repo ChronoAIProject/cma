@@ -1,7 +1,7 @@
 //! Daily visitor quota commits with Launch admission, including replay recovery.
 use super::{admission::AttemptError, LaunchCollections};
 use layer2_core::{
-    trigger_domain::{Launch, LaunchAuthorityClass, LaunchStoreError},
+    trigger_domain::{visitor_launch_day, Launch, LaunchAuthorityClass, LaunchStoreError},
     PlatformSettings, StoreError,
 };
 use mongodb::{
@@ -59,9 +59,8 @@ pub(super) async fn admit(
     let limit = settings.limits.visitor_max_launches_per_day;
     let timestamp = layer2_core::seconds_from_rfc3339(&launch.created_at)
         .ok_or_else(|| Domain(LaunchStoreError::Corrupt("invalid Launch time".into())))?;
-    let day = timestamp / 86_400;
+    let (day, reset_at) = visitor_launch_day(timestamp);
     let start = UNIX_EPOCH + Duration::from_secs(day * 86_400);
-    let reset_at = start + Duration::from_secs(86_400);
     let key = format!("{day}:{}", launch.owner.as_str());
     let previous = data
         .visitor_days
