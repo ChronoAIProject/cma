@@ -84,6 +84,7 @@ pub fn launch_request(
     .map_err(|_| "event_ref_too_large")?;
     Ok(LaunchRequest {
         timing: None,
+        turn_trace: None,
         consumer: None,
         trace: tracing::Span::current(),
         channel,

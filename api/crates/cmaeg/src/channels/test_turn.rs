@@ -98,6 +98,7 @@ async fn start(
         metadata: BTreeMap::new(),
         agent_key: credential.clone(),
         event_context: None,
+        turn_trace: None,
     };
     let stream = loop {
         match state

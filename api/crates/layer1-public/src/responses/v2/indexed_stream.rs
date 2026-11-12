@@ -21,8 +21,16 @@ pub(in crate::responses::v2) async fn read(
     next: u64,
 ) -> Result<Page, AgentReadError> {
     let metadata = projection::project_metadata(source, origin, reading.clone()).await?;
-    let bound = source.metadata().index.is_some();
-    let opening_count = if bound { 2_u64 } else { 1 };
+    // The output index describes storage format, not whether this command has
+    // committed a turn. Keep queued responses on their single created frame.
+    let bound = reading.command.turn_sequence.is_some();
+    // A negotiated bound adds one durable metadata frame after
+    // response.in_progress. Legacy responses retain the two-frame opening.
+    let opening_count = if bound {
+        2_u64 + u64::from(metadata.nyxid_trace.is_some())
+    } else {
+        1
+    };
     let output_count = source
         .metadata()
         .index

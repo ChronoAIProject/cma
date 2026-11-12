@@ -106,6 +106,8 @@ pub struct CommandWorkState {
     pub failure: Option<CommandFailure>,
     #[serde(default)]
     pub observation: Option<CommandObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nyxid_trace: Option<super::NyxidTrace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -289,6 +291,13 @@ impl AdmittedAgentCommand {
 pub(super) fn validate_work(record: &AdmittedAgentCommand) -> Result<(), CommandLedgerError> {
     super::continuation_retry::validate_attempts(record)?;
     let work = &record.work;
+    if work
+        .nyxid_trace
+        .as_ref()
+        .is_some_and(|trace| trace.validate().is_err())
+    {
+        return Err(CommandLedgerError::Corrupt);
+    }
     if work.observation.as_ref().is_some_and(|observation| {
         work.dispatch
             .as_ref()

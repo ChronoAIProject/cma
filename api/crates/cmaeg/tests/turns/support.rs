@@ -124,6 +124,7 @@ impl Fixture {
             timing: None,
             consumer: None,
             trace: tracing::Span::current(),
+            turn_trace: None,
             channel: self.channel.clone(),
             idempotency_key: IdempotencyKey::from_event(&activity.event_id),
             activity,

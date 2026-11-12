@@ -13,6 +13,7 @@ pub struct AgentResponseReading {
     pub deferred_failure_detail: Option<String>,
     pub command: CommandStatusView,
     pub metadata: BTreeMap<String, String>,
+    pub nyxid_trace: Option<super::NyxidTrace>,
 }
 
 impl AgentCommandService {
@@ -70,6 +71,7 @@ impl AgentCommandService {
             } else {
                 BTreeMap::new()
             },
+            nyxid_trace: record.work.nyxid_trace,
         })
     }
 }

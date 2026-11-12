@@ -239,6 +239,7 @@ async fn reservation(
     let command = AgentCommand::message("queued while bootstrap prepares");
     CommandReservation {
         binding: None,
+        nyxid_trace: None,
         envelope: AgentCommandEnvelope {
             continuation: None,
             schema_version: AGENT_IO_SCHEMA_VERSION,

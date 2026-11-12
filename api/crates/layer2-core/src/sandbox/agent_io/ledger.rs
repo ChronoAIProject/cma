@@ -34,6 +34,7 @@ pub struct CommandReservation {
     pub authority_deadline: Option<tokio::time::Instant>,
     /// Historical evidence only; never a substitute for the live policy fence.
     pub admission_audit: Option<crate::resource_access::ResourceAuthorizationAudit>,
+    pub nyxid_trace: Option<super::NyxidTrace>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -323,7 +324,10 @@ impl CommandReservation {
             },
             revision: 1,
             target_turn,
-            work: Default::default(),
+            work: super::CommandWorkState {
+                nyxid_trace: self.nyxid_trace.clone(),
+                ..Default::default()
+            },
         })
     }
 
@@ -342,6 +346,15 @@ impl CommandReservation {
             || current.receipt.envelope.continuation != self.envelope.continuation
         {
             return Err(CommandLedgerError::IdempotencyConflict);
+        }
+        // A replay may omit metadata when an older caller retries, but two
+        // admitted associations must never disagree. Keep the durable winner
+        // authoritative and fail closed on a conflicting diagnostic claim.
+        if self.nyxid_trace.is_some()
+            && current.work.nyxid_trace.is_some()
+            && self.nyxid_trace != current.work.nyxid_trace
+        {
+            return Err(CommandLedgerError::Corrupt);
         }
         Ok(CommandReservationResult::Existing(Box::new(current)))
     }

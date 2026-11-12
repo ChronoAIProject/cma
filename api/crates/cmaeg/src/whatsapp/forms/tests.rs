@@ -392,6 +392,7 @@ async fn completion_retention_survives_original_event_expiry_and_admission_marke
         received_at: std::time::Instant::now(),
         trace: tracing::Span::none(),
         timing: None,
+        turn_trace: None,
     };
     let keys = crate::ingress::routing_plan::fixture::keys();
     let now = crate::interactions::whatsapp_native_fixture::now();
@@ -560,6 +561,7 @@ async fn real_preparation_reopens_only_the_exact_selected_durable_event() {
         received_at: std::time::Instant::now(),
         trace: tracing::Span::none(),
         timing: None,
+        turn_trace: None,
     };
     let OrdinaryPlan::Routed(plan) = routing_plan::plan(
         &request,

@@ -131,6 +131,7 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
             failure: None,
         },
         metadata: Default::default(),
+        nyxid_trace: None,
     };
     (
         legacy,

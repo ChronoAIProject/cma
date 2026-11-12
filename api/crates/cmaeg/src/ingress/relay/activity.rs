@@ -115,7 +115,7 @@ pub(crate) fn launch_request(
     let event_ref = EventRef::seal(
         &EventRefPayload {
             telegram_admission: None,
-            turn_trace,
+            turn_trace: turn_trace.clone(),
             v: 1,
             activity_sha256: Some(cmaeg_core::seal::event_ref::activity_digest(&activity)),
             channel_id: channel.id.clone(),
@@ -140,6 +140,7 @@ pub(crate) fn launch_request(
     .map_err(|_| "event_ref_too_large")?;
     Ok(Built::Launch(Box::new(LaunchRequest {
         timing: None,
+        turn_trace,
         consumer: None,
         trace: tracing::Span::current(),
         channel,

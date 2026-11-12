@@ -97,10 +97,7 @@ async fn commonmark_rollout_keeps_interactive_markup_on_the_legacy_route() {
         .await;
 
     assert!(matches!(outcome.0, DeliveryOutcome::Confirmed { .. }));
-    assert_eq!(
-        fake.sent()[0].url.path(),
-        "/api/v1/channel-relay/reply"
-    );
+    assert_eq!(fake.sent()[0].url.path(), "/api/v1/channel-relay/reply");
 }
 
 #[tokio::test(start_paused = true)]

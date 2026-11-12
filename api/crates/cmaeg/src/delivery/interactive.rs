@@ -196,7 +196,7 @@ impl Sender {
         };
         effects.first_send_done = true;
         let (mut delivery, mut outbound) = if lark {
-                self.relay
+            self.relay
                 .send_lark_card_with_trace(
                     &event.reply,
                     key,

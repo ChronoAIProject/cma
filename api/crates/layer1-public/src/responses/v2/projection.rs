@@ -62,6 +62,9 @@ pub struct V2ResponseObject {
     pub truncation: &'static str,
     pub usage: Option<ResponseUsage>,
     pub metadata: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<serde_json::Value>)]
+    pub nyxid_trace: Option<layer2_core::sandbox::agent_io::NyxidTrace>,
 }
 impl V2ResponseObject {
     pub(super) fn terminal(&self) -> bool {
@@ -131,10 +134,12 @@ pub(super) fn project(
         truncation: "disabled",
         usage: None,
         metadata: reading.metadata,
+        nyxid_trace: None,
     };
     let Some(turn) = command.turn_sequence else {
         return Some(response);
     };
+    response.nyxid_trace = reading.nyxid_trace.filter(|trace| trace.validate().is_ok());
     response.model = super::super::model::for_turn(
         snapshot.initial_model.as_deref(),
         turn,
@@ -274,11 +279,18 @@ pub(super) fn events(response: &V2ResponseObject, bound: bool) -> Vec<Value> {
     opening.incomplete_details = None;
     opening.completed_at = None;
     opening.usage = None;
+    opening.nyxid_trace = None;
     push("response.created", json!({"response":opening}));
     if bound {
         opening.status = V2ResponseStatus::InProgress;
         opening.model.clone_from(&response.model);
         push("response.in_progress", json!({"response":opening}));
+        if let Some(trace) = &response.nyxid_trace {
+            push(
+                "response.nyxid_trace",
+                json!({"response_id":response.id,"nyxid_trace":trace}),
+            );
+        }
     }
     for event in &response.output_events {
         push(
@@ -303,6 +315,16 @@ pub(super) fn events(response: &V2ResponseObject, bound: bool) -> Vec<Value> {
 mod compatibility_tests {
     use super::*;
 
+    fn trace() -> layer2_core::sandbox::agent_io::NyxidTrace {
+        layer2_core::sandbox::agent_io::NyxidTrace {
+            version: 1,
+            turn_id: "11111111-1111-4111-8111-111111111111".into(),
+            trace_id: "11111111111141118111111111111111".into(),
+            parent_span_id: "0123456789abcdef".into(),
+            ingress_request_id: "22222222-2222-4222-8222-222222222222".into(),
+        }
+    }
+
     #[test]
     fn retained_prerequisite_response_errors_use_the_legacy_code() {
         for code in [
@@ -311,5 +333,48 @@ mod compatibility_tests {
         ] {
             assert_eq!(failure_code(code), "agent_command_execution_failed");
         }
+    }
+
+    #[test]
+    fn bound_trace_is_one_ordered_event_and_is_absent_from_created() {
+        let response = V2ResponseObject {
+            callback_url: None,
+            id: "resp_trace".into(),
+            object: "response",
+            created_at: 1,
+            completed_at: None,
+            conversation: ResponseConversation { id: "agt".into() },
+            status: V2ResponseStatus::InProgress,
+            background: false,
+            error: None,
+            incomplete_details: None,
+            instructions: None,
+            max_output_tokens: None,
+            model: "model".into(),
+            creation_model: "model".into(),
+            output: vec![],
+            output_events: vec![],
+            parallel_tool_calls: false,
+            previous_response_id: None,
+            reasoning: json!({}),
+            store: true,
+            temperature: None,
+            text: json!({}),
+            tool_choice: "none",
+            tools: vec![],
+            top_p: None,
+            truncation: "disabled",
+            usage: None,
+            metadata: BTreeMap::new(),
+            nyxid_trace: Some(trace()),
+        };
+        let events = events(&response, true);
+        assert_eq!(events[0]["type"], "response.created");
+        assert!(events[0]["response"].get("nyxid_trace").is_none());
+        assert_eq!(events[1]["type"], "response.in_progress");
+        assert_eq!(events[2]["type"], "response.nyxid_trace");
+        assert_eq!(events[2]["sequence_number"], 2);
+        assert_eq!(events[2]["response_id"], "resp_trace");
+        assert_eq!(events[2]["nyxid_trace"]["turn_id"], trace().turn_id);
     }
 }

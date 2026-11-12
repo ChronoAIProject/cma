@@ -113,6 +113,7 @@ pub fn request(edit: impl FnOnce(&mut Value), activity: Activity) -> LaunchReque
         received_at: Instant::now(),
         trace: tracing::Span::none(),
         timing: None,
+        turn_trace: None,
         consumer: None,
     }
 }

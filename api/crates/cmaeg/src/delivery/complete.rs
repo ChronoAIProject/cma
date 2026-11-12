@@ -40,8 +40,7 @@ impl Sender {
             capabilities.buttons = "numbered_text".into();
         }
         let commonmark = self.relay.commonmark_for(&event.reply);
-        let (part, rendering) =
-            RelayText.whole_with_commonmark(message, &capabilities, commonmark);
+        let (part, rendering) = RelayText.whole_with_commonmark(message, &capabilities, commonmark);
         if part.text.is_empty()
             && message.native_attachments.is_empty()
             && message.whatsapp_template.is_none()

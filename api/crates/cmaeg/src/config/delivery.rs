@@ -336,9 +336,7 @@ mod tests {
         for value in ["", "TRUE", "1", " true "] {
             assert!(feature_switch(Ok(value.into()), "flag").is_err());
         }
-        assert!(
-            feature_switch(Err(env::VarError::NotUnicode("invalid".into())), "flag").is_err()
-        );
+        assert!(feature_switch(Err(env::VarError::NotUnicode("invalid".into())), "flag").is_err());
     }
 
     #[test]

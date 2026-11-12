@@ -83,6 +83,7 @@ async fn reserve(f: &Fixture, key: &str) -> AdmittedAgentCommand {
         .reserve_command(CommandReservation {
             envelope,
             binding: None,
+            nyxid_trace: None,
             key_sha256: command_key_digest(key).unwrap(),
             response_id: Some(AgentResponseId::generate()),
             admitted_at: source.receipt.admitted_at,

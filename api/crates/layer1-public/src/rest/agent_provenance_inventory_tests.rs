@@ -211,6 +211,7 @@ async fn task_navigation_does_not_call_a_completed_agent_done_after_new_work_is_
         .store
         .reserve_command(CommandReservation {
             binding: None,
+            nyxid_trace: None,
             envelope: AgentCommandEnvelope {
                 schema_version: AGENT_IO_SCHEMA_VERSION,
                 command_id: AgentCommandId("cmd_task_navigation".into()),

@@ -126,7 +126,7 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: CommandSubmission,
     ) -> Result<CommandStatusView, CommandAdmissionError> {
-        self.admit_inner(context, credential, source, submission, None)
+        self.admit_inner(context, credential, source, submission, None, None)
             .await
     }
 
@@ -145,6 +145,29 @@ impl AgentCommandService {
             source,
             submission,
             Some(binding_revision),
+            None,
+        )
+        .await
+    }
+
+    /// Responses boundary admission with an authenticated NyxID diagnostic
+    /// association. The association is persisted atomically with the command.
+    pub async fn admit_at_binding_revision_with_trace(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: CommandSubmission,
+        binding_revision: Option<u64>,
+        nyxid_trace: Option<super::NyxidTrace>,
+    ) -> Result<CommandStatusView, CommandAdmissionError> {
+        self.admit_inner(
+            context,
+            credential,
+            source,
+            submission,
+            Some(binding_revision),
+            nyxid_trace,
         )
         .await
     }
@@ -156,10 +179,12 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: CommandSubmission,
         binding_policy: Option<Option<u64>>,
+        nyxid_trace: Option<super::NyxidTrace>,
     ) -> Result<CommandStatusView, CommandAdmissionError> {
         let (mut authorized, mut request) = self
             .prepare(context, credential, source, submission.clone())
             .await?;
+        request.nyxid_trace = nyxid_trace;
         if binding_policy.is_some_and(|revision| match revision {
             Some(revision) => request
                 .binding
@@ -434,6 +459,7 @@ impl AgentCommandService {
                 &target,
                 capability,
             )?),
+            nyxid_trace: None,
         };
         Ok((authorized, request))
     }

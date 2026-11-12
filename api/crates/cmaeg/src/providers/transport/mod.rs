@@ -8,6 +8,7 @@ mod tests;
 use crate::{providers::ProviderError, telemetry::timing::IngressTiming};
 use axum::http::{header, Request};
 use bytes::Bytes;
+use cmaeg_core::seal::TurnTraceContext;
 use connect::Connection;
 use http_body_util::Full;
 use observation::{Observation, Pending};
@@ -137,6 +138,19 @@ impl ResponseTransport {
         json: Vec<u8>,
         timing: Option<IngressTiming>,
     ) -> Result<Response, ProviderError> {
+        self.send_with_trace(url, key, idempotency, json, timing, None)
+            .await
+    }
+
+    pub async fn send_with_trace(
+        &self,
+        url: url::Url,
+        key: &str,
+        idempotency: &str,
+        json: Vec<u8>,
+        timing: Option<IngressTiming>,
+        turn_trace: Option<&TurnTraceContext>,
+    ) -> Result<Response, ProviderError> {
         // The registry builds the URL. Keep an additional origin fence at the socket layer.
         if url.origin() != self.origin.origin() {
             return Err(ProviderError::InvalidRequest(
@@ -149,7 +163,7 @@ impl ResponseTransport {
         let mut authorization = axum::http::HeaderValue::from_str(&format!("Bearer {key}"))
             .map_err(|_| ProviderError::InvalidRequest("invalid provider authorization".into()))?;
         authorization.set_sensitive(true);
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method("POST")
             .uri(url.as_str())
             .header(header::AUTHORIZATION, authorization)
@@ -160,7 +174,16 @@ impl ResponseTransport {
                 header::USER_AGENT,
                 concat!("cmaeg/", env!("CARGO_PKG_VERSION")),
             )
+            .header("x-request-id", uuid::Uuid::new_v4().to_string())
             .header("idempotency-key", idempotency);
+        if let Some(turn_trace) = turn_trace {
+            if let Ok(value) = crate::telemetry::turn_trace::child_traceparent(turn_trace)
+                .parse::<axum::http::HeaderValue>()
+            {
+                request = request.header("traceparent", value);
+                request = request.header("x-nyxid-turn-trace-contract", "1");
+            }
+        }
         let response = match self.acquire().await? {
             Connection::H1(mut connection) => {
                 let _keep_alive = &connection.driver;

@@ -8,6 +8,7 @@ use futures_util::stream;
 use layer2_core::sandbox::{agent_io::CommandReceiptView, AgentEventStreamAuthorization};
 use serde_json::{json, Value};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
+use uuid::Uuid;
 
 pub(super) async fn snapshot(
     state: &ResponsesV2State,
@@ -155,7 +156,15 @@ pub(super) async fn open(
             }
         }
     });
-    response(body, &response_id, &command_id)
+    response(
+        body,
+        &response_id,
+        &command_id,
+        initial
+            .nyxid_trace
+            .as_ref()
+            .map(|trace| trace.turn_id.as_str()),
+    )
 }
 
 pub(super) fn pagination_required() -> Response {
@@ -167,6 +176,7 @@ pub(super) fn response(
     body: impl futures_util::Stream<Item = Result<Event, Infallible>> + Send + 'static,
     response_id: &str,
     command_id: &str,
+    nyxid_trace_id: Option<&str>,
 ) -> Response {
     let mut response = Sse::new(stream_telemetry::observe(body, Kind::ResponsesV2))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
@@ -181,6 +191,12 @@ pub(super) fn response(
     headers.insert(
         "x-cma-command-id",
         command_id.parse().expect("server command identity"),
+    );
+    let request_id = Uuid::new_v4().to_string();
+    headers.insert("x-request-id", request_id.parse().unwrap());
+    headers.insert(
+        "x-nyxid-trace-id",
+        nyxid_trace_id.unwrap_or(&request_id).parse().unwrap(),
     );
     headers.insert("link", "</api/v2>; rel=\"service-desc\"".parse().unwrap());
     response

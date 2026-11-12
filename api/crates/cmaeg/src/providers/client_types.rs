@@ -10,6 +10,7 @@ use cmaeg_core::{
     channel::{ConformanceLevel, Secret},
     ids::{BindingId, ConversationId, IdempotencyKey},
     profile::EventWorkerProfile,
+    seal::TurnTraceContext,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -101,6 +102,7 @@ pub struct TurnRequest {
     pub metadata: BTreeMap<String, String>,
     pub agent_key: Secret,
     pub event_context: Option<super::EventContextSnapshot>,
+    pub turn_trace: Option<TurnTraceContext>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

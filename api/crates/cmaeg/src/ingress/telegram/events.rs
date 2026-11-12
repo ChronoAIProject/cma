@@ -127,6 +127,7 @@ pub(crate) async fn prepare(
         outbound_consumer: None,
         request: LaunchRequest {
             timing: None,
+            turn_trace: None,
             consumer: None,
             trace: tracing::Span::current(),
             channel,

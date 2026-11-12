@@ -309,6 +309,7 @@ async fn native_buttons_deliver_and_consume_with_durable_original_actor_fences()
                     activity: request.activity.clone(),
                     event_ref: request.event_ref.clone(),
                 }),
+                turn_trace: None,
             },
         )
         .await

@@ -126,6 +126,7 @@ fn reading(turn: Option<u64>) -> AgentResponseReading {
             failure: None,
         },
         metadata: Default::default(),
+        nyxid_trace: None,
     }
 }
 
@@ -294,6 +295,7 @@ fn deferred_source_attempt_stays_queued_only_with_exact_paired_no_write_proof() 
                 deferred_failure_detail: value.deferred_failure_detail.clone(),
                 command: value.command.clone(),
                 metadata: value.metadata.clone(),
+                nyxid_trace: None,
             },
             &response_window_tests::window(&history, 1, history.history.len()),
         )

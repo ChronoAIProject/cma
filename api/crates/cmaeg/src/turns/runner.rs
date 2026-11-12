@@ -257,6 +257,7 @@ impl TurnRunner {
             metadata: rendered.metadata,
             agent_key: credential.clone(),
             event_context: Some(rendered.event_context),
+            turn_trace: turn.turn_trace.clone(),
         };
         let retry_deadline = Instant::now() + self.config.busy_retry_max;
         let mut ensured = false;

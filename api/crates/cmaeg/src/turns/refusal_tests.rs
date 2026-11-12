@@ -136,12 +136,8 @@ fn rejected_provider_detail_is_carried_as_a_bounded_relay_contract() {
     assert_eq!(upstream.operation, "responses");
     assert_eq!(upstream.status, 403);
     assert_eq!(upstream.code, "media_source_refused");
-    let body = cmaeg_core::problem::Problem::new(
-        refusal.code,
-        refusal.status,
-        refusal.detail,
-    )
-    .with_upstream(upstream);
+    let body = cmaeg_core::problem::Problem::new(refusal.code, refusal.status, refusal.detail)
+        .with_upstream(upstream);
     let json = serde_json::to_value(body).unwrap();
     assert_eq!(json["code"], "provider_rejected");
     assert_eq!(json["upstream"]["operation"], "responses");

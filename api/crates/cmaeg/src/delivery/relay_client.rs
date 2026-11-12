@@ -20,7 +20,10 @@ use cmaeg_core::{
 use futures_util::future::BoxFuture;
 use reqwest::{header::HeaderMap, Client, StatusCode, Url};
 use serde::Deserialize;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// The largest relay receipt the client reads.
 const RECEIPT_MAX_BYTES: usize = 4096;
@@ -389,7 +392,12 @@ impl RelayClient {
             ),
         )
         .await
-        .unwrap_or_else(|_| (unknown("response_lost"), None))
+        .unwrap_or_else(|_| {
+            let context = turn_trace
+                .map(|value| crate::telemetry::turn_trace::Context::from_wire(value.clone()));
+            relay_trace_milestone(context.as_ref(), None, "unknown");
+            (unknown("response_lost"), None)
+        })
     }
     pub(super) fn prepare(
         address: &ReplyAddress,
@@ -452,7 +460,14 @@ impl RelayClient {
         };
         let result = tokio::time::timeout(timeout, self.post_prepared(secret, prepared, timeout))
             .await
-            .unwrap_or_else(|_| (unknown("response_lost"), None));
+            .unwrap_or_else(|_| {
+                let context = prepared
+                    .turn_trace
+                    .as_ref()
+                    .map(|value| crate::telemetry::turn_trace::Context::from_wire(value.clone()));
+                relay_trace_milestone(context.as_ref(), None, "unknown");
+                (unknown("response_lost"), None)
+            });
         if prepared.native_media
             && matches!(
                 result.0,
@@ -491,7 +506,7 @@ impl RelayClient {
             turn_trace,
             self.timeout,
         )
-            .await
+        .await
     }
     async fn post_prepared(
         &self,
@@ -523,9 +538,8 @@ impl RelayClient {
         turn_trace: Option<&TurnTraceContext>,
         timeout: Duration,
     ) -> (DeliveryOutcome, Option<String>) {
-        let trace_context = turn_trace.map(|value| {
-            crate::telemetry::turn_trace::Context::from_wire(value.clone())
-        });
+        let trace_context =
+            turn_trace.map(|value| crate::telemetry::turn_trace::Context::from_wire(value.clone()));
         let mut endpoint = self.endpoint.clone();
         if thread_reply {
             // Old NyxID replicas must fail before sending, never ignore the flag.
@@ -543,21 +557,48 @@ impl RelayClient {
                 headers.insert("traceparent", value);
             }
         }
+        let gateway_started = Instant::now();
+        crate::telemetry::turn_trace::milestone(
+            trace_context.as_ref(),
+            "gateway",
+            "start",
+            None,
+            None,
+            None,
+        );
         let reply = match self.transport.post(endpoint, headers, body, timeout).await {
             Ok(reply) => reply,
             Err(_) => {
-                relay_trace_milestone(trace_context.as_ref(), None, "unknown", "response_lost");
+                crate::telemetry::turn_trace::milestone_duration(
+                    trace_context.as_ref(),
+                    "gateway",
+                    "end",
+                    Some("unknown"),
+                    None,
+                    None,
+                    gateway_started,
+                );
+                relay_trace_milestone(trace_context.as_ref(), None, "unknown");
                 return (unknown("response_lost"), None);
             }
         };
         let status = reply.status.as_u16();
+        let gateway_outcome = if reply.status.is_success() {
+            "completed"
+        } else {
+            "rejected"
+        };
+        crate::telemetry::turn_trace::milestone_duration(
+            trace_context.as_ref(),
+            "gateway",
+            "end",
+            Some(gateway_outcome),
+            Some(status),
+            None,
+            gateway_started,
+        );
         if reply.status == StatusCode::TOO_MANY_REQUESTS {
-            relay_trace_milestone(
-                trace_context.as_ref(),
-                Some(status),
-                "rejected",
-                "rate_limited",
-            );
+            relay_trace_milestone(trace_context.as_ref(), Some(status), "rejected");
             return (
                 DeliveryOutcome::RateLimited {
                     retry_after: retry_after(&reply.headers),
@@ -566,42 +607,22 @@ impl RelayClient {
             );
         }
         if reply.status != StatusCode::OK {
-            relay_trace_milestone(
-                trace_context.as_ref(),
-                Some(status),
-                "rejected",
-                "provider_failure",
-            );
+            relay_trace_milestone(trace_context.as_ref(), Some(status), "rejected");
             return (unknown("provider_failure"), None);
         }
         let bytes = match reply.body {
             Ok(bytes) => bytes,
             Err(BodyError::Oversized) => {
-                relay_trace_milestone(
-                    trace_context.as_ref(),
-                    Some(status),
-                    "unknown",
-                    "receipt_invalid",
-                );
+                relay_trace_milestone(trace_context.as_ref(), Some(status), "unknown");
                 return (unknown("receipt_invalid"), None);
             }
             Err(BodyError::Lost) => {
-                relay_trace_milestone(
-                    trace_context.as_ref(),
-                    Some(status),
-                    "unknown",
-                    "response_lost",
-                );
+                relay_trace_milestone(trace_context.as_ref(), Some(status), "unknown");
                 return (unknown("response_lost"), None);
             }
         };
         let Ok(receipt) = serde_json::from_slice::<ReplyResponse>(&bytes) else {
-            relay_trace_milestone(
-                trace_context.as_ref(),
-                Some(status),
-                "unknown",
-                "receipt_invalid",
-            );
+            relay_trace_milestone(trace_context.as_ref(), Some(status), "unknown");
             return (unknown("receipt_invalid"), None);
         };
         if !valid_id(&receipt.message_id)
@@ -611,19 +632,15 @@ impl RelayClient {
                 .as_deref()
                 .is_some_and(|id| !valid_id(id))
         {
-            relay_trace_milestone(
-                trace_context.as_ref(),
-                Some(status),
-                "unknown",
-                "receipt_invalid",
-            );
+            relay_trace_milestone(trace_context.as_ref(), Some(status), "unknown");
             return (unknown("receipt_invalid"), None);
         }
+        relay_trace_milestone(trace_context.as_ref(), Some(status), "confirmed");
         crate::telemetry::turn_trace::milestone(
             trace_context.as_ref(),
             "gateway",
             "milestone",
-            Some("confirmed"),
+            Some("completed"),
             Some(status),
             None,
         );
@@ -640,14 +657,13 @@ fn relay_trace_milestone(
     context: Option<&crate::telemetry::turn_trace::Context>,
     status: Option<u16>,
     outcome: &'static str,
-    code: &'static str,
 ) {
     crate::telemetry::turn_trace::milestone(
         context,
-        "gateway",
+        "platform",
         "milestone",
         Some(outcome),
         status,
-        Some(code),
+        None,
     );
 }

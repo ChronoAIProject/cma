@@ -164,6 +164,7 @@ impl AgentCommandService {
             deferred_failure_detail: None,
             command: CommandStatusView::from_record(&record),
             metadata: record.receipt.envelope.response_metadata(),
+            nyxid_trace: record.work.nyxid_trace,
         })
     }
 }

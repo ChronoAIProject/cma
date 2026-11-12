@@ -142,6 +142,7 @@ impl BindingMediaService for Service {
                 ("cma_artifact_id".into(), "0:transcript".into()),
                 ("cma_command_fingerprint".into(), "d".repeat(64)),
             ]),
+            nyxid_trace: None,
         })
     }
 }

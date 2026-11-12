@@ -103,6 +103,7 @@ pub fn frozen(
             activity: plan.activity.clone(),
             event_ref: FrozenTurn::event_ref(plan, target, &fixture::keys()).unwrap(),
         },
+        turn_trace: None,
         delivery: FrozenDelivery {
             consumer: target.launch.consumer.clone(),
             label: consumer.label.into(),

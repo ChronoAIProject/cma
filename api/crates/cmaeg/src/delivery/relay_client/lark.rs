@@ -26,7 +26,8 @@ impl RelayClient {
         secret: &Secret,
         card: &Value,
     ) -> (DeliveryOutcome, Option<String>) {
-        self.send_lark_card_with_trace(address, secret, card, None).await
+        self.send_lark_card_with_trace(address, secret, card, None)
+            .await
     }
 
     pub(crate) async fn send_lark_card_with_trace(

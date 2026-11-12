@@ -360,6 +360,7 @@ pub(super) async fn make_turn(mut kinds: Vec<AgentLogKind>, target: u64) -> Inde
     let reading = AgentResponseReading {
         deferred_failure_detail: None,
         metadata: BTreeMap::new(),
+        nyxid_trace: None,
         command: CommandStatusView {
             receipt: CommandReceiptView {
                 command_id: layer2_core::ids::AgentCommandId("cmd_indexed".into()),

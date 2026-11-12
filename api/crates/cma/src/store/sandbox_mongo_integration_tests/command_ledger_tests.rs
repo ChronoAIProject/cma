@@ -28,6 +28,7 @@ pub(super) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandRese
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         binding: None,
+        nyxid_trace: None,
         authority_deadline: None,
         admission_audit: None,
         envelope: AgentCommandEnvelope {

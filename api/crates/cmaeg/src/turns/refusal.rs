@@ -23,11 +23,7 @@ pub(super) struct ClassifiedFailure {
     pub upstream: Option<UpstreamRefusal>,
 }
 
-pub(super) fn failure(
-    code: ProblemCode,
-    detail: &'static str,
-    status: u16,
-) -> ClassifiedFailure {
+pub(super) fn failure(code: ProblemCode, detail: &'static str, status: u16) -> ClassifiedFailure {
     ClassifiedFailure {
         code,
         detail,
@@ -44,10 +40,7 @@ impl ProviderCall {
 
 /// Classify a start failure and emit its single warn record using bounded codes
 /// and static labels, never a provider error's Display/Debug.
-pub(super) fn classify_start_failure(
-    provider: &str,
-    failure: StartFailure,
-) -> ClassifiedFailure {
+pub(super) fn classify_start_failure(provider: &str, failure: StartFailure) -> ClassifiedFailure {
     let classification = classify(&failure.error);
     let provider_call = failure.call.name();
     let (provider_error, upstream_status, upstream_code) = match &failure.error {

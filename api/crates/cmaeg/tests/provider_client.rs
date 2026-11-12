@@ -117,6 +117,7 @@ async fn bind_conversation_probe_and_stream_round_trip() {
                 metadata: BTreeMap::new(),
                 agent_key: secret.clone(),
                 event_context: None,
+                turn_trace: None,
             },
         )
         .await
@@ -195,6 +196,7 @@ async fn busy_and_missing_conversation_errors_are_typed() {
                 metadata: BTreeMap::new(),
                 agent_key: secret,
                 event_context: None,
+                turn_trace: None,
             },
         )
         .await
@@ -258,6 +260,7 @@ async fn full_provider_semaphore_returns_busy_without_waiting() {
         metadata: BTreeMap::new(),
         agent_key: secret.clone(),
         event_context: None,
+        turn_trace: None,
     };
     let first = client
         .start_turn(&provider, request("event-1"))
@@ -293,6 +296,7 @@ async fn one_hundred_sequential_turns_accept_with_low_latency() {
                     metadata: BTreeMap::new(),
                     agent_key: secret.clone(),
                     event_context: None,
+                    turn_trace: None,
                 },
             )
             .await
@@ -332,6 +336,7 @@ async fn streaming_lifetime_outlives_header_timeout_and_drop_releases_capacity()
         metadata: BTreeMap::new(),
         agent_key: Secret::new("ephemeral-test-agent"),
         event_context: None,
+        turn_trace: None,
     };
     let mut first = client
         .start_turn_immediate(&provider(), request("one"))

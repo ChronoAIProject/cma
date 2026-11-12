@@ -185,6 +185,7 @@ fn relayed_turn(edit: impl FnOnce(&mut Activity)) -> (LaunchRequest, i64) {
         received_at: std::time::Instant::now(),
         trace: tracing::Span::none(),
         timing: None,
+        turn_trace: None,
         consumer: None,
     };
     (turn, expires_at)

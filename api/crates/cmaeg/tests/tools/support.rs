@@ -386,6 +386,7 @@ async fn store_context(provider: &ProviderClient, request: LaunchRequest) {
                     .clone()
                     .unwrap(),
                 event_context: Some(snapshot),
+                turn_trace: None,
             },
         )
         .await

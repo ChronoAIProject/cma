@@ -26,7 +26,9 @@ async fn unknown_provider_refusal_keeps_callback_502_and_configured_failure_deli
         assert_eq!(problem["status"], 502);
         assert_eq!(problem["code"], "provider_rejected");
         assert_eq!(problem["detail"], "provider_rejected");
-        assert!(!problem.to_string().contains("guest_denied"));
+        assert_eq!(problem["upstream"]["operation"], "responses");
+        assert_eq!(problem["upstream"]["status"], 403);
+        assert_eq!(problem["upstream"]["code"], "guest_denied");
         assert!(!problem.to_string().contains("private provider diagnostic"));
         assert!(
             app.tracker

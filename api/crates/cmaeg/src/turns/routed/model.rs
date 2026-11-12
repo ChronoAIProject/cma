@@ -5,7 +5,7 @@ use crate::{
 use cmaeg_core::{
     channel::{ReplyChoice, ReplyPolicy},
     ids::{ConsumerId, ConversationId, IdempotencyKey},
-    seal::{EventRef, MasterKeyRing, ReplyAddress},
+    seal::{EventRef, MasterKeyRing, ReplyAddress, TurnTraceContext},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -51,6 +51,10 @@ pub struct FrozenTurn {
     pub input: Vec<Value>,
     pub metadata: BTreeMap<String, String>,
     pub event_context: EventContextSnapshot,
+    /// Optional callback trace carried alongside the frozen request. It is
+    /// sent as a diagnostic header and never enters provider JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn_trace: Option<TurnTraceContext>,
     pub delivery: FrozenDelivery,
 }
 
@@ -168,6 +172,11 @@ impl FrozenTurn {
                 != self.delivery.default_destination.is_some()
             || opened != &delivery_event(plan, target)
             || self.event_context.validate().is_err()
+            || self
+                .turn_trace
+                .as_ref()
+                .is_some_and(|trace| trace.validate().is_err())
+            || self.turn_trace != opened.turn_trace
             || self.input.is_empty()
             || serde_json::to_vec(&self.input)
                 .map_err(|_| ExecutionError::Invalid)?

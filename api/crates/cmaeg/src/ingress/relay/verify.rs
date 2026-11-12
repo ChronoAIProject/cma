@@ -21,10 +21,13 @@ pub struct CallbackHeaders<'a> {
     pub timestamp: &'a str,
     pub traceparent: Option<&'a str>,
     pub traceparent_invalid: bool,
+    pub request_id: Option<&'a str>,
+    pub request_id_invalid: bool,
 }
 impl<'a> CallbackHeaders<'a> {
     pub fn read(headers: &'a HeaderMap) -> Result<Self, VerificationError> {
         let (traceparent, traceparent_invalid) = traceparent(headers);
+        let (request_id, request_id_invalid) = request_id(headers);
         Ok(Self {
             callback_token: single(headers, "x-nyxid-callback-token", true)?.unwrap(),
             message_id: single(headers, "x-nyxid-message-id", true)?.unwrap(),
@@ -33,11 +36,25 @@ impl<'a> CallbackHeaders<'a> {
             user_token: single(headers, "x-nyxid-user-token", false)?,
             traceparent,
             traceparent_invalid,
+            request_id,
+            request_id_invalid,
         })
     }
 }
 fn traceparent<'a>(headers: &'a HeaderMap) -> (Option<&'a str>, bool) {
     let mut values = headers.get_all("traceparent").iter();
+    let first = values.next();
+    let duplicate = values.next().is_some();
+    let value = first.and_then(|value| {
+        value
+            .to_str()
+            .ok()
+            .filter(|value| !value.is_empty() && !value.contains(','))
+    });
+    (value, duplicate || first.is_some() && value.is_none())
+}
+fn request_id<'a>(headers: &'a HeaderMap) -> (Option<&'a str>, bool) {
+    let mut values = headers.get_all("x-request-id").iter();
     let first = values.next();
     let duplicate = values.next().is_some();
     let value = first.and_then(|value| {
@@ -227,6 +244,13 @@ pub async fn verify(
     } else {
         crate::telemetry::turn_trace::parse_parent(headers.traceparent)
     };
+    let ingress_request_id = headers
+        .request_id
+        .filter(|_| !headers.request_id_invalid)
+        .and_then(|value| {
+            let id = uuid::Uuid::parse_str(value).ok()?;
+            (id.get_version_num() == 4).then_some(id.to_string())
+        });
     let turn_trace = match parsed_trace {
         Ok(Some(context)) => Some(context.wire()),
         Ok(None) => None,
@@ -235,6 +259,10 @@ pub async fn verify(
             None
         }
     };
+    let turn_trace = turn_trace.map(|mut context| {
+        context.ingress_request_id = ingress_request_id;
+        context
+    });
     Ok(VerifiedCallback {
         payload,
         reply_token,
@@ -274,9 +302,7 @@ mod tests {
         let mut headers = required();
         headers.insert(
             "traceparent",
-            HeaderValue::from_static(
-                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
-            ),
+            HeaderValue::from_static("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
         );
         let parsed = CallbackHeaders::read(&headers).unwrap();
         assert!(!parsed.traceparent_invalid);

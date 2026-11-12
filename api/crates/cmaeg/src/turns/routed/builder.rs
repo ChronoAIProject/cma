@@ -114,6 +114,7 @@ impl ProductionFrozenTurnBuilder {
             received_at,
             trace: tracing::Span::current(),
             timing: None,
+            turn_trace: target.launch.event.turn_trace.clone(),
             consumer: target.launch.event.consumer.clone(),
         };
         let audience = Audience::of(&consumer, &self.media_tool_providers);
@@ -156,6 +157,7 @@ impl ProductionFrozenTurnBuilder {
                 input: rendered.input,
                 metadata: rendered.metadata,
                 event_context: rendered.event_context,
+                turn_trace: turn.turn_trace,
                 delivery: FrozenDelivery {
                     consumer: target.launch.consumer.clone(),
                     label: consumer.label.to_owned(),

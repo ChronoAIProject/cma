@@ -79,6 +79,7 @@ async fn claim(store: &InMemorySandboxStore, agent: &Agent, actor: &str) -> Admi
     store
         .reserve_command(CommandReservation {
             binding: None,
+            nyxid_trace: None,
             envelope: AgentCommandEnvelope {
                 continuation: None,
                 schema_version: AGENT_IO_SCHEMA_VERSION,

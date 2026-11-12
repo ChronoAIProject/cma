@@ -327,12 +327,13 @@ impl ProviderClient {
         let bytes = canonical_json(body).into_bytes();
         let observed = tokio::time::timeout(
             self.request_timeout,
-            handle.responses.send(
+            handle.responses.send_with_trace(
                 url,
                 request.agent_key.as_str(),
                 request.idempotency_key.as_str(),
                 bytes,
                 request.timing,
+                request.turn_trace.as_ref(),
             ),
         )
         .await

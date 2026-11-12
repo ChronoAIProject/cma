@@ -60,6 +60,7 @@ fn response(kinds: &[AgentLogKind]) -> V2ResponseObject {
             failure: None,
         },
         metadata: Default::default(),
+        nyxid_trace: None,
     };
     project(
         &crate::agent_page::AgentPageOrigin::test(),

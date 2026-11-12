@@ -250,6 +250,7 @@ pub(crate) fn launch(
         received_at: verified.received,
         trace: tracing::Span::current(),
         timing: None,
+        turn_trace: None,
         consumer: None,
     })
 }

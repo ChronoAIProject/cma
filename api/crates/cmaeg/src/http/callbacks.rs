@@ -64,7 +64,7 @@ pub enum CallbackResponse {
     params(("channel_id"=String, Path), ("x-nyxid-callback-token"=String, Header),
         ("x-nyxid-message-id"=String, Header), ("x-nyxid-platform"=String, Header),
         ("x-nyxid-timestamp"=String, Header), ("x-nyxid-user-token"=Option<String>, Header),
-        ("traceparent"=Option<String>, Header)),
+        ("traceparent"=Option<String>, Header), ("x-request-id"=Option<String>, Header)),
     request_body=crate::ingress::relay::payload::CallbackPayload,
     responses((status=202, body=CallbackResponse), (status="default", body=cmaeg_core::problem::Problem, content_type="application/problem+json")))]
 pub async fn callback(

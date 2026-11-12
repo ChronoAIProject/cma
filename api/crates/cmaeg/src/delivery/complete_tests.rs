@@ -155,6 +155,7 @@ async fn commonmark_telegram_replies_use_dedicated_routes_and_preserve_source() 
         event.turn_trace = Some(cmaeg_core::seal::TurnTraceContext {
             trace_id: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
             parent_span_id: "00f067aa0ba902b7".into(),
+            ingress_request_id: None,
         });
         let trace = tracing::Span::none();
         let gate = RecordingGate::new(true);
@@ -167,7 +168,10 @@ async fn commonmark_telegram_replies_use_dedicated_routes_and_preserve_source() 
         let mut outbound = message(source.into());
         outbound.thread_reply = thread;
         let (receipt, _) = sender.reply(&ctx, &event, &outbound).await;
-        assert!(matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }));
+        assert!(matches!(
+            receipt.delivery,
+            DeliveryOutcome::Confirmed { .. }
+        ));
         let requests = transport.1.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(

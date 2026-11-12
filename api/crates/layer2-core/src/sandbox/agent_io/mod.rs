@@ -41,6 +41,7 @@ mod revival_authority;
 mod service;
 mod status;
 mod targeted_control;
+mod trace;
 pub(in crate::sandbox) mod trigger;
 mod work;
 mod worker;
@@ -95,6 +96,7 @@ pub use targeted_control::{
     TargetedControlReservation, TargetedControlStatusView, TargetedControlSubmission,
     TargetedResponse,
 };
+pub use trace::NyxidTrace;
 pub use trigger::{
     is_bound_trigger_first, TriggerExecutionAuthorization, TriggerExecutionFence,
     TriggerExecutionProof, TriggerFirstMessageBinding,

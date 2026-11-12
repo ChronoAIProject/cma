@@ -43,6 +43,7 @@ async fn queued_input_http_pages_maximum_text_below_sdk_limit_without_losing_que
             .reserve_command(CommandReservation {
                 envelope,
                 binding: None,
+                nyxid_trace: None,
                 key_sha256: command_key_digest(&format!("page-{index}")).unwrap(),
                 response_id: Some(AgentResponseId::generate()),
                 admitted_at: source.receipt.admitted_at.clone(),

@@ -270,6 +270,7 @@ impl ExecutionPort for HttpExecutionPort {
                     &body.idempotency_key,
                     &body.metadata,
                     credential,
+                    body.turn_trace.as_ref(),
                 )
                 .await
             {

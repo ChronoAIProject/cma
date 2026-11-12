@@ -126,6 +126,7 @@ impl IngressState {
             received_at: Instant::now(),
             trace: tracing::Span::none(),
             timing: None,
+            turn_trace: None,
         };
         let source = VerifiedIngress {
             quote: crate::ingress::quoted_context::Intake::Legacy,

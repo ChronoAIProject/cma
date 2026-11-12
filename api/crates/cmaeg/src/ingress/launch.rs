@@ -4,7 +4,7 @@ use cmaeg_core::{
     activity::Activity,
     ids::{ConsumerId, ConversationId, IdempotencyKey},
     problem::{Problem, ProblemCode},
-    seal::EventRef,
+    seal::{EventRef, TurnTraceContext},
 };
 use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Instant};
@@ -20,6 +20,9 @@ pub struct LaunchRequest {
     pub received_at: Instant,
     pub trace: tracing::Span,
     pub timing: Option<crate::telemetry::timing::IngressTiming>,
+    /// Optional authenticated NyxID trace metadata. It is diagnostic only and
+    /// is carried to the provider transport as a request header.
+    pub turn_trace: Option<TurnTraceContext>,
     /// The consumer that serves this turn. None means the default consumer.
     pub consumer: Option<ConsumerId>,
 }

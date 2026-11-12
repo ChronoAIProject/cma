@@ -18,6 +18,9 @@
         "body": {
           "object": "cma.responses.capabilities",
           "version": 2,
+          "features": [
+            "nyxid_turn_trace_v1"
+          ],
           "create": "/api/v2/responses",
           "agent_alias": "/api/v2/agents/{agent_id}/responses",
           "retrieve": "/api/v2/responses/{response_id}",
@@ -102,7 +105,9 @@
           "link": "</api/v2>; rel=\"service-desc\"",
           "x-accel-buffering": "no",
           "x-cma-command-id": "cmd_contract",
-          "x-cma-response-id": "resp_contract"
+          "x-cma-response-id": "resp_contract",
+          "x-nyxid-trace-id": "$responses_v2_create_retry_x_request_id",
+          "x-request-id": "$responses_v2_create_retry_x_request_id"
         },
         "body": [
           {
@@ -246,7 +251,10 @@
         ],
         "bodyKind": "sse"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_v2_create_retry_x_request_id": "x-request-id"
+      }
     },
     {
       "id": "responses-v2-alias-retry",
@@ -273,7 +281,9 @@
           "link": "</api/v2>; rel=\"service-desc\"",
           "x-accel-buffering": "no",
           "x-cma-command-id": "cmd_contract",
-          "x-cma-response-id": "resp_contract"
+          "x-cma-response-id": "resp_contract",
+          "x-nyxid-trace-id": "$responses_v2_alias_retry_x_request_id",
+          "x-request-id": "$responses_v2_alias_retry_x_request_id"
         },
         "body": [
           {
@@ -417,7 +427,10 @@
         ],
         "bodyKind": "sse"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_v2_alias_retry_x_request_id": "x-request-id"
+      }
     },
     {
       "id": "responses-v2-retrieve",
@@ -431,7 +444,9 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-nyxid-trace-id": "$responses_v2_retrieve_x_request_id",
+          "x-request-id": "$responses_v2_retrieve_x_request_id"
         },
         "body": {
           "callback_url": "https://cma.example/agents/agt_fixture",
@@ -475,6 +490,9 @@
       },
       "captures": {
         "completed_at": "/completed_at"
+      },
+      "headerCaptures": {
+        "responses_v2_retrieve_x_request_id": "x-request-id"
       }
     },
     {
@@ -494,7 +512,9 @@
           "link": "</api/v2>; rel=\"service-desc\"",
           "x-accel-buffering": "no",
           "x-cma-command-id": "cmd_contract",
-          "x-cma-response-id": "resp_contract"
+          "x-cma-response-id": "resp_contract",
+          "x-nyxid-trace-id": "$responses_v2_replay_x_request_id",
+          "x-request-id": "$responses_v2_replay_x_request_id"
         },
         "body": [
           {
@@ -638,7 +658,10 @@
         ],
         "bodyKind": "sse"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_v2_replay_x_request_id": "x-request-id"
+      }
     },
     {
       "id": "responses-v2-conversation",
@@ -1592,7 +1615,9 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-nyxid-trace-id": "$responses_v2_failed_retrieve_x_request_id",
+          "x-request-id": "$responses_v2_failed_retrieve_x_request_id"
         },
         "body": {
           "callback_url": "https://cma.example/agents/agt_fixture",
@@ -1637,7 +1662,10 @@
         },
         "bodyKind": "json"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_v2_failed_retrieve_x_request_id": "x-request-id"
+      }
     },
     {
       "id": "responses-v2-failed-create",
@@ -1664,7 +1692,9 @@
           "link": "</api/v2>; rel=\"service-desc\"",
           "x-accel-buffering": "no",
           "x-cma-command-id": "cmd_contract",
-          "x-cma-response-id": "resp_contract"
+          "x-cma-response-id": "resp_contract",
+          "x-nyxid-trace-id": "$responses_v2_failed_create_x_request_id",
+          "x-request-id": "$responses_v2_failed_create_x_request_id"
         },
         "body": [
           {
@@ -1765,7 +1795,10 @@
         ],
         "bodyKind": "sse"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_v2_failed_create_x_request_id": "x-request-id"
+      }
     },
     {
       "id": "responses-v2-failed-alias",
@@ -1792,7 +1825,9 @@
           "link": "</api/v2>; rel=\"service-desc\"",
           "x-accel-buffering": "no",
           "x-cma-command-id": "cmd_contract",
-          "x-cma-response-id": "resp_contract"
+          "x-cma-response-id": "resp_contract",
+          "x-nyxid-trace-id": "$responses_v2_failed_alias_x_request_id",
+          "x-request-id": "$responses_v2_failed_alias_x_request_id"
         },
         "body": [
           {
@@ -1893,7 +1928,10 @@
         ],
         "bodyKind": "sse"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_v2_failed_alias_x_request_id": "x-request-id"
+      }
     },
     {
       "id": "responses-v2-failed-replay",
@@ -1912,7 +1950,9 @@
           "link": "</api/v2>; rel=\"service-desc\"",
           "x-accel-buffering": "no",
           "x-cma-command-id": "cmd_contract",
-          "x-cma-response-id": "resp_contract"
+          "x-cma-response-id": "resp_contract",
+          "x-nyxid-trace-id": "$responses_v2_failed_replay_x_request_id",
+          "x-request-id": "$responses_v2_failed_replay_x_request_id"
         },
         "body": [
           {
@@ -2013,7 +2053,10 @@
         ],
         "bodyKind": "sse"
       },
-      "captures": {}
+      "captures": {},
+      "headerCaptures": {
+        "responses_v2_failed_replay_x_request_id": "x-request-id"
+      }
     }
   ]
 }

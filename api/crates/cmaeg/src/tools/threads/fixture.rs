@@ -367,6 +367,7 @@ impl App {
             received_at: Instant::now(),
             trace: tracing::Span::none(),
             timing: None,
+            turn_trace: None,
             consumer: None,
         };
         let OrdinaryPlan::Routed(plan) = routing_plan::plan(

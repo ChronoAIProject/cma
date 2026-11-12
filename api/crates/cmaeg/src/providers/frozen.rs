@@ -24,6 +24,7 @@ impl ProviderClient {
         idempotency: &IdempotencyKey,
         metadata: &BTreeMap<String, String>,
         credential: &Secret,
+        turn_trace: Option<&cmaeg_core::seal::TurnTraceContext>,
     ) -> FrozenSubmission {
         if self.record_worker_key(credential).await.is_err() {
             return FrozenSubmission::NotAccepted;
@@ -49,7 +50,14 @@ impl ProviderClient {
         tokio::time::timeout(deadline, async {
             let observed = match handle
                 .responses
-                .send(url, credential.as_str(), idempotency.as_str(), bytes, None)
+                .send_with_trace(
+                    url,
+                    credential.as_str(),
+                    idempotency.as_str(),
+                    bytes,
+                    None,
+                    turn_trace,
+                )
                 .await
             {
                 Ok(response) => response,

@@ -2,7 +2,7 @@ use super::{error, ResponsesV2State};
 use crate::AuthenticatedResourceCaller;
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -17,6 +17,7 @@ use layer2_core::{
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use uuid::Uuid;
 
 type Auth = Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>;
 
@@ -38,7 +39,7 @@ pub(super) struct CreateV2ResponseRequest {
     binding_generation: Option<u64>,
     store: Option<bool>,
 }
-#[utoipa::path(post, path = "/api/v2/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("Idempotency-Key" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
+#[utoipa::path(post, path = "/api/v2/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("Idempotency-Key" = Option<String>, Header), ("traceparent" = Option<String>, Header), ("x-request-id" = Option<String>, Header), ("X-NyxID-Turn-Trace-Contract" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
 pub(super) async fn create(
     State(state): State<ResponsesV2State>,
     auth: Auth,
@@ -47,7 +48,7 @@ pub(super) async fn create(
 ) -> Response {
     submit(state, auth, headers, body, None).await
 }
-#[utoipa::path(post, path = "/api/v2/agents/{agent_id}/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("agent_id" = String, Path), ("Idempotency-Key" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
+#[utoipa::path(post, path = "/api/v2/agents/{agent_id}/responses", tag = "responses v2", request_body = CreateV2ResponseRequest, params(("agent_id" = String, Path), ("Idempotency-Key" = Option<String>, Header), ("traceparent" = Option<String>, Header), ("x-request-id" = Option<String>, Header), ("X-NyxID-Turn-Trace-Contract" = Option<String>, Header)), responses((status = 200, body = String, content_type = "text/event-stream"), (status = 422, body = Value)))]
 pub(super) async fn create_alias(
     State(state): State<ResponsesV2State>,
     auth: Auth,
@@ -70,6 +71,7 @@ async fn submit(
     let Some(credential) = auth.credential.as_ref() else {
         return error::unauthenticated();
     };
+    let nyxid_trace = parse_nyxid_trace(&headers);
     let Json(mut body) = match body {
         Ok(body) => body,
         Err(_) => {
@@ -219,12 +221,13 @@ async fn submit(
     }
     let admitted = match state
         .commands
-        .admit_at_binding_revision(
+        .admit_at_binding_revision_with_trace(
             &auth.context,
             credential.value(),
             CommandSubmissionSource::Api,
             submission.clone(),
             policy_revision,
+            nyxid_trace.clone(),
         )
         .await
     {
@@ -238,12 +241,13 @@ async fn submit(
             match state.replay_sender_context(&auth, &submission).await {
                 Ok(Some(replay)) => match state
                     .commands
-                    .admit_at_binding_revision(
+                    .admit_at_binding_revision_with_trace(
                         &auth.context,
                         credential.value(),
                         CommandSubmissionSource::Api,
                         replay,
                         None,
+                        nyxid_trace.clone(),
                     )
                     .await
                 {
@@ -276,6 +280,70 @@ async fn submit(
     super::stream::open(state, authorization, admitted.receipt, None).await
 }
 
+/// Parse the negotiated NyxID diagnostic headers after normal authentication.
+/// Invalid, unnegotiated, or spoofed values simply produce partial trace
+/// coverage and never affect authorization, idempotency or dispatch.
+fn parse_nyxid_trace(headers: &HeaderMap) -> Option<layer2_core::sandbox::agent_io::NyxidTrace> {
+    if headers.get_all("traceparent").iter().count() != 1
+        || headers.get_all("x-request-id").iter().count() != 1
+        || headers
+            .get_all("x-nyxid-turn-trace-contract")
+            .iter()
+            .count()
+            != 1
+        || headers
+            .get("x-nyxid-turn-trace-contract")
+            .and_then(|value| value.to_str().ok())
+            != Some("1")
+    {
+        return None;
+    }
+    let traceparent = headers.get("traceparent")?.to_str().ok()?;
+    if traceparent.len() > 256 {
+        return None;
+    }
+    let mut parts = traceparent.split('-');
+    let (Some(version), Some(trace_id), Some(parent_span_id), Some(flags)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    if parts.next().is_some()
+        || version != "00"
+        || flags.len() != 2
+        || !flags.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || flags.bytes().any(|byte| byte.is_ascii_uppercase())
+        || trace_id.len() != 32
+        || !trace_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || trace_id.bytes().all(|byte| byte == b'0')
+        || parent_span_id.len() != 16
+        || !parent_span_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || parent_span_id.bytes().all(|byte| byte == b'0')
+        || trace_id.bytes().any(|byte| byte.is_ascii_uppercase())
+        || parent_span_id.bytes().any(|byte| byte.is_ascii_uppercase())
+    {
+        return None;
+    }
+    let turn_id = Uuid::parse_str(&format!(
+        "{}-{}-{}-{}-{}",
+        &trace_id[0..8],
+        &trace_id[8..12],
+        &trace_id[12..16],
+        &trace_id[16..20],
+        &trace_id[20..32]
+    ))
+    .ok()?;
+    let ingress_request_id = Uuid::parse_str(headers.get("x-request-id")?.to_str().ok()?).ok()?;
+    let trace = layer2_core::sandbox::agent_io::NyxidTrace {
+        version: 1,
+        turn_id: turn_id.to_string(),
+        trace_id: trace_id.to_owned(),
+        parent_span_id: parent_span_id.to_owned(),
+        ingress_request_id: ingress_request_id.to_string(),
+    };
+    (turn_id.get_version_num() == 4 && ingress_request_id.get_version_num() == 4).then_some(trace)
+}
+
 #[utoipa::path(get, path = "/api/v2/responses/{response_id}", tag = "responses v2", params(("response_id" = String, Path)), responses((status = 200, body = super::V2ResponseObject), (status = 404, body = Value)))]
 pub(super) async fn retrieve(
     State(state): State<ResponsesV2State>,
@@ -292,7 +360,24 @@ pub(super) async fn retrieve(
         Err(value) => return *value,
     };
     match super::stream::snapshot(&state, &authorization, &receipt).await {
-        Ok((response, _)) => Json(response).into_response(),
+        Ok((response, _)) => {
+            let trace_id = response
+                .nyxid_trace
+                .as_ref()
+                .map(|trace| trace.turn_id.clone());
+            let request_id = Uuid::new_v4().to_string();
+            let mut output = Json(response).into_response();
+            output.headers_mut().insert(
+                "x-request-id",
+                HeaderValue::from_str(&request_id).expect("generated request identity"),
+            );
+            output.headers_mut().insert(
+                "x-nyxid-trace-id",
+                HeaderValue::from_str(trace_id.as_deref().unwrap_or(&request_id))
+                    .expect("generated trace identity"),
+            );
+            output
+        }
         Err(value) => value,
     }
 }
@@ -391,6 +476,7 @@ pub(super) async fn capabilities(auth: Auth) -> Response {
     }
     Json(serde_json::json!({
         "object":"cma.responses.capabilities", "version":2,
+        "features":["nyxid_turn_trace_v1"],
         "create":"/api/v2/responses", "agent_alias":"/api/v2/agents/{agent_id}/responses",
         "retrieve":"/api/v2/responses/{response_id}", "conversation":"/api/v2/conversations/{conversation_id}",
         "items":"/api/v2/conversations/{conversation_id}/items",
@@ -408,4 +494,60 @@ pub(super) async fn capabilities(auth: Auth) -> Response {
         "companion":"/api/v1/agui/events?thread_id={agent_id}",
         "documentation":"https://github.com/ChronoAIProject/cma/blob/main/docs/API_Responses.md"
     })).into_response()
+}
+
+#[cfg(test)]
+mod trace_header_tests {
+    use super::parse_nyxid_trace;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn accepts_only_a_v4_turn_and_request_pair() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "traceparent",
+            HeaderValue::from_static("00-11111111111141118111111111111111-0123456789abcdef-01"),
+        );
+        headers.insert(
+            "x-request-id",
+            HeaderValue::from_static("22222222-2222-4222-8222-222222222222"),
+        );
+        headers.insert("x-nyxid-turn-trace-contract", HeaderValue::from_static("1"));
+        let trace = parse_nyxid_trace(&headers).expect("valid trace headers");
+        assert_eq!(trace.turn_id, "11111111-1111-4111-8111-111111111111");
+        assert_eq!(trace.trace_id, "11111111111141118111111111111111");
+    }
+
+    #[test]
+    fn malformed_or_duplicate_diagnostic_headers_are_ignored() {
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "traceparent",
+            HeaderValue::from_static("00-11111111111141118111111111111111-0123456789abcdef-01"),
+        );
+        headers.append(
+            "traceparent",
+            HeaderValue::from_static("00-11111111111141118111111111111111-0123456789abcdef-01"),
+        );
+        headers.insert(
+            "x-request-id",
+            HeaderValue::from_static("22222222-2222-4222-8222-222222222222"),
+        );
+        headers.insert("x-nyxid-turn-trace-contract", HeaderValue::from_static("1"));
+        assert!(parse_nyxid_trace(&headers).is_none());
+    }
+
+    #[test]
+    fn trace_headers_without_negotiated_contract_are_ignored() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "traceparent",
+            HeaderValue::from_static("00-11111111111141118111111111111111-0123456789abcdef-01"),
+        );
+        headers.insert(
+            "x-request-id",
+            HeaderValue::from_static("22222222-2222-4222-8222-222222222222"),
+        );
+        assert!(parse_nyxid_trace(&headers).is_none());
+    }
 }

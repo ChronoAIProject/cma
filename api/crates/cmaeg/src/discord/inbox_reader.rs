@@ -328,6 +328,7 @@ impl InboxReader {
             received_at: Instant::now(),
             trace: tracing::Span::current(),
             timing: None,
+            turn_trace: None,
             consumer,
         };
         Ok(InboxLaunch::Launch(Box::new(VerifiedInboxLaunch {

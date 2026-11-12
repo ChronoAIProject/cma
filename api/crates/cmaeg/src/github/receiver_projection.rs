@@ -216,6 +216,7 @@ pub(super) fn github_launch_request(
         received_at: Instant::now(),
         trace: tracing::Span::current(),
         timing: None,
+        turn_trace: None,
         consumer: None,
     })
 }

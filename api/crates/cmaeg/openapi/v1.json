@@ -6221,6 +6221,17 @@
           },
           "type": {
             "type": "string"
+          },
+          "upstream": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/UpstreamRefusal",
+                "description": "Optional provider metadata for relay consumers. Older responses omit\nthis field and retain the existing RFC 9457 shape."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -9531,6 +9542,29 @@
         ],
         "type": "object"
       },
+      "UpstreamRefusal": {
+        "additionalProperties": false,
+        "description": "Bounded metadata about a provider refusal. This is safe to expose to a\ngateway peer: it contains no provider response body, credentials or\nrequest data.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation",
+          "status",
+          "code"
+        ],
+        "type": "object"
+      },
       "VerifyAppRequest": {
         "additionalProperties": false,
         "properties": {
@@ -10110,6 +10144,28 @@
           {
             "in": "header",
             "name": "x-nyxid-user-token",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "traceparent",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
             "required": false,
             "schema": {
               "type": [

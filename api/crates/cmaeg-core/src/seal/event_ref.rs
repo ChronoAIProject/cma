@@ -49,6 +49,10 @@ pub struct TurnTraceContext {
     pub trace_id: String,
     /// The authenticated caller span that led into CMAEG.
     pub parent_span_id: String,
+    /// The NyxID request that admitted this callback, when the peer supplied
+    /// one. Older callbacks omit it and retain partial trace coverage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ingress_request_id: Option<String>,
 }
 
 impl TurnTraceContext {
@@ -63,7 +67,10 @@ impl TurnTraceContext {
             ));
         }
         if self.parent_span_id.len() != 16
-            || !self.parent_span_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+            || !self
+                .parent_span_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
             || self.parent_span_id.bytes().all(|byte| byte == b'0')
         {
             return Err(ValidationError::new(
@@ -71,10 +78,7 @@ impl TurnTraceContext {
                 "invalid parent span id",
             ));
         }
-        if self
-            .trace_id
-            .bytes()
-            .any(|byte| byte.is_ascii_uppercase())
+        if self.trace_id.bytes().any(|byte| byte.is_ascii_uppercase())
             || self
                 .parent_span_id
                 .bytes()
@@ -84,6 +88,20 @@ impl TurnTraceContext {
                 "/turn_trace",
                 "trace ids must be lowercase",
             ));
+        }
+        if let Some(request_id) = &self.ingress_request_id {
+            let request_id = uuid::Uuid::parse_str(request_id).map_err(|_| {
+                ValidationError::new(
+                    "/turn_trace/ingress_request_id",
+                    "invalid ingress request id",
+                )
+            })?;
+            if request_id.get_version_num() != 4 {
+                return Err(ValidationError::new(
+                    "/turn_trace/ingress_request_id",
+                    "ingress request id must be UUID v4",
+                ));
+            }
         }
         Ok(())
     }

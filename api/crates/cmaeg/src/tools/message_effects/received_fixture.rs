@@ -180,6 +180,7 @@ impl Fixture {
                     received_at: std::time::Instant::now(),
                     trace: tracing::Span::none(),
                     timing: None,
+                    turn_trace: None,
                     consumer: None,
                 }
             }

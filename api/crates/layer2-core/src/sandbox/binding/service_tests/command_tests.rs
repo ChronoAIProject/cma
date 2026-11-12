@@ -73,6 +73,7 @@ pub(super) async fn request(
     let now = std::time::SystemTime::now();
     CommandReservation {
         binding: held.binding_authority().cloned(),
+        nyxid_trace: None,
         envelope: AgentCommandEnvelope {
             continuation: None,
             schema_version: AGENT_IO_SCHEMA_VERSION,

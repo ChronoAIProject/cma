@@ -107,6 +107,7 @@ pub async fn issue(
                     activity: app.activity.clone(),
                     event_ref: reference.clone(),
                 }),
+                turn_trace: None,
             },
         )
         .await

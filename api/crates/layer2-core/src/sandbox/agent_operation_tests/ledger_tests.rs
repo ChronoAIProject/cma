@@ -10,6 +10,7 @@ pub(super) fn reservation(agent: &Agent, parent: &Sandbox, key: &str) -> Command
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         binding: None,
+        nyxid_trace: None,
         authority_deadline: None,
         admission_audit: None,
         envelope: AgentCommandEnvelope {
@@ -97,6 +98,39 @@ async fn racing_retries_reserve_one_input_response_and_order() {
         CommandLedgerError::IdempotencyConflict
     );
     assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
+}
+
+#[tokio::test]
+async fn conflicting_nyxid_trace_replay_fails_closed_without_replacing_winner() {
+    let (store, agent, parent) = fixture().await;
+    let mut first = reservation(&agent, &parent, "trace-replay");
+    first.nyxid_trace = Some(NyxidTrace {
+        trace_id: "11111111111141118111111111111111".into(),
+        parent_span_id: "0123456789abcdef".into(),
+        ingress_request_id: "22222222-2222-4222-8222-222222222222".into(),
+        turn_id: "11111111-1111-4111-8111-111111111111".into(),
+        version: 1,
+    });
+    let stored = record(store.reserve_command(first).await.unwrap());
+    let mut conflicting = reservation(&agent, &parent, "trace-replay");
+    conflicting.nyxid_trace = Some(NyxidTrace {
+        trace_id: "33333333333343338333333333333333".into(),
+        parent_span_id: "fedcba9876543210".into(),
+        ingress_request_id: "44444444-4444-4444-8444-444444444444".into(),
+        turn_id: "33333333-3333-4333-8333-333333333333".into(),
+        version: 1,
+    });
+    assert_eq!(
+        store.reserve_command(conflicting).await,
+        Err(CommandLedgerError::Corrupt)
+    );
+    assert_eq!(
+        store
+            .get_command(&stored.receipt.envelope.command_id)
+            .await
+            .unwrap(),
+        Some(stored)
+    );
 }
 
 #[tokio::test]

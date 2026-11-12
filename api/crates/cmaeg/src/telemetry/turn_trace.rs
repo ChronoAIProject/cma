@@ -28,6 +28,7 @@ static DROPPED: AtomicU64 = AtomicU64::new(0);
 pub(crate) struct Context {
     pub trace_id: String,
     pub parent_span_id: String,
+    pub ingress_request_id: Option<String>,
 }
 
 impl Context {
@@ -35,6 +36,7 @@ impl Context {
         Self {
             trace_id: value.trace_id,
             parent_span_id: value.parent_span_id,
+            ingress_request_id: value.ingress_request_id,
         }
     }
 
@@ -42,6 +44,7 @@ impl Context {
         TurnTraceContext {
             trace_id: self.trace_id.clone(),
             parent_span_id: self.parent_span_id.clone(),
+            ingress_request_id: self.ingress_request_id.clone(),
         }
     }
 
@@ -50,6 +53,19 @@ impl Context {
             .try_into()
             .expect("eight bytes");
         format!("{:016x}", u64::from_be_bytes(bytes).max(1))
+    }
+
+    fn turn_id(&self) -> Option<String> {
+        let mut value = self.trace_id.clone();
+        if value.len() != 32 || value.bytes().any(|byte| !byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        value.insert(8, '-');
+        value.insert(13, '-');
+        value.insert(18, '-');
+        value.insert(23, '-');
+        let uuid = Uuid::parse_str(&value).ok()?;
+        (uuid.get_version_num() == 4).then_some(uuid.to_string())
     }
 }
 
@@ -86,6 +102,7 @@ pub(crate) fn parse_parent(value: Option<&str>) -> Result<Option<Context>, GapRe
     Ok(Some(Context {
         trace_id: fields[1].to_owned(),
         parent_span_id: fields[2].to_owned(),
+        ingress_request_id: None,
     }))
 }
 
@@ -107,14 +124,22 @@ struct Record {
     instance_id: String,
     timestamp: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     trace_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     span_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_span_id: Option<String>,
     request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ingress_request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    related_turn_id: Option<String>,
     phase: &'static str,
     stage: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    part_index: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     outcome: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -122,7 +147,7 @@ struct Record {
     #[serde(skip_serializing_if = "Option::is_none")]
     http_status: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error_code: Option<String>,
+    error_code: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     gap_reason: Option<&'static str>,
 }
@@ -134,14 +159,16 @@ fn now() -> String {
         .as_millis() as i64;
     time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(millis) * 1_000_000)
         .ok()
-        .and_then(|value| value.format(&time::format_description::well_known::Rfc3339).ok())
+        .and_then(|value| {
+            value
+                .format(&time::format_description::well_known::Rfc3339)
+                .ok()
+        })
         .unwrap_or_else(|| "1970-01-01T00:00:00Z".into())
 }
 
 fn instance() -> String {
-    INSTANCE
-        .get_or_init(|| Uuid::new_v4().to_string())
-        .clone()
+    INSTANCE.get_or_init(|| Uuid::new_v4().to_string()).clone()
 }
 
 fn fresh_span() -> String {
@@ -151,16 +178,29 @@ fn fresh_span() -> String {
     format!("{:016x}", u64::from_be_bytes(bytes).max(1))
 }
 
-fn bounded_code(code: &str) -> Option<String> {
-    (1..=64)
-        .contains(&code.len())
-        .then_some(())
-        .filter(|_| {
-            code.bytes().all(|b| {
-                b.is_ascii_lowercase() || b.is_ascii_digit() || b"_.-".contains(&b)
-            })
-        })
-        .map(|_| code.to_owned())
+fn bounded_error_code(code: u32) -> Option<u32> {
+    matches!(
+        code,
+        400 | 401 | 403 | 404 | 409 | 422 | 429 | 500 | 502 | 503
+    )
+    .then_some(code)
+}
+
+fn bounded_outcome(outcome: Option<&'static str>) -> Option<&'static str> {
+    outcome.filter(|value| {
+        matches!(
+            *value,
+            "completed"
+                | "failed"
+                | "cancelled"
+                | "unknown"
+                | "streamed"
+                | "silent"
+                | "confirmed"
+                | "rejected"
+                | "partial"
+        )
+    })
 }
 
 fn emit(record: Record) {
@@ -168,7 +208,12 @@ fn emit(record: Record) {
         return;
     };
     if sender.try_send(record).is_err() {
-        DROPPED.fetch_add(1, Ordering::Relaxed);
+        let dropped = DROPPED.fetch_add(1, Ordering::Relaxed) + 1;
+        // A full queue is deliberately non-blocking. Emit a sparse health
+        // signal so operators can distinguish partial traces from no traffic.
+        if dropped.is_power_of_two() {
+            tracing::warn!(dropped, "nyxid turn trace records are being dropped");
+        }
     }
 }
 
@@ -205,12 +250,16 @@ pub(crate) fn ingress_gap(reason: GapReason) {
         service: "cma",
         instance_id: instance(),
         timestamp: now(),
+        turn_id: None,
         trace_id: None,
         span_id: Some(fresh_span()),
         parent_span_id: None,
         request_id: Uuid::new_v4().to_string(),
+        ingress_request_id: None,
+        related_turn_id: None,
         phase: "link",
         stage: "ingress",
+        part_index: None,
         outcome: None,
         duration_ms: None,
         http_status: None,
@@ -225,7 +274,39 @@ pub(crate) fn milestone(
     phase: &'static str,
     outcome: Option<&'static str>,
     status: Option<u16>,
-    code: Option<&str>,
+    code: Option<u32>,
+) {
+    milestone_record(context, stage, phase, outcome, status, code, None);
+}
+
+pub(crate) fn milestone_duration(
+    context: Option<&Context>,
+    stage: &'static str,
+    phase: &'static str,
+    outcome: Option<&'static str>,
+    status: Option<u16>,
+    code: Option<u32>,
+    started: std::time::Instant,
+) {
+    milestone_record(
+        context,
+        stage,
+        phase,
+        outcome,
+        status,
+        code,
+        Some(started.elapsed()),
+    );
+}
+
+fn milestone_record(
+    context: Option<&Context>,
+    stage: &'static str,
+    phase: &'static str,
+    outcome: Option<&'static str>,
+    status: Option<u16>,
+    code: Option<u32>,
+    duration: Option<std::time::Duration>,
 ) {
     emit(Record {
         schema_version: 1,
@@ -233,16 +314,20 @@ pub(crate) fn milestone(
         service: "cma",
         instance_id: instance(),
         timestamp: now(),
+        turn_id: context.and_then(Context::turn_id),
         trace_id: context.map(|value| value.trace_id.clone()),
         span_id: context.map(Context::child_span),
         parent_span_id: context.map(|value| value.parent_span_id.clone()),
         request_id: Uuid::new_v4().to_string(),
+        ingress_request_id: context.and_then(|value| value.ingress_request_id.clone()),
+        related_turn_id: None,
         phase,
         stage,
-        outcome,
-        duration_ms: None,
+        part_index: None,
+        outcome: bounded_outcome(outcome),
+        duration_ms: duration.map(|value| value.as_millis().min(u128::from(u64::MAX)) as u64),
         http_status: status,
-        error_code: code.and_then(bounded_code),
+        error_code: code.and_then(bounded_error_code),
         gap_reason: None,
     });
 }
@@ -278,13 +363,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_codes_are_bounded_and_redacted() {
-        assert_eq!(bounded_code("media_source_refused").as_deref(), Some("media_source_refused"));
-        assert!(bounded_code("").is_none());
-        assert!(bounded_code("UPPER").is_none());
-        assert!(bounded_code("private detail").is_none());
-        let oversized = "a".repeat(65);
-        assert!(bounded_code(&oversized).is_none());
+    fn numeric_error_codes_are_allowlisted() {
+        assert_eq!(bounded_error_code(403), Some(403));
+        assert!(bounded_error_code(0).is_none());
+        assert!(bounded_error_code(418).is_none());
     }
 
     #[test]
@@ -292,6 +374,7 @@ mod tests {
         let context = TurnTraceContext {
             trace_id: "4bf92f3577b34da6a3ce929d0e0e4736".into(),
             parent_span_id: "00f067aa0ba902b7".into(),
+            ingress_request_id: None,
         };
         let first = child_traceparent(&context);
         let second = child_traceparent(&context);

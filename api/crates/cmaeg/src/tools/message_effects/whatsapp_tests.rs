@@ -671,6 +671,7 @@ async fn native_whatsapp_reaction_short_reference_does_not_shorten_receipt_or_un
             received_at: std::time::Instant::now(),
             trace: tracing::Span::none(),
             timing: None,
+            turn_trace: None,
             consumer: None,
         };
         (app.activity, app.event) = crate::turns::routed::bind_received_message_fixture(

@@ -78,6 +78,7 @@ async fn live_stream_metrics_follow_saturation_cancellation_disconnect_and_compl
         metadata: BTreeMap::new(),
         agent_key: Secret::new("fixture-credential-value"),
         event_context: None,
+        turn_trace: None,
     };
     assert_eq!(sample(&handle, "cmaeg_provider_permit_capacity", None), 1.);
     let mut first = client

@@ -153,6 +153,7 @@ pub async fn seed(
                     activity: activity.clone(),
                     event_ref: EventRef::seal(event, keys).unwrap(),
                 }),
+                turn_trace: None,
             },
         )
         .await

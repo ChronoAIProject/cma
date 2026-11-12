@@ -308,6 +308,7 @@ async fn mongo_notification_turn_reselection_fences_an_inflight_old_admission_sn
     let admitted = command(&selected);
     let request = CommandReservation {
         binding: None,
+        nyxid_trace: None,
         envelope: admitted.receipt.envelope,
         key_sha256: admitted.key_sha256,
         response_id: admitted.receipt.response_id,

@@ -32,6 +32,7 @@ pub(in crate::sandbox::store::memory) async fn fixture() -> (
     let command = AgentCommand::Interrupt;
     let ordinary = CommandReservation {
         binding: None,
+        nyxid_trace: None,
         envelope: AgentCommandEnvelope {
             continuation: None,
             schema_version: AGENT_IO_SCHEMA_VERSION,

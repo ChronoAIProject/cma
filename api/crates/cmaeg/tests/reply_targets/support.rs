@@ -328,6 +328,7 @@ impl App {
                         activity,
                         event_ref: event_ref.clone(),
                     }),
+                    turn_trace: None,
                 },
             )
             .await

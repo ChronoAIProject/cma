@@ -145,6 +145,7 @@ pub fn turn(
 ) -> Arc<LaunchRequest> {
     Arc::new(LaunchRequest {
         timing: None,
+        turn_trace: None,
         consumer: None,
         trace: tracing::Span::none(),
         channel: channel.clone(),
