@@ -68,12 +68,18 @@ pub(super) async fn selection(
             fields(&["record.metadata.origin_agent_id", "record.runtime_author_agent_id"], &closure.agents)
         ]},
         Policy::Budget => doc! {"$or":[
-            fields(&["record.agent_id", "record.hold.scope.agent_id"], &closure.agents),
-            // Request-turn ledgers have no record-level owner. Their exact key
-            // grammar is request-turn:<Agent ID>:<turn>; owner baselines are not
-            // Sandbox data and must never be swept in by a shared owner match.
+            // Full shapes were checked above. Only reservation families carry
+            // record-level ownership; independent accounting stays excluded.
+            {"$and":[
+                {"_id":{"$regex":r"\A(?:command|turn|request):"}},
+                fields(&["record.agent_id", "record.hold.scope.agent_id"], &closure.agents)
+            ]},
+            // Request-turn ledgers and stop evidence have no record-level owner.
+            // Known shapes prove <family>:<Agent ID>:<decimal turn>; generated
+            // Agent IDs (agt_ + UUID simple) contain no colon. Compare complete
+            // segments so neighbouring IDs and owner baselines stay excluded.
             {"$expr":{"$and":[
-                {"$eq":[{"$arrayElemAt":[{"$split":["$_id", ":"]}, 0]}, "request-turn"]},
+                {"$in":[{"$arrayElemAt":[{"$split":["$_id", ":"]}, 0]}, ["request-turn", "stop"]]},
                 {"$in":[{"$arrayElemAt":[{"$split":["$_id", ":"]}, 1]}, &closure.agents]}
             ]}}
         ]},
