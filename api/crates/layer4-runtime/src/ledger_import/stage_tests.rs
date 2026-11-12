@@ -7,7 +7,7 @@ use rusqlite::{Connection, OpenFlags};
 
 fn plan(fixture: &Fixture) -> (PathBuf, String) {
     let path = fixture.root.join("plan");
-    let report = plan::create(&fixture.config, &path).unwrap();
+    let report = diagnostics::assert_ok(|| plan::create(&fixture.config, &path));
     (path, report["plan_sha256"].as_str().unwrap().into())
 }
 fn database(output: &Path) -> Connection {
