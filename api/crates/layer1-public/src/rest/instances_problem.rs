@@ -327,7 +327,7 @@ mod global_admission_tests {
                 HierarchyProblem::sandbox(SandboxServiceError::Budget(
                     BudgetError::PlatformExhausted,
                 )),
-                StatusCode::SERVICE_UNAVAILABLE,
+                StatusCode::PAYMENT_REQUIRED,
                 "platform_budget_exhausted",
             ),
             (
@@ -341,7 +341,7 @@ mod global_admission_tests {
                 HierarchyProblem::sandbox_lifecycle(SandboxLifecycleCommandError::Budget(
                     BudgetError::PlatformExhausted,
                 )),
-                StatusCode::SERVICE_UNAVAILABLE,
+                StatusCode::PAYMENT_REQUIRED,
                 "platform_budget_exhausted",
             ),
         ] {
