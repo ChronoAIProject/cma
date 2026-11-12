@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "responses-v2-output-success",
+      "operation": "GET /api/v2/responses/{response_id}/output",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/output",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.output_page",
+          "response_id": "resp_contract",
+          "data": [],
+          "has_more": false,
+          "next_after": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-output-anonymous",
+      "operation": "GET /api/v2/responses/{response_id}/output",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/output",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-output-foreign",
+      "operation": "GET /api/v2/responses/{response_id}/output",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/output",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-output-invalid-cursor",
+      "operation": "GET /api/v2/responses/{response_id}/output",
+      "scenario": "responses_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_contract/output?after=foreign",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_output_cursor",
+            "message": "The cursor does not match this source format.",
+            "param": "after"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
