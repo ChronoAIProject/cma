@@ -137,7 +137,9 @@ impl AgentReadService {
             .map_err(|error| match error {
                 // A complete transcript is one implicit page. The segmented
                 // store refuses that page when it exceeds its result budget.
-                SandboxStoreError::InvalidPage => AgentReadError::TranscriptPaginationRequired,
+                SandboxStoreError::InvalidPage | SandboxStoreError::AgentLogCapacityExceeded => {
+                    AgentReadError::TranscriptPaginationRequired
+                }
                 error => super::store_error(error),
             })?
         {
