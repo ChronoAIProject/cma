@@ -76,11 +76,13 @@ pub(crate) async fn admit_and_wait(
     let task_credential = credential.clone();
     // Reserve to completion even when the HTTP future is dropped. The worker
     // owns readiness and execution; no stream observer runs in this task.
-    let admitted = tokio::spawn(async move {
-        task_service
-            .admit(&task_context, task_credential.value(), source, submission)
-            .await
-    })
+    let admitted = tokio::spawn(
+        layer2_core::diagnostic_context::DiagnosticContext::current().scope(async move {
+            task_service
+                .admit(&task_context, task_credential.value(), source, submission)
+                .await
+        }),
+    )
     .await
     .map_err(|error| {
         tracing::error!(%error, "legacy protocol command admission task failed");
