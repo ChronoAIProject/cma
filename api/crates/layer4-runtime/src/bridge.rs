@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use layer3_adapter::agent_capacity_recovery::{
     CapacityRecoveryConfirmation, CapacityRecoveryError, CapacityRecoveryNativeProof,
-    CapacityRecoveryRequest, ConfirmedAgentState,
+    CapacityRecoveryRequest,
 };
 use layer3_adapter::AgentLaunch;
 #[cfg(unix)]
@@ -92,8 +92,7 @@ pub(crate) struct Bridge {
     reader: tokio::task::AbortHandle,
     ended: tokio::sync::watch::Sender<bool>,
     writer_session_root: Option<i32>,
-    conversation_id: Arc<Mutex<Option<String>>>,
-    native_state: Arc<Mutex<Option<ConfirmedAgentState>>>,
+    observation: Arc<Mutex<observation::NativeObservation>>,
     capacity_recovery: Mutex<Option<(String, u64, Instant)>>,
 }
 
@@ -143,16 +142,14 @@ impl Bridge {
         let pending = Arc::new(Mutex::new(Pending::default()));
         let retained_output = Arc::new(OutputRetention::default());
         let (ended, _) = tokio::sync::watch::channel(false);
-        let conversation_id = Arc::new(Mutex::new(None));
-        let native_state = Arc::new(Mutex::new(Some(ConfirmedAgentState::Idle)));
+        let observation = Arc::new(Mutex::new(observation::NativeObservation::default()));
         spawn_writer(stdin, input_rx);
         let reader = spawn_reader(
             stdout,
             output.clone(),
             Arc::clone(&pending),
             Arc::clone(&retained_output),
-            Arc::clone(&conversation_id),
-            Arc::clone(&native_state),
+            Arc::clone(&observation),
         );
         observation::spawn_diagnostics(stderr);
         observation::spawn_reaper(child, managed, ended.clone());
@@ -166,15 +163,21 @@ impl Bridge {
             reader,
             ended,
             writer_session_root,
-            conversation_id,
-            native_state,
+            observation,
             capacity_recovery: Mutex::new(None),
         })
     }
 
     pub(crate) async fn send(&self, frame: Vec<u8>) -> bool {
-        observation::observe_input(&self.conversation_id, &self.native_state, &frame).await;
-        frame.len() <= MAX_FRAME_BYTES && self.input.send(frame).await.is_ok()
+        if frame.len() > MAX_FRAME_BYTES {
+            return false;
+        }
+        self.observation.lock().await.input(&frame);
+        if self.input.send(frame).await.is_err() {
+            self.observation.lock().await.invalidate();
+            return false;
+        }
+        true
     }
 
     /// Legacy recording has no durable cursor. Never replay that history into a
@@ -260,8 +263,7 @@ fn spawn_reader(
     output: tokio::sync::broadcast::Sender<Outbound>,
     pending: Arc<Mutex<Pending>>,
     retained_output: Arc<OutputRetention>,
-    conversation_id: Arc<Mutex<Option<String>>>,
-    native_state: Arc<Mutex<Option<ConfirmedAgentState>>>,
+    observation: Arc<Mutex<observation::NativeObservation>>,
 ) -> tokio::task::AbortHandle {
     let reader = tokio::spawn(async move {
         let mut stdout = BufReader::new(stdout);
@@ -289,8 +291,7 @@ fn spawn_reader(
                             &output,
                             &pending,
                             &retained_output,
-                            &conversation_id,
-                            &native_state,
+                            &observation,
                         )
                         .await;
                     }
@@ -310,15 +311,7 @@ fn spawn_reader(
             retained_output.gap().await;
             pending.lock().await.gap();
         } else if !frame.is_empty() {
-            publish(
-                frame,
-                &output,
-                &pending,
-                &retained_output,
-                &conversation_id,
-                &native_state,
-            )
-            .await;
+            publish(frame, &output, &pending, &retained_output, &observation).await;
         }
         retained_output.finish().await;
     });
@@ -330,10 +323,9 @@ async fn publish(
     output: &tokio::sync::broadcast::Sender<Outbound>,
     pending: &Arc<Mutex<Pending>>,
     retained_output: &OutputRetention,
-    conversation_id: &Arc<Mutex<Option<String>>>,
-    native_state: &Arc<Mutex<Option<ConfirmedAgentState>>>,
+    observation: &Arc<Mutex<observation::NativeObservation>>,
 ) {
-    observation::observe_output(conversation_id, native_state, &frame).await;
+    observation.lock().await.output(&frame);
     retained_output.retain(&frame).await;
     if output.send(Outbound::Frame(frame.clone())).is_err() {
         pending.lock().await.push(frame);

@@ -64,14 +64,13 @@ impl Bridge {
         if self.is_ended() || self.select_output_acknowledgement(true) != Ok(true) {
             return Err(CapacityRecoveryError::Unavailable);
         }
-        let conversation_id = self.conversation_id.lock().await.clone();
+        let observed = self.observation.lock().await;
+        let conversation_id = &observed.conversation_id;
         if conversation_id.as_deref() != Some(request.target.conversation_id.as_str()) {
             return Err(CapacityRecoveryError::IdentityConflict);
         }
-        let native_state = self
+        let native_state = observed
             .native_state
-            .lock()
-            .await
             .clone()
             .ok_or(CapacityRecoveryError::StateUnconfirmed)?;
         let output = self
@@ -87,5 +86,4 @@ impl Bridge {
         confirmation.validate_for(request)?;
         Ok(CapacityRecoveryNativeProof { confirmation, cwd })
     }
-
 }
