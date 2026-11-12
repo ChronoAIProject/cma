@@ -2,6 +2,7 @@ use layer2_core::trigger_domain::{
     Launch, LaunchAdmission, LaunchAdmissionResult, LaunchEvent, LaunchState, LaunchStoreError,
 };
 use mongodb::ClientSession;
+use std::time::Duration;
 
 use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
@@ -13,7 +14,9 @@ use super::event_log;
 use super::queries::{self, ReadError};
 use super::transactions;
 use super::validation;
-use super::{unavailable, MongoTriggerDefinitionStore, TRANSACTION_ATTEMPTS};
+use super::{unavailable, MongoTriggerDefinitionStore};
+
+const ADMISSION_ATTEMPTS: usize = 16;
 
 #[derive(Clone)]
 struct AdmissionReceipt {
@@ -43,9 +46,9 @@ pub(super) async fn admit(
     launch.validate()?;
 
     let mut last_transient = None;
-    for attempt in 0..TRANSACTION_ATTEMPTS {
+    for attempt in 0..ADMISSION_ATTEMPTS {
         if attempt > 0 {
-            tokio::task::yield_now().await;
+            tokio::time::sleep(launch_admission_retry_delay(attempt)).await;
         }
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
@@ -66,7 +69,7 @@ pub(super) async fn admit(
             match admit_once(store, &admission.trigger, &launch, &events, &mut session).await {
                 Ok(Attempt::Existing(existing)) => {
                     let _ = session.abort_transaction().await;
-                    return replay(*existing, &launch);
+                    return retried_result(attempt, replay(*existing, &launch));
                 }
                 Ok(Attempt::Created(receipt)) => *receipt,
                 Err(AttemptError::Retry(reason)) => {
@@ -85,7 +88,7 @@ pub(super) async fn admit(
                     let _ = session.abort_transaction().await;
                     if duplicate {
                         if let Some(result) = classify_duplicate(store, &launch).await? {
-                            return result;
+                            return retried_result(attempt, result);
                         }
                     }
                     last_transient = Some(error.to_string());
@@ -98,7 +101,10 @@ pub(super) async fn admit(
             };
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
-                return Ok(LaunchAdmissionResult::Created(receipt.launch.launch));
+                return retried_result(
+                    attempt,
+                    Ok(LaunchAdmissionResult::Created(receipt.launch.launch)),
+                );
             }
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
@@ -106,18 +112,40 @@ pub(super) async fn admit(
                     transactions::no_operation_time("Launch admission commit", error.clone())
                 })?;
                 let store = store.clone();
-                return transactions::reconcile("Launch admission commit", error, async move {
-                    reconcile(&store, &receipt, at).await
-                })
-                .await;
+                let result =
+                    transactions::reconcile("Launch admission commit", error, async move {
+                        reconcile(&store, &receipt, at).await
+                    })
+                    .await;
+                return retried_result(attempt, result);
             }
             CommitOutcome::Failed(error) => return Err(unavailable(error)),
         }
     }
+    tracing::warn!(
+        attempts = ADMISSION_ATTEMPTS,
+        "launch admission retries exhausted"
+    );
     Err(LaunchStoreError::Unavailable(format!(
         "Launch admission exhausted its retry budget: {}",
         last_transient.unwrap_or_else(|| "no driver result".into())
     )))
+}
+
+fn launch_admission_retry_delay(attempt: usize) -> Duration {
+    let base = 1_u64 << attempt.saturating_sub(1).min(5);
+    let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]) % (attempt as u64 + 1);
+    Duration::from_millis(base + jitter)
+}
+
+fn retried_result(
+    attempt: usize,
+    result: Result<LaunchAdmissionResult, LaunchStoreError>,
+) -> Result<LaunchAdmissionResult, LaunchStoreError> {
+    if attempt > 0 && result.is_ok() {
+        tracing::info!(attempts = attempt + 1, "launch admission retried");
+    }
+    result
 }
 
 async fn admit_once(
@@ -269,6 +297,22 @@ impl From<CounterError> for AttemptError {
             CounterError::Retry(reason) => Self::Retry(reason),
             CounterError::Domain(error) => Self::Domain(error),
             CounterError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn retry_delay_grows_and_is_capped() {
+        for _ in 0..100 {
+            assert!((Duration::from_millis(1)..=Duration::from_millis(2))
+                .contains(&launch_admission_retry_delay(1)));
+            assert!((Duration::from_millis(32)..=Duration::from_millis(42))
+                .contains(&launch_admission_retry_delay(10)));
         }
     }
 }
