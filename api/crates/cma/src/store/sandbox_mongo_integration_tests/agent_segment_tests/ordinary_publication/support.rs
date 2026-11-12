@@ -41,10 +41,8 @@ pub(super) async fn working(
         .commit_agent_conversation(message_mutation(&ready, &parent, &claim))
         .await
         .unwrap();
-    store
-        .release_command_claim(&claim, layer2_core::now_rfc3339())
-        .await
-        .unwrap();
+    // Keep custody through runtime output. The actual settlement transaction,
+    // including abort/unknown retries, must clear this exact original claim.
     let working = store.get_agent(&ready.id).await.unwrap().unwrap();
     (client, name, store, working, command)
 }
