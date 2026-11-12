@@ -5,6 +5,7 @@ use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
 mod activity_indexes;
+mod agent_log_segments;
 mod collection_indexes;
 mod steps;
 use steps::Step;
@@ -76,6 +77,12 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     ledger.preflight().await?;
     if command == "--migration-status" {
         return ledger.status().await;
+    }
+    if step == Step::AgentLogSegments {
+        return match identity {
+            Some(identity) => agent_log_segments::apply(&ledger, &database, &identity).await,
+            None => agent_log_segments::inspect(&database).await,
+        };
     }
     let indexes = step.inspect(&database).await?;
     if let Some(identity) = identity {

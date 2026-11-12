@@ -89,7 +89,12 @@ impl BackgroundWork {
         };
         // Dropping the timeout releases the operation before its budget permit.
         // Callers must be replay-safe: a cancelled write is never proof of failure.
-        let result = tokio::time::timeout(self.deadline, operation()).await;
+        let result = tokio::time::timeout(
+            self.deadline,
+            layer2_core::diagnostic_context::DiagnosticContext::background(self.name)
+                .scope(operation()),
+        )
+        .await;
         let reason = match &result {
             Ok(Ok(value)) => {
                 if complete(value) {
