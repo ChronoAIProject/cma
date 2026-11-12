@@ -16,7 +16,9 @@ use super::super::{
     worktrees::read_worktree,
 };
 
+mod agent_projection;
 mod batched;
+mod sandbox;
 
 pub(super) enum Target<'a> {
     Sandbox(&'a SandboxId),
@@ -95,63 +97,11 @@ async fn read_in_snapshot(
 ) -> Result<Reading, Error> {
     let duration = std::time::Duration::from_secs(10);
     match target {
-        Target::Sandbox(id) => {
-            // Snapshot sessions preserve an inherited majority concern in the
-            // driver. Override it explicitly without cloning the whole store.
-            let snapshot = store.sandbox_snapshot_reads;
-            let sandboxes = collection(&store.sandboxes, snapshot);
-            let workspaces = collection(&store.workspaces, snapshot);
-            let worktrees = collection(&store.worktrees, snapshot);
-            let agents = collection(&store.agents, snapshot);
-            let Some(document) = sandboxes
-                .find_one(doc! {"_id":id.as_str()})
-                .max_time(duration)
-                .session(&mut *session)
+        Target::Sandbox(id) => Ok(Reading::Sandbox(
+            sandbox::read::<agent_projection::Complete>(store, id, session)
                 .await?
-            else {
-                return Ok(Reading::Sandbox(None));
-            };
-            let sandbox = read_sandbox(&document)?;
-            if snapshot && store.sandbox_batched_reads {
-                if let Some(children) = batched::read(store, id, session).await? {
-                    return Ok(Reading::Sandbox(Some(Box::new(SandboxHierarchyRecord {
-                        sandbox,
-                        workspaces: children.workspaces,
-                        worktrees: children.worktrees,
-                        agents: children.agents,
-                    }))));
-                }
-                // A near-limit BSON document cannot fit an added envelope.
-                // Re-read the unchanged collections at the SAME snapshot time.
-            }
-            let workspaces = children(
-                &workspaces,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_workspace,
-            )
-            .await?;
-            let worktrees = children(
-                &worktrees,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_worktree,
-            )
-            .await?;
-            let agents = children(
-                &agents,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_agent,
-            )
-            .await?;
-            Ok(Reading::Sandbox(Some(Box::new(SandboxHierarchyRecord {
-                sandbox,
-                workspaces,
-                worktrees,
-                agents,
-            }))))
-        }
+                .map(Box::new),
+        )),
         Target::Workspace(id) => {
             let Some(document) = store
                 .workspaces
