@@ -260,12 +260,12 @@ async fn identical_unkeyed_runs_are_distinct_and_run_id_stays_correlation_only()
 }
 
 #[tokio::test]
-async fn platform_exhaustion_is_a_503_problem_with_the_spec_guidance() {
+async fn platform_exhaustion_is_a_402_problem_with_the_spec_guidance() {
     use axum::response::IntoResponse;
     use layer2_core::budget::BudgetError;
     let reason = BudgetError::PlatformExhausted;
     let admission = crate::rest::instance_problem::InstanceProblem::Budget(reason).into_response();
-    assert_eq!(admission.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(admission.status(), StatusCode::PAYMENT_REQUIRED);
     assert!(admission.headers().get("retry-after").is_none());
     let wire = body(admission).await;
     assert!(wire.contains("platform_budget_exhausted"), "{wire}");
@@ -292,7 +292,7 @@ async fn platform_exhaustion_is_a_503_problem_with_the_spec_guidance() {
         .unwrap()
         .unwrap()
         .unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
     assert!(response.headers().get("retry-after").is_none());
     let wire = body(response).await;
     assert!(wire.contains("platform_budget_exhausted"), "{wire}");
