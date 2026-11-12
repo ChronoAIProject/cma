@@ -11,15 +11,20 @@ Real creation continues to use `CHRONO_SERVER_RATE_CREATE_PER_MINUTE` (default 1
 No authentication, authorization, queue, command, idempotency or retry limit is
 removed, and no body or caller-supplied header selects a budget.
 
-Recovery and controls of admitted work use the independent Control tier in both
-flag modes. Control classification takes precedence over Input. In particular,
-Responses v2 interrupt uses Control even when the input flag is enabled; its
+With the separate `CHRONO_SERVER_RATE_CONTROL_ENABLED=true`, recovery and
+controls of admitted work use the independent Control tier in both Input flag
+modes. The Control switch is strict and defaults to false in code and infra.
+While it is false, all prior classifications are preserved: v2 interrupt uses
+Input only when the Input flag is true and the caller is not binding-authenticated;
+other listed controls use Create. With Control enabled, its classification takes
+precedence over Input: v2 interrupt uses Control for either Input flag value; its
 replacement message still follows the existing domain admission checks. The flag
 continues to govern input submissions exactly as shown below.
 
 ## Route inventory
 
 Inventory checked against the registered routers, handlers and public API docs.
+The Control entries below describe the explicitly enabled Control policy.
 All entries require POST; other methods retain their existing classification.
 Parameterized entries require the router's exact `MatchedPath` template.
 
@@ -59,8 +64,8 @@ slashes, duplicate separators and encoded lookalikes do not match the allowlist.
 
 ## Activation and rollback
 
-Deployment OFF preserves the input submission policy; recovery and controls still
-use Control. After exact-head security review and the owner's separate live policy
+The Input flag OFF preserves the input submission policy. The separate Control
+flag determines whether recovery and controls use their independent allowance. After exact-head security review and the owner's separate live policy
 go, converge all API processes on the same flag
 and observe tier/refusal aggregates with unchanged rates and admission controls.
 Do not run production probes alongside the designated acceptance campaign.
@@ -79,8 +84,9 @@ converge promptly; do not clear shared buckets or alter TTLs to force success.
 
 Rollback sets the flag false on all compatible API processes. Retained Create
 usage still applies and may cause immediate refusal; Input usage is retained.
-Recovery and controls remain in Control when only this flag is disabled; rolling
-back the executable to a predecessor loses that independent protection. Do not
+Recovery and controls remain in Control when only the Input flag is disabled
+and Control remains enabled. Set the Control flag false to restore the predecessor
+classification without rolling back the executable. Do not
 reset any budget. Request processing continues to fail closed with
 `request_budget_unavailable` if shared enforcement fails. A limiter refusal
 retains typed `rate_limited` and positive `Retry-After` through the current handler.

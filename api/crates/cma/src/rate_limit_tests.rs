@@ -107,24 +107,29 @@ fn tiers_are_generic_http_work_classes() {
                 Method::POST,
                 "/api/v1/profile-authoring/repositories/resolve"
             ),
-            false
+            false,
+            true
         ),
         RequestTier::Default
     );
     assert_eq!(
-        request_tier(&request(Method::GET, "/livez"), false),
+        request_tier(&request(Method::GET, "/livez"), false, true),
         RequestTier::Health
     );
     assert_eq!(
-        request_tier(&request(Method::GET, "/api/v1/resources"), false),
+        request_tier(&request(Method::GET, "/api/v1/resources"), false, true),
         RequestTier::Default
     );
     assert_eq!(
-        request_tier(&request(Method::POST, "/api/v1/resources"), false),
+        request_tier(&request(Method::POST, "/api/v1/resources"), false, true),
         RequestTier::Create
     );
     assert_eq!(
-        request_tier(&request(Method::POST, "/api/v1/resources/id/input"), false),
+        request_tier(
+            &request(Method::POST, "/api/v1/resources/id/input"),
+            false,
+            true
+        ),
         RequestTier::Input
     );
 }

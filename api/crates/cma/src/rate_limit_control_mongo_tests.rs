@@ -14,6 +14,15 @@ async fn database() -> Database {
 }
 
 async fn replica(database: &Database, enabled: bool, control: u32) -> Router {
+    replica_with_policy(database, enabled, control, true).await
+}
+
+async fn replica_with_policy(
+    database: &Database,
+    enabled: bool,
+    control: u32,
+    controls: bool,
+) -> Router {
     let n = |value| NonZeroU32::new(value).unwrap();
     let config = RateLimitConfig {
         admission_per_minute: n(1000),
@@ -21,6 +30,7 @@ async fn replica(database: &Database, enabled: bool, control: u32) -> Router {
         default_per_minute: n(600),
         create_per_minute: n(10),
         input_per_minute: n(120),
+        control_tier_enabled: controls,
         control_per_minute: n(control),
         response_input_tier_enabled: enabled,
     };
@@ -29,6 +39,43 @@ async fn replica(database: &Database, enabled: bool, control: u32) -> Router {
         TrustedProxyConfig::sample(),
         Arc::new(MongoRequestLimits::open(database).await.unwrap()),
     ))
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn disabled_control_policy_keeps_shared_create_keys_and_never_writes_control_keys() {
+    let database = database().await;
+    let app = replica_with_policy(&database, false, 120, false).await;
+    for (_, path) in CONTROL_ROUTES.iter().take(10) {
+        assert_eq!(
+            app.clone()
+                .oneshot(request(Method::POST, path, "owner"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+    }
+    refusal(
+        app.oneshot(request(Method::POST, CONTROL_ROUTES[10].1, "owner"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    let rows = database.collection::<Document>(COLLECTION);
+    assert_eq!(
+        rows.count_documents(doc! {"_id": {"$regex": "^control:"}})
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        rows.count_documents(doc! {"_id": {"$regex": "^create:"}})
+            .await
+            .unwrap(),
+        1
+    );
+    database.drop().await.unwrap();
 }
 
 #[tokio::test]

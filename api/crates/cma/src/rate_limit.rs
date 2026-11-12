@@ -94,6 +94,7 @@ pub(crate) struct RateLimiters {
     input: KeyedLimiter,
     control: KeyedLimiter,
     response_input_tier_enabled: bool,
+    control_tier_enabled: bool,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
@@ -117,6 +118,7 @@ impl RateLimiters {
             trusted_proxies,
         );
         limiters.response_input_tier_enabled = config.response_input_tier_enabled;
+        limiters.control_tier_enabled = config.control_tier_enabled;
         limiters.shared = Some((shared, config));
         Arc::new(limiters)
     }
@@ -139,6 +141,7 @@ impl RateLimiters {
             input: RateLimiter::keyed(input),
             control: RateLimiter::keyed(control),
             response_input_tier_enabled: false,
+            control_tier_enabled: false,
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),
@@ -203,7 +206,11 @@ pub(crate) async fn admit(
         return next.run(request).await;
     }
 
-    let tier = request_tier(&request, limiters.response_input_tier_enabled);
+    let tier = request_tier(
+        &request,
+        limiters.response_input_tier_enabled,
+        limiters.control_tier_enabled,
+    );
     let client = resolve_client(&request, &limiters.trusted_proxies);
     request.extensions_mut().insert(client.clone());
     let budget = if tier == RequestTier::Health {
@@ -228,7 +235,11 @@ pub(crate) async fn enforce(
     if is_cors_preflight(&request) {
         return next.run(request).await;
     }
-    let tier = request_tier(&request, limiters.response_input_tier_enabled);
+    let tier = request_tier(
+        &request,
+        limiters.response_input_tier_enabled,
+        limiters.control_tier_enabled,
+    );
     if tier == RequestTier::Health {
         return next.run(request).await;
     }
