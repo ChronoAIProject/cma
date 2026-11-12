@@ -10,6 +10,12 @@ pub(in crate::store) fn document(
 ) -> Result<Document, CommandLedgerError> {
     record.validate()?;
     let envelope = &record.receipt.envelope;
+    let mut compatible = record.clone();
+    let budget_failure = compatible.work.failure.as_mut().and_then(|failure| {
+        failure.code.budget_error().inspect(|_| {
+            failure.code = failure.code.legacy_code();
+        })
+    });
     let mut document = doc! {
         "_id": envelope.command_id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -21,8 +27,14 @@ pub(in crate::store) fn document(
         "status": record_bson(&record.status).map_err(|_| CommandLedgerError::Corrupt)?,
         "queue_deadline": &record.queue_deadline,
         "revision": signed(record.revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)?,
-        "record": record_bson(record).map_err(|_| CommandLedgerError::Corrupt)?,
+        "record": record_bson(&compatible).map_err(|_| CommandLedgerError::Corrupt)?,
     };
+    if let Some(reason) = budget_failure {
+        document.insert(
+            "model_budget_failure",
+            record_bson(&reason).map_err(|_| CommandLedgerError::Corrupt)?,
+        );
+    }
     if let Some(input) = &record.queued_input {
         document.insert(
             "queued_input",
@@ -61,6 +73,24 @@ pub(in crate::store) fn read(value: &Document) -> Result<AdmittedAgentCommand, C
     if marker != guarded_input(&record).then_some(mongodb::bson::Bson::Int32(1)) {
         return Err(CommandLedgerError::Corrupt);
     }
+    if let Some(value) = value.get("model_budget_failure") {
+        use layer2_core::sandbox::agent_io::{AgentResponseStatus, CommandFailureCode};
+        let reason: layer2_core::budget::BudgetError =
+            mongodb::bson::deserialize_from_bson(value.clone())
+                .map_err(|_| CommandLedgerError::Corrupt)?;
+        let failure = record
+            .work
+            .failure
+            .as_mut()
+            .ok_or(CommandLedgerError::Corrupt)?;
+        if record.status != AgentResponseStatus::Failed
+            || record.work.dispatch.is_some()
+            || failure.code != CommandFailureCode::ExecutionFailed
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        failure.code = CommandFailureCode::from_budget(reason);
+    }
     let expected = document(&record)?;
     if value.get("external_event_key") != expected.get("external_event_key")
         || expected
@@ -80,6 +110,11 @@ pub(in crate::store) async fn ensure_indexes(
     collection: &Collection<Document>,
 ) -> Result<(), layer2_core::StoreError> {
     let definitions = [
+        (
+            "agent_command_observations",
+            doc! { "status": 1, "record.receipt.admitted_at": 1, "queue_deadline": 1 },
+            false,
+        ),
         (
             "agent_command_answer_admission",
             doc! { "agent_id": 1, "record.receipt.envelope.command.type": 1, "record.receipt.event_cursor": 1 },

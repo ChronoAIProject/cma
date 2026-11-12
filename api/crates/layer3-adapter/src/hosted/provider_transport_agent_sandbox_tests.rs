@@ -114,3 +114,48 @@ async fn native_checkpoint_and_restore_are_rejected_before_any_provider_or_runti
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn native_and_retained_constructors_pin_json_policy_over_renderer_preferences() {
+    let api = listener().await;
+    for enabled in [false, true] {
+        let native = native_transport(api.local_addr().unwrap())
+            .with_retained_json(enabled)
+            .with_coordinated_ingress(enabled);
+        let retained = ProviderHostedControlTransport::for_retained_opensandbox(
+            SandboxClient::new(format!("http://{}", api.local_addr().unwrap()), "fixture"),
+        )
+        .unwrap()
+        .with_retained_json(enabled)
+        .with_coordinated_ingress(enabled);
+        for transport in [native, retained] {
+            let mut settings = HostedAgentOpenSettings {
+                output_json_budget: false,
+                shared_runtime_output: false,
+                bounded_permission_state: false,
+                coordinated_ingress: !enabled,
+                retained_json: !enabled,
+                bounded_raw_output: false,
+                already_initialized_error: None,
+                open_completion: None,
+                context_refresh: None,
+                permission_mode: None,
+                own_credential: false,
+                channel_tool: None,
+                provider_tool: None,
+                access_tool: None,
+                recovered_prompt: None,
+                recovered_context_sequence: None,
+            };
+            transport.pin_output_policy(&mut settings);
+            assert_eq!(settings.retained_json, enabled);
+            assert_eq!(settings.coordinated_ingress, enabled);
+            assert!(!settings.bounded_raw_output && !settings.output_json_budget);
+        }
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), api.accept())
+            .await
+            .is_err()
+    );
+}

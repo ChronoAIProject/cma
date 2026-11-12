@@ -19,6 +19,9 @@ use layer2_core::{OperationStore, RuntimeCapabilities};
 use layer3_adapter::{AdapterError, RuntimeHandle, SandboxAdapter};
 #[path = "projections/agent_v2.rs"]
 mod agent_v2;
+#[cfg(test)]
+#[path = "projections/response_readers_tests.rs"]
+mod response_readers_tests;
 
 pub(crate) struct AgentProjectionServices {
     suggestions: Option<Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>>,
@@ -35,6 +38,16 @@ pub(crate) struct AgentProjectionServices {
 }
 
 impl AgentProjectionServices {
+    pub(crate) fn with_response_logs(
+        mut self,
+        reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
+    ) -> Self {
+        // All response routes, including legacy streams, share this service.
+        // Retained adopted histories need the reader even after admission closes.
+        self.reads = self.reads.with_response_logs(reader);
+        self
+    }
+
     pub(crate) fn with_suggestions(
         mut self,
         store: Arc<dyn layer2_core::sandbox::suggestions::SuggestionStore>,
@@ -94,6 +107,11 @@ impl AgentProjectionServices {
 
     pub(crate) fn with_sessions(mut self, sessions: Arc<dyn SandboxSessionStore>) -> Self {
         self.reads = self.reads.with_sessions(sessions);
+        self
+    }
+
+    pub(crate) fn with_skill_upgrades(mut self, enabled: bool) -> Self {
+        self.operations = self.operations.with_skill_upgrades_enabled(enabled);
         self
     }
 
@@ -275,6 +293,7 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                 | AdapterError::RuntimeLedgerHold(_)
                 | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
                 AdapterError::Rejected(_)
+                | AdapterError::SkillUpgradeRefused(_)
                 | AdapterError::OperationIdentityConflict(_)
                 | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
             })?;
@@ -331,6 +350,7 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
             "the runtime does not support resource readings".into(),
         ),
         AdapterError::Rejected(_)
+        | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::RuntimeContractMismatch(_) => SandboxResourceReadError::Corrupt(
             "the runtime resource authority or reply is invalid".into(),
@@ -349,6 +369,14 @@ pub(crate) struct AdapterAgentSkillSupport(pub Arc<dyn SandboxAdapter>);
 #[async_trait::async_trait]
 impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport {
     async fn supported(&self, sandbox: &Sandbox) -> bool {
+        self.observe(sandbox, false).await
+    }
+    async fn upgrade_supported(&self, sandbox: &Sandbox) -> bool {
+        self.observe(sandbox, true).await
+    }
+}
+impl AdapterAgentSkillSupport {
+    async fn observe(&self, sandbox: &Sandbox, upgrade: bool) -> bool {
         let Some(binding) = &sandbox.runtime else {
             return false;
         };
@@ -361,6 +389,7 @@ impl layer1_public::rest::AgentSkillRuntimeSupport for AdapterAgentSkillSupport 
         match result {
             Ok(Ok(status)) => {
                 status.agent_skill_install
+                    && (!upgrade || status.agent_skill_upgrade)
                     && status.installation_ready
                     && status.credential_ready
                     && sandbox.runtime_process_matches(&status).unwrap_or(false)

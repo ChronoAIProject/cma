@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+use async_trait::async_trait;
 
 use super::{
     Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus,
@@ -12,14 +11,21 @@ use super::{
 
 mod sandbox;
 pub use sandbox::SandboxStore;
+pub mod ledger_collection;
+mod pagination;
 mod service_traits;
 pub use super::binding::BindingStore;
+use pagination::page;
 pub use service_traits::*;
 
 mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+mod agent_response_log;
+pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
+mod agent_log_publication;
+pub use agent_log_publication::AgentLogPublicationIdentity;
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
@@ -45,7 +51,7 @@ mod provenance;
 mod provenance_inventory;
 pub use provenance::{
     AgentProvenanceBackfillStore, AgentProvenanceSnapshot, AgentProvenanceStore,
-    ProvenanceBackfillOutcome,
+    ProvenanceBackfillOutcome, ProvenanceBackfillProgress,
 };
 pub use provenance_inventory::AgentProvenanceInventoryStore;
 mod agent_admission;
@@ -53,6 +59,8 @@ pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
 };
 mod agent_conversation;
+mod agent_conversation_capacity;
+pub use agent_conversation_capacity::AgentConversationCapacitySettlement;
 mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{
@@ -74,7 +82,8 @@ mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+    AgentConnectionRecoveryRequest, AgentRetryObservation, AgentWorkMutation, AgentWorkerStore,
+    VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
@@ -154,6 +163,8 @@ pub struct Page<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxStoreError {
+    #[error(transparent)]
+    Budget(crate::budget::BudgetError),
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]
@@ -173,6 +184,8 @@ pub enum SandboxStoreError {
     AgentLogCapacityExceeded,
     #[error("sandbox limit reached: {live} of {limit}")]
     LimitReached { limit: u16, live: u16 },
+    #[error("global sandbox capacity is unavailable")]
+    GlobalCapacityReached,
     #[error("sandbox is not ready for workspace admission")]
     SandboxNotReady,
     #[error("workspace name is already live in the sandbox")]
@@ -385,6 +398,7 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_key_history: std::collections::HashSet<String>,
@@ -460,28 +474,6 @@ impl InMemorySandboxStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-}
-
-fn page<T: Clone>(
-    mut values: Vec<(String, T)>,
-    request: &PageRequest,
-) -> Result<Page<T>, SandboxStoreError> {
-    if request.limit == 0 || request.limit > MAX_PAGE_SIZE {
-        return Err(SandboxStoreError::InvalidPage);
-    }
-    values.sort_by(|left, right| left.0.cmp(&right.0));
-    if let Some(cursor) = &request.cursor {
-        values.retain(|(key, _)| key > cursor);
-    }
-    let has_more = values.len() > usize::from(request.limit);
-    values.truncate(usize::from(request.limit));
-    let next = has_more
-        .then(|| values.last().map(|(key, _)| key.clone()))
-        .flatten();
-    Ok(Page {
-        items: values.into_iter().map(|(_, value)| value).collect(),
-        next,
-    })
 }
 
 mod admin_memory;

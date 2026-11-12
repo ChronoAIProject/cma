@@ -7,6 +7,7 @@ pub(super) struct RuntimeServices {
     pub warm_pools: Arc<NativeWarmPools>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
     pub recovery: Arc<layer2_core::sandbox::RetainedRecoveryService>,
+    pub reopen: Arc<layer2_core::sandbox::RetainedReopenService>,
 }
 
 impl RuntimeServices {
@@ -15,15 +16,21 @@ impl RuntimeServices {
         stores: &MongoStores,
         adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     ) -> Self {
+        let inspector = Arc::new(
+            crate::sandbox::retained_recovery::RetainedRuntimeInspector::new(
+                adapter.clone(),
+                config.deployment_id.clone(),
+            ),
+        );
         Self {
+            reopen: Arc::new(layer2_core::sandbox::RetainedReopenService::new(
+                stores.sandbox_model.clone(),
+                inspector.clone(),
+                config.features.retained_reopen_enabled,
+            )),
             recovery: Arc::new(layer2_core::sandbox::RetainedRecoveryService::new(
                 stores.sandbox_model.clone(),
-                Arc::new(
-                    crate::sandbox::retained_recovery::RetainedRuntimeInspector::new(
-                        adapter.clone(),
-                        config.deployment_id.clone(),
-                    ),
-                ),
+                inspector,
             )),
             warm_pools: NativeWarmPools::new(
                 stores.native_warm_pools.clone(),
@@ -65,4 +72,29 @@ pub(super) fn funding(
         adapter,
         config.deployment_id.clone(),
     )
+}
+
+/// Keep deployment lifecycle options together with runtime authority setup.
+pub(super) fn lifecycle_config(
+    config: &Config,
+    holder: String,
+) -> crate::sandbox::SandboxLifecycleConfig {
+    crate::sandbox::SandboxLifecycleConfig {
+        parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        bounded_live_fragments: config.features.bounded_live_fragments,
+        coordinated_ingress: config.features.coordinated_ingress,
+        access_transport_migration: config.agent_access_transport_migration.clone(),
+        managed_documents_enabled: config.document_storage.is_some(),
+        event_driven_reconciliation: config.features.event_driven_reconciliation,
+        home_policy: config
+            .runtime
+            .home_policy
+            .clone()
+            .or_else(|| config.runtime.agent_sandbox_home_policy.clone()),
+        execution: config.execution,
+        holder,
+        deployment_id: config.deployment_id.clone(),
+        runtime_version: config.runtime.sandbox_image.clone(),
+        title_model: config.default_profiles.agent_model.clone(),
+    }
 }

@@ -3,6 +3,7 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use layer2_core::sandbox::{
     RetainedRecoveryDisposition as D, RetainedRecoveryInspector, RetainedRecoverySnapshot,
+    RetainedReopenProof, RetainedReopenSnapshot, RetainedReopenVerifier, SandboxStoreError,
 };
 use layer3_adapter::{
     AdapterError, RecoveryConversation, RuntimeHandle, RuntimeInspection,
@@ -23,7 +24,11 @@ impl RetainedRuntimeInspector {
         }
     }
 
-    async fn inspect_source(&self, snapshot: &RetainedRecoverySnapshot) -> Result<D, D> {
+    async fn inspect_source(
+        &self,
+        snapshot: &RetainedRecoverySnapshot,
+        reopening: bool,
+    ) -> Result<(D, Option<RetainedReopenProof>), D> {
         let source = snapshot.source()?;
         let home = snapshot
             .sandbox
@@ -43,6 +48,20 @@ impl RetainedRuntimeInspector {
             &self.deployment,
         )
         .map_err(classify)?;
+        // Running-runtime adoption rejects a suspended graph before returning
+        // status. Prove this read-only case through its exact native seam;
+        // failure of this probe is never absence or admission authority.
+        if !reopening
+            && snapshot.agents.is_empty()
+            && self
+                .adapter
+                .verify_suspended_runtime(&request)
+                .await
+                .is_ok()
+        {
+            volumes.verify(&home).await.map_err(classify)?;
+            return Ok((D::ExactSuspendedRuntime, None));
+        }
         let before = self
             .adapter
             .inspect_runtime(&request)
@@ -56,7 +75,7 @@ impl RetainedRuntimeInspector {
             // the exact retained native graph in a verified suspended state
             // proves process absence. With no process to read history, even a
             // terminal child keeps this inspection-only branch closed.
-            if !snapshot.agents.is_empty() {
+            if reopening || !snapshot.agents.is_empty() {
                 return Err(D::EvidenceUnavailable);
             }
             self.adapter
@@ -64,7 +83,7 @@ impl RetainedRuntimeInspector {
                 .await
                 .map_err(classify)?;
             volumes.verify(&home).await.map_err(classify)?;
-            return Ok(D::ExactSuspendedRuntime);
+            return Ok((D::ExactSuspendedRuntime, None));
         }
         let before = before.ok_or(D::EvidenceUnavailable)?;
         let identity = RuntimeStatusRequest {
@@ -77,6 +96,9 @@ impl RetainedRuntimeInspector {
         // Inspection has no stop/quiesce/suspend call, even after owner consent.
         if status.agent_processes != 0 {
             return Err(D::ChildActivity);
+        }
+        if reopening && !status.credential_ready {
+            return Err(D::EvidenceUnavailable);
         }
         let conversations = snapshot
             .agents
@@ -97,12 +119,15 @@ impl RetainedRuntimeInspector {
             boot_id: status.boot_id.clone(),
             conversations,
         };
-        let evidence = self
+        let recovery = self
             .adapter
             .runtime_recovery()
-            .ok_or(D::UnsupportedImageAuthority)?
-            .inspect_recovery(&history_request)
-            .await;
+            .ok_or(D::UnsupportedImageAuthority)?;
+        let evidence = if reopening {
+            recovery.inspect_idle_reopen(&history_request).await
+        } else {
+            recovery.inspect_recovery(&history_request).await
+        };
         // A refused history response is not allowed to conceal native drift.
         let after = self
             .adapter
@@ -146,20 +171,52 @@ impl RetainedRuntimeInspector {
         {
             return Err(D::IncompleteHistory);
         }
-        Ok(if status.boot_id == source.expected_boot {
+        let disposition = if status.boot_id == source.expected_boot {
             D::RecordedBootPresent
         } else {
             D::ExactBootReplacement
-        })
+        };
+        let proof = reopening.then(|| RetainedReopenProof {
+            expected_runtime: source.binding.clone(),
+            observed_boot: status.boot_id.clone(),
+            home_identity: source.home_identity,
+            provider_plan: evidence.provider_plan,
+            provider_plan_sha256: evidence.provider_plan_sha256,
+            histories: evidence.histories,
+        });
+        Ok((disposition, proof))
     }
 }
 
 #[async_trait::async_trait]
 impl RetainedRecoveryInspector for RetainedRuntimeInspector {
     async fn inspect(&self, snapshot: &RetainedRecoverySnapshot) -> D {
-        self.inspect_source(snapshot)
+        self.inspect_source(snapshot, false)
             .await
+            .map(|(disposition, _)| disposition)
             .unwrap_or_else(|reason| reason)
+    }
+}
+
+#[async_trait::async_trait]
+impl RetainedReopenVerifier for RetainedRuntimeInspector {
+    async fn verify(
+        &self,
+        snapshot: &RetainedReopenSnapshot,
+    ) -> Result<RetainedReopenProof, SandboxStoreError> {
+        snapshot.validate()?;
+        self.inspect_source(&snapshot.retained, true)
+            .await
+            .map_err(|reason| match reason {
+                D::EvidenceUnavailable => {
+                    SandboxStoreError::Unavailable("retained reopening evidence unavailable".into())
+                }
+                _ => SandboxStoreError::InvalidTransaction("retained reopening evidence refused"),
+            })?
+            .1
+            .ok_or(SandboxStoreError::InvalidTransaction(
+                "retained reopening proof absent",
+            ))
     }
 }
 

@@ -62,7 +62,7 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
     let path = super::directory().with_file_name("public-contract-inventory.json");
     let inventory: Inventory = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(inventory.version, 1);
-    assert_eq!(inventory.openapi_operations, 278);
+    assert_eq!(inventory.openapi_operations, 286);
     assert_eq!(
         openapi.len(),
         inventory.openapi_operations,
@@ -96,6 +96,7 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
         let corpus: Corpus = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(corpus.version, 1);
         for case in corpus.cases {
+            case.response.expected_headers();
             assert!(ids.insert(case.id.clone()), "duplicate case {}", case.id);
             let entry = inventory
                 .operations
@@ -425,6 +426,7 @@ fn unnamed_stream_failures_cannot_pass_as_success() {
 fn stream_response(body: serde_json::Value) -> ResponseFixture {
     ResponseFixture {
         status: 200,
+        set_cookies: Vec::new(),
         headers: BTreeMap::new(),
         body,
         body_kind: BodyKind::Sse,

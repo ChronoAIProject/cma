@@ -1,6 +1,7 @@
 use super::*;
 use crate::responses::{retrieve, OutputMessage, OutputText};
 use crate::rest::agents_tests::{conversation_fixture, seeded_agent};
+use layer2_core::sandbox::AgentLiveFragment;
 use layer2_core::sandbox::{AgentStatus, AgentUpdateRecorder, DurableAgentUpdateRecorder};
 use layer2_core::{Authorization, Caller, Capability};
 
@@ -29,6 +30,8 @@ async fn opening() -> (Open, Agent) {
             ended: false,
             live: LiveState::new(watching),
             authorization: None,
+            indexed: false,
+            pagination_required: false,
         },
         agent,
     )
@@ -66,7 +69,7 @@ fn response(agent: &Agent, text: &str) -> crate::responses::ResponseObject {
 #[tokio::test]
 async fn live_text_waits_for_durable_high_water_and_reconciles_without_duplicate_prefix() {
     let (mut open, mut agent) = opening().await;
-    open.live.held = Some(fragment(&agent, 6, AgentLiveFragmentKind::Message));
+    open.live.held = Some(fragment(&agent, 6, AgentLiveFragmentKind::Message).into());
     open.drain_live(&agent, 4);
     assert!(open.pending.is_empty());
     assert!(open.live.held.is_some());
@@ -110,13 +113,13 @@ async fn foreign_stale_and_superseded_fragments_are_discarded() {
     let mut superseded = valid;
     superseded.after_seq = 3;
     for rejected in [stale, prior, foreign, superseded] {
-        open.live.held = Some(rejected);
+        open.live.held = Some(rejected.into());
         open.drain_live(&agent, 4);
         assert!(open.pending.is_empty());
     }
     let mut terminal = agent.clone();
     terminal.conversation.active_turn = None;
-    open.live.held = Some(fragment(&agent, 5, AgentLiveFragmentKind::Thought));
+    open.live.held = Some(fragment(&agent, 5, AgentLiveFragmentKind::Thought).into());
     open.drain_live(&terminal, 4);
     assert!(open.pending.is_empty());
 }

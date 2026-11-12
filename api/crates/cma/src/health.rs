@@ -1,5 +1,6 @@
 //! Process liveness and a single bounded, cached application-store check.
 
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::{sync::Arc, time::Duration};
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
@@ -44,7 +45,7 @@ pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
     let (result, state) = watch::channel(None);
     // The sender owns no receiver. Dropping the last router cancels the check
     // and stops the worker, including during checkout or an unanswered ping.
-    tokio::spawn(monitor(probe, result));
+    tokio::spawn(DiagnosticContext::background("health_monitor").scope(monitor(probe, result)));
     routes(state)
 }
 
@@ -68,6 +69,10 @@ async fn monitor(probe: Arc<dyn ReadinessProbe>, result: watch::Sender<Option<Co
                     Err(_) => Some("deadline"),
                 };
                 let completed = Instant::now();
+                metrics::gauge!("cma_readiness_check_success").set(if failure.is_none() { 1. } else { 0. });
+                metrics::gauge!("cma_readiness_check_timestamp_seconds").set(crate::telemetry::timestamp());
+                metrics::histogram!("cma_readiness_check_seconds", "outcome" => failure.unwrap_or("ready"))
+                    .record(completed.duration_since(started).as_secs_f64());
                 let check = CompletedCheck {
                     completed,
                     checked_at: layer2_core::rfc3339_at(std::time::SystemTime::now()),
@@ -130,6 +135,8 @@ async fn readiness(State(state): State<CheckState>) -> impl IntoResponse {
     )
 }
 
+#[cfg(test)]
+mod gateway_tests;
 #[cfg(test)]
 mod mongo_fixture;
 #[cfg(test)]

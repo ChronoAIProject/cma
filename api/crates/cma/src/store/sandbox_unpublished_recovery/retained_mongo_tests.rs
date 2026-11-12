@@ -93,6 +93,17 @@ async fn retained_recovery_mongo_snapshot_validates_terminal_child_logs_and_pare
         .await
         .unwrap();
     assert!(store.retained_runtime_recovery_snapshot(id).await.is_ok());
+    let unchanged = store
+        .agents
+        .find_one(doc! {"_id": terminal.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!unchanged.contains_key("agent_log_integrity_quarantine_v1"));
+    // A read-only assessment refuses missing parent events too.
+    let event_request = fixture(&store, "sbx_retained_event_integrity").await;
+    let id = &event_request.snapshot.sandbox.id;
+    assert!(store.retained_runtime_recovery_snapshot(id).await.is_ok());
     store
         .sandboxes
         .update_one(
@@ -107,3 +118,6 @@ async fn retained_recovery_mongo_snapshot_validates_terminal_child_logs_and_pare
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "retained_get_mongo_tests.rs"]
+mod get;

@@ -72,6 +72,9 @@ impl Bridge {
     }
 
     pub(in super::super) async fn mark_prompt_completed(&self, id: &str) {
+        if let Some(state) = &self.permission_state {
+            state.lock().await.complete_prompt(id);
+        }
         self.recovery.lock().await.mark_completed(id);
     }
 
@@ -82,7 +85,7 @@ impl Bridge {
     pub(in super::super) async fn recover_prompt_result(
         &self,
         id: &str,
-        frame: serde_json::Value,
+        frame: &serde_json::Value,
         updates: &UpdateRelay,
     ) -> bool {
         let mut recovery = self.recovery.lock().await;
@@ -90,15 +93,21 @@ impl Bridge {
             return false;
         }
         let prompt_id = recovery.expected.clone().expect("identity was checked");
+        if let Some(state) = &self.permission_state {
+            state.lock().await.complete_prompt(id);
+        }
         recovery.mark_completed(id);
         recovery.expected = None;
-        let outcome = crate::hosted::acp_turn::turn_outcome(frame);
+        let outcome =
+            crate::hosted::acp_turn::turn_outcome_with_policy(frame, self.json_pools.is_some());
         if recovery.verified {
-            updates.send(crate::hosted::acp_turn::scoped_turn_outcome(
-                outcome,
-                true,
-                Some(prompt_id),
-            ));
+            updates
+                .send(crate::hosted::acp_turn::scoped_turn_outcome(
+                    outcome,
+                    true,
+                    Some(prompt_id),
+                ))
+                .await;
         } else {
             recovery.outcome = Some((prompt_id, outcome));
         }
@@ -109,11 +118,13 @@ impl Bridge {
         let mut recovery = self.recovery.lock().await;
         recovery.verified = true;
         if let Some((prompt_id, outcome)) = recovery.outcome.take() {
-            updates.send(crate::hosted::acp_turn::scoped_turn_outcome(
-                outcome,
-                true,
-                Some(prompt_id),
-            ));
+            updates
+                .send(crate::hosted::acp_turn::scoped_turn_outcome(
+                    outcome,
+                    true,
+                    Some(prompt_id),
+                ))
+                .await;
         }
     }
 }

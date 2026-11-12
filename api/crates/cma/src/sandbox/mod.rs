@@ -3,6 +3,7 @@
 mod agent_scheduler;
 mod agent_skills;
 mod agent_worker;
+mod capacity_scheduler;
 #[allow(
     dead_code,
     reason = "cleanup request seal awaits effect and restore integration"
@@ -20,6 +21,7 @@ pub(crate) mod native_prepared;
 mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
+mod model_request_budget;
 mod reconciliation;
 pub(crate) mod retained_recovery;
 pub(crate) mod runtime_attachment;
@@ -46,6 +48,8 @@ pub(crate) use credential::{
     ManagedSandboxCredentials, OwnerTokenSource, SandboxCredentialController,
     SandboxCredentialCustody,
 };
+#[cfg(test)]
+pub(crate) use live_agents::record_update_for_test;
 pub(crate) use live_agents::LiveAgentRegistry;
 pub(crate) use policy::LiveSandboxPolicy;
 pub(crate) use runtime_mapping::{runtime_capabilities, runtime_options};
@@ -66,7 +70,14 @@ pub(crate) mod legacy_credentials;
 pub(crate) mod binding_lifecycle_test_support {
     pub(crate) use super::agent_skills::EmptyAgentSkillResolver;
     pub(crate) use super::agent_worker::{AgentWorker, AgentWorkerConfig, AgentWorkerDependencies};
+    pub(crate) use super::agent_worker::{
+        CapacityRecoveryReconnect, ReconnectAction, RecoveryReconnect,
+    };
     pub(crate) use super::live_agent_stopper::DurableLiveAgentStopper;
+    pub(crate) use super::live_agents::{
+        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+        LiveAgentConnectionLossHandler,
+    };
     pub(crate) use super::workspace_worker::{
         DurableProfileWorkspaceProvisioner, WorkspaceWorker, WorkspaceWorkerConfig,
         WorkspaceWorkerDependencies,

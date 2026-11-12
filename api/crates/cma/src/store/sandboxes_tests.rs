@@ -177,7 +177,8 @@ fn trigger_query_fields_and_fingerprint_are_independently_validated() {
 #[test]
 fn sandbox_indexes_match_the_schema_contract() {
     let indexes = sandbox_indexes();
-    assert_eq!(indexes.len(), 11);
+    assert_eq!(indexes.len(), 12);
+    assert_eq!(indexes[11].keys, doc! { "retired_at": 1, "_id": 1 });
     assert_eq!(indexes[0].keys, doc! { "owner": 1, "name": 1 });
     let options = indexes[0].options.as_ref().unwrap();
     assert_eq!(options.unique, Some(true));

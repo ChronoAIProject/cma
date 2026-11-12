@@ -49,7 +49,7 @@ export function MetricDetail({
     },
     [api, reportId, sandboxId, measured],
   );
-  const detail = useUsageRead(load, active);
+  const detail = useUsageRead(load, active, api);
   useEffect(() => {
     if (detail.error?.denied || detail.error?.expired) onFailure(detail.error);
   }, [detail.error, onFailure]);

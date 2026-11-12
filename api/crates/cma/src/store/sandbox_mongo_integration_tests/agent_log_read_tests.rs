@@ -1,5 +1,8 @@
 use super::*;
 
+mod transcript_projection_tests;
+mod usage_projection_tests;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn agent_log_prefix_uses_one_complete_snapshot_scan_and_retains_integrity_checks() {
@@ -151,3 +154,5 @@ async fn agent_log_prefix_uses_one_complete_snapshot_scan_and_retains_integrity_
     );
     admin.database(&name).drop().await.unwrap();
 }
+
+mod bounded_window_tests;

@@ -5,6 +5,8 @@ use mongodb::{
     Client,
 };
 use std::sync::Arc;
+mod rollout;
+mod tenant_isolation;
 fn caller(s: &str) -> Caller {
     Caller::new(
         SubjectId::new(s),

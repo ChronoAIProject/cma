@@ -34,6 +34,7 @@ end
 guarded = mode == "release" ? [
   ["ci", "trigger-release-contract", "Debian desktop fixture regressions"],
   ["ci", "trigger-release-contract", "Ledger image qualification regressions"],
+  ["ci", "trigger-release-contract", "Migration matrix evidence regressions"],
   ["ci", "images", "Qualify exact runtime ledger storage"],
   ["ci", "images", "Execute desktop image contract"],
   ["ci", "images", "Execute built runtime image contract"],
@@ -122,6 +123,8 @@ if mode == "release"
     "unbounded cache transfer" => ["Inject API Cargo cache mounts", "timeout-minutes", 60],
     "mutable cache action" => ["Restore API Cargo cache archive", "uses", "actions/cache/restore@v4"],
     "cache other paths" => ["Restore API Cargo cache archive", "with", { "path" => "~/.cargo" }],
+    "extract PR cache" => ["Extract API Cargo cache before pruning", "if", "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
+    "save PR cache" => ["Save accepted API Cargo cache archive", "if", "success() && matrix.component == 'api' && steps.api-cargo-cache-export.outputs.ready == 'true'"],
     "save failed image cache" => ["Save accepted API Cargo cache archive", "if", "always()"],
     "skip build on cache hit" => ["Build image for all target platforms", "if", "steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
     "skip scan on cache hit" => ["Vulnerability scan", "if", "steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"],
@@ -130,6 +133,11 @@ if mode == "release"
   cache_changes.each do |label, (name, field, changed)|
     reject.call(label) do |value|
       value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == name }[field] = changed
+    end
+  end
+  { "cache-from" => "type=gha,scope=shared", "cache-to" => "type=gha,mode=max,scope=${{ matrix.component }}" }.each do |field, changed|
+    reject.call("image #{field} loses component isolation or develop-only saves") do |value|
+      value["ci"]["jobs"]["images"]["steps"].find { |row| row["name"] == "Build image for all target platforms" }["with"][field] = changed
     end
   end
   reject.call("extract after prune") do |value|
@@ -438,6 +446,11 @@ else
       initialize = steps.find { |row| row["name"] == "Initialize isolated evidence path" }
       steps.delete(initialize)
       steps.push(initialize)
+    end
+  end
+  ["${{ vars.CMA_E2E_PUBLIC_ID }}", "${{ secrets.CMA_E2E_PUBLIC_ID }}"].each do |expression|
+    reject.call("unmasked or unsynchronized smoke public ID") do |value|
+      value["nightly-staging"]["jobs"]["smoke"]["env"]["CMA_E2E_PUBLIC_ID"] = expression
     end
   end
   reject.call("unprotected mutation") { |value| value["nightly-staging"]["jobs"]["journeys"].delete("environment") }
