@@ -41,6 +41,8 @@ pub struct AgentLifecycleCreateRequest {
     /// Create an empty Workspace and Agent inside this owned Sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_id: Option<String>,
+    /// Retained for compatibility; custom image selection is rejected with
+    /// `image_selection_unsupported`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<AgentLifecycleImageReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,10 +193,8 @@ pub enum AgentLifecycleProvisioningError {
     Unavailable,
     #[error("the authenticated caller cannot create an Agent")]
     Forbidden,
-    #[error("sign in again to authorize the selected Image Manager image")]
-    SignInRequired,
-    #[error("the selected Image Manager image is not accessible to this account")]
-    ImageAccessDenied,
+    #[error("custom image selection is not supported")]
+    ImageSelectionUnsupported,
     #[error("invalid Agent lifecycle request: {0}")]
     Invalid(String),
     #[error("the selected services need to be connected before provisioning")]
@@ -227,16 +227,10 @@ impl IntoResponse for AgentLifecycleProvisioningError {
                 "permission_denied",
                 self.to_string(),
             ),
-            Self::SignInRequired => (
-                StatusCode::UNAUTHORIZED,
-                "agent-manager-sign-in-required",
-                "not_authenticated",
-                self.to_string(),
-            ),
-            Self::ImageAccessDenied => (
-                StatusCode::FORBIDDEN,
-                "agent-manager-image-access-denied",
-                "permission_denied",
+            Self::ImageSelectionUnsupported => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "agent-manager-image-selection-unsupported",
+                "image_selection_unsupported",
                 self.to_string(),
             ),
             Self::Invalid(_) => (

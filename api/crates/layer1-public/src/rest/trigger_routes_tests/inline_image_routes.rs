@@ -1,4 +1,4 @@
-//! Route-level evidence for delegated Image Manager authority on inline Triggers.
+//! Route-level evidence for refusing custom image selection before admission.
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -40,10 +40,15 @@ impl TriggerInlineTargetMaterializer for CredentialMaterializer {
             return Ok(target.clone());
         }
         self.owners.lock().unwrap().push(owner.clone());
-        match credential {
-            Some(CREDENTIAL) => Ok(target.clone()),
-            Some(_) => Err(TriggerReferenceError::ImageAccessDenied { field: FIELD }),
-            None => Err(TriggerReferenceError::ImageSignInRequired { field: FIELD }),
+        let _ = credential;
+        if target
+            .inline
+            .as_ref()
+            .is_some_and(|inline| inline.image.is_some())
+        {
+            Err(TriggerReferenceError::ImageSelectionUnsupported { field: FIELD })
+        } else {
+            Ok(target.clone())
         }
     }
 }
@@ -80,24 +85,15 @@ async fn write(
 }
 
 #[tokio::test]
-async fn create_requires_and_forwards_image_authority_without_leaking_the_credential() {
+async fn create_rejects_custom_image_selection_without_persisting_any_operation() {
     let materializer = Arc::new(CredentialMaterializer::default());
     let app = TestApp::with_inline_materializer(materializer.clone()).await;
-    for (credential, status, code, key) in [
-        (
-            None,
-            StatusCode::UNAUTHORIZED,
-            "trigger_image_sign_in_required",
-            "missing",
-        ),
-        (
-            Some("fixture-denied"),
-            StatusCode::FORBIDDEN,
-            "trigger_image_access_denied",
-            "denied",
-        ),
+    for (credential, key) in [
+        (None, "missing"),
+        (Some("fixture-denied"), "denied"),
+        (Some(CREDENTIAL), "authorized"),
     ] {
-        let (actual, problem) = write(
+        let (status, problem) = write(
             &app,
             Method::POST,
             "/api/v1/triggers",
@@ -106,41 +102,45 @@ async fn create_requires_and_forwards_image_authority_without_leaking_the_creden
             key,
         )
         .await;
-        assert_eq!(actual, status, "{problem}");
-        assert_eq!(problem["code"], code);
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+        assert_eq!(problem["code"], "trigger_image_selection_unsupported");
         assert_eq!(problem["field"], FIELD);
     }
+    assert_eq!(app.operation_reservations(), 0);
+    assert!(materializer.owners.lock().unwrap().is_empty());
     let (_, empty) = json_response(
         &app.router,
         publisher_request(Method::GET, "/api/v1/triggers", None, None),
     )
     .await;
     assert_eq!(empty["items"], json!([]));
+    let mut body = inline_body();
+    body["content"]["target"]["inline"]
+        .as_object_mut()
+        .unwrap()
+        .remove("image");
     let (status, created) = write(
         &app,
         Method::POST,
         "/api/v1/triggers",
-        inline_body(),
+        body,
         Some(CREDENTIAL),
-        "allowed",
+        "default-image",
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{created}");
     assert_eq!(
-        created["draft"]["target"]["inline"]["image"]["id"],
-        "private-codex"
-    );
-    assert_eq!(
         materializer.owners.lock().unwrap().as_slice(),
-        vec![SubjectId::new(OWNER); 3]
+        vec![SubjectId::new(OWNER)]
     );
 }
 
 #[tokio::test]
-async fn update_conceals_foreign_owners_and_preserves_the_draft_when_image_authority_fails() {
+async fn update_rejects_custom_image_selection_without_persisting_or_changing_the_draft() {
     let materializer = Arc::new(CredentialMaterializer::default());
     let app = TestApp::with_inline_materializer(materializer.clone()).await;
     let created = create_trigger(&app, "always_new", "legacy-draft").await;
+    let reservations = app.operation_reservations();
     let path = format!("/api/v1/triggers/{}", created["id"].as_str().unwrap());
     let body = json!({"draft_version": 1, "content": inline_body()["content"]});
     let (status, _) = json_response(
@@ -155,25 +155,15 @@ async fn update_conceals_foreign_owners_and_preserves_the_draft_when_image_autho
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(materializer.owners.lock().unwrap().is_empty());
-    for (credential, status, code, key) in [
-        (
-            None,
-            StatusCode::UNAUTHORIZED,
-            "trigger_image_sign_in_required",
-            "missing",
-        ),
-        (
-            Some("fixture-denied"),
-            StatusCode::FORBIDDEN,
-            "trigger_image_access_denied",
-            "denied",
-        ),
+    for (credential, key) in [
+        (None, "missing"),
+        (Some("fixture-denied"), "denied"),
+        (Some(CREDENTIAL), "authorized"),
     ] {
-        let (actual, problem) =
+        let (status, problem) =
             write(&app, Method::PUT, &path, body.clone(), credential, key).await;
-        assert_eq!(actual, status, "{problem}");
-        assert_eq!(problem["code"], code);
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{problem}");
+        assert_eq!(problem["code"], "trigger_image_selection_unsupported");
         assert_eq!(problem["field"], FIELD);
         let (_, unchanged) = json_response(
             &app.router,
@@ -182,12 +172,22 @@ async fn update_conceals_foreign_owners_and_preserves_the_draft_when_image_autho
         .await;
         assert_eq!(unchanged, created);
     }
-    let (status, updated) =
-        write(&app, Method::PUT, &path, body, Some(CREDENTIAL), "allowed").await;
+    assert_eq!(app.operation_reservations(), reservations);
+    assert!(materializer.owners.lock().unwrap().is_empty());
+    let mut body = body;
+    body["content"]["target"]["inline"]
+        .as_object_mut()
+        .unwrap()
+        .remove("image");
+    let (status, updated) = write(
+        &app,
+        Method::PUT,
+        &path,
+        body,
+        Some(CREDENTIAL),
+        "default-image",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "{updated}");
     assert_eq!(updated["draft_version"], 2);
-    assert_eq!(
-        materializer.owners.lock().unwrap().as_slice(),
-        vec![SubjectId::new(OWNER); 3]
-    );
 }

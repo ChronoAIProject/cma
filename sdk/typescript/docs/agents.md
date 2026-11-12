@@ -11,10 +11,10 @@ hide the group without blocking the answer or manual composer. Preserve its
 send. Generation observations report token usage and latency; missing cost is
 null, never a zero-cost claim. Neither reading nor refreshing starts model work.
 
-Use `agents.createLifecycle` to create an Agent from an Image Manager selection
-and inline configuration. Omit `image` for the deployment default. Persist the
-exact request and idempotency key before sending it; an uncertain response must
-be retried with the same body and key.
+Use `agents.createLifecycle` to create an Agent with inline configuration. Omit `image`
+to use the deployment's system default image. The field remains for compatibility,
+but the server rejects custom image selection with HTTP 422 and `image_selection_unsupported`.
+Save the complete request and idempotency key before sending; reuse both when the outcome is uncertain.
 
 ```ts
 import type { Cma, AgentLifecycleCreateRequest } from '@chronoai/cma-sdk';

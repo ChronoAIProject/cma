@@ -7,16 +7,6 @@ use layer3_adapter::SandboxCapacity;
 
 struct NoExternalResolver;
 #[async_trait::async_trait]
-impl ImageResolver for NoExternalResolver {
-    async fn resolve(
-        &self,
-        _: Option<&str>,
-        _: &AgentLifecycleImageReference,
-    ) -> Result<String, AgentLifecycleProvisioningError> {
-        panic!("system default image needs no catalog resolution")
-    }
-}
-#[async_trait::async_trait]
 impl BotProfileResolver for NoExternalResolver {
     async fn resolve(&self, _: &SubjectId, _: &CreateBot) -> Result<BotProfiles, BotError> {
         panic!("inline consumers cannot use legacy profile selection")
@@ -38,7 +28,7 @@ fn resolver(
             },
             Arc::new([] as [String; 0]),
         ),
-        image_resolver: Arc::new(NoExternalResolver),
+        image_resolver: Arc::new(crate::agent_lifecycle::UnsupportedImageResolver),
         connections: Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         capacity,
         default_model: "gpt-6".into(),
@@ -141,4 +131,60 @@ async fn consumer_defaults_match_native_pool_and_admitted_replay_keeps_original_
             .unwrap(),
         next
     );
+}
+
+#[tokio::test]
+async fn consumer_custom_image_selection_is_rejected_without_persisting_bot_or_profiles() {
+    use layer2_core::bots::BotStore;
+    use layer2_core::profiles::{AgentProfileStore, SandboxProfileStore, WorkspaceProfileStore};
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let store = Arc::new(InMemoryBotStore::default());
+    let service = BotService::new(
+        store.clone(),
+        Arc::new(NoExternalResolver),
+        "cma_codex".into(),
+    )
+    .with_inline_profiles(resolver(profiles.clone(), SandboxCapacity::default()));
+    let caller = Caller::new(
+        SubjectId::new("owner"),
+        Authorization::new([Capability::ManageOwnBots]),
+    );
+    let mut request = input();
+    request.image = Some(layer2_core::bots::BotImageReference {
+        id: "custom-image".into(),
+        version: Some("v1".into()),
+    });
+    let error = service
+        .create(&caller, "unsupported-image", request)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error,
+        BotError::Invalid(
+            "image_selection_unsupported: custom image selection is not supported".into()
+        )
+    );
+    assert!(store
+        .list(&caller.subject, None, 50)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(profiles
+        .list_agent_profiles(None, false, &Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(profiles
+        .list_workspace_profiles(None, false, &Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(profiles
+        .list_sandbox_profiles(None, false, &Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
 }

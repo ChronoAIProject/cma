@@ -75,12 +75,12 @@ pub struct BotReply {
     /// Milliseconds until progress acknowledgement; zero disables it.
     pub ack_after_ms: u32,
 }
-/// Immutable Image Manager selection for inline consumer authoring.
+/// Retains historical custom image selections for inline consumers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotImageReference {
-    /// Image Manager identifier.
+    /// The retained historical custom image identifier.
     pub id: String,
-    /// Optional immutable Image Manager version.
+    /// The optional immutable custom image version.
     pub version: Option<String>,
 }
 /// Optional GitHub workspace source for inline consumer authoring.
@@ -132,7 +132,8 @@ pub struct CreateBot {
     /// Opaque Event Gateway connection. Mutually exclusive with nyxid_bot_id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,
-    /// Immutable Image Manager selection for inline authoring.
+    /// Retained for compatibility; the server rejects selection with
+    /// `image_selection_unsupported` in the error detail.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<BotImageReference>,
     /// Optional GitHub workspace source for inline authoring.

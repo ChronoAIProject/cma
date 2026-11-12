@@ -10,7 +10,8 @@ use axum::{
     Json, Router,
 };
 use layer2_core::trigger_domain::{
-    LaunchService, ServiceConnectionService, TriggerId, TriggerPageRequest, TriggerService,
+    LaunchService, ServiceConnectionService, TriggerContent, TriggerId, TriggerPageRequest,
+    TriggerService, TriggerServiceError,
 };
 use layer2_core::{Caller, Capability, OperationStore};
 
@@ -18,9 +19,9 @@ use crate::{AuthenticatedCaller, DelegatedCredential};
 
 use super::idempotency::{self, IdempotencyKey, RequestBody};
 use super::trigger_openapi_shapes::{
-    CreateTriggerRequest, PublishTriggerRequest, PublishedTriggerRevisionView, TriggerPageQuery,
-    TriggerPageView, TriggerPreviewView, TriggerRevisionView, TriggerStatisticsView, TriggerView,
-    UpdateTriggerRequest,
+    CreateTriggerRequest, PublishTriggerRequest, PublishedTriggerRevisionView, TriggerContentBody,
+    TriggerPageQuery, TriggerPageView, TriggerPreviewView, TriggerRevisionView,
+    TriggerStatisticsView, TriggerView, UpdateTriggerRequest,
 };
 use super::trigger_problem::TriggerProblem;
 use super::BodyProblem;
@@ -155,6 +156,17 @@ where
     guard.finish(execute().await).await
 }
 
+fn reject_custom_image_selection(
+    content: Option<&TriggerContentBody>,
+) -> Result<(), TriggerProblem> {
+    let Some(content) = content else {
+        return Ok(());
+    };
+    TriggerContent::from(content.clone())
+        .reject_custom_image_selection()
+        .map_err(|error| TriggerProblem::from(TriggerServiceError::Reference(error)))
+}
+
 #[utoipa::path(
     post,
     path = "/api/v1/triggers",
@@ -171,6 +183,14 @@ pub(super) async fn create(
     body: Result<RequestBody<CreateTriggerRequest>, BodyProblem>,
 ) -> Response {
     if let Err(problem) = require_publisher(&caller) {
+        return problem.into_response();
+    }
+    if let Err(problem) = reject_custom_image_selection(
+        body.as_ref()
+            .ok()
+            .and_then(RequestBody::value)
+            .map(|body| &body.content),
+    ) {
         return problem.into_response();
     }
     let command_state = state.clone();
@@ -240,7 +260,7 @@ pub(super) async fn read(
         .map_err(Into::into)
 }
 
-#[utoipa::path(put, path = "/api/v1/triggers/{id}", tag = "triggers", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = UpdateTriggerRequest, responses((status = 200, body = TriggerView), (status = 409, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(put, path = "/api/v1/triggers/{id}", tag = "triggers", params(("id" = String, Path), ("Idempotency-Key" = String, Header)), request_body = UpdateTriggerRequest, responses((status = 200, body = TriggerView), (status = 409, body = crate::rest::ProblemDocument), (status = 422, body = crate::rest::ProblemDocument)))]
 pub(super) async fn update(
     State(state): State<TriggerRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -250,6 +270,14 @@ pub(super) async fn update(
     body: Result<RequestBody<UpdateTriggerRequest>, BodyProblem>,
 ) -> Response {
     if let Err(problem) = require_owned_trigger(&state, &caller, &id).await {
+        return problem.into_response();
+    }
+    if let Err(problem) = reject_custom_image_selection(
+        body.as_ref()
+            .ok()
+            .and_then(RequestBody::value)
+            .map(|body| &body.content),
+    ) {
         return problem.into_response();
     }
     let command_state = state.clone();

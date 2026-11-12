@@ -92,6 +92,9 @@ in the return destination. Poll `readConnection` with the authenticated owner;
 CMA does not inspect cross-origin window contents. Manual connection metadata
 does not imply that a hosted handoff is available.
 
+The server rejects the retired `/image-manager` sign-in return target as an unknown landing page.
+The SDK's retained client-side compatibility validation does not imply server support for that target.
+
 Browser return URLs preserve one `setup` query on `/bots/new` or one `tab` query
 on `/sandboxes/{id}`. Paths remain canonical and relative (256 bytes); complete
 encoded absolute login URLs are bounded to 4,096 ASCII bytes, including origin and options. Unknown/duplicate query keys and

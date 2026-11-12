@@ -33,7 +33,8 @@ pub struct AgentLifecycleCreateRequest {
     /// Existing owned Sandbox; creates an empty workspace for the new Agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox_id: Option<String>,
-    /// Image Manager catalogue selection.
+    /// Retained for compatibility; the server rejects custom image selection with
+    /// `image_selection_unsupported`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<AgentLifecycleImage>,
     /// Optional GitHub workspace.
@@ -44,7 +45,7 @@ pub struct AgentLifecycleCreateRequest {
     pub profile: Option<AgentLifecycleProfile>,
 }
 
-/// Image Manager catalogue identity and optional pinned version.
+/// Retains historical custom image identities and versions; the server rejects new selections.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentLifecycleImage {
     /// Image identity.

@@ -2,6 +2,15 @@ use super::*;
 use crate::SubjectId;
 
 impl CreateBot {
+    pub(super) fn reject_custom_image_selection(&self) -> Result<(), super::BotError> {
+        if self.image.is_some() {
+            return Err(super::BotError::Invalid(
+                "image_selection_unsupported: custom image selection is not supported".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn validate(&self) -> Result<(), super::BotError> {
         let inline = self.inline_agent.is_some();
         if self.name.trim().is_empty()

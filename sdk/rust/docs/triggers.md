@@ -2,6 +2,12 @@
 
 <!-- nav: 8 Triggers -->
 
+New inline targets use the system default image. The `image` type remains for historical data compatibility;
+the server rejects new custom image selections with HTTP 422 and
+`trigger_image_selection_unsupported`. Published targets continue to use their recorded images.
+Bot `image` selection is also unsupported: the server returns HTTP 400 / `invalid_bot`,
+with `image_selection_unsupported` in the detail. SDK type shapes remain unchanged.
+
 A Trigger publishes immutable profile and reuse choices. It brings a visitor
 to their own Agent, never the publisher's. Public preview, badge retrieval,
 navigation, and OAuth callbacks do not admit Launch work.

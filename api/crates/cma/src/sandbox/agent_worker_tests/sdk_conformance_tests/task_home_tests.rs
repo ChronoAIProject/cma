@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent_lifecycle::{ImageManagerResolver, InlineAgentLifecycle};
+use crate::agent_lifecycle::{InlineAgentLifecycle, UnsupportedImageResolver};
 use crate::store::{MongoAgentLifecycleStore, MongoProfileStore, MongoSandboxStore};
 use axum::body::{to_bytes, Body};
 use layer2_core::profiles::ProfileCapacityBounds;
@@ -180,7 +180,7 @@ async fn router_with_support(
         store.clone(),
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
         profiles,
-        ImageManagerResolver::new("http://127.0.0.1:1".into()).unwrap(),
+        Arc::new(UnsupportedImageResolver),
         ProfileCapacityBounds {
             min_cpu_millis: 100,
             max_cpu_millis: 8000,

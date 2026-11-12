@@ -7,7 +7,7 @@ use crate::profiles::{
     SandboxProfileStore, WorkspaceProfile, WorkspaceProfileRevision, WorkspaceProfileStore,
 };
 
-use super::TriggerTarget;
+use super::{TriggerContent, TriggerTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedTriggerProfiles {
@@ -23,10 +23,8 @@ pub enum TriggerReferenceError {
     Unavailable { field: &'static str },
     #[error("trigger_reference_not_public: {field}")]
     NotPublic { field: &'static str },
-    #[error("trigger_image_access_denied: {field}")]
-    ImageAccessDenied { field: &'static str },
-    #[error("trigger_image_sign_in_required: {field}")]
-    ImageSignInRequired { field: &'static str },
+    #[error("trigger_image_selection_unsupported: {field}")]
+    ImageSelectionUnsupported { field: &'static str },
 }
 
 impl TriggerReferenceError {
@@ -34,8 +32,7 @@ impl TriggerReferenceError {
         match self {
             Self::Unavailable { .. } => "trigger_reference_unavailable",
             Self::NotPublic { .. } => "trigger_reference_not_public",
-            Self::ImageAccessDenied { .. } => "trigger_image_access_denied",
-            Self::ImageSignInRequired { .. } => "trigger_image_sign_in_required",
+            Self::ImageSelectionUnsupported { .. } => "trigger_image_selection_unsupported",
         }
     }
 
@@ -43,9 +40,25 @@ impl TriggerReferenceError {
         match self {
             Self::Unavailable { field }
             | Self::NotPublic { field }
-            | Self::ImageAccessDenied { field }
-            | Self::ImageSignInRequired { field } => field,
+            | Self::ImageSelectionUnsupported { field } => field,
         }
+    }
+}
+
+impl TriggerContent {
+    /// Rejects new custom image selections without invalidating retained content.
+    pub fn reject_custom_image_selection(&self) -> Result<(), TriggerReferenceError> {
+        if self
+            .target
+            .inline
+            .as_ref()
+            .is_some_and(|inline| inline.image.is_some())
+        {
+            return Err(TriggerReferenceError::ImageSelectionUnsupported {
+                field: "target.inline.image",
+            });
+        }
+        Ok(())
     }
 }
 
@@ -86,9 +99,8 @@ pub trait TriggerInlineTargetMaterializer: Send + Sync {
         target: &TriggerTarget,
     ) -> Result<TriggerTarget, TriggerReferenceError>;
 
-    /// Materialize an inline target with the caller's delegated service
-    /// credential when an external resolver needs to verify Image Manager
-    /// authority. Compatibility implementations may use the legacy method.
+    /// Retains the delegated credential entry point for existing materializers.
+    /// New inline targets do not support custom image selection.
     async fn materialize_with_credential(
         &self,
         owner: &SubjectId,

@@ -352,6 +352,78 @@ async fn contextual_facade_restarts_one_agent_without_new_parents_and_rechecks_a
     db.drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn custom_image_selection_is_rejected_without_persisting_lifecycle_or_profiles() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo URI is required");
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let db = client.database(&format!(
+        "cma_image_refusal_test_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let operations = Arc::new(MongoAgentLifecycleStore::open(&db).await.unwrap());
+    let store = Arc::new(InMemorySandboxStore::default());
+    let profiles = Arc::new(
+        crate::store::MongoProfileStore::open(&client, db.name())
+            .await
+            .unwrap(),
+    );
+    let service = fixture::facade(store.clone(), profiles, operations);
+    let mut owner = fixture::context("owner");
+    owner.caller.authorization =
+        Authorization::new([Capability::UseOwnSandboxes, Capability::CreateSandbox]);
+    for credential in [None, Some("fixture-delegated-credential")] {
+        for extra in [
+            json!({}),
+            json!({"machine_included":true}),
+            json!({"workspace_id":"wk_existing"}),
+            json!({"sandbox_id":"sbx_existing"}),
+        ] {
+            let mut value =
+                json!({"name":"Custom Agent", "image":{"id":"custom-image", "version":"v1"}});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let error = service
+                .create(
+                    &owner.caller,
+                    Some(&owner),
+                    credential,
+                    request(value),
+                    "unsupported-image",
+                )
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                error,
+                AgentLifecycleProvisioningError::ImageSelectionUnsupported
+            ));
+        }
+    }
+    assert_eq!(
+        db.collection::<mongodb::bson::Document>("agent_lifecycle_operations")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    assert_profile_counts(&db, 0).await;
+    assert!(store
+        .list_sandboxes(&owner.caller.subject, &Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(store
+        .list_agents(&owner.caller.subject, &Default::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    db.drop().await.unwrap();
+}
+
 async fn assert_profile_counts(db: &mongodb::Database, expected_agents: u64) {
     for (collection, expected) in [
         ("agent_profiles", expected_agents),

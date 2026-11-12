@@ -48,6 +48,7 @@ const createBotFields = object({
   name: text,
   nyxid_bot_id: optional(text),
   connection_ref: optional(text),
+  /** Retained for compatibility; the server rejects selection with image_selection_unsupported in the error detail. */
   image: optional(image),
   repository: optional(repository),
   agent: optional(inlineAgent),

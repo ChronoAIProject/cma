@@ -81,7 +81,10 @@ admission checks setup again; store and provider outages remain dependency
 errors. The SDK does not perform an OAuth token exchange or obtain refresh
 credentials for a backend client.
 
-Return destinations also support `/agent-manager`, `/event-gateway`, `/image-manager`,
+The server rejects the retired `/image-manager` sign-in return target as an unknown landing page.
+The SDK's retained client-side compatibility validation does not imply server support for that target.
+
+Return destinations also support `/agent-manager`, `/event-gateway`,
 Bot pages and the public actor-link completion path. A single `setup` query on
 `/bots/new` and a single `tab` query on `/sandboxes/{id}` are preserved; duplicate
 or unknown keys and fragments and raw non-ASCII bytes are rejected. Paths are limited to 256 bytes and

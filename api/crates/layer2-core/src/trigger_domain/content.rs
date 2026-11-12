@@ -73,7 +73,7 @@ pub struct TriggerImage {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Immutable OCI reference selected from Image Manager. System defaults omit this object.
+    /// Retains historical immutable image references; new custom image selection is unsupported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
 }

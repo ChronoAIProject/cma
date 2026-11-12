@@ -24,6 +24,7 @@ export const agentLifecycleCreateRequest = object({
   machine_included: optional(boolean),
   workspace_id: optional(text),
   sandbox_id: optional(text),
+  /** Retained for compatibility; the server rejects custom image selection with image_selection_unsupported. */
   image: optional(object({ id: text, version: optional(text) })),
   repository: optional(object({ url: text, ref: optional(text) })),
   profile: optional(

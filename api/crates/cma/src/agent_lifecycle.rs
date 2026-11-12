@@ -57,7 +57,7 @@ mod desktop;
 mod image;
 #[path = "agent_lifecycle_policy.rs"]
 mod task_policy;
-pub(crate) use image::{ImageManagerResolver, ImageResolver};
+pub(crate) use image::{ImageResolver, UnsupportedImageResolver};
 #[path = "agent_lifecycle_validation.rs"]
 pub(crate) mod validation;
 use validation::{
@@ -384,6 +384,14 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         request: AgentLifecycleCreateRequest,
         idempotency_key: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
+        let selected_image = match &request.image {
+            Some(image) => Some(
+                self.image_resolver
+                    .resolve(delegated_credential, image)
+                    .await?,
+            ),
+            None => None,
+        };
         validate_request(&request)?;
         caller
             .authorization
@@ -433,14 +441,8 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
                 "Machine Included selects the deployment desktop image and cannot be combined with an explicit image".into(),
             ));
         }
-        // Resolve the delegated Image Manager reference before persisting the
-        // operation. The durable worker then needs no secret after admission.
-        let resolved_image = match &request.image {
-            Some(image) => Some(
-                self.image_resolver
-                    .resolve(delegated_credential, image)
-                    .await?,
-            ),
+        let resolved_image = match selected_image {
+            Some(image) => Some(image),
             None if request.machine_included => self
                 .machine_sandbox_image
                 .clone()

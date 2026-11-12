@@ -10,9 +10,10 @@ not block ordinary conversation. Preserve the returned scope for an unchanged
 suggestion's normal conditional send. Observations retain measured tokens and
 latency, with provider-reported cost when available and `None` when unknown.
 
-Use `agents().create_lifecycle` for Image Manager selections and inline Agent
-configuration. Omit the image to use the deployment default. Persist the exact
-request and key before submission so an uncertain result can be retried safely.
+Use `agents().create_lifecycle` to create an Agent with inline configuration. Omit `image`
+to use the deployment's system default image. The field remains for compatibility,
+but the server rejects custom image selection with HTTP 422 and `image_selection_unsupported`.
+Save the complete request and idempotency key before sending; reuse both when the outcome is uncertain.
 
 ```rust,no_run
 use cma_sdk::{Client, IdempotencyKey};

@@ -102,7 +102,7 @@ pub struct CreateBot {
     /// Opaque gateway-owned channel connection. Mutually exclusive with legacy external_bot_id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_ref: Option<String>,
-    /// Immutable Image Manager selection used by the inline consumer authoring path.
+    /// Retains historical image selections; new inline consumers do not support custom images.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<BotImageReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

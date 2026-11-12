@@ -19,11 +19,6 @@ fn bounds() -> ProfileCapacityBounds {
 fn target() -> TriggerTarget {
     serde_json::from_value(serde_json::json!({
         "inline": {
-            "image": {
-                "id": "private-codex",
-                "version": "v3",
-                "reference": "registry.example/codex@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-            },
             "agent": {
                 "model": "gpt-5-codex",
                 "reasoning_effort": "high",
@@ -51,7 +46,7 @@ async fn materialization_is_deterministic_and_links_private_revisions() {
         bounds(),
         layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
-        Arc::new(AuthorizedImageResolver),
+        Arc::new(crate::agent_lifecycle::UnsupportedImageResolver),
     );
     let owner = SubjectId::new("trigger-owner");
     let source = target();
@@ -113,10 +108,7 @@ async fn materialization_is_deterministic_and_links_private_revisions() {
             first.workspace_profile.revision
         ),]
     );
-    assert_eq!(
-        sandbox_revision.content.runtime_image.as_deref(),
-        Some("registry.example/codex@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-    );
+    assert_eq!(sandbox_revision.content.runtime_image, None);
     assert_eq!(sandbox_revision.content.max_workspaces, 16);
     assert_eq!(sandbox_revision.content.max_agents_per_workspace, 16);
     assert_eq!(agent_revision.content.model.as_deref(), Some("gpt-5-codex"));
@@ -139,7 +131,7 @@ async fn changed_capacity_materializes_new_snapshots_and_retains_existing_target
             bounds(),
             capacity,
             Arc::new([] as [String; 0]),
-            Arc::new(AuthorizedImageResolver),
+            Arc::new(crate::agent_lifecycle::UnsupportedImageResolver),
         )
     };
     let old = build(layer3_adapter::SandboxCapacity::default())
@@ -183,7 +175,7 @@ async fn changed_inline_content_and_owner_get_distinct_snapshots() {
         bounds(),
         layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
-        Arc::new(AuthorizedImageResolver),
+        Arc::new(crate::agent_lifecycle::UnsupportedImageResolver),
     );
     let owner = SubjectId::new("trigger-owner");
     let mut changed = target();
@@ -223,7 +215,7 @@ async fn invalid_inline_payload_is_rejected_before_profile_creation() {
         bounds(),
         layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
-        Arc::new(AuthorizedImageResolver),
+        Arc::new(crate::agent_lifecycle::UnsupportedImageResolver),
     );
     let mut invalid = target();
     invalid.inline.as_mut().unwrap().agent.system_prompt = "x".repeat(32_769);
@@ -245,51 +237,38 @@ async fn invalid_inline_payload_is_rejected_before_profile_creation() {
         .is_empty());
 }
 
-struct AuthorizedImageResolver;
-
-#[async_trait]
-impl ImageResolver for AuthorizedImageResolver {
-    async fn resolve(
-        &self,
-        credential: Option<&str>,
-        image: &AgentLifecycleImageReference,
-    ) -> Result<String, layer1_public::rest::AgentLifecycleProvisioningError> {
-        if credential.is_none() {
-            return Err(layer1_public::rest::AgentLifecycleProvisioningError::SignInRequired);
-        }
-        if credential != Some("trigger-caller") {
-            return Err(layer1_public::rest::AgentLifecycleProvisioningError::ImageAccessDenied);
-        }
-        assert_eq!(image.id, "private-codex");
-        assert_eq!(image.version.as_deref(), Some("v3"));
-        Ok(format!("registry.example/codex@sha256:{}", "a".repeat(64)))
-    }
-}
-
 #[tokio::test]
-async fn image_authority_is_required_before_creating_private_profiles() {
+async fn custom_image_selection_is_rejected_before_creating_private_profiles() {
     let store = Arc::new(InMemoryProfileStore::default());
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
         layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
-        Arc::new(AuthorizedImageResolver),
+        Arc::new(crate::agent_lifecycle::UnsupportedImageResolver),
     );
-    for credential in [None, Some("unauthorized-caller")] {
-        let error = materializer
-            .materialize_with_credential(&SubjectId::new("trigger-owner"), &target(), credential)
-            .await
-            .expect_err("a supplied digest cannot bypass Image Manager authority");
-        assert_eq!(error.field(), "target.inline.image");
-        assert!(matches!(
-            (credential, error),
-            (None, TriggerReferenceError::ImageSignInRequired { .. })
-                | (
-                    Some("unauthorized-caller"),
-                    TriggerReferenceError::ImageAccessDenied { .. }
-                )
-        ));
+    for credential in [None, Some("trigger-caller")] {
+        for reference in [
+            None,
+            Some(format!(
+                "registry.example/runtime@sha256:{}",
+                "a".repeat(64)
+            )),
+        ] {
+            let mut source = target();
+            source.inline.as_mut().unwrap().image =
+                Some(layer2_core::trigger_domain::TriggerImage {
+                    id: "custom-image".into(),
+                    version: Some("v3".into()),
+                    reference,
+                });
+            let error = materializer
+                .materialize_with_credential(&SubjectId::new("trigger-owner"), &source, credential)
+                .await
+                .expect_err("custom image selection must be rejected even with a supplied digest");
+            assert_eq!(error.code(), "trigger_image_selection_unsupported");
+            assert_eq!(error.field(), "target.inline.image");
+        }
     }
     assert!(store
         .list_agent_profiles(None, false, &Default::default())
@@ -312,62 +291,17 @@ async fn image_authority_is_required_before_creating_private_profiles() {
 }
 
 #[tokio::test]
-async fn image_manager_reference_replaces_supplied_or_missing_digest() {
+async fn system_default_image_requires_no_catalog_resolution() {
     let store = Arc::new(InMemoryProfileStore::default());
     let materializer = InlineTriggerProfileMaterializer::new(
         store.clone(),
         bounds(),
         layer3_adapter::SandboxCapacity::default(),
         Arc::new([] as [String; 0]),
-        Arc::new(AuthorizedImageResolver),
+        Arc::new(crate::agent_lifecycle::UnsupportedImageResolver),
     );
-    let mut supplied = target();
-    for reference in [
-        None,
-        Some(format!("untrusted.example/other@sha256:{}", "b".repeat(64))),
-    ] {
-        supplied
-            .inline
-            .as_mut()
-            .unwrap()
-            .image
-            .as_mut()
-            .unwrap()
-            .reference = reference;
-        let result = materializer
-            .materialize_with_credential(
-                &SubjectId::new("trigger-owner"),
-                &supplied,
-                Some("trigger-caller"),
-            )
-            .await
-            .unwrap();
-        let image = result.inline.as_ref().unwrap().image.as_ref().unwrap();
-        let expected = format!("registry.example/codex@sha256:{}", "a".repeat(64));
-        assert_eq!(image.reference.as_deref(), Some(expected.as_str()));
-        let sandbox = store
-            .sandbox_profile_revision(&result.sandbox_profile.id, result.sandbox_profile.revision)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(sandbox.content.runtime_image, Some(expected));
-    }
-}
-
-#[tokio::test]
-async fn system_default_image_does_not_require_image_manager_authority() {
-    let store = Arc::new(InMemoryProfileStore::default());
-    let materializer = InlineTriggerProfileMaterializer::new(
-        store.clone(),
-        bounds(),
-        layer3_adapter::SandboxCapacity::default(),
-        Arc::new([] as [String; 0]),
-        Arc::new(AuthorizedImageResolver),
-    );
-    let mut source = target();
-    source.inline.as_mut().unwrap().image = None;
     let result = materializer
-        .materialize(&SubjectId::new("trigger-owner"), &source)
+        .materialize(&SubjectId::new("trigger-owner"), &target())
         .await
         .unwrap();
     let sandbox = store

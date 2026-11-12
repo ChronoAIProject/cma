@@ -53,14 +53,14 @@ pub struct Target {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-/// Image Manager selection for an inline Trigger Agent.
+/// Retains historical inline Trigger image selections; new custom image selection is unsupported.
 pub struct TriggerImage {
-    /// Image Manager identifier.
+    /// The retained historical custom image identifier.
     pub id: String,
-    /// Optional Image Manager version.
+    /// The optional historical custom image version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Immutable OCI reference returned by Image Manager.
+    /// The retained immutable OCI image reference.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
 }
@@ -103,7 +103,8 @@ pub struct TriggerInlineAgent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Inline Trigger target configuration.
 pub struct TriggerInlineTarget {
-    /// Optional Image Manager image.
+    /// Retained for compatibility; new image selections are rejected with
+    /// `trigger_image_selection_unsupported`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<TriggerImage>,
     /// Inline Agent configuration.

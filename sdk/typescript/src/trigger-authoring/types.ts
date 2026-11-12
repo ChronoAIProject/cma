@@ -43,6 +43,7 @@ export const triggerInlineAgent = object({
 });
 export type TriggerInlineAgent = Output<typeof triggerInlineAgent>;
 export const triggerInlineTarget = object({
+  /** New image selections are rejected with trigger_image_selection_unsupported. */
   image: optional(triggerImage),
   agent: triggerInlineAgent,
   workspace: optional(triggerInlineWorkspace),

@@ -121,6 +121,39 @@ async fn concurrent_creation_is_owner_scoped_and_replays_the_original_snapshot()
     assert_ne!(other.bot_id, a.bot_id);
 }
 #[tokio::test]
+async fn custom_image_creation_is_refused_even_when_the_historical_request_would_replay() {
+    let (original, _) = fixture();
+    let owner = caller("owner");
+    let mut historical = original
+        .create(&owner, "historical", input())
+        .await
+        .unwrap();
+    historical.request.inline_agent = Some(BotInlineAgentProfile::default());
+    historical.request.image = Some(BotImageReference {
+        id: "historical-image".into(),
+        version: Some("v1".into()),
+    });
+    historical.request_fingerprint = content_digest(&historical.request).unwrap();
+    let store = Arc::new(InMemoryBotStore::default());
+    store.insert(&historical).await.unwrap();
+    let service = BotService::new(store.clone(), Arc::new(Profiles), "registered".into());
+    for key in ["new-command", "historical"] {
+        assert_eq!(
+            service
+                .create(&owner, key, historical.request.clone())
+                .await,
+            Err(BotError::Invalid(
+                "image_selection_unsupported: custom image selection is not supported".into()
+            ))
+        );
+    }
+    assert_eq!(
+        store.list(&owner.subject, None, 50).await.unwrap(),
+        vec![historical]
+    );
+}
+
+#[tokio::test]
 async fn authority_and_invalid_policy_are_refused_before_admission() {
     let (service, store) = fixture();
     let visitor = Caller::new(SubjectId::new("owner"), Authorization::none());

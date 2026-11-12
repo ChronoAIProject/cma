@@ -137,6 +137,33 @@ mod inline_target_tests {
     }
 
     #[test]
+    fn custom_image_selection_is_refused_without_invalidating_retained_content() {
+        let content = inline_content();
+        content.validate().expect("retained inline image is valid");
+        let error = content
+            .reject_custom_image_selection()
+            .expect_err("new custom image selection must be refused");
+        assert_eq!(error.code(), "trigger_image_selection_unsupported");
+        assert_eq!(error.field(), "target.inline.image");
+    }
+
+    #[test]
+    fn system_default_and_profile_targets_allow_new_authoring() {
+        let mut content = inline_content();
+        content.target.inline.as_mut().unwrap().image = None;
+        content.reject_custom_image_selection().unwrap();
+
+        content.target = serde_json::from_value(serde_json::json!({
+            "sandbox_profile": {"id": "sbp_example", "revision": 1},
+            "workspace_profile": {"id": "wkp_example", "revision": 1},
+            "agent_profile": {"id": "agp_example", "revision": 1}
+        }))
+        .unwrap();
+        content.validate().unwrap();
+        content.reject_custom_image_selection().unwrap();
+    }
+
+    #[test]
     fn inline_target_rejects_mutable_image_reference() {
         let mut content = inline_content();
         content
