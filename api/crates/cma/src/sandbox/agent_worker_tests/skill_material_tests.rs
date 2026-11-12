@@ -453,3 +453,6 @@ async fn live_skill_resolution_failure_does_not_fail_the_agent_or_publish_instal
         .skills
         .is_empty());
 }
+
+#[path = "skill_upgrade_tests.rs"]
+mod upgrade_tests;

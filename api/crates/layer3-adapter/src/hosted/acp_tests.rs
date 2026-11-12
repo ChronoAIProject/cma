@@ -34,6 +34,8 @@ mod buffered_recovery_tests;
 mod fresh_bridge_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
+#[path = "acp_recovery_deadline_tests.rs"]
+mod recovery_deadline_tests;
 
 #[path = "acp_backpressure_tests.rs"]
 mod backpressure_tests;
