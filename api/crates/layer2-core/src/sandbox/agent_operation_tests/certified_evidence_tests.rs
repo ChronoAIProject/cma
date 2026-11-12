@@ -400,3 +400,18 @@ async fn certified_deferred_retry_requires_original_detail_adjacency_and_live_au
         }
     }
 }
+
+#[tokio::test]
+async fn certified_pending_index_cannot_contradict_the_original_latest_resolution() {
+    let mut case = Case::new().await;
+    case.push(requested("approval"));
+    let request = case.log.last().unwrap().clone();
+    case.push(resolved("approval"));
+    let mut source = case.source();
+    source.pending_approval = Some(&request);
+    assert!(CommandEvidence::from_certified_source(&case.command, source).is_err());
+    case.push(requested("approval"));
+    let mut source = case.source();
+    source.pending_approval = Some(&request);
+    assert!(CommandEvidence::from_certified_source(&case.command, source).is_err());
+}
