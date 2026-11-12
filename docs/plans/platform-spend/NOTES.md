@@ -320,15 +320,15 @@ The user ruled "pause both under `SpendStop`"; the parent session relayed it.
   scope.
 - Not determined: whether automatic unpublished recovery could ever take a
   platform pause that failed non-retryably (`restore_failed`) back to Active.
-- CLAUDE.md (left to the user, not edited): section 5 says "Quiet Sandboxes
-  pause according to platform settings after every Agent is quiet, unless
-  their Profile has Always keep alive enabled", and the Layer 2 text says
-  "Always keep alive prevents inactivity pause". Both stay true for
-  inactivity. Suggested addition after the section 5 sentence: "A platform
+- CLAUDE.md: section 5 says "Quiet Sandboxes pause according to platform
+  settings after every Agent is quiet, unless their Profile has Always keep
+  alive enabled", and the Layer 2 text says "Always keep alive prevents
+  inactivity pause". Both stay true for inactivity. The user approved, and
+  section 5 now carries after the inactivity-fence sentence: "A platform
   spend stop (`SpendStop`) is the one exception: it also pauses Sandboxes
   kept alive and Active Sandboxes without live Agents, never busy work, does
   not change the preference, and defers managed runtime updates until it
-  lifts."
+  lifts." The Layer 2 sentence is unchanged.
 
 ### Review round 3 (R7 to R10)
 
