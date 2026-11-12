@@ -193,8 +193,53 @@ async fn composed_with_history(
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
+    composed_with_input_history(client, name, credentials, parent, history, None).await
+}
+
+pub(in crate::store) async fn composed_with_input(
+    client: &Client,
+    name: &str,
+    input: ConversationInputSender,
+    conversation_id: String,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<AtomicUsize>,
+) {
+    let (store, agent, sandbox, execution, _, sends) = composed_with_input_history(
+        client,
+        name,
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        active_sandbox("sbx_commands"),
+        None,
+        Some((input, conversation_id)),
+    )
+    .await;
+    (store, agent, sandbox, execution, sends)
+}
+
+async fn composed_with_input_history(
+    client: &Client,
+    name: &str,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    parent: Sandbox,
+    history: Option<(u64, bool)>,
+    input: Option<(ConversationInputSender, String)>,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
     let store = MongoSandboxStore::open(client, name).await.unwrap();
-    let agent = ready_agent(&parent, "agt_commands");
+    let mut agent = ready_agent(&parent, "agt_commands");
+    if let Some((_, conversation)) = &input {
+        agent.conversation.conversation_id = Some(conversation.clone());
+    }
     store.create_sandbox(parent.clone()).await.unwrap();
     insert_agent(&store, &agent, NOW).await;
     let workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
@@ -221,9 +266,16 @@ async fn composed_with_history(
     let authority = Arc::new(Authority(Mutex::new(Ok(caller))));
     let sends = Arc::new(AtomicUsize::new(0));
     let sent = sends.clone();
-    let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, move |_| {
+    let input = input.map(|(sender, _)| sender);
+    let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, move |message| {
         sent.fetch_add(1, Ordering::SeqCst);
-        async { Ok(()) }
+        let input = input.clone();
+        async move {
+            match input {
+                Some(input) => input.send(message).await,
+                None => Ok(()),
+            }
+        }
     })));
     let profiles = Arc::new(InMemoryProfileStore::default());
     let context = AgentContextService::new(
