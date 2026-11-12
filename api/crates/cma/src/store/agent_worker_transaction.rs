@@ -281,14 +281,29 @@ async fn apply_publication_observed(
     let next_semantic = prior_semantic
         .after_append(&logs, &final_agent)
         .map_err(ApplyError::Domain)?;
-    let integrity = prepare_append(
+    let prepared = prepare_append(
         &current,
         &complete_log,
         &logs,
         final_agent.revision,
-        next_semantic,
+        next_semantic.clone(),
         publication_capacity(&current, mutation),
-    )
+    );
+    let integrity = match prepared {
+        Err(SandboxStoreError::AgentLogCapacityExceeded)
+            if super::agent_worker_capacity::stop_can_use_delete_reserve(&current, mutation) =>
+        {
+            prepare_append(
+                &current,
+                &complete_log,
+                &logs,
+                final_agent.revision,
+                next_semantic,
+                super::agent_log_integrity::AppendCapacity::Delete,
+            )
+        }
+        result => result,
+    }
     .map_err(ApplyError::Domain)?;
     advance_agent(
         store,

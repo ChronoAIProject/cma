@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use layer3_adapter::ConversationUpdate;
-use sha2::{Digest, Sha256};
 
 use crate::ids::AgentId;
 use crate::seconds_from_rfc3339;
@@ -26,7 +25,9 @@ mod budget;
 
 #[path = "conversation_output.rs"]
 mod output;
-use output::{is_identity_terminal_for_current, output_replayed, output_source_for_checkpoint};
+use output::{
+    is_identity_terminal_for_current, output_replayed, output_source_for_checkpoint, store_error,
+};
 
 #[path = "conversation_live.rs"]
 pub(super) mod live;
@@ -179,27 +180,8 @@ impl DurableAgentUpdateRecorder {
                 "conversation update timestamp is invalid",
             ));
         }
-        let retained_effect = matches!(&update, ConversationUpdate::RetainedEffect(_));
-        let (source, update, shared) = match update.effect() {
-            ConversationUpdate::RuntimeOutput { receipt, update } => (
-                Some(&receipt.source),
-                update.as_deref().map(ConversationUpdate::effect),
-                update.as_ref().is_some_and(|update| update.is_shared()),
-            ),
-            update => (None, Some(update), retained_effect),
-        };
-        let fingerprint = source.map_or_else(
-            || {
-                format!(
-                    "{:x}",
-                    Sha256::digest(
-                        format!("{:?}", update.as_ref().expect("legacy update is present"))
-                            .as_bytes()
-                    )
-                )
-            },
-            |source| format!("{:x}", Sha256::digest(format!("{source:?}").as_bytes())),
-        );
+        let (source, update, shared) = output::update_parts(&update);
+        let fingerprint = output::fingerprint(source, update);
         let update_id = if let Some(pending) = &assembly.pending_update {
             if pending.fingerprint != fingerprint
                 || pending.runtime_generation != runtime_generation
@@ -287,7 +269,14 @@ impl DurableAgentUpdateRecorder {
                     .and_then(|checkpoint| checkpoint.reanchored(&current))
                 {
                     match self
-                        .commit_output(persisted.clone(), previous.clone(), reanchored, None, guard)
+                        .commit_output(
+                            persisted.clone(),
+                            previous.clone(),
+                            reanchored,
+                            None,
+                            guard,
+                            false,
+                        )
                         .await
                     {
                         Ok(_) => {}
@@ -305,6 +294,7 @@ impl DurableAgentUpdateRecorder {
                         checkpoint,
                         None,
                         guard,
+                        false,
                     )
                     .await
                     .map_err(store_error)?;
@@ -317,7 +307,14 @@ impl DurableAgentUpdateRecorder {
                     // An exact receipt retry must also persist a verified repair.
                     // Otherwise a later control write still sees the obsolete anchor.
                     match self
-                        .commit_output(persisted.clone(), previous.clone(), reanchored, None, guard)
+                        .commit_output(
+                            persisted.clone(),
+                            previous.clone(),
+                            reanchored,
+                            None,
+                            guard,
+                            false,
+                        )
                         .await
                     {
                         Ok(_) => {}
@@ -332,6 +329,7 @@ impl DurableAgentUpdateRecorder {
                         recorded.clone(),
                         None,
                         guard,
+                        false,
                     )
                     .await
                     .map_err(store_error)?;
@@ -450,12 +448,23 @@ impl DurableAgentUpdateRecorder {
                 agent_logs: logs,
             });
             match self
-                .commit_output(persisted.clone(), previous, checkpoint, mutation, guard)
+                .commit_output(
+                    persisted.clone(),
+                    previous,
+                    checkpoint,
+                    mutation,
+                    guard,
+                    source.is_some() && identity_terminal,
+                )
                 .await
             {
                 Ok(outcome) => {
-                    *assembly = next_assembly;
-                    self.live.publish(fragment);
+                    if outcome.turn_closed {
+                        *assembly = AgentMessageAssembly::default();
+                    } else {
+                        *assembly = next_assembly;
+                        self.live.publish(fragment);
+                    }
                     return Ok(outcome);
                 }
                 Err(SandboxStoreError::Conflict) => {}
@@ -480,17 +489,5 @@ impl DurableAgentUpdateRecorder {
         Err(AgentConversationError::Unavailable(
             "conversation changed during every commit attempt".into(),
         ))
-    }
-}
-
-fn store_error(error: SandboxStoreError) -> AgentConversationError {
-    match error {
-        SandboxStoreError::NotFound => AgentConversationError::NotFound,
-        SandboxStoreError::InvalidTransaction(detail) => {
-            AgentConversationError::InvalidState(detail)
-        }
-        SandboxStoreError::AgentLogCapacityExceeded => AgentConversationError::CapacityExceeded,
-        SandboxStoreError::Corrupt(detail) => AgentConversationError::Corrupt(detail),
-        other => AgentConversationError::Unavailable(other.to_string()),
     }
 }
