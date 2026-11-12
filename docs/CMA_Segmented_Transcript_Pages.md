@@ -18,7 +18,7 @@ owner authority are checked again after the buffered read, before returning it.
 
 Segmented pages seek turns through the numeric evidence index and read at most
 32 requested originals plus four header points. Capture validates the active
-physical segment (at most 10,128 entries / 64 MiB) once per request. Closed
+physical segment (at most 10,128 entries / 65 MiB) once per request. Closed
 history is never replayed to reach a cursor. Requested point sets have a 4 MiB
 source-byte cap, and each emitted turn page has a 4 MiB serialized cap. These
 bounds apply independently of the number of sealed segments and turn length.
