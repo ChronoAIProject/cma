@@ -836,11 +836,15 @@ mod evaluation {
     async fn after_a_lift_an_explicit_new_message_is_admitted_and_nothing_replays() {
         let (client, name) = database("platform_eval_resume").await;
         let (store, agent, parent) = fixture(&name, &client).await;
-        let turn_limit = configure_capped(&store, &agent, u64::from(u8::MAX) + 1).await;
+        let cap = u64::from(u8::MAX) + 1;
+        let turn_limit = configure_capped(&store, &agent, cap).await;
         assert!(store
             .reserve_command(request(&agent, &parent, "admitted"))
             .await
             .is_ok());
+        // One observed unit brings committed to disposable, so the refusal
+        // below enters the stop that the raised cap then lifts.
+        observe(&store, &capped(cap), 1, seconds(NOW)).await;
         let refused = request(&agent, &parent, "refused");
         assert_eq!(
             store.reserve_command(refused.clone()).await,
