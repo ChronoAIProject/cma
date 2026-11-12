@@ -25,6 +25,43 @@ pub struct SharedAgentDetail {
 }
 
 impl AgentReadService {
+    /// Public transcript with certified segmented dispatch and legacy compatibility.
+    /// Segmented proof refusal never falls back to a complete legacy scan.
+    pub async fn transcript_bounded(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+    ) -> Result<AgentTranscript, AgentReadError> {
+        let (lineage, held) = self
+            .owner_projection_authority(caller, id, crate::RuntimeCapability::Conversation)
+            .await?;
+        let result = self.read_transcript(&lineage.agent).await?;
+        self.finish_owner_projection(
+            caller,
+            id,
+            &lineage,
+            held,
+            crate::RuntimeCapability::Conversation,
+        )
+        .await?;
+        Ok(result)
+    }
+
+    /// Public usage with captured-source dispatch and final owner authority.
+    pub async fn usage_bounded(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+    ) -> Result<AgentUsageReading, AgentReadError> {
+        let (lineage, held) = self
+            .owner_projection_authority(caller, id, crate::RuntimeCapability::Usage)
+            .await?;
+        let result = self.read_usage(&lineage.agent).await?;
+        self.finish_owner_projection(caller, id, &lineage, held, crate::RuntimeCapability::Usage)
+            .await?;
+        Ok(result)
+    }
+
     pub async fn detail_authorized(
         &self,
         context: &CallerContext,
@@ -78,10 +115,7 @@ impl AgentReadService {
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
         require_granted(agent, crate::RuntimeCapability::Conversation)?;
-        let entries = self.complete_log(agent).await?;
-        let mut transcript = fold_agent_log(agent, &entries)
-            .map_err(AgentReadError::Corrupt)?
-            .transcript;
+        let mut transcript = self.read_transcript(agent).await?;
         // Attribution/correlation metadata is not a history access grant. The
         // transcript projection includes conversation messages and outcomes only.
         if !is_personal(&authorized, context) {
@@ -90,6 +124,76 @@ impl AgentReadService {
         self.finish_read(&authorized, id, ResourceCapability::ViewHistory)
             .await?;
         Ok(transcript)
+    }
+
+    pub(super) async fn read_transcript(
+        &self,
+        agent: &Agent,
+    ) -> Result<AgentTranscript, AgentReadError> {
+        if let Some(transcript) = self
+            .store
+            .agent_log_transcript_projection(agent)
+            .await
+            .map_err(|error| match error {
+                // A complete transcript is one implicit page. The segmented
+                // store refuses that page when it exceeds its result budget.
+                SandboxStoreError::InvalidPage | SandboxStoreError::AgentLogCapacityExceeded => {
+                    AgentReadError::TranscriptPaginationRequired
+                }
+                error => super::store_error(error),
+            })?
+        {
+            return Ok(transcript);
+        }
+        let (entries, bounded) = match self.store.agent_log_transcript(agent).await {
+            Ok(Some(entries)) => (entries, true),
+            Ok(None) => (self.complete_log(agent).await?, false),
+            Err(error) => return Err(super::store_error(error)),
+        };
+        match fold_agent_log(agent, &entries) {
+            Ok(projection) => Ok(projection.transcript),
+            Err(_error) if bounded => {
+                let complete = self.complete_log(agent).await?;
+                fold_agent_log(agent, &complete)
+                    .map(|projection| projection.transcript)
+                    .map_err(AgentReadError::Corrupt)
+            }
+            Err(error) => Err(AgentReadError::Corrupt(error)),
+        }
+    }
+
+    pub(super) async fn read_usage(
+        &self,
+        agent: &Agent,
+    ) -> Result<AgentUsageReading, AgentReadError> {
+        if let Some(reading) = self
+            .store
+            .agent_log_usage_projection(agent)
+            .await
+            .map_err(super::store_error)?
+        {
+            return Ok(reading);
+        }
+        if let Some(entries) = self
+            .store
+            .agent_log_usage(agent)
+            .await
+            .map_err(super::store_error)?
+        {
+            match fold_agent_usage(agent, &entries) {
+                Ok(reading) => return Ok(reading),
+                Err(_) => {
+                    // A selected-row projection is an optimization boundary,
+                    // not a second semantic authority. If its proof or fold
+                    // disagrees with the exact history, retry the established
+                    // complete compatibility read.
+                }
+            }
+        }
+        let entries = self.complete_log(agent).await?;
+        fold_agent_log(agent, &entries)
+            .map(|projection| projection.usage)
+            .map_err(AgentReadError::Corrupt)
     }
 
     pub async fn log_authorized(
@@ -193,10 +297,7 @@ impl AgentReadService {
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
         require_granted(agent, crate::RuntimeCapability::Usage)?;
-        let entries = self.complete_log(agent).await?;
-        let usage = fold_agent_log(agent, &entries)
-            .map_err(AgentReadError::Corrupt)?
-            .usage;
+        let usage = self.read_usage(agent).await?;
         self.finish_read(&authorized, id, ResourceCapability::ViewDetails)
             .await?;
         Ok(usage)
