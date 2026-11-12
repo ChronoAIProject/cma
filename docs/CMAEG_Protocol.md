@@ -1910,8 +1910,19 @@ An in-progress or abandoned claim returns `delivery.outcome: "unknown"` with
 reason `delivery_in_progress_or_uncertain`, without initiating another send. A
 later retry can read the finalized receipt if the original worker finishes.
 A lost external response also remains unknown; this API does not promise exactly
-once external delivery. Do not invent a new ID to retry an uncertain send. Multiple
-different IDs are independent messages, with no ordering guarantee across events.
+once external delivery. A second durable fence covers the original channel record,
+event ID and consumer, independently of the caller's key, message content or
+reminted capability. While a send is in progress, abandoned, unknown, or lacks a
+durable final receipt, another key returns `delivery.outcome: "unknown"` with
+reason `reply_target_delivery_uncertain` and performs no dispatch. That refusal is
+itself retained under the submitted key. Read the original occurrence's receipt
+by repeating its original key and body; neither reads nor replacement keys retry
+the external effect. The fence is released only after a definite result and its
+exact receipt have been saved. After that, a fresh key denotes a new
+result occurrence (including deliberately identical text), and can send once.
+Different events remain independent. Drain old reply-target writers before
+activating this behavior: writers predating the fence cannot honor it, and
+preexisting claims without a fence require reconciliation or expiry.
 Records persist through all capabilities that can be minted from the original
 event. Delivery records cannot authorize interaction callbacks. Native MCP keeps
 the four existing tools, plus `readEventAttachment` when media is enabled; delayed
