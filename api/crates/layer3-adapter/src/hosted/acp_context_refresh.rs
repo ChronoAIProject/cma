@@ -55,7 +55,9 @@ impl Bridge {
     }
 
     pub(super) async fn observe_context_frame_goal(&self, frame: &super::retained_json::JsonFrame) {
-        super::context_goal::ContextGoal::observe(&mut *self.context_goal.lock().await, frame);
+        if let Some(observation) = super::context_goal::Observation::read(frame) {
+            observation.record(&mut *self.context_goal.lock().await);
+        }
     }
 
     #[cfg(test)]

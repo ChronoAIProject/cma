@@ -940,3 +940,10 @@ successful lookup. It requires the verified Gateway service-account access beare
 and both management capabilities. Ordinary owner, browser and worker credentials
 are refused, and unavailable authentication or storage is an HTTP error. A caller
 must never treat that error as `unknown` or reuse a negative result as a cache.
+
+### Browser diagnostic reports
+
+`Client::report_browser_fault(browser_telemetry::BrowserFault)` sends one
+anonymous category to `POST /api/v1/telemetry/browser` and requires bodyless
+204. It omits the configured bearer and performs no automatic retry. Reports
+contain no exception text or identifiers and are not durable work receipts.

@@ -13,6 +13,7 @@ use super::agent_log_telemetry::ScanCaller;
 use super::sandbox_mongo::{signed, MongoSandboxStore};
 
 pub(super) mod integrity;
+mod segmented;
 use integrity::{LogReadIntegrity, PreparedIntegrity, ReadHead};
 
 #[derive(Clone, Copy)]
@@ -107,7 +108,11 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
         window.bounds(0)?;
         return Ok(Vec::new());
     };
-    let entries = if head.trusted {
+    let entries = if let Some(segmented) = &head.segmented {
+        let (after, through) = window.bounds(head.last_seq)?;
+        segmented::read_compatibility_window(store, &head, segmented, after, through, &mut session)
+            .await?
+    } else if head.trusted {
         let (after, through) = window.bounds(head.last_seq)?;
         let entries = read_bounded(
             store,

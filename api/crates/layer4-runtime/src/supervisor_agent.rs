@@ -258,7 +258,11 @@ impl Supervisor {
                 return Err(error);
             }
         };
-        let bridge = match Bridge::start(&launch, &environment) {
+        let bridge = match Bridge::start_with_recovery(
+            &launch,
+            &environment,
+            self.config.capacity_recovery_enabled,
+        ) {
             Ok(bridge) => Arc::new(bridge),
             Err(error) => {
                 return Err(ticket

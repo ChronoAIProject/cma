@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+mod access_snapshot;
 mod admission_log;
 mod global_admission;
 mod provider_tool_relay;
@@ -21,6 +22,7 @@ mod agent_sandbox;
 mod execution;
 mod gateway;
 mod home;
+mod oauth_resource;
 mod profiles;
 mod public_streams;
 mod runtime;
@@ -46,6 +48,7 @@ const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
+pub(crate) const MONGO_DIAGNOSTICS_ENABLED: &str = "CHRONO_MONGO_DIAGNOSTICS_ENABLED";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
 pub(crate) const REQUIRED_BASELINE_SERVICES: &[&str] = &["chrono-llm-public", "ornn-api"];
 const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm-public,ornn-api";
@@ -69,6 +72,8 @@ pub struct RateLimitConfig {
     pub default_per_minute: NonZeroU32,
     pub create_per_minute: NonZeroU32,
     pub input_per_minute: NonZeroU32,
+    pub control_per_minute: NonZeroU32,
+    pub control_tier_enabled: bool,
     pub response_input_tier_enabled: bool,
 }
 
@@ -77,6 +82,11 @@ impl RateLimitConfig {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         Ok(Self {
+            control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => return Err("CHRONO_SERVER_RATE_CONTROL_ENABLED must be true or false".into()),
+            },
             response_input_tier_enabled: match lookup("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED")?
                 .as_deref()
             {
@@ -108,6 +118,12 @@ impl RateLimitConfig {
             )?,
             create_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_CREATE_PER_MINUTE", 10, 1)?,
             input_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_INPUT_PER_MINUTE", 120, 1)?,
+            control_per_minute: positive_u32(
+                lookup,
+                "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE",
+                120,
+                1,
+            )?,
         })
     }
 }
@@ -167,6 +183,7 @@ pub struct Config {
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -177,6 +194,7 @@ pub struct Config {
     pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
+    pub nyxid_oauth_api_resource: Option<String>,
     pub nyxid_proxy_issuer: Option<String>,
     pub nyxid_proxy_jwks_url: Option<String>,
     pub nyxid_proxy_audience: Option<String>,
@@ -256,6 +274,12 @@ impl Config {
         let bind = value_or(&mut lookup, "CHRONO_SERVER_BIND", DEFAULT_BIND)?
             .parse::<SocketAddr>()
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
+        let metrics_bind = value_or(&mut lookup, "CHRONO_METRICS_BIND", "0.0.0.0:9091")?
+            .parse::<SocketAddr>()
+            .map_err(|error| format!("CHRONO_METRICS_BIND is not a socket address: {error}"))?;
+        if metrics_bind == bind && bind.port() != 0 {
+            return Err("CHRONO_METRICS_BIND must differ from CHRONO_SERVER_BIND".into());
+        }
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
         let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
@@ -396,6 +420,7 @@ impl Config {
         Ok(Self {
             global_sandbox_limit,
             bind,
+            metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             public_url,
             agent_access_retained_origins,
@@ -404,6 +429,9 @@ impl Config {
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
+            nyxid_oauth_api_resource: oauth_resource::parse(lookup(
+                "CHRONO_NYXID_OAUTH_API_RESOURCE",
+            )?)?,
             nyxid_proxy_issuer: lookup("CHRONO_NYXID_PROXY_ISSUER")?,
             nyxid_proxy_jwks_url: lookup("CHRONO_NYXID_PROXY_JWKS_URL")?,
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
