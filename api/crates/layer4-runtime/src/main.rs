@@ -4,6 +4,7 @@ mod agent_attachment;
 mod agent_filesystem;
 mod agent_home;
 mod agent_skill_install;
+mod agent_skill_upgrade;
 mod bridge;
 mod browser;
 mod checkpoint;

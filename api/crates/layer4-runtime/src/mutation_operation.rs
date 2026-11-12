@@ -31,7 +31,7 @@ pub(crate) enum Subject {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Operation {
     pub operation_id: String,
@@ -40,16 +40,41 @@ pub(crate) struct Operation {
     pub subject: Subject,
 }
 
+impl PartialEq for Operation {
+    fn eq(&self, other: &Self) -> bool {
+        self.operation_id == other.operation_id
+            && self.request_sha256 == other.request_sha256
+            && self.payload_sha256 == other.payload_sha256
+            && match (&self.subject, &other.subject) {
+                (
+                    Subject::InstallAgentSkill { request: a },
+                    Subject::InstallAgentSkill { request: b },
+                ) => {
+                    a.has_valid_sha256()
+                        && b.has_valid_sha256()
+                        && a.request_sha256 == b.request_sha256
+                }
+                (a, b) => a == b,
+            }
+    }
+}
+
 impl Operation {
     pub(crate) fn install_agent_skill(request: &layer3_adapter::AgentSkillInstallRequest) -> Self {
         let mut request = request.clone();
         // The supervisor routes archives through its local proxy. Persist only
         // the path so a control-plane origin change cannot break durable replay.
-        if let Ok(url) = url::Url::parse(&request.skill.source_url) {
-            request.skill.source_url = url.path().to_owned();
-            if let Some(query) = url.query() {
-                request.skill.source_url.push('?');
-                request.skill.source_url.push_str(query);
+        let mut skills = vec![&mut request.skill];
+        if let Some(upgrade) = &mut request.upgrade {
+            skills.push(&mut upgrade.previous);
+        }
+        for skill in skills {
+            if let Ok(url) = url::Url::parse(&skill.source_url) {
+                skill.source_url = url.path().to_owned();
+                if let Some(query) = url.query() {
+                    skill.source_url.push('?');
+                    skill.source_url.push_str(query);
+                }
             }
         }
         Self {
