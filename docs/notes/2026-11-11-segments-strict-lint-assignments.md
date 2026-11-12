@@ -1,6 +1,6 @@
 # Segmentation combined PR: current assignments and gate ledger
 
-Updated Thu 2026-11-12 08:11 SGT. S2 owns
+Updated Thu 2026-11-12 08:46 SGT. S2 owns
 `tl/cma-log-segments/integration-20261111`. One default-off combined PR to develop;
 strict-green and PR by14:00, reviewer3 by15:30, explicit relay/merge by16:00,
 evening train19:00–22:00. Writer and recovery activation remain closed.
@@ -9,8 +9,11 @@ Unsupported; source qualification does not claim supported production activation
 
 ## Final handoffs normally integrated
 
-Combined source `ff0f161b8` now also merges final S3 `e58162249` normally;
-the prior qualified source is `e28cb6beb`. Current-head strict CMA passes with zero diagnostics (2m36s).
+Combined production source `ff0f161b8` merges final S3 `e58162249` normally.
+Current checkpoint `c620ebbf2` changes only the discovery Mongo fixture and this
+ledger; production source is byte-identical. Strict CMA at ff0 passed with zero
+diagnostics (2m36s). Current fixture rerun is queued; no current-head pass is
+claimed before that execution.
 All currently published handoffs are included:
 
 | Owner | Pin / branch | Included work |
@@ -42,7 +45,7 @@ from owner pins; owner tests should live in named new child files below.
 | **S4 cma-seg-lead** | **P1-1 still open:** ordinary v2 claim/reserve/target-control roots in `store/child_writer_claims.rs`, `store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/apply.rs`; inventory remaining ordinary roots. **P1-N1 still open:** `store/agent_log_segments/writer_prepare.rs` and writer-plan/persist permission for an independently admitted segmented CapacityRecovery successor. Own writer/source-contract fixes and tests under `store/sandbox_mongo_integration_tests/agent_segment_tests/`. Retain fresh capture, fencing, immutable receipt and no input replay. Own any recurring strict diagnostics in `sandbox_reconciliation/**` or accepted-work composition `service.rs/accepted_service.rs/worker*.rs/transactions.rs`. | Exact successor contract09:00; source pins10:30; root/adoption/abort/unknown tests11:30. At09:00 flag any item that cannot fit. |
 | **S5 cma-seg-3** | Own **P1-N1 actual service admission coverage** after S4's writer contract: already-segmented exhausted source through preparation/admission to atomic seal/successor/carrier; abort, Unknown/restart, closed/wrong admission gate and immutable original witness. New test child `store/sandbox_mongo_integration_tests/agent_capacity_recovery_tests/segmented_admission.rs`; request registration from S2. Own required fixes in `agent_capacity_recovery/{preparation,admission,authority,records,receipts,restart,accepted_authority}.rs`, with no S4 service edits. Reconcile the combined four old runtime failures against final2144909ce and provide exact closure mapping. Keep production native Unsupported. | Old-failure/contract map09:00; source/test pin10:30; actual service/refusal results11:30. |
 | **S3 cma-seg-2** | P1-4 transcript/usage/title and P2 selected-consumer matrix. Own `agent_log_segment_reads.rs`, transcript/usage/title projection paths, Layer2 folds and selected-reader tests already allocated. Bound requested-page work across1/10/100/1000segments; >10,128rows/>4MiB, long turns, continuation, serialized parity, corrupt/stale proofs, generation/retirement, snapshot races, final authority, no read-side writes. | Published final source10:30; bounds/parity matrix11:30; risk report09:00. |
-| **S2 cma-db-contention** | Integration, `transaction_scope`/shared exports, canonical migration/schema/index/runtime grants, source-size/conflict resolution and all combined gates. Own any recurring `TransactionScope::insert_one` or canonical registration diagnostics. Run strict CMA first on e28cb6beb, then current recovery/scheduler/adapter/authenticated Mongo and partitioned contracts; add final S3/owner deltas and qualify the final head. Prepare PR body/evidence, rollout/rollback reader floor and exact blocker dispositions. | Initial strict inventory ASAP; freeze source11:30; combined strict/all required gates13:30; PR14:00. |
+| **S2 cma-db-contention** | Integration, `transaction_scope`/shared exports, canonical migration/schema/index/runtime grants, source-size/conflict resolution and all combined gates. Own any recurring `TransactionScope::insert_one` or canonical registration diagnostics. Strict CMA and affected-layer lint already pass on the assembled final handoffs; qualify the corrected discovery fixture and outstanding partitioned Mongo contracts, then add final S3/owner deltas and qualify the final head. Prepare PR body/evidence, rollout/rollback reader floor and exact blocker dispositions. | Initial strict inventory ASAP; freeze source11:30; combined strict/all required gates13:30; PR14:00. |
 
 S4 and S5 agree the segmented capacity-successor contract in this note by09:00;
 use the existing independent CapacityRecovery admission rather than relabeling it
@@ -109,8 +112,8 @@ execution must actually select the cases.
 | Finding | Current disposition |
 | --- | --- |
 | P1-1 ordinary v2 roots | OPEN, S4; must qualify actual worker claim through ordinary/control admission and output. |
-| P1-2 canonical runtime roles/carrier/index | Source-closed, S2; canonical authenticated Mongo passed onb305. Final combined rerun remains. |
-| P1-3 later-progress activation | Source and author gates qualified2144909ce; final combined rerun/reviewer required. Native Unsupported remains a separate activation prohibition. |
+| P1-2 canonical runtime roles/carrier/index | Source-closed, S2; canonical authenticated Mongo passed on final S3-inclusive ff0f161b8. Final candidate and reviewer readback remain. |
+| P1-3 later-progress activation | Source qualified2144909ce; actual combined recovery selection31/31passed at ff0f161b8, including all four historical failures. Reviewer confirmation remains. Native Unsupported remains a separate activation prohibition. |
 | P1-4 / D6-2 large-history response/transcript | S1 source/author response gates handed off; S3 bounded transcript and final shared parity pending. |
 | P1-N1 segmented capacity admission | OPEN, S4writer + S5service tests; not covered by legacy bootstrap success. |
 | P2 / D6-5 selected-consumer matrix | OPEN, S3, with response portionS1. |
@@ -175,7 +178,7 @@ selection covers remaining segment/operator/proof units, recovery HTTP cases and
 the partitioned real-Mongo inventory after the ten-step batch succeeds.
 All changed Rust/TypeScript files are independently confirmed below500lines.
 
-Current qualification status: new source ff0f161b8 is exported immutably and
+Historical qualification: source ff0f161b8 was exported immutably and
 strict CMA passed with zero diagnostics in2m36s. The e28 runner completed both lint gates plus26caller,
 57scheduler,108response,205core and47adapter tests. Preserve their separate
 selection counts; overlapping suites are not summed as unique test coverage.
@@ -219,3 +222,35 @@ normal WorkStepCompleted event and revision/sequence advance, so the worker
 store correctly returnedConflict. S2 corrected the fixture to match the normal
 AgentWorker::progress publication contract; the production guard is unchanged.
 The corrected fixture remains unqualified until its next actual Mongo run.
+
+## 08:46 source audit and train risk
+
+Develop merge freeze is active from 08:30 until the explicit lift relay. Current
+develop `3aee1ff68` is already merged; all published final slice pins remain
+ancestors of `c620ebbf2`. No additional owner fix pin is published as of this audit.
+The 14:00 PR / 16:00 merge target depends on the 10:30 source and 11:30 owner-gate
+cutoffs. Ordinary v2 writer roots, segmented capacity admission and selected
+consumer bounds remain source blockers.
+
+Fresh source anchors at `c620ebbf2`: S4 `child_writer_claims.rs:202` retains the
+v1 CAS; `agent_commands/reserve.rs:150` uses one v1 filter for Agent and parent;
+`agent_commands/targeted_control/apply.rs:86` calls the legacy complete scanner;
+`agent_log_segments/writer_prepare.rs:119` rejects segmented CapacityRecovery.
+S3 `agent_log_segment_reads.rs:98` starts selected traversal at zero, and
+`agent_titles/bounded.rs:56` retains/refolds the selected first-turn prefix.
+These map to the existing owner rows and retain their existing ownership.
+
+Current checkpoint formatting and base-to-head whitespace checks pass. The
+corrected discovery gate acquired the existing heavy-1 inode after its blocking
+wait and is executing against the immutable c620ebbf2 export. The one owned Cargo target/export remains in
+use; disk free was 61 GiB at the latest check. Every own segmentation runner
+uses `lockf -k`. Project 9 issues #1348–#1351 remain In Progress with aggregate
+checkpoint comments; the next milestone remains 14:00 SGT.
+
+The pending Mongo partition selection now also covers changed
+`store::agent_worker_transaction::` prepared-open and prepared-replay contracts,
+plus the generic canonical migrator tests. The authenticated runtime-role case
+stays in its separate authenticated fixture. The previous partition selector
+omitted these changed worker-publication modules; no old run is credited with
+that coverage. The actual nextest inventory will determine bounded partitions
+of at most 40 tests per disposable replica set.
