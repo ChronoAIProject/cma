@@ -1,6 +1,25 @@
 use super::*;
 
 #[tokio::test]
+async fn binding_home_capacity_refusal_is_safe_and_retryable() {
+    let response = error(BindingError::GlobalCapacityReached);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "60");
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["code"], "sandbox_capacity_unavailable");
+    assert_eq!(
+        body["detail"],
+        layer2_core::admission::CapacityKind::RetainedHomes.guidance()
+    );
+    assert_eq!(body.as_object().unwrap().len(), 5);
+    assert!(!body.to_string().contains("limit"));
+    assert!(!body.to_string().contains("count"));
+}
+
+#[tokio::test]
 async fn operator_pause_is_safe_and_paces_binding_event_retries() {
     let response = error(BindingError::AdmissionPaused);
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

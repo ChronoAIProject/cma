@@ -101,6 +101,7 @@ fn binding_error(error: BindingError) -> ResourceAccessError {
             ResourceAccessStoreError::Corrupt.into()
         }
         BindingError::AdmissionPaused
+        | BindingError::GlobalCapacityReached
         | BindingError::Unavailable(_)
         | BindingError::ResourcesUnavailable => ResourceAccessStoreError::Unavailable.into(),
     }

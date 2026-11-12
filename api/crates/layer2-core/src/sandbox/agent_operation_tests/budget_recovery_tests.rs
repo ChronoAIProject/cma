@@ -272,3 +272,22 @@ fn unattempted_first_message_platform_refusal_is_terminal_and_not_replayable() {
     );
     assert!(!first.failure.as_ref().unwrap().retryable);
 }
+
+#[test]
+fn unattempted_first_message_session_refusal_is_terminal_and_not_replayable() {
+    let mut agent = test_agent(AgentStatus::Ready, Some("Begin"));
+    let first = agent.conversation.first_message.as_mut().unwrap();
+    first.refuse_session_capacity(LATER.into()).unwrap();
+    first.validate().unwrap();
+    assert_eq!(first.state, FirstMessageDelivery::Failed);
+    assert_eq!(first.turn_sequence, None);
+    assert_eq!(first.attempt, 0);
+    assert_eq!(
+        first.failure.as_ref().unwrap().code,
+        "session_capacity_unavailable"
+    );
+    assert!(!first.failure.as_ref().unwrap().retryable);
+    assert!(first
+        .authorize_recovery(&first.payload_sha256.clone(), true, LATEST.into())
+        .is_err());
+}

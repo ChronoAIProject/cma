@@ -185,6 +185,7 @@ pub(super) fn store_error(error: LaunchStoreError) -> LaunchServiceError {
         LaunchStoreError::Corrupt(detail) => LaunchServiceError::Corrupt(detail),
         LaunchStoreError::Budget(reason) => LaunchServiceError::Budget(reason),
         LaunchStoreError::AdmissionPaused => LaunchServiceError::AdmissionPaused,
+        LaunchStoreError::GlobalCapacityReached => LaunchServiceError::GlobalCapacityReached,
         other => LaunchServiceError::Corrupt(other.to_string()),
     }
 }

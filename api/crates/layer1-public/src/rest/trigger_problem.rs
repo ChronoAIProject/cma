@@ -224,6 +224,12 @@ fn launch_problem(error: LaunchServiceError) -> ProblemParts {
             layer2_core::admission::ADMISSION_PAUSED_GUIDANCE,
             Vec::new(),
         ),
+        LaunchServiceError::GlobalCapacityReached => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "sandbox_capacity_unavailable",
+            layer2_core::admission::CapacityKind::RetainedHomes.guidance(),
+            Vec::new(),
+        ),
         LaunchServiceError::Budget(reason) => (
             StatusCode::PAYMENT_REQUIRED,
             reason.code(),
@@ -356,6 +362,21 @@ mod tests {
     use axum::body::to_bytes;
 
     use super::*;
+
+    #[tokio::test]
+    async fn launch_home_capacity_refusal_exposes_only_safe_guidance() {
+        let response =
+            TriggerProblem::from(LaunchServiceError::GlobalCapacityReached).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = to_bytes(response.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "sandbox_capacity_unavailable");
+        assert_eq!(
+            body["detail"],
+            layer2_core::admission::CapacityKind::RetainedHomes.guidance()
+        );
+        assert_eq!(body.as_object().unwrap().len(), 5);
+    }
 
     #[tokio::test]
     async fn connection_preflight_conceals_only_an_absent_launch() {

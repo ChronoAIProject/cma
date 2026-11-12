@@ -399,10 +399,5 @@ pub(super) fn unavailable(error: impl std::fmt::Display) -> BindingError {
 }
 
 pub(super) fn credential_error(error: crate::CoreError) -> BindingError {
-    match error {
-        crate::CoreError::AdmissionPaused => BindingError::AdmissionPaused,
-        crate::CoreError::InvalidRequest(detail) => BindingError::InvalidRequest(detail),
-        crate::CoreError::InvalidState(_) => BindingError::Conflict,
-        other => unavailable(other),
-    }
+    error.into()
 }
