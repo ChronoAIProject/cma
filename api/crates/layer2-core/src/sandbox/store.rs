@@ -167,6 +167,8 @@ pub enum SandboxStoreError {
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("active session capacity is unavailable")]
+    SessionCapacityUnavailable,
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]

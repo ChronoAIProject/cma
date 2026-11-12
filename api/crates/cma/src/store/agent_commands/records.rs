@@ -16,6 +16,16 @@ pub(in crate::store) fn document(
             failure.code = failure.code.legacy_code();
         })
     });
+    let capacity_failure = compatible.work.failure.as_mut().is_some_and(|failure| {
+        if failure.code
+            == layer2_core::sandbox::agent_io::CommandFailureCode::SessionCapacityUnavailable
+        {
+            failure.code = failure.code.legacy_code();
+            true
+        } else {
+            false
+        }
+    });
     let mut document = doc! {
         "_id": envelope.command_id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -34,6 +44,9 @@ pub(in crate::store) fn document(
             "model_budget_failure",
             record_bson(&reason).map_err(|_| CommandLedgerError::Corrupt)?,
         );
+    }
+    if capacity_failure {
+        document.insert("admission_capacity_failure", "session_capacity_unavailable");
     }
     if let Some(input) = &record.queued_input {
         document.insert(
@@ -90,6 +103,22 @@ pub(in crate::store) fn read(value: &Document) -> Result<AdmittedAgentCommand, C
             return Err(CommandLedgerError::Corrupt);
         }
         failure.code = CommandFailureCode::from_budget(reason);
+    }
+    if let Some(value) = value.get("admission_capacity_failure") {
+        use layer2_core::sandbox::agent_io::{AgentResponseStatus, CommandFailureCode};
+        let failure = record
+            .work
+            .failure
+            .as_mut()
+            .ok_or(CommandLedgerError::Corrupt)?;
+        if value.as_str() != Some("session_capacity_unavailable")
+            || record.status != AgentResponseStatus::Failed
+            || record.work.dispatch.is_some()
+            || failure.code != CommandFailureCode::ExecutionFailed
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        failure.code = CommandFailureCode::SessionCapacityUnavailable;
     }
     let expected = document(&record)?;
     if value.get("external_event_key") != expected.get("external_event_key")

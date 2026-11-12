@@ -27,6 +27,26 @@ async fn shared_agui_and_responses_command_refusal_preserves_operator_pause() {
 }
 
 #[tokio::test]
+async fn shared_agui_and_responses_session_capacity_refusal_is_safe_and_retryable() {
+    let response = crate::conversation::commands::admission_failure(CommandAdmissionError::Ledger(
+        CommandLedgerError::SessionCapacityUnavailable,
+    ));
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "60");
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["code"], "session_capacity_unavailable");
+    assert_eq!(
+        value["detail"],
+        layer2_core::admission::CapacityKind::ActiveSessions.guidance()
+    );
+    assert!(!value.to_string().contains("limit"));
+    assert!(!value.to_string().contains("count"));
+}
+
+#[tokio::test]
 async fn a_missing_predecessor_refuses_after_an_older_turn_without_creating_turn_zero() {
     let f = fixture(true).await;
     let task = tokio::spawn(f.router.clone().oneshot(request(
@@ -155,6 +175,11 @@ async fn committed_prebinding_failures_keep_typed_http_errors_and_receipt_header
             CommandFailureCode::BudgetUnavailable,
             StatusCode::PAYMENT_REQUIRED,
             "budget_unavailable",
+        ),
+        (
+            CommandFailureCode::SessionCapacityUnavailable,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "session_capacity_unavailable",
         ),
         (
             CommandFailureCode::ExecutionFailed,

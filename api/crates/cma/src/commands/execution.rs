@@ -185,6 +185,7 @@ pub(super) fn classify(error: AgentOperationError) -> CommandAttempt {
     // Errors after an unknown commit therefore only lead to reconciliation.
     match error {
         Budget(reason) => CommandAttempt::Reject(Failure::from_budget(reason)),
+        SessionCapacityUnavailable => CommandAttempt::Reject(Failure::SessionCapacityUnavailable),
         Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError::SetupRequired) => {
             CommandAttempt::Reject(Failure::CredentialSetupRequired)
         }
@@ -240,5 +241,18 @@ pub(super) fn authorization_error_kind(error: &ResourceCommandAuthorizationError
             "custody_unavailable"
         }
         ResourceCommandAuthorizationError::Resource(error) => command_access_error_kind(error),
+    }
+}
+
+#[cfg(test)]
+mod session_capacity_tests {
+    use super::*;
+
+    #[test]
+    fn session_capacity_refusal_is_terminal_before_runtime_dispatch() {
+        assert!(matches!(
+            classify(AgentOperationError::SessionCapacityUnavailable),
+            CommandAttempt::Reject(CommandFailureCode::SessionCapacityUnavailable)
+        ));
     }
 }

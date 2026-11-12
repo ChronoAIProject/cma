@@ -100,6 +100,8 @@ pub enum CommandLedgerError {
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("active session capacity is unavailable")]
+    SessionCapacityUnavailable,
     #[error("invalid command reservation")]
     Invalid,
     #[error("command authority or Agent is unavailable")]
@@ -125,6 +127,7 @@ impl CommandLedgerError {
         match self {
             Self::Budget(reason) => reason.code(),
             Self::AdmissionPaused => "admission_paused",
+            Self::SessionCapacityUnavailable => "session_capacity_unavailable",
             Self::Invalid => "invalid_agent_command",
             Self::NotFound => "agent_not_found",
             Self::IdempotencyConflict => "agent_command_key_conflict",

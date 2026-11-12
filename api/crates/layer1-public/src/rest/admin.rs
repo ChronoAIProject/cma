@@ -159,7 +159,9 @@ impl From<CoreError> for CollectionProblem {
                 Self::InvalidRequest
             }
             CoreError::InvalidState(_) => Self::Conflict,
-            CoreError::ModelBudgetWritesUnavailable
+            CoreError::AdmissionCeilingsWritesUnavailable
+            | CoreError::AdmissionCapacity(_)
+            | CoreError::ModelBudgetWritesUnavailable
             | CoreError::RuntimeUnavailable(_)
             | CoreError::RuntimeRefused(_)
             | CoreError::ServiceCatalogUnavailable(_)
