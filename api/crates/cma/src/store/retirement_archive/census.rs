@@ -68,7 +68,12 @@ pub(super) async fn selection(
             fields(&["record.metadata.origin_agent_id", "record.runtime_author_agent_id"], &closure.agents)
         ]},
         Policy::Budget => doc! {"$or":[
-            fields(&["record.agent_id", "record.hold.scope.agent_id"], &closure.agents),
+            // Full shapes were checked above. Only reservation families carry
+            // record-level ownership; independent accounting stays excluded.
+            {"$and":[
+                {"_id":{"$regex":r"\A(?:command|turn|request):"}},
+                fields(&["record.agent_id", "record.hold.scope.agent_id"], &closure.agents)
+            ]},
             // Request-turn ledgers and stop evidence have no record-level owner.
             // Known shapes prove <family>:<Agent ID>:<decimal turn>; generated
             // Agent IDs (agt_ + UUID simple) contain no colon. Compare complete
