@@ -21,7 +21,7 @@ import { Button } from '../ui/Button';
 import { publicCopy } from '../vocabulary/needs';
 import { refusalSentence } from '../vocabulary/errors';
 import type { PublicClient } from './client';
-import { admit, isUnsettledCommand } from './admission';
+import { admit, isSettledQuotaRefusal, isUnsettledCommand } from './admission';
 import { createIntent, forgetIntent, readIntent, writeIntent, type BrowserIntent } from './intent';
 import { Landing } from './Landing';
 import { Progress } from './Progress';
@@ -145,7 +145,10 @@ function Entry({
             } catch {
               setError(publicCopy.storageUnavailable);
             }
-          } else if (!isUnsettledCommand(cause)) forgetIntent(selected.id);
+          } else if (!isUnsettledCommand(cause)) {
+            forgetIntent(selected.id);
+            if (isSettledQuotaRefusal(cause)) setIntent(undefined);
+          }
         }
       } finally {
         setBusy(false);
