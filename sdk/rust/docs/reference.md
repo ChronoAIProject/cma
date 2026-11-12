@@ -22,6 +22,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `worktrees()` | `list`, `read` |
 | `agents()` | `list`, `read`, `create`, `input`, `steer`, `interrupt`, `answer_approval`, `stop`, `delete`, `events`, `transcript`, `usage`, `resources`, `models`, `settings`, `update_settings`, `skills`, `install_skill`, `access_requests`, `approve_access_request`, `deny_access_request`, `update_service_access` |
 | `agents()` answer deliveries | `describe_deliverable`, `answer_deliverables`, `read_answer_deliverable`, `download_answer_deliverable` |
+| `account().deletion()` | irreversible `request`, safe progress `status` |
 | `auth()` | `read_session`, anonymous `read_signup_options`, navigation-only `login_url`, `logout_url` |
 | `triggers()` | `list`, `read`, `create`, `save`, `delete`, `publish`, `retire`, `list_revisions`, `list_placements`, `create_placement`, `retire_placement`, `embed`, `stats` |
 | `launches()` | `create_or_resume`, `list`, `read`, `start`, `cancel`, `requirements`, `events`, `stream`, `create_connection`, `read_connection` |
@@ -150,6 +151,41 @@ intent and operation key. Preparation requires enabled server support and
 management authority. Reuse both after an uncertain response; never create a new
 key to retry. This reserves a new home after original retirement and does not
 recover the released home. Request Debug formatting omits the agent credential.
+
+## Account deletion
+
+`client.account().deletion().request(&key)` explicitly acknowledges irreversible
+CMA data deletion with `POST /api/v1/account/deletion` and the fixed body
+`{"acknowledge":"irreversible"}`. Retain the same caller-selected
+`IdempotencyKey` after an uncertain response. HTTP 202 returns a typed
+`AccountDeletionReceipt`, with closed status/step enums, timestamps and
+completed-step counts. Acceptance does not mean erasure has completed.
+While the access gate is active, only that owner's exact already-persisted key
+can recover the existing receipt; a new or different key receives
+`403 account_deletion_in_progress`.
+
+`client.account().deletion().status()` requires HTTP 200 and reads the safe
+progress receipt, including while the ordinary account data surfaces are gated.
+Errors such as `account_deletion_not_found` remain `Error::Api`; a failed read
+never implies completion. The writer defaults off, and the initial acceptance
+release retains `running` / `inventory` until later cascade PRs ship.
+The session capability enum recognizes `DeleteOwnAccount` when the server
+advertises `delete_own_account`. CMA deletion does not delete the external
+identity account.
+
+```rust,no_run
+use cma_sdk::{Client, IdempotencyKey};
+
+# async fn run() -> cma_sdk::Result<()> {
+let client = Client::builder("https://cma.example.com")?.build()?;
+// Persist the caller-selected key before acknowledging irreversible deletion.
+let key = IdempotencyKey::new("account-deletion-confirmation-1")?;
+let accepted = client.account().deletion().request(&key).await?;
+let progress = client.account().deletion().status().await?;
+println!("{}: {:?}", accepted.id, progress.status);
+# Ok(())
+# }
+```
 
 ## CMA Event Gateway
 

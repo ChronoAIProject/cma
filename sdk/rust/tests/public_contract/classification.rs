@@ -9,11 +9,24 @@ pub enum Classification {
     BodySize,
     QueryShape,
     BinaryHeaders,
+    FixedBody,
 }
 
 // Exact backend-invalid cases not claimed as typed HTTP replay. Each is checked
 // against its source shape or the SDK's real preflight, then its shared error is decoded.
 pub const LOCAL_CASES: &[(&str, Classification)] = &[
+    ("account-deletion-missing-key", Classification::Local),
+    ("account-deletion-invalid-key", Classification::Local),
+    ("account-deletion-invalid-json", Classification::RawJson),
+    (
+        "account-deletion-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "account-deletion-acknowledgement-required",
+        Classification::FixedBody,
+    ),
+    ("account-deletion-unknown-field", Classification::FixedBody),
     ("desktop-capability-owner-400", Classification::QueryShape),
     ("deliverables-owner-invalid-revision", Classification::Local),
     (
@@ -1119,6 +1132,14 @@ pub fn classify(case: &Case) -> Option<Classification> {
 
 pub fn assert_unrepresentable(case: &Case, class: Classification) {
     match class {
+        Classification::FixedBody => {
+            assert_eq!(case.operation, "POST /api/v1/account/deletion");
+            assert_ne!(
+                case.request.body,
+                Some(serde_json::json!({"acknowledge":"irreversible"}))
+            );
+            assert!(case.response.status >= 400);
+        }
         Classification::BinaryHeaders => {
             let headers = &case.request.headers;
             let invalid = match case.id.as_str() {

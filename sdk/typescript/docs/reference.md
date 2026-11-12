@@ -26,39 +26,9 @@ metadata read. See [Answer deliverables](agents.md#answer-deliverables).
 | `responsesV2`                                           | `readCapabilities`, `create`, `createForAgent`, `read`, `readEventContext`, `readConversation`, `listConversationItems`, `replay`, `observeControls`, `submitControl`, `interruptWithInput`, `readCommand`, `observeQueuedCancellation`, `cancelQueuedResponse`, `listQueuedInputs`, `editQueuedInput`                        |
 | `agentEventsV2`                                         | `readTransportEligibility`, `snapshot`, `events` with acknowledgement after consumer success                                                                                                                                                                                                                                  |
 | `responses`                                             | `createConversation`, `readConversation`, `listConversationItems`, `create`, `read`, `delete`, `cancel`                                                                                                                                                                                                                       |
+| `account.deletion`                                      | `request({ idempotencyKey })`, `status`                                                                                                                                                                                                                                                                                       |
 | `auth`                                                  | `readSession`, `readSignupOptions`, `loginUrl`, `logoutUrl`                                                                                                                                                                                                                                                                   |
 | `admin`                                                 | `listSandboxes`, `readSandbox`, `sandboxEvents`, `retireSandbox`, `listProfiles`, `retireProfile`, `readSettings`, `replaceSettings`, `patchSettings`, `resetSettings`, `pauseTriggers`, `resumeTriggers`, `readRuntimeInventory`, `listWarmPools`, `configureWarmPool`, `resizeWarmPool`, `listActivity`                     |
-
-## Account deletion
-
-`client.account.deletion.request({ idempotencyKey })` explicitly acknowledges
-irreversible deletion of the human owner's CMA data and sends
-`POST /api/v1/account/deletion` with `{"acknowledge":"irreversible"}`. Keep the
-same caller-selected key when the response is uncertain. The method accepts
-only HTTP 202 and returns an `AccountDeletionReceipt`; acceptance is separate
-from completed erasure.
-
-`client.account.deletion.status()` reads the current receipt with HTTP 200.
-Its closed `status` and `step` values and completed-step counts are validated;
-a failed status read throws `ApiError` and never implies completion. The
-initial writer release leaves accepted requests at `running` / `inventory`.
-The writer defaults off and reports `account_deletion_unavailable` until an
-operator enables it after deploying the access-gate reader floor. The session
-capability parser recognizes `delete_own_account` when the server advertises it.
-CMA deletion does not delete the external identity account.
-
-```ts
-import { createClient, type AccountDeletionReceipt } from '@chronoai/cma-sdk';
-
-const client = createClient({ baseUrl: 'https://cma.example.com', cookies: true });
-// Persist this caller-selected key before acknowledging irreversible deletion.
-const idempotencyKey = 'account-deletion-confirmation-1';
-const accepted: AccountDeletionReceipt = await client.account.deletion.request({
-  idempotencyKey,
-});
-const progress: AccountDeletionReceipt = await client.account.deletion.status();
-console.log(accepted.id, progress.status, progress.step);
-```
 
 `readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
 `readOpenApi(options?)` reads the generated `/openapi.json` anonymously, preserving
@@ -152,6 +122,40 @@ Agent `resources` keeps unavailable numeric readings as `null`; missing
 `context_window` in usage is distinct from a reported zero. Event and transcript
 DTOs are discriminated unions. Durable histories do not manufacture live
 reasoning or replace the public conversation stream.
+
+## Account deletion
+
+`client.account.deletion.request({ idempotencyKey })` explicitly acknowledges
+irreversible deletion of the human owner's CMA data and sends
+`POST /api/v1/account/deletion` with `{"acknowledge":"irreversible"}`. Keep the
+same caller-selected key when the response is uncertain. The method accepts
+only HTTP 202 and returns an `AccountDeletionReceipt`; acceptance is separate
+from completed erasure.
+While the access gate is active, only that owner's exact already-persisted key
+can recover the existing receipt; a new or different key receives
+`403 account_deletion_in_progress`.
+
+`client.account.deletion.status()` reads the current receipt with HTTP 200.
+Its closed `status` and `step` values and completed-step counts are validated;
+a failed status read throws `ApiError` and never implies completion. The
+initial writer release leaves accepted requests at `running` / `inventory`.
+The writer defaults off and reports `account_deletion_unavailable` until an
+operator enables it after deploying the access-gate reader floor. The session
+capability parser recognizes `delete_own_account` when the server advertises it.
+CMA deletion does not delete the external identity account.
+
+```ts
+import { createClient, type AccountDeletionReceipt } from '@chronoai/cma-sdk';
+
+const client = createClient({ baseUrl: 'https://cma.example.com', cookies: true });
+// Persist this caller-selected key before acknowledging irreversible deletion.
+const idempotencyKey = 'account-deletion-confirmation-1';
+const accepted: AccountDeletionReceipt = await client.account.deletion.request({
+  idempotencyKey,
+});
+const progress: AccountDeletionReceipt = await client.account.deletion.status();
+console.log(accepted.id, progress.status, progress.step);
+```
 
 ## Trigger Authoring
 
