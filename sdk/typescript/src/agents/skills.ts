@@ -28,7 +28,7 @@ const agentSkills = object({
   can_install: boolean,
   unavailable_reason: optional(text),
 });
-/** Runtime-confirmed skill inventory and the current installation capability. */
+/** Runtime-confirmed inventory. Pending/failed upgrades retain the previous effective version. */
 export type AgentSkills = Output<typeof agentSkills>;
 
 const installRequest = object({
@@ -55,7 +55,7 @@ const installRequest = object({
     return version;
   },
 });
-/** Add one explicitly selected Ornn skill at an exact version. */
+/** Install or upgrade an Ornn skill to an exact version on a capable idle Agent. */
 export type InstallAgentSkillRequest = Output<typeof installRequest>;
 
 function installAgentSkillRequest(value: unknown): InstallAgentSkillRequest {

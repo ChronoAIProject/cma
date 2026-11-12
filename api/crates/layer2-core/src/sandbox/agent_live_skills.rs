@@ -1,4 +1,4 @@
-//! Durable additive skills; profile material remains immutable.
+//! Durable skill installation history; profile material remains immutable.
 use super::{
     Agent, AgentLogKind, AgentOperationError, AgentOperationService, AgentStatus, AgentWorkState,
     AgentWorkStep, ResolvedAgentSkill, SandboxModelError,
@@ -6,6 +6,10 @@ use super::{
 use crate::profiles::SkillRef;
 use crate::{now_rfc3339, AgentId, Caller};
 use serde::{Deserialize, Serialize};
+
+const MAX_SKILLS: usize = 32;
+// At most 512 KiB of bounded installation metadata, retained in the hot Agent record.
+const MAX_ATTEMPTS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +22,12 @@ pub enum AgentSkillInstallStatus {
 #[serde(deny_unknown_fields)]
 pub struct AgentSkillInstallation {
     pub reference: SkillRef,
+    /// Safe preparation retries, retained even when lifecycle work changes step.
+    #[serde(default, skip_serializing_if = "zero_retries")]
+    pub preparation_retries: u32,
+    /// Exact effective installation being replaced; absent on legacy additive work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<ResolvedAgentSkill>,
     pub status: AgentSkillInstallStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<ResolvedAgentSkill>,
@@ -28,11 +38,27 @@ impl AgentSkillInstallation {
     pub fn new(reference: SkillRef) -> Self {
         Self {
             reference,
+            preparation_retries: 0,
+            previous: None,
             status: AgentSkillInstallStatus::Pending,
             material: None,
             error: None,
         }
     }
+}
+fn zero_retries(value: &u32) -> bool {
+    *value == 0
+}
+fn preparation_retry(old: &AgentSkillInstallation, new: &AgentSkillInstallation) -> bool {
+    if old.previous.is_none()
+        || old.material.is_some()
+        || new.preparation_retries >= layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS
+    {
+        return false;
+    }
+    let mut expected = old.clone();
+    expected.preparation_retries = old.preparation_retries.saturating_add(1);
+    expected == *new
 }
 fn valid_reference(reference: &SkillRef) -> bool {
     let id = reference.id.as_str();
@@ -55,13 +81,28 @@ pub(super) fn validate_installations(
     work: &AgentWorkState,
     profile: &[SkillRef],
 ) -> Result<(), SandboxModelError> {
-    let valid = work.live_skills.len() + profile.len() <= 32
+    let valid = skill_count(work, profile) <= MAX_SKILLS
+        && work.live_skills.len() <= MAX_ATTEMPTS
         && work.live_skills.iter().enumerate().all(|(index, item)| {
+            let previous = effective_before(work, &item.reference.id, index);
             valid_reference(&item.reference)
-                && !profile.iter().any(|r| r.id == item.reference.id)
-                && !work.live_skills[..index]
-                    .iter()
-                    .any(|r| r.reference.id == item.reference.id)
+                && item.preparation_retries
+                    < layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS
+                && (item.previous.is_some() || item.preparation_retries == 0)
+                && match &item.previous {
+                    Some(expected) => {
+                        previous == Some(expected)
+                            && expected.validate().is_ok()
+                            && item.reference.source == expected.source
+                            && item.reference.version.as_deref() != Some(expected.version.as_str())
+                    }
+                    None => {
+                        !profile.iter().any(|r| r.id == item.reference.id)
+                            && !work.live_skills[..index]
+                                .iter()
+                                .any(|r| r.reference.id == item.reference.id)
+                    }
+                }
                 && item.material.as_ref().is_none_or(|m| {
                     m.validate().is_ok()
                         && m.id == item.reference.id
@@ -92,6 +133,67 @@ pub(super) fn validate_installations(
         Err(SandboxModelError::invalid_value("agent.work.live_skills"))
     }
 }
+/// Latest runtime-confirmed material; failed attempts never replace it.
+pub fn effective<'a>(
+    work: &'a AgentWorkState,
+    id: &crate::SkillId,
+) -> Option<&'a ResolvedAgentSkill> {
+    effective_before(work, id, work.live_skills.len())
+}
+fn effective_before<'a>(
+    work: &'a AgentWorkState,
+    id: &crate::SkillId,
+    end: usize,
+) -> Option<&'a ResolvedAgentSkill> {
+    work.live_skills[..end]
+        .iter()
+        .rev()
+        .find(|item| item.reference.id == *id && item.status == AgentSkillInstallStatus::Installed)
+        .and_then(|item| item.material.as_ref())
+        .or_else(|| work.resolved_skills.as_ref()?.iter().find(|m| m.id == *id))
+}
+fn skill_count(work: &AgentWorkState, profile: &[SkillRef]) -> usize {
+    profile
+        .iter()
+        .map(|r| &r.id)
+        .chain(work.live_skills.iter().map(|r| &r.reference.id))
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+}
+/// Capacity for a new identifier and for replacing an installed identifier.
+/// Activity, ownership and observed runtime support are checked separately.
+pub fn capacity(agent: &Agent) -> (bool, bool) {
+    if agent.work.live_skills.len() >= MAX_ATTEMPTS {
+        return (false, false);
+    }
+    let installed = agent
+        .work
+        .live_skills
+        .iter()
+        .filter(|item| item.status == AgentSkillInstallStatus::Installed)
+        .filter_map(|item| item.material.as_ref())
+        .chain(agent.work.resolved_skills.iter().flatten());
+    let upgrade = installed.into_iter().any(|material| {
+        valid_reference(&SkillRef {
+            source: material.source,
+            id: material.id.clone(),
+            version: Some(material.version.clone()),
+        })
+    });
+    (
+        skill_count(&agent.work, &agent.profile.content.skills) < MAX_SKILLS,
+        upgrade,
+    )
+}
+
+fn intent(agent: &Agent, reference: SkillRef) -> AgentSkillInstallation {
+    let previous = effective(&agent.work, &reference.id).cloned();
+    AgentSkillInstallation {
+        previous,
+        ..AgentSkillInstallation::new(reference)
+    }
+}
+
 pub fn idle(agent: &Agent) -> bool {
     agent.status == AgentStatus::Ready
         && agent.work.step == AgentWorkStep::None
@@ -127,7 +229,7 @@ pub fn is_install_admission(current: &Agent, next: &Agent) -> bool {
     };
     if !idle(current)
         || !valid_reference(&item.reference)
-        || *item != AgentSkillInstallation::new(item.reference.clone())
+        || *item != intent(current, item.reference.clone())
         || next.work.live_skills.len() != current.work.live_skills.len() + 1
         || !next.work.live_skills.starts_with(&current.work.live_skills)
         || validate_installations(&next.work, &next.profile.content.skills).is_err()
@@ -143,6 +245,23 @@ pub fn is_install_admission(current: &Agent, next: &Agent) -> bool {
 }
 
 impl AgentOperationService {
+    /// Default-closed admission policy. Existing work and exact accepted retries remain readable.
+    pub fn with_skill_upgrades_enabled(&self, enabled: bool) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            skill_upgrades_enabled: enabled,
+            instruction_policy: self.instruction_policy.clone(),
+            settings_authority: self.settings_authority.clone(),
+            command_claim: self.command_claim.clone(),
+            execution_authority: self.execution_authority.clone(),
+            trigger_authority: self.trigger_authority.clone(),
+            connections: self.connections.clone(),
+            store: self.store.clone(),
+            runtimes: self.runtimes.clone(),
+        })
+    }
+    pub fn skill_upgrades_enabled(&self) -> bool {
+        self.skill_upgrades_enabled
+    }
     pub async fn install_skill(
         &self,
         caller: &Caller,
@@ -157,84 +276,76 @@ impl AgentOperationService {
         }
         for _ in 0..super::agent_operation_service::MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
-            if let Some(existing) = current
-                .work
-                .live_skills
-                .iter()
-                .find(|i| i.reference.id == reference.id)
-            {
-                return if existing.reference == reference {
-                    Ok(current)
-                } else if existing.status == AgentSkillInstallStatus::Pending {
-                    Err(AgentOperationError::Conflict)
-                } else {
-                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-                        id: reference.id.as_str().into(),
-                        installed: existing
-                            .material
-                            .as_ref()
-                            .map(|material| material.version.clone())
-                            .or_else(|| existing.reference.version.clone())
-                            .unwrap_or_default(),
-                        requested: reference.version.clone().unwrap_or_default(),
-                    })
-                };
+            if current.work.live_skills.last().is_some_and(|item| {
+                item.status == AgentSkillInstallStatus::Pending && item.reference == reference
+            }) {
+                return Ok(current);
             }
-            if let Some(existing) = current
-                .work
-                .resolved_skills
-                .as_ref()
-                .and_then(|skills| skills.iter().find(|s| s.id == reference.id))
+            let previous = effective(&current.work, &reference.id);
+            if previous.is_some_and(|m| Some(&m.version) != reference.version.as_ref())
+                && !self.skill_upgrades_enabled
             {
-                return if reference.version.as_ref() == Some(&existing.version) {
-                    Ok(current)
-                } else {
-                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-                        id: reference.id.as_str().into(),
-                        installed: existing.version.clone(),
-                        requested: reference.version.clone().unwrap_or_default(),
-                    })
-                };
-            }
-            if let Some(existing) = current
-                .profile
-                .content
-                .skills
-                .iter()
-                .find(|skill| skill.id == reference.id)
-            {
-                return if existing.version == reference.version {
-                    Err(AgentOperationError::InvalidRequest(
-                        "skill already selected or skill limit reached".into(),
-                    ))
-                } else {
-                    Err(AgentOperationError::SkillVersionUpgradeUnsupported {
-                        id: reference.id.as_str().into(),
-                        installed: existing.version.clone().unwrap_or_default(),
-                        requested: reference.version.clone().unwrap_or_default(),
-                    })
-                };
+                return Err(AgentOperationError::SkillUpgradeDisabled);
             }
             if !idle(&current) {
                 return Err(AgentOperationError::StatusConflict {
                     status: current.status,
                 });
             }
-            if current.work.live_skills.len() + current.profile.content.skills.len() >= 32
-                || current
+            if previous.is_some_and(|m| {
+                m.source == reference.source && Some(&m.version) == reference.version.as_ref()
+            }) {
+                return Ok(current);
+            }
+            if previous.is_none() {
+                // Failed additive work retains its original per-skill identity.
+                // It cannot be silently reinterpreted as a fresh installation.
+                if let Some(existing) = current
+                    .work
+                    .live_skills
+                    .iter()
+                    .find(|i| i.reference.id == reference.id)
+                {
+                    return if existing.reference == reference {
+                        Ok(current)
+                    } else {
+                        Err(AgentOperationError::InvalidRequest(
+                            "previous skill installation failed; no confirmed version to upgrade"
+                                .into(),
+                        ))
+                    };
+                }
+                if current
                     .profile
                     .content
                     .skills
                     .iter()
                     .any(|s| s.id == reference.id)
-            {
-                return Err(AgentOperationError::InvalidRequest(
-                    "skill already selected or skill limit reached".into(),
-                ));
+                {
+                    return Err(AgentOperationError::InvalidRequest(
+                        "previous skill material is unavailable".into(),
+                    ));
+                }
+                if skill_count(&current.work, &current.profile.content.skills) >= MAX_SKILLS {
+                    return Err(AgentOperationError::InvalidRequest(
+                        "skill limit reached".into(),
+                    ));
+                }
+            }
+            if current.work.live_skills.len() >= MAX_ATTEMPTS {
+                return Err(AgentOperationError::SkillHistoryFull);
             }
             self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;
-            if queues {
+            // A ready child can precede the parent's final active publication.
+            // Skill stores only admit an active parent; do not spin on a
+            // deterministic store refusal and misreport it as an operation lock.
+            if queues
+                || !matches!(
+                    parent.status,
+                    super::SandboxStatus::Active | super::SandboxStatus::CredentialRotating
+                )
+            {
                 return Err(AgentOperationError::StatusConflict {
                     status: current.status,
                 });
@@ -243,7 +354,7 @@ impl AgentOperationService {
             let mut next = current.clone();
             next.work
                 .live_skills
-                .push(AgentSkillInstallation::new(reference.clone()));
+                .push(intent(&current, reference.clone()));
             next.work.schedule(AgentWorkStep::InstallSkill, at.clone());
             let logs = vec![AgentLogKind::SkillInstallationChanged {
                 skill_id: reference.id.as_str().into(),
@@ -258,7 +369,11 @@ impl AgentOperationService {
                 Err(error) => return Err(error),
             }
         }
-        Err(AgentOperationError::Conflict)
+        // Revision contention does not prove that another operation owns this
+        // Agent. Keep the bounded retry, but do not project it as a busy Agent.
+        Err(AgentOperationError::Unavailable(
+            "skill admission could not commit after concurrent changes; retry the request".into(),
+        ))
     }
 }
 
@@ -284,6 +399,7 @@ pub fn validate_install_work(
     let new = next.work.live_skills.last().ok_or(Error::Conflict)?;
     if old.status != AgentSkillInstallStatus::Pending
         || old.reference != new.reference
+        || old.previous != new.previous
         || current.work.live_skills.len() != next.work.live_skills.len()
         || current.work.live_skills[..current.work.live_skills.len() - 1]
             != next.work.live_skills[..next.work.live_skills.len() - 1]
@@ -303,7 +419,7 @@ pub fn validate_install_work(
                 .expect("present")
                 .material = new.material.clone();
         }
-        AgentSkillInstallStatus::Pending if old == new => {
+        AgentSkillInstallStatus::Pending if old == new || preparation_retry(old, new) => {
             if (!mutation.agent_logs.is_empty()
                 && !super::store::agent_cleanup_capacity_retry(current, mutation))
                 || next.work.ready_at <= mutation.appended_at
@@ -312,11 +428,18 @@ pub fn validate_install_work(
             }
             expected
                 .work
+                .live_skills
+                .last_mut()
+                .expect("present")
+                .preparation_retries = new.preparation_retries;
+            expected
+                .work
                 .retry(&mutation.holder, mutation.fence, next.work.ready_at.clone())
                 .map_err(|_| Error::Conflict)?;
         }
         AgentSkillInstallStatus::Installed | AgentSkillInstallStatus::Failed => {
             if old.material != new.material
+                || old.preparation_retries != new.preparation_retries
                 || (new.status == AgentSkillInstallStatus::Installed && old.material.is_none())
                 || mutation.agent_logs
                     != vec![AgentLogKind::SkillInstallationChanged {
