@@ -338,7 +338,7 @@ impl Command {
         deferred: bool,
     ) {
         tracing::info!(target: "mongo_diagnostic", parent: None,
-            event, pool = self.pool, hold_hash = %self.hold_hash, route = %self.context.route, request_hash = %self.context.request_hash,
+            event, pool = self.pool, hold_hash = %self.hold_hash, route = self.context.route.as_ref(), request_hash = %self.context.request_hash,
             worker = self.context.worker, phase = self.context.phase,
             command = self.command, collection = self.collection,
             duration_us = micros(duration), docs_returned = docs.unwrap_or(0), docs_returned_known = docs.is_some(), session = self.session,
