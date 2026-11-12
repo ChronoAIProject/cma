@@ -177,6 +177,8 @@ data:
   CMAEG_MEDIA_CACHE_BYTES: "33554432"
   CMAEG_MEDIA_RATE_PER_MINUTE: "60"
   CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR: "268435456"
+  # Downloads require shared record CAS before fetch and a fresh authority read.
+  # Retain claims through this TTL; drain older writers before native activation.
   CMAEG_MEDIA_LINK_TTL_SECONDS: "120"
   CMAEG_MEDIA_PREPARE_BUDGET_MS: "15000"
   CMAEG_MEDIA_FFMPEG_DIR: "/opt/ffmpeg/bin"

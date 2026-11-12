@@ -2304,17 +2304,20 @@ path, the query and every other header are never read, because they reach
 load-balancer and access logs, so a link in a query string is ignored and the
 request is refused like one without a link. The request body must be empty.
 
-**Single use.** A link is redeemed on the replica that serves it before any
-other check, so a refused request spends it too. A second request with the
-same link on that replica is refused. The redemption set is per replica and is
-kept for the link's whole life, but it is not shared: during a rollout surge,
-or after a restart, a link can be redeemed once more on another replica within
-its short lifetime. Single use is therefore exact per replica and best effort
-across replicas.
+**Single use.** Before authority checks or source fetch, the gateway atomically
+creates an encrypted redemption record in the shared record store. Its identity
+is derived from the sealed link's random ID and it is retained through that
+link's expiry. Exactly one replica can establish the claim. A refused request
+spends the link too; later requests return `410 media_link_used`, including after
+replica changes and restarts. An unavailable store or an uncertain write
+acknowledgement returns `503 media_redemption_unavailable` without fetching or
+releasing bytes. A local cache only accelerates refusals; it cannot authorize a
+fetch. Rollout must drain readers that only enforce process-local redemption
+before enabling native downloads; a mixed fleet cannot enforce this contract.
 
 **Re-validation.** Every request checks, in this order, that the link is
-authentic and unexpired; that a fresh authority read establishes that the channel
-still exists with the same record;
+authentic and unexpired; that its shared redemption claim succeeds; that a fresh
+authority read establishes that the channel still exists with the same record;
 that its binding, provider and agent key are the ones the link was minted for
 (rotating the agent key revokes every outstanding link); that the binding may
 still download (it is autonomous, and its provider is still in
@@ -2366,7 +2369,8 @@ Refusals are problems, sent before any body byte:
 | 503 | `media_unavailable` | `media_disabled` | Inbound media is disabled. |
 | 400 | `invalid_request` | `media_link_invalid` | Not exactly one `Authorization: Bearer` header, or a malformed, tampered or foreign link. |
 | 410 | `media_unavailable` | `media_link_expired` | The link's lifetime has passed. |
-| 410 | `media_unavailable` | `media_link_used` | The link was already redeemed on this replica. |
+| 410 | `media_unavailable` | `media_link_used` | The link was already redeemed in the shared store (or refused locally). |
+| 503 | `media_unavailable` | `media_redemption_unavailable` | The shared claim could not be established; no source fetch or bytes are released. |
 | 403 | `forbidden` | `media_link_revoked` | The channel was deleted, or its record, binding, agent key, download permission or attachment source changed. |
 | 503 | `media_unavailable` | `event_context_unverified` | The provider's activity cannot be read or no longer matches the sealed digest. |
 | 404 | `attachment_not_found` | `attachment_not_found` | The event has no attachment at the link's index, or the source no longer has it. |

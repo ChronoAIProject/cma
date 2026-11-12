@@ -23,6 +23,7 @@ pub use thread_history::{DiscordThreadHistory, ThreadHistory, ThreadHistoryMessa
 pub use threads::{DiscordThreads, TelegramTopics};
 mod download_access;
 mod media_links;
+mod media_redemption;
 pub(crate) mod message_effects;
 pub(crate) mod reply_targets;
 pub(crate) mod state;

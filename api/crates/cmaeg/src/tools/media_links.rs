@@ -1,5 +1,6 @@
 //! Single-use media links: minting for autonomous tool-bearing bindings, the
-//! per-pod redemption set, and the stream slots every download holds.
+//! local refusal cache, and the stream slots every download holds. Shared
+//! durable redemption, not this cache, authorizes a fetch.
 //!
 //! A link is a standalone bearer seen by the model provider and stored by CMA
 //! as a tool-call title, so it must be worthless once redeemed or expired.
@@ -28,8 +29,9 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 /// Links all channels together may mint per minute.
 pub(crate) const GLOBAL_LINK_MINTS_PER_MINUTE: u32 = 600;
 /// Live links are bounded by the global mint rate times the longest TTL, so
-/// a capacity above that bound never evicts a jti before its link expires:
-/// single use is exact for the pod's lifetime. At about 128 bytes an entry
+/// a capacity above that bound avoids evicting a jti before its link expires.
+/// This is only a fast refusal cache; the shared record enforces single use.
+/// At about 128 bytes an entry
 /// the full set stays near 2 MiB.
 const REDEEMED_CAPACITY: u64 = 16_384;
 const _: () = assert!(
@@ -104,8 +106,8 @@ impl MediaDownloads {
         self
     }
 
-    /// Mark `jti` redeemed; true only the first time on this pod. A jti of
-    /// the wrong shape never reaches here, because opening the link refuses it.
+    /// Local refusal optimization, never fetch authority. A fresh entry must
+    /// still acquire the shared durable claim before any bytes are fetched.
     pub(super) fn redeem(&self, jti: &str) -> bool {
         let Some(key) = hex_bytes::<JTI_BYTES>(jti) else {
             return false;
