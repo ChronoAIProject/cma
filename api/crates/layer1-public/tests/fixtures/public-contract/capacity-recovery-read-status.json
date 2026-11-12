@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "capacity-read-status-owner",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery",
+      "scenario": "capacity_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "disposition": "evidence_required",
+          "phase": null,
+          "attempts": 0,
+          "retry_at": null,
+          "operation_key": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-read-status-foreign",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery",
+      "scenario": "capacity_contract_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 404,
+          "detail": "Agent recovery is unavailable.",
+          "code": "capacity_recovery_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-read-status-missing",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery",
+      "scenario": "capacity_contract_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_absent/capacity-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 404,
+          "detail": "Agent recovery is unavailable.",
+          "code": "capacity_recovery_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-read-status-anonymous",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery",
+      "scenario": "capacity_contract_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-read-status-unavailable",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery",
+      "scenario": "capacity_contract_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 503,
+          "detail": "Retry the unchanged original request to reconcile its outcome.",
+          "code": "capacity_recovery_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "capacity-read-status-conflict",
+      "operation": "GET /api/v1/agents/{id}/capacity-recovery",
+      "scenario": "capacity_contract_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/capacity-recovery",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/capacity-recovery",
+          "title": "capacity recovery",
+          "status": 409,
+          "detail": "Current recovery prerequisites do not permit this operation.",
+          "code": "capacity_recovery_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

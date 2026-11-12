@@ -114,6 +114,11 @@ impl Bridge {
                 locator,
                 decision,
             } => {
+                if self.permission_state.is_some() {
+                    return self
+                        .bounded_permission_answer(&id, locator.as_ref(), &session, decision)
+                        .await;
+                }
                 let restored = match locator.as_ref() {
                     Some(locator) => Some(blocked_from_locator(&id, locator, &session)?),
                     None => None,
@@ -177,7 +182,9 @@ impl Bridge {
             "sessionId": session,
             "prompt": content,
         });
-        let recoverable = prompt_id.is_some();
+        let recoverable =
+            prompt_id.is_some() || self.bounded_raw_output || self.json_pools.is_some();
+        let bounded_permissions = self.permission_state.is_some();
         let terminal_identity = prompt_id.clone();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {
@@ -197,7 +204,7 @@ impl Bridge {
                         // The runtime still owns this identified prompt when
                         // its API attachment closes. Connection recovery must
                         // observe its original result, never invent a failure.
-                        Err(_) if recoverable => None,
+                        Err(_) if recoverable || bounded_permissions => None,
                         Err(_) => Some(scoped_turn_outcome(
                             Outcome::Failed {
                                 message: "agent stopped answering before the turn finished".into(),
@@ -208,7 +215,7 @@ impl Bridge {
                         )),
                     };
                     if let Some(update) = update {
-                        updates.send(update);
+                        updates.send(update).await;
                     }
                 });
                 Ok(())
@@ -216,14 +223,16 @@ impl Bridge {
             Err(error) => {
                 let previous = self.owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
                 debug_assert!(previous > 0, "failed prompt releases its waiter");
-                updates.send(scoped_turn_outcome(
-                    Outcome::Failed {
-                        message: format!("prompt could not be sent to the agent: {error}"),
-                        capability: None,
-                    },
-                    false,
-                    terminal_identity,
-                ));
+                updates
+                    .send(scoped_turn_outcome(
+                        Outcome::Failed {
+                            message: format!("prompt could not be sent to the agent: {error}"),
+                            capability: None,
+                        },
+                        false,
+                        terminal_identity,
+                    ))
+                    .await;
                 Err(error)
             }
         }
@@ -281,13 +290,25 @@ pub(super) fn scoped_turn_outcome(
     }
 }
 
-pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
+#[cfg(test)]
+pub(super) fn turn_outcome(frame: impl std::borrow::Borrow<serde_json::Value>) -> Outcome {
+    turn_outcome_with_policy(frame, false)
+}
+
+pub(super) fn turn_outcome_with_policy(
+    frame: impl std::borrow::Borrow<serde_json::Value>,
+    bounded_error_json: bool,
+) -> Outcome {
+    let frame = frame.borrow();
     if let Some(error) = frame.get("error") {
         let message = error
             .get("message")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("agent refused the prompt without saying why")
             .to_string();
+        if let Some(failure) = super::acp_credit_failure::classify(&message, bounded_error_json) {
+            return failure;
+        }
         return Outcome::Failed {
             message,
             capability: error
@@ -307,6 +328,15 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
         if !failure.is_null()
             && failure.get("severity").and_then(serde_json::Value::as_str) != Some("warning")
         {
+            if let Some(failure) = failure
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|message| {
+                    super::acp_credit_failure::classify(message, bounded_error_json)
+                })
+            {
+                return failure;
+            }
             return Outcome::Failed {
                 message: failure
                     .get("title")
@@ -318,7 +348,7 @@ pub(super) fn turn_outcome(frame: serde_json::Value) -> Outcome {
             };
         }
     }
-    match serde_json::from_value::<PromptResponse>(result.clone()) {
+    match super::runtime_decode::decode::<PromptResponse>(result, bounded_error_json) {
         Ok(response) => Outcome::Ended(response),
         Err(error) => {
             tracing::warn!(%error, "turn ended in a newer ACP shape");

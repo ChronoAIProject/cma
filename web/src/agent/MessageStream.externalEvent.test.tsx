@@ -10,6 +10,8 @@ const reference = `cmaeg1.ev.1.${'sealed_event-reference_'.repeat(150)}`;
 const request = '我正在尝试从telegram上和你对话，你有什么功能';
 const input = `${request}\n\nevent_ref: ${reference}`;
 const timestamp = '2026-10-30T00:00:00Z';
+const verified =
+  'cma_verified_sender: {"v":1,"source_kind":"native_lark","platform":"feishu","actor_id":"ou_one","actor_kind":"human","conversation_kind":"private","human_sender":true}';
 
 function emptyConversation() {
   return conversationFromTranscript({ agentId: 'agent', throughSeq: 0, turns: [] });
@@ -69,6 +71,21 @@ it.each(sources)('hides and excludes the event reference from copies of %s', asy
   await actor.click(screen.getByRole('button', { name: 'Copy content' }));
   expect(copy).toHaveBeenCalledWith(request);
   expect(conversation.messages[0]?.content).toBe(input);
+});
+
+it('keeps the verified first line visible and copyable while hiding the event reference', async () => {
+  const actor = userEvent.setup();
+  const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  const { container } = render(
+    <MessageStream
+      conversation={durableConversation(`${verified}\n${input}`)}
+      onApproval={vi.fn()}
+    />,
+  );
+  expect(container).toHaveTextContent(verified);
+  expect(container).not.toHaveTextContent(reference);
+  await actor.click(screen.getByRole('button', { name: 'Copy content' }));
+  expect(copy).toHaveBeenCalledWith(`${verified}\n${request}`);
 });
 
 it.each([

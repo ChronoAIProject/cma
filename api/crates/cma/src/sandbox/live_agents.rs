@@ -11,12 +11,16 @@ use layer3_adapter::{ConversationInputSender, ConversationUpdate};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
+mod budget;
+mod capacity;
 mod publication;
 mod recovery;
 mod updates;
 pub(crate) use recovery::{
     DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity, LiveAgentConnectionLossHandler,
 };
+#[cfg(test)]
+pub(crate) use updates::record_update as record_update_for_test;
 use updates::spawn_update_task;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -2,6 +2,11 @@
 
 use crate::store::agent_log_telemetry::ScanCaller;
 use std::collections::BTreeMap;
+mod checkpoint_receipt;
+mod integrity_write;
+pub(super) mod reconciliation;
+mod segmented;
+use integrity_write::{advance_agent, classify_aggregate_write, classify_log_write};
 
 use layer2_core::sandbox::store::{
     validate_lifecycle_mutation, SandboxLifecycleAgentMutation, SandboxLifecycleMutation,
@@ -11,29 +16,32 @@ use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{log_document, read_entry, scan_complete_log_with_session};
-use super::agent_log_integrity::{ensure_append_capacity, AppendCapacity, TransactionLogError};
+use super::agent_log::{read_entry, scan_complete_log_with_session};
+use super::agent_log_integrity::{prepare_append, AppendCapacity, TransactionLogError};
+use super::agent_log_segments::transaction_scope::TransactionScope;
 use super::agents::{agent_replacement_fields, read_agent};
-use super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
+use super::lifecycle_execution::LifecycleLoadError;
 use super::sandbox_events::{
     append_in_transaction, reconcile_event_with_snapshot_session, TransactionEventError,
 };
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
+    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 
 #[derive(Clone)]
-struct LifecycleReceipt {
-    sandbox: Sandbox,
-    agents: Vec<Agent>,
-    logs: Vec<AgentLogEntry>,
-    events: Vec<SandboxEvent>,
+pub(super) struct LifecycleReceipt {
+    pub(super) segmented: Vec<super::agent_log_segments::writer_commit::Recorded>,
+    pub(super) sandbox: Sandbox,
+    pub(super) agents: Vec<Agent>,
+    pub(super) logs: Vec<AgentLogEntry>,
+    pub(super) events: Vec<SandboxEvent>,
+    pub(super) checkpoint_children: Option<checkpoint_receipt::Children>,
 }
 
-enum ApplyError {
+#[derive(Debug)]
+pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
 }
@@ -84,14 +92,15 @@ pub(super) async fn commit_lifecycle(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
+        let scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => {
                 last_transient = Some(error.to_string());
                 continue;
             }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let applied = apply_lifecycle(store, &mutation, &mut session).await;
+            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+        };
+        let applied = apply_lifecycle(store, &mutation, scope).await;
         let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
@@ -122,7 +131,7 @@ pub(super) async fn commit_lifecycle(
                 let unresolved = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("sandbox lifecycle commit", async move {
-                    if reconcile_lifecycle(&store, &receipt, snapshot_time).await? {
+                    if reconciliation::after_unknown(&store, &receipt, snapshot_time).await? {
                         Ok(())
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
@@ -153,21 +162,56 @@ pub(super) async fn commit_lifecycle(
     Err(SandboxStoreError::Conflict)
 }
 
-async fn apply_lifecycle(
+pub(super) async fn apply_lifecycle(
     store: &MongoSandboxStore,
     mutation: &SandboxLifecycleMutation,
-    session: &mut mongodb::ClientSession,
+    mut scope: TransactionScope<'_>,
 ) -> Result<LifecycleReceipt, ApplyError> {
-    let current = load_sandbox(store, &mutation.guard.sandbox_id, session).await?;
-    let agents = load_sandbox_agents(store, &current.id, session).await?;
-    super::checkpoint_capture::validate_and_fence_begin(
-        store,
-        &current,
-        &mutation.sandbox,
-        &agents,
-        session,
-    )
-    .await?;
+    let current = load_sandbox(store, &mutation.guard.sandbox_id, &mut scope).await?;
+    let agents =
+        super::agent_capacity_recovery::lineage::agents(store, &current.id, &mut scope).await?;
+    let segmented = scope
+        .find_one(
+            &store.agents,
+            doc! {
+                "sandbox_id": current.id.as_str(),
+                "$or": [{"document_schema_version": {"$ne": DOCUMENT_SCHEMA_VERSION}},
+                    {"agent_log_format": {"$exists": true}}],
+            },
+        )
+        .await
+        .map_err(ApplyError::Driver)?
+        .is_some();
+    if segmented {
+        super::checkpoint_capture::validate_and_fence_begin_scoped(
+            store,
+            &current,
+            &mutation.sandbox,
+            &agents,
+            &mut scope,
+        )
+        .await?;
+    }
+    let checkpoint_children = if segmented {
+        checkpoint_receipt::capture(store, &current, &mutation.sandbox, &agents, &mut scope).await?
+    } else {
+        None
+    };
+    // Checkpoint proofs remain inside the exclusive scope. The completed
+    // checkpoint fence and all later domain writes still share this transaction;
+    // any later validation/write error is aborted by the root above.
+    let segment_receipts = segmented::publish(store, &agents, mutation, &mut scope).await?;
+    let session = scope.release();
+    if !segmented {
+        super::checkpoint_capture::validate_and_fence_begin(
+            store,
+            &current,
+            &mutation.sandbox,
+            &agents,
+            session,
+        )
+        .await?;
+    }
     let by_id = agents
         .iter()
         .map(|agent| (agent.id.clone(), agent))
@@ -181,28 +225,68 @@ async fn apply_lifecycle(
         })
         .collect::<Vec<_>>();
     let mut logs = Vec::new();
+    let mut encoded_logs = Vec::new();
+    let mut integrity_by_id = BTreeMap::new();
     for change in &mutation.agents {
         let stored = by_id
             .get(&change.agent.id)
             .copied()
             .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        if let Some(recorded) = segment_receipts.get(&stored.id) {
+            logs.extend(recorded.logs.iter().cloned());
+            continue;
+        }
+        let mut prior_entries = Vec::new();
         let complete = scan_complete_log_with_session(
             ScanCaller::CommandAdmission,
             store,
             &stored.id,
             stored.conversation.last_seq,
             session,
-            |_| Ok(()),
+            |entry| {
+                prior_entries.push(entry);
+                Ok(())
+            },
         )
         .await?;
+        let complete = complete.with_semantic(
+            crate::store::agent_log_integrity::audit_checkpoint(
+                store,
+                stored,
+                &prior_entries,
+                session,
+            )
+            .await?,
+        );
         let batch = materialize_logs(stored, change, &mutation.appended_at)?;
-        ensure_append_capacity(&complete, &batch, AppendCapacity::StopOrFailure)
-            .map_err(ApplyError::Domain)?;
+
         let row = rows
             .iter_mut()
             .find(|(agent, _)| agent.id == stored.id)
             .expect("loaded lifecycle agent has a validation row");
         row.1 = complete.entry_count();
+        let semantic =
+            complete
+                .semantic()
+                .cloned()
+                .ok_or(ApplyError::Domain(SandboxStoreError::Corrupt(
+                    "lifecycle scan did not produce semantic checkpoint".into(),
+                )))?;
+        let next_semantic = semantic
+            .after_append(&batch, &change.agent)
+            .map_err(ApplyError::Domain)?;
+        integrity_by_id.insert(
+            stored.id.clone(),
+            prepare_append(
+                stored,
+                &complete,
+                &batch,
+                change.agent.revision,
+                next_semantic,
+                AppendCapacity::StopOrFailure,
+            )
+            .map_err(ApplyError::Domain)?,
+        );
         logs.extend(batch);
     }
     validate_lifecycle_mutation(&current, &rows, mutation).map_err(ApplyError::Domain)?;
@@ -213,12 +297,22 @@ async fn apply_lifecycle(
             .get(&change.agent.id)
             .copied()
             .expect("validated lifecycle agent exists");
-        advance_agent(store, stored, change, session).await?;
+        if segment_receipts.contains_key(&stored.id) {
+            continue;
+        }
+        let integrity = integrity_by_id
+            .remove(&stored.id)
+            .ok_or(ApplyError::Domain(SandboxStoreError::Corrupt(
+                "lifecycle integrity receipt missing".into(),
+            )))?;
+        encoded_logs.extend(integrity.documents);
+        advance_agent(store, stored, change, integrity.integrity, session).await?;
     }
-    for entry in &logs {
+    for entry in &encoded_logs {
         store
             .agent_log
-            .insert_one(log_document(entry).map_err(ApplyError::Domain)?)
+            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+            .insert_one(entry)
             .session(&mut *session)
             .await
             .map_err(classify_log_write)?;
@@ -237,6 +331,7 @@ async fn apply_lifecycle(
         );
     }
     Ok(LifecycleReceipt {
+        segmented: segment_receipts.into_values().collect(),
         sandbox: mutation.sandbox.clone(),
         agents: mutation
             .agents
@@ -245,18 +340,17 @@ async fn apply_lifecycle(
             .collect(),
         logs,
         events,
+        checkpoint_children,
     })
 }
 
 async fn load_sandbox(
     store: &MongoSandboxStore,
     id: &layer2_core::SandboxId,
-    session: &mut mongodb::ClientSession,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<Sandbox, ApplyError> {
-    store
-        .sandboxes
-        .find_one(doc! { "_id": id.as_str() })
-        .session(session)
+    scope
+        .find_one(&store.sandboxes, doc! { "_id": id.as_str() })
         .await
         .map_err(ApplyError::Driver)?
         .as_ref()
@@ -322,148 +416,4 @@ async fn advance_sandbox(
     } else {
         Err(ApplyError::Domain(SandboxStoreError::Conflict))
     }
-}
-
-async fn advance_agent(
-    store: &MongoSandboxStore,
-    current: &Agent,
-    change: &SandboxLifecycleAgentMutation,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
-    let mut fields = agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
-    let row = store
-        .agents
-        .find_one(doc! { "_id": current.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    super::agent_conversation_store::carry_checkpoint_fields(
-        &row,
-        current,
-        &change.agent,
-        &mut fields,
-    )
-    .map_err(ApplyError::Domain)?;
-    fields.insert(
-        "last_seq",
-        Bson::Int64(
-            signed(
-                change.agent.conversation.last_seq,
-                "lifecycle agent log sequence",
-            )
-            .map_err(SandboxStoreError::Corrupt)
-            .map_err(ApplyError::Domain)?,
-        ),
-    );
-    let advanced = store
-        .agents
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "sandbox_id": current.sandbox_id.as_str(),
-                "owner": current.owner.as_str(),
-                "revision": signed(current.revision, "lifecycle agent revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "last_seq": signed(current.conversation.last_seq, "lifecycle agent log sequence")
-                    .map_err(SandboxStoreError::Corrupt)
-                    .map_err(ApplyError::Domain)?,
-            },
-            doc! { "$set": fields },
-        )
-        .session(session)
-        .await
-        .map_err(classify_aggregate_write)?;
-    if advanced.matched_count == 1 {
-        Ok(())
-    } else {
-        Err(ApplyError::Domain(SandboxStoreError::Conflict))
-    }
-}
-
-fn classify_aggregate_write(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
-        ApplyError::Domain(SandboxStoreError::Duplicate)
-    } else {
-        ApplyError::Driver(error)
-    }
-}
-
-fn classify_log_write(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
-        ApplyError::Domain(SandboxStoreError::SequenceConflict)
-    } else {
-        ApplyError::Driver(error)
-    }
-}
-
-async fn reconcile_lifecycle(
-    store: &MongoSandboxStore,
-    receipt: &LifecycleReceipt,
-    snapshot_time: Timestamp,
-) -> Result<bool, SandboxStoreError> {
-    let mut session = store
-        .client
-        .start_session()
-        .snapshot(true)
-        .snapshot_time(snapshot_time)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let sandbox = store
-        .sandboxes
-        .find_one(doc! { "_id": receipt.sandbox.id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()?;
-    if sandbox.as_ref() != Some(&receipt.sandbox) {
-        return Ok(false);
-    }
-    for expected in &receipt.agents {
-        let actual = store
-            .agents
-            .find_one(doc! { "_id": expected.id.as_str() })
-            .read_concern(ReadConcern::snapshot())
-            .session(&mut session)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-            .as_ref()
-            .map(read_agent)
-            .transpose()?;
-        if actual.as_ref() != Some(expected) {
-            return Ok(false);
-        }
-    }
-    for expected in &receipt.logs {
-        let actual = store
-            .agent_log
-            .find_one(doc! {
-                "agent_id": expected.agent_id.as_str(),
-                "seq": signed(expected.seq, "reconciled lifecycle log sequence")
-                    .map_err(SandboxStoreError::Corrupt)?,
-            })
-            .read_concern(ReadConcern::snapshot())
-            .session(&mut session)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-            .as_ref()
-            .map(read_entry)
-            .transpose()?;
-        if actual.as_ref() != Some(expected) {
-            return Ok(false);
-        }
-    }
-    for expected in &receipt.events {
-        if reconcile_event_with_snapshot_session(store, expected, &mut session)
-            .await?
-            .is_none()
-        {
-            return Ok(false);
-        }
-    }
-    Ok(true)
 }

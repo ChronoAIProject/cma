@@ -83,7 +83,7 @@ nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=github_source)'
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)'
-nextest_build run -E 'package(=cma) and test(~store::isolation::tests::real_)' \
+nextest_build run -E 'package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))' \
   --run-ignored only --test-threads 1
 
 nextest_build run --run-ignored all --test-threads 1 --no-fail-fast \
@@ -94,3 +94,8 @@ nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
 
 nextest_build run -E 'package(=cma) and test(~gateway::tests::)' \
   --run-ignored only --test-threads 1
+
+# Verified sender input must survive real binding policy updates and ledger replay.
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(~sender_context_tests::)'

@@ -151,6 +151,15 @@ pub(super) async fn cleanup_due(
     let mut error = None;
     for document in documents {
         let tombstone = read(document)?;
+        if crate::store::retirement_archive::holds_checkpoint_key(
+            &store.client.database(&store.manifests.namespace().db),
+            &tombstone.object_key,
+        )
+        .await
+        .map_err(|_| unavailable("retirement archive authority is unavailable"))?
+        {
+            continue;
+        }
         let result = store.objects.finalize_delete(&tombstone.object_key).await;
         if matches!(result, Ok(true)) {
             // Every part and manifest now has storage-owned authority rejecting

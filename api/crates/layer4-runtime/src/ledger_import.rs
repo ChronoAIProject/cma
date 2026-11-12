@@ -1,5 +1,7 @@
 //! Offline tools never initialize a home, recover a journal or authorize effects.
 //! Inventory is evidence, not proof that a legacy writer has stopped.
+#[cfg(test)]
+mod diagnostics;
 mod inventory;
 mod io;
 mod isolation;
@@ -7,6 +9,10 @@ mod json;
 mod plan;
 mod plan_io;
 mod publication;
+mod retirement;
+mod retirement_artifact;
+pub(crate) mod retirement_move;
+mod retirement_stage;
 mod sealed;
 mod stage;
 #[cfg(test)]
@@ -28,11 +34,30 @@ pub(crate) async fn inspect_command() -> std::result::Result<(), String> {
     let config = crate::config::RuntimeConfig::from_environment()
         .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
     let summary = tokio::task::spawn_blocking(move || {
-        inventory::scan(&config, Limits::default()).map(|inventory| inventory.summary())
+        inventory::scan(&config, Limits::default()).map(|inventory| {
+            let mut summary = inventory.summary();
+            summary["capacity"] = inventory.capacity_summary(config.generation);
+            summary
+        })
     })
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
     .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn retirement_preview_command(
+    snapshot: std::path::PathBuf,
+    digest: String,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary =
+        tokio::task::spawn_blocking(move || retirement::preview(&config, &snapshot, &digest))
+            .await
+            .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+            .map_err(|error| error.to_string())?;
     println!("{summary}");
     Ok(())
 }
@@ -47,6 +72,50 @@ pub(crate) async fn validate_command() -> std::result::Result<(), String> {
     .await
     .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
     .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn retirement_stage_command(
+    plan: std::path::PathBuf,
+    plan_sha256: String,
+    observation: std::path::PathBuf,
+    observation_sha256: String,
+    destination: std::path::PathBuf,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let runtime = tokio::runtime::Handle::current();
+    let summary = tokio::task::spawn_blocking(move || {
+        runtime.block_on(retirement_stage::create(
+            config,
+            retirement_stage::Input {
+                plan: &plan,
+                plan_sha256: &plan_sha256,
+                observation: &observation,
+                observation_sha256: &observation_sha256,
+            },
+            &destination,
+        ))
+    })
+    .await
+    .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+    .map_err(|error| error.to_string())?;
+    println!("{summary}");
+    Ok(())
+}
+
+pub(crate) async fn retirement_verify_command(
+    path: std::path::PathBuf,
+    expected: String,
+) -> std::result::Result<(), String> {
+    let config = crate::config::RuntimeConfig::from_environment()
+        .map_err(|_| "runtime ledger inspection configuration is invalid".to_owned())?;
+    let summary =
+        tokio::task::spawn_blocking(move || retirement_artifact::verify(&config, &path, &expected))
+            .await
+            .map_err(|_| "runtime ledger inspection worker failed".to_owned())?
+            .map_err(|error| error.to_string())?;
     println!("{summary}");
     Ok(())
 }
@@ -212,11 +281,32 @@ fn capacity_at_least(budget: &'static str, lower_bound: u128) -> RuntimeError {
     )
 }
 
+#[track_caller]
 fn invalid() -> RuntimeError {
+    #[cfg(test)]
+    diagnostics::record("invalid", None);
     RuntimeError::rejected(
         "mutation_ledger_migration_invalid",
         "runtime mutation ledger migration input requires verification",
     )
+}
+
+#[track_caller]
+fn invalid_guard(guard: &'static str) -> RuntimeError {
+    #[cfg(test)]
+    diagnostics::record(guard, None);
+    #[cfg(not(test))]
+    let _ = guard;
+    invalid()
+}
+
+#[track_caller]
+fn invalid_io(guard: &'static str, error: std::io::Error) -> RuntimeError {
+    #[cfg(test)]
+    diagnostics::record(guard, Some(error));
+    #[cfg(not(test))]
+    let _ = (guard, error);
+    invalid()
 }
 
 fn changed() -> RuntimeError {

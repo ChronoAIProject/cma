@@ -4,6 +4,7 @@ mod agent_attachment;
 mod agent_filesystem;
 mod agent_home;
 mod agent_skill_install;
+mod agent_skill_upgrade;
 mod bridge;
 mod browser;
 mod checkpoint;
@@ -27,6 +28,7 @@ mod install_state_validation;
 mod lanes;
 mod ledger_format;
 mod ledger_import;
+mod ledger_reclamation;
 mod ledger_storage;
 mod link;
 mod mutation_authority;
@@ -47,6 +49,8 @@ mod resource_cgroup;
 mod resource_network;
 mod resources;
 mod restore_bootstrap;
+mod retirement_archive;
+mod retirement_format;
 mod skills;
 mod snapshot_export;
 mod supervisor;
@@ -99,13 +103,47 @@ async fn run() -> Result<(), String> {
     if arguments.len() == 1 && arguments[0] == "--validate-ledger-v1" {
         return ledger_import::validate_command().await;
     }
+    if arguments.len() == 3 && arguments[0] == "--preview-ledger-retirement" {
+        let digest = arguments[2]
+            .to_str()
+            .ok_or("invalid ledger snapshot digest")?;
+        return ledger_import::retirement_preview_command(
+            arguments[1].clone().into(),
+            digest.into(),
+        )
+        .await;
+    }
     if arguments.len() == 2 && arguments[0] == "--plan-ledger-v1" {
         return ledger_import::plan_command(std::path::PathBuf::from(&arguments[1])).await;
+    }
+    if arguments.len() == 6 && arguments[0] == "--stage-ledger-retirement" {
+        let plan_digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
+        let observation_digest = arguments[4]
+            .to_str()
+            .ok_or("invalid ledger snapshot digest")?;
+        return ledger_import::retirement_stage_command(
+            arguments[1].clone().into(),
+            plan_digest.into(),
+            arguments[3].clone().into(),
+            observation_digest.into(),
+            arguments[5].clone().into(),
+        )
+        .await;
     }
     if arguments.len() == 3 && arguments[0] == "--verify-ledger-plan" {
         let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;
         return ledger_import::verify_plan_command(arguments[1].clone().into(), digest.into())
             .await;
+    }
+    if arguments.len() == 3 && arguments[0] == "--verify-ledger-retirement" {
+        let digest = arguments[2]
+            .to_str()
+            .ok_or("invalid ledger retirement digest")?;
+        return ledger_import::retirement_verify_command(
+            arguments[1].clone().into(),
+            digest.into(),
+        )
+        .await;
     }
     if arguments.len() == 4 && arguments[0] == "--stage-ledger-v1" {
         let digest = arguments[2].to_str().ok_or("invalid ledger plan digest")?;

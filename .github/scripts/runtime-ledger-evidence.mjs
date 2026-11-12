@@ -40,7 +40,7 @@ export function elfContract(bytes) {
 }
 
 export function validateSqlite(proof) {
-  assert.deepEqual(Object.keys(proof).sort(), ['anchored_import_create_commit_reopen', 'compile_options', 'create_commit_reopen', 'journal_mode', 'sqlite_source_id', 'sqlite_version', 'synchronous']);
+  assert.deepEqual(Object.keys(proof).sort(), ['anchored_import_create_commit_reopen', 'compile_options', 'create_commit_reopen', 'indexed_retirement_copy_reopen_refusal', 'journal_mode', 'retirement_archive_copy_reopen_refusal', 'sqlite_source_id', 'sqlite_version', 'synchronous', 'synthetic_retirement_move_restore']);
   assert.equal(proof.sqlite_version, '3.54.1'); // bundled libsqlite3-sys 0.39.1
   assert.match(proof.sqlite_source_id, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [a-f0-9]{64}$/);
   assert(Array.isArray(proof.compile_options) && proof.compile_options.length > 0 && proof.compile_options.length <= 256);
@@ -50,6 +50,9 @@ export function validateSqlite(proof) {
   assert.equal(proof.synchronous, 'extra');
   assert.equal(proof.create_commit_reopen, 'passed');
   assert.equal(proof.anchored_import_create_commit_reopen, 'passed');
+  assert.equal(proof.retirement_archive_copy_reopen_refusal, 'passed');
+  assert.equal(proof.synthetic_retirement_move_restore, 'passed');
+  assert.equal(proof.indexed_retirement_copy_reopen_refusal, 'passed');
 }
 
 export function qualify(imageRef, revision, destination) {

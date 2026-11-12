@@ -331,11 +331,7 @@ fn resolve_existing<T: DeserializeOwned>(
 }
 
 fn ensure_exact(record: &Record, operation: &Operation) -> Result<()> {
-    if record.operation_id != operation.operation_id
-        || record.request_sha256 != operation.request_sha256
-        || record.payload_sha256 != operation.payload_sha256
-        || record.subject != operation.subject
-    {
+    if record.operation() != *operation {
         return Err(RuntimeError::rejected(
             "runtime_mutation_replay_mismatch",
             "runtime mutation replay differs from the admitted request or rendered payload",

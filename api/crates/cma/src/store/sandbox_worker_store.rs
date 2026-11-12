@@ -36,6 +36,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
             .find(doc! {
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "work_pending": true,
+                "$nor": [{"record.lifecycle.retirement_archive.verified": {"$type":"null"}}],
                 "work_ready_at": { "$lte": now },
                 "$or": [
                     { "work_lease_expires_at": Bson::Null },
@@ -74,7 +75,10 @@ impl SandboxWorkerStore for MongoSandboxStore {
             let Some(mut sandbox) = self.get_sandbox(id).await? else {
                 return Ok(None);
             };
-            if !sandbox.work.is_due(&now) || sandbox.lifecycle.checkpoint_capture.is_some() {
+            if !sandbox.work.is_due(&now)
+                || sandbox.lifecycle.checkpoint_capture.is_some()
+                || sandbox.retirement_archive_pending()
+            {
                 return Ok(None);
             }
             let expected = sandbox.revision;
@@ -195,6 +199,11 @@ async fn purge_in_transaction(
     let Some(aggregate) = aggregate else {
         return Err(PurgeError::Conflict);
     };
+    if super::ledger_collection_progress::retention_required(&aggregate)
+        .map_err(|_| PurgeError::Conflict)?
+    {
+        return Err(PurgeError::Conflict);
+    }
     if super::channel_storage_retention::required(
         &store.client.database(&store.sandboxes.namespace().db),
         id.as_str(),
@@ -206,8 +215,17 @@ async fn purge_in_transaction(
     {
         return Err(PurgeError::Conflict);
     }
+    if super::agent_log_segments::retention::required(store, id.as_str(), session)
+        .await
+        .map_err(PurgeError::Driver)?
+    {
+        return Err(PurgeError::Conflict);
+    }
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
-    if sandbox.status != SandboxStatus::Retired || !sandbox.credential.revoke_debt.is_empty() {
+    if sandbox.retirement_archive_pending()
+        || sandbox.status != SandboxStatus::Retired
+        || !sandbox.credential.revoke_debt.is_empty()
+    {
         return Err(PurgeError::Conflict);
     }
     if layer2_core::sandbox_usage::Allocation::from_sandbox(&sandbox)

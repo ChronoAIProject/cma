@@ -13,6 +13,7 @@ use tokio::time::MissedTickBehavior;
 use super::agent_worker::AgentWorker;
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+const RECONCILIATION_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_CONCURRENT_AGENTS: usize = 50;
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(25);
 
@@ -23,6 +24,8 @@ pub(crate) struct AgentScheduler {
     concurrency: usize,
     drain_timeout: Duration,
     admitted: Arc<Notify>,
+    parent_ready: Arc<Notify>,
+    event_driven_reconciliation: bool,
 }
 
 #[async_trait::async_trait]
@@ -35,7 +38,9 @@ trait AgentScheduleWork: Send + Sync {
 #[async_trait::async_trait]
 impl AgentScheduleWork for AgentWorker {
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError> {
-        self.due_work(now, limit).await
+        layer2_core::diagnostic_context::DiagnosticContext::background("scheduler")
+            .scope(self.due_work(now, limit))
+            .await
     }
 
     async fn reconcile(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
@@ -43,7 +48,9 @@ impl AgentScheduleWork for AgentWorker {
     }
 
     async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
-        AgentWorker::run_scheduled(self, id, now).await
+        layer2_core::diagnostic_context::DiagnosticContext::background("agent_worker")
+            .scope(AgentWorker::run_scheduled(self, id, now))
+            .await
     }
 }
 
@@ -56,15 +63,32 @@ impl AgentScheduler {
             concurrency: MAX_CONCURRENT_AGENTS,
             drain_timeout: DRAIN_TIMEOUT,
             admitted,
+            parent_ready: Arc::new(Notify::new()),
+            event_driven_reconciliation: false,
         }
+    }
+
+    pub(crate) fn with_event_driven_reconciliation(
+        mut self,
+        parent_ready: Arc<Notify>,
+        enabled: bool,
+    ) -> Self {
+        self.parent_ready = parent_ready;
+        self.event_driven_reconciliation = enabled;
+        self
     }
 
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
+            let telemetry = crate::telemetry::worker::Worker::start("agents");
             let mut work = ScheduledWork::new(self.worker, self.concurrency, self.budget);
             let mut ticker = tokio::time::interval(self.sweep_interval);
+            let mut reconciliation_ticker = tokio::time::interval(RECONCILIATION_FALLBACK_INTERVAL);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+            reconciliation_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
             loop {
+                telemetry.heartbeat();
+                telemetry.queue(work.queued.len(), work.in_flight.len());
                 if *shutdown.borrow() {
                     break;
                 }
@@ -79,7 +103,13 @@ impl AgentScheduler {
                             work.completed(result);
                         }
                     }
-                    _ = ticker.tick() => work.poll(),
+                    _ = ticker.tick() => work.poll(!self.event_driven_reconciliation),
+                    _ = reconciliation_ticker.tick(), if self.event_driven_reconciliation => {
+                        work.reconcile();
+                    }
+                    _ = self.parent_ready.notified(), if self.event_driven_reconciliation => {
+                        work.reconcile();
+                    }
                     // Keep one coalesced hint through a full queue, full capacity,
                     // or an in-progress discovery that may predate the admission.
                     _ = self.admitted.notified(), if work.can_discover() => work.discover(),
@@ -157,7 +187,14 @@ impl ScheduledWork {
         }
     }
 
-    fn poll(&mut self) {
+    fn poll(&mut self, reconcile: bool) {
+        if reconcile {
+            self.reconcile();
+        }
+        self.discover();
+    }
+
+    fn reconcile(&mut self) {
         if !self.reconciling {
             let worker = Arc::clone(&self.worker);
             let reconciliation = self.reconciliation.clone();
@@ -170,7 +207,6 @@ impl ScheduledWork {
             self.kinds.insert(task.id(), TaskKind::Reconcile);
             self.reconciling = true;
         }
-        self.discover();
     }
 
     fn can_discover(&self) -> bool {
@@ -219,6 +255,17 @@ impl ScheduledWork {
             Ok((id, _)) => *id,
             Err(error) => error.id(),
         };
+        let phase = match self.kinds.get(&task_id) {
+            Some(TaskKind::Due) => "discovery",
+            Some(TaskKind::Reconcile) => "reconciliation",
+            _ => "execution",
+        };
+        let outcome = match &result {
+            Ok((_, Ok(_))) => "ok",
+            Ok((_, Err(_))) => "error",
+            Err(_) => "terminated",
+        };
+        crate::telemetry::worker::completed("agents", phase, outcome);
         match self.kinds.remove(&task_id) {
             Some(TaskKind::Due) => self.polling = false,
             Some(TaskKind::Reconcile) => self.reconciling = false,
