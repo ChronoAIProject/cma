@@ -149,6 +149,7 @@ pub(in crate::store) async fn apply_with_cause(
             request.envelope.command_id.as_str(),
             now,
             cause,
+            request.binding.is_some(),
             session,
         )
         .await
@@ -162,6 +163,9 @@ pub(in crate::store) async fn apply_with_cause(
             super::super::agent_conversation_store::ApplyError::Domain(
                 layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused,
             ) => ApplyError::Domain(CommandLedgerError::AdmissionPaused),
+            super::super::agent_conversation_store::ApplyError::Domain(
+                layer2_core::sandbox::store::SandboxStoreError::SessionCapacityUnavailable,
+            ) => ApplyError::Domain(CommandLedgerError::SessionCapacityUnavailable),
             _ => ApplyError::Domain(CommandLedgerError::Unavailable),
         })?;
     }

@@ -1,4 +1,5 @@
 //! Durable adapters that do not depend on a resource aggregate.
+mod admission_capacity;
 mod admission_checks;
 
 pub mod activity;
