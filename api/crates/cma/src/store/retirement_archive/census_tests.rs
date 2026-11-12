@@ -8,6 +8,98 @@ use layer2_core::{budget::RequestBudget, sandbox::store::AgentStore};
 #[path = "census_test_support.rs"]
 mod support;
 
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn stop_evidence_roundtrips_exactly_and_excludes_other_agents_and_prefix_neighbours() {
+    let (client, name, _, record) =
+        crate::store::agent_access_requests::tests::approved_fixture().await;
+    let database = client.database(&name);
+    let fixture = support::prepare_source(
+        client,
+        database.clone(),
+        record.requester.sandbox_id.as_str(),
+    )
+    .await;
+    let rows = database.collection::<Document>("model_budget_reservations");
+    for turn in [1, 42] {
+        rows.insert_one(doc! {
+            "_id":format!("stop:{}:{turn}", record.requester.agent_id),
+            "document_schema_version":1_i64,
+            "record":mongodb::bson::serialize_to_bson(&layer2_core::budget::BudgetError::OwnerExhausted).unwrap()
+        }).await.unwrap();
+    }
+    let expected = support::inventory(
+        &database,
+        &["model_budget_reservations", "agents", "agent_log"],
+    )
+    .await;
+    for agent in [
+        "agt_unrelated".to_string(),
+        format!("{}_suffix", record.requester.agent_id),
+    ] {
+        rows.insert_one(doc! {
+            "_id":format!("stop:{agent}:1"), "document_schema_version":1_i64,
+            "record":"owner_exhausted"
+        })
+        .await
+        .unwrap();
+    }
+    support::roundtrip(fixture, expected).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn malformed_stop_evidence_refuses_without_releasing_the_hold() {
+    let (_temp, store, request, bytes) = fixture().await;
+    store.admit(&request, &bytes).await.unwrap();
+    let held = store.inspect(&request.sandbox_id).await.unwrap();
+    let rows = store
+        .database
+        .collection::<Document>("model_budget_reservations");
+    for (key, record) in [
+        ("stop:", Bson::String("owner_exhausted".into())),
+        ("stop::1", Bson::String("owner_exhausted".into())),
+        ("stop:agt_missing", Bson::String("owner_exhausted".into())),
+        (
+            "stop:agt_missing:invalid",
+            Bson::String("owner_exhausted".into()),
+        ),
+        (
+            "stop:agt_missing:-1",
+            Bson::String("owner_exhausted".into()),
+        ),
+        (
+            "stop:agt_missing:1:extra",
+            Bson::String("owner_exhausted".into()),
+        ),
+        (
+            "stop:agt_missing:1\n",
+            Bson::String("owner_exhausted".into()),
+        ),
+        ("stop:agt_missing:1", Bson::Document(doc! {})),
+        (
+            "stop:agt_missing:1",
+            Bson::Array(vec![Bson::String("owner_exhausted".into())]),
+        ),
+    ] {
+        rows.insert_one(doc! {
+            "_id":key, "document_schema_version":1_i64, "record":record
+        })
+        .await
+        .unwrap();
+        assert!(
+            export::publish(&store, &request, &bytes, &Custody::default(), None)
+                .await
+                .is_err(),
+            "{key:?}"
+        );
+        assert!(store.manifest(&request, &bytes).await.is_err());
+        assert_eq!(store.inspect(&request.sandbox_id).await.unwrap(), held);
+        rows.delete_one(doc! {"_id":key}).await.unwrap();
+    }
+    store.database.drop().await.unwrap();
+}
+
 #[test]
 fn every_declared_namespace_has_exactly_one_explicit_policy() {
     census::validate_catalog().unwrap();
