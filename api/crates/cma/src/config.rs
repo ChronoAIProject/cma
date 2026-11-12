@@ -21,6 +21,7 @@ mod agent_sandbox;
 mod execution;
 mod gateway;
 mod home;
+mod oauth_resource;
 mod profiles;
 mod public_streams;
 mod runtime;
@@ -427,24 +428,9 @@ impl Config {
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
-            nyxid_oauth_api_resource: lookup("CHRONO_NYXID_OAUTH_API_RESOURCE")?
-                .filter(|v| !v.is_empty())
-                .map(|v| {
-                    let u = url::Url::parse(&v).map_err(|_| "Invalid OAuth API resource URL")?;
-                    if !(u.scheme() == "https"
-                        || u.scheme() == "http"
-                            && matches!(u.host_str(), Some("localhost" | "127.0.0.1")))
-                        || u.host_str().is_none()
-                        || !u.username().is_empty()
-                        || u.password().is_some()
-                        || u.query().is_some()
-                        || u.fragment().is_some()
-                    {
-                        return Err("Invalid OAuth API resource URL");
-                    }
-                    Ok(v)
-                })
-                .transpose()?,
+            nyxid_oauth_api_resource: oauth_resource::parse(lookup(
+                "CHRONO_NYXID_OAUTH_API_RESOURCE",
+            )?)?,
             nyxid_proxy_issuer: lookup("CHRONO_NYXID_PROXY_ISSUER")?,
             nyxid_proxy_jwks_url: lookup("CHRONO_NYXID_PROXY_JWKS_URL")?,
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
