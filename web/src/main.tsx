@@ -14,6 +14,7 @@ import { createOperatorClient } from './operator/client';
 import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
 import { clearAgentTransport } from './agent/transport/journal';
+import { createAccountDeletionFetchObserver } from './account/fetchObserver';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -40,7 +41,10 @@ const authProvider = {
     clearAgentTransport(sessionStorage);
   },
 };
-const sdk = createClient();
+const nativeFetch = globalThis.fetch.bind(globalThis);
+const observedFetch = createAccountDeletionFetchObserver(nativeFetch);
+globalThis.fetch = observedFetch;
+const sdk = createClient({ fetch: observedFetch });
 const client = createRestWebClient(sdk, {
   storage: sessionStorage,
   async currentUser() {

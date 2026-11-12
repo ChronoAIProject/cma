@@ -12,7 +12,7 @@ import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
-import { lazy, Suspense, useLayoutEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react';
 import { Presence } from './ui/Presence';
 import { IdentityNotice, IdentityError } from './auth/IdentityNotice';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
@@ -35,14 +35,69 @@ import { EventGatewayPortal } from './services/EventGatewayPortal';
 import { isBotRoute } from './BotManagement';
 import { ServiceBody } from './services/ServiceBody';
 import { PortalFrame } from './shell/PortalFrame';
+import { AccountDeletionDialog } from './account/AccountDeletionDialog';
+import { AccountDeletionPending } from './account/AccountDeletionPending';
+import {
+  ACCOUNT_DELETION_IN_PROGRESS_EVENT,
+  createAccountDeletionRequest,
+  restoreAccountDeletion,
+  type AccountDeletionRequest,
+} from './account/deletion';
 
 const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
 
 export function App() {
   const browserRouter = useAppRouter();
-  const { state: identity } = useAuth();
+  const { state: identity, signOut } = useAuth();
   const { navigate } = browserRouter;
   const client = useCmaClient();
+  const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
+  const [initialAppIdentityKey] = useState(() => identityKey);
+  const authenticatedViewerId = identity.status === 'authenticated' ? identity.user.id : undefined;
+  const initialAccountDeletion =
+    authenticatedViewerId === undefined ? undefined : restoreAccountDeletion(authenticatedViewerId);
+  const [accountDeletionSurface, setAccountDeletionSurface] = useState<
+    'dialog' | 'pending' | undefined
+  >(initialAccountDeletion === undefined ? undefined : 'pending');
+  const [accountDeletionRestricted, setAccountDeletionRestricted] = useState(false);
+  const [accountDeletionRequest, setAccountDeletionRequest] = useState<
+    AccountDeletionRequest | undefined
+  >(initialAccountDeletion);
+  useEffect(() => {
+    if (identityKey === initialAppIdentityKey) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      const restored =
+        authenticatedViewerId === undefined
+          ? undefined
+          : restoreAccountDeletion(authenticatedViewerId);
+      setAccountDeletionRequest(restored);
+      setAccountDeletionSurface(restored === undefined ? undefined : 'pending');
+      setAccountDeletionRestricted(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [authenticatedViewerId, identityKey, initialAppIdentityKey]);
+  useEffect(() => {
+    const onInProgress = () => {
+      if (authenticatedViewerId === undefined) return;
+      const dialogOpen = accountDeletionSurface === 'dialog';
+      setAccountDeletionRequest(restoreAccountDeletion(authenticatedViewerId));
+      setAccountDeletionRestricted(dialogOpen);
+      if (!dialogOpen) setAccountDeletionSurface('pending');
+    };
+    window.addEventListener(ACCOUNT_DELETION_IN_PROGRESS_EVENT, onInProgress);
+    return () => window.removeEventListener(ACCOUNT_DELETION_IN_PROGRESS_EVENT, onInProgress);
+  }, [accountDeletionSurface, authenticatedViewerId]);
+  const openAccountDeletion = () => {
+    if (identity.status !== 'authenticated') return;
+    const restored = restoreAccountDeletion(identity.user.id);
+    setAccountDeletionRequest(restored ?? createAccountDeletionRequest());
+    setAccountDeletionRestricted(false);
+    setAccountDeletionSurface(restored === undefined ? 'dialog' : 'pending');
+  };
   const usageOpen = browserRouter.route.kind === 'usage';
   const [visitedUsage, setVisitedUsage] = useState(usageOpen);
   if (usageOpen && !visitedUsage) setVisitedUsage(true);
@@ -69,7 +124,6 @@ export function App() {
     : usageOpen
       ? { ...browserRouter, route: browserRouter.backgroundRoute ?? AUTHENTICATED_HOME_ROUTE }
       : browserRouter;
-  const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
   const service =
     router.route.kind === 'event_gateway' || isBotRoute(router.route) ? 'event-gateway' : undefined;
   const [lastGatewayRoute, setLastGatewayRoute] = useState<AppRoute>(
@@ -97,12 +151,80 @@ export function App() {
     setVisitedAgent(true);
   }
   const publicJourney = router.route.kind === 'public_trigger' || router.route.kind === 'launch';
+  const accountDeletionDialog =
+    identity.status === 'authenticated' &&
+    accountDeletionSurface === 'dialog' &&
+    accountDeletionRequest !== undefined ? (
+      <AccountDeletionDialog
+        client={client}
+        viewerId={identity.user.id}
+        initial={accountDeletionRequest}
+        onAccepted={(next) => {
+          setAccountDeletionRequest(next);
+          setAccountDeletionRestricted(true);
+        }}
+        onPending={() => {
+          if (identity.status !== 'authenticated') return;
+          setAccountDeletionRequest(
+            restoreAccountDeletion(identity.user.id) ?? accountDeletionRequest,
+          );
+          setAccountDeletionRestricted(false);
+          setAccountDeletionSurface('pending');
+        }}
+        onCompleted={() => {
+          setAccountDeletionRequest(undefined);
+          setAccountDeletionRestricted(false);
+          setAccountDeletionSurface(undefined);
+        }}
+        onClose={() => {
+          setAccountDeletionSurface((current) => (current === 'dialog' ? undefined : current));
+        }}
+      />
+    ) : null;
+  const accountDeletionProgressPage =
+    identity.status === 'authenticated' ? (
+      <AccountDeletionPending
+        client={client}
+        viewerId={identity.user.id}
+        onCompleted={() => {
+          setAccountDeletionRequest(undefined);
+          setAccountDeletionRestricted(false);
+          setAccountDeletionSurface(undefined);
+        }}
+        onSignOut={() => void signOut()}
+      />
+    ) : null;
+  if (
+    identity.status === 'authenticated' &&
+    accountDeletionSurface === 'dialog' &&
+    accountDeletionRestricted
+  ) {
+    return (
+      <>
+        <AccountDeletionPending
+          client={client}
+          viewerId={identity.user.id}
+          onSignOut={() => void signOut()}
+          showProgress={false}
+        />
+        {accountDeletionDialog}
+      </>
+    );
+  }
+  if (
+    identity.status === 'authenticated' &&
+    (accountDeletionSurface === 'pending' ||
+      (accountDeletionSurface === undefined && initialAccountDeletion !== undefined))
+  ) {
+    return accountDeletionProgressPage;
+  }
   if (publicJourney)
     return (
       <div className="service-shell">
         <IdentityNotice />
-        <AgentApp router={router} />
+        <AgentApp router={router} onDeleteAccount={openAccountDeletion} />
         {usageDialog}
+        {accountDeletionDialog}
       </div>
     );
   const navigateService = (next: AppRoute) =>
@@ -124,9 +246,11 @@ export function App() {
             router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
             onServiceNavigate={navigateService}
             {...sidebar}
+            onDeleteAccount={openAccountDeletion}
           />
         </ServiceBody>
       ) : null}
+      {accountDeletionDialog}
       {visitedGateway ? (
         <EventGatewayPortal
           key={`event-gateway:${identityKey}`}
@@ -159,11 +283,13 @@ function AgentApp({
   sidebarCollapsed,
   onSidebarCollapsedChange,
   onServiceNavigate,
+  onDeleteAccount,
 }: {
   readonly router: AppRouter;
   readonly sidebarCollapsed?: boolean;
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   readonly onServiceNavigate?: (route: AppRoute) => void;
+  readonly onDeleteAccount?: () => void;
 }) {
   const { state, signIn, signOut } = useAuth();
   const client = useCmaClient();
@@ -236,6 +362,7 @@ function AgentApp({
         sidebarCollapsed={sidebarCollapsed}
         onSidebarCollapsedChange={onSidebarCollapsedChange}
         onServiceNavigate={onServiceNavigate}
+        onDeleteAccount={onDeleteAccount}
         onCreate={
           creation === undefined
             ? undefined
