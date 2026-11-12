@@ -26,7 +26,7 @@ const READY_NOTICE: &str =
 const NOT_PERMITTED_NOTICE: &str =
     "downloads are available only to autonomous agents with gateway tools";
 
-fn photo() -> Vec<u8> {
+pub(super) fn photo() -> Vec<u8> {
     (0..48 * 1024).map(|index| (index % 239) as u8).collect()
 }
 
@@ -101,7 +101,7 @@ fn native_whatsapp(unique: &str, kind: AttachmentKind, group: bool) -> Attachmen
     item
 }
 
-fn native_discord_app() -> MediaSetup {
+pub(super) fn native_discord_app() -> MediaSetup {
     let attachment = native_discord("800", AttachmentKind::Image);
     let source = attachment.source.clone().unwrap();
     let setup = MediaSetup::new(vec![attachment])
@@ -112,7 +112,7 @@ fn native_discord_app() -> MediaSetup {
     setup
 }
 
-fn native_whatsapp_app(group: bool) -> MediaSetup {
+pub(super) fn native_whatsapp_app(group: bool) -> MediaSetup {
     let attachment = native_whatsapp("45678", AttachmentKind::Image, group);
     let source = attachment.source.clone().unwrap();
     let setup = MediaSetup::new(vec![attachment])
@@ -143,7 +143,7 @@ async fn mint(app: &App, index: u8) -> (String, Value) {
 }
 
 /// The same view through the REST twin.
-async fn mint_rest(app: &App, index: &str) -> Value {
+pub(super) async fn mint_rest(app: &App, index: &str) -> Value {
     let response = app.attachment(index, "?view=download").await;
     assert_eq!(response.status(), 200);
     response.json().await.unwrap()

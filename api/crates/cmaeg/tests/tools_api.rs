@@ -31,6 +31,8 @@ pub mod consumer_support;
 pub mod download_support;
 #[path = "tools/link_redemption.rs"]
 mod link_redemption;
+#[path = "tools/media_authority.rs"]
+mod media_authority;
 #[path = "tools/media_downloads.rs"]
 mod media_downloads;
 #[path = "tools/media_links.rs"]
