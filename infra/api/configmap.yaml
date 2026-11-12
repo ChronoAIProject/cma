@@ -95,6 +95,8 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  # Enable only after runtime and scan measurements support cooperative decoding.
+  CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED: "false"
   CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Expand-only skill upgrade readers; enable new writers only after migration qualification.
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"

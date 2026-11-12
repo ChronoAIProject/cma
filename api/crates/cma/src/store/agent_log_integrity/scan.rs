@@ -1,5 +1,9 @@
 //! Explicit complete audit; all fallbacks keep caller accounting.
 use super::*;
+use crate::store::{
+    cooperative_budget::Policy,
+    execution_sections::{Clock, MonotonicClock},
+};
 use futures_util::TryStreamExt;
 use mongodb::options::ReadConcern;
 use std::future::IntoFuture;
@@ -87,7 +91,7 @@ where
         agent_id,
         last_seq,
         session,
-        snapshot,
+        ScanOptions::new(snapshot, store.scan_cooperation),
         |entry| {
             if let (
                 Some(agent),
@@ -130,13 +134,13 @@ where
     result
 }
 
-pub(in crate::store) async fn scan_collection<F>(
+pub(in crate::store) async fn scan_collection<F, C: Clock>(
     caller: ScanCaller,
     collection: &mongodb::Collection<Document>,
     agent_id: &AgentId,
     last_seq: u64,
     session: &mut mongodb::ClientSession,
-    snapshot: bool,
+    options: ScanOptions<C>,
     visit: F,
 ) -> Result<LogSummary, TransactionLogError>
 where
@@ -149,7 +153,7 @@ where
         last_seq,
         session,
         ScanMode {
-            snapshot,
+            options,
             known_corrupt: false,
         },
         visit,
@@ -163,7 +167,7 @@ pub(super) async fn scan_corruption(
     agent_id: &AgentId,
     last_seq: u64,
     session: &mut mongodb::ClientSession,
-    snapshot: bool,
+    options: ScanOptions,
 ) -> Result<LogSummary, TransactionLogError> {
     scan_rows(
         caller,
@@ -172,7 +176,7 @@ pub(super) async fn scan_corruption(
         last_seq,
         session,
         ScanMode {
-            snapshot,
+            options,
             known_corrupt: true,
         },
         |_| Ok(()),
@@ -180,24 +184,61 @@ pub(super) async fn scan_corruption(
     .await
 }
 
-struct ScanMode {
+pub(in crate::store) struct ScanOptions<C = MonotonicClock> {
     snapshot: bool,
+    cooperation: Policy,
+    clock: C,
+}
+impl Default for ScanOptions {
+    fn default() -> Self {
+        Self::new(false, Policy::default())
+    }
+}
+impl ScanOptions {
+    pub(in crate::store) fn new(snapshot: bool, cooperation: Policy) -> Self {
+        Self {
+            snapshot,
+            cooperation,
+            clock: MonotonicClock,
+        }
+    }
+    #[cfg(test)]
+    pub(in crate::store) fn with_clock<C: Clock>(self, clock: C) -> ScanOptions<C> {
+        ScanOptions {
+            snapshot: self.snapshot,
+            cooperation: self.cooperation,
+            clock,
+        }
+    }
+}
+struct ScanMode<C> {
+    options: ScanOptions<C>,
     known_corrupt: bool,
 }
+impl MongoSandboxStore {
+    pub(crate) fn with_scan_cooperation(mut self, enabled: bool) -> Self {
+        self.scan_cooperation = Policy::enabled(enabled);
+        self
+    }
+}
 
-async fn scan_rows<F>(
+async fn scan_rows<F, C: Clock>(
     caller: ScanCaller,
     collection: &mongodb::Collection<Document>,
     agent_id: &AgentId,
     last_seq: u64,
     session: &mut mongodb::ClientSession,
-    mode: ScanMode,
+    mode: ScanMode<C>,
     mut visit: F,
 ) -> Result<LogSummary, TransactionLogError>
 where
     F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
 {
-    let mut observation = crate::store::agent_log_telemetry::Scan::new(caller);
+    let mut observation = crate::store::agent_log_telemetry::Scan::with_clock(
+        caller,
+        mode.options.cooperation,
+        mode.options.clock,
+    );
     if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
         tracing::warn!(
             limit_kind = "physical_entries",
@@ -213,7 +254,7 @@ where
         .find(mongodb::bson::doc! { "agent_id": agent_id.as_str() })
         .sort(mongodb::bson::doc! { "seq": 1 })
         .limit(i64::try_from(PHYSICAL_AGENT_LOG_ENTRIES + 1).unwrap_or(i64::MAX));
-    let find = if mode.snapshot {
+    let find = if mode.options.snapshot {
         find.read_concern(ReadConcern::snapshot())
     } else {
         find
@@ -264,6 +305,7 @@ where
         visit(entry).map_err(TransactionLogError::Domain)?;
         head_hash = hash_raw(raw.as_bytes());
         entry_count = expected.unwrap_or_default();
+        observation.checkpoint().await;
     }
     if entry_count != last_seq {
         return Err(TransactionLogError::Domain(

@@ -10,6 +10,7 @@ pub(super) trait Clock: Send {
     fn now(&self) -> Instant;
 }
 
+#[derive(Clone, Copy, Default)]
 pub(super) struct MonotonicClock;
 impl Clock for MonotonicClock {
     fn now(&self) -> Instant {
@@ -54,7 +55,7 @@ impl<C: Clock> ExecutionSections<C> {
         .await
     }
 
-    fn suspend(&mut self, now: Instant) {
+    pub(super) fn suspend(&mut self, now: Instant) {
         if let Some(started) = self.started.take() {
             self.stats.sections = self.stats.sections.saturating_add(1);
             self.stats.longest_section = self
@@ -64,6 +65,15 @@ impl<C: Clock> ExecutionSections<C> {
         }
     }
 
+    pub(super) fn now(&self) -> Instant {
+        self.clock.now()
+    }
+    pub(super) fn started_at(&self) -> Option<Instant> {
+        self.started
+    }
+    pub(super) fn resume(&mut self, now: Instant) {
+        self.started = Some(now);
+    }
     pub(super) fn finish(&mut self) -> SectionStats {
         self.suspend(self.clock.now());
         self.stats

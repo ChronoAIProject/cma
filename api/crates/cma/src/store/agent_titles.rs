@@ -213,7 +213,7 @@ async fn transcript_at_snapshot_with_format(
         &agent.id,
         agent.conversation.last_seq,
         session,
-        true,
+        crate::store::agent_log_integrity::ScanOptions::new(true, store.scan_cooperation),
         |entry| {
             if entry.agent_id != agent.id {
                 return Err(SandboxStoreError::SequenceConflict);
