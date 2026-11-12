@@ -23,6 +23,7 @@ exposed under `/event-gateway` on the same origin with its own
 | Bots | Create and manage owner Bots through CMAEG, inspect progress, test, enable, disable, rotate credentials and delete. |
 | Triggers and Launches | Publish visitor entry points, placements and embeds; admit and observe visitor-owned work and service connections. |
 | Provider and gateway | Manage CMAEG provider bindings; admit provider turns and retrieve immutable full event context. |
+| Documents and usage | Manage independent documents and sharing; query owner document, retained-byte and source-object quota usage through `GET /api/v1/usage/documents`. |
 | Operations | Manage platform settings, defaults and authorized inventory; inspect activity and conformance. |
 | Auth and discovery | Browser sign-in/session/logout, OpenAPI, conformance and Agent-card discovery. |
 
@@ -519,3 +520,20 @@ admin route and enumerate current exceptions with
 `GET /api/v1/admin/sandboxes?always_on=true`. See
 [CMA automatic pause](CMA_Auto_Pause.md) for revision rules, audit fields and the
 required review of legacy exceptions before enablement.
+
+## Owner document quota observations
+
+`GET /api/v1/usage/documents` is an authenticated private read. A ready, enabled
+ledger reports `enforcement: enforced` and `used`/`limit` counters for `documents`,
+`bytes` and `objects`. Off or unready accounting reports `not_enforced` with all
+three counters null. The query includes retained reservations for older revisions
+and uncertain writes and never includes another owner's documents through a
+share. The typed SDK methods are TypeScript `client.usage.documents(options?)`
+and Rust `client.usage().documents().await`.
+
+Quota refusal is HTTP 429 `resource-limit-reached`, with dimension-specific
+`document_limit_reached`, `document_bytes_limit_reached` or
+`document_objects_limit_reached` codes and `limit`/`live` extensions. `live` is
+usage before the refused reservation; no `Retry-After` is supplied. Per-document
+metadata bounds continue to use `document_capacity`. See
+[document quotas](CMA_Document_Quotas.md) for activation gates and examples.

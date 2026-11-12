@@ -1,11 +1,57 @@
 //! Reservations outlive uncertain object writes and metadata commits.
-use super::{digest, valid_id, DocumentError, MAX_DOCUMENT_BYTES};
+use super::{digest, valid_id, DocumentError, DocumentService, MAX_DOCUMENT_BYTES};
 use serde::{Deserialize, Serialize};
 
 pub const OWNER_DOCUMENT_LIMIT: u64 = 100;
 pub const OWNER_DOCUMENT_BYTES: u64 = 1024 * 1024 * 1024;
 // Failed writes with tiny bodies must not create an unbounded accounting ledger.
 pub const OWNER_DOCUMENT_OBJECT_LIMIT: u64 = 32_768;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaEnforcement {
+    Enforced,
+    NotEnforced,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageCounter {
+    pub used: u64,
+    pub limit: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentUsage {
+    pub enforcement: QuotaEnforcement,
+    pub documents: Option<UsageCounter>,
+    pub bytes: Option<UsageCounter>,
+    pub objects: Option<UsageCounter>,
+}
+
+impl DocumentUsage {
+    pub fn not_enforced() -> Self {
+        Self {
+            enforcement: QuotaEnforcement::NotEnforced,
+            documents: None,
+            bytes: None,
+            objects: None,
+        }
+    }
+}
+
+impl DocumentService {
+    pub async fn usage(&self, caller: &crate::Caller) -> Result<DocumentUsage, DocumentError> {
+        super::service::principal(caller)?;
+        match &self.quota {
+            Some(quota) => {
+                quota
+                    .usage(&digest(caller.subject.as_str().as_bytes()))
+                    .await
+            }
+            None => Ok(DocumentUsage::not_enforced()),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -67,4 +113,7 @@ pub trait DocumentQuotaStore: Send + Sync {
         &self,
         source: &DocumentSourceReservation,
     ) -> Result<SourceTicket, DocumentError>;
+
+    /// Report only authoritative owner counters while enforcement is ready.
+    async fn usage(&self, owner_hash: &str) -> Result<DocumentUsage, DocumentError>;
 }

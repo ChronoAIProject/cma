@@ -344,7 +344,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
     #[openapi(paths(summary, list, read, events, admin_summary, admin_list),
         components(schemas(UsageTotalsView, AllocationView, SandboxUsageView, UsageSummaryView,
             UsagePageView, UsageEventView, UsageEventsView)),
-        tags((name="usage", description="Sandbox allocation metering, uptime and lifecycle intervals")))]
+        tags((name="usage", description="Owner document quotas and Sandbox allocation metering, uptime and lifecycle intervals")))]
     struct UsageApi;
     UsageApi::openapi()
 }

@@ -266,6 +266,9 @@ async fn revoked_runtime_is_checked_before_reserving_document_storage() {
     struct QuotaCalls(std::sync::atomic::AtomicUsize);
     #[async_trait::async_trait]
     impl DocumentQuotaStore for QuotaCalls {
+        async fn usage(&self, _: &str) -> Result<DocumentUsage, DocumentError> {
+            Ok(DocumentUsage::not_enforced())
+        }
         async fn reserve(
             &self,
             _: &DocumentSourceReservation,

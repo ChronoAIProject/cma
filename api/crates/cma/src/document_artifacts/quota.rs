@@ -144,13 +144,21 @@ impl MongoDocumentQuotaStore {
             _ => return Err(DocumentError::Corrupt.into()),
         };
         let additions = [u64::from(new_document), source.bytes, 1];
-        if usage
-            .iter()
-            .zip(additions)
-            .zip(self.limits)
-            .any(|((&used, added), limit)| used.checked_add(added).is_none_or(|n| n > limit))
+        for (((live, added), limit), dimension) in
+            usage.into_iter().zip(additions).zip(self.limits).zip([
+                DocumentLimit::Documents,
+                DocumentLimit::Bytes,
+                DocumentLimit::Objects,
+            ])
         {
-            return Err(DocumentError::Capacity.into());
+            if live.checked_add(added).is_none_or(|n| n > limit) {
+                return Err(DocumentError::LimitReached {
+                    dimension,
+                    limit,
+                    live,
+                }
+                .into());
+            }
         }
         if new_document {
             self.rows
@@ -176,6 +184,57 @@ impl DocumentQuotaStore for MongoDocumentQuotaStore {
         tokio::time::timeout(IO, self.reserve_bounded(source))
             .await
             .map_err(|_| DocumentError::Unavailable)?
+    }
+
+    async fn usage(&self, owner_hash: &str) -> Result<DocumentUsage, DocumentError> {
+        if !valid_digest(owner_hash) {
+            return Err(DocumentError::Invalid);
+        }
+        if !self.enabled {
+            return Ok(DocumentUsage::not_enforced());
+        }
+        tokio::time::timeout(IO, async {
+            let state = self
+                .rows
+                .find_one(doc! {"_id": STATE})
+                .max_time(IO)
+                .await
+                .map_err(unavailable)?;
+            if !state.as_ref().is_some_and(ready) {
+                return Ok(DocumentUsage::not_enforced());
+            }
+            let owner = self
+                .rows
+                .find_one(doc! {"_id": owner_id(owner_hash)})
+                .max_time(IO)
+                .await
+                .map_err(unavailable)?;
+            let used = match owner {
+                Some(owner) => {
+                    validate_row(&owner, "owner")?;
+                    [
+                        number(&owner, "documents")?,
+                        number(&owner, "bytes")?,
+                        number(&owner, "objects")?,
+                    ]
+                }
+                None => [0; 3],
+            };
+            let [documents, bytes, objects] = [0, 1, 2].map(|i| {
+                Some(UsageCounter {
+                    used: used[i],
+                    limit: self.limits[i],
+                })
+            });
+            Ok(DocumentUsage {
+                enforcement: QuotaEnforcement::Enforced,
+                documents,
+                bytes,
+                objects,
+            })
+        })
+        .await
+        .map_err(|_| DocumentError::Unavailable)?
     }
 }
 

@@ -2441,10 +2441,11 @@ Runtime MCP `publish_document` and `update_document` derive owner/Agent from con
 
 Limits: UTF8 Markdown 1 MiB, title 240 bytes, search 160 bytes, comments 8 KiB; page 1–50 (default 25); source revisions 256; direct grants 128; links 32; comments 256; retained receipts 1024; serialized metadata 12 MiB. Sources are content-addressed by server-derived owner/document/digest keys; callers never select storage locations. A failed metadata CAS may leave an unreachable immutable source object; no document metadata or source is lost. There is no document deletion endpoint in this increment.
 
-Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_key/invalid_json;401 not_authenticated;404 document_not_found conceals unavailable authority;409 document_revision_conflict/idempotency_key_reused;413 invalid_json size;415 json_content_type_required;422 invalid_json shape;429 document_capacity;503 document_unavailable.
+Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_key/invalid_json;401 not_authenticated;404 document_not_found conceals unavailable authority;409 document_revision_conflict/idempotency_key_reused;413 invalid_json size;415 json_content_type_required;422 invalid_json shape;429 document_capacity/document_write_busy/document_limit_reached/document_bytes_limit_reached/document_objects_limit_reached;503 document_unavailable.
 
 | Operation | Behavior |
 |---|---|
+| `GET /api/v1/usage/documents` | Read authenticated owner document, retained-byte and source-object quota counters. |
 | `GET /api/v1/documents` | List/search owned and explicitly shared documents. |
 | `POST /api/v1/documents` | Create owned Markdown document. |
 | `GET /api/v1/documents/{id}` | Read effective document metadata. |
@@ -2461,7 +2462,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `POST /api/v1/documents/{id}/comments` | Add comment under current grant. |
 | `DELETE /api/v1/documents/{id}/comments/{comment_id}` | Owner or author comment removal. |
 
-SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both expose list/create/read/update/source/revisions/shares/grant/revoke/links/createLink(create_link)/revokeLink(revoke_link)/comments/comment/removeComment(remove_comment). Read/comment options accept an explicit share token only in the header. Full and focused AgentManager OpenAPI documents include all 15 operations.
+SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both expose list/create/read/update/source/revisions/shares/grant/revoke/links/createLink(create_link)/revokeLink(revoke_link)/comments/comment/removeComment(remove_comment). Read/comment options accept an explicit share token only in the header. TypeScript `client.usage.documents(options?)` and Rust `client.usage().documents().await` query owner document usage. The response has `enforcement` (`enforced` or `not_enforced`) and nullable `documents`, `bytes`, `objects` counters containing `used` and `limit`. Counters are null when accounting is off or the ledger is not ready. The usage route returns 401 `not_authenticated`, 404 `document_not_found` for missing document authority, or 503 `document_unavailable` for failed reads. Quota refusals use problem type `resource-limit-reached`, include `limit` and pre-reservation `live`, and have no `Retry-After`; bounded metadata capacity keeps `document_capacity`. Full and focused AgentManager OpenAPI documents include all 16 operations.
 
 
 

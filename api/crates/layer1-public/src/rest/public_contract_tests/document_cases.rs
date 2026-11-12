@@ -80,7 +80,41 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         }
     }
     drop(records);
-    let service = if matches!(mode, "unavailable" | "capacity") {
+    let service = if mode.starts_with("limit_") || mode.starts_with("usage_") {
+        let limits = match mode {
+            "limit_documents" => [1, 1024, 128],
+            "limit_bytes" => [100, 17, 128],
+            "limit_objects" => [100, 1024, 1],
+            _ => [
+                OWNER_DOCUMENT_LIMIT,
+                OWNER_DOCUMENT_BYTES,
+                OWNER_DOCUMENT_OBJECT_LIMIT,
+            ],
+        };
+        let mut quota = memory::MemoryDocumentQuota::new(limits);
+        quota
+            .reserve(&DocumentSourceReservation {
+                owner_hash: digest(b"document-owner"),
+                document_id: d.id.clone(),
+                sha256: d.sha256.clone(),
+                bytes: d.size_bytes,
+            })
+            .await
+            .unwrap();
+        if mode == "limit_documents" {
+            // Retained baselines can exceed a newly enforced limit.
+            quota.limits[0] = 0;
+        }
+        quota.ready.store(
+            mode != "usage_not_ready",
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        quota.unavailable.store(
+            mode == "usage_unavailable",
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        DocumentService::with_storage_quota(rows, blobs, false, Some(Arc::new(quota)))
+    } else if matches!(mode, "unavailable" | "capacity") {
         DocumentService::new(
             Arc::new(Faults {
                 rows,
@@ -94,12 +128,13 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     Some(Scenario {
         router: super::super::documents_router(service),
         subject: match mode {
-            "anonymous" => None,
+            "anonymous" | "usage_anonymous" => None,
+            "usage_foreign" => Some("document-stranger"),
             "foreign" | "link" => Some("document-stranger"),
             "reader" => Some("document-reader"),
             _ => Some("document-owner"),
         },
-        authorization: if mode == "forbidden" {
+        authorization: if matches!(mode, "forbidden" | "usage_forbidden") {
             Authorization::none()
         } else {
             owner.authorization

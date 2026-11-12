@@ -15,6 +15,13 @@ pub(super) const MAX_METADATA_BYTES: usize = 12 * 1024 * 1024;
 // Normal writes never consume this reserve, including when metadata fills first.
 pub(super) const REVOCATION_RECEIPT_BYTES: usize = 4096;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentLimit {
+    Documents,
+    Bytes,
+    Objects,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DocumentError {
     #[error("Document request is invalid")]
@@ -27,6 +34,12 @@ pub enum DocumentError {
     IdempotencyConflict,
     #[error("Document capacity reached")]
     Capacity,
+    #[error("Owner document quota reached")]
+    LimitReached {
+        dimension: DocumentLimit,
+        limit: u64,
+        live: u64,
+    },
     #[error("Document source writes are busy")]
     Busy,
     #[error("Document storage is unavailable")]

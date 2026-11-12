@@ -84,6 +84,29 @@ source revisions, 128 direct shares, 32 share links and 256 comments per
 document. Metadata receipts and aggregate size are separately bounded. These
 limits are enforced by the service, not only the editor.
 
+Owner storage accounting is separately controlled by
+`CHRONO_DOCUMENT_QUOTAS_ENABLED` (default `false`) and a verified ready ledger.
+Once enabled, source writes reserve up to 100 document identities, 1 GiB retained
+source bytes and 32,768 source objects per owner. Older revisions and failed or
+uncertain uploads remain charged; sharing does not charge the recipient. These
+defaults require activation approval and do not change the per-document bounds.
+
+Use authenticated `GET /api/v1/usage/documents` to query owner usage and limits.
+An enforced result contains `documents`, `bytes` and `objects` counters with
+`used` and `limit`; remaining capacity is `max(0, limit - used)`. When accounting
+is off or not ready, `enforcement` is `not_enforced` and all three counters are
+`null`. Clients must hide numeric capacity in that state. Usage is a private
+observation rather than a reservation for the next write.
+
+Quota refusals use HTTP 429, problem type `resource-limit-reached`, and code
+`document_limit_reached`, `document_bytes_limit_reached` or
+`document_objects_limit_reached`. The `limit` and `live` fields identify the
+ceiling and usage before the refused reservation. They have no `Retry-After`.
+Per-document receipt/revision/share bounds retain `document_capacity`; the
+process concurrency limit uses `document_write_busy` with `Retry-After: 1`.
+Callers should retain unsaved drafts and identify the refused dimension. See
+[document quotas](CMA_Document_Quotas.md) for activation and accounting details.
+
 All writes default to the original 1024-receipt and 12 MiB aggregate metadata
 limits, including owner revocation. The reader unconditionally accepts expanded
 bounded aggregates so this image can become a safe rollback target before any
