@@ -306,7 +306,6 @@ async fn buffered_hierarchy_refuses_revocation_and_expiry_without_leaking_counts
                 dependency_failure,
                 gate: Some((entered.clone(), resume.clone())),
             }))
-            .with_detail_timings(true)
             .with_resource_access(f.access.clone());
             let sandbox_id = f.parent.id.clone();
             let workspace_id = f.workspace.id.clone();
