@@ -22,6 +22,12 @@ impl AgentLogProjectionState {
             return;
         };
         match &entry.kind {
+            AgentLogKind::ApprovalRequested { .. } | AgentLogKind::ApprovalResolved { .. }
+                if turn.end_sequence.is_none() =>
+            {
+                turn.approval_change_sequence = Some(entry.seq);
+                changes.push(AgentLogEvidenceChange::Turn(Box::new(turn.clone())));
+            }
             AgentLogKind::Usage {
                 input_tokens,
                 output_tokens,
@@ -78,6 +84,11 @@ impl AgentLogProjectionState {
 impl AgentLogTurnFacts {
     pub(super) fn validate_response_facts(&self, through: u64) -> Result<(), String> {
         if self.response_usage.is_some() != self.response_usage_sequence.is_some()
+            || self.approval_change_sequence.is_some_and(|seq| {
+                seq <= self.turn_sequence
+                    || seq > through
+                    || self.end_sequence.is_some_and(|end| seq >= end)
+            })
             || self
                 .response_usage
                 .is_some_and(|usage| usage.turn_sequence != self.turn_sequence)
