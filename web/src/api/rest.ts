@@ -88,16 +88,6 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       );
       return { runtimeUpdate: runtimeUpdate(result.runtime_update), revision: result.revision };
     },
-    inspectSandboxRecovery: (id, options) => sdk.sandboxes.inspectRuntimeRecovery(id, options),
-    recoverSandboxRetained: (id, expectedRevision, options) =>
-      sdk.sandboxes.recoverRetained(
-        id,
-        {
-          expected_revision: expectedRevision,
-          confirm_same_image_recovery: true,
-        },
-        options,
-      ),
     ...agentSettingsClient(),
     ...messageFeedbackClient(),
     readSuggestedReplies: (agentId, scope, options) =>

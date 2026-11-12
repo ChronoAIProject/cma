@@ -400,7 +400,6 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
-    retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_key_history: std::collections::HashSet<String>,

@@ -58,18 +58,6 @@ pub struct NonexecutingRecoveryVerification {
 
 #[async_trait::async_trait]
 pub trait RuntimeRecovery: Send + Sync {
-    /// Read-only proof for reopening already restored, idle conversations.
-    /// Requires complete settled history and no Agent/unowned process. This
-    /// grants no authority to stop a process or suspend the retained runtime.
-    async fn inspect_idle_reopen(
-        &self,
-        _request: &RuntimeRecoveryInspectionRequest,
-    ) -> Result<RuntimeRecoveryInspection> {
-        Err(AdapterError::Unsupported(
-            "idle conversation reopening proof is unavailable".into(),
-        ))
-    }
-
     /// Read-only provider proof for the complete, empty-Agent case. Callers must
     /// establish that scope transactionally; this method grants no mutation authority.
     async fn inspect_nonexecuting_recovery(

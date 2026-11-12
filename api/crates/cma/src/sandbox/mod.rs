@@ -22,7 +22,6 @@ mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
 mod model_request_budget;
 mod reconciliation;
-pub(crate) mod retained_recovery;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;

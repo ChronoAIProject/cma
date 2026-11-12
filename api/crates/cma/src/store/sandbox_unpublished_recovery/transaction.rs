@@ -10,7 +10,6 @@ use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
 use mongodb::bson::{doc, Timestamp};
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
-use sha2::{Digest, Sha256};
 
 use super::super::agent_log::scan_complete_log_with_session;
 use super::super::agent_log_integrity::TransactionLogError;
@@ -23,14 +22,13 @@ use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::super::workspaces::read_workspace;
 
-#[derive(Debug)]
-pub(in crate::store) enum ApplyError {
+pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
 }
 
 impl ApplyError {
-    pub(in crate::store) fn domain(self) -> SandboxStoreError {
+    pub(super) fn domain(self) -> SandboxStoreError {
         match self {
             Self::Domain(error) => error,
             Self::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
@@ -73,40 +71,6 @@ pub(super) async fn load(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
-    load_for_inspection(store, id, session, true, false)
-        .await
-        .map(|(snapshot, seq, _)| (snapshot, seq))
-}
-
-pub(in crate::store) async fn load_reopen(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-    session: &mut ClientSession,
-) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
-    load_for_inspection(store, id, session, true, true).await
-}
-
-pub(super) async fn load_retained(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-    session: &mut ClientSession,
-) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, ApplyError> {
-    let (snapshot, last_seq, _) = load_for_inspection(store, id, session, false, false).await?;
-    validate_in_transaction(store, id, last_seq, session).await?;
-    Ok(layer2_core::sandbox::RetainedRecoverySnapshot {
-        sandbox: snapshot.sandbox,
-        agents: snapshot.agents,
-        workspaces: snapshot.workspaces,
-    })
-}
-
-async fn load_for_inspection(
-    store: &MongoSandboxStore,
-    id: &SandboxId,
-    session: &mut ClientSession,
-    require_unpublished: bool,
-    require_reopen: bool,
-) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
     let document = store
         .sandboxes
         .find_one(doc! { "_id": id.as_str() })
@@ -123,73 +87,39 @@ async fn load_for_inspection(
     let agents = load_sandbox_agents(store, id, session).await?;
     let generation = sandbox
         .unpublished_recovery_binding()
-        .and_then(|binding| binding.provision_generation);
-    if require_unpublished && generation.is_none() {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    let mut history_digest = Sha256::new();
+        .and_then(|binding| binding.provision_generation)
+        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     for agent in &agents {
         let mut observation = Observation::new(Stage::PublicationLog);
         let mut published = false;
-        let mut entries = Vec::new();
-        let result = if require_unpublished {
-            scan_complete_log_with_session(
-                ScanCaller::RecoveryProof,
-                store,
-                &agent.id,
-                agent.conversation.last_seq,
-                session,
-                |entry| {
-                    if matches!(entry.kind,
+        let result = scan_complete_log_with_session(
+            ScanCaller::RecoveryProof,
+            store,
+            &agent.id,
+            agent.conversation.last_seq,
+            session,
+            |entry| {
+                if matches!(entry.kind,
                 AgentLogKind::ConversationOpened { runtime_generation, .. }
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
-                    if generation.is_some_and(|generation| runtime_generation >= generation))
-                    {
-                        published = true;
-                        return Err(SandboxStoreError::InvalidTransaction(
-                            "runtime generation was already published",
-                        ));
-                    }
-                    if require_reopen {
-                        let bytes = serde_json::to_vec(&entry).map_err(|_| {
-                            SandboxStoreError::Corrupt("recovery history encoding failed".into())
-                        })?;
-                        history_digest.update((bytes.len() as u64).to_be_bytes());
-                        history_digest.update(bytes);
-                        entries.push(entry);
-                    }
-                    Ok(())
-                },
-            )
-            .await
-        } else {
-            // Assessment is available before consent and even with admission
-            // disabled. Existing quarantine is a refusal, never a reason to write.
-            super::super::agent_log_integrity::read::scan_complete_log_with_session(
-                ScanCaller::RecoveryProof,
-                store,
-                agent,
-                session,
-            )
-            .await
-        };
+                    if runtime_generation >= generation)
+                {
+                    published = true;
+                    return Err(SandboxStoreError::InvalidTransaction(
+                        "runtime generation was already published",
+                    ));
+                }
+                Ok(())
+            },
+        )
+        .await;
         observation.finish(match &result {
             Ok(_) => Reason::Success,
             Err(TransactionLogError::Driver(_)) => Reason::Unavailable,
             Err(_) if published => Reason::PublishedGeneration,
             Err(_) => Reason::CorruptHistory,
         });
-        let summary = result?;
-        if require_reopen {
-            use super::super::agent_log_integrity::{
-                audit_checkpoint, ensure_reopen_capacity, SemanticCheckpoint,
-            };
-            // Audit before refusal so a disproved trusted checkpoint is revoked.
-            audit_checkpoint(store, agent, &entries, session).await?;
-            SemanticCheckpoint::validate_retained_semantics(agent, &entries)
-                .map_err(ApplyError::Domain)?;
-            ensure_reopen_capacity(&summary).map_err(ApplyError::Domain)?;
-        }
+        result?;
     }
     let mut cursor = store
         .workspaces
@@ -214,7 +144,6 @@ async fn load_for_inspection(
             workspaces,
         },
         last_seq,
-        format!("{:x}", history_digest.finalize()),
     ))
 }
 

@@ -9,27 +9,6 @@ pub(super) fn snapshot(
     state: &State,
     id: &SandboxId,
 ) -> Result<SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
-    load(state, id, true)
-}
-
-pub(super) fn retained_snapshot(
-    state: &State,
-    id: &SandboxId,
-) -> Result<crate::sandbox::RetainedRecoverySnapshot, SandboxStoreError> {
-    let snapshot = load(state, id, false)?;
-    super::maintenance::validate_event_stream(state, id)?;
-    Ok(crate::sandbox::RetainedRecoverySnapshot {
-        sandbox: snapshot.sandbox,
-        agents: snapshot.agents,
-        workspaces: snapshot.workspaces,
-    })
-}
-
-fn load(
-    state: &State,
-    id: &SandboxId,
-    require_unpublished: bool,
-) -> Result<SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
     let sandbox = state
         .sandboxes
         .get(id)
@@ -51,21 +30,18 @@ fn load(
     workspaces.sort_by(|a, b| a.id.cmp(&b.id));
     let generation = sandbox
         .unpublished_recovery_binding()
-        .and_then(|binding| binding.provision_generation);
-    if require_unpublished && generation.is_none() {
-        return Err(SandboxStoreError::Conflict);
-    }
+        .and_then(|binding| binding.provision_generation)
+        .ok_or(SandboxStoreError::Conflict)?;
     for agent in &agents {
         let logs = state
             .agent_logs
             .get(&agent.id)
             .map_or(&[][..], Vec::as_slice);
         for (index, entry) in logs.iter().enumerate() {
-            if require_unpublished
-                && matches!(entry.kind,
+            if matches!(entry.kind,
                 AgentLogKind::ConversationOpened { runtime_generation, .. }
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
-                    if generation.is_some_and(|generation| runtime_generation >= generation))
+                    if runtime_generation >= generation)
             {
                 Observation::new(Stage::PublicationLog).finish(Reason::PublishedGeneration);
                 return Err(SandboxStoreError::InvalidTransaction(

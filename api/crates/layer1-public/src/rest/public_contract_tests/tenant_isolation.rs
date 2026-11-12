@@ -31,8 +31,6 @@ pub(super) fn selected(case: &Case) -> bool {
             | "agents_approval"
             | "agents_paused"
             | "instances_owner"
-            | "retained_recovery_owner"
-            | "retained_reopen_owner"
             | "instances_paused"
             | "instances_lifecycle"
             | "source_manual"
