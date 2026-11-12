@@ -152,10 +152,31 @@ excludes the driver's BSON conversion. The real-Mongo assertion is a catastrophi
 regression ceiling (less than twice baseline plus 5 ms), **not** proof of low
 overhead. Low overhead for large reads remains unresolved; the measured decoding
 cost must be considered before enabling this instrumentation in a diagnostic
-window. An optimized driver comparison is the next validation step.
+window. An optimized comparison is recorded below.
 
 The driver's raw command-event interface is private. Its optional OpenTelemetry
 interface avoids whole-reply conversion with query text disabled, but does not
 expose cursor batch lengths or the exact `autocommit:false` marker. It cannot
 replace this observer while preserving every requested field without further
 work or a driver API change.
+
+An optimized standalone harness then included the actual observer source and
+production text formatter writing to a sink, with the same driver, a disposable
+replica set and 80 reads per mode/size. It includes task-local context, command
+monitoring, CMAP tracking, hashing, summaries and sampled formatting. It excludes
+the full API, remote transport and log-sink I/O. One fixture collection is
+allowlisted in the harness; no production data is used.
+
+| Documents | Off mean | On mean | Added mean | Off/on p50 | Mean change |
+| --- | --- | --- | --- | --- | --- |
+| 25 | 0.576 ms | 0.510 ms | -0.066 ms | 0.436 / 0.466 ms | -11.5% |
+| 200 | 1.704 ms | 1.906 ms | 0.202 ms | 1.470 / 1.675 ms | +11.9% |
+| 10,001 | 76.191 ms | 92.642 ms | 16.451 ms | 69.939 / 85.386 ms | +21.6% |
+
+The negative small-read mean is measurement noise, not a speedup claim; its p50
+increased. A separate minimal callback measured 8.615 ms added for 10,001
+documents, confirming a driver-level cost without the observer. Neither
+comparison establishes a production overhead bound. Default-on full command
+monitoring therefore needs an explicit overhead disposition in review before
+the diagnostic window. Phase timers and existing pool metrics can remain enabled
+with command monitoring off; that mode loses collection/command attribution.
