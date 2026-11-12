@@ -11,6 +11,7 @@ pub(super) enum RequestTier {
     Default,
     Create,
     Input,
+    Control,
 }
 
 impl RequestTier {
@@ -20,14 +21,14 @@ impl RequestTier {
             Self::Default => "default",
             Self::Create => "create",
             Self::Input => "input",
+            Self::Control => "control",
         }
     }
 }
 
 pub(super) fn request_tier(request: &Request, response_inputs: bool) -> RequestTier {
-    let path = request
-        .extensions()
-        .get::<MatchedPath>()
+    let matched_path = request.extensions().get::<MatchedPath>();
+    let path = matched_path
         .map(MatchedPath::as_str)
         .unwrap_or_else(|| request.uri().path());
     if matches!(request.method(), &Method::GET | &Method::HEAD)
@@ -42,6 +43,30 @@ pub(super) fn request_tier(request: &Request, response_inputs: bool) -> RequestT
         )
     {
         return RequestTier::Default;
+    }
+    // Recovery and controls of admitted work take precedence over Input.
+    // Only exact router metadata can grant this independent allowance.
+    if matched_path.is_some()
+        && matches!(
+            path,
+            "/api/v1/agents/{id}/stop"
+                | "/api/v1/agents/{id}/interrupt"
+                | "/api/v1/agents/{id}/approvals/{request_id}"
+                | "/api/v1/agents/{id}/access-requests/{request_id}/approve"
+                | "/api/v1/agents/{id}/access-requests/{request_id}/deny"
+                | "/api/v1/launches/{id}/cancel"
+                | "/api/v1/responses/{response_id}/cancel"
+                | "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt"
+                | "/api/v2/agents/{agent_id}/responses/{response_id}/controls"
+                | "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
+                | "/api/v1/sandboxes/{id}/pause"
+                | "/api/v1/sandboxes/{id}/commands"
+                | "/api/v1/sandboxes/{id}/revive"
+                | "/api/v1/agents/{id}/capacity-recovery/resume"
+        )
+    {
+        // Recovery routes and Sandbox command Revive retain domain admission.
+        return RequestTier::Control;
     }
     // Parameterized paths must be exact registered MatchedPath templates.
     // The disabled branch preserves the prior suffix-based policy.
@@ -60,7 +85,6 @@ pub(super) fn request_tier(request: &Request, response_inputs: bool) -> RequestT
                     | "/api/v1/agents/{id}/input"
                     | "/api/v1/agents/{id}/steer"
                     | "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input"
-                    | "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt"
             )
     } else {
         path.split('/').rfind(|segment| !segment.is_empty()) == Some("input")

@@ -20,6 +20,7 @@ async fn replica(database: &Database, enabled: bool) -> Router {
         default_per_minute: n(600),
         create_per_minute: n(10),
         input_per_minute: n(3),
+        control_per_minute: n(120),
         response_input_tier_enabled: enabled,
     };
     router(RateLimiters::from_config(

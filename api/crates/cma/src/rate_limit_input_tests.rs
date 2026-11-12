@@ -24,10 +24,6 @@ const INPUT_ROUTES: &[(&str, &str)] = &[
         "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
         "/api/v2/agents/agt_one/responses/rsp_one/queued-input",
     ),
-    (
-        "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
-        "/api/v2/agents/agt_one/responses/rsp_one/interrupt",
-    ),
 ];
 
 fn request(method: Method, path: &str, subject: Option<&str>, binding: bool) -> Request {
@@ -58,6 +54,7 @@ fn local(enabled: bool) -> Arc<RateLimiters> {
         quota(1000),
         quota(600),
         quota(10),
+        quota(120),
         quota(120),
         TrustedProxyConfig::sample(),
     );

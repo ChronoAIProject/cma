@@ -78,6 +78,7 @@ enum Budget {
     Default,
     Create,
     Input,
+    Control,
 }
 
 /// Independent admission, health, and operation budgets.
@@ -91,6 +92,7 @@ pub(crate) struct RateLimiters {
     default: KeyedLimiter,
     create: KeyedLimiter,
     input: KeyedLimiter,
+    control: KeyedLimiter,
     response_input_tier_enabled: bool,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
@@ -111,6 +113,7 @@ impl RateLimiters {
             Quota::per_minute(config.default_per_minute),
             Quota::per_minute(config.create_per_minute),
             Quota::per_minute(config.input_per_minute),
+            Quota::per_minute(config.control_per_minute),
             trusted_proxies,
         );
         limiters.response_input_tier_enabled = config.response_input_tier_enabled;
@@ -124,6 +127,7 @@ impl RateLimiters {
         default: Quota,
         create: Quota,
         input: Quota,
+        control: Quota,
         trusted_proxies: TrustedProxyConfig,
     ) -> Self {
         Self {
@@ -133,6 +137,7 @@ impl RateLimiters {
             default: RateLimiter::keyed(default),
             create: RateLimiter::keyed(create),
             input: RateLimiter::keyed(input),
+            control: RateLimiter::keyed(control),
             response_input_tier_enabled: false,
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
@@ -148,6 +153,7 @@ impl RateLimiters {
             Budget::Default => &self.default,
             Budget::Create => &self.create,
             Budget::Input => &self.input,
+            Budget::Control => &self.control,
         };
         let decision = limiter
             .check_key(key)
@@ -167,6 +173,7 @@ impl RateLimiters {
             self.default.retain_recent();
             self.create.retain_recent();
             self.input.retain_recent();
+            self.control.retain_recent();
         }
     }
 
@@ -244,6 +251,7 @@ pub(crate) async fn enforce(
         RequestTier::Default => Budget::Default,
         RequestTier::Create => Budget::Create,
         RequestTier::Input => Budget::Input,
+        RequestTier::Control => Budget::Control,
         RequestTier::Health => unreachable!("health is admitted above"),
     };
     match limiters.check_operation(budget, &key).await {
@@ -387,3 +395,7 @@ mod tests;
 #[cfg(test)]
 #[path = "rate_limit_input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "rate_limit_control_tests.rs"]
+mod control_tests;
