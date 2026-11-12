@@ -302,3 +302,24 @@ async fn the_platform_spend_phase_pauses_keep_alive_and_agentless_sandboxes() {
         assert_eq!(store.pauses.lock().unwrap().len(), 3);
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_platform_stop_defers_managed_runtime_updates_so_no_paused_sandbox_is_restarted() {
+    for stopped in [false, true] {
+        let (store, reconciler, settings) = live().await;
+        let reconciler = reconciler
+            .with_runtime_version("fixture-image".into())
+            .with_platform_spend(Arc::new(Platform(Some(stopped))));
+        enable(&settings, now() - Duration::from_secs(1_800), 900);
+        assert!(reconciler.run_due(now()).await.unwrap());
+        // One binding read per pass; the runtime-update phase reads every
+        // candidate once more, and would start a rotation (a runtime, even
+        // on a paused Sandbox) unless the stop defers it to after the lift.
+        for index in 0..3 {
+            let id = fixtures::sandbox(index).id.to_string();
+            let reads = store.keys("get").iter().filter(|key| **key == id).count();
+            assert_eq!(reads, if stopped { 1 } else { 2 }, "{id} stopped={stopped}");
+        }
+        assert_eq!(store.keys("pause").len(), 3);
+    }
+}
