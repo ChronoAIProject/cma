@@ -159,10 +159,35 @@ async fn real_mongo_monitoring_privacy_and_overhead() {
                 .is_err());
         })
         .await;
+    drain(&on_counts).await;
     let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     for sensitive in [&name, &payload, "unknown_private_command", "127.0.0.1"] {
         assert!(!logs.contains(sensitive));
     }
     assert!(logs.contains("event=\"failed\""));
+    // Check-in runs in the driver's pool task: prove its retained labels and
+    // physical-hold hash still join to the originating command after that hop.
+    let returned = logs
+        .lines()
+        .find(|line| {
+            line.contains("event=\"checked_in\"")
+                && line.contains("route=\"GET /api/v1/sandboxes/{id}\"")
+                && line.contains("phase=\"hierarchy\"")
+        })
+        .expect("a sampled physical hold must retain its request context");
+    let hold_hash = returned
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("hold_hash="))
+        .unwrap();
+    assert_eq!(hold_hash.len(), 64);
+    let request_hash = format!("request_hash={}", "b".repeat(64));
+    assert!(returned.contains(&request_hash));
+    assert!(logs.lines().any(|line| {
+        line.contains("event=\"succeeded\"")
+            && line.contains(&format!("hold_hash={hold_hash}"))
+            && line.contains(&request_hash)
+            && line.contains("phase=\"hierarchy\"")
+            && line.contains("docs_returned_known=true")
+    }));
     database.drop().await.unwrap();
 }
