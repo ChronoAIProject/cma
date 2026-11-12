@@ -91,3 +91,28 @@ navigating. Treat the hosted URL as sensitive handoff data: do not log it or put
 in the return destination. Poll `readConnection` with the authenticated owner;
 CMA does not inspect cross-origin window contents. Manual connection metadata
 does not imply that a hosted handoff is available.
+
+Browser return URLs preserve one `setup` query on `/bots/new` or one `tab` query
+on `/sandboxes/{id}`. Paths remain canonical and relative (256 bytes); complete
+encoded absolute login URLs are bounded to 4,096 ASCII bytes, including origin and options. Unknown/duplicate query keys and
+fragments and raw non-ASCII bytes are refused. The startup-gated `silent_sign_in` hint defaults to false;
+the SDK still projects `{ authenticated: false }`. Same-origin server logout records an opt-out time; successful explicit sign-in
+records its attempt start separately and re-enables silent entry only when later.
+
+Explicit preference recovery is backed by durable custody, with a separate
+non-authenticating reference cookie. Same-origin logout revokes that proof;
+cross-site logout revokes the session without changing the preference.
+
+Browser binding cookies last 660 seconds: the ten-minute authorization attempt
+plus a one-minute callback-processing margin. Attempt expiry is unchanged.
+Predecessor attempts complete inline after reservation, and logout tombstones
+last at least as long as the binding cookie. Neither SDK handles the OAuth code
+exchange; browser cookies remain server-owned.
+
+`MAX_LOGIN_URL_BYTES` is exported from the public package entry point. It is the
+4,096-byte limit for the complete encoded absolute login URL, including its
+origin and options. Reference clients should import it through the package alias:
+
+```ts
+import { MAX_LOGIN_URL_BYTES } from '@chronoai/cma-sdk';
+```

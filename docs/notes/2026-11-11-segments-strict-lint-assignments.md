@@ -254,3 +254,54 @@ proxy; its failure is retained, and the corrected 34-case replica-set run passed
 No gate is waived. Both owned Mongo fixtures/volumes are absent after execution.
 See `2026-11-12-transcript-matrix-disposition.md` and
 `../CMA_Segmented_Transcript_Pages.md` for contract, matrix and exact limits.
+
+## S4 ordinary v2 admission allocation and 13:00 pin
+
+Branch `tl/cma-log-segments/ordinary-v2-admission` starts at `4b148fba5`.
+S4 owns the exact Agent envelope changes in `store/child_writer_claims.rs`,
+`store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/{apply,fences}.rs`,
+and the bounded transaction-local proof in `store/agent_log_segments/ordinary.rs`
+(with its single module registration). Parent fences and retirement archive guards
+remain independently enforced. Tests live under `store/sandbox_mongo_integration_tests/
+agent_segment_tests/{ordinary_roots,admission_contexts}.rs` and
+`admission_contexts/support.rs`; the existing discovery fixture exposes its
+connection-completion helper for the actual adopted claim/publication regression.
+
+P1-N1 uses a distinct `RolloverPermission::SegmentedRecovery`, supplied only by
+an exact durable CapacityRecovery admission. It forces a seal and empty successor,
+without event replay or sequence movement; it refuses legacy-source mismatch,
+empty source, appended events and terminal reserve classes. Writer preparation
+preserves conversation/worktree state and requires a non-Ready result. S5 keeps
+actual service admission success/refusal tests and the original dual-gate contract.
+
+Additional P1-1 inventory: `store/agent_conversation_store::apply_mutation`,
+`store/agent_conversation_store::checkpoint::{apply,write}` and
+`store/agent_commands::reconcile::apply` still use legacy publication/settlement.
+The three named claim/admission fixes alone therefore do not close P1-1's full
+post-adoption output requirement. Exact additional ownership/dependency was
+requested through the lead. Keep writer/recovery activation closed and both
+issues In Progress. Final-source gate counts and the exact pin are appended below;
+no unexecuted test or previous-pin pass is a qualification of this pin.
+
+### Published 13:00 checkpoint (12:56 SGT)
+
+Pushed executable head `256f455b9` normally merges develop `d08742c70`.
+The narrow CapacityRecovery permission commit is `ea8d89ef7`; ordinary claim/
+admission code and four new Mongo roots are `a56e1e025`. All are reachable from
+`tl/cma-log-segments/ordinary-v2-admission`. No PR is opened.
+
+Exact-head light gates: fmt/whitespace pass; canonical size 6,375 files pass;
+secret history 4,162 commits / zero findings. Prior working-source strict CMA
+all-targets/all-features passed with zero diagnostics, and the earlier planner
+selection passed 8/8. These are interim evidence only: additional tests and the
+develop merge require final-source strict/units/Mongo, now queued on shared slot 1.
+The queue uses `lockf -k -t 3600`, two jobs and a RAM pause below 10%; locks remain
+intact. An accidentally selected root-default toolchain build was cancelled and
+requeued with the repository's explicit 1.96.1 toolchain before any test executed.
+No final-source unit or Mongo count is claimed. Evidence remains in
+`notes/2026-11-12-ordinary-v2-evidence/` in the dedicated worktree.
+
+Full P1-1 closure remains blocked on the additional conversation/checkpoint/
+settlement paths named above; current proof is admission/worker publication only.
+P1-N1 writer permission is published for S5's service qualification, not declared
+service-qualified. Project 9 for #1350 and #1351 was verified In Progress.

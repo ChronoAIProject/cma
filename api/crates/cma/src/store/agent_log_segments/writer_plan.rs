@@ -20,6 +20,7 @@ pub(super) enum RolloverPermission {
     Closed,
     Normal,
     LegacyRecovery,
+    SegmentedRecovery,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -110,6 +111,8 @@ pub(super) fn plan(
         || i64::try_from(leaves.bytes.len()).ok() != current.active_count.checked_mul(32)
         || (source == SourceFormat::Legacy && current.active_ordinal != 0)
         || (permission == RolloverPermission::LegacyRecovery && source != SourceFormat::Legacy)
+        || (permission == RolloverPermission::SegmentedRecovery
+            && source != SourceFormat::Segmented)
     {
         return Err(corrupt());
     }
@@ -123,7 +126,10 @@ pub(super) fn plan(
     }
     let full_legacy = source == SourceFormat::Legacy
         && (current.active_count >= NORMAL_COUNT || current.active_bytes >= NORMAL_BYTES);
-    let recovery = permission == RolloverPermission::LegacyRecovery;
+    let recovery = matches!(
+        permission,
+        RolloverPermission::LegacyRecovery | RolloverPermission::SegmentedRecovery
+    );
     let overflows = !batch.rows.is_empty()
         && !fits(
             current.active_count,
@@ -132,6 +138,9 @@ pub(super) fn plan(
             capacity_class,
         );
     let rollover = full_legacy || recovery || overflows;
+    if recovery && (!batch.rows.is_empty() || capacity_class != AppendCapacity::Normal) {
+        return Err(corrupt());
+    }
     if rollover
         && (current.active_count == 0
             || (source == SourceFormat::Segmented && capacity_class != AppendCapacity::Normal))
