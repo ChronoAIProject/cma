@@ -86,13 +86,22 @@ fn platform_spend_pause_ignores_the_inactivity_threshold_and_uses_the_platform_n
 }
 
 #[test]
-fn platform_spend_pause_is_not_eligible_with_an_active_turn_or_queued_messages() {
+fn platform_spend_pause_is_not_eligible_with_an_active_turn_queued_messages_or_pending_work() {
     let current = sandbox();
     let mut busy = activity("agt_a", 4);
     busy.active_turn = Some(4);
     let mut queued = activity("agt_b", 8);
     queued.queued_messages_present = true;
-    for activities in [vec![busy], vec![queued], vec![]] {
+    let mut pending = activity("agt_c", 2);
+    pending.work_pending = true;
+    let mut admitted = activity("agt_d", 3);
+    admitted.external_activity_present = true;
+    for activities in [
+        vec![busy],
+        vec![queued],
+        vec![pending],
+        vec![activity("agt_e", 5), admitted],
+    ] {
         assert_eq!(
             apply_inactivity_pause(
                 &current,
@@ -104,4 +113,58 @@ fn platform_spend_pause_is_not_eligible_with_an_active_turn_or_queued_messages()
             ))
         );
     }
+}
+
+#[test]
+fn platform_spend_pause_admits_a_sandbox_without_live_agents_and_inactivity_does_not() {
+    let current = sandbox();
+    assert_eq!(
+        apply_inactivity_pause(
+            &current,
+            &[],
+            &request(InactivityPauseCause::Inactivity, 60)
+        ),
+        Ok(SandboxMaintenanceApplication::Complete(
+            SandboxMaintenanceOutcome::NotEligible
+        ))
+    );
+    let application = apply_inactivity_pause(
+        &current,
+        &[],
+        &request(InactivityPauseCause::PlatformSpendStop, 0),
+    )
+    .unwrap();
+    let SandboxMaintenanceApplication::Persist {
+        sandbox: paused, ..
+    } = application.clone()
+    else {
+        panic!("an Active Sandbox without live Agents is paused under a platform stop");
+    };
+    assert_eq!(paused.status, SandboxStatus::Pausing);
+    assert_eq!(
+        scheduled_notice(application).as_deref(),
+        Some(PLATFORM_NOTICE)
+    );
+    // Only a bound, Active Sandbox is a candidate without live Agents.
+    let mut unbound = sandbox();
+    unbound.runtime = None;
+    let mut paused_already = sandbox();
+    paused_already.status = SandboxStatus::Paused;
+    for other in [unbound, paused_already] {
+        assert!(!crate::sandbox::is_platform_stop_pause_candidate(
+            &other,
+            &[],
+            AT
+        ));
+    }
+    assert!(crate::sandbox::is_platform_stop_pause_candidate(
+        &current,
+        &[],
+        AT
+    ));
+    assert!(!crate::sandbox::is_platform_stop_pause_candidate(
+        &current,
+        &[],
+        "not a time"
+    ));
 }
