@@ -5,7 +5,7 @@ use layer2_core::sandbox::{
     Agent, AgentOrigin, AgentStatus, AgentWorkState, AgentWorkStep, ConversationState,
 };
 
-pub(super) async fn database(prefix: &str) -> (Client, String) {
+pub(in crate::store) async fn database(prefix: &str) -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
     assert!(prefix.is_ascii());
     // Keep the random identity intact and leave room for the cross-database
@@ -17,7 +17,7 @@ pub(super) async fn database(prefix: &str) -> (Client, String) {
     )
 }
 
-pub(super) fn agent() -> Agent {
+pub(in crate::store) fn agent() -> Agent {
     Agent {
         id: AgentId("agt_segment_fixture".into()),
         worktree_id: WorktreeId("wkt_segment_fixture".into()),
@@ -107,7 +107,7 @@ pub(super) async fn segmented_with_width(
     install(store, agent, entries, closed, width).await
 }
 
-pub(super) async fn install(
+pub(in crate::store) async fn install(
     store: &MongoSandboxStore,
     mut agent: Agent,
     entries: Vec<AgentLogEntry>,
