@@ -198,3 +198,32 @@ cleaned up on exit; verify own resources absent before the final report. Keep
 30 GB free. Current executable gates use immutable source 92ed; subsequent changes
 to only documentation or the blank composition separator are separately proved,
 never falsely labeled a different tested source hash. Production untouched.
+
+
+## S4 ordinary v2 admission allocation and 13:00 pin
+
+Branch `tl/cma-log-segments/ordinary-v2-admission` starts at `4b148fba5`.
+S4 owns the exact Agent envelope changes in `store/child_writer_claims.rs`,
+`store/agent_commands/reserve.rs`, `store/agent_commands/targeted_control/{apply,fences}.rs`,
+and the bounded transaction-local proof in `store/agent_log_segments/ordinary.rs`
+(with its single module registration). Parent fences and retirement archive guards
+remain independently enforced. Tests live under `store/sandbox_mongo_integration_tests/
+agent_segment_tests/{ordinary_roots,admission_contexts}.rs` and
+`admission_contexts/support.rs`; the existing discovery fixture exposes its
+connection-completion helper for the actual adopted claim/publication regression.
+
+P1-N1 uses a distinct `RolloverPermission::SegmentedRecovery`, supplied only by
+an exact durable CapacityRecovery admission. It forces a seal and empty successor,
+without event replay or sequence movement; it refuses legacy-source mismatch,
+empty source, appended events and terminal reserve classes. Writer preparation
+preserves conversation/worktree state and requires a non-Ready result. S5 keeps
+actual service admission success/refusal tests and the original dual-gate contract.
+
+Additional P1-1 inventory: `store/agent_conversation_store::apply_mutation`,
+`store/agent_conversation_store::checkpoint::{apply,write}` and
+`store/agent_commands::reconcile::apply` still use legacy publication/settlement.
+The three named claim/admission fixes alone therefore do not close P1-1's full
+post-adoption output requirement. Exact additional ownership/dependency was
+requested through the lead. Keep writer/recovery activation closed and both
+issues In Progress. Final-source gate counts and the exact pin are appended below;
+no unexecuted test or previous-pin pass is a qualification of this pin.
