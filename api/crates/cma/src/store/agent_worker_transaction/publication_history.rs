@@ -1,11 +1,15 @@
 //! Same-snapshot proofs, periodic audits, and invocation-local conflict reuse.
+use super::retry_audit::telemetry::{self, Verification};
 use super::*;
 use crate::store::agent_log_integrity::{
     trusted_summary, AppendCapacity, LogSummary, INTEGRITY_FIELD, NORMAL_AGENT_LOG_ENTRIES,
     QUARANTINE_FIELD,
 };
 use layer2_core::sandbox::AgentLogKind;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Instant;
 
 pub(super) struct History {
@@ -13,6 +17,17 @@ pub(super) struct History {
     pub(super) entries: Vec<AgentLogEntry>,
     pub(super) last: Option<AgentLogEntry>,
     audit_at: Option<Instant>,
+    audit_recorded: AtomicBool,
+}
+
+impl History {
+    pub(super) fn audited(&self, current: &Agent) {
+        // Conflict reuse can revisit semantic validation for this same scan.
+        // Count its completed audit once, independently of commit certainty.
+        if self.audit_at.is_some() && !self.audit_recorded.swap(true, Ordering::Relaxed) {
+            telemetry::record(current.work.step, Verification::CompletedFull);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -57,12 +72,16 @@ pub(super) async fn read(
     session: &mut mongodb::ClientSession,
 ) -> Result<Arc<History>, ApplyError> {
     let needs_marker = agent_cleanup_capacity_retry(current, mutation) || selection.repeated;
+    let repeat = needs_marker && mutation.agent_logs.is_empty();
     let bounded =
         selection.ordinary && store.bounded_close_retries && store.bounded_log_enabled(&current.id);
     let key = bounded.then(|| snapshot_key(row)).transpose()?;
     if let Some(key) = &key {
         if let Some((agent, proof, history)) = &cache.validated {
             if agent == current && proof == key {
+                if repeat {
+                    telemetry::record(current.work.step, Verification::SkippedConflictReuse);
+                }
                 tracing::debug!(
                     step = current.work.step.operation_name(),
                     "Reused Agent history after aborted publication"
@@ -72,7 +91,6 @@ pub(super) async fn read(
         }
     }
     cache.validated = None;
-    let repeat = needs_marker && mutation.agent_logs.is_empty();
     let caller = if needs_marker && !selection.repeated
         || crate::store::agent_worker_capacity::capacity_failure_evidence_matches(current, mutation)
     {
@@ -101,12 +119,19 @@ pub(super) async fn read(
                     } else {
                         None
                     };
+                    if repeat {
+                        telemetry::record(current.work.step, Verification::SkippedProof);
+                    }
                     return Ok::<_, ApplyError>(History {
                         summary,
                         entries: vec![],
                         last,
                         audit_at: None,
+                        audit_recorded: AtomicBool::new(false),
                     });
+                }
+                if repeat {
+                    telemetry::fallback(current, row).map_err(ApplyError::Domain)?;
                 }
             }
             // Audit age is process-local, so restart and eviction force a complete
@@ -134,6 +159,7 @@ pub(super) async fn read(
                 entries,
                 last,
                 audit_at,
+                audit_recorded: AtomicBool::new(false),
             })
         })
         .await?;
