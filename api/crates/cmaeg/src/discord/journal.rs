@@ -114,7 +114,7 @@ impl DurableJournal {
                 epoch: 1,
                 lease_until: 0,
                 remaining: observed.session_start_limit.remaining,
-                reset_at: now + observed.session_start_limit.reset_after as i64,
+                reset_at: observed.session_start_limit.reset_deadline(now),
                 identify_after: 0,
                 authorization: None,
                 checkpoint: None,
@@ -236,6 +236,9 @@ impl DurableJournal {
                 } else {
                     FailureCode::IdentifyBucketWait
                 });
+                // Retain a newly observed reset boundary even when no Identify
+                // can be reserved yet (including zero -> positive recovery).
+                self.save(&lease, version).await?;
                 return Err(error);
             }
         }
@@ -317,13 +320,19 @@ impl NativeDiscordJournal for DurableJournal {
 }
 fn reserve(lease: &mut Lease, observed: &Discovery, now: i64) -> Result<(), GatewayError> {
     let limit = &observed.session_start_limit;
-    if now >= lease.reset_at {
+    if limit.reset_after != 0 && now >= lease.reset_at {
         lease.remaining = limit.remaining;
-        lease.reset_at = now + limit.reset_after as i64;
+        lease.reset_at = limit.reset_deadline(now);
     } else {
         // A newer Discord observation can reduce a local reservation budget,
         // never restore an Identify already reserved but not yet observed there.
         lease.remaining = lease.remaining.min(limit.remaining);
+    }
+    // A zero-duration observation supplies no future reset boundary. Never
+    // replenish reservations on repeated zero/stale snapshots. When a positive
+    // window becomes known, start tracking it without refunding reservations.
+    if limit.reset_after == 0 || lease.reset_at == i64::MAX {
+        lease.reset_at = limit.reset_deadline(now);
     }
     if now < lease.identify_after || lease.remaining == 0 {
         return Err(GatewayError::RateLimited);
