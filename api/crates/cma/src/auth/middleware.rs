@@ -54,7 +54,14 @@ pub async fn attach_subject(
             {
                 return identity_failure();
             }
-            return store_failure();
+            let mut response = store_failure();
+            if request.uri().path().starts_with("/auth/") {
+                response.headers_mut().insert(
+                    axum::http::header::CACHE_CONTROL,
+                    "no-store".parse().unwrap(),
+                );
+            }
+            return response;
         }
     };
     if let Some(resolved) = resolved {
