@@ -243,3 +243,30 @@ it('parses frozen budgets only with enough operator-verified egress networks to 
   save(proxyFiles.slice(0, 2));
   expect(() => tc117Fixture(local.env)).toThrow(/^BLOCKED:/);
 });
+
+it.each([202, 429])(
+  'injects caller response loss only after admission (%s), retaining scoped cleanup ownership',
+  async (status) => {
+    const baseURL = await server((_req, res) => {
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'launch-delivery-loss', created_at: '2026-11-13T23:59:40Z' }));
+    });
+    const local = localFixture();
+    prepareEvidenceDirectory(local.env.CMA_E2E_OUTPUT_DIR, 'tc117-loss-regression-123456')();
+    const client = await TC117Client.open(
+      { baseURL, output: local.env.CMA_E2E_OUTPUT_DIR },
+      local.fixture,
+    );
+    disposals.push(() => client.close(false));
+    await expect(
+      client.launchAndLoseResponse('utc', local.fixture.triggers.reuseA, {
+        key: 'local-loss-probe',
+      }),
+    ).rejects.toThrow(
+      status === 202 ? 'injected caller response loss' : 'lost-response probe was not admitted',
+    );
+    expect(client.journal.resources).toEqual(
+      status === 202 ? [{ kind: 'launches', id: 'launch-delivery-loss', subject: 'utc' }] : [],
+    );
+  },
+);
