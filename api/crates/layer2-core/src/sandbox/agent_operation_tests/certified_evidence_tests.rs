@@ -293,3 +293,110 @@ async fn certified_settlement_refuses_invalid_original_facts_without_mutating_in
     let mut continuous = CommandEvidence::new(&case.command).unwrap();
     assert!(continuous.observe(&case.log[1]).is_err());
 }
+
+#[tokio::test]
+async fn certified_control_uses_original_turn_and_cannot_release_another_claim() {
+    let mut case = Case::new().await;
+    case.command.receipt.envelope.command = AgentCommand::Interrupt;
+    case.command.receipt.envelope.request_fingerprint =
+        case.command.receipt.envelope.command.fingerprint().unwrap();
+    case.command.receipt.response_id = None;
+    case.command
+        .work
+        .dispatch
+        .as_mut()
+        .unwrap()
+        .operation_sequence = 6;
+    for state in [
+        AgentOperationDelivery::DispatchFenced,
+        AgentOperationDelivery::WriteConfirmed,
+    ] {
+        case.push(AgentLogKind::OperationDeliveryChanged {
+            operation_sequence: 6,
+            operation: AgentOperationKind::Interrupt,
+            state,
+        });
+    }
+    assert_eq!(case.parity().status, AgentResponseStatus::Completed);
+    let evidence = CommandEvidence::from_certified_source(&case.command, case.source()).unwrap();
+    let mut newer = case.command.work.lease.clone().unwrap();
+    newer.claim.fence += 1;
+    let mut lane = CommandLane {
+        last_order: 2,
+        next_fence: 3,
+        lease: Some(newer.clone()),
+    };
+    let mut command = case.command.clone();
+    evidence
+        .apply(&mut command, &mut lane, &case.agent)
+        .unwrap();
+    assert_eq!(lane.lease, Some(newer));
+    assert!(command.work.lease.is_none());
+}
+
+#[tokio::test]
+async fn certified_deferred_retry_requires_original_detail_adjacency_and_live_authority() {
+    for fault in 0..4 {
+        let mut case = Case::new().await;
+        let envelope = &mut case.command.receipt.envelope;
+        envelope.authorization.authority_id = "binding:certified".into();
+        envelope.authorization.grant_revision = Some(1);
+        envelope.continuation = Some(ExternalEventContinuation {
+            parent_command_id: crate::ids::AgentCommandId("command-parent".into()),
+            parent_response_id: crate::ids::AgentResponseId("response-parent".into()),
+            parent_fingerprint: "a".repeat(64),
+            binding_generation: 1,
+            source_generation: None,
+            source_expires_at: 2_000_000_000,
+            artifact_id: "artifact".into(),
+            source_proof: serde_json::json!({}),
+        });
+        let mut detail =
+            crate::sandbox::agent_io::continuation_retry::deferred_detail(envelope, 3, 4);
+        if fault == 1 {
+            detail.push('x');
+        }
+        case.push(delivery(AgentOperationDelivery::PreWriteFailed));
+        if fault == 2 {
+            case.push(AgentLogKind::AgentMessage {
+                content: "intervening".into(),
+            });
+        }
+        case.push(AgentLogKind::TurnFailed {
+            turn_sequence: 4,
+            failure: TypedFailure {
+                class: SOURCE_DEFERRED_FAILURE.into(),
+                detail,
+            },
+        });
+        case.agent.conversation.active_turn = None;
+        let evidence =
+            CommandEvidence::from_certified_source(&case.command, case.source()).unwrap();
+        let mut full = CommandEvidence::new(&case.command).unwrap();
+        for row in &case.log {
+            full.observe(row).unwrap();
+        }
+        assert_eq!(evidence.has_source_deferred(), full.has_source_deferred());
+        assert_eq!(evidence.has_source_deferred(), fault == 0 || fault == 3);
+        let mut command = case.command.clone();
+        evidence
+            .apply_with_continuation_retry(
+                &mut command,
+                &mut CommandLane::default(),
+                &case.agent,
+                fault != 3,
+            )
+            .unwrap();
+        assert_eq!(command.status == AgentResponseStatus::Queued, fault == 0);
+        assert_eq!(
+            command.work.deferred_attempts.len(),
+            usize::from(fault == 0)
+        );
+        if fault == 3 {
+            assert_eq!(
+                command.work.failure.unwrap().code,
+                CommandFailureCode::AuthorityRevoked
+            );
+        }
+    }
+}
