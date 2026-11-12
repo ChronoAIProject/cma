@@ -145,9 +145,7 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
     let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
     let mut options = ClientOptions::parse(uri).await.unwrap();
     attach(&mut options, observer.clone());
-    // Installing a command callback would eagerly decode full BSON payloads
-    // inside the driver even if our callback ignores them.
-    assert!(options.command_event_handler.is_none());
+    assert!(options.command_event_handler.is_some());
     assert!(options.cmap_event_handler.is_some());
     let client = Client::with_options(options).unwrap();
     let name = format!("cma_latency_{}", uuid::Uuid::new_v4().simple());

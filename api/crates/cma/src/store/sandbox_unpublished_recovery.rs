@@ -20,27 +20,37 @@ pub(super) async fn retained_snapshot(
     store: &MongoSandboxStore,
     id: &SandboxId,
 ) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, SandboxStoreError> {
-    let mut session = store.client.start_session().await.map_err(unavailable)?;
-    start_transaction(&mut session).await.map_err(unavailable)?;
-    let result = transaction::load_retained(store, id, &mut session)
+    layer2_core::diagnostic_context::DiagnosticContext::current()
+        .with_worker("recovery_assessment")
+        .scope(async {
+            let mut session = store.client.start_session().await.map_err(unavailable)?;
+            start_transaction(&mut session).await.map_err(unavailable)?;
+            let result = transaction::load_retained(store, id, &mut session)
+                .await
+                .map_err(ApplyError::domain);
+            let _ = session.abort_transaction().await;
+            result
+        })
         .await
-        .map_err(ApplyError::domain);
-    let _ = session.abort_transaction().await;
-    result
 }
 
 pub(super) async fn snapshot(
     store: &MongoSandboxStore,
     id: &SandboxId,
 ) -> Result<SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
-    let mut session = store.client.start_session().await.map_err(unavailable)?;
-    start_transaction(&mut session).await.map_err(unavailable)?;
-    let result = transaction::load(store, id, &mut session)
+    layer2_core::diagnostic_context::DiagnosticContext::current()
+        .with_worker("recovery_assessment")
+        .scope(async {
+            let mut session = store.client.start_session().await.map_err(unavailable)?;
+            start_transaction(&mut session).await.map_err(unavailable)?;
+            let result = transaction::load(store, id, &mut session)
+                .await
+                .map(|(snapshot, _)| snapshot)
+                .map_err(ApplyError::domain);
+            let _ = session.abort_transaction().await;
+            result
+        })
         .await
-        .map(|(snapshot, _)| snapshot)
-        .map_err(ApplyError::domain);
-    let _ = session.abort_transaction().await;
-    result
 }
 
 pub(super) async fn admit(

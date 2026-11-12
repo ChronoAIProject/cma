@@ -38,7 +38,9 @@ trait AgentScheduleWork: Send + Sync {
 #[async_trait::async_trait]
 impl AgentScheduleWork for AgentWorker {
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError> {
-        self.due_work(now, limit).await
+        layer2_core::diagnostic_context::DiagnosticContext::background("scheduler")
+            .scope(self.due_work(now, limit))
+            .await
     }
 
     async fn reconcile(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
@@ -46,7 +48,9 @@ impl AgentScheduleWork for AgentWorker {
     }
 
     async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
-        AgentWorker::run_scheduled(self, id, now).await
+        layer2_core::diagnostic_context::DiagnosticContext::background("agent_worker")
+            .scope(AgentWorker::run_scheduled(self, id, now))
+            .await
     }
 }
 

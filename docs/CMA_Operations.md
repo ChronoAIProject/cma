@@ -2292,12 +2292,13 @@ four snapshot reads; disable both reader flags to restore transactions. See
 [Sandbox hierarchy batching](CMA_Sandbox_Hierarchy_Batching.md) for bounds,
 compatibility tests and local volume measurements. Activation is release-owned.
 
-`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `false` and
+`CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED` independently defaults to `true` and
 accepts only exact `true` or `false`. It emits the allowlisted auth, hierarchy,
 colors, names and final-fence durations and completion/error/cancellation outcome,
-without identifiers, error strings or inherited request spans. Enable it before
-reader activation to collect a baseline, and disable it after the measurement
-window. Optional enrichment retains its existing fallback behavior.
+with route templates and opaque request hashes, without raw identifiers, error
+strings or inherited request spans. Keep it enabled for the diagnostic comparison.
+Optional enrichment retains its existing fallback behavior. See
+[Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching

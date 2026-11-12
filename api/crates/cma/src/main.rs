@@ -14,6 +14,7 @@ mod config;
 mod connections;
 #[cfg(test)]
 mod dependency_test_support;
+mod diagnostic_request;
 mod document_artifacts;
 mod document_storage;
 mod expensive_reads;
@@ -415,6 +416,7 @@ fn with_request_context(router: Router) -> Router {
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
+        .layer(axum::middleware::from_fn(diagnostic_request::scope))
         .layer(SetRequestIdLayer::new(X_REQUEST_ID, MakeRequestUuid))
         .layer(axum::middleware::from_fn(discard_unusable_request_id))
 }
@@ -429,17 +431,18 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
     next.run(request).await
 }
 
-fn request_span(request: &Request) -> tracing::Span {
-    let request_id = request
-        .headers()
-        .get(X_REQUEST_ID)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("<non-text request id>");
+fn request_span(_request: &Request) -> tracing::Span {
+    let context = layer2_core::diagnostic_context::DiagnosticContext::current();
+    let (method, path) = context
+        .route
+        .split_once(' ')
+        .unwrap_or(("OTHER", "unmatched"));
     tracing::info_span!(
         "http.request",
-        request_id = %request_id,
-        method = %request.method(),
-        path = %request.uri().path(),
+        request_hash = %context.request_hash,
+        route = %context.route,
+        method,
+        path,
     )
 }
 
