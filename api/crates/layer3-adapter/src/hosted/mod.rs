@@ -2,6 +2,7 @@
 
 mod acp;
 mod acp_context_refresh;
+mod acp_correlation;
 mod acp_credit_failure;
 mod acp_handshake;
 mod acp_inbound;
