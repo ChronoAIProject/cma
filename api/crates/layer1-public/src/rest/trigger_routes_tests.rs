@@ -11,3 +11,4 @@ mod trigger_routes;
 mod launch_initiation;
 
 mod inline_image_routes;
+mod visitor_boundaries;

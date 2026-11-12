@@ -19,6 +19,8 @@ use super::sandboxes::admitted_sandbox_document;
 const NOW: &str = "2026-09-05T00:00:00Z";
 const LATER: &str = "2026-09-05T00:01:00Z";
 
+mod visitor_limit;
+
 #[path = "warm_sandboxes/mongo_integration_tests.rs"]
 mod warmup;
 
