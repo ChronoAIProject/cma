@@ -88,7 +88,7 @@ pub(super) fn emit(completed: Option<Completed>) {
     if let Some(completed) = completed {
         for (key, value) in completed.window.groups {
             tracing::info!(target: "mongo_diagnostic_summary", parent: None,
-                pool = key.pool, route = %key.route, worker = key.worker, phase = key.phase,
+                pool = key.pool, route = key.route.as_ref(), worker = key.worker, phase = key.phase,
                 command = key.command, collection = key.collection, metric = key.metric,
                 count = value.count, total_us = value.total_us, max_us = value.max_us,
                 docs_returned = value.docs, failures = value.failures,
