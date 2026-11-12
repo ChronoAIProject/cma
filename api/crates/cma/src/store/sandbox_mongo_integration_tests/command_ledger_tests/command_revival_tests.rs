@@ -137,8 +137,54 @@ impl AgentCommandAuthorizer for ResourceAuthority {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn production_shared_preparation_revives_once_without_sending_or_rewriting_command() {
+    run_shared_revival(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn operator_stop_keeps_admitted_command_revival_exactly_once() {
+    run_shared_revival(true).await;
+}
+
+async fn run_shared_revival(stopped: bool) {
     let (client, name) = database("command_revival_prepare").await;
     let mut fixture = Fixture::new(&client, &name).await;
+    if stopped {
+        use layer2_core::admission::AdmissionControlStore;
+        crate::store::admission_control::MongoAdmissionControlStore::open(&client, &name)
+            .await
+            .unwrap()
+            .change(
+                0,
+                &SubjectId::new("operator"),
+                "contain new work",
+                true,
+                100,
+            )
+            .await
+            .unwrap();
+        let service = SandboxService::new(
+            fixture.store.clone(),
+            Arc::new(InMemoryProfileStore::default()),
+            SandboxPolicy::default(),
+            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        );
+        service.attach_platform_spend(fixture.store.clone());
+        let proof = fixture.proof(MAX_MEMBERSHIP_AGE).await;
+        service.revive_for_command(proof).await.unwrap();
+        let first = fixture
+            .store
+            .get_sandbox(&fixture.parent.id)
+            .await
+            .unwrap()
+            .unwrap();
+        let proof = fixture.proof(MAX_MEMBERSHIP_AGE).await;
+        service.revive_for_command(proof).await.unwrap();
+        assert_eq!(
+            fixture.store.get_sandbox(&fixture.parent.id).await.unwrap(),
+            Some(first)
+        );
+    }
     let revision = fixture.agent.revision;
     fixture.agent.status = AgentStatus::Paused;
     fixture.agent.revision += 1;
