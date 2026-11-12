@@ -155,6 +155,8 @@ ARG RUNTIME_DESKTOP=0
 # privileged. User-space installers therefore write under /home/cma. Python
 # and the archive tools are present for those installers; git prepares CMA
 # workspaces; bubblewrap is the distro path Codex expects on restricted hosts.
+# Repository harnesses call ps (procps) and jq by name, so every variant ships
+# them; the build fails here if either command is missing.
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
@@ -168,6 +170,7 @@ RUN apt-get update \
         build-essential \
         git \
         gzip \
+        jq \
         libdbus-1-3 \
         libgmp-dev \
         libgssapi-krb5-2 \
@@ -175,6 +178,7 @@ RUN apt-get update \
         libssl3t64 \
         libunwind8 \
         ncurses-term \
+        procps \
         python3 \
         ripgrep \
         tar \
@@ -184,6 +188,8 @@ RUN apt-get update \
         zstd \
     && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal adwaita-icon-theme librsvg2-common; else test "${RUNTIME_DESKTOP}" = "0"; fi \
     && git --version \
+    && ps --version \
+    && jq --version \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -367,7 +373,7 @@ RUN --mount=type=bind,source=api/crates/layer3-adapter/src/codex,target=/tmp/cma
     && node /tmp/cma-codex-source/open_completion.cjs \
     && echo "${CODEX_ACP_SHA256}  /usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js" | sha256sum -c - \
     && test -x /usr/local/bin/codex-acp \
-    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs \
+    && node --test /tmp/cma-codex-source/persist_conversations.test.cjs /tmp/cma-codex-source/subscription_auth.test.cjs /tmp/cma-codex-source/native_tools.test.cjs /tmp/cma-codex-source/managed_model_catalog.test.cjs /tmp/cma-codex-source/live_skill_install.test.cjs /tmp/cma-codex-source/runtime_observations.test.cjs /tmp/cma-codex-source/required_access_tool.test.cjs /tmp/cma-codex-source/session_commands.test.cjs /tmp/cma-codex-source/agent_instructions.test.cjs /tmp/cma-codex-source/retained_context.test.cjs /tmp/cma-codex-source/endpoint_migration.test.cjs /tmp/cma-codex-source/turn_steering.test.cjs /tmp/cma-codex-source/open_completion.test.cjs /tmp/cma-codex-source/open_completion_native.test.cjs /tmp/cma-codex-source/recovery_rejoin_native.test.cjs \
     && python3 /tmp/cma-codex-source/recovery_test.py \
     && python3 /tmp/cma-codex-source/recovery_desktop_test.py \
     && node --test /tmp/cma-codex-source/recovery_native.test.cjs \
@@ -444,15 +450,15 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.runtime-bootstrap="1" \
       dev.chrono.cma.home-layout="2"
 
-# Explicit experimental target. The default target remains the Debian runtime.
-# CI supplies a verified native CMA artifact as OMARCHY_CMA_BASE.
+# Cache checksum-pinned desktop dependencies separately from verified CMA tools.
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
-FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy
+FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-dependencies
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-tools.sh
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
 RUN bash /tmp/install-omarchy.sh && rm /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+FROM omarchy-dependencies AS omarchy
 COPY --from=omarchy-cma /usr/local/bin/ /usr/local/bin/
 # Toolchain donor stays pinned; the supervisor must match this source revision.
 COPY --from=build /out/layer4-runtime /usr/local/bin/layer4-runtime

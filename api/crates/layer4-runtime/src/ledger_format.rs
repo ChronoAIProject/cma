@@ -1,11 +1,11 @@
 //! Manifest is the only format commit point. Missing/partial V2 never means V1.
 mod descriptor;
-mod io;
+pub(crate) mod io;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 #[allow(dead_code)]
-mod v1_reader;
+pub(crate) mod v1_reader;
 #[cfg(test)]
 #[allow(dead_code)]
 mod v1_validation;

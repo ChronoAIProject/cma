@@ -7,3 +7,169 @@ mod native;
 mod home_tests {
     include!("home_tests.rs");
 }
+
+#[test]
+fn response_input_tier_requires_explicit_boolean_and_preserves_existing_rates() {
+    let key = "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED";
+    for (values, enabled) in [
+        (vec![], false),
+        (vec![(key, "false")], false),
+        (vec![(key, "true")], true),
+    ] {
+        let limits = configured(&values).unwrap().rate_limits;
+        assert_eq!(limits.response_input_tier_enabled, enabled);
+        assert_eq!(limits.create_per_minute.get(), 10);
+        assert_eq!(limits.input_per_minute.get(), 120);
+    }
+    for value in ["", "TRUE", "1", " true ", "yes"] {
+        assert!(configured(&[(key, value)]).unwrap_err().contains(key));
+    }
+    assert_eq!(
+        configured(&[(key, "true"), ("CHRONO_SERVER_RATE_INPUT_PER_MINUTE", "17")])
+            .unwrap()
+            .rate_limits
+            .input_per_minute
+            .get(),
+        17
+    );
+}
+
+#[test]
+fn reporting_pool_setting_is_validated_by_startup_configuration() {
+    assert_eq!(
+        configured(&[]).unwrap().usage_metrics.reporting_pool_size,
+        4
+    );
+    let key = "CHRONO_USAGE_REPORTING_MONGO_MAX_POOL_SIZE";
+    assert_eq!(
+        configured(&[(key, "8")])
+            .unwrap()
+            .usage_metrics
+            .reporting_pool_size,
+        8
+    );
+    for value in ["", "0", "17", "invalid"] {
+        assert!(configured(&[(key, value)]).unwrap_err().contains(key));
+    }
+}
+
+#[test]
+fn skill_upgrades_require_an_explicit_strict_boolean() {
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = super::FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")
+                .then(|| value.map(str::to_owned))
+                .flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.agent_skill_upgrade_enabled, expected);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(super::FeatureFlags::from_lookup(&mut |key| Ok((key
+            == "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")
+            .then(|| value.to_owned())))
+        .is_err());
+    }
+}
+
+#[cfg(test)]
+mod silent_sign_in_tests {
+    use super::*;
+    #[test]
+    fn silent_sign_in_requires_explicit_activation() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_SILENT_SIGN_IN_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.silent_sign_in, expected);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| Ok((key
+                == "CHRONO_SILENT_SIGN_IN_ENABLED")
+                .then(|| value.to_owned())))
+            .is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod shared_output_tests {
+    use super::*;
+
+    #[test]
+    fn shared_runtime_output_requires_its_own_strict_opt_in() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let flags = FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")
+                    .then(|| value.map(str::to_owned))
+                    .flatten())
+            })
+            .unwrap();
+            assert_eq!(flags.shared_runtime_output, expected);
+            assert!(!flags.bounded_response_reads);
+        }
+        for value in ["", "1", "TRUE", " true "] {
+            assert!(FeatureFlags::from_lookup(&mut |key| {
+                Ok((key == "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED").then(|| value.into()))
+            })
+            .is_err());
+        }
+    }
+}
+
+#[test]
+fn control_rate_rejects_invalid_values_at_startup() {
+    let key = "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE";
+    for invalid in ["", "0", "-1", "1.5", "nope", " 20", "4294967296"] {
+        let error = configured(&[(key, invalid)]).unwrap_err();
+        assert!(error.contains(key), "{error}");
+    }
+}
+
+#[test]
+fn control_rate_defaults_to_120_and_accepts_positive_u32_values() {
+    let defaults = configured(&[]).unwrap().rate_limits;
+    assert!(!defaults.control_tier_enabled);
+    assert_eq!(defaults.control_per_minute.get(), 120);
+    assert_eq!(defaults.create_per_minute.get(), 10);
+    assert_eq!(defaults.input_per_minute.get(), 120);
+    assert!(!defaults.response_input_tier_enabled);
+    let key = "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE";
+    for value in [1, 20, 120, u32::MAX] {
+        let raw = value.to_string();
+        let limits = configured(&[(key, &raw)]).unwrap().rate_limits;
+        assert_eq!(limits.control_per_minute.get(), value);
+        assert_eq!(
+            limits.create_per_minute.get(),
+            defaults.create_per_minute.get()
+        );
+        assert_eq!(
+            limits.input_per_minute.get(),
+            defaults.input_per_minute.get()
+        );
+        assert_eq!(
+            limits.response_input_tier_enabled,
+            defaults.response_input_tier_enabled
+        );
+    }
+}
+
+#[test]
+fn control_policy_requires_an_explicit_strict_boolean() {
+    let key = "CHRONO_SERVER_RATE_CONTROL_ENABLED";
+    for (value, expected) in [("false", false), ("true", true)] {
+        assert_eq!(
+            configured(&[(key, value)])
+                .unwrap()
+                .rate_limits
+                .control_tier_enabled,
+            expected
+        );
+    }
+    for invalid in ["", "1", "TRUE", " true", "false "] {
+        assert!(configured(&[(key, invalid)]).unwrap_err().contains(key));
+    }
+}

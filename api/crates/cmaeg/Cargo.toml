@@ -13,6 +13,7 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 h2 = { workspace = true }
 http-body-util = { workspace = true }
+httpdate = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 image = { workspace = true }
@@ -66,6 +67,8 @@ libc = { workspace = true }
 seccompiler = { workspace = true }
 
 [dev-dependencies]
+# Validate generated OpenAPI payloads without network reference retrieval.
+jsonschema = { version = "0.33.0", default-features = false }
 # The progressive JPEG fixture of the image decode bound test.
 jpeg-encoder = { workspace = true }
 # Paused time drives the media deadline and job tests deterministically.

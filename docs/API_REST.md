@@ -243,14 +243,36 @@ The composed identity/discovery/static routes also include:
 | Operation | Meaning |
 |---|---|
 | `GET /openapi.json` | Anonymous machine-readable contract |
-| `GET /auth/login` | Begin NyxID OAuth; return destination is validated |
-| `GET /auth/callback` | Complete identity exchange; never starts Agent work |
-| `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out |
-| `POST /auth/logout` | Revoke browser login and expire cookie; redirect to `/` |
+| `GET /auth/login` | Begin NyxID OAuth; return destination is validated; `prompt=none` reuses a NyxID session without interaction |
+| `GET /auth/callback` | Complete browser-bound single-use PKCE exchange; accept and ignore `error_description`/`error_uri`; silent failures return to validated target, never starting Agent work |
+| `GET /auth/session` | Browser identity, capabilities, visitor flag and effective usage presentation policy; 401 when signed out, reporting startup-gated `silent_sign_in` (default false) |
+| `GET /auth/logout` | Revoke active/pending browser custody, expire session and establish automatic-sign-in suppression; redirect to `/` only after durable revocation |
 | `GET /embed/v1.js` | Fixed versioned-by-integrity embed script; no credential access |
 | `POST /api/v1/mcp` | Typed 501 `interface_not_available` |
 | `GET /.well-known/agent-card.json` | Public provider card for binding Responses; A2A JSON-RPC remains unavailable |
 | `/api/v1/a2a` | Typed 501 `interface_not_available` |
+
+Browser identity/flow responses use `Cache-Control: no-store`; anonymous signup
+options retain their public five-minute cache. Every `Set-Cookie` header must be
+preserved separately. Same-origin logout records its time; successful interactive
+sign-in records the attempt's start time and a non-authenticating binding reference
+in a separate cookie. The start must follow the logout marker and the durable proof must still be active
+to re-enable silent entry; same-origin logout revokes it, so stale responses and replica clock skew
+cannot overrule callback fencing. Suppressed anonymous
+sessions advertise `silent_sign_in: false`. Cross-site logout still revokes its
+session but cannot establish this new opt-out.
+
+Callbacks mint fresh session tokens and atomically link them to pending binding
+custody; either cookie revokes the session. Predecessor attempts remain readable,
+and new fields are additive. Predecessor callbacks reserve custody and complete
+inline; logout tombstones prevent resurrection. Binding cookies last 660 seconds
+(ten-minute attempt plus a one-minute callback margin); tombstones last at least
+that long. Consent renews only live pending custody. The complete
+encoded absolute login URL is limited to 4,096 ASCII bytes, measured after query
+encoding. Server and SDKs reject oversized or non-ASCII inputs; the web retains
+large drafts and uses path-only explicit sign-in instead of navigating to an
+oversized URL. See [authentication and rollout](API_Overview.md#authentication-and-visitors)
+for hop evidence, the shared boundary contract, and deployment/rollback order.
 
 `GET /auth/signup-options` appears in the checked inventory. Its four-field
 response is exactly `{ email_signup, social_providers, invite_code_required,
@@ -605,6 +627,68 @@ Already admitted messages and exact retries retain their original deadline.
 Capacity remains 64. Expiry before dispatch produces the definite failure
 `agent_command_queue_timeout` without starting an Agent turn. Ordinary chat/UI and
 Trigger messages retain their existing 300-second wait.
+
+CMA also accepts `profile.environment.verified_sender_context: true` for an
+`existing_agent` target. The gateway forwards this opaque provider extension.
+Only this input policy is applied: all other supplied environment/model/tool
+settings retain their existing refusal and leave the borrowed Agent unchanged.
+An extension-only environment is supported. Omitted or `false` disables the
+policy; `honoured` contains `environment.verified_sender_context` exactly while
+enabled. Profile targets explicitly list this field in `refused`.
+
+Enable/disable through the same binding PUT with the current profile, digest and
+worker key. This policy update preserves the binding generation, Agent,
+configuration, credential and conversation. Queue policy can change in the same
+PUT; unrelated profile changes remain conflicts. Unchanged legacy profiles,
+including omitted/null and previously supported environment settings, still
+support exact PUT replay and separate worker-key renewal.
+
+For a new Responses v2 admission with `event_context`, CMA attests the complete
+original Activity with the gateway, then prefixes the input with this exact
+versioned format (fixed field order, compact JSON, followed by one LF):
+
+```text
+cma_verified_sender: {"v":1,"source_kind":"native_lark","platform":"feishu","actor_id":"ou_example","actor_kind":"human","conversation_kind":"private","human_sender":true}
+```
+
+Native Lark uses `source.region` (`feishu` or `lark`); Telegram and NyxID relay
+use their attested `platform`. WhatsApp, Discord and GitHub use `whatsapp`,
+`discord` and `github`; custom sources use JSON `null`. Actor kind is `human`,
+`bot`, `system` or `unknown`; conversation kind is `private`, `group`, `channel`,
+`thread` or `custom`. Non-human actors retain their attested ID/kind and carry
+`human_sender:false`, explicitly indicating no human sender. String values use
+JSON escaping, including escaped Unicode line separators. User text follows the
+line verbatim; a supplied lookalike cannot precede the verified prefix. The
+complete prefix counts against the existing input-byte limit; overflow is a
+named refusal, never truncation. Blank text remains refused in both policy modes.
+Media-only activities work because CMAEG supplies a non-empty attachments block.
+
+Only a current binding credential may submit `event_context`; owner/API callers
+cannot forge it. Turns without that context receive no prefix. Commands persist
+ordinary text using the existing ledger schema. Enabled-policy requests first
+look up the retained command. Exact replay compares the complete request with
+its original form and a prefixed form rendered locally from its own Activity;
+the retained ExternalEvent is part of that equality. Replay returns the original
+admission without contacting the gateway, even after reference expiry or during
+an outage. Only new admissions attest. Changed requests under the same key
+conflict. Policy toggles never rewrite admitted bytes or fingerprints.
+
+Disabled-policy turns use the ordinary admission path without extra preliminary
+reads or a new timeout. Only an idempotency conflict triggers a retained-command
+comparison with the locally prefixed form, supporting replay after disabling.
+Unrelated conflicts and store failures retain their existing responses.
+
+An older binary can read and dispatch these ordinary-text commands, but ignores
+the policy carried in `honoured`: new gateway turns then arrive without the
+verified line. Consumers must fail closed whenever `event_ref` is present without
+that line. The Q&A skill must enforce this during rollback; the enabled policy
+alone does not prove that an older provider rendered the sender context.
+
+The CMA Responses v2 dialect defines `403 verified_sender_context_invalid`,
+`422 verified_sender_context_unsupported`, and retryable
+`503 verified_sender_context_unavailable` (`Retry-After: 5`) before durable
+admission. See [provider failure handling](CMAEG_Protocol.md#verified-sender-context-cma-responses-v2-dialect)
+for exact classification, time budgets, bounded retries and activity reporting.
 
 CMA's optional profile extension `environment.session_affinity:"source_user"`
 changes provider selection without changing gateway partitioning. CMA verifies
@@ -1691,6 +1775,11 @@ pools and retained homes keep their admitted templates.
 | `GET /api/v1/agent-lifecycle/{id}` | - | - | 200 AgentLifecycleOperationView |
 | `GET /api/v1/agents` | - | organization, sandbox, workspace, status, cursor, limit | 200 AccessibleAgentPageView |
 | `GET /api/v1/agents/{id}` | - | - | 200 AccessibleAgentView |
+| `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | - | - | 200 authorized recovery metadata |
+| `GET /api/v1/agents/{id}/capacity-recovery` | - | - | 200 authorized recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/status` | Original recovery request | - | 200 original recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/admit` | Original recovery request | - | 200 recorded result; 202 unknown commit |
+| `POST /api/v1/agents/{id}/capacity-recovery/resume` | Original recovery request | - | 200 recorded result; 202 unknown commit |
 | `DELETE /api/v1/agents/{id}` | -; key | - | 202 empty |
 | `GET /api/v1/agents/{id}/events` | - | after, limit | 200 AgentEventPageView |
 | `GET /api/v1/agents/{id}/suggestions` | - | turn_sequence, answer_sequence | 200 SuggestionReadingView |
@@ -2022,6 +2111,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
+| `GET /api/v2/responses/{response_id}/output` | - | after | 200 JSON output page |
 | `GET /api/v2/conversations/{conversation_id}` | - | - | 200 Conversation |
 | `GET /api/v2/conversations/{conversation_id}/items` | - | after, before, limit, order | 200 JSON items |
 | `GET /api/v2/agents/{agent_id}/responses/{response_id}/controls` | - | - | 200 V2ResponseControls |
@@ -2210,7 +2300,16 @@ conversation, and listing does not download file bodies. See
 | `POST /api/v1/sandboxes/{id}/revive` | -; key | - | 202 SandboxView |
 | `POST /api/v1/sandboxes/{id}/always-on` | AlwaysOnRequest | - | 200 SandboxView |
 | `POST /api/v1/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest; key | - | 202 SandboxView |
+| `GET /api/v1/sandboxes/{id}/runtime-recovery` | - | - | 200 RetainedRecoveryView |
+| `POST /api/v1/sandboxes/{id}/runtime-recovery` | Idempotency-Key | RecoverRetainedRequest | 202 RetainedReopenView |
 | `POST /api/v1/sandboxes/{id}/service-access` | GrantSandboxServiceAccessRequest; key | - | 200 SandboxView; new grants require fully Paused, existing grants replay without change |
+
+The read-only `runtime-recovery` assessment returns a fixed `disposition` and
+`admission_enabled`, which describes the deployment gate rather than eligibility.
+GET never schedules recovery. The explicit owner POST repeats stronger native and
+history proof and requires consent, the reviewed revision and an original request
+key. See [Same-image retained recovery](CMA_Retained_Recovery.md) for supported
+states, refusal categories, atomic admission and rollback qualification.
 
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's
@@ -2369,6 +2468,7 @@ SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both exp
 | `GET /api/v1/agents/{id}/preferences` | - | - | 200 AgentPreferencesView |
 | `PATCH /api/v1/agents/{id}/preferences` | UpdateAgentPreferencesRequest; key | - | 200 AgentPreferencesView |
 
+| `POST /api/v1/telemetry/browser` | Anonymous, bounded browser diagnostic category; no durable receipt. |
 <!-- openapi-operations:end -->
 
 ## Contract Verification
@@ -2530,3 +2630,46 @@ Reads use the reporting pool/circuit, a two-second Mongo deadline and a five-sec
 HTTP deadline. Open circuits return 429 before database access; source failures
 return 503. Responses are `private, no-store`. An unavailable page is not zero
 allocation; consumers should retain the loaded count and offer a bounded retry.
+
+Always on exceptions require administrator approval. The owner Always on route
+only accepts relinquishment (`false`); enabling returns HTTP 403
+`always_on_approval_required`. Administrators approve/revoke through the audited
+admin route and enumerate current exceptions with
+`GET /api/v1/admin/sandboxes?always_on=true`. See
+[CMA automatic pause](CMA_Auto_Pause.md) for revision rules, audit fields and the
+required review of legacy exceptions before enablement.
+
+### Browser diagnostic reports
+
+`POST /api/v1/telemetry/browser` accepts anonymous JSON such as
+`{"kind":"react_error"}` and returns 204. Fixed kinds are `uncaught_error`,
+`unhandled_rejection`, `react_error`, `resource_error`, `chunk_error`. The body
+is limited to 256 bytes; unknown kinds or additional fields return 422, oversized
+bodies return 413. The local 20/sec process budget returns 429 with Retry-After,
+in addition to normal pre-auth network admission. No identity or durable
+activity record is created. This untrusted signal is diagnostic only. Send no
+exception text, stack, page URL, credentials or resource identifiers. The web
+bootstrap reports each category at most once per page and does not retry.
+
+## Agent capacity recovery
+
+These personal authenticated routes expose current metadata and explicit original
+recovery requests. New recovery admission remains default-off. Every response,
+including authentication refusals, has `Cache-Control: private, no-store`.
+
+| Method and path | Request | Result |
+| --- | --- | --- |
+| `GET /api/v1/agents/{id}/capacity-recovery/dry-run` | None | Authorized metadata only; no history scan, write or runtime call |
+| `GET /api/v1/agents/{id}/capacity-recovery` | None | Current personal recovery status |
+| `POST /api/v1/agents/{id}/capacity-recovery/status` | Original recovery request | Status of that original request |
+| `POST /api/v1/agents/{id}/capacity-recovery/admit` | Original recovery request | Explicit admission, subject to current gates and authority |
+| `POST /api/v1/agents/{id}/capacity-recovery/resume` | Original recovery request | One bounded accepted-work attempt or exact result reconciliation |
+
+The original request contains `agent_id`, `creation_key`, `creation_fingerprint`,
+`failure_seq` and `requested_at`. Preserve every field on retry. It identifies
+the original failure and grants no authority. Routes reject foreign or missing
+resources without revealing native conversation, runtime or home identities.
+A recorded outcome is HTTP 200; an uncertain commit is HTTP 202 with
+`outcome: unknown`. HTTP 409 may carry `outcome: known_abort` or a named problem.
+A missing receipt never proves abort. Neither result authorizes replaying Agent
+input. Admission refusal does not prevent reconciling already accepted work.

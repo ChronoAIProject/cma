@@ -31,6 +31,7 @@ impl MetricsWorkers {
             &config.mongodb_database,
             &key,
             config.usage_metrics.budgets.clone(),
+            config.usage_metrics.reporting_pool_size,
         )
         .await
         .map_err(|e| e.to_string())?;
@@ -78,7 +79,7 @@ impl MetricsWorkers {
             let worker = self.clone();
             let signal = shutdown.subscribe();
             shutdown.push(tokio::spawn(async move {
-                tokio::select!{_ = crate::shutdown::signalled(signal)=>{},_ = worker.reports(slot)=>{}}
+                tokio::select!{_ = crate::shutdown::signalled(signal)=>{},_ = layer2_core::diagnostic_context::DiagnosticContext::background("metrics").scope(worker.reports(slot))=>{}}
             }));
         }
         if self.enabled {
@@ -86,7 +87,7 @@ impl MetricsWorkers {
                 let worker = self.clone();
                 let signal = shutdown.subscribe();
                 shutdown.push(tokio::spawn(async move {
-                    tokio::select!{_ = crate::shutdown::signalled(signal)=>{},_ = worker.background(task)=>{}}
+                    tokio::select!{_ = crate::shutdown::signalled(signal)=>{},_ = layer2_core::diagnostic_context::DiagnosticContext::background("metrics").with_phase(task).scope(worker.background(task))=>{}}
                 }));
             }
         }

@@ -23,6 +23,7 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
     storage.close().await?;
     crate::mutation_ledger::probe(&directory.with_extension("indexed")).await?;
     super::anchored::probe::run(&directory.with_extension("anchored")).await?;
+    crate::retirement_archive::probe(directory).await?;
     let storage = Storage::open(directory.to_owned(), false, 256).await?;
     let qualification = storage
         .call(|connection| {
@@ -43,7 +44,9 @@ pub(crate) async fn run(directory: &Path) -> Result<()> {
                 return Err(super::invalid());
             }
             Ok(serde_json::json!({"sqlite_version":rusqlite::version(), "sqlite_source_id":source_id, "compile_options":compile_options,
-                "journal_mode":"delete", "synchronous":"extra", "create_commit_reopen":"passed", "anchored_import_create_commit_reopen":"passed"}))
+                "journal_mode":"delete", "synchronous":"extra", "create_commit_reopen":"passed", "anchored_import_create_commit_reopen":"passed",
+                "retirement_archive_copy_reopen_refusal":"passed", "synthetic_retirement_move_restore":"passed",
+                "indexed_retirement_copy_reopen_refusal":"passed"}))
         })
         .await?;
     storage.close().await?;

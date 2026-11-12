@@ -1,15 +1,14 @@
 //! Bounded, complete-snapshot validation for Mongo agent logs.
 
 use super::agent_log_telemetry::ScanCaller;
-use futures_util::TryStreamExt;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{SandboxStoreError, MAX_AGENT_LOG_BATCH_SIZE};
-use layer2_core::sandbox::AgentLogEntry;
-use mongodb::bson::{Document, RawDocumentBuf};
-use mongodb::options::ReadConcern;
+use layer2_core::sandbox::{Agent, AgentLogEntry};
+use mongodb::bson::{doc, Binary, Bson, Document, RawDocumentBuf};
+use sha2::{Digest, Sha256};
 
-use super::agent_log::{log_document, read_entry};
-use super::sandbox_mongo::MongoSandboxStore;
+use super::agent_log::{log_document, log_id, read_entry};
+use super::sandbox_mongo::{signed, unsigned, MongoSandboxStore};
 
 pub(super) use layer2_core::sandbox::store::NORMAL_AGENT_LOG_ENTRIES;
 pub(super) const NORMAL_AGENT_LOG_BYTES: usize = 64 * 1024 * 1024;
@@ -22,7 +21,13 @@ const STOP_AGENT_LOG_BYTES: usize = NORMAL_AGENT_LOG_BYTES + STOP_RESERVE_BYTES;
 const PHYSICAL_AGENT_LOG_ENTRIES: u64 = STOP_AGENT_LOG_ENTRIES + DELETE_RESERVE_ENTRIES;
 const PHYSICAL_AGENT_LOG_BYTES: usize = STOP_AGENT_LOG_BYTES + DELETE_RESERVE_BYTES;
 const MAX_AGENT_LOG_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const INTEGRITY_FIELD: &str = "agent_log_integrity_v1";
+pub(super) const QUARANTINE_FIELD: &str = "agent_log_integrity_quarantine_v1";
+const SEMANTIC_FIELD: &str = "semantic_checkpoint_v1";
+const INTEGRITY_FORMAT: i64 = 1;
+const HASH_BYTES: usize = 32;
 
+#[derive(Debug)]
 pub(super) enum TransactionLogError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -45,161 +50,161 @@ impl AppendCapacity {
     }
 }
 
+#[derive(Default)]
 pub(super) struct LogSummary {
     entry_count: u64,
     encoded_bytes: usize,
+    head_hash: [u8; HASH_BYTES],
+    semantic: Option<SemanticCheckpoint>,
 }
 
 impl LogSummary {
     pub(super) const fn entry_count(&self) -> u64 {
         self.entry_count
     }
-}
 
-pub(super) async fn scan_complete_log_with_session<F>(
-    caller: ScanCaller,
-    store: &MongoSandboxStore,
-    agent_id: &AgentId,
-    last_seq: u64,
-    session: &mut mongodb::ClientSession,
-    visit: F,
-) -> Result<LogSummary, TransactionLogError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
-{
-    scan_complete_log(caller, store, agent_id, last_seq, session, false, visit).await
-}
-
-pub(super) async fn scan_complete_log_with_snapshot_session<F>(
-    caller: ScanCaller,
-    store: &MongoSandboxStore,
-    agent_id: &AgentId,
-    last_seq: u64,
-    session: &mut mongodb::ClientSession,
-    visit: F,
-) -> Result<LogSummary, TransactionLogError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
-{
-    scan_complete_log(caller, store, agent_id, last_seq, session, true, visit).await
-}
-
-pub(super) async fn scan_complete_log<F>(
-    caller: ScanCaller,
-    store: &MongoSandboxStore,
-    agent_id: &AgentId,
-    last_seq: u64,
-    session: &mut mongodb::ClientSession,
-    snapshot: bool,
-    visit: F,
-) -> Result<LogSummary, TransactionLogError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
-{
-    scan_collection(
-        caller,
-        &store.agent_log,
-        agent_id,
-        last_seq,
-        session,
-        snapshot,
-        visit,
-    )
-    .await
-}
-
-pub(super) async fn scan_collection<F>(
-    caller: ScanCaller,
-    collection: &mongodb::Collection<Document>,
-    agent_id: &AgentId,
-    last_seq: u64,
-    session: &mut mongodb::ClientSession,
-    snapshot: bool,
-    mut visit: F,
-) -> Result<LogSummary, TransactionLogError>
-where
-    F: FnMut(AgentLogEntry) -> Result<(), SandboxStoreError>,
-{
-    let mut observation = super::agent_log_telemetry::Scan::new(caller);
-    if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
-        tracing::warn!(
-            limit_kind = "physical_entries",
-            existing_entries = last_seq,
-            max_entries = PHYSICAL_AGENT_LOG_ENTRIES,
-            "Agent log capacity rejected"
-        );
-        return Err(capacity_error().into());
+    pub(super) fn semantic(&self) -> Option<&SemanticCheckpoint> {
+        self.semantic.as_ref()
     }
-    let mut read = super::mongo_read_telemetry::Read::find(collection.name());
-    let raw_log = collection.clone_with_type::<RawDocumentBuf>();
-    let find = raw_log
-        .find(mongodb::bson::doc! { "agent_id": agent_id.as_str() })
-        .sort(mongodb::bson::doc! { "seq": 1 })
-        .limit(i64::try_from(PHYSICAL_AGENT_LOG_ENTRIES + 1).unwrap_or(i64::MAX));
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
+
+    pub(super) fn with_semantic(mut self, semantic: SemanticCheckpoint) -> Self {
+        self.semantic = Some(semantic);
+        self
+    }
+}
+
+pub(crate) mod fleet;
+mod metadata;
+mod preparation;
+mod proof;
+#[cfg(test)]
+mod quarantine_tests;
+pub(super) mod read;
+mod scan;
+mod semantic;
+#[cfg(test)]
+mod semantic_tests;
+#[cfg(test)]
+mod tests;
+
+pub(super) use layer2_core::sandbox::AgentLogCheckpoint as SemanticCheckpoint;
+pub(super) use metadata::parse_integrity;
+use metadata::{hash_raw, history_identity, LogIntegrity};
+pub(super) use proof::trusted_summary;
+pub(super) use scan::scan_collection;
+pub(super) use scan::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
+pub(super) use semantic::audit_checkpoint;
+
+pub(super) fn empty_summary() -> LogSummary {
+    LogSummary::default()
+}
+
+pub(super) fn integrity_document(
+    agent: &Agent,
+    summary: &LogSummary,
+    bound_agent_revision: u64,
+    semantic: SemanticCheckpoint,
+) -> Result<Document, SandboxStoreError> {
+    LogIntegrity::from_summary(agent, summary, bound_agent_revision, semantic).to_document()
+}
+
+/// Carry a validated integrity summary across an Agent revision-only mutation.
+/// The caller must still CAS the old revision/head; a changed log head is not
+/// eligible for carry and will be repaired by the next append fallback.
+pub(super) fn carry_integrity_for_revision(
+    current_row: &Document,
+    current: &Agent,
+    next: &Agent,
+    fields: &mut Document,
+) -> Result<(), SandboxStoreError> {
+    if current.conversation.last_seq != next.conversation.last_seq {
+        return Ok(());
+    }
+    let Some(mut integrity) = parse_integrity(current_row)? else {
+        return Ok(());
     };
-    let mut cursor = find
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?;
-    let mut entry_count = 0_u64;
-    let mut encoded_bytes = 0_usize;
-    while let Some(raw) = cursor
-        .stream(session)
-        .try_next()
-        .await
-        .map_err(TransactionLogError::Driver)?
+    if integrity.bound_agent_revision != current.revision
+        || integrity.history_identity != history_identity(current)
+        || history_identity(current) != history_identity(next)
+        || current.conversation != next.conversation
+        || integrity.head_seq != current.conversation.last_seq
+        || integrity.semantic.through_seq != current.conversation.last_seq
     {
-        let document_bytes = raw.as_bytes().len();
-        observation.document(document_bytes);
-        read.document(document_bytes);
-        let document = Document::try_from(&raw).map_err(|error| {
-            TransactionLogError::Domain(SandboxStoreError::Corrupt(error.to_string()))
-        })?;
-        let entry = read_entry(&document).map_err(TransactionLogError::Domain)?;
-        let expected = entry_count.checked_add(1);
-        if expected != Some(entry.seq) || entry.seq > last_seq {
-            return Err(TransactionLogError::Domain(
-                SandboxStoreError::SequenceConflict,
-            ));
-        }
-        encoded_bytes = encoded_bytes
-            .checked_add(document_bytes)
-            .filter(|total| *total <= PHYSICAL_AGENT_LOG_BYTES)
-            .ok_or_else(|| {
-                tracing::warn!(
-                    limit_kind = "physical_bytes",
-                    scanned_entries = entry_count,
-                    scanned_bytes = encoded_bytes,
-                    document_bytes,
-                    max_bytes = PHYSICAL_AGENT_LOG_BYTES,
-                    "Agent log capacity rejected"
-                );
-                capacity_error()
-            })
-            .map_err(TransactionLogError::Domain)?;
-        visit(entry).map_err(TransactionLogError::Domain)?;
-        entry_count = expected.unwrap_or_default();
+        return Ok(());
     }
-    if entry_count != last_seq {
-        return Err(TransactionLogError::Domain(
-            SandboxStoreError::SequenceConflict,
+    integrity.bound_agent_revision = next.revision;
+    fields.insert(INTEGRITY_FIELD, integrity.to_document()?);
+    Ok(())
+}
+
+pub(super) struct PreparedAppend {
+    pub(super) integrity: Document,
+    pub(super) documents: Vec<RawDocumentBuf>,
+}
+
+/// Allocate/validate sequences before encoding. Capacity, hash and Mongo insert
+/// all use these same immutable BSON buffers, including the padded `_id`.
+pub(super) fn prepare_append(
+    agent: &Agent,
+    summary: &LogSummary,
+    appended: &[AgentLogEntry],
+    bound_agent_revision: u64,
+    semantic: SemanticCheckpoint,
+    capacity: AppendCapacity,
+) -> Result<PreparedAppend, SandboxStoreError> {
+    ensure_append_batch_size(appended.len())?;
+    let mut documents = Vec::with_capacity(appended.len());
+    for (offset, entry) in appended.iter().enumerate() {
+        let expected = summary
+            .entry_count
+            .checked_add(offset as u64)
+            .and_then(|value| value.checked_add(1))
+            .ok_or(SandboxStoreError::SequenceConflict)?;
+        if entry.agent_id != agent.id || entry.seq != expected {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        let raw = RawDocumentBuf::try_from(&log_document(entry)?)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        documents.push(raw);
+    }
+    ensure_append_capacity(summary, &documents, capacity)?;
+    let total_bytes = documents
+        .iter()
+        .try_fold(summary.encoded_bytes, |total, raw| {
+            total
+                .checked_add(raw.as_bytes().len())
+                .ok_or(SandboxStoreError::AgentLogCapacityExceeded)
+        })?;
+    let head_seq = summary
+        .entry_count
+        .checked_add(documents.len() as u64)
+        .ok_or(SandboxStoreError::SequenceConflict)?;
+    if semantic.through_seq != head_seq {
+        return Err(SandboxStoreError::Corrupt(
+            "append checkpoint does not cover the final log head".into(),
         ));
     }
-    observation.complete();
-    read.complete();
-    Ok(LogSummary {
-        entry_count,
-        encoded_bytes,
+    let integrity = LogIntegrity {
+        head_seq,
+        entry_count: head_seq,
+        encoded_bytes: total_bytes,
+        head_hash: documents
+            .last()
+            .map_or(summary.head_hash, |raw| hash_raw(raw.as_bytes())),
+        bound_agent_revision,
+        history_identity: history_identity(agent),
+        semantic,
+    }
+    .to_document()?;
+    Ok(PreparedAppend {
+        integrity,
+        documents,
     })
 }
 
 pub(super) fn ensure_append_capacity(
     complete: &LogSummary,
-    appended: &[AgentLogEntry],
+    appended: &[RawDocumentBuf],
     capacity: AppendCapacity,
 ) -> Result<(), SandboxStoreError> {
     if appended.is_empty() {
@@ -208,9 +213,8 @@ pub(super) fn ensure_append_capacity(
     ensure_append_batch_size(appended.len())?;
     let pending_count = u64::try_from(appended.len()).map_err(|_| capacity_error())?;
     let mut pending_bytes = 0_usize;
-    for entry in appended {
-        let document = log_document(entry)?;
-        let document_bytes = encoded_document_len(&document)?;
+    for document in appended {
+        let document_bytes = document.as_bytes().len();
         if document_bytes > MAX_AGENT_LOG_DOCUMENT_BYTES {
             tracing::warn!(
                 limit_kind = "document_bytes",
@@ -263,11 +267,19 @@ pub(super) fn ensure_append_batch_size(pending: usize) -> Result<(), SandboxStor
     }
 }
 
-fn encoded_document_len(document: &Document) -> Result<usize, SandboxStoreError> {
-    document
-        .to_vec()
-        .map(|encoded| encoded.len())
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+/// Refuse recovery near normal capacity before any native reopen. Startup
+/// metadata and the reopen/publication suffix need ordinary log capacity; the
+/// stop/delete reserves are never borrowed to make a failed Agent usable.
+pub(super) fn ensure_reopen_capacity(summary: &LogSummary) -> Result<(), SandboxStoreError> {
+    capacity_allows(
+        summary.entry_count,
+        summary.encoded_bytes,
+        64,
+        512 * 1024,
+        AppendCapacity::Normal,
+    )
+    .then_some(())
+    .ok_or_else(capacity_error)
 }
 
 fn capacity_allows(
@@ -297,95 +309,5 @@ impl From<SandboxStoreError> for TransactionLogError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn entry(seq: u64) -> AgentLogEntry {
-        AgentLogEntry {
-            agent_id: AgentId("agt_capacity".into()),
-            seq,
-            appended_at: "2026-09-05T00:00:00Z".into(),
-            kind: layer2_core::sandbox::AgentLogKind::Deleted,
-        }
-    }
-
-    #[test]
-    fn normal_and_terminal_agent_log_capacity_are_distinct_and_bounded() {
-        assert!(capacity_allows(
-            NORMAL_AGENT_LOG_ENTRIES - 1,
-            NORMAL_AGENT_LOG_BYTES - 1,
-            1,
-            1,
-            AppendCapacity::Normal,
-        ));
-        assert!(!capacity_allows(
-            NORMAL_AGENT_LOG_ENTRIES,
-            NORMAL_AGENT_LOG_BYTES,
-            1,
-            1,
-            AppendCapacity::Normal,
-        ));
-        assert!(capacity_allows(
-            NORMAL_AGENT_LOG_ENTRIES,
-            NORMAL_AGENT_LOG_BYTES,
-            STOP_RESERVE_ENTRIES,
-            STOP_RESERVE_BYTES,
-            AppendCapacity::StopOrFailure,
-        ));
-        assert!(capacity_allows(
-            NORMAL_AGENT_LOG_ENTRIES,
-            NORMAL_AGENT_LOG_BYTES,
-            STOP_RESERVE_ENTRIES + DELETE_RESERVE_ENTRIES,
-            STOP_RESERVE_BYTES + DELETE_RESERVE_BYTES,
-            AppendCapacity::Delete,
-        ));
-        assert!(!capacity_allows(
-            STOP_AGENT_LOG_ENTRIES,
-            STOP_AGENT_LOG_BYTES,
-            DELETE_RESERVE_ENTRIES + 1,
-            DELETE_RESERVE_BYTES,
-            AppendCapacity::Delete,
-        ));
-    }
-
-    #[test]
-    fn append_checks_leave_staged_terminal_headroom() {
-        let normal_full = LogSummary {
-            entry_count: NORMAL_AGENT_LOG_ENTRIES,
-            encoded_bytes: NORMAL_AGENT_LOG_BYTES,
-        };
-        assert_eq!(
-            ensure_append_capacity(&normal_full, &[entry(10_001)], AppendCapacity::Normal),
-            Err(SandboxStoreError::AgentLogCapacityExceeded)
-        );
-        assert!(ensure_append_capacity(
-            &normal_full,
-            &[entry(10_001)],
-            AppendCapacity::StopOrFailure,
-        )
-        .is_ok());
-        assert!(ensure_append_capacity(&normal_full, &[], AppendCapacity::Normal).is_ok());
-
-        let stop_full = LogSummary {
-            entry_count: STOP_AGENT_LOG_ENTRIES,
-            encoded_bytes: STOP_AGENT_LOG_BYTES,
-        };
-        assert!(
-            ensure_append_capacity(&stop_full, &[entry(10_065)], AppendCapacity::Delete).is_ok()
-        );
-        assert_eq!(
-            ensure_append_capacity(&stop_full, &[entry(10_065)], AppendCapacity::StopOrFailure,),
-            Err(SandboxStoreError::AgentLogCapacityExceeded)
-        );
-    }
-
-    #[test]
-    fn atomic_append_batches_are_bounded_before_materialization() {
-        assert!(ensure_append_batch_size(0).is_ok());
-        assert!(ensure_append_batch_size(MAX_AGENT_LOG_BATCH_SIZE).is_ok());
-        assert_eq!(
-            ensure_append_batch_size(MAX_AGENT_LOG_BATCH_SIZE + 1),
-            Err(SandboxStoreError::AgentLogCapacityExceeded)
-        );
-    }
-}
+#[path = "agent_log_integrity/reopen_capacity_tests.rs"]
+mod reopen_capacity_tests;

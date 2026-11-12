@@ -4,6 +4,8 @@ use crate::RuntimeCapability;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentOperationError {
     #[error(transparent)]
+    Budget(crate::budget::BudgetError),
+    #[error(transparent)]
     Connection(#[from] SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
     Forbidden,
@@ -39,6 +41,10 @@ pub enum AgentOperationError {
         installed: String,
         requested: String,
     },
+    #[error("new skill upgrade admission is disabled")]
+    SkillUpgradeDisabled,
+    #[error("skill installation history capacity reached")]
+    SkillHistoryFull,
     #[error("agent changed while the operation was being fenced")]
     Conflict,
     #[error("sandbox checkpoint is in progress; input was not admitted")]
@@ -65,6 +71,7 @@ pub enum AgentOperationError {
 impl AgentOperationError {
     pub const fn code(&self) -> &'static str {
         match self {
+            Self::Budget(reason) => reason.code(),
             Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
@@ -82,6 +89,8 @@ impl AgentOperationError {
             Self::SkillVersionUpgradeUnsupported { .. } => {
                 "agent_skill_version_upgrade_unsupported"
             }
+            Self::SkillUpgradeDisabled => "agent_skill_upgrade_disabled",
+            Self::SkillHistoryFull => "agent_skill_history_full",
             Self::Conflict => "agent_operation_conflict",
             Self::CheckpointInProgress => "sandbox_checkpoint_in_progress",
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",

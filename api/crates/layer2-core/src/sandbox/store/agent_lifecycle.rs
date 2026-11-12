@@ -209,9 +209,39 @@ pub fn apply_agent_connection_recovery(
     )))
 }
 
+/// Work admission and authority observed before a failed read-only attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentRetryObservation {
+    pub agent_revision: u64,
+    pub command_admission_generation: u64,
+    pub sandbox_revision: u64,
+    pub workspace_revision: u64,
+    pub worktree_revision: u64,
+}
+
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
+    /// Observe durable command admission before inspection. Stores without this
+    /// evidence retain ordinary retries rather than pacing unobserved work.
+    async fn agent_command_admission_generation(
+        &self,
+        _id: &AgentId,
+    ) -> Result<Option<u64>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// Publish a failed read-only observation, optionally retaining a scheduling hint.
+    /// A store may omit the hint: it grants no authority and losing it only causes
+    /// an ordinary retry. Effect outcomes must use ordinary publication instead.
+    async fn commit_agent_work_retry(
+        &self,
+        mutation: AgentWorkMutation,
+        _observed: AgentRetryObservation,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_agent_work(mutation).await
+    }
+
     /// Exact durable preparation authority for replaying a worktree/home pair.
     /// Stores without such evidence retain the ordinary individual work steps.
     async fn prepared_agent_replay_matches(

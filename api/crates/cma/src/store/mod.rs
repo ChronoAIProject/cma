@@ -7,6 +7,8 @@ pub(crate) mod agent_access_requests;
 mod agent_access_tools;
 mod agent_admission;
 mod agent_admission_records;
+pub(crate) mod agent_capacity_recovery;
+mod agent_capacity_recovery_presence;
 mod agent_channel_usage;
 mod agent_commands;
 mod agent_control_lineage;
@@ -14,11 +16,18 @@ mod agent_control_receipt;
 mod agent_control_store;
 mod agent_control_transaction;
 mod agent_conversation_store;
+mod agent_failure_pacing;
 mod agent_lifecycle_operations;
 mod agent_log;
+mod agent_log_codec;
 mod agent_log_integrity;
 mod agent_log_reads;
+pub(crate) mod agent_log_segment_reads;
+pub(crate) mod agent_log_segments;
+mod agent_log_store;
 pub(crate) mod agent_log_telemetry;
+mod agent_log_transcript;
+mod agent_log_usage;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;
@@ -45,6 +54,7 @@ pub(crate) mod bot_setups;
 pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
+mod budget;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
@@ -57,6 +67,9 @@ pub mod directory;
 mod durability;
 mod encryption;
 mod media_uploads;
+pub(crate) mod provenance_progress;
+mod segment_response;
+pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
@@ -69,6 +82,10 @@ mod hierarchy;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
+pub(crate) mod ledger_census;
+pub(crate) mod ledger_collection;
+mod ledger_collection_progress;
+pub(crate) mod ledger_retirement;
 mod legacy_history;
 mod lifecycle_execution;
 pub(crate) mod lifecycle_transaction;
@@ -80,8 +97,12 @@ mod marketplace_query;
 mod marketplace_support;
 mod marketplace_visibility;
 mod message_feedback;
+pub(crate) mod migrations;
 pub mod mongo;
-mod mongo_latency;
+mod mongo_diagnostics;
+#[cfg(test)]
+pub(crate) use mongo_diagnostics::attach_readiness_fixture;
+pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
 pub mod operation;
@@ -97,6 +118,8 @@ mod profile_references;
 mod profiles;
 pub(crate) mod request_limits;
 mod resource_access;
+mod retained_reopen;
+pub(crate) mod retirement_archive;
 mod sandbox_admission;
 #[cfg(test)]
 mod sandbox_admission_mongo_integration_tests;
@@ -109,6 +132,10 @@ mod sandbox_maintenance;
 mod sandbox_mongo;
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
 #[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
@@ -124,12 +151,14 @@ mod sandboxes_tests;
 mod schema;
 #[cfg(test)]
 mod schema_mongo_integration_tests;
+pub(crate) mod segment_operations;
 pub mod settings;
 mod shared_child_capacity;
 mod suggestions;
 mod trigger_definitions;
 mod trigger_first_messages;
 mod warm_sandboxes;
+pub(crate) mod worker_observations;
 pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
 mod workspace_admission;
 mod workspace_prepare_recovery;

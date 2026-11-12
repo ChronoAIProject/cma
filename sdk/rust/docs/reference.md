@@ -130,6 +130,18 @@ Legacy encrypted Gateway storage methods remain for older installations and migr
 
 Provider binding management uses `client.provider_bindings().put/get/delete/ensure_conversation/delete_conversation`. Supply the complete profile snapshot and digest for PUT. These gateway-only operations require both management capabilities; use the scoped binding credential for Responses and immutable event-context reads. Binding responses never contain the supplied credential.
 
+The opaque profile `environment` preserves CMA's
+`verified_sender_context:true` extension for an existing Agent. Enabling it
+adds a gateway-attested first line to new event turns; omitted/false disables
+it, and profile targets refuse it by name. Exact retries retain admitted input
+across policy changes. Channel Activity's optional `refusal_code` reports named
+pre-admission failures; `last_non_admission_code` retains the last precise
+retryable refusal, including after expiry. These failures produce no chat reply.
+Exact replay renders locally and does not require gateway availability. Older
+providers ignore the policy; consumers must refuse an `event_ref` input without
+the verified line during rollback.
+
+
 `client.provider_bindings().inspect_preparation(binding_id, &request)` inspects
 the generation for an authenticated, durably admitted event without mutating
 resources. A `BindingPreparationInspection::Pending` returns an immutable intent;
@@ -928,3 +940,10 @@ successful lookup. It requires the verified Gateway service-account access beare
 and both management capabilities. Ordinary owner, browser and worker credentials
 are refused, and unavailable authentication or storage is an HTTP error. A caller
 must never treat that error as `unknown` or reuse a negative result as a cache.
+
+### Browser diagnostic reports
+
+`Client::report_browser_fault(browser_telemetry::BrowserFault)` sends one
+anonymous category to `POST /api/v1/telemetry/browser` and requires bodyless
+204. It omits the configured bearer and performs no automatic retry. Reports
+contain no exception text or identifiers and are not durable work receipts.

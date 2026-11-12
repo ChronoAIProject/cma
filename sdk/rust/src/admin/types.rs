@@ -60,7 +60,8 @@ pub struct Sandbox {
     pub status: SandboxStatus,
     /// Immutable profile identity.
     pub profile: InstanceProfileReference,
-    /// Explicit automatic-pause whitelist preference, when supplied by the server.
+    /// Explicit automatic-pause exception, when supplied by the server.
+    /// True alone does not establish approval provenance for retained records.
     #[serde(default)]
     pub always_on: Option<bool>,
     /// Observed runtime metadata.
@@ -220,7 +221,7 @@ pub struct RuntimeInventory {
     pub runtimes: Vec<RuntimeEntry>,
 }
 
-/// Operator automatic-pause whitelist update.
+/// Administrator approval or revocation of an automatic-pause exception.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AlwaysOnRequest {
     /// Whether this Sandbox should remain running while idle.

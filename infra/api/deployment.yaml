@@ -6,18 +6,22 @@ metadata:
   labels:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
+  # Captured live annotations retain earlier builds after image-only rollouts.
+  # The container digest below identifies the running artifact.
   annotations:
-    cma.chronoai.dev/api-image-digest: "sha256:3b2eae1d7cde8b7a154a551c3a24891cb53e11808d464e8119328001578a2a20"
+    cma.chronoai.dev/api-image-digest: "sha256:2a167bf3773ebf9c0053b4c8a028cf4098dc95739afcd8c3497d461c16b98147"
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:250b1adc70d3945690fade75dbfe58e365baff84bccf69d7b50369cb8f8f14c8"
-    cma.chronoai.dev/ci-artifact: "13062951329"
+    cma.chronoai.dev/candidate: "b31a88603ed821b7b88d52084ddf02ce974067f5"
+    cma.chronoai.dev/ci-accepted-attempt: "1"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:eed6ad8e432af0d29e3f2a5a824af0b872d5c8f28f56f23a331832b49a651cf5"
+    cma.chronoai.dev/ci-artifact: "13457798219"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:3806e9f443b951191414a3159f6b06ada3e4e7adea1f911d7673d5d5ba01cf50"
-    cma.chronoai.dev/ci-run: "41253930839"
-    cma.chronoai.dev/image-digest: "sha256:3b2eae1d7cde8b7a154a551c3a24891cb53e11808d464e8119328001578a2a20"
-    cma.chronoai.dev/image-source: "bc8cd8bf0f585446a37d3bd50a8e3df2d6d06e6e"
+    cma.chronoai.dev/ci-head: "b31a88603ed821b7b88d52084ddf02ce974067f5"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:e8247072372b5002fe15d84f7c47bfc530db7da215f010777e5e67a680e48d82"
+    cma.chronoai.dev/ci-run: "42115975473"
+    cma.chronoai.dev/domain-migration-stage: "endpoint-durable-context-delivery-api"
+    cma.chronoai.dev/image-digest: "sha256:2a167bf3773ebf9c0053b4c8a028cf4098dc95739afcd8c3497d461c16b98147"
+    cma.chronoai.dev/image-source: "b31a88603ed821b7b88d52084ddf02ce974067f5"
     cma.chronoai.dev/machine-runtime-build-mode: "github-ci-artifact"
     cma.chronoai.dev/machine-runtime-candidate: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
     cma.chronoai.dev/machine-runtime-ci-archive-sha256: "sha256:446ff3356907c2044b4594994054db1e2293b1a4e4318e4811b29fefcbab7bbd"
@@ -43,7 +47,7 @@ metadata:
     cma.chronoai.dev/runtime-image-digest: "sha256:e1d2accb555dbfe92eee9e736a968e50125f08c64c21247a6b590117d95b7c1f"
     cma.chronoai.dev/runtime-image-source: "bc8cd8bf0f585446a37d3bd50a8e3df2d6d06e6e"
     cma.chronoai.dev/runtime-source-tree: "d578ab272f0d840581caf5ffb1be4de8d376c5f6"
-    cma.chronoai.dev/source-tree: "d578ab272f0d840581caf5ffb1be4de8d376c5f6"
+    cma.chronoai.dev/source-tree: "6ae0ee7fb729e51c73622db6c2a5c411e94b3884"
 spec:
   replicas: 1
   minReadySeconds: 30
@@ -60,18 +64,26 @@ spec:
   template:
     metadata:
       annotations:
+        chrono-cd.chrono-ai.fun/metrics-port: "9091"
+        chrono-cd.chrono-ai.fun/metrics-path: /metrics
+        cma.chrono-ai.fun/recovery-at: "2026-10-31T16:39:53.824865+00:00"
         cma.chronoai.dev/allocation-provider: "agent-sandbox"
-        cma.chronoai.dev/api-image-digest: "sha256:3b2eae1d7cde8b7a154a551c3a24891cb53e11808d464e8119328001578a2a20"
+        cma.chronoai.dev/api-image-digest: "sha256:2a167bf3773ebf9c0053b4c8a028cf4098dc95739afcd8c3497d461c16b98147"
+        cma.chronoai.dev/api-worker-config-source: "adc47d1020e16b7c56f24b22fa36da215307da46"
+        cma.chronoai.dev/billing-config-restarted-at: "2026-11-06T09:58:13.258065+00:00"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:250b1adc70d3945690fade75dbfe58e365baff84bccf69d7b50369cb8f8f14c8"
-        cma.chronoai.dev/ci-artifact: "13062951329"
+        cma.chronoai.dev/candidate: "b31a88603ed821b7b88d52084ddf02ce974067f5"
+        cma.chronoai.dev/ci-accepted-attempt: "1"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:eed6ad8e432af0d29e3f2a5a824af0b872d5c8f28f56f23a331832b49a651cf5"
+        cma.chronoai.dev/ci-artifact: "13457798219"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:3806e9f443b951191414a3159f6b06ada3e4e7adea1f911d7673d5d5ba01cf50"
-        cma.chronoai.dev/ci-run: "41253930839"
-        cma.chronoai.dev/image-digest: "sha256:3b2eae1d7cde8b7a154a551c3a24891cb53e11808d464e8119328001578a2a20"
-        cma.chronoai.dev/image-source: "bc8cd8bf0f585446a37d3bd50a8e3df2d6d06e6e"
+        cma.chronoai.dev/ci-head: "b31a88603ed821b7b88d52084ddf02ce974067f5"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:e8247072372b5002fe15d84f7c47bfc530db7da215f010777e5e67a680e48d82"
+        cma.chronoai.dev/ci-run: "42115975473"
+        cma.chronoai.dev/domain-migration-stage: "endpoint-durable-context-delivery-api"
+        cma.chronoai.dev/image-digest: "sha256:2a167bf3773ebf9c0053b4c8a028cf4098dc95739afcd8c3497d461c16b98147"
+        cma.chronoai.dev/image-source: "b31a88603ed821b7b88d52084ddf02ce974067f5"
+        cma.chronoai.dev/machine-acceptance-disabled-at: "2026-10-28T23:48:52.875543+00:00"
         cma.chronoai.dev/machine-runtime-build-mode: "github-ci-artifact"
         cma.chronoai.dev/machine-runtime-candidate: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
         cma.chronoai.dev/machine-runtime-ci-archive-sha256: "sha256:446ff3356907c2044b4594994054db1e2293b1a4e4318e4811b29fefcbab7bbd"
@@ -85,6 +97,7 @@ spec:
         cma.chronoai.dev/machine-runtime-image-source: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
         cma.chronoai.dev/machine-runtime-microvm-proof-sha256: "sha256:1ced1614d8d163b1db2529a760e4da8d8fa4121643169643f78317da6eca1856"
         cma.chronoai.dev/machine-runtime-source-tree: "d578ab272f0d840581caf5ffb1be4de8d376c5f6"
+        cma.chronoai.dev/operator-config-reload: "media-binding-aeb4db035-40826008480"
         cma.chronoai.dev/runtime-build-mode: "github-ci-artifact"
         cma.chronoai.dev/runtime-candidate: "b73b1a6c1cde45b59ff0f927f1863d3b483ef326"
         cma.chronoai.dev/runtime-ci-archive-sha256: "sha256:d0590182c4c982893dc97bef76fb6fc852b52ffc48cf15ca7aec47770b84de9b"
@@ -97,10 +110,12 @@ spec:
         cma.chronoai.dev/runtime-image-digest: "sha256:e1d2accb555dbfe92eee9e736a968e50125f08c64c21247a6b590117d95b7c1f"
         cma.chronoai.dev/runtime-image-source: "bc8cd8bf0f585446a37d3bd50a8e3df2d6d06e6e"
         cma.chronoai.dev/runtime-source-tree: "d578ab272f0d840581caf5ffb1be4de8d376c5f6"
-        cma.chronoai.dev/source-tree: "d578ab272f0d840581caf5ffb1be4de8d376c5f6"
+        cma.chronoai.dev/source-tree: "6ae0ee7fb729e51c73622db6c2a5c411e94b3884"
+        kubectl.kubernetes.io/restartedAt: "2026-11-05T07:27:22.713656+00:00"
       labels:
         app.kubernetes.io/name: cma-agent-manager
         app.kubernetes.io/part-of: cma
+        chrono-cd.chrono-ai.fun/metrics: "true"
     spec:
       # Shutdown drains HTTP for up to 30s, then background workers for up to
       # 30s. Leave another five seconds for process and kubelet teardown.
@@ -133,11 +148,14 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:3b2eae1d7cde8b7a154a551c3a24891cb53e11808d464e8119328001578a2a20
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8080
+              protocol: TCP
+            - name: metrics
+              containerPort: 9091
               protocol: TCP
           envFrom:
             - configMapRef:
@@ -146,9 +164,13 @@ spec:
                 name: cma-agent-manager
           env:
             # Keep interactive IO schedulable alongside reconciliation and BSON
-            # decoding. Match workers to the four-core burst limit below.
+            # decoding. Derive workers from this container's CPU limit.
             - name: TOKIO_WORKER_THREADS
-              value: "4"
+              valueFrom:
+                resourceFieldRef:
+                  containerName: api
+                  divisor: "1"
+                  resource: limits.cpu
             - name: CHRONO_AGENT_SANDBOX_API_SERVER
               valueFrom:
                 configMapKeyRef:
@@ -180,13 +202,11 @@ spec:
               drop: ["ALL"]
           resources:
             requests:
-              cpu: "2"
+              cpu: "4"
               memory: 256Mi
             limits:
-              cpu: "4"
-              # Four lifecycle sweeps can each hold bounded upload buffers.
-              # All restore downloads share a four-part (128 MiB) buffer cap.
-              memory: 1Gi
+              cpu: "8"
+              memory: 8Gi
           # Startup validates MongoDB schema/indexes and composes provider
           # authorities before binding. The existing 30-minute budget is
           # finite; readiness separately checks the composed dependencies.
@@ -207,6 +227,8 @@ spec:
               port: http
             initialDelaySeconds: 5
             periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /ready

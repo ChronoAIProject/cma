@@ -6,18 +6,25 @@ metadata:
   labels:
     app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
+  # Captured live annotations retain earlier builds after image-only rollouts.
+  # The container digest below identifies the running artifact.
   annotations:
     cma.chronoai.dev/build-mode: "github-ci-artifact"
-    cma.chronoai.dev/candidate: "0d1772cfcbda4b55edba6f872495413ec9d6e72d"
-    cma.chronoai.dev/ci-archive-sha256: "sha256:f1d2a86df0b89e39dbf14ae3b4ab4efa71b21cc167f1dd34a358f5a27d1a4ea1"
-    cma.chronoai.dev/ci-artifact: "12821784343"
+    cma.chronoai.dev/candidate: "4c61e77e6efbe4e02c6769a378c9e13794f1a14c"
+    cma.chronoai.dev/ci-accepted-attempt: "1"
+    cma.chronoai.dev/ci-archive-sha256: "sha256:ade9d5e12b1c972581657493ab93556cc0e3bee2de0fc543c0ec6c6a620dd979"
+    cma.chronoai.dev/ci-artifact: "13425821517"
     cma.chronoai.dev/ci-attempt: "1"
-    cma.chronoai.dev/ci-head: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
-    cma.chronoai.dev/ci-publication-sha256: "sha256:023e22a19c42cf9736bbc1c8dc21f7727da75cfdebaad61b77a5ecf975bf6baa"
-    cma.chronoai.dev/ci-run: "40699201203"
-    cma.chronoai.dev/image-digest: "sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130"
-    cma.chronoai.dev/image-source: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
-    cma.chronoai.dev/source-tree: "674ab5a55000aa49433715f0668df743488fe2fb"
+    cma.chronoai.dev/ci-head: "4c61e77e6efbe4e02c6769a378c9e13794f1a14c"
+    cma.chronoai.dev/ci-publication-sha256: "sha256:99cf0eb3ed7a7ad9b6b6b6767e7be939919d7e1b4b746ba7e5b1215cf3911188"
+    cma.chronoai.dev/ci-run: "42043986725"
+    cma.chronoai.dev/cmaeg-image-digest: "sha256:60971f2bffaa1b1337716cb0dbbf28984e6cc9bcf5db80969273377c1a60e3a9"
+    cma.chronoai.dev/domain-migration-stage: "console-oauth-origin"
+    cma.chronoai.dev/gateway-domain-phase: "eg-canonical"
+    cma.chronoai.dev/image-digest: "sha256:60971f2bffaa1b1337716cb0dbbf28984e6cc9bcf5db80969273377c1a60e3a9"
+    cma.chronoai.dev/image-source: "4c61e77e6efbe4e02c6769a378c9e13794f1a14c"
+    cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
+    cma.chronoai.dev/source-tree: "f6bf104c2ebadc7f3a722b5cd86b8181bf2da686"
 spec:
   replicas: 1
   minReadySeconds: 30
@@ -32,25 +39,31 @@ spec:
   template:
     metadata:
       annotations:
-        cma.chronoai.dev/thread-contract-writes: "v1"
-        cma.chronoai.dev/operator-config-reload: "cmaeg-four-platform-4db8af3b-40699201203"
+        chrono-cd.chrono-ai.fun/metrics-port: "9091"
+        chrono-cd.chrono-ai.fun/metrics-path: /metrics
         cma.chronoai.dev/authoring-activation: "76bcae97d-20261026"
         cma.chronoai.dev/build-mode: "github-ci-artifact"
-        cma.chronoai.dev/candidate: "0d1772cfcbda4b55edba6f872495413ec9d6e72d"
-        cma.chronoai.dev/image-digest: "sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130"
-        cma.chronoai.dev/ci-archive-sha256: "sha256:f1d2a86df0b89e39dbf14ae3b4ab4efa71b21cc167f1dd34a358f5a27d1a4ea1"
-        cma.chronoai.dev/image-source: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
-        cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
-        cma.chronoai.dev/ci-artifact: "12821784343"
+        cma.chronoai.dev/candidate: "4c61e77e6efbe4e02c6769a378c9e13794f1a14c"
+        cma.chronoai.dev/ci-accepted-attempt: "1"
+        cma.chronoai.dev/ci-archive-sha256: "sha256:ade9d5e12b1c972581657493ab93556cc0e3bee2de0fc543c0ec6c6a620dd979"
+        cma.chronoai.dev/ci-artifact: "13425821517"
         cma.chronoai.dev/ci-attempt: "1"
-        cma.chronoai.dev/ci-head: "615c6f23bbf3b9ea250bc77d72888aa19727b8b7"
-        cma.chronoai.dev/ci-publication-sha256: "sha256:023e22a19c42cf9736bbc1c8dc21f7727da75cfdebaad61b77a5ecf975bf6baa"
-        cma.chronoai.dev/ci-run: "40699201203"
+        cma.chronoai.dev/ci-head: "4c61e77e6efbe4e02c6769a378c9e13794f1a14c"
+        cma.chronoai.dev/ci-publication-sha256: "sha256:99cf0eb3ed7a7ad9b6b6b6767e7be939919d7e1b4b746ba7e5b1215cf3911188"
+        cma.chronoai.dev/ci-run: "42043986725"
+        cma.chronoai.dev/cmaeg-image-digest: "sha256:60971f2bffaa1b1337716cb0dbbf28984e6cc9bcf5db80969273377c1a60e3a9"
+        cma.chronoai.dev/domain-migration-stage: "console-oauth-origin"
         cma.chronoai.dev/gateway-domain-phase: "eg-canonical"
-        cma.chronoai.dev/source-tree: "674ab5a55000aa49433715f0668df743488fe2fb"
+        cma.chronoai.dev/image-digest: "sha256:60971f2bffaa1b1337716cb0dbbf28984e6cc9bcf5db80969273377c1a60e3a9"
+        cma.chronoai.dev/image-source: "4c61e77e6efbe4e02c6769a378c9e13794f1a14c"
+        cma.chronoai.dev/operator-config-reload: "owner-keys-owner-reload-3d11ffa7964f-40959177691"
+        cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
+        cma.chronoai.dev/source-tree: "f6bf104c2ebadc7f3a722b5cd86b8181bf2da686"
+        cma.chronoai.dev/thread-contract-writes: "v1"
       labels:
         app.kubernetes.io/name: cma-event-gateway
         app.kubernetes.io/part-of: cma
+        chrono-cd.chrono-ai.fun/metrics: "true"
     spec:
       serviceAccountName: cmaeg-ksa
       automountServiceAccountToken: false
@@ -74,7 +87,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: cmaeg
-          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:03df804694cd5f43f637a44ebaa6002c988c4dbaaeb37beeee5e906943b79130
+          image: us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-cmaeg@sha256:2400d8b818527e2352ae0a25f44a4f5e01f3d027702f0768c562df07ab9d31c9
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -1,3 +1,4 @@
+import { capacityRecoveryDispatch } from './public-contract/capacity-recovery.js';
 import { documentDispatch } from './public-contract/documents.js';
 import { metricsDispatch } from './public-contract/metrics.js';
 import { usageDispatch } from './public-contract/usage.js';
@@ -39,6 +40,7 @@ import { verifyDesktopUpgrade } from './public-contract/desktop.js';
 
 const corpus = loadCorpus();
 const dispatch = {
+  ...capacityRecoveryDispatch,
   ...deliverableDispatch(corpus),
   ...usageDispatch,
   ...metricsDispatch,
@@ -54,7 +56,11 @@ const dispatch = {
 };
 
 function response(fixture: ContractCase): Response {
-  const { bodyKind, body, status, headers } = fixture.response;
+  const { bodyKind, body, status } = fixture.response;
+  const headers = new Headers(fixture.response.headers);
+  for (const cookie of fixture.response.setCookies ?? []) headers.append('set-cookie', cookie);
+  if (fixture.response.setCookies !== undefined)
+    expect(headers.getSetCookie()).toEqual(fixture.response.setCookies);
   if (bodyKind === 'sse') {
     const wire = (body as Record<string, unknown>[])
       .map(
@@ -248,6 +254,13 @@ describe('shared public contract', () => {
         expect(fetch).toHaveBeenCalledTimes(exchange.length);
       } else if (
         fixture.response.status >= 400 &&
+        !(
+          fixture.response.status === 409 &&
+          /^POST \/api\/v1\/agents\/\{id\}\/capacity-recovery\/(admit|resume)$/.test(
+            fixture.operation,
+          ) &&
+          JSON.stringify(fixture.response.body) === JSON.stringify({ outcome: 'known_abort' })
+        ) &&
         !(fixture.operation === 'GET /auth/session' && fixture.response.status === 401)
       ) {
         const body = problemBody(fixture);

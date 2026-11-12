@@ -1,4 +1,4 @@
-//! Owner-controlled automatic-pause whitelist route.
+//! Owner relinquishment of an administrator-approved automatic-pause exception.
 
 use axum::{
     extract::{Path, State},
@@ -33,12 +33,15 @@ pub(crate) struct AlwaysOnRequest {
     responses(
         (status = 200, body = SandboxView),
         (status = 400, body = crate::rest::ProblemDocument),
-        (status = 403, body = crate::rest::ProblemDocument),
+        (status = 403, description = "Enabling requires administrator approval: always_on_approval_required.", body = crate::rest::ProblemDocument),
         (status = 404, body = crate::rest::ProblemDocument),
         (status = 409, body = crate::rest::ProblemDocument),
         (status = 422, body = crate::rest::ProblemDocument)
     )
 )]
+/// Turn off an existing Always on exception. Enabling requires administrator
+/// approval and returns 403 `always_on_approval_required`, even if already on.
+/// Disabling an unset preference leaves the Sandbox and its revision unchanged.
 pub(super) async fn always_on(
     State(state): State<HierarchyState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -71,3 +74,7 @@ pub(super) async fn always_on(
     )
     .await
 }
+
+#[cfg(test)]
+#[path = "sandbox_always_on_tests.rs"]
+mod tests;

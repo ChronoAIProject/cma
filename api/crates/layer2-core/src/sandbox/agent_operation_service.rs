@@ -53,6 +53,7 @@ mod error;
 pub use error::AgentOperationError;
 
 pub struct AgentOperationService {
+    pub(super) skill_upgrades_enabled: bool,
     pub(super) instruction_policy: Arc<dyn super::AgentInstructionPolicy>,
     pub(super) settings_authority: Option<super::AgentSettingsAuthorization>,
     pub(super) command_claim: Option<super::agent_io::CommandClaim>,
@@ -70,6 +71,7 @@ impl AgentOperationService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            skill_upgrades_enabled: false,
             instruction_policy: Arc::new(super::agent_preferences::UnmanagedInstructions),
             settings_authority: None,
             command_claim: None,
@@ -86,6 +88,7 @@ impl AgentOperationService {
         connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            skill_upgrades_enabled: self.skill_upgrades_enabled,
             instruction_policy: self.instruction_policy.clone(),
             settings_authority: self.settings_authority.clone(),
             command_claim: self.command_claim.clone(),
@@ -406,6 +409,7 @@ fn require_granted(
 pub(super) fn operation_store_error(error: SandboxStoreError) -> AgentOperationError {
     match error {
         SandboxStoreError::NotFound => AgentOperationError::NotFound,
+        SandboxStoreError::Budget(reason) => AgentOperationError::Budget(reason),
         SandboxStoreError::Conflict => AgentOperationError::Conflict,
         SandboxStoreError::CheckpointInProgress => AgentOperationError::CheckpointInProgress,
         SandboxStoreError::SequenceConflict => {

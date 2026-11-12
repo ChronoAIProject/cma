@@ -1,5 +1,31 @@
 # CMA Event Gateway operations
 
+## Secret-first CMAEG deployment
+
+The owner-key identifiers come from `cma-event-gateway-owner-keys`, not ConfigMap
+values or empty placeholders. With owner keys enabled, the Secret must exist and
+its two keys must be verified **before any CMAEG deployment from this revision**.
+Missing required identifiers fail startup. Merge and image publication do not
+authorize a rollout or a full application of the checked-in manifests.
+
+Use the [owner-key Secret cutover runbook](CMAEG_Owner_Key_Secret_Cutover.md)
+and `.github/scripts/cmaeg-owner-key-cutover.py` under the current release GO,
+exclusive bridge lock and unchanged STOP marker. The required order is:
+
+1. Capture current resource fences and the existing owner-key authorization baseline.
+2. Seed the dedicated Secret from the existing live values in memory and verify
+   the two keys without printing or retaining values. A mismatch is a hold.
+3. Apply the fenced env-only change, preserving the image and unrelated settings.
+4. Verify readiness, owner-key authority and existing channels; complete observation.
+5. Only then remove the two legacy ConfigMap fields and verify the final state.
+
+Do not apply an empty Secret declaration, remove the legacy fields first or copy
+values into a file. The obsolete empty-placeholder apply wrapper is removed;
+its former ConfigMap-before-Deployment order is not the Secret migration path.
+After cutover, retain the Secret references and use separately approved fenced
+image patches. Preserve the current forward-fix boundary, stored data and all
+unrelated live configuration, including the separately decided typing flag.
+
 ## Native GitHub startup initialization
 
 `CMAEG_GITHUB_ENABLED` is the deployment-wide feature flag, default `false` when unset.
@@ -306,7 +332,7 @@ applies with all media flags off.**
 | `CMAEG_STT_TIMEOUT_MS` | unsigned decimal, ms | `30000` | 1000..=120000. Deadline of one request attempt, within the derivation's own deadline. |
 | `CMAEG_STT_API_KEY` | secret string | Required when `CMAEG_STT_URL` is set | Platform speech-to-text key from the optional `cmaeg-stt` Secret, sent only to `CMAEG_STT_URL` as a bearer token and never logged. 1..=4096 printable ASCII characters without whitespace. Never a tenant's key. |
 | `CMAEG_PROVIDER_CONNECT_TIMEOUT_MS` | positive integer, ms | `2000` | TCP/TLS connection timeout for each provider pool. |
-| `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. |
+| `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. CMA verified-sender input uses a 2-second attestation deadline inside a 5-second preflight budget; keep the provider POST budget at least 10 seconds when enabling that extension (the deployed 30000 ms value is capped at 20 seconds for frozen submission). |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Retained event identity and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
 | `CMAEG_CONSOLE_NYXID_PUBLIC_URL` | origin URL | `CMAEG_NYXID_BASE_URL` | Console OAuth discovery, authorization, token, revocation and organization-list origin. Production `https://api.nyxid.ai`; HTTPS required except loopback tests. Discovery must advertise endpoints on this exact origin. Does not change shared creator authentication, retained issuer, service audiences or credentials. |
@@ -343,6 +369,7 @@ applies with all media flags off.**
 | `CMAEG_INGRESS_MAX_BODY` | positive integer | `1048576` | Callback body limit, configurable from 1 byte through 16 MiB. |
 | `CMAEG_INGRESS_INFLIGHT` | positive integer | `256` | Concurrent callbacks per replica; overflow returns immediate 429 with `Retry-After: 1`. |
 | `CMAEG_ACCEPT_BUDGET_MS` | positive integer, ms | `20000` | Time from the last inbound body byte to acknowledgment; a pending provider request continues after the gateway returns 202. |
+| `CMAEG_CONTEXT_RETRY_ENABLED` | boolean | `false` | Opt in to at most two sequential retained-context GETs for legacy CMA Custom ingress, with a three-second attempt bound, jittered backoff, eight-second total bound and HTTP Retry-After on transient exhaustion. Does not acknowledge uncommitted work as queued. |
 | `CMAEG_TURN_TIMEOUT_MS` | positive integer, ms | `600000` | Total turn lifetime including provider setup, retry and stream consumption. |
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
@@ -545,7 +572,9 @@ for exact identity and source restrictions.
 
 CMAEG serves Prometheus text at `/metrics` on `CMAEG_METRICS_LISTEN`
 (`0.0.0.0:9091` by default). The public listener does not expose that path.
-Keep the scrape listener private to the cluster. Registration is process-wide
+Keep the scrape listener private to the cluster. The deployment declares the
+platform Pod discovery metadata described in [CMA observability](CMA_Observability.md);
+verify active collector coverage separately. Registration is process-wide
 and idempotent. All duration histograms use seconds with buckets
 `0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10`, except those named
 `cmaeg_media_*`, which use `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 15, 30, 60, 90`:
@@ -625,6 +654,57 @@ boundaries. Each media derivation job runs in a `cmaeg.media.derive` span with
 `op`, `outcome`, the channel hash and the attachment `index`; it never carries
 a file name, URL, token or content. Info logs exclude bearer keys, reply tokens, event references, and
 message content. Provider-controlled parsing diagnostics are also excluded.
+
+The legacy turn runner emits one warn record, `provider turn start failed`, when
+provider start attempts end in a classified failure. It runs inside `cmaeg.turn`,
+so the `channel` field is the 16-character channel hash and `event_id` identifies
+the event. The record carries `provider` (the slug), `provider_call`,
+`gateway_detail` and `gateway_status` (the unchanged gateway classification),
+and `provider_error` (a static variant label). `provider_call` names the step in
+which the failure occurred, including local preparation and admission checks:
+`responses` for turn start and `conversation` for conversation ensure. It does
+not prove that an HTTP request reached the provider. The runner's local consumer
+and credential checks belong to the `responses` step. A successful ensure
+followed by a failed retried start reports `responses`; intermediate
+conversation-missing and busy retries do not emit this warning. Operators use
+the step together with the error label to distinguish a provider refusal at
+turn start from one at conversation creation, or from a gateway-local failure.
+
+For this legacy start path, the error labels have these meanings:
+
+| `provider_error` | What it establishes about the failed attempt |
+| --- | --- |
+| `unknown_provider` | Local provider registry lookup failed before sending the step's HTTP request. |
+| `invalid_request` | Local consumer/credential, metadata, event-context, URL or HTTP-header validation failed before sending the step's HTTP request. A connection may already have been established. |
+| `capacity` | The responses step could not acquire its local inflight permit immediately; it sent no HTTP request for that attempt. |
+| `busy` | Either the conversation step timed out waiting for a local inflight permit, or the provider returned a busy/readiness HTTP refusal. This label alone does not prove a request reached the provider. |
+| `unavailable` | Can occur before sending (worker-credential registration, management authentication, a closed conversation semaphore, connection/TLS failure), during transport or a timeout, or after a non-success, non-4xx HTTP response. This label alone does not establish whether a request reached the provider. |
+| `rejected`, `conversation_missing` | Derived from an HTTP response to the step's request. |
+
+These facts concern the failed attempt only: earlier attempts may have reached
+the provider, and auxiliary credential registration or authentication may
+already have occurred. The helper also supports the static `response_malformed`
+and `sse` labels, but the current legacy start/ensure calls do not produce those
+variants; stream parsing happens after start returns.
+
+For `provider_error="rejected"`, the record also carries `upstream_status` and
+`upstream_code`. The code is admitted only as a 1–64-byte machine token matching
+`[a-z0-9_.:-]+`; every other value becomes the fixed placeholder `unrecognized`,
+without truncating or escaping provider text. The client selects the first
+present value from `code`, `error.code`, then `type` in the refusal body. If that
+value is not a string, none is present, or the body cannot be read or parsed as
+JSON, the client substitutes `provider_error`. Thus
+`upstream_code="provider_error"` can mean this extraction fallback or the
+provider's own literal code; the record cannot distinguish them. This fallback
+is separate from the sanitizer's `unrecognized` placeholder.
+
+For this warning, the grammar-checked code is the only admitted provider text;
+free-form parsing diagnostics, response bodies and provider messages are
+excluded. Other error variants log only their static label, with no inner error
+strings or upstream fields. This warning never includes bearer keys, reply
+tokens, event references or message content. Callback problems, failure replies
+and metric labels retain their existing classifications; provider response
+bodies are not forwarded.
 
 A request handler that panics is answered with a 500 `internal` problem whose
 detail is `internal_error`, with the usual protocol headers and `x-request-id`;
@@ -909,7 +989,9 @@ is never used as a provider credential.
 The deployment permits a rolling replacement with one surge pod and zero
 unavailable pods. Its 615-second termination grace covers the five-second
 load-balancer propagation delay, the 600-second application drain, and teardown.
-Apply ConfigMap and populated Secrets before starting the Deployment. Confirm
+Apply populated Secrets through the separately approved secret procedure;
+use the [guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+before starting the Deployment. Confirm
 `/healthz`, `/readyz`, accepted HTTPRoute/health policy status, authenticated CMA
 record access, and the public HTTPS route after rollout. A ready gateway alone
 does not prove a deployed Telegram round trip.
@@ -1767,8 +1849,9 @@ Linux/amd64 Pod in the authorized cluster, with no secrets or service-account
 token and the gateway's restricted security context. Require a successful
 `--media-sandbox-check` and compare `--print-openapi` with the committed JSON.
 These probes establish executable/ABI compatibility, not the full Linux or
-transformer suite. Then dry-run and apply the locally committed ConfigMap and
-Deployment together, verify live digest/readiness, console sign-in and media
+transformer suite. Then use the
+[guarded ConfigMap and Deployment path](#guarded-configmap-and-deployment-apply)
+for the dry-run and approved apply, verify live digest/readiness, console sign-in and media
 attachment behavior, and record any unperformed acceptance probes explicitly.
 
 ### FFmpeg in the gateway image
@@ -3304,3 +3387,31 @@ current consent and authority. See [the full contract](CMAEG_Native_WhatsApp_Mes
 ## Optional media continuation scheduling storage
 
 The continuation worker uses a separate expiring active-head collection, bounded keyset scans and a preserved original retention deadline. It never treats a scheduling head as admission authority. Base Gateway startup does not require the optional migration or role. Deploy compatible readers, then review the optional role/migration and readiness before enabling a worker; older isolated readers reject unrecognized optional grants. See [media continuation storage](CMAEG_Media_Continuation_Storage.md) for exact commands, retention, rollback and verification.
+
+### Delivery queue and outcome observations
+
+The private exporter additionally exposes `cmaeg_delivery_queue_{depth,capacity,waiters,sample_timestamp_seconds}`
+by `inbound` / `worker` stage, both stages’ `oldest_seconds` and
+`residence_seconds`, queue `wait_seconds` and `submissions_total` by bounded
+result, and `cmaeg_delivery_outcomes_total{platform,step,destination,outcome}`.
+Production inbound and worker queues retain cancellation-safe residence guards;
+old entries disappear on dequeue or receiver loss/panic. Queue depth excludes
+active sends and blocked producers. The legacy raw-channel constructor supports
+sampled depth/capacity only. Require fresh sample
+timestamps before interpreting snapshots. Local `buffered` does not mean a
+recipient received a message; unknown outcomes are not failures safe to resend.
+Default webhook groups are logical group outcomes. Turn duration buckets cover
+long inference through 3600 seconds. Full semantics and production follow-up
+are in [CMA Observability](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
+
+
+Provider permits expose per-provider capacity, held/available permits, waiter
+count and oldest waiter timestamp, acquisition outcomes/wait duration and held
+duration. These observe the existing per-provider gates and retain their 50ms
+wait, immediate-capacity refusals and stream ownership. The deployment cap is
+applied separately to each provider; it is not one shared aggregate pool.
+Use `time() - cmaeg_provider_permit_oldest_wait_timestamp_seconds` only with
+`cmaeg_provider_permit_waiters > 0`. Long held permits can be healthy inference.
+See [permit semantics](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
+Worker/readiness changes belong to [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740)
+and a separate PR.

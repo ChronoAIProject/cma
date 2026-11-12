@@ -1,18 +1,19 @@
 import { useAgentTitle } from './useAgentTitle';
-import { readPreparation } from './preparationRead';
+import { usePreparationProgress } from './preparationProgress';
+import { queueObservationRevision } from './queueObservationRevision';
+import { ReadinessWake } from './readinessWait';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
 import { CommandKeys } from '../api/client';
-import type { AgentLiveEvent, SandboxEvent } from '../api/types';
-import { readSandboxHistory } from '../sandbox/eventHistory';
+import type { AgentLiveEvent } from '../api/types';
 import { currentAgentStatus } from './status';
 import { useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
 import { useRetainedAgentState } from './retainedState';
-import { reopenAgent, refreshConversation } from './reopenAgent';
+import { reopenAgent } from './reopenAgent';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
@@ -54,6 +55,7 @@ export function useAgentController(
   const [revision, setRevision] = useState(0);
   const [replayRevision, setReplayRevision] = useState(0);
   const [requestRevision, setRequestRevision] = useState(0);
+  const [readinessWake] = useState(() => new ReadinessWake());
   const [state, setState, stateRef] = useRetainedAgentState(client, options.viewerId, agentId);
   const loaded = useRef<
     | { client: CmaWebClient; agentId?: string; revision: number; lineage?: AgentLoadLineage }
@@ -285,45 +287,19 @@ export function useAgentController(
     (state.detail.status === 'starting' ||
       (state.detail.firstMessage !== undefined &&
         !['completed', 'failed', 'recovery_required'].includes(state.detail.firstMessage.state)));
-  useEffect(() => {
-    if (!provisioning || agentId === undefined || pending !== undefined) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let events: readonly SandboxEvent[] = [];
-    let observedStatus: string | undefined;
-    const poll = async () => {
-      try {
-        const next = await readPreparation(client, agentId, request.signal, stateRef, setState);
-        events = await readSandboxHistory(client, next.detail.sandbox.id, request.signal, events);
-        if (request.signal.aborted) return;
-        setState((current) => {
-          if (current.status !== 'ready' || current.detail.id !== agentId) return current;
-          const conversation = refreshConversation(current.conversation, next);
-          liveCursor.current = conversation.cursor;
-          return { status: 'ready', ...next, conversation, sandboxEvents: events };
-        });
-        setActionError((current) =>
-          current === 'Preparation progress could not be refreshed. Reconnecting.'
-            ? undefined
-            : current,
-        );
-        if (next.detail.status !== 'starting' && observedStatus !== next.detail.status)
-          hierarchyChanged.current?.();
-        observedStatus = next.detail.status;
-        timer = setTimeout(() => void poll(), 1500);
-      } catch (error) {
-        if (!request.signal.aborted && !onIdentityChange(error)) {
-          setActionError('Preparation progress could not be refreshed. Reconnecting.');
-          timer = setTimeout(() => void poll(), 5000);
-        }
-      }
-    };
-    void poll();
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
-  }, [agentId, client, pending, provisioning, setState, stateRef, onIdentityChange]);
+  usePreparationProgress({
+    agentId,
+    client,
+    pending,
+    provisioning,
+    stateRef,
+    setState,
+    setActionError,
+    liveCursor,
+    hierarchyChanged,
+    onIdentityChange,
+    wake: readinessWake,
+  });
   useEffect(() => {
     if (!replayEnabled || agentId === undefined) return;
     const controller = new AbortController();
@@ -350,6 +326,11 @@ export function useAgentController(
             stateRef.current.status === 'ready' ? stateRef.current.conversation.agentCursor! : '',
             controller.signal,
             (frame) => {
+              if (
+                frame.type === 'cma.agent.event' &&
+                frame.data.kind?.type === 'conversation_available'
+              )
+                readinessWake.hint();
               const current = stateRef.current;
               if (current.status !== 'ready' || current.detail.id !== agentId)
                 throw new Error('The Agent view no longer accepts live updates.');
@@ -382,6 +363,7 @@ export function useAgentController(
     setState,
     stateRef,
     onIdentityChange,
+    readinessWake,
   ]);
 
   useLayoutEffect(() => {
@@ -402,7 +384,6 @@ export function useAgentController(
     setState(agentId === undefined ? { status: 'idle' } : { status: 'loading' });
     setRevision((value) => value + 1);
   }, [agentId, setState]);
-
   const { run, command, recoverPending } = useAgentActions({
     agentId: suspended ? undefined : agentId,
     client,
@@ -425,7 +406,6 @@ export function useAgentController(
     onIdentityChange,
     options,
   });
-
   const displayedStatus =
     state.status === 'ready'
       ? currentAgentStatus(state.detail, state.conversation, summary)
@@ -436,8 +416,9 @@ export function useAgentController(
     v2,
     !historyIncomplete && !suspended,
     activeTurn,
-    `${state.status === 'ready' ? state.conversation.cursor : 0}:${requestRevision}`,
+    state.status === 'ready' ? queueObservationRevision(state.conversation) : '',
     onIdentityChange,
+    requestRevision,
   );
   const interruptTurn = (strict: boolean) =>
     command(

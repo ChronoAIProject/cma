@@ -26,6 +26,7 @@ mod external_event;
 mod external_event_read;
 mod input;
 mod interruption;
+mod retained_input;
 pub use interruption::*;
 mod lane;
 mod ledger;
@@ -66,7 +67,7 @@ pub use continuation::{CommandSourceGuard, ExternalEventContinuation};
 pub use event::{
     AgentEphemeralEvent, AgentEvent, AgentEventKind, AgentMessageRole, AGENT_IO_SCHEMA_VERSION,
 };
-pub use evidence::CommandEvidence;
+pub use evidence::{CertifiedCommandSource, CommandEvidence};
 pub use execution_authority::{CommandExecutionAuthorization, CommandExecutionFence};
 pub use external_event::{external_event_key, ExternalEventContext, MAX_EXTERNAL_EVENT_BYTES};
 pub use input::{AgentAttachmentReference, AgentContent, AgentInput};

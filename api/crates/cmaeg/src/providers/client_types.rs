@@ -125,7 +125,7 @@ pub(crate) struct ProviderHandle {
     pub(crate) entry: super::ProviderEntry,
     pub(crate) client: reqwest::Client,
     pub(crate) responses: std::sync::Arc<super::transport::ResponseTransport>,
-    pub(crate) inflight: std::sync::Arc<tokio::sync::Semaphore>,
+    pub(crate) inflight: std::sync::Arc<super::permits::Gate>,
 }
 
 /// The per-request metadata bounds required by provider contracts.

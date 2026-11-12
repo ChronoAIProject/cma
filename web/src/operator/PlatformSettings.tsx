@@ -1,16 +1,27 @@
 import { Presence } from '../ui/Presence';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { PlatformSettings as Settings, StoredPlatformSettings } from '@chronoai/cma-sdk';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
 import { IconCheckOutline16, IconRefreshOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
 import { usageSettingsChanged } from '../usage/metrics/useMeasuredUsage';
 import { reviewSettingsDraft } from './settingsDraft';
+import { IdleThresholdFields, NumberField } from './SettingsFields';
+import { SpendControls } from './SpendControls';
+import { budgetChanged, spendBudget, spendListConflict } from './spendBudget';
+import { validateSpendBudget, type SpendErrors } from './spendValidation';
+import { SettingsAudit } from './SettingsAudit';
+import { spendAvailability, type SpendAvailability } from './spendAvailability';
 
-export function PlatformSettings({ client }: { readonly client: OperatorClient }) {
+export function PlatformSettings({
+  client,
+  canReadAudit = false,
+}: {
+  readonly client: OperatorClient;
+  readonly canReadAudit?: boolean;
+}) {
   const [state, setState] = useState<{ stored?: StoredPlatformSettings; error?: OperatorFailure }>(
     {},
   );
@@ -52,7 +63,7 @@ export function PlatformSettings({ client }: { readonly client: OperatorClient }
           )}
         </>
       ) : (
-        <SettingsEditor client={client} initial={state.stored} />
+        <SettingsEditor client={client} initial={state.stored} canReadAudit={canReadAudit} />
       )}
     </section>
   );
@@ -61,13 +72,16 @@ export function PlatformSettings({ client }: { readonly client: OperatorClient }
 function SettingsEditor({
   client,
   initial,
+  canReadAudit,
 }: {
   readonly client: OperatorClient;
   readonly initial: StoredPlatformSettings;
+  readonly canReadAudit: boolean;
 }) {
   const [draft, setDraft] = useState<Settings>(initial.settings);
   const [base, setBase] = useState<Settings>(initial.settings);
   const [revision, setRevision] = useState(initial.revision);
+  const [availability, setAvailability] = useState<SpendAvailability>(initial);
   const [current, setCurrent] = useState<StoredPlatformSettings>();
   const [failure, setFailure] = useState<OperatorFailure>();
   const [busy, setBusy] = useState(false);
@@ -76,20 +90,32 @@ function SettingsEditor({
   const [previewCount, setPreviewCount] = useState<number>();
   const [pauseNowResult, setPauseNowResult] = useState<string>();
   const [pauseNowBusy, setPauseNowBusy] = useState(false);
+  const [spendErrors, setSpendErrors] = useState<SpendErrors>({});
   const submitting = useRef(false);
+  const spendChanged = budgetChanged(base.model_budget, draft.model_budget);
+  // PUT restores an omitted policy before the backend evaluates either gate.
+  const effectiveBudget = draft.model_budget === undefined ? base.model_budget : draft.model_budget;
+  const { edit: writesAvailable, save: canSave } = spendAvailability(availability, effectiveBudget);
+  const spendSaveBlocked = !canSave;
   const update = (value: Settings) => {
     setDraft(value);
     setSaved(false);
   };
   const reread = async () => {
     try {
-      setCurrent(await client.admin.readSettings());
+      const latest = await client.admin.readSettings();
+      setCurrent(latest);
+      setAvailability(latest);
     } catch (error) {
       setFailure(operatorFailure(error));
     }
   };
   const save = async () => {
-    if (submitting.current || needsReview) return;
+    if (submitting.current || needsReview || spendSaveBlocked) return;
+    const budget = spendBudget(draft.model_budget);
+    const errors = budget && writesAvailable ? validateSpendBudget(budget) : {};
+    setSpendErrors(errors);
+    if (Object.keys(errors).length) return;
     submitting.current = true;
     setBusy(true);
     setFailure(undefined);
@@ -102,12 +128,14 @@ function SettingsEditor({
       setDraft(stored.settings);
       setBase(stored.settings);
       setRevision(stored.revision);
+      setAvailability(stored);
       setCurrent(undefined);
       setSaved(true);
       usageSettingsChanged();
     } catch (error) {
       const problem = operatorFailure(error);
       setFailure(problem);
+      if (problem.code === 'model_budget_writes_unavailable') setAvailability({});
       if (problem.conflict || problem.uncertain) {
         setNeedsReview(true);
         await reread();
@@ -118,6 +146,10 @@ function SettingsEditor({
     }
   };
   const disabled = busy;
+  const listConflict =
+    !!current &&
+    spendListConflict(base.model_budget, draft.model_budget, current.settings.model_budget);
+  const canReviewBudget = !current || !spendChanged || !!spendBudget(current.settings.model_budget);
   const fieldError = (path: string) =>
     failure?.field?.replace(/^settings\./, '') === path ? failure.message : undefined;
   return (
@@ -128,6 +160,7 @@ function SettingsEditor({
       }}
     >
       <p className="operator-notice">Revision {revision}</p>
+      <SettingsAudit key={revision} client={client} revision={revision} allowed={canReadAudit} />
       <FailureNotice failure={failure} />
       <Presence>
         {needsReview ? (
@@ -146,24 +179,28 @@ function SettingsEditor({
                     setDraft(current.settings);
                     setBase(current.settings);
                     setRevision(current.revision);
+                    setAvailability(current);
                     setCurrent(undefined);
                     setNeedsReview(false);
                     setFailure(undefined);
+                    setSpendErrors({});
                   }
                 }}
               >
                 Load current values
               </Button>
               <Button
-                disabled={busy || current === undefined}
+                disabled={busy || current === undefined || !canReviewBudget || listConflict}
                 onClick={() => {
                   if (current !== undefined) {
                     setDraft(reviewSettingsDraft(base, draft, current.settings));
                     setBase(current.settings);
                     setRevision(current.revision);
+                    setAvailability(current);
                     setCurrent(undefined);
                     setNeedsReview(false);
                     setFailure(undefined);
+                    setSpendErrors({});
                   }
                 }}
               >
@@ -179,9 +216,50 @@ function SettingsEditor({
                 </Button>
               ) : null}
             </div>
+            {listConflict ? (
+              <p>
+                Owner overrides or request models changed both here and on the server. Your draft
+                remains visible. Load current values and reapply those list edits before saving.
+              </p>
+            ) : null}
+            {!canReviewBudget ? (
+              <p>
+                The current server no longer exposes the spend-controls contract. Your draft is
+                retained; load current values before saving other settings.
+              </p>
+            ) : null}
           </div>
         ) : null}
       </Presence>
+      <SpendControls
+        value={draft.model_budget}
+        disabled={disabled || !writesAvailable}
+        writesAvailable={writesAvailable}
+        requestWritesAvailable={availability.model_request_budget_writes_available === true}
+        errors={spendErrors}
+        onChange={(model_budget) => {
+          update({ ...draft, model_budget });
+          setSpendErrors({});
+        }}
+      />
+      {!writesAvailable || availability.model_request_budget_writes_available !== true ? (
+        <div className="operator-actions">
+          <Button
+            disabled={busy}
+            onClick={() => {
+              setNeedsReview(true);
+              void reread();
+            }}
+          >
+            Refresh settings availability
+          </Button>
+          {spendSaveBlocked ? (
+            <p role="status">
+              Saving settings is not available yet for this spend policy. Your changes are retained.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <section>
         <h3>Inactivity</h3>
         <label className="operator-switch">
@@ -368,7 +446,7 @@ function SettingsEditor({
         <Button
           type="submit"
           variant="primary"
-          disabled={busy || needsReview}
+          disabled={busy || needsReview || spendSaveBlocked}
           icon={<IconCheckOutline16 />}
         >
           {busy ? 'Saving' : 'Save settings'}
@@ -378,105 +456,5 @@ function SettingsEditor({
         </Presence>
       </div>
     </form>
-  );
-}
-
-function IdleThresholdFields({
-  seconds,
-  disabled,
-  onChange,
-}: {
-  readonly seconds: number;
-  readonly disabled: boolean;
-  readonly onChange: (seconds: number) => void;
-}) {
-  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  const remainder = safeSeconds % 60;
-  const change = (part: 'hours' | 'minutes' | 'seconds', value: number) => {
-    const next =
-      part === 'hours'
-        ? value * 3600 + minutes * 60 + remainder
-        : part === 'minutes'
-          ? hours * 3600 + value * 60 + remainder
-          : hours * 3600 + minutes * 60 + value;
-    onChange(next);
-  };
-  return (
-    <div className="operator-settings-grid" aria-label="Automatic pause idle threshold">
-      <NumberField
-        label="Pause after hours"
-        value={hours}
-        minimum={0}
-        maximum={24}
-        disabled={disabled}
-        onChange={(value) => change('hours', value)}
-      />
-      <NumberField
-        label="Pause after minutes"
-        value={minutes}
-        minimum={0}
-        maximum={59}
-        disabled={disabled}
-        onChange={(value) => change('minutes', value)}
-      />
-      <NumberField
-        label="Pause after seconds"
-        value={remainder}
-        minimum={0}
-        maximum={59}
-        disabled={disabled}
-        onChange={(value) => change('seconds', value)}
-      />
-      <p className="operator-notice">Choose at least 60 seconds and at most 24 hours.</p>
-    </div>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  minimum = 0,
-  maximum = 4_294_967_295,
-  step = 1,
-  disabled,
-  error,
-  onChange,
-}: {
-  readonly label: string;
-  readonly value: number;
-  readonly minimum?: number;
-  readonly maximum?: number;
-  readonly step?: number | 'any';
-  readonly disabled: boolean;
-  readonly error?: string;
-  readonly onChange: (value: number) => void;
-}) {
-  const id = useId();
-  return (
-    <label className="operator-field">
-      <span>{label}</span>
-      <Input
-        aria-label={label}
-        type="number"
-        value={Number.isNaN(value) ? '' : value}
-        min={minimum}
-        max={maximum}
-        step={step}
-        required
-        disabled={disabled}
-        aria-invalid={error !== undefined}
-        aria-describedby={error === undefined ? undefined : id}
-        onChange={(event) =>
-          onChange(event.target.value === '' ? Number.NaN : Number(event.target.value))
-        }
-      />
-      {error === undefined ? null : (
-        <span id={id} className="operator-failure">
-          {error}
-        </span>
-      )}
-    </label>
   );
 }

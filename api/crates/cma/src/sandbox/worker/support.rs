@@ -331,6 +331,7 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
             WorkerFailure::resource_quota("requested sandbox capacity is unavailable")
         }
         AdapterError::Rejected(_)
+        | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => {
             WorkerFailure::terminal_validation("runtime rejected the lifecycle operation")

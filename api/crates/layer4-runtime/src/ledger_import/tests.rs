@@ -5,6 +5,10 @@ use crate::config::RuntimeConfig;
 use std::path::{Path, PathBuf};
 #[path = "plan_tests.rs"]
 mod plans;
+#[path = "retirement_stage_tests.rs"]
+mod retirement_archives;
+#[path = "retirement_tests.rs"]
+mod retirement_preview;
 #[path = "sealed_tests.rs"]
 mod sealed_plans;
 #[path = "validation_tests.rs"]
@@ -89,7 +93,7 @@ fn observes_exhausted_and_historical_scopes_without_recovering_temporaries() {
     .unwrap();
     let inventory = fixture.scan().unwrap();
     assert_eq!(inventory.entries.len(), 5126);
-    assert_eq!(std::fs::read(partial).unwrap(), b"{");
+    assert_eq!(std::fs::read(&partial).unwrap(), b"{");
     assert!(inventory.roots.iter().any(|root| root.scope == 2));
     let summary = inventory.summary();
     assert_eq!(summary["semantic_validation"], "pending");
@@ -100,6 +104,69 @@ fn observes_exhausted_and_historical_scopes_without_recovering_temporaries() {
     assert!(!text.contains(fixture.root.to_str().unwrap()));
     assert!(!text.contains("journal bytes"));
     assert_eq!(inventory.summary(), fixture.scan().unwrap().summary());
+    let capacity = inventory.capacity_summary(fixture.config.generation);
+    assert_eq!(capacity["journal_scan_entries"], 1025);
+    assert_eq!(capacity["authority_scan_entries"], 4097);
+    assert_eq!(capacity["authority_temporary_files"], 1);
+    assert_eq!(capacity["historical_journal_files"], 1);
+    assert_eq!(capacity["admission_headroom"], "unproved");
+    assert_eq!(std::fs::read(partial).unwrap(), b"{");
+    std::fs::remove_file(
+        fixture
+            .config
+            .state_root
+            .join("runtime-mutations")
+            .join(name(1024)),
+    )
+    .unwrap();
+    std::fs::remove_file(
+        fixture
+            .config
+            .state_root
+            .join("mutation-authority")
+            .join(name(4096)),
+    )
+    .unwrap();
+    let at_limit = fixture
+        .scan()
+        .unwrap()
+        .capacity_summary(fixture.config.generation);
+    assert_eq!(at_limit["journal_scan_entries"], 1024);
+    assert_eq!(at_limit["authority_scan_entries"], 4096);
+}
+
+#[test]
+fn physical_capacity_counts_include_journal_replacements_but_exclude_old_scopes() {
+    let fixture = Fixture::new();
+    fixture.write(&format!("runtime-mutations/{}", name(1)), b"canonical");
+    let pending = fixture.write(
+        "runtime-mutations/.mutation-journal-1-1.tmp",
+        b"replacement",
+    );
+    fixture.write(
+        &format!("process-generation-7/runtime-mutations/{}", name(2)),
+        b"current",
+    );
+    fixture.write(
+        &format!("process-generation-6/mutation-authority/{}", name(3)),
+        b"historical",
+    );
+    let before = fixture.scan().unwrap();
+    let counts = before.capacity_summary(fixture.config.generation);
+    assert_eq!(counts["journal_canonical_files"], 2);
+    assert_eq!(counts["journal_temporary_files"], 1);
+    assert_eq!(counts["journal_scan_entries"], 3);
+    assert_eq!(counts["authority_scan_entries"], 0);
+    assert_eq!(counts["historical_authority_files"], 1);
+    assert_eq!(
+        counts["retirement_eligibility"],
+        "requires_authoritative_state"
+    );
+    assert_eq!(std::fs::read(pending).unwrap(), b"replacement");
+    assert_eq!(before.digest, fixture.scan().unwrap().digest);
+    let output = counts.to_string();
+    assert!(!output.contains(&fixture.config.sandbox_id));
+    assert!(!output.contains(fixture.root.to_str().unwrap()));
 }
 
 #[test]

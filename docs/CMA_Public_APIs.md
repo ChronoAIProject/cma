@@ -321,6 +321,8 @@ of the public contract.
 | `POST /api/v1/sandboxes/{id}/revive` |
 | `POST /api/v1/sandboxes/{id}/always-on` |
 | `POST /api/v1/sandboxes/{id}/runtime-update` |
+| `GET /api/v1/sandboxes/{id}/runtime-recovery` |
+| `POST /api/v1/sandboxes/{id}/runtime-recovery` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
 
 ### service connections
@@ -509,3 +511,11 @@ Provider associations expose retained Manager membership under current Agent man
 authority. Reservation timestamps do not represent message usage. The legacy
 `channel-usage` projection does not cover provider admissions; its empty result
 does not prove that an Agent has no provider associations. See `API_REST.md`.
+
+Always on exceptions require administrator approval. The owner Always on route
+only accepts relinquishment (`false`); enabling returns HTTP 403
+`always_on_approval_required`. Administrators approve/revoke through the audited
+admin route and enumerate current exceptions with
+`GET /api/v1/admin/sandboxes?always_on=true`. See
+[CMA automatic pause](CMA_Auto_Pause.md) for revision rules, audit fields and the
+required review of legacy exceptions before enablement.
