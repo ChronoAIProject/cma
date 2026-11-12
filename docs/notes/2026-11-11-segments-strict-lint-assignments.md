@@ -467,3 +467,11 @@ four contract failures. The merged operation count and output-page scenario/docs
 are fixed in `182501b84`; capacity-recovery mounted-route classification remains
 with S5. These fixes require final-source qualification. Historical failures
 remain in the takeover evidence; no pending gate counts as a pass.
+
+### S4 publication checkpoint integrated
+
+Normal merge of `4476f0bbbd8d2f3716ca053959c232a7a751e0c8` retains the
+[writer allocation and executed checkpoint](2026-11-12-segments-publication-checkpoints.md).
+The published checkpoint has 17 passing units and strict CMA Clippy, with
+49/52 Mongo passes; the three documented failures still require corrected
+fixture and bounded-settlement caller qualification. Final S4 pin is pending.
