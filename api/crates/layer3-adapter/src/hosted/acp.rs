@@ -104,7 +104,7 @@ pub(super) struct Bridge {
     retired: AtomicBool,
     pub(super) instructions_support: AtomicU8,
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
-    pub(super) context_goal: Mutex<Option<(String, bool)>>,
+    pub(super) context_goal: Mutex<Option<super::context_goal::ContextGoal>>,
     pub(super) recovering_context: AtomicU64,
     pub(super) retained_history_deadline: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
 }
