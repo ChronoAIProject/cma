@@ -15,7 +15,10 @@ SCALE_TEST = ("store::usage_reports::tests::scale::"
               "metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages")
 OWNER_ALLOCATION_TEST = ("store::usage_reports::tests::owner_allocation::"
                          "metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound")
-ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST))
+DIAGNOSTICS_TEST = ("store::mongo_diagnostics::mongo_tests::"
+                    "real_mongo_monitoring_privacy_and_overhead")
+ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
+                  ("--diagnostics", DIAGNOSTICS_TEST))
 CLEANUP_FAILURE = 125
 
 
@@ -43,7 +46,7 @@ def partition_count(script):
     print(f"Mongo contracts: {len(selected)} tests, {count} partitions, "
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
           f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; "
-          "report scale and owner allocation run alone first", flush=True)
+          "report scale, owner allocation and diagnostics overhead run alone first", flush=True)
     return count
 
 
