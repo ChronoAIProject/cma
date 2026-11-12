@@ -112,6 +112,32 @@ async fn delete_absent_key_is_success() {
 }
 
 #[tokio::test]
+async fn delete_treats_only_200_and_204_as_deleted() {
+    let mut peer = Peer::start().await;
+    let client = client(&peer, true);
+    for (index, status) in [
+        200, 204, 404, 202, 201, 203, 205, 206, 207, 208, 226, 299, 301, 400, 429, 500,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let copy = client.clone();
+        let task = tokio::spawn(async move { copy.delete(&failure_tests::key()).await });
+        if index == 0 {
+            authorize(&mut peer).await;
+        }
+        peer.next().await.respond(status, "");
+        let result = finish(task).await;
+        match status {
+            200 | 204 => assert_eq!(result.unwrap(), BlobDeletion::Deleted),
+            404 => assert_eq!(result.unwrap(), BlobDeletion::Absent),
+            _ => assert_eq!(result.unwrap_err().error, DocumentError::Unavailable),
+        }
+        assert_eq!(peer.count(), index + 2);
+    }
+}
+
+#[tokio::test]
 async fn delete_and_list_reject_invalid_or_foreign_prefix_without_contacting_storage() {
     let peer = Peer::start().await;
     let client = client(&peer, true);
