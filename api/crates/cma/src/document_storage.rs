@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 
+pub(crate) mod maintenance;
 pub(crate) mod token;
 use token::StorageToken;
 
@@ -327,3 +328,11 @@ mod transport_tests;
 #[cfg(test)]
 #[path = "document_storage_receipt_tests.rs"]
 mod receipt_tests;
+
+#[cfg(test)]
+#[path = "document_storage_maintenance_tests.rs"]
+mod maintenance_tests;
+
+#[cfg(test)]
+#[path = "document_storage_maintenance_retry_tests.rs"]
+mod maintenance_retry_tests;
