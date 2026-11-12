@@ -246,3 +246,108 @@ images or real provider/runtime execution. Final ordinary service logs, metric
 snapshots, HTTP samples, commands, source/binary identity and shutdown results
 are in `/tmp/cma-1740-evidence/service-startup-final/`. The preceding
 pre-synchronization process results are retained as historical evidence only.
+
+## Review follow-up verification (2026-11-12)
+
+The supplementary implementation is pinned to source
+`4dd6f30d550faab36f14d07b5b6834608e518c64`, with Rust 1.96.1 and the same
+isolated MongoDB 8.0.13 replica set. The test executable SHA-256 is
+`76fde5ce7c6ebc008fc86b4e011296243d194af24d907b8202271e28845e745e`;
+the ordinary service executable SHA-256 is
+`30308e7eb1f7d8964bf33c73dd082902fac0532a3dcee81c5892cddf5890ea31`.
+These results supersede the seven-worker coverage above. The service now has
+seven required capabilities plus optional `native_warm_pools`.
+
+The independent `sandbox_reconciliation` loop now uses the common supervisor.
+Its single owned batch and the reconciler's sweep cursors, binding holds and
+recovery schedule survive scheduling-future recovery. One-second scheduling
+turns remain observable while a batch follows the existing fifteen-second
+cadence and background budget/deadlines. The new regression runs a legitimate
+batch longer than the stall grace, injects a scheduling panic, verifies its
+original phase age and authority pass survive, and drains that same batch once.
+The full-service fault matrix also includes this newly required worker.
+
+Two paused-time regressions now cover the complete cooldown boundary: no retry
+at 59.999 seconds, one retry at 60 seconds, bounded failures in a fresh rolling
+window, successful retry becoming available after real scheduling activity, and
+a later failure returning to the first backoff after old failures expire.
+The retry policy itself is unchanged; these are scheduler failures, not business
+task retry limits or a permanent pause policy.
+
+All **203 distinct focused tests passed**: supervisor 10, schedulers 51, health
+11, warm pools 29, Launch recovery 23, shutdown 2, background 6, metrics 2,
+runtime reconciliation 47, runtime worker reconciliation 16, and six explicit
+Mongo regressions. The six Mongo cases include the two new command recovery
+tests below and the previously documented stale-holder, unknown-commit,
+concurrent-reservation and warm-pool fencing cases. Default-ignored tests are
+not counted unless explicitly executed. Eight other opt-in warm-pool tests
+remain unclaimed. Strict pinned Clippy, formatting, source-size, API docs,
+configuration-key/docs and documentation contract checks passed.
+
+### Durable command work across scheduler faults
+
+The new replica-set tests compose the actual `CommandScheduler`,
+`AgentCommandWorker`, `ResourceCommandExecution`, authorization, Mongo command
+ledger and dispatch/receipt services. A gate holds the first execution after
+its durable claim. The scheduler is then panicked or suspended while that child
+remains owned. After scheduling recovers, the test checks the same claim and
+receipt, releases the original child, observes one runtime send, supplies a
+deterministic runtime `TurnEnded`, and waits for the actual scheduler to persist
+`Completed`. A second admitted command must also complete. Reopening the store
+and replaying both commands leaves exactly two sends, two execution claims,
+two command records and two owner-message log entries.
+
+| Injected scheduler fault | Detection | Resumed scheduling | Original command durably completed | Subsequent command durably completed |
+| --- | ---: | ---: | ---: | ---: |
+| Panic | 0.268 s | 1.275 s | 1.565 s | 2.062 s |
+| Suspension | 5.981 s | 6.992 s | 7.260 s | 7.774 s |
+
+All times start at fault injection and are observed local wall-clock values.
+Run these tests with the disposable replica-set URI and pinned test command,
+filter `command_scheduler_panic_retains_durable_claim_and_completes_once` or
+`command_scheduler_stall_retains_durable_claim_and_completes_once`, and
+`-- --ignored --nocapture --test-threads=1`. Both live under the existing Mongo
+CI contract selection for command-ledger tests. The runtime input sender and
+terminal update are deterministic substitutes; no Kubernetes cluster is needed
+for this local durable-work proof.
+
+### Whole-service and ordinary binary follow-up
+
+The final test executable passed all ten whole-service faults in PID 48725:
+panic in each of eight workers, Agent-command exit, and Agent-command suspension.
+Panic recovery took 1.271–2.194 seconds. In particular,
+`sandbox_reconciliation` first became unavailable at 0.949 seconds and recovered
+at 1.965 seconds, with required readiness 503 during loss. Exit recovered at
+2.211 seconds. Suspension became unavailable at 5.237 seconds and recovered at
+9.996 seconds, including the four-second backoff after its prior two failures.
+Each target restarted once, unrelated workers did not restart, optional warm
+loss kept readiness 200, liveness stayed 200, and SIGTERM completed successfully.
+The sampler retained 482 HTTP observations and 27 metric scrapes. This
+whole-service fixture still admits no business executions; durable work is
+proved separately by the composed Mongo tests above.
+
+The ordinary binary also started with all eight workers running. Its checked
+health, Sandbox and conformance reads returned 200; all eight heartbeats
+advanced over fifteen seconds with zero restarts. Suspending only the disposable
+Mongo for about 5.1 seconds produced readiness 503 with reason `store` after
+2.481 seconds, while liveness remained 200. Readiness recovered 0.122 seconds
+after Mongo resumed, in the same PID 48763, with no worker restarts. SIGTERM
+exited 0 after 19.146 seconds, draining the retained background batch without a
+deadline warning. The persistent inspection service was then replaced with the
+new ordinary binary: PID 48949 on `http://127.0.0.1:58483`, metrics port 58484,
+with all eight workers running at the final check.
+
+Raw logs, exact commands, all 203 distinct test names, file and executable hashes
+are under `/tmp/cma-1740-evidence/supplement-final/`. Final service faults are in
+`supplement-service-worker-faults-final/`, ordinary service observations in
+`supplement-ordinary-service/`, and the final inspection state in
+`supplement-final-running.json` beside those directories. The earlier
+`supplement-service-worker-faults/` run preceded a test-only assertion lint fix;
+it is not the final executable identity.
+
+This fills the local command pipeline's durable-progress evidence gap. It does
+not establish a universal thirty-second result for every worker, unknown remote
+outcome or long claim. Real provider/model execution and preservation of active
+Sandbox/runtime/home/conversation/long reasoning, exact deployment image digests
+and external production journey acceptance remain the qualification gates
+described above. No production Kubernetes context was used.
