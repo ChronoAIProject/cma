@@ -157,6 +157,7 @@ async fn serve(
             agent_filesystem: false,
             agent_attachment_upload: false,
             agent_skill_install: true,
+            agent_skill_upgrade: false,
             agent_model_catalog: true,
             agent_browser: false,
             agent_resource_preparation: false,
