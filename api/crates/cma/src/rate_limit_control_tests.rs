@@ -387,3 +387,6 @@ async fn control_aliases_share_a_finite_budget_and_count_rejections_without_spen
         StatusCode::NO_CONTENT
     );
 }
+
+#[path = "rate_limit_control_mongo_tests.rs"]
+mod mongo;
