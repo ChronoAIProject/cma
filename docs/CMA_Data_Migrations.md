@@ -283,3 +283,14 @@ recorded operation time. Keep the compatible reader image, Mongo backups and
 activation manifest as recovery artifacts. Completion evidence includes exact
 retry identity, legacy-row reads, commit/CAS conflict behavior, condemned-row
 refusal and the per-process 16-slot busy refusal.
+
+Exact identity retries refuse an object row already marked `condemned` before
+upload, leaving its counters unchanged so reclaim cannot be followed by a late
+PUT that recreates an unledgered object. Rows in `reserved`, `committed`, or the
+legacy no-`state` form retain the free retry behavior.
+
+The metadata commit and its bounded retries have a three-second overall
+deadline. The deadline can expire after `commitTransaction` has been sent, so
+the caller returns `Unavailable` when the final result is uncertain. The same
+create idempotency key or update receipt is the recovery path for reconciling
+that outcome.

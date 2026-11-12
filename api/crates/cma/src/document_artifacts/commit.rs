@@ -9,6 +9,7 @@ use mongodb::{
     bson::{doc, Document, Timestamp},
     options::ReadConcern,
 };
+use std::future::Future;
 use std::time::Duration;
 
 const TRANSACTION_ATTEMPTS: usize = 8;
@@ -32,6 +33,27 @@ pub(super) async fn compare_exchange(
 }
 
 async fn write(
+    store: &MongoDocumentStore,
+    record: &StoredDocument,
+    expected: Option<u64>,
+    source: &DocumentSourceReservation,
+) -> Result<bool, DocumentError> {
+    // This deadline covers every transaction attempt and reconciliation read.
+    // It may expire after commitTransaction was sent, so callers receive
+    // Unavailable and must retry the same idempotent request to reconcile.
+    with_write_deadline(write_bounded(store, record, expected, source)).await
+}
+
+async fn with_write_deadline<F, T>(future: F) -> Result<T, DocumentError>
+where
+    F: Future<Output = Result<T, DocumentError>>,
+{
+    tokio::time::timeout(IO, future)
+        .await
+        .map_err(|_| DocumentError::Unavailable)?
+}
+
+async fn write_bounded(
     store: &MongoDocumentStore,
     record: &StoredDocument,
     expected: Option<u64>,
@@ -197,6 +219,16 @@ pub(super) fn snapshot_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn document_commit_deadline_returns_unavailable_after_three_seconds() {
+        let result = with_write_deadline(async {
+            tokio::time::sleep(IO + Duration::from_millis(1)).await;
+            Ok::<_, DocumentError>(true)
+        })
+        .await;
+        assert_eq!(result, Err(DocumentError::Unavailable));
+    }
 
     #[test]
     fn document_commit_unknown_result_is_resolved_by_snapshot_read() {

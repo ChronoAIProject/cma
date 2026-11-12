@@ -157,6 +157,12 @@ condemnation cannot race a metadata commit into a referenced deleted object.
 Rows written by older readers without `state` are read as `reserved` until a
 compatible writer observes and commits them.
 
+Reservation retries compare object identity without charging a second time, but
+they refuse an identity-matching row whose state is `condemned`. This refusal
+happens before the source upload and leaves the owner counters and condemned row
+unchanged, preventing a late retry from recreating an object after reclaim has
+removed it.
+
 When the quota ledger is ready, a document create or Markdown update writes its
 metadata and marks its source object committed in one majority MongoDB
 transaction. A failed CAS aborts the transaction and leaves the object reserved;
@@ -165,6 +171,13 @@ unchanged. Unknown commit outcomes are resolved by a snapshot read at the
 recorded operation time and succeed only when both the expected metadata and a
 committed object are visible. Title-only, sharing, revocation and comment
 mutations retain the plain metadata CAS path.
+
+The metadata commit transaction has one three-second overall deadline covering
+all attempts and reconciliation reads. The deadline can expire after
+`commitTransaction` has been sent, so the caller receives `Unavailable` even
+when the final commit result is uncertain. Create callers retry the same
+idempotency key through `creation_replay`; update callers retry through the
+stored receipt, allowing the next request to reconcile the durable result.
 
 Every API process admits at most 16 source writes at once. The permit covers
 reservation, object upload and metadata commit. A seventeenth source write is
@@ -193,6 +206,13 @@ it is never queued. Metadata-only mutations do not consume these permits.
   reader image. If a commit result is unknown, reconcile from the transaction's
   snapshot time; if the object is not committed with the expected metadata,
   return unavailable and leave the reservation for reclaim.
+- **Reservation safety:** exact identity retries refuse `condemned` object rows
+  before upload and leave their counters unchanged, while `reserved`,
+  `committed`, and legacy rows without `state` retain the free retry behavior.
+- **Commit deadline:** the whole metadata commit and reconciliation path has a
+  three-second deadline. A timeout may follow an already-sent commit; return
+  `Unavailable` and rely on the same create idempotency key or update receipt to
+  reconcile the outcome.
 - **Completion:** verify old rows, exact retries, condemned write rejection,
   CAS conflict behavior and the 16-slot busy response before enabling any
   production writer.
