@@ -1,11 +1,12 @@
 //! Process-local access revocation, refreshed independently of request traffic.
 use std::{
     collections::{BTreeMap, BTreeSet},
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
 };
 
 use axum::{http::header, response::Response};
+use futures_util::{future::BoxFuture, future::Shared, FutureExt};
 use layer2_core::{
     account_deletion::{
         subject_hash, AccountDeletionError, AccountStanding, OwnerSessionAuthority,
@@ -19,6 +20,40 @@ use super::{AuthMode, AuthState, RequestAuth};
 use crate::store::account_deletions::MongoAccountDeletionStore;
 
 const MAX_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
+const REFRESH_PERIOD: Duration = Duration::from_secs(1);
+const MAX_FALLBACK_SUBJECTS: usize = 256;
+type PointLookup =
+    Shared<BoxFuture<'static, (tokio::time::Instant, Result<bool, AccountDeletionError>)>>;
+
+struct PointWaiter<'a> {
+    fallback: &'a Mutex<BTreeMap<String, PointLookup>>,
+    hash: &'a str,
+    lookup: Option<PointLookup>,
+}
+impl PointWaiter<'_> {
+    async fn wait(mut self) -> Result<bool, AccountDeletionError> {
+        self.lookup.as_mut().expect("live standing lookup").await.1
+    }
+}
+impl Drop for PointWaiter<'_> {
+    fn drop(&mut self) {
+        let Some(lookup) = self.lookup.take() else {
+            return;
+        };
+        let mut fallback = self.fallback.lock().expect("standing fallback lock");
+        // A normally completed waiter has no Shared identity left. The final
+        // cancelled waiter removes its lookup while other frames keep theirs.
+        if fallback
+            .get(self.hash)
+            .is_some_and(|current| current.ptr_eq(&lookup) && current.strong_count() == Some(2))
+        {
+            fallback.remove(self.hash);
+        }
+        // Serialize dropping the caller reference with other waiter drops, so
+        // simultaneous cancellations cannot leave a map-only pending future.
+        drop(lookup);
+    }
+}
 
 #[async_trait::async_trait]
 trait SnapshotSource: Send + Sync {
@@ -48,6 +83,7 @@ pub(crate) struct ErasingSnapshot {
     source: Arc<dyn SnapshotSource>,
     state: RwLock<Snapshot>,
     refresh_lock: tokio::sync::Mutex<()>,
+    fallback: Mutex<BTreeMap<String, PointLookup>>,
 }
 
 impl ErasingSnapshot {
@@ -59,6 +95,7 @@ impl ErasingSnapshot {
             source,
             state: RwLock::new(Snapshot::default()),
             refresh_lock: tokio::sync::Mutex::new(()),
+            fallback: Mutex::new(BTreeMap::new()),
         }
     }
     pub(crate) async fn start(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
@@ -87,8 +124,10 @@ impl ErasingSnapshot {
     pub(crate) fn spawn_refresh(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let snapshot = Arc::downgrade(self);
         tokio::spawn(async move {
-            let period = Duration::from_secs(1);
-            let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+            let mut ticks = tokio::time::interval_at(
+                tokio::time::Instant::now() + REFRESH_PERIOD,
+                REFRESH_PERIOD,
+            );
             ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 ticks.tick().await;
@@ -101,21 +140,86 @@ impl ErasingSnapshot {
             }
         })
     }
+    fn snapshot_result(&self, hash: &str) -> Option<bool> {
+        let state = self.state.read().expect("standing snapshot lock");
+        if state.local.contains_key(hash) {
+            return Some(true);
+        }
+        state
+            .refreshed_at
+            .filter(|at| at.elapsed() <= MAX_SNAPSHOT_AGE)
+            .map(|_| state.hashes.contains(hash))
+    }
+    fn point_lookup(
+        &self,
+        hash: &str,
+        subject: &SubjectId,
+    ) -> Result<PointLookup, AccountDeletionError> {
+        let mut fallback = self.fallback.lock().expect("standing fallback lock");
+        if let Some(lookup) = fallback.get(hash) {
+            let reusable = match lookup.peek() {
+                None => lookup.strong_count().is_some_and(|count| count > 1),
+                // Completed denials and source failures remain conservative for
+                // at most one refresh period. Allows are shared only in flight.
+                Some((at, result)) => !matches!(result, Ok(false)) && at.elapsed() < REFRESH_PERIOD,
+            };
+            if reusable {
+                return Ok(lookup.clone());
+            }
+            fallback.remove(hash);
+        }
+        if fallback.len() >= MAX_FALLBACK_SUBJECTS {
+            let removable = fallback
+                .iter()
+                .find(|(_, lookup)| lookup.peek().is_some() || lookup.strong_count() == Some(1))
+                .map(|(hash, _)| hash.clone());
+            let Some(removable) = removable else {
+                return Err(AccountDeletionError::Unavailable);
+            };
+            fallback.remove(&removable);
+        }
+        let source = self.source.clone();
+        let subject = subject.clone();
+        // Shared polling keeps other frames alive when one is cancelled. The
+        // final waiter drops an unfinished read immediately; no detached task
+        // retains the source or drains work after cancellation or shutdown.
+        let lookup = async move {
+            let result = source.erasing(&subject).await;
+            (tokio::time::Instant::now(), result)
+        }
+        .boxed()
+        .shared();
+        fallback.insert(hash.to_owned(), lookup.clone());
+        Ok(lookup)
+    }
 }
 
 #[async_trait::async_trait]
 impl AccountStanding for ErasingSnapshot {
     async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
-        {
-            let state = self.state.read().expect("standing snapshot lock");
-            if state
-                .refreshed_at
-                .is_some_and(|at| at.elapsed() <= MAX_SNAPSHOT_AGE)
-            {
-                return Ok(state.hashes.contains(&subject_hash(subject)));
-            }
+        let hash = subject_hash(subject);
+        if let Some(result) = self.snapshot_result(&hash) {
+            return Ok(result);
         }
-        self.source.erasing(subject).await
+        let result = match self.point_lookup(&hash, subject) {
+            Ok(lookup) => {
+                PointWaiter {
+                    fallback: &self.fallback,
+                    hash: &hash,
+                    lookup: Some(lookup),
+                }
+                .wait()
+                .await
+            }
+            Err(error) => Err(error),
+        };
+        // A denial learned while the read was in flight overrides its allow.
+        // A concurrent refresh cannot weaken an authority refusal or failure.
+        if self.snapshot_result(&hash) == Some(true) {
+            Ok(true)
+        } else {
+            result
+        }
     }
     async fn authoritative(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
         self.source.erasing(subject).await
@@ -264,6 +368,10 @@ pub(super) fn unavailable() -> Response {
 #[cfg(test)]
 #[path = "account_standing_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "account_standing_fallback_tests.rs"]
+mod fallback_tests;
 
 #[cfg(test)]
 #[path = "account_standing_mongo_tests.rs"]
