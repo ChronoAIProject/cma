@@ -149,7 +149,7 @@ impl CmaEventRouter {
                     Some(binding.generation),
                 )
                 .await
-                .map_err(|_| E::Unavailable)?;
+                .map_err(binding_route_error)?;
             if conversation.agent_id != target.agent_id
                 || conversation.state != BindingConversationState::Ready
             {
@@ -180,7 +180,7 @@ impl CmaEventRouter {
                 Some(binding.generation),
             )
             .await
-            .map_err(|_| E::Unavailable)?;
+            .map_err(binding_route_error)?;
         match conversation.state {
             BindingConversationState::Ready => {}
             BindingConversationState::Provisioning => return Err(E::NotReady),
@@ -188,6 +188,15 @@ impl CmaEventRouter {
         }
         event.provider_conversation_id = Some(conversation.conversation_id);
         Ok(Some(conversation.agent_id))
+    }
+}
+
+fn binding_route_error(error: layer2_core::sandbox::binding::BindingError) -> BindingRouteError {
+    match error {
+        layer2_core::sandbox::binding::BindingError::AdmissionPaused => {
+            BindingRouteError::AdmissionPaused
+        }
+        _ => BindingRouteError::Unavailable,
     }
 }
 
@@ -312,6 +321,27 @@ mod tests {
     use super::*;
     use axum::{http::HeaderMap, routing::post, Json, Router};
     use serde_json::json;
+
+    #[test]
+    fn operator_pause_keeps_its_category_through_binding_event_selection() {
+        use layer2_core::sandbox::binding::BindingError;
+        assert!(matches!(
+            binding_route_error(BindingError::AdmissionPaused),
+            BindingRouteError::AdmissionPaused
+        ));
+        for error in [
+            BindingError::Forbidden,
+            BindingError::NotFound,
+            BindingError::Conflict,
+            BindingError::Unavailable("fixture".into()),
+        ] {
+            assert!(matches!(
+                binding_route_error(error),
+                BindingRouteError::Unavailable
+            ));
+        }
+    }
+
     fn activity() -> serde_json::Value {
         json!({"schema_version":1,"event_id":"event-a",
             "kind":{"type":"message","text":"hello","mentions_bot":false},

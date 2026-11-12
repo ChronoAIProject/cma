@@ -36,7 +36,13 @@ pub(super) async fn reserve(
         // No hold for an unbudgeted owner, but the platform state still
         // refuses its model request (decision 24).
         let timestamp = now(store).map_err(domain)?;
-        super::super::period::require_open(store, timestamp, session).await?;
+        super::super::period::require_open(
+            store,
+            timestamp,
+            layer2_core::admission::AdmissionCause::Continuation,
+            session,
+        )
+        .await?;
         return Ok(None);
     };
     let settings = store

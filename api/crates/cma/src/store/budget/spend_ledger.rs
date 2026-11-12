@@ -108,16 +108,19 @@ impl MongoSandboxStore {
 #[async_trait::async_trait]
 impl PlatformSpendLedger for MongoSandboxStore {
     async fn admission_state(&self, _now: u64) -> Result<PlatformAdmissionState, BudgetError> {
-        let Some(platform) = self
-            .platform_snapshot()
-            .await?
-            .and_then(|value| value.platform)
-        else {
+        let Some(snapshot) = self.platform_snapshot().await? else {
             return Ok(PlatformAdmissionState::default());
+        };
+        let Some(platform) = snapshot.platform else {
+            return Ok(PlatformAdmissionState {
+                operator_control: snapshot.operator_control,
+                ..Default::default()
+            });
         };
         let ledger = self.period_ledger(platform.period_bounds()?.0).await?;
         Ok(PlatformAdmissionState {
             configured: true,
+            operator_control: snapshot.operator_control,
             closures: ledger.map(|ledger| ledger.closures).unwrap_or_default(),
         })
     }
