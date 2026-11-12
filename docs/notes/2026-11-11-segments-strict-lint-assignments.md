@@ -494,5 +494,6 @@ transaction cleanup preserves durable receipts and no-replay assertions. Combine
 qualification is running; final-source readiness is not yet claimed.
 
 Qualified S4 pin `72ad199417f7d9114a85d65165921101631069da` is integrated;
-its 52/52 Mongo and 50/50 unit results and activation prerequisites are in the
-[publication handoff](2026-11-12-segments-publication-checkpoints.md).
+[publication handoff](2026-11-12-segments-publication-checkpoints.md): 52/52 Mongo, 50/50 units.
+Natural-adoption caller `a6ce08011`, develop-merged `e25696744`: `tl/cma-log-segments/writer-caller`;
+[caller handoff and qualification](2026-11-12-writer-caller.md). Activation requires review/image seals.

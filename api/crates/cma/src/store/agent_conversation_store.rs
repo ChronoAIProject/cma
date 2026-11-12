@@ -74,6 +74,7 @@ async fn commit_conversation(
     store.prepare_fleet_log(&mutation.agent.id).await;
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
     let _platform = store.conversation_platform_guard(&mutation).await;
+    let adoption = scoped::adoption::prepare(store, &mutation, None).await?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         contention::backoff(attempt).await;
@@ -99,6 +100,7 @@ async fn commit_conversation(
             &mutation,
             None,
             None,
+            adoption.as_ref(),
             &mut scope,
         )
         .await;
