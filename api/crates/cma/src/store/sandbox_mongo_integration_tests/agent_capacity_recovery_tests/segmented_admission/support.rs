@@ -107,7 +107,7 @@ pub(super) async fn close_gates(store: &MongoSandboxStore) {
     }
 }
 
-pub(super) async fn admission(
+pub(super) async fn read_admission(
     store: &MongoSandboxStore,
     request: &RecoveryRequest,
 ) -> writer_admission::Admission {
