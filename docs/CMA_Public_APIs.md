@@ -427,7 +427,7 @@ and the public Trigger embed routes are already included in the OpenAPI table.
 | `POST /api/v1/mcp` | Return the explicit unsupported-interface response. |
 | `ANY /api/v1/a2a` | Return the explicit unsupported-interface response. |
 | `GET /livez` | Probe API process liveness. |
-| `GET /ready` | Probe API readiness, including database availability. |
+| `GET /ready` | Probe cached database availability and required local scheduling capability. |
 
 CMAEG's supported native `POST /mcp` belongs to the gateway origin and is a
 separate interface from CMA's unsupported `/api/v1/mcp` route.

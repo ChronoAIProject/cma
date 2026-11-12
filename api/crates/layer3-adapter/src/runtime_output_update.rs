@@ -21,6 +21,12 @@ enum Storage {
 }
 
 impl RuntimeOutputUpdate {
+    // Effect and reservation use separate Arcs, each with two counters. This
+    // covers their explicit layouts, excluding allocator/OS overhead.
+    pub(crate) const ACCOUNTED_STORAGE_BYTES: usize = size_of::<ConversationUpdate>()
+        + size_of::<crate::ingress_budget::IngressReservation>()
+        + 4 * size_of::<usize>();
+
     pub fn new(update: ConversationUpdate, shared: bool) -> Self {
         Self(if shared {
             Storage::Shared(Arc::new(update))

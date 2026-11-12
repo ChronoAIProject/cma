@@ -31,6 +31,12 @@ attempt owns that event; a zero operation sequence means no command was assigned
 | `readiness_diagnostic_snapshot` | Frozen preceding 30 seconds at every deadline, outstanding tracked commands/holds (including older holds), source interval, row counts and loss totals. |
 | `readiness_diagnostic_output` | Writer heartbeat, cumulative output loss and fixed queue capacities. |
 
+Response reason `workers` means the cached dependency check is healthy but a
+required scheduling capability is unavailable. Its check sequence still joins
+the cached Mongo check; it does not attribute the worker refusal to Mongo. When
+the dependency also fails, its specific reason takes precedence. Worker recovery
+restores readiness only while the dependency remains healthy and fresh.
+
 Events retain source `observed_unix_us` anchored to process startup wall time and
 `process_monotonic_us`, independently of emission time. `queue_delay_us` measures
 writer delay. Use source time for joins; wall-clock corrections after startup do
