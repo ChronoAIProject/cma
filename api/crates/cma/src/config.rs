@@ -71,6 +71,7 @@ pub struct RateLimitConfig {
     pub create_per_minute: NonZeroU32,
     pub input_per_minute: NonZeroU32,
     pub control_per_minute: NonZeroU32,
+    pub control_tier_enabled: bool,
     pub response_input_tier_enabled: bool,
 }
 
@@ -79,6 +80,11 @@ impl RateLimitConfig {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         Ok(Self {
+            control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => return Err("CHRONO_SERVER_RATE_CONTROL_ENABLED must be true or false".into()),
+            },
             response_input_tier_enabled: match lookup("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED")?
                 .as_deref()
             {

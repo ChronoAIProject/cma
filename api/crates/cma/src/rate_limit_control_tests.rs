@@ -94,6 +94,7 @@ fn local(enabled: bool) -> Arc<RateLimiters> {
         TrustedProxyConfig::sample(),
     );
     limiters.response_input_tier_enabled = enabled;
+    limiters.control_tier_enabled = true;
     Arc::new(limiters)
 }
 
@@ -141,7 +142,7 @@ async fn exact_registered_recovery_and_controls_precede_input_policy_for_all_aut
             app = app.route(
                 template,
                 any(move |request: Request| async move {
-                    let tier = request_tier(&request, enabled).name();
+                    let tier = request_tier(&request, enabled, true).name();
                     ([("x-test-tier", tier)], tier)
                 }),
             );
@@ -187,7 +188,7 @@ async fn unregistered_controls_and_near_matches_remain_create() {
         for (template, concrete) in CONTROL_ROUTES {
             for path in [*template, *concrete] {
                 assert_eq!(
-                    request_tier(&request(Method::POST, path, "owner"), enabled),
+                    request_tier(&request(Method::POST, path, "owner"), enabled, true),
                     RequestTier::Create,
                     "no MatchedPath: {path}"
                 );
@@ -210,7 +211,9 @@ async fn unregistered_controls_and_near_matches_remain_create() {
         ] {
             let app = Router::new().route(
                 template,
-                post(move |request: Request| async move { request_tier(&request, enabled).name() }),
+                post(move |request: Request| async move {
+                    request_tier(&request, enabled, true).name()
+                }),
             );
             let path = template
                 .replace("{agent_id}", "agt_one")
@@ -230,12 +233,12 @@ async fn unregistered_controls_and_near_matches_remain_create() {
         for path in ["/livez", "/ready"] {
             for method in [Method::GET, Method::HEAD] {
                 assert_eq!(
-                    request_tier(&request(method, path, "owner"), enabled),
+                    request_tier(&request(method, path, "owner"), enabled, true),
                     RequestTier::Health
                 );
             }
             assert_eq!(
-                request_tier(&request(Method::POST, path, "owner"), enabled),
+                request_tier(&request(Method::POST, path, "owner"), enabled, true),
                 RequestTier::Create
             );
         }
@@ -390,3 +393,6 @@ async fn control_aliases_share_a_finite_budget_and_count_rejections_without_spen
 
 #[path = "rate_limit_control_mongo_tests.rs"]
 mod mongo;
+
+#[path = "rate_limit_control_disabled_tests.rs"]
+mod disabled;
