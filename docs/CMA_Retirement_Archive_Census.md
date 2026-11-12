@@ -66,10 +66,29 @@ paths refuse because their ownership cannot be proved by literal comparison.
 
 `Budget` includes `record.agent_id` command/turn reservations,
 `record.hold.scope.agent_id` request reservations, and the exact
-`request-turn:<Agent ID>:<turn>` key grammar for request-turn accounting.
-Unknown budget key families, malformed request-turn keys and missing nested
-request ownership refuse capture before selection. The `owner:<subject>` baseline belongs to independent account accounting and is
-not copied. Whole BSON records preserve request, consent, receipt and accounting
+`request-turn:<Agent ID>:<turn>` and `stop:<Agent ID>:<turn>` key grammars for
+request-turn accounting and Agent-scoped stop evidence. Both compare the complete
+Agent segment with the closure's Agents, including retained lineage; a prefix
+neighbour is unrelated. Generated Agent IDs are `agt_` plus a simple UUID
+(`layer2-core/ids.rs`), so they contain no colon. Stop records must be BSON strings,
+as written by `budget/source.rs` when it serializes a `BudgetError`.
+Unknown budget key families, malformed keys, non-string stop records and missing
+nested request ownership refuse capture before selection.
+
+The `owner:<subject>` baseline belongs to independent account accounting and is
+not copied. `platform:<RFC3339>` period ledgers and
+`observation:cloud:<RFC3339>:<RFC3339>` observation history are independent platform
+accounting, also never selected or copied. Their key authority is #1741's
+`budget/period.rs::period_key` and `budget/spend_ledger.rs::observe_in`, respectively
+(reviewed read-only at `1ff129b6e123d7da50197bba150d02f58bb7eeef` on
+`origin/feat/platform-spend`); see its platform spend contract sections 4, 8 and 13.
+Each timestamp uses `layer2-core/clock.rs::rfc3339_at`'s UTC whole-second
+`YYYY-MM-DDTHH:MM:SSZ` format. Anchored patterns match complete keys, including both
+observation timestamps; these timestamps cannot be parsed as colon-delimited
+ownership segments. This census extension has no dependency on #1741's code or
+permission to enable its writers.
+
+Whole BSON records preserve request, consent, receipt and accounting
 bytes; document revision objects are separately read back and verified. `Documents`
 requires both the indexed and embedded owner to match the source Sandbox owner,
 plus the originating/runtime Agent reference. Public creation accepts an origin
@@ -78,8 +97,11 @@ annotation, so it cannot authorize copying another account's body.
 The full capture/restore regressions create access-request consent and budget
 reservations through the production stores. Their expected inventories read the
 entire isolated fixture collections, independently of the archive selector, and
-compare restored lengths/hashes. Unrelated identity collisions and request-turn
-prefix neighbours must stay excluded. Every `Empty` namespace is tested with a
+compare restored lengths/hashes. Stop evidence is restored byte-exact, including
+after the source database drops. Unrelated identity collisions and request-turn
+and stop prefix neighbours must stay excluded. Platform rows permit capture but
+leave an empty budget archive when no Sandbox-owned budget rows exist. Malformed
+stop/platform/observation keys and non-string stop records still refuse. Every `Empty` namespace is tested with a
 nonempty unresolved row, and unrelated authentication custody remains outside the
 archive. Source-independent restore is repeated after the fixture database drops.
 
@@ -92,7 +114,7 @@ a nonempty collection; its source entry identifies the missing closure or decode
 
 | Namespace | Policy / exact ownership paths | Schema authority / audit basis |
 | --- | --- | --- |
-| `model_budget_reservations` | `Budget` | budget/mod.rs; budget/requests.rs; budget/requests/admission.rs |
+| `model_budget_reservations` | `Budget`; owner baselines and platform accounting excluded | budget/mod.rs; budget/requests.rs; budget/requests/admission.rs; budget/source.rs (`stop:`); #1741 budget/period.rs (`platform:`) and budget/spend_ledger.rs (`observation:cloud:`), independent platform accounting |
 | `sandbox_metric_bindings` | `Sandbox(&["sandbox_id"])` | sandbox_metric_bindings/mod.rs |
 | `sandbox_metric_rollups` | `Sandbox(&["sandbox_id"])` | sandbox_metric_rollups/mod.rs |
 | `sandbox_usage_rollups` | `Sandbox(&["sandbox_id"])` | sandbox_usage_rollups/mod.rs |
@@ -243,3 +265,27 @@ a nonempty collection; its source entry identifies the missing closure or decode
 | `workspace_profiles` | `Independent` | profile_documents.rs; layer2-core/profiles snapshots |
 | `workspaces` | `Sandbox(&["sandbox_id"])` | workspaces.rs |
 | `worktrees` | `Sandbox(&["sandbox_id"])` | worktrees.rs |
+
+## Budget shape expansion and reader record
+
+Migration ID: `2026-11-12-am-retirement-budget-shapes`; service/store owner:
+Agent Manager; issue #1496; phase: additive reader/closure expansion. Source
+implementation commits are `ea5ba207b5fdca50726e78ade63608e80a9e334c`
+(stop closure) and `c4409b3dc408febc70e986a1445a9bf5b60fce2e` (platform exclusion).
+The final documentation/source identity is this branch's exact reviewed head;
+the release owner must record the
+immutable candidate executable checksum/image digest, full release batch,
+environment, operator window and receipts before qualification. This record
+follows [CMA data migrations](CMA_Data_Migrations.md); it authorizes no production
+writes or archive operation.
+
+| Required field | Scoped disposition |
+| --- | --- |
+| Store and writer triggers | `model_budget_reservations` keeps its existing Agent Manager writers. #1621's stop poll upserts immutable `stop:` evidence; #1741 separately introduces period and operator-observation writers. This change extends only retirement capture's snapshot reader/selection. The existing explicit capture writes custody objects/manifests; verification reconstructs BSON files. No ordinary request, worker, startup/import, runtime/home, browser, key or external-effect writer is added or enabled. |
+| Durable formats and preservation | Mongo envelope schema 1, archive manifest format 1, BSON chunks and the `archive-census-v2` namespace/policy hash remain unchanged; the catalogue is unchanged. Newly captured archives can contain existing `stop:<Agent ID>:<decimal turn>` rows with a string `record`. Original IDs, complete BSON, logs, request/operation identities and custody proofs are preserved. Platform/account rows remain outside the Sandbox closure. No indexes, validators, TTLs, encryption or defaults change. |
+| Reader floor and recovery artifacts | Capture with any of these rows requires this census extension. Opaque BSON restore needs no new budget decoder: the existing `archive-census-v2` restore implementation (present at baseline source `fa292b83473aa414a43ab9e23edc14a40e8b0aea`) already checks BSON IDs, lengths, hashes, custody and the unchanged catalogue hash without interpreting `record`. Application readers of restored #1621 stop reasons still require #1621's `BudgetError`/stop reader. If #1741 writes `platform_exhausted` or its other new fields, its independently higher whole-batch reader floor also applies; this extension does not certify a develop-only image for those application records. No predecessor executable/image was executed or certified here; the release owner must pin and exercise every permitted recovery artifact. |
+| Writer gating and cohort | No new writer gate is needed for this reader expansion. Existing explicit archive admission, source exclusion/hold and completion proofs remain required. Budget and platform-spend gates remain owned by their respective changes; this change neither opens them nor certifies mixed-version writer rollout. Deploy compatible capture readers before requiring capture of these families; closing budget gates does not remove retained rows or lower the application reader floor. |
+| Migration/backfill and prerequisites | No transformation, backfill, contract step, migrator or startup DDL. No migration command/checksum or execution lease applies. Prerequisites are the existing census-v2 archive/custody implementation and #1621's stop writer/reader; #1741 code is not a build prerequisite. Existing snapshot census work, query deadlines and capture bounds are unchanged. Unknown/malformed shapes and unsupported schema versions still refuse without certifying a manifest or releasing the hold. Existing exact retry and completion fences remain in force. |
+| Backup and dry-run | No irreversible rewrite/deletion or contraction requires a new destructive-step backup. Recovery still needs the complete manifest, referenced custody objects and original request/source/exclusion evidence; application import additionally retains the original Sandbox home/runtime and any required keys. Disposable local `mongo:8.0.13` replica-set tests exercise byte-exact stop reconstruction, source-independent restore, platform exclusion and malformed-row refusal. This is local test evidence, not a protected production backup or production restore rehearsal. |
+| Rollback and forward recovery | Retain new archives and all source rows unchanged. A predecessor census again refuses capture on these families; use a qualified image containing this extension to retain capture capability. The archive format itself imposes no new restore decoder boundary, while the stop/platform writers' application reader floors continue to govern import and operation. Do not delete rows, change the catalogue/hash, strip stop evidence or replace homes to make an older artifact eligible. Prefer a compatible forward fix; abort qualification on any unexpected inclusion, omission, byte mismatch or unknown shape. |
+| Verification and completion | New and unchanged retirement-archive tests run against an isolated local replica set, single-threaded, including failpoint contracts; formatting, Clippy and source-size checks cover the final change. Exact commands/results and source commits accompany the change. Production and predecessor-artifact matrix cells remain unverified. Agent Manager's release owner owns candidate/recovery digests, authorized read-only inventory, an isolated-copy capture/restore drill, retained-data checks, sign-off and issue closure; merge alone completes none of those receipts. |
