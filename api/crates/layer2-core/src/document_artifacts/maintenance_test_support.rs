@@ -1,6 +1,6 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use tokio::sync::{Mutex, Notify, Semaphore};
 
 pub const NOW: i64 = 3_600_000;
@@ -15,6 +15,7 @@ struct Row {
     source: DocumentSourceReservation,
     state: State,
     reserved_at: i64,
+    claim: Option<DeleteClaim>,
 }
 #[derive(Default)]
 struct Data {
@@ -28,6 +29,8 @@ pub struct Store {
     data: Mutex<Data>,
     pub reads: AtomicUsize,
     pub judgements: AtomicUsize,
+    pub refuse_claim: AtomicBool,
+    pub claim_delay_ms: AtomicU64,
 }
 impl Store {
     pub fn new(ready: bool) -> Self {
@@ -36,6 +39,8 @@ impl Store {
             data: Mutex::new(Data::default()),
             reads: 0.into(),
             judgements: 0.into(),
+            refuse_claim: false.into(),
+            claim_delay_ms: 0.into(),
         }
     }
     pub async fn reserve(&self, source: DocumentSourceReservation, reserved_at: i64) {
@@ -55,6 +60,7 @@ impl Store {
                 source,
                 state: State::Reserved,
                 reserved_at,
+                claim: None,
             },
         );
     }
@@ -144,13 +150,55 @@ impl DocumentReclaimStore for Store {
             Judgement::Condemned
         })
     }
-    async fn finalize(&self, candidate: &ObjectCandidate) -> Result<bool, DocumentError> {
+    async fn claim_delete(
+        &self,
+        candidate: &ObjectCandidate,
+        holder: &str,
+        now: i64,
+    ) -> Result<Option<DeleteClaim>, DocumentError> {
+        if self.refuse_claim.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let claim = {
+            let mut data = self.data.lock().await;
+            let Some(row) = data.rows.get_mut(&candidate.source.object_key()) else {
+                return Ok(None);
+            };
+            if row.state != State::Condemned
+                || row
+                    .claim
+                    .as_ref()
+                    .is_some_and(|claim| claim.lease_until >= now)
+            {
+                return Ok(None);
+            }
+            let claim = DeleteClaim {
+                candidate: candidate.clone(),
+                holder: holder.into(),
+                fence: row.claim.as_ref().map_or(1, |claim| claim.fence + 1),
+                lease_until: now + DELETE_LEASE.as_millis() as i64,
+            };
+            row.claim = Some(claim.clone());
+            claim
+        };
+        let delay = self.claim_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+        Ok(Some(claim))
+    }
+    async fn finalize(&self, claim: &DeleteClaim) -> Result<bool, DocumentError> {
+        let candidate = &claim.candidate;
         let mut data = self.data.lock().await;
         let key = candidate.source.object_key();
         let Some(row) = data.rows.get(&key) else {
             return Ok(false);
         };
-        if row.state != State::Condemned {
+        if row.state != State::Condemned
+            || !row.claim.as_ref().is_some_and(|current| {
+                current.holder == claim.holder && current.fence == claim.fence
+            })
+        {
             return Ok(false);
         }
         let document = row.source.document_id.clone();

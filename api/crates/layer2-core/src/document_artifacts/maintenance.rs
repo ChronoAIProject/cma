@@ -11,6 +11,12 @@ pub const RECLAIM_INTERVAL: Duration = Duration::from_secs(5 * 60);
 pub const RECLAIM_BATCH: usize = 64;
 pub const RECLAIM_DELETE_CONCURRENCY: usize = 4;
 pub const ORPHAN_ALERT_AGE: Duration = Duration::from_secs(24 * 60 * 60);
+// Five minutes is deliberately much longer than the 30-second operation budget.
+// Abandoned remote effects outliving this lease still require a finality contract.
+pub const DELETE_LEASE: Duration = Duration::from_secs(5 * 60);
+// The composed maintenance client must bound each delete by this budget.
+pub const DELETE_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DELETE_LEASE_MARGIN: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug)]
 pub struct ObjectCandidate {
@@ -20,6 +26,14 @@ pub struct ObjectCandidate {
     /// Unix milliseconds; judgement must recheck this strict cutoff atomically.
     pub reserved_before: i64,
     pub condemned: bool,
+}
+#[derive(Clone, Debug)]
+pub struct DeleteClaim {
+    pub candidate: ObjectCandidate,
+    pub holder: String,
+    pub fence: u64,
+    /// Unix milliseconds, on the same clock as the claim's `now` argument.
+    pub lease_until: i64,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Judgement {
@@ -57,14 +71,22 @@ pub trait DocumentReclaimStore: Send + Sync {
     ) -> Result<Vec<ObjectCandidate>, DocumentError>;
     /// Read references and conditionally change the object state in one transaction.
     async fn judge(&self, candidate: &ObjectCandidate) -> Result<Judgement, DocumentError>;
-    /// Fence the owner, remove the condemned row and release counters atomically.
-    async fn finalize(&self, candidate: &ObjectCandidate) -> Result<bool, DocumentError>;
+    /// Exclusively claim an unleased or strictly expired condemned reservation.
+    async fn claim_delete(
+        &self,
+        candidate: &ObjectCandidate,
+        holder: &str,
+        now: i64,
+    ) -> Result<Option<DeleteClaim>, DocumentError>;
+    /// Match holder, fence and incarnation before releasing counters atomically.
+    async fn finalize(&self, claim: &DeleteClaim) -> Result<bool, DocumentError>;
     async fn backlog(&self, now: i64) -> Result<ReclaimBacklog, DocumentError>;
 }
 pub struct DocumentMaintenance {
     store: Arc<dyn DocumentReclaimStore>,
     blobs: Arc<dyn DocumentBlobMaintenance>,
     enabled: bool,
+    delete_holder: String,
 }
 impl DocumentMaintenance {
     pub fn new(
@@ -76,10 +98,16 @@ impl DocumentMaintenance {
             store,
             blobs,
             enabled,
+            // Constructed once for each maintenance worker during process startup.
+            delete_holder: uuid::Uuid::new_v4().to_string(),
         }
     }
     /// Run one bounded batch. `now` is Unix milliseconds.
     pub async fn reclaim_step(&self, now: i64) -> Result<ReclaimOutcome, DocumentError> {
+        let clock = ReclaimClock {
+            now,
+            started: tokio::time::Instant::now(),
+        };
         // Capability gates precede ledger reads as well as all state transitions.
         let blocked_reason = if !self.enabled {
             Some("reclaim_disabled")
@@ -116,7 +144,8 @@ impl DocumentMaintenance {
                 Judgement::Skipped => (),
             }
         }
-        self.delete_condemned(condemned, &mut outcome).await?;
+        self.delete_condemned(condemned, &mut outcome, clock)
+            .await?;
         outcome.backlog = self.store.backlog(now).await?;
         Ok(outcome)
     }
@@ -125,19 +154,36 @@ impl DocumentMaintenance {
         &self,
         mut candidates: VecDeque<ObjectCandidate>,
         outcome: &mut ReclaimOutcome,
+        clock: ReclaimClock,
     ) -> Result<(), DocumentError> {
         let mut inflight = FuturesUnordered::new();
         for candidate in candidates.drain(..candidates.len().min(RECLAIM_DELETE_CONCURRENCY)) {
-            inflight.push(self.delete_candidate(candidate));
+            inflight.push(self.delete_candidate(candidate, clock));
         }
         let mut stopped = false;
         let mut finalize_error = None;
-        while let Some((candidate, result)) = inflight.next().await {
+        while let Some(attempt) = inflight.next().await {
+            let (claim, result) = match attempt {
+                Ok(Some(result)) => result,
+                Ok(None) => {
+                    if !stopped {
+                        if let Some(candidate) = candidates.pop_front() {
+                            inflight.push(self.delete_candidate(candidate, clock));
+                        }
+                    }
+                    continue;
+                }
+                Err(error) => {
+                    finalize_error.get_or_insert(error);
+                    stopped = true;
+                    continue;
+                }
+            };
             match result {
                 Ok(()) => {
                     // Both deletion and confirmed absence prove object finality.
                     outcome.deleted += 1;
-                    match self.store.finalize(&candidate).await {
+                    match self.store.finalize(&claim).await {
                         Ok(true) => outcome.released += 1,
                         Ok(false) => (),
                         Err(error) => {
@@ -158,7 +204,7 @@ impl DocumentMaintenance {
             // condemned and remains safe to revisit after interruption.
             if !stopped {
                 if let Some(candidate) = candidates.pop_front() {
-                    inflight.push(self.delete_candidate(candidate));
+                    inflight.push(self.delete_candidate(candidate, clock));
                 }
             }
         }
@@ -168,12 +214,41 @@ impl DocumentMaintenance {
     async fn delete_candidate(
         &self,
         candidate: ObjectCandidate,
-    ) -> (ObjectCandidate, Result<(), BlobMaintenanceError>) {
+        clock: ReclaimClock,
+    ) -> DeleteAttempt {
+        let Some(claim) = self
+            .store
+            .claim_delete(&candidate, &self.delete_holder, clock.now())
+            .await?
+        else {
+            return Ok(None);
+        };
+        // Include time spent judging, waiting for a claim and draining previous
+        // completions. Do not send a request with an almost expired lease.
+        if claim.lease_until.saturating_sub(clock.now())
+            <= (DELETE_OPERATION_TIMEOUT + DELETE_LEASE_MARGIN).as_millis() as i64
+        {
+            return Ok(None);
+        }
         let result = self
             .blobs
             .delete(&candidate.source.object_key())
             .await
             .map(|_| ());
-        (candidate, result)
+        Ok(Some((claim, result)))
+    }
+}
+
+type DeleteAttempt = Result<Option<(DeleteClaim, Result<(), BlobMaintenanceError>)>, DocumentError>;
+
+#[derive(Clone, Copy)]
+struct ReclaimClock {
+    now: i64,
+    started: tokio::time::Instant,
+}
+impl ReclaimClock {
+    fn now(self) -> i64 {
+        self.now
+            .saturating_add(self.started.elapsed().as_millis().min(i64::MAX as u128) as i64)
     }
 }

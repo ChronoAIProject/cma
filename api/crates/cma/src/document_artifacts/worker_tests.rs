@@ -18,7 +18,15 @@ impl DocumentReclaimStore for Store {
     async fn judge(&self, _: &ObjectCandidate) -> Result<Judgement, DocumentError> {
         unreachable!()
     }
-    async fn finalize(&self, _: &ObjectCandidate) -> Result<bool, DocumentError> {
+    async fn claim_delete(
+        &self,
+        _: &ObjectCandidate,
+        _: &str,
+        _: i64,
+    ) -> Result<Option<DeleteClaim>, DocumentError> {
+        unreachable!()
+    }
+    async fn finalize(&self, _: &DeleteClaim) -> Result<bool, DocumentError> {
         unreachable!()
     }
     async fn backlog(&self, _: i64) -> Result<ReclaimBacklog, DocumentError> {

@@ -6,6 +6,64 @@ use std::time::Duration;
 mod support;
 use support::*;
 
+#[tokio::test(start_paused = true)]
+async fn reclaim_deletes_only_after_exclusive_claim() {
+    for already_condemned in [false, true] {
+        let (store, blobs, first) = fixture();
+        store.reserve(source(1), 0).await;
+        if already_condemned {
+            store.set_state(&source(1), State::Condemned).await;
+        }
+        blobs.pause();
+        let second = DocumentMaintenance::new(store.clone(), blobs.clone(), true);
+        let a = tokio::spawn(async move { first.reclaim_step(NOW).await });
+        blobs.wait_for_calls(1).await;
+        let b = tokio::spawn(async move { second.reclaim_step(NOW).await });
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        let calls = blobs.calls.load(Ordering::SeqCst);
+        blobs.resume(2);
+        let a = a.await.unwrap().unwrap();
+        let b = b.await.unwrap().unwrap();
+        assert_eq!(calls, 1, "only one worker may delete a reservation");
+        assert_eq!(a.released + b.released, 1);
+        assert_eq!(store.counters().await, [0, 0, 0]);
+    }
+}
+
+#[tokio::test]
+async fn document_reclaim_condemned_row_without_claim_is_never_deleted() {
+    for already_condemned in [false, true] {
+        let (store, blobs, maintenance) = fixture();
+        store.reserve(source(1), 0).await;
+        if already_condemned {
+            store.set_state(&source(1), State::Condemned).await;
+        }
+        store.refuse_claim.store(true, Ordering::SeqCst);
+        let outcome = maintenance.reclaim_step(NOW).await.unwrap();
+        assert_eq!(blobs.calls.load(Ordering::SeqCst), 0);
+        assert_eq!((outcome.deleted, outcome.released), (0, 0));
+        assert_eq!(store.counters().await, [1, 8, 1]);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn reclaim_skips_delete_when_lease_cannot_cover_operation_budget() {
+    for (delay_ms, expected_deletes) in [(264_000, 1), (265_000, 0), (266_000, 0), (300_001, 0)] {
+        let (store, blobs, maintenance) = fixture();
+        store.reserve(source(1), 0).await;
+        store.claim_delay_ms.store(delay_ms, Ordering::SeqCst);
+        let outcome = maintenance.reclaim_step(NOW).await.unwrap();
+        assert_eq!(blobs.calls.load(Ordering::SeqCst), expected_deletes);
+        assert_eq!(outcome.released, expected_deletes as u64);
+        if expected_deletes == 0 {
+            assert_eq!(store.state(&source(1)).await, Some(State::Condemned));
+            assert_eq!(store.counters().await, [1, 8, 1]);
+        }
+    }
+}
+
 #[tokio::test]
 async fn reclaim_blocks_without_ready_ledger_or_supported_deletion() {
     for (enabled, ready, supported, reason) in [
@@ -79,7 +137,7 @@ async fn referenced_baseline_row_is_marked_committed_not_condemned() {
     assert_eq!(store.state(&source).await, Some(State::Committed));
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn delete_failure_keeps_condemned_and_reports_retry_after() {
     let (store, blobs, maintenance) = fixture();
     let source = source(1);
@@ -99,8 +157,12 @@ async fn delete_failure_keeps_condemned_and_reports_retry_after() {
     assert_eq!(outcome.backlog.pending_objects, 1);
     assert!(blobs.contains(&source).await);
     assert_eq!(store.counters().await, [1, source.bytes as i64, 1]);
-    // Condemned rows are retried immediately, regardless of the grace cutoff.
-    let retried = maintenance.reclaim_step(NOW).await.unwrap();
+    // A failed delete retains its exclusive lease until it strictly expires.
+    assert_eq!(maintenance.reclaim_step(NOW).await.unwrap().released, 0);
+    let retried = maintenance
+        .reclaim_step(NOW + DELETE_LEASE.as_millis() as i64 + 1)
+        .await
+        .unwrap();
     assert_eq!((retried.judged, retried.released), (0, 1));
 }
 
