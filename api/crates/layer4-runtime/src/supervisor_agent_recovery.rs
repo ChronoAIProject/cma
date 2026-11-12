@@ -1,3 +1,6 @@
+use layer3_adapter::agent_capacity_recovery::{
+    CapacityRecoveryError, CapacityRecoveryNativeProof, CapacityRecoveryRequest,
+};
 use layer3_adapter::wire::{AgentHomeReceipt, AgentHomeRemoveReceipt, AgentOpenReceipt};
 use layer3_adapter::{AgentCloseRequest, AgentHomeRemoveRequest, AgentSlot};
 
@@ -7,6 +10,52 @@ use crate::mutation_journal::Subject;
 use crate::mutation_store::{Pending, Ticket};
 
 impl Supervisor {
+    pub(crate) async fn capacity_recovery(
+        &self,
+        request: CapacityRecoveryRequest,
+    ) -> Result<CapacityRecoveryNativeProof> {
+        request
+            .validate()
+            .map_err(|_| identity("capacity recovery request is invalid"))?;
+        self.require_credentialed().await?;
+        let target = &request.target;
+        let home_identity = self
+            .config
+            .home_identity
+            .as_deref()
+            .ok_or_else(|| identity("runtime has no durable home identity"))?;
+        if target.sandbox_id != self.config.sandbox_id
+            || target.boot_id != self.boot_id
+            || target.provision_generation != self.config.generation
+            || target.home_identity != home_identity
+        {
+            return Err(identity("capacity recovery runtime identity changed"));
+        }
+        let agent_id = AgentSlot::new(&target.agent_id);
+        let agents = self.agents.read().await;
+        let process = agents
+            .get(&agent_id)
+            .ok_or_else(|| unavailable("capacity recovery Agent process is not live"))?;
+        let launch = &process.launch;
+        if launch.agent_id != agent_id
+            || launch.operation_id != target.original_open_operation
+            || launch.request_sha256 != target.original_open_sha256
+            || launch.home != self.config.agent_home(agent_id.as_str()).to_string_lossy()
+        {
+            return Err(identity("capacity recovery open identity changed"));
+        }
+        process
+            .bridge
+            .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+            .await
+            .map_err(capacity_error)?;
+        process
+            .bridge
+            .capacity_recovery_proof(&request, launch.cwd.clone())
+            .await
+            .map_err(capacity_error)
+    }
+
     pub(super) async fn recover_agent_home(&self, pending: Pending) -> Result<()> {
         let Subject::CreateAgentHome { agent_id } = &pending.operation.subject else {
             return Err(corrupt("agent home recovery received another operation"));
@@ -120,6 +169,31 @@ impl Supervisor {
                 agent_id: request.agent_id,
             });
         finish_recovery(pending.ticket, result).await
+    }
+}
+
+fn identity(detail: &str) -> RuntimeError {
+    RuntimeError::rejected("capacity_recovery_identity", detail)
+}
+
+fn unavailable(detail: &str) -> RuntimeError {
+    RuntimeError::unavailable("capacity_recovery_unavailable", detail)
+}
+
+fn capacity_error(error: CapacityRecoveryError) -> RuntimeError {
+    match error {
+        CapacityRecoveryError::Unsupported => RuntimeError::rejected(
+            "capacity_recovery_unsupported",
+            "native recovery is unsupported",
+        ),
+        CapacityRecoveryError::Unavailable => unavailable("native recovery is unavailable"),
+        CapacityRecoveryError::IdentityConflict => identity("native recovery identity changed"),
+        CapacityRecoveryError::StateUnconfirmed => {
+            RuntimeError::rejected("capacity_recovery_state", "native state is unconfirmed")
+        }
+        CapacityRecoveryError::OutputUnconfirmed => {
+            RuntimeError::rejected("capacity_recovery_output", "retained output is unconfirmed")
+        }
     }
 }
 
