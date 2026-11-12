@@ -230,3 +230,75 @@ async fn platform_spend_is_evaluated_even_when_an_earlier_sweep_phase_keeps_fail
         assert_eq!(evaluations(), expected, "after {offset}s");
     }
 }
+
+/// An Active, bound copy of a fixture candidate, valid for the pause store.
+fn active(index: usize, always_on: bool) -> layer2_core::sandbox::Sandbox {
+    use layer2_core::sandbox::{
+        RuntimeBinding, SandboxCredentialAuthority, SandboxStatus, SandboxWorkState,
+        SandboxWorkStep,
+    };
+    let mut value = fixtures::sandbox(index);
+    let at = value.created_at.clone();
+    value.status = SandboxStatus::Active;
+    value.profile.always_on = always_on.then_some(true);
+    value.runtime = Some(RuntimeBinding {
+        boot_id: None,
+        runtime_id: format!("runtime-{index}"),
+        runtime_version: "image-v1".into(),
+        provision_generation: Some(1),
+        bound_at: at.clone(),
+    });
+    value.lifecycle.runtime_generation_high_water = 1;
+    value.credential.key_generation = 1;
+    value.credential.delivered = true;
+    value.credential.current = Some(SandboxCredentialAuthority {
+        generation: 1,
+        provider_key_id: "provider-key".into(),
+        provider_state_version: 1,
+        issued_at: at.clone(),
+        expires_at: "2026-10-05T00:00:00Z".into(),
+        grant_fingerprint: "a".repeat(64),
+    });
+    value.work = SandboxWorkState::new(SandboxWorkStep::WaitForCredentialRotation, at);
+    value
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_platform_spend_phase_pauses_keep_alive_and_agentless_sandboxes() {
+    use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxStore};
+    use layer2_core::sandbox::{SandboxStatus, PLATFORM_SPEND_PAUSE_NOTICE};
+    for stopped in [false, true] {
+        let (store, reconciler, settings) = live().await;
+        let decisions = InMemorySandboxStore::default();
+        // sbx_000 keeps itself alive; none of the three has a live Agent.
+        for index in 0..3 {
+            decisions
+                .create_sandbox(active(index, index == 0))
+                .await
+                .unwrap();
+        }
+        assert!(store.pause_decisions.set(decisions.clone()).is_ok());
+        let reconciler = reconciler.with_platform_spend(Arc::new(Platform(Some(stopped))));
+        // Without the stop, automatic inactivity pause is enabled and due.
+        enable(&settings, now() - Duration::from_secs(1_800), 900);
+        assert!(reconciler.run_due(now()).await.unwrap());
+        for index in 0..3 {
+            let sandbox = decisions
+                .get_sandbox(&fixtures::sandbox(index).id)
+                .await
+                .unwrap()
+                .unwrap();
+            if stopped {
+                assert_eq!(sandbox.status, SandboxStatus::Pausing, "sbx_{index:03}");
+                assert_eq!(
+                    sandbox.lifecycle.paused_notice.as_deref(),
+                    Some(PLATFORM_SPEND_PAUSE_NOTICE)
+                );
+            } else {
+                assert_eq!(sandbox.status, SandboxStatus::Active, "sbx_{index:03}");
+            }
+            assert_eq!(sandbox.profile.always_on, (index == 0).then_some(true));
+        }
+        assert_eq!(store.pauses.lock().unwrap().len(), 3);
+    }
+}
