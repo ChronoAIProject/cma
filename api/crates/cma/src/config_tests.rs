@@ -469,3 +469,12 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         );
     }
 }
+
+#[test]
+fn metrics_listener_is_private_and_has_a_distinct_valid_address() {
+    let config = configured(&[]).unwrap();
+    assert_eq!(config.metrics_bind.to_string(), "0.0.0.0:9091");
+    assert!(configured(&[("CHRONO_METRICS_BIND", "invalid")]).unwrap_err().contains("CHRONO_METRICS_BIND"));
+    assert!(configured(&[("CHRONO_METRICS_BIND", "0.0.0.0:8080")]).unwrap_err().contains("must differ"));
+    assert_eq!(configured(&[("CHRONO_METRICS_BIND", "127.0.0.1:9191")]).unwrap().metrics_bind.to_string(), "127.0.0.1:9191");
+}
