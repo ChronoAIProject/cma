@@ -1,6 +1,30 @@
 use super::*;
 use crate::SubjectId;
 
+#[test]
+fn dispatched_rechecks_stop_at_terminal_and_use_only_the_injected_delay() {
+    use super::super::reconcile_pacing::recheck_delay;
+    for configured in [
+        Duration::ZERO,
+        Duration::from_secs(1),
+        Duration::from_millis(125),
+    ] {
+        for status in [
+            AgentResponseStatus::InProgress,
+            AgentResponseStatus::WaitingAction,
+        ] {
+            assert_eq!(recheck_delay(status, configured), configured);
+        }
+        for status in [
+            AgentResponseStatus::Completed,
+            AgentResponseStatus::Failed,
+            AgentResponseStatus::Cancelled,
+        ] {
+            assert_eq!(recheck_delay(status, configured), Duration::ZERO);
+        }
+    }
+}
+
 fn envelope() -> AgentCommandEnvelope {
     let command = AgentCommand::message("queued before runtime");
     AgentCommandEnvelope {

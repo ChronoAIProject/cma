@@ -17,6 +17,7 @@ use crate::supervisor::Supervisor;
 #[serde(rename_all = "camelCase")]
 pub(super) struct ConversationQuery {
     output_ack: Option<String>,
+    capacity_recovery_challenge: Option<String>,
 }
 
 pub(super) async fn conversation(
@@ -33,6 +34,16 @@ pub(super) async fn conversation(
             false,
         );
     };
+    if let Some(challenge) = query.capacity_recovery_challenge.as_deref() {
+        if !bridge.consume_capacity_recovery(challenge).await {
+            return protocol_failure(
+                StatusCode::CONFLICT,
+                "capacity_recovery_lease",
+                "capacity recovery lease is missing or already consumed",
+                false,
+            );
+        }
+    }
     let acknowledge_output =
         match bridge.select_output_acknowledgement(query.output_ack.as_deref() == Some("1")) {
             Ok(acknowledge_output) => acknowledge_output,
