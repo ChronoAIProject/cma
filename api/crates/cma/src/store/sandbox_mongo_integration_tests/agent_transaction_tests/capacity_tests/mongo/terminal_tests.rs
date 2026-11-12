@@ -64,7 +64,7 @@ async fn terminal_case(bytes: bool, refuse_output: bool) {
             },
             acks.clone(),
         ),
-        update: Some(Box::new(update)),
+        update: Some(Box::new(update).into()),
     };
     let recorder = DurableAgentUpdateRecorder::new(store.clone());
     let started = Instant::now();

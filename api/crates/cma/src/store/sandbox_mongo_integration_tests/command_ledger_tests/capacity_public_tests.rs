@@ -163,7 +163,7 @@ async fn public_case(bytes: bool, refused: bool) {
             &mut assembly,
             ConversationUpdate::RuntimeOutput {
                 receipt: RuntimeOutputReceipt::new(source, acks),
-                update: Some(Box::new(update)),
+                update: Some(Box::new(update).into()),
             },
             layer2_core::now_rfc3339(),
         )

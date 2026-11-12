@@ -80,7 +80,7 @@ async fn run(capacity: Capacity, visible: bool) -> Vec<AgentLogEntry> {
             },
             acks.clone(),
         ),
-        update: Some(Box::new(update)),
+        update: Some(Box::new(update).into()),
     };
     crate::sandbox::record_update_for_test(
         recorder.as_ref(),
