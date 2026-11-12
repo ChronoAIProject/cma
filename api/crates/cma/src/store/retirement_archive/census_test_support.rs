@@ -105,10 +105,18 @@ pub(super) async fn roundtrip(
     fixture: (Temp, ArchiveStore, Request, Vec<u8>),
     expected: BTreeMap<String, Vec<u8>>,
 ) {
+    roundtrip_with_blobs(fixture, expected, None).await;
+}
+
+pub(super) async fn roundtrip_with_blobs(
+    fixture: (Temp, ArchiveStore, Request, Vec<u8>),
+    expected: BTreeMap<String, Vec<u8>>,
+    blobs: Option<&dyn layer2_core::document_artifacts::DocumentBlobStore>,
+) {
     let (temp, store, request, bytes) = fixture;
     let custody = Custody::default();
     store.admit(&request, &bytes).await.unwrap();
-    let manifest = export::publish(&store, &request, &bytes, &custody, None)
+    let manifest = export::publish(&store, &request, &bytes, &custody, blobs)
         .await
         .unwrap();
     let restored = verify::restore(

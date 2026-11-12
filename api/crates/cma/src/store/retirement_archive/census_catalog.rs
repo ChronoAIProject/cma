@@ -7,6 +7,7 @@ pub(super) enum Policy {
     Command,
     Budget,
     Activity,
+    Documents,
     Independent,
     Empty,
 }
@@ -22,13 +23,7 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_usage_report_control", Independent),
     ("request_rate_limits", Independent),
     ("visitor_launch_days", Independent),
-    (
-        "cma_document_artifacts",
-        Agent(&[
-            "record.metadata.origin_agent_id",
-            "record.runtime_author_agent_id",
-        ]),
-    ),
+    ("cma_document_artifacts", Documents),
     ("cma_document_quotas", Independent),
     ("native_warm_pool_targets", Independent),
     ("native_prepared_sandboxes", Empty),
