@@ -10,7 +10,7 @@ async fn owner_transcript_pages_complete_transcript_and_usage_recheck_buffered_a
         let policy_store = Arc::new(PolicyStore {
             inner: store.clone(),
             replacement: None,
-            calls: AtomicUsize::new(0),
+            calls: AtomicUsize::new(1),
             gate: Some((entered.clone(), resume.clone())),
         });
         let reads = service(store.clone()).with_resource_access(Arc::new(
@@ -46,7 +46,8 @@ async fn owner_transcript_pages_complete_transcript_and_usage_recheck_buffered_a
             .await
             .unwrap();
         let revision = agent.revision;
-        agent.owner = SubjectId::new("replacement-owner");
+        agent.status = AgentStatus::Deleted;
+        agent.deleted_at = Some(NOW.into());
         agent.revision += 1;
         store.save_agent(revision, agent).await.unwrap();
         resume.notify_one();
