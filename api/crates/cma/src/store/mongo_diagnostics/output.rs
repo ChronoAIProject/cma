@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn stalled_writer_and_full_queue_never_wait_and_count_each_drop() {
         let (entered, started) = mpsc::channel();
-        let (release, resume) = mpsc::channel();
+        let (release, resume) = mpsc::channel::<()>();
         let (reported, reports) = mpsc::channel();
         let queue = Arc::new(
             Queue::spawn(
