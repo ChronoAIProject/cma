@@ -8,13 +8,14 @@ use layer2_core::sandbox::{store::AgentMessageCheckpoint, AgentUpdateOutcome};
 
 pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
-    current: &Agent,
+    source: (&Agent, Option<&adoption::Prepared>),
     previous: Option<&AgentMessageCheckpoint>,
     next: &AgentMessageCheckpoint,
     mutation: Option<&AgentConversationMutation>,
     authority: &Authority,
     scope: &mut TransactionScope<'_>,
 ) -> Result<(AgentUpdateOutcome, Option<ConversationReceipt>), ApplyError> {
+    let (current, adoption) = source;
     let guard = match authority {
         Authority::Reopen(guard) => Some(guard.as_ref()),
         _ => None,
@@ -87,6 +88,7 @@ pub(in crate::store) async fn apply(
             mutation,
             capacity,
             Some(next),
+            adoption,
             scope,
         )
         .await?;
