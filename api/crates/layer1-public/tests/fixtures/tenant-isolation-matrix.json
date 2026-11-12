@@ -172,5 +172,10 @@
   {"operation":"PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","positive":"binding-conversation-put","negative":"binding-put-conversation-forbidden","proof":"binding-contract"},
   {"operation":"PUT /api/v1/documents/{id}/shares/{subject}","positive":"document-grant-success","negative":"document-grant-foreign","proof":"probe"},
   {"operation":"GET /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-recovery-owner","negative":"retained-recovery-foreign","proof":"probe"},
-  {"operation":"POST /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-reopen-accepted","negative":"retained-reopen-foreign","proof":"probe"}
+  {"operation":"POST /api/v1/sandboxes/{id}/runtime-recovery","positive":"retained-reopen-accepted","negative":"retained-reopen-foreign","proof":"probe"},
+  {"operation":"GET /api/v1/agents/{id}/capacity-recovery/dry-run","positive":"capacity-dry-run-owner","negative":"capacity-dry-run-foreign","proof":"contract"},
+  {"operation":"GET /api/v1/agents/{id}/capacity-recovery","positive":"capacity-read-status-owner","negative":"capacity-read-status-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/capacity-recovery/status","positive":"capacity-request-status-owner","negative":"capacity-request-status-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/capacity-recovery/admit","positive":"capacity-admit-owner","negative":"capacity-admit-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/capacity-recovery/resume","positive":"capacity-resume-owner","negative":"capacity-resume-foreign","proof":"contract"}
 ]
