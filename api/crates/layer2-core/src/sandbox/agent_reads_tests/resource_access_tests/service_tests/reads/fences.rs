@@ -1,4 +1,6 @@
 use super::*;
+#[path = "fences/owner.rs"]
+mod owner;
 
 struct PolicyStore {
     inner: Arc<InMemorySandboxStore>,
@@ -138,7 +140,7 @@ async fn explicit_org_owner_never_becomes_personal_on_legacy_interfaces() {
 
 #[tokio::test]
 async fn grant_revocation_during_buffered_history_rejects_the_pending_page() {
-    for projection in ["events", "transcript", "usage"] {
+    for projection in ["events", "transcript", "transcript_page", "usage"] {
         let (store, authority, access, selector) =
             setup(Reply::Role(OrganizationRole::Viewer)).await;
         let agent = history(&store).await;
@@ -171,6 +173,20 @@ async fn grant_revocation_during_buffered_history_rejects_the_pending_page() {
                         &agent.id,
                         0,
                         2,
+                    )
+                    .await
+                    .map(|_| ()),
+                "transcript_page" => reads
+                    .transcript_page_authorized(
+                        &context("recipient"),
+                        Some("request-credential"),
+                        &agent.id,
+                        &crate::sandbox::AgentTranscriptPageRequest {
+                            turn: None,
+                            after: None,
+                            through: None,
+                            limit: 2,
+                        },
                     )
                     .await
                     .map(|_| ()),
