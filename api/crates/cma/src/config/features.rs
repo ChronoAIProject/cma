@@ -1,6 +1,10 @@
 //! Independent rollout policy for the current CMA interfaces.
+#[cfg(test)]
+#[path = "ingress_coordinator_tests.rs"]
+mod ingress_coordinator_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
     pub output_json_budget: bool,
@@ -45,6 +49,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
@@ -85,6 +90,14 @@ impl FeatureFlags {
         };
         if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
             return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
+        }
+        if flags.coordinated_ingress
+            && !(flags.retained_json
+                && flags.bounded_raw_output
+                && flags.bounded_permission_state
+                && flags.bounded_live_fragments)
+        {
+            return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
         }
         Ok(flags)
     }

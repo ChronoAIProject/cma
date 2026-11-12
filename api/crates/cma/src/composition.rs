@@ -254,6 +254,7 @@ impl ControlPlaneComposition {
             },
             SandboxLifecycleConfig {
                 bounded_live_fragments: config.features.bounded_live_fragments,
+                coordinated_ingress: config.features.coordinated_ingress,
                 access_transport_migration: config.agent_access_transport_migration.clone(),
                 managed_documents_enabled: config.document_storage.is_some(),
                 event_driven_reconciliation: config.features.event_driven_reconciliation,
@@ -455,6 +456,7 @@ impl ControlPlaneComposition {
         let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
+        let worker_observations = stores.worker_observations();
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -471,6 +473,7 @@ impl ControlPlaneComposition {
             )?),
         );
         Ok(Self {
+            worker_observations,
             router,
             auth,
             bindings,

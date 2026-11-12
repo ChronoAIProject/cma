@@ -196,7 +196,7 @@ pub(super) fn active_turn(agent: &Agent) -> Result<u64, AgentConversationError> 
 }
 
 pub(super) fn prompt_evidence(update: &ConversationUpdate) -> (&ConversationUpdate, bool) {
-    match update {
+    match update.effect() {
         ConversationUpdate::WithoutPromptEvidence(update) => {
             let (update, _) = prompt_evidence(update);
             (update, false)
