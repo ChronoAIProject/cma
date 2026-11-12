@@ -3,6 +3,70 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn distributed_counters_refuse_unsupported_or_corrupt_accounting_evidence() {
+    let (client, name, store, policy) = fixture(10_000, true).await;
+    let held = reserve(&store, "held", 100).await.unwrap();
+    let root_key = period::period_key(held.start);
+    let counter_key = counters::key(held.start, held.shard.unwrap());
+    for (key, field, value) in [
+        (&root_key, "counter_layout", 2_i64),
+        (&root_key, "spent", 1),
+        (&counter_key, "revision", -1),
+        (&counter_key, "shard", 16),
+        (&counter_key, "period_start", held.start as i64 + 1),
+        (&counter_key, "future_field", 1),
+    ] {
+        let original = store
+            .model_budget
+            .find_one(doc! {"_id": key})
+            .await
+            .unwrap()
+            .unwrap();
+        let mut corrupt = original.clone();
+        corrupt
+            .get_document_mut("record")
+            .unwrap()
+            .insert(field, value);
+        store
+            .model_budget
+            .replace_one(doc! {"_id": key}, corrupt.clone())
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.spend_state(NOW).await,
+            Err(BudgetError::Unavailable)
+        ));
+        assert!(matches!(
+            reserve(&store, "new", 1).await,
+            Err(BudgetError::Unavailable)
+        ));
+        assert_eq!(
+            store
+                .model_budget
+                .find_one(doc! {"_id": key})
+                .await
+                .unwrap(),
+            Some(corrupt),
+            "refusal must not repair or discard unrecognized evidence"
+        );
+        store
+            .model_budget
+            .replace_one(doc! {"_id": key}, original)
+            .await
+            .unwrap();
+    }
+    reserve(&store, "after-restoration", 1).await.unwrap();
+    let ledger = store.spend_state(NOW).await.unwrap().ledger.unwrap();
+    assert_eq!(ledger.reserved, 101);
+    assert_eq!(
+        root(&store, &policy).await.get_str("_id").unwrap(),
+        root_key
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn distributed_counters_first_refusal_persists_stop_without_converting() {
     let (client, name, store, policy) = fixture(200, true).await;
     store
