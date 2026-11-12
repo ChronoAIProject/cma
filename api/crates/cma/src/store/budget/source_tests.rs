@@ -156,6 +156,7 @@ async fn platform_stop_authority_conflicts_with_a_lift_or_disable_after_its_snap
         .unwrap()
         .unwrap();
         assert!(read
+            .ledger
             .closures
             .iter()
             .any(|closure| closure.reason == ClosureReason::SpendStop));
