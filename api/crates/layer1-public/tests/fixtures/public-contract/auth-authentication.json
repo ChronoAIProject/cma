@@ -18,6 +18,7 @@
         },
         "body": {
           "authenticated": true,
+          "api_commands": false,
           "usage_reporting": {
             "measured_visible": false
           },
@@ -214,6 +215,7 @@
         },
         "body": {
           "authenticated": true,
+          "api_commands": false,
           "usage_reporting": {
             "measured_visible": false
           },
@@ -302,6 +304,7 @@
         },
         "body": {
           "authenticated": true,
+          "api_commands": false,
           "usage_reporting": {
             "measured_visible": false
           },

@@ -16,6 +16,8 @@ pub enum GatewayError {
     InvalidConfiguration,
     MissingMessageContentIntent,
     Authority,
+    Authentication,
+    SessionLimitUnavailable,
     Unavailable,
     RateLimited,
     Protocol,

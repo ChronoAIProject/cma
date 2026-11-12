@@ -1,3 +1,4 @@
+use layer2_core::diagnostic_context::DiagnosticContext;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,7 +34,10 @@ impl SandboxControlScheduleWork for SandboxControlWorker {
         &self,
         page: &PageRequest,
     ) -> Result<Page<SandboxCommandId>, SandboxControlError> {
-        let page = self.discover(page).await?;
+        let page = DiagnosticContext::background("sandbox_control_scheduler")
+            .with_phase("discovery")
+            .scope(self.discover(page))
+            .await?;
         Ok(Page {
             items: page
                 .items
@@ -45,7 +49,10 @@ impl SandboxControlScheduleWork for SandboxControlWorker {
     }
 
     async fn run_one(&self, id: &SandboxCommandId) -> Result<(), SandboxControlError> {
-        self.run_one(id).await
+        DiagnosticContext::background("sandbox_control_scheduler")
+            .with_phase("execution")
+            .scope(self.run_one(id))
+            .await
     }
 }
 
@@ -59,43 +66,83 @@ impl SandboxControlScheduler {
         }
     }
 
-    pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut work = ScheduledWork::new(self.worker, self.concurrency);
-            let mut ticker = tokio::time::interval(self.interval);
-            ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            loop {
-                if *shutdown.borrow() {
-                    break;
-                }
-                tokio::select! {
-                    changed = shutdown.changed() => {
-                        if changed.is_err() || *shutdown.borrow() { break }
+    #[cfg(test)]
+    pub(crate) fn spawn(self, shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
+        self.spawn_supervised(
+            shutdown,
+            crate::worker_supervision::Workers::new().get("sandbox_commands"),
+        )
+    }
+
+    pub(crate) fn spawn_supervised(
+        self,
+        shutdown: watch::Receiver<bool>,
+        activity: crate::worker_supervision::Activity,
+    ) -> JoinHandle<()> {
+        let interval = self.interval;
+        let drain_timeout = self.drain_timeout;
+        let work = ScheduledWork::new(self.worker, self.concurrency);
+        crate::worker_supervision::spawn(
+            work,
+            activity,
+            shutdown,
+            move |work, activity, mut shutdown| {
+                Box::pin(async move {
+                    work.activity = Some(activity.clone());
+                    let telemetry = crate::telemetry::worker::Worker::start("sandbox_commands");
+                    let mut ticker = tokio::time::interval(interval);
+                    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    loop {
+                        activity.waiting(
+                            interval,
+                            if work.in_flight.len() >= work.concurrency {
+                                "execution_slots"
+                            } else if work.polling {
+                                "discovery"
+                            } else {
+                                "idle_scan"
+                            },
+                        );
+                        telemetry.heartbeat();
+                        telemetry.queue(work.queued.len(), work.in_flight.len());
+                        if *shutdown.borrow() {
+                            break;
+                        }
+                        tokio::select! {
+                            changed = shutdown.changed() => {
+                                if changed.is_err() || *shutdown.borrow() { break }
+                            }
+                            result = work.tasks.join_next_with_id(), if !work.tasks.is_empty() => {
+                                if let Some(result) = result { work.completed(result); }
+                            }
+                            _ = ticker.tick() => work.poll(),
+                        }
+                        if !*shutdown.borrow() {
+                            work.fill_slots();
+                        }
+                        activity.scheduled();
                     }
-                    result = work.tasks.join_next_with_id(), if !work.tasks.is_empty() => {
-                        if let Some(result) = result { work.completed(result); }
+                })
+            },
+            move |work| {
+                Box::pin(async move {
+                    if tokio::time::timeout(drain_timeout, async {
+                        while let Some(result) = work.tasks.join_next_with_id().await {
+                            work.completed(result);
+                        }
+                    })
+                    .await
+                    .is_err()
+                    {
+                        tracing::warn!(
+                            pending = work.tasks.len(),
+                            "Sandbox command scheduler drain timed out"
+                        );
+                        work.tasks.shutdown().await;
                     }
-                    _ = ticker.tick() => work.poll(),
-                }
-                if !*shutdown.borrow() {
-                    work.fill_slots();
-                }
-            }
-            if tokio::time::timeout(self.drain_timeout, async {
-                while let Some(result) = work.tasks.join_next_with_id().await {
-                    work.completed(result);
-                }
-            })
-            .await
-            .is_err()
-            {
-                tracing::warn!(
-                    pending = work.tasks.len(),
-                    "Sandbox command scheduler drain timed out"
-                );
-                work.tasks.shutdown().await;
-            }
-        })
+                })
+            },
+        )
     }
 }
 
@@ -110,6 +157,7 @@ enum TaskOutput {
 type TaskResult = Result<TaskOutput, SandboxControlError>;
 
 struct ScheduledWork {
+    activity: Option<crate::worker_supervision::Activity>,
     worker: Arc<dyn SandboxControlScheduleWork>,
     concurrency: usize,
     tasks: JoinSet<TaskResult>,
@@ -123,6 +171,7 @@ struct ScheduledWork {
 impl ScheduledWork {
     fn new(worker: Arc<dyn SandboxControlScheduleWork>, concurrency: usize) -> Self {
         Self {
+            activity: None,
             worker,
             concurrency,
             tasks: JoinSet::new(),
@@ -143,9 +192,16 @@ impl ScheduledWork {
             limit: PAGE_SIZE,
             cursor: self.cursor.clone(),
         };
-        let task = self
-            .tasks
-            .spawn(async move { worker.discover(&page).await.map(TaskOutput::Discovered) });
+        let activity = self.activity.clone();
+        let task = self.tasks.spawn(async move {
+            crate::worker_supervision::discover(
+                activity,
+                worker.discover(&page),
+                SandboxControlError::Unavailable,
+            )
+            .await
+            .map(TaskOutput::Discovered)
+        });
         self.kinds.insert(task.id(), TaskKind::Discover);
         self.polling = true;
     }
@@ -175,6 +231,17 @@ impl ScheduledWork {
             Ok((id, _)) => *id,
             Err(error) => error.id(),
         };
+        let phase = if matches!(self.kinds.get(&id), Some(TaskKind::Discover)) {
+            "discovery"
+        } else {
+            "execution"
+        };
+        let outcome = match &result {
+            Ok((_, Ok(_))) => "ok",
+            Ok((_, Err(_))) => "error",
+            Err(_) => "terminated",
+        };
+        crate::telemetry::worker::completed("sandbox_commands", phase, outcome);
         match self.kinds.remove(&id) {
             Some(TaskKind::Discover) => self.polling = false,
             Some(TaskKind::Command(id)) => {

@@ -395,7 +395,7 @@ impl Ledger {
                 return Err("migration effect count malformed");
             }
             attempts.push(json!({"fence":row.get_i64("fence").map_err(|_| "migration fence malformed")?,
-                "outcome":outcome,"source":source,"image":image,"created_indexes":changed,
+                "outcome":outcome,"source":source,"image":image,(self.step.effect_field()):changed,
                 "started_at":row.get_datetime("started_at")
                     .map_err(|_| "migration start malformed")?.timestamp_millis(),
                 "finished_at":row.get_datetime("finished_at").ok().map(|time|time.timestamp_millis())}));

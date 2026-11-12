@@ -33,8 +33,13 @@ pub(super) async fn production_adapter(
 
     let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
 
-    let routing_client = mongodb::Client::with_uri_str(&config.mongodb_uri)
+    let mut routing_options = mongodb::options::ClientOptions::parse(&config.mongodb_uri)
         .await
+        .map_err(|_| "runtime routing database unavailable")?;
+    routing_options.cmap_event_handler = Some(mongodb::event::EventHandler::callback(
+        crate::store::mongo_latency::observer(&routing_options, "routing"),
+    ));
+    let routing_client = mongodb::Client::with_options(routing_options)
         .map_err(|_| "runtime routing database unavailable")?;
     let runtime_database = routing_client.database(&config.mongodb_database);
     crate::store::isolation::verify_with_authority(&runtime_database, config.mongodb_authority)
