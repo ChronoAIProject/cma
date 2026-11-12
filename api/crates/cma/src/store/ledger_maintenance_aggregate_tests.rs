@@ -8,19 +8,28 @@ use layer2_core::sandbox::store::{
     AgentStore, SandboxEventStore, SandboxStore, SandboxTransaction, SandboxTransactionStore,
     WorkspaceStore, WorktreeStore,
 };
-use layer2_core::sandbox::{SandboxEventKind, SandboxStatus};
+use layer2_core::sandbox::{
+    AgentStatus, AgentWorkState, AgentWorkStep, SandboxEventKind, SandboxStatus,
+};
 use layer2_core::{AgentId, WorktreeId};
 
 #[path = "ledger_maintenance_aggregate_race_tests.rs"]
 mod races;
 
 fn mutation(source: &LedgerMaintenanceSnapshotV1, kind: u8) -> SandboxTransaction {
-    match kind {
+    let mutation = match kind {
         0 => {
             let mut worktree = source.worktrees[0].clone();
             let mut agent = source.agents[0].clone();
             worktree.id = WorktreeId::generate();
             agent.id = AgentId::generate();
+            agent.creation_key = format!("create-{}", agent.id);
+            agent.status = AgentStatus::Starting;
+            agent.ready_at = None;
+            agent.conversation.conversation_id = None;
+            agent.conversation.runtime_generation = None;
+            agent.conversation.last_seq = 0;
+            agent.work = AgentWorkState::new(AgentWorkStep::AddWorktree, NOW.into());
             agent.worktree_id = worktree.id.clone();
             worktree.agent_id = Some(agent.id.clone());
             worktree.name = "wt-2".into();
@@ -68,7 +77,9 @@ fn mutation(source: &LedgerMaintenanceSnapshotV1, kind: u8) -> SandboxTransactio
             }
         }
         _ => unreachable!(),
-    }
+    };
+    crate::store::sandbox_transactions::validate_transaction(&mutation).unwrap();
+    mutation
 }
 
 async fn assert_saved(store: &MongoSandboxStore, mutation: &SandboxTransaction) {

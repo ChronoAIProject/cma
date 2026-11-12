@@ -28,11 +28,13 @@ async fn fixture(
         .await
         .unwrap()
         .unwrap();
-    support::retain_home(&mut parent);
+    // Preserve the original retained attachment and any recovery binding.
+    assert!(parent.lifecycle.home.is_some());
     if parent.runtime.is_none() {
         parent.lifecycle.suspended_runtime = Some(Box::new(record.requester.runtime.clone()));
     }
     parent.revision += 1;
+    parent.validate().unwrap();
     store
         .sandboxes
         .update_one(

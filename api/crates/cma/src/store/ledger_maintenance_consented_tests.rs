@@ -15,7 +15,9 @@ async fn retained_fixture() -> (
 ) {
     let (client, name, store, record) = granted_fixture().await;
     let mut current = parent(&store, &record).await;
-    support::retain_home(&mut current);
+    // The access fixture already binds home_recovery to its retained volume.
+    // Keep that original identity instead of replacing its attachment.
+    assert!(current.lifecycle.home.is_some());
     current.lifecycle.suspended_runtime = Some(Box::new(record.requester.runtime.clone()));
     current.revision += 1;
     save_parent(&store, &current).await;
