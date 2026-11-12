@@ -1,12 +1,45 @@
 use super::*;
+use mongodb::event::{command::CommandEvent, EventHandler};
 use mongodb::options::ClientOptions;
+pub(super) type OriginalSession = Arc<std::sync::Mutex<Option<mongodb::bson::Document>>>;
 
 pub(super) async fn client_for(name: &str) -> (Client, String) {
+    let (client, app, _) = observed_client_for(name).await;
+    (client, app)
+}
+
+pub(super) async fn observed_client_for(name: &str) -> (Client, String, OriginalSession) {
     let app = format!("ordinary-v2-{name}-{}", uuid::Uuid::new_v4());
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let mut options = ClientOptions::parse(uri).await.unwrap();
     options.app_name = Some(app.clone());
-    (Client::with_options(options).unwrap(), app)
+    let original = OriginalSession::default();
+    let observed = original.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            if event.command_name == "commitTransaction" {
+                *observed.lock().unwrap() =
+                    Some(event.command.get_document("lsid").unwrap().clone());
+            }
+        }
+    }));
+    (Client::with_options(options).unwrap(), app, original)
+}
+
+pub(super) async fn release_abandoned_transaction(admin: &Client, original: &OriginalSession) {
+    let original = original
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("original commit session");
+    // Model server cleanup after the lost process. A failCommand refusal can
+    // leave server locks although the driver already considers commit sent.
+    // Kill only this operation's observed session; committed receipts survive.
+    admin
+        .database("admin")
+        .run_command(doc! {"killSessions":[original]})
+        .await
+        .unwrap();
 }
 
 pub(super) async fn fail_commit(admin: &Client, app: &str, committed: bool) {
