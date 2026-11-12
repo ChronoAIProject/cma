@@ -66,7 +66,7 @@ impl Process {
         let log = fs::File::create(dir.join("trace.log")).unwrap();
         let mut command = Command::new(env!("CARGO_BIN_EXE_cmaeg"));
         command.env_clear();
-        let database = if std::env::var_os("CMA_IM_TEST_MONGODB_URI").is_some() {
+        let database = if std::env::var_os("CMA_SERVICE_AUTH_TEST_MONGODB_URI").is_some() {
             let database =
                 database::DatabaseFixture::new(std::path::Path::new(env!("CARGO_BIN_EXE_cmaeg")))
                     .await;

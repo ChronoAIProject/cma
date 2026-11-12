@@ -17,7 +17,7 @@ mod shared_schema;
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn gateway_records_are_exclusive_owner_immutable_and_revision_fenced() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_SERVICE_AUTH_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_eg_contract_{}", uuid::Uuid::new_v4().simple());
     let result = exercise(&uri, &admin, &name).await;
@@ -27,7 +27,7 @@ async fn gateway_records_are_exclusive_owner_immutable_and_revision_fenced() {
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn disabled_github_import_refuses_new_github_channels_and_retains_stored_ones() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_SERVICE_AUTH_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_eg_github_import_{}", uuid::Uuid::new_v4().simple());
     let result = github_import::verify(&admin.database(&name)).await;
@@ -74,7 +74,7 @@ async fn exercise(uri: &str, admin: &Client, name: &str) -> Result<(), Box<dyn s
         "gateway_channel_records",
         "im_images",
         "im_builds",
-        "im_auth_sessions",
+        "foreign_auth_sessions",
     ] {
         db.collection::<Document>(foreign)
             .insert_one(doc! {"_id":"private"})

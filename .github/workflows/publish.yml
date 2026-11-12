@@ -1,7 +1,7 @@
 name: Publish release
 
 # Runs once a pull request from develop has been merged into main. It decides
-# the release version, publishes the five images under it, and then records
+# the release version, publishes the four images under it, and then records
 # what happened as a tag and a release.
 #
 # The ordering is the point. The tag is the claim that a version exists and is
@@ -131,7 +131,7 @@ jobs:
       # release job will not run either way.
       fail-fast: false
       matrix:
-        component: [api, web, runtime, cmaeg, image-manager]
+        component: [api, web, runtime, cmaeg]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -328,7 +328,7 @@ jobs:
       # failed leg can be re-run without rebuilding or moving either image tag.
       fail-fast: false
       matrix:
-        component: [api, web, runtime, cmaeg, image-manager]
+        component: [api, web, runtime, cmaeg]
     steps:
       - uses: actions/checkout@v5
 
@@ -530,7 +530,7 @@ jobs:
           fi
 
           revision=${GITHUB_SHA:0:7}
-          for component in api web runtime cmaeg image-manager; do
+          for component in api web runtime cmaeg; do
             expected="cma-${component}-${VERSION}-${revision}-oci"
             matches=$(jq -r --arg name "$expected" \
               '[.artifacts[] | select(.name == $name)] | length' \

@@ -121,9 +121,9 @@ module CIContract
       node --test .github/scripts/desktop-browser-page.test.cjs
     SH
     images = job(ci, "images", "Images")
-    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime runtime-desktop cmaeg image-manager], "all image gates must execute")
+    require!(!images.key?("if") && images.dig("strategy", "matrix", "component") == %w[api web runtime runtime-desktop cmaeg], "all image gates must execute")
     %w[images image-exports].each do |id|
-      require!(publish.dig("jobs", id, "strategy", "matrix", "component") == %w[api web runtime cmaeg image-manager], "release #{id} must include every service image")
+      require!(publish.dig("jobs", id, "strategy", "matrix", "component") == %w[api web runtime cmaeg], "release #{id} must include every service image")
     end
     step(images, "Execute built runtime image contract", 'node .github/scripts/runtime-image-evidence.mjs run cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "matrix.component == 'runtime'")
     step(images, "Require passing runtime image evidence", 'node .github/scripts/runtime-image-evidence.mjs verify cma-runtime:ci "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"', "always() && matrix.component == 'runtime'")
@@ -198,7 +198,7 @@ module CIContract
       "Provider contract mutation regressions" => "ruby .github/scripts/ci-contract-tests.rb provider",
       "Backend capacity preparation regressions" => "python3 .github/scripts/backend-capacity-tests.py",
       "Staging authority and evidence regressions" => "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs",
-      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs",
+      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/service-auth-mongo-contract.test.mjs",
       "Typecheck every harness entry point" => "npm run e2e:typecheck",
       "Exact remote campaign inventory remains mandatory" => "node .github/scripts/staging-authority.mjs inventory",
       "Fail-closed fixtures and cleanup mechanics" => "npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts",

@@ -100,7 +100,10 @@ run_plan patch || fail "the first canonical patch release was not planned"
 assert_contains "$output" '## Release Notes v0.0.1'
 assert_contains "$output" 'ghcr.io/chronoaiproject/cma-web:v0.0.1'
 assert_contains "$output" 'ghcr.io/chronoaiproject/cma-cmaeg:v0.0.1'
-assert_contains "$output" 'ghcr.io/chronoaiproject/cma-image-manager:v0.0.1'
+assert_contains "$output" 'ghcr.io/chronoaiproject/cma-api:v0.0.1'
+assert_contains "$output" 'ghcr.io/chronoaiproject/cma-runtime:v0.0.1'
+[ "$(grep -c '^ghcr.io/chronoaiproject/cma-' "$output")" -eq 4 ] \
+  || fail "release notes must list exactly four service images"
 pass "an untagged first release is assembled as v0.0.1"
 
 new_case

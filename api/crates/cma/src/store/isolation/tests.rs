@@ -7,7 +7,7 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_SERVICE_AUTH_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_am_contract_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -107,7 +107,7 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
         "eg_auth_sessions",
         "im_images",
         "im_builds",
-        "im_auth_sessions",
+        "foreign_auth_sessions",
     ] {
         db.collection::<Document>(foreign)
             .insert_one(doc! {"_id":"private"})
@@ -265,7 +265,7 @@ async fn real_progress_grants_cannot_delete_receipts_or_access_another_service()
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_SERVICE_AUTH_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_progress_auth_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
