@@ -2,6 +2,113 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    async fn reattach_existing_capacity_recovery(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: tokio::sync::mpsc::Sender<crate::ConversationUpdate>,
+    ) -> Result<
+        (
+            crate::ConversationChannel,
+            crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+        ),
+        crate::agent_capacity_recovery::CapacityRecoveryError,
+    > {
+        request
+            .validate()
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)?;
+        // Close/retire during any discovery or attachment await must invalidate
+        // this attempt before it can replace a newer registered conversation.
+        let key = (
+            request.target.runtime.clone(),
+            crate::AgentSlot::new(&request.target.agent_id),
+        );
+        let epochs = self.open_epochs(&key).await;
+        let endpoint = self
+            .endpoint(&request.target.runtime)
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let proof = self.capacity_recovery_proof(&endpoint, request).await?;
+        proof
+            .confirmation
+            .validate_for(request)
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::StateUnconfirmed)?;
+        let recovered_prompt = match &proof.confirmation.native_state {
+            crate::agent_capacity_recovery::ConfirmedAgentState::Idle => None,
+            crate::agent_capacity_recovery::ConfirmedAgentState::Working { prompt_id }
+            | crate::agent_capacity_recovery::ConfirmedAgentState::WaitingApproval {
+                prompt_id,
+                ..
+            } => crate::PromptIdentity::parse(prompt_id),
+        };
+        if request.target.active_turn.is_some() && recovered_prompt.is_none() {
+            return Err(crate::agent_capacity_recovery::CapacityRecoveryError::StateUnconfirmed);
+        }
+        let socket_url = endpoint
+            .conversation_for_capacity_recovery(&request.target.agent_id, &request.challenge)
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let socket = self
+            .connect_url(
+                &endpoint,
+                &crate::AgentSlot::new(&request.target.agent_id),
+                socket_url,
+                None,
+            )
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let settings = super::HostedAgentOpenSettings {
+            coordinated_ingress: true,
+            retained_json: true,
+            bounded_raw_output: true,
+            bounded_permission_state: true,
+            output_json_budget: true,
+            shared_runtime_output: true,
+            already_initialized_error: Some(serde_json::json!({
+                "code": -32603,
+                "message": "Internal error",
+                "data": { "details": "Already initialized" },
+            })),
+            open_completion: None,
+            context_refresh: None,
+            permission_mode: None,
+            own_credential: false,
+            channel_tool: None,
+            provider_tool: None,
+            access_tool: None,
+            recovered_prompt,
+            recovered_context_sequence: None,
+        };
+        let opened = Bridge::open_with_relay_policy(
+            socket,
+            &request.target.agent_id,
+            proof.cwd,
+            (settings, None, true),
+            Some(request.target.conversation_id.clone()),
+            match &proof.confirmation.native_state {
+                crate::agent_capacity_recovery::ConfirmedAgentState::Idle => None,
+                crate::agent_capacity_recovery::ConfirmedAgentState::Working { prompt_id }
+                | crate::agent_capacity_recovery::ConfirmedAgentState::WaitingApproval {
+                    prompt_id,
+                    ..
+                } => crate::PromptIdentity::parse(prompt_id),
+            },
+            updates,
+        )
+        .await
+        .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        if opened.channel.conversation_id.as_deref()
+            != Some(request.target.conversation_id.as_str())
+        {
+            opened.bridge.retire().await;
+            opened.reader.abort();
+            opened.relay.abort();
+            return Err(crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict);
+        }
+        self.register_link(key, epochs, opened)
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)
+            .map(|channel| (channel, proof.confirmation))
+    }
+
     async fn open_desktop(
         &self,
         handle: &RuntimeHandle,
