@@ -20,6 +20,7 @@ async fn agent_conversation_atomically_saves_and_reconciles_aggregate_and_logs()
     );
     assert_eq!(store.agent_log(&expected.id, 0, 10).await.unwrap().len(), 4);
     let receipt = ConversationReceipt {
+        segmented: None,
         command_dispatch: None,
         agent: expected,
         logs: appended,
@@ -39,6 +40,7 @@ async fn agent_conversation_reconciliation_uses_one_complete_snapshot() {
     let expected = mutation.agent.clone();
     let appended = store.commit_agent_conversation(mutation).await.unwrap();
     let receipt = ConversationReceipt {
+        segmented: None,
         command_dispatch: None,
         agent: expected,
         logs: appended,
