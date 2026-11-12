@@ -532,6 +532,14 @@ retired records retain that reservation. Reusing the key on another binding
 returns a conflict. Metadata-only profile changes retain the original hierarchy,
 generation and conversations; changes to pinned runtime configuration are refused.
 
+Fresh home-producing binding and reprovision requests return
+`503 sandbox_capacity_unavailable` with `Retry-After: 60` if capacity policy is
+unreadable. Numeric home capacity is enforced by the Sandbox insertion
+transaction, including pending Launch reservations. Trusted binding consumers use
+the full existing-consumer home/session share and still obey per-owner active
+limits. Existing resources and exact admitted replays remain available; capacity
+refusals disclose no counts or limits.
+
 An identical PUT can return a failed, idle profile binding to `ready` after its
 original Sandbox has recovered to `active` and its original Workspace is
 `ready`. Admission requires the same manager, owner, profile digest, key and
@@ -1734,6 +1742,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
+| `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
 | `POST /api/v1/admin/admission/resume` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
 | `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
@@ -2699,3 +2708,39 @@ A recorded outcome is HTTP 200; an uncertain commit is HTTP 202 with
 `outcome: unknown`. HTTP 409 may carry `outcome: known_abort` or a named problem.
 A missing receipt never proves abort. Neither result authorizes replaying Agent
 input. Admission refusal does not prevent reconciling already accepted work.
+
+### Admission capacity ceilings
+
+`PUT /api/v1/admin/admission/ceilings` requires `ConfigurePlatform` and accepts
+`{ceilings, reason, expected_revision}`. `ceilings` contains optional nullable
+unsigned 32-bit `registrations`, `retained_homes`, `active_sessions`,
+`owner_active_sessions`, and `existing_reserve: {retained_homes, active_sessions}`.
+Missing/null ceilings are unlimited; zero closes additional capacity. Reserves
+default to zero and must not exceed their configured ceilings. This is a complete
+replacement, not a patch. Reasons are nonblank 1–512 UTF-8 bytes without control
+characters. The expected revision belongs to ceilings independently of stop and
+settings revisions. Success returns `{revision, ceilings, last_change,
+writes_available}`. A stale revision is 409 `admission_ceilings_conflict`;
+invalid values are 422 `invalid_request`; a closed deployment write gate is
+503 `admission_ceilings_writes_unavailable`.
+
+`GET /api/v1/admin/admission` additionally returns `ceilings` (the state above),
+`effective_limits` (including the deployment hard home cap), `capacity` (nullable
+registration/home/session observations), and `ceilings_history` (at most twenty
+full changes, newest first). Each observation has `{observed, bound, saturated}`;
+a saturated observation is a lower bound, and null skips that resource count.
+`capacity.pending_launch_homes` is a separate exact nonnegative integer, zero
+when the counter is absent. It is read once with a bounded point query even when
+the retained-home limit is unset, so pending reservations remain visible after
+ceiling removal. Every change includes revision/time/actor/reason and complete
+old/new ceilings.
+These operator-only details never appear in public capacity refusals.
+
+Registration keeps 503 `registration_closed`, and retained homes keep
+503 `sandbox_capacity_unavailable`. Idle-Agent input may receive
+503 `session_capacity_unavailable` with `Retry-After: 60` through REST, AG-UI
+or Responses. A message to an already active Agent adds no active session.
+Capacity is rechecked at turn start; a refusal there is a terminal typed receipt,
+so replaying the original command returns that result without dispatching work.
+Lowering ceilings retains existing resources and turns. See
+[admission control](CMA_Admission_Control.md) for activation and cohort semantics.

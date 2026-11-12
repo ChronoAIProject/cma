@@ -3,7 +3,7 @@
 PR-A of #1478 adds one platform-wide operator stop for new work. It is
 independent of spend metering and requires `ConfigurePlatform`. It never
 cancels a turn, pauses a Sandbox, changes an allowance, or closes observation
-streams. Capacity ceilings and existing-consumer reserves belong to PR-B;
+streams. PR-B adds capacity ceilings and existing-consumer reserves below;
 control rate budgets belong to PR-C.
 
 ## State and storage
@@ -64,8 +64,8 @@ platform settings backup and recovery custody.
 ## Refusals and continuation
 
 The domain `PlatformAdmissionState` combines spend closures with independent
-operator control (open, stopped or unreadable). `AdmissionRefusal` has `Budget`
-and `Paused` variants; a future capacity variant can extend it. Spend refusals retain their
+operator control (open, stopped or unreadable). `AdmissionRefusal` has `Budget`,
+`Paused` and `Capacity(CapacityKind)` variants. Spend refusals retain their
 existing behavior and precedence, including 402 `platform_budget_exhausted`.
 
 | Operation | Cause | Stop or unreadable control | Existing spend refusal |
@@ -181,3 +181,205 @@ stop and resume. A closed gate does not lift a stored stop. Follow the
 | Backup/dry-run | No destructive or irreversible transformation requiring a new backup. Existing backup/restore custody still applies to settings, immutable change history and activity. Local disposable replica-set tests exercise old missing-field data, new state and transaction failure; these do not certify production restore. |
 | Recovery | Before first control write, retain current compatible recovery policy. After writes, keep a reader implementing this shape. **Never deploy or roll back while stopped**; resume using the current stop revision before any release change. Preserve history, state and homes; use a compatible forward fix for failure. Closing the gate alone never reopens admission. |
 | Completion | Local test logs and exact counts are recorded in PR-A notes/description. Production drill, candidate/recovery image identities, all-replica reader proof, ≤60-second measurement and production audit verification remain release-owner items. No production qualification or issue closure is claimed. |
+
+## Capacity ceilings and the existing-consumer reserve
+
+PR-B adds a separate top-level `admission_ceilings` field on `_id: "platform"`.
+It is deliberately outside `admission_control`: PR-A's strict control decoder
+would reject an unknown nested field during recovery. Settings replacement,
+stop/resume and ceilings replacement preserve each other's fields and revisions.
+Missing ceilings mean unlimited; a present unreadable policy refuses fresh
+admissions governed by these checks. It never blocks reads, settlement or an
+already admitted continuation. A configured zero is a real ceiling of zero.
+
+```text
+AdmissionCeilingsState { revision, ceilings, last_change? }
+AdmissionCeilings {
+  registrations?, retained_homes?, active_sessions?, owner_active_sessions?,
+  existing_reserve: { retained_homes?, active_sessions? }
+}
+AdmissionCeilingsChange {
+  revision, at, actor, reason, old_ceilings, new_ceilings
+}
+```
+
+Every limit and reserve is an optional unsigned 32-bit integer. No capacity is
+guessed or enabled by default. An absent reserve means zero, and a reserve must
+not exceed its configured ceiling. The effective retained-home ceiling is the
+minimum of the operator ceiling and a nonzero `CHRONO_SANDBOX_GLOBAL_LIMIT`;
+zero in that deployment setting remains unlimited. If the deployment cap is
+smaller than the reserve, the public share saturates at zero. Existing consumers
+may consume up to the effective ceiling; public subjects stop at ceiling minus
+reserve. This is a reserved slice of shared fleet capacity, not an additional
+per-subject allowance. Lowering a ceiling retains all existing resources and
+turns, and refuses only additional admissions.
+
+### Registration cohort and activation
+
+A subject is public only when its callback has written a registration receipt
+under the newly activated path. All other owners, including API and binding
+subjects, use the existing-consumer share. The callback checks retained directory
+records, raw persisted sign-in subjects and owned resources before classifying
+an unseen subject as public. A failed best-effort directory write therefore
+cannot turn an existing owner into a public signup. Retained retired resources
+also prove prior ownership. Exact public registration replays precede these
+checks and remain counted once after their directory/sign-in records exist.
+
+The first process startup with `CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED=true`
+creates the activation fence with `$setOnInsert`. Its immutable `activated_at`
+is the cohort boundary. Before that event no registration receipts or counter
+are written. After activation registration tracking continues even if the
+configuration write gate later closes, including while registrations are
+unlimited. Closing the gate prevents configuration changes; it does not reset
+that retained cohort boundary. Deploy compatible serving and recovery APIs and
+drain incompatible predecessor writers before opening the gate. A running
+compatible callback receiver discovers activation without restarting: while its
+state is unknown or inactive, a never-seen callback reads the marker once by
+exact `_id`. Only a positive result is cached, because activation is immutable.
+A known directory owner returns after its existing directory read and adds no
+activation query. Existing retained-owner evidence still precedes registration
+reservation. There is no registration-callback exclusion or restart requirement
+for compatible receivers at activation.
+
+The existing `sandbox_admissions` collection stores these additional shapes:
+
+```text
+{ _id: { scope: "registration_capacity" }, document_schema_version: 1,
+  activated_at: <Unix seconds>, count: <nonnegative integer> }
+{ _id: { scope: "registration", subject: <subject> },
+  document_schema_version: 1, registered_at: <Unix seconds> }
+{ _id: { scope: "global_sandbox_capacity" }, document_schema_version: 1,
+  fence: <integer>, pending_launch_homes: <nonnegative integer, absent means zero> }
+{ _id: { scope: "launch_home_capacity", launch: <Launch id> },
+  document_schema_version: 1, owner: <subject>,
+  state: "reserved" | "reused" | "consumed" | "released", sandbox_id?: <id> }
+```
+
+A registration transaction inserts one unique subject receipt and increments
+`count` on the fence only while below the configured registration limit. The
+counter is O(1), never reconstructed by scanning registration scopes. Conflicts
+and duplicate keys retry within a finite budget; exact duplicates consume no
+additional capacity. Unknown commit outcomes retry only the original commit.
+Existing identities sign in even when settings are unreadable or capacity is
+full. Signup options use a point read of the counter when a registration ceiling
+is set and advertise `register_available: false` at the boundary.
+
+### Retained homes and active sessions
+
+Retained homes reuse #1672's global transaction fence, live-home index hint,
+bounded count and three-second database operation bound. Provisioning, paused
+and retiring homes retain their slots until retirement completes. Public fresh
+creation uses the reserved slice. Continuation steps of an admitted Launch keep
+#1672's deployment hard-cap behavior and bypass the new operator home ceiling.
+After the same durable activation exists, fresh Launch admission reserves a
+pending home in the same transaction as the Launch when its resolved plan needs
+a new home. The shared global fence's
+`pending_launch_homes` counter participates in ordinary and Trigger capacity
+checks. A keyed `launch_home_capacity` receipt preserves its owner and state.
+Sandbox insertion converts a reserved slot to a live home in one transaction;
+terminal/cancelled Launch commits release an unused reservation. Retryable
+Launch failure retains its slot. Replays never reserve or release twice.
+Reused homes need no additional slot; a retained marker makes any later new-home
+replacement meet the numeric capacity authority. Predecessor Launches without
+receipts retain their inherited continuation rule. Transfer/release reads are
+settlement of already admitted reservations, including after a ceiling is unset;
+they are not fresh capacity checks. New Launch admission with both the operator ceiling unset and the deployment
+hard cap zero adds no capacity command. Before activation, a nonzero deployment
+hard cap preserves the base behavior: Launch admission writes no new capacity
+marker, pending counter or receipt, and workers enforce #1672's retained-home
+cap with its original fence, index hint, limit and timeout. A nonzero env cap
+alone never enables the new persisted shapes. After activation, configured
+operator ceilings or a nonzero deployment cap enable Launch reservations, which
+remain recoverable after the write gate closes.
+
+Recovery writers must preserve `trigger_launches.home_capacity_admission` through
+whole-document replacements and settle its matching receipt. Predecessor writers
+can discard that marker and leak pending reservations. Removing a configured
+ceiling does not make those writers compatible while retained reservations exist.
+
+Binding hierarchy work retains PR-A's continuation classification for stop and
+spend. Inserting an unreserved new binding home still grows fleet usage, so it
+uses the readable operator ceiling and includes pending Launch reservations.
+Binding consumers use the full existing-consumer ceiling. Existing-home return
+and exact replay precede growth checks. An unreadable policy does not strand a
+binding continuation; its deployment hard cap remains effective.
+The fresh binding boundary rejects unreadable ceilings before retaining a new
+home-producing binding, reusing its existing settings read. This prevents a new
+request from acquiring continuation authority under an unreadable policy.
+
+An active session is one Agent whose top-level status is `working` or
+`waiting_approval`. Fresh messages that could make an idle Agent active check
+the fleet and per-owner ceilings in `reserve_command`. Messages queued to an
+already active Agent consume no additional slot and bypass capacity checks.
+Validated binding command and execution fences attribute existing-consumer work
+without a new lookup. Those commands use the full fleet share and still obey
+the per-owner active ceiling; clients cannot choose this classification.
+The authority is `start_turn`: the existing settings fence serializes concurrent
+starts, and the Agent's top-level status and `TurnStarted` log commit in the
+same transaction. Fleet counts use `{status, _id}`; owner counts use
+`{owner, status, updated_at}`. Both use a ceiling-bounded count and `max_time`.
+Unset checks return before any cohort read or capacity count; they add no Mongo
+command to the inherited message/home transaction.
+
+Queued commands have durable `agent_commands` records, but these are indexed
+per Agent. There is no existing bounded indexed count of distinct pending Agents;
+`work_pending` also includes unrelated work. Queued messages therefore do not
+reserve active slots. Several idle Agents can pass the admission precheck;
+only available slots can cross the authoritative turn-start transaction.
+An accepted command refused there follows the owner-budget terminal path:
+fixed typed failure, no runtime dispatch, no automatic replay. Retrying its
+original identity returns that same terminal receipt. An unreadable policy at
+this continuation boundary does not prevent already admitted work starting;
+a readable numeric ceiling is still authoritative.
+
+The new public refusal is HTTP 503 `session_capacity_unavailable` with
+`Retry-After: 60`. REST, AG-UI and Responses preserve this type. Registrations
+keep `registration_closed`; homes keep `sandbox_capacity_unavailable`.
+No public refusal contains limits, counts, operator details or reasons.
+Spend and operator-stop precedence remain ahead of capacity checks.
+
+### Capacity operator API
+
+`PUT /api/v1/admin/admission/ceilings` accepts
+`{ceilings, reason, expected_revision}` and requires `ConfigurePlatform`.
+It replaces the complete policy; omitted/null limits are unlimited. The reason
+uses the same 1–512-byte bounded contract as stop/resume. CAS is independent
+of both settings and stop revision. An exact no-op at the current revision
+writes nothing; a stale revision returns 409 `admission_ceilings_conflict`.
+A closed gate returns 503 `admission_ceilings_writes_unavailable`.
+
+`GET /api/v1/admin/admission` retains the stop fields and `history`, and adds:
+
+- `ceilings`: `{revision, ceilings, last_change, writes_available}`.
+- `effective_limits`: the policy with the deployment home cap applied.
+- `capacity`: optional observations for configured registration/home/session
+  limits. Each has `{observed, bound, saturated}`; saturated counts are lower
+  bounds. An unset limit has a null observation and skips its resource count.
+  `capacity.pending_launch_homes` is the exact nonnegative pending counter,
+  with an absent counter reported as zero. It is read once by exact `_id` with a
+  three-second bound even when the retained-home ceiling is unset, so retained
+  reservations remain visible after policy removal.
+- `ceilings_history`: the newest twenty immutable full changes, descending.
+
+Advisory state is computed only on demand. No timer writes the hot singleton.
+Ceilings history uses `_id: "admission_ceilings_change:<revision padded to 20>"`
+and `{document_schema_version: 1, record: AdmissionCeilingsChange}` in
+`platform_settings`. Each change, singleton CAS and one existing-format
+`activity` row commit together. The activity target is `admission_ceilings`;
+immutable history retains actor/time/reason and complete old/new policies.
+History uses an `_id` range and a 20-row limit; incomplete or inconsistent
+history makes the operator read unavailable. No historical records are invented.
+
+### Capacity migration and recovery record
+
+| Required field | Record |
+| --- | --- |
+| Identity/phase/owner | `2026-11-13-am-admission-ceilings`; #1478 PR-B; additive expand, default-closed configuration writers; Agent Manager/store owner. Source base `192e7884814d062a8df92be70ba0bb2988bef33c` plus ordered review patches and checksums. |
+| Stores/writers | `platform_settings.admission_ceilings`, immutable ceiling-change rows, `activity`; capability-gated operator PUT. `sandbox_admissions` activation fence and registration receipts: first enabled startup and callback transaction, including post-activation tracking after gate closure. After durable activation, configured-capacity Launches preserve the additive `trigger_launches.home_capacity_admission: true` marker across claims, handoffs and full replacements. Fresh Launch admission and terminal/cancelled Launch commits also write pending-home reservation receipts/counters in `sandbox_admissions`; Sandbox admission transfers them atomically to retained homes. Command failure metadata also writes `agent_commands.admission_capacity_failure` at authoritative refusal. Legacy first-message workers persist the new nonretryable startup failure in `agents` and their Agent-log publication in the same conversation transaction. No runtime files, client journals or external effects. |
+| Formats/preservation | Strict independent state and change records; new structured registration keys and counter; structured `launch_home_capacity` receipts and `global_sandbox_capacity.pending_launch_homes` preserve pending home authority; no replacement of PR-A control, settings or operation identity. Existing collections/catalog/validators/TTL and home identities/history remain. The auth store adds the nondestructive `auth_api_bearers_subject` index `{subject: 1, _id: 1}` for bounded prior API-custody evidence. Command records retain predecessor `execution_failed` bytes; the top-level sidecar restores `session_capacity_unavailable` to current readers. Historical FirstMessage execution without a common command stores the typed nonretryable `session_capacity_unavailable` startup failure; its exact unattempted-failure whitelist now recognizes that retained state. PR-A cannot validate that newly failed FirstMessage and is excluded from recovery. |
+| Reader floor | Every serving/recovery API must implement cohort, ceilings, Launch reservations and typed terminal recovery before activation. Before activation, even a nonzero deployment cap writes no new Launch capacity shapes and retains base worker admission. Drain incompatible predecessor writers before opening the activation gate; compatible receivers discover the marker without restarting. PR-A ignores the new top-level settings field without corrupting control, but does not enforce ceilings or track registrations; it is not an authorized recovery artifact once activated. Exact immutable API/recovery digests and old executable matrix remain release-owner evidence, not locally certified. Runtime images are unaffected. |
+| Gate/cohort | Exact boolean `CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED=false` in code/ConfigMap; `ConfigurePlatform`; one immutable first-open boundary for registration and new Launch reservation shapes. No registration receipt, home_capacity_admission marker, pending_launch_homes field or launch_home_capacity receipt is written before it, including with a nonzero env cap. Gate closure preserves tracking and all retained resources/reads/continuations. All replicas must agree before serving. |
+| Migration/backfill/startup | No backfill, count scan, transform, deletion, new collection, validator or TTL. Auth startup idempotently creates the additive subject index; partial startup safely retries the same index definition. Existing data counts directly for homes/sessions; public registrations start at activation. One-time activation upsert is idempotent and never resets count/time; replacement uses revision CAS and bounded retrying transactions. Startup retains existing schema/index initialization; any added index is documented with its owning store. |
+| Backup/dry-run | No destructive transformation or irreversible deletion, so no new backup operation is required by this slice. Existing settings/admissions/command/activity backup custody applies. Disposable-replica-set concurrency and rollback tests provide local rehearsal only, not production restore certification. |
+| Recovery/abort | Close configuration writes, retain compatible enforcement and cohort tracking, preserve every ledger/history/sidecar/home. Prefer a compatible forward fix. Do not roll back to an API that ignores active ceilings or resets the cohort; gate closure cannot erase retained state. Candidate/recovery digests, replica drain and a coherent post-backup-write procedure remain release-owner requirements. |
+| Completion | Local logs, configuration, sample counts, time window and patch identity are in PR-B evidence/description. Actual K, reserve peak×1.5, CPU/memory reservation, N+1/stream mapping, production drills and TC-070/TC-078 qualification remain outside local claims. |
