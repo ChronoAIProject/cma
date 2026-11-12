@@ -124,7 +124,7 @@ a commitment with no model component such as a Sandbox creation) succeeds only
 when:
 
 ```
-committed(now) + L ≤ disposable
+committed(now) < disposable   and   committed(now) + L ≤ disposable
 ```
 
 This is #1496's `spent + reserved + max_metering_lag_risk ≤ usable cap`
@@ -134,12 +134,19 @@ This is #1496's `spent + reserved + max_metering_lag_risk ≤ usable cap`
 The rule is evaluated **inside the admitting transaction** against the period
 row. A liability-bearing admission (`L > 0`) also increments the settings fence,
 as the foundation does today; a zero-liability admission reads the settings and
-the period row inside its snapshot without the fence (section 4.1). A refusal
-aborts the admitting transaction, so the refusing call enters the closure
-afterwards with a guarded single-document write (section 5.4); a successful
-admission that crosses the warning level enters `SpendWarning` inside its own
-transaction. The owner and turn checks of the foundation still apply first; the
-platform check never loosens them.
+the period row inside its snapshot without the fence (section 4.1). The owner
+and turn checks of the foundation still apply first; the platform check never
+loosens them.
+
+An allowance that does not fit is refused on its own; it does not close the
+platform. The platform enters `SpendStop` only when `committed(now) ≥
+disposable` (decision 29): the evaluator finds it, or an admission or
+zero-liability check that is refused at that point. A zero-liability commitment
+at exactly `disposable` is therefore refused, as the evaluator's stop already
+says. A refusal aborts the admitting transaction, so the refusing call enters
+any closure it found afterwards with a guarded single-document write (section
+5.4); a successful admission that crosses the warning level enters
+`SpendWarning` inside its own transaction.
 
 When the operator raises `period_cap`, `stop_percent` or lowers the reserves in
 a new settings revision, levels are recomputed from that revision and a closure
@@ -337,7 +344,11 @@ Closures are entered in two ways, both monotonic:
 - **Inside a successful admission:** `SpendWarning`, when the admitted liability
   crosses the warning level. It commits with the admission.
 - **Outside any transaction:** every closure entered on a refusal (an admission,
-  a zero-liability check) and every closure the evaluator enters. The
+  a zero-liability check) and every closure the evaluator enters. A refusal
+  enters `SpendStop` only when `committed` without its own `L` has reached
+  `disposable`, a missing `SpendWarning` when `committed ≥ warning_level`, and
+  `MeteringUnavailable` on a fail-closed condition (section 4.2); an allowance
+  that merely does not fit enters no `SpendStop`. The
   foundation's transaction loops abort on any domain error, so a closure pushed
   inside a refusing transaction would roll back with it. Instead the refusing
   call, after the abort, issues one guarded single-document update:
@@ -395,7 +406,7 @@ Additive to the existing `BudgetError` set:
 
 | Code | Transport | Meaning | Guidance |
 | --- | --- | --- | --- |
-| `platform_budget_exhausted` | HTTP 503, no `Retry-After` | `SpendStop` closure present | "The platform's spend limit for this period has been reached. Completed work is preserved and your Sandbox is paused, not lost. After the limit is raised, send a new message to continue; this turn will not replay automatically." |
+| `platform_budget_exhausted` | HTTP 503, no `Retry-After` | `SpendStop` closure present, or the commitment does not fit below `disposable` (section 3) | "The platform's spend limit for this period has been reached. Completed work is preserved and your Sandbox is paused, not lost. After the limit is raised, send a new message to continue; this turn will not replay automatically." |
 | `registration_closed` | HTTP 503 | `SpendWarning` or any stop closure, subject never seen | "New sign-ups are temporarily closed. Existing accounts are unaffected." |
 | `budget_unavailable` (existing) | unchanged | metering source stale, unconfigured or period ended; ledger inconsistent | existing text |
 
@@ -480,14 +491,18 @@ period and controlled observations. No real funds are consumed.
    subject receives `registration_closed` at the sign-in callback and at the
    sign-up entry; an existing owner's new turn is admitted; no running turn is
    touched.
-2. **Stop**: drive `committed ≥ disposable` with concurrent admissions on two
-   replicas. Expect: exactly the admissions that fit are admitted, none
-   overshoot; exactly one `SpendStop` is visible after the refusing
-   transactions aborted; CreateSandbox, Launch, revive, new turn, first message
-   and auxiliary holds are refused with `platform_budget_exhausted`; every
-   running turn receives the guarded cancel within 60 s; failed receipts retain
-   output; all quiet Sandboxes reach Paused with the platform reason; homes
-   retained; approvals and cancels on admitted work still succeed.
+2. **Stop**: run concurrent admissions on two replicas until the next
+   allowance no longer fits. Expect: exactly the admissions that fit are
+   admitted, none overshoot; the one that does not fit is refused with
+   `platform_budget_exhausted`, no `SpendStop` is entered and running turns
+   continue. Then drive `committed ≥ disposable` by settlement or observation.
+   Expect: exactly one `SpendStop` is visible, entered by the evaluator or by a
+   refused admission or zero-liability check; CreateSandbox, Launch, revive,
+   new turn, first message and auxiliary holds are refused with
+   `platform_budget_exhausted`; every running turn receives the guarded cancel
+   within 60 s of the closure's `since`; failed receipts retain output; all
+   quiet Sandboxes reach Paused with the platform reason; homes retained;
+   approvals and cancels on admitted work still succeed.
 3. **Lift**: PATCH a higher cap (new revision). Expect: the evaluator lifts
    `SpendStop` and `SpendWarning`; an explicit new message revives and is
    admitted; nothing replays; a process that has not seen the new revision
@@ -562,9 +577,10 @@ Recorded during implementation:
     is present and `budget_unavailable` when only `MeteringUnavailable` is,
     for admissions, zero-liability commitments and revival alike.
 20. The evaluator enters `SpendStop` at `committed ≥ disposable` (section 5);
-    admission refuses at `committed + L > disposable` (section 3). A row with
-    no liability adopts a changed `period_end` of the same period; a changed
-    `period_start` is a different row.
+    admission refuses at `committed + L > disposable` or `committed ≥
+    disposable` (section 3, decision 29). A row with no liability adopts a
+    changed `period_end` of the same period; a changed `period_start` is a
+    different row.
 21. Inside a snapshot transaction a concurrent period-row writer surfaces as a
     retried write conflict, so a residual revision-filter miss (section 4.1)
     is treated as an inconsistency and fails closed with `budget_unavailable`
@@ -596,10 +612,16 @@ Recorded during implementation:
 28. The two admin spend routes are served behind `ConfigurePlatform` and the
     third gate but are not yet in the published OpenAPI document or the
     public-contract corpus.
-29. A refusal at `committed + L > disposable` enters `SpendStop` even while
-    `committed` is below `disposable`, so the platform stops when the next
-    allowance no longer fits (TC-126). Where one owner's allowance exceeds the
-    remaining headroom this stops running work early; revisit with #1478.
+29. Stop at 100% (user ruling, 2026-11-12). The platform enters `SpendStop`
+    only when `committed` itself reaches `disposable`. An allowance that does
+    not fit (`committed + L > disposable` while `committed < disposable`) is
+    refused alone with `platform_budget_exhausted`: it enters no `SpendStop`
+    (only a missing `SpendWarning` once `committed ≥ warning_level`), running
+    turns continue and no Sandbox is paused. A refused admission or
+    zero-liability check that finds `committed ≥ disposable` still enters
+    `SpendStop` outside its transaction, and a zero-liability commitment at
+    exactly `disposable` is refused, consistent with the evaluator
+    (decision 20).
 30. Only owner rows pin a token valuation; the period row sums amounts that
     are already valued in the shared accounting units, so owners with
     different valuations are admitted side by side. Evaluation runs on every

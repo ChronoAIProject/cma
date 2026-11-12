@@ -115,27 +115,61 @@ fn admission_mirrors_reserved_and_enters_warning_once() {
 }
 
 #[test]
-fn refusal_at_disposable_returns_the_stop_closure_without_mutating_the_ledger() {
+fn an_allowance_that_does_not_fit_is_refused_without_entering_the_stop() {
     let now = START + 100;
     let mut ledger = observed_at(now);
     let before = ledger.clone();
     let refusal = ledger.admit(&policy(), 3, 900_001, now).unwrap_err();
     assert_eq!(refusal.reason, BudgetError::PlatformExhausted);
+    assert!(refusal.closures.is_empty());
+    assert_eq!(ledger, before);
+    // Late usage raised committed past the warning level outside any
+    // admission: the refusal carries the missing warning, never the stop.
+    ledger.retain(850_000).unwrap();
+    let before = ledger.clone();
+    let refusal = ledger.admit(&policy(), 3, 50_001, now).unwrap_err();
+    assert_eq!(refusal.reason, BudgetError::PlatformExhausted);
     assert_eq!(
         reasons(&refusal.closures),
-        vec![ClosureReason::SpendStop, ClosureReason::SpendWarning]
+        vec![ClosureReason::SpendWarning]
     );
     assert!(refusal.closures.iter().all(|closure| closure.since == now
         && closure.settings_revision == 3
-        && closure.committed_at_entry == 0));
+        && closure.committed_at_entry == 850_000));
     assert_eq!(ledger, before);
-    assert!(ledger.closures.is_empty());
+    assert!(!ledger.closed_for_commitments());
+    // Below disposable a zero liability is admitted, and so is an allowance
+    // that exactly reaches it.
     assert_eq!(
-        ledger
-            .admit(&policy(), 3, 900_000, now)
-            .map(|c| reasons(&c)),
+        ledger.admit(&policy(), 3, 0, now).map(|c| reasons(&c)),
         Ok(vec![ClosureReason::SpendWarning])
     );
+    assert_eq!(ledger.admit(&policy(), 3, 50_000, now), Ok(vec![]));
+    assert_eq!(ledger.reserved, 900_000);
+    assert_eq!(reasons(&ledger.closures), vec![ClosureReason::SpendWarning]);
+}
+
+#[test]
+fn a_check_at_or_past_disposable_is_refused_and_enters_the_stop() {
+    let now = START + 100;
+    let mut below = observed_at(now);
+    below.retain(899_999).unwrap();
+    assert!(below.admit(&policy(), 3, 0, now).is_ok());
+    let mut ledger = observed_at(now);
+    ledger.retain(900_000).unwrap();
+    let before = ledger.clone();
+    for liability in [0, 1] {
+        let refusal = ledger.admit(&policy(), 3, liability, now).unwrap_err();
+        assert_eq!(refusal.reason, BudgetError::PlatformExhausted);
+        assert_eq!(
+            reasons(&refusal.closures),
+            vec![ClosureReason::SpendStop, ClosureReason::SpendWarning]
+        );
+        assert!(refusal.closures.iter().all(|closure| closure.since == now
+            && closure.settings_revision == 3
+            && closure.committed_at_entry == 900_000));
+        assert_eq!(ledger, before);
+    }
     let mut stopped = ledger.clone();
     stopped.closures.push(Closure {
         reason: ClosureReason::SpendStop,
