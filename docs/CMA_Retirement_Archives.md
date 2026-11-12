@@ -56,7 +56,11 @@ cohort, epoch, home identity and the SHA-256 of the JSON root list. It also bind
 `qualified_at` and `expires_at` (at most 24 hours). These hashes identify retained
 release-owned proof. They are not a signature or proof of physical fencing. Every
 source-dependent phase checks the exact bytes and expiry. Expiry leaves the durable
-hold intact; it never resumes retirement. A renewed authority requires a reviewed
+hold intact; it never resumes retirement. Completion re-reads the exact original
+proof after census and inside the transaction, then guards the last transactional
+write using database time. Failure aborts both the release and its usage event.
+An identical already-committed completion remains replayable after expiry or loss
+of the local proof file; it does not admit another release. A renewed authority requires a reviewed
 continuation, not editing the original admitted request.
 
 | Action | Behavior |
@@ -89,14 +93,17 @@ the same mount; each role is captured and checked explicitly.
 The service captures full BSON documents, not projections, in a single Mongo
 snapshot session. It discovers and validates the complete Sandbox/Workspace/
 Worktree/Agent hierarchy, including Failed and Deleted Agents, and captures the
-matching records in every declared service collection using authoritative lineage
-and retained references. The existing full-log scanner checks sequence continuity against each Agent's
+matching records using the explicit [namespace census audit](CMA_Retirement_Archive_Census.md).
+All 142 namespaces have an explicit policy. Unknown/future ownership schemas and
+nonempty unqualified namespaces refuse capture, including unrelated rows where
+complete disjoint ownership cannot be proved. This is a production eligibility
+limitation: the current tool cannot certify every populated database. The existing full-log scanner checks sequence continuity against each Agent's
 authoritative head and refuses quarantine or mismatched creation lineage. Exact
 BSON length framing is preserved. Embedded Agent
 artifact bodies are included. Document artifact revisions are read through the
 existing document store adapter in read-only mode (no creation OAuth scope and
 local write refusal) and matched to their metadata hashes and sizes.
-A second independent snapshot/census must match before manifest publication.
+A second snapshot/census must match before manifest publication.
 The Mongo census is bounded to two million documents and 32 GiB; exceeding a
 budget refuses capture. The command normalizes its own parent hold bookkeeping to the retained original
 parent; the full archive requirement and receipt remain separately durable.

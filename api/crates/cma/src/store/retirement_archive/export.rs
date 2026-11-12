@@ -5,14 +5,20 @@ use crate::retirement_archive::{DatabaseRecord, ExternalRecord};
 use layer2_core::document_artifacts::{DocumentBlobStore, StoredDocument};
 use layer3_adapter::permanent_custody::PermanentCustody;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
 use std::time::Duration;
 const MAX_DOCUMENTS: u64 = 2_000_000;
 const MAX_BYTES: u64 = 32 * 1024 * 1024 * 1024;
 const CHUNK: usize = 4 * 1024 * 1024;
 
 pub(crate) fn schema_sha256() -> String {
-    digest(super::super::isolation::COLLECTIONS.join("\n").as_bytes())
+    digest(
+        format!(
+            "archive-census-v2\n{:?}\n{}",
+            super::census_catalog::AUDIT,
+            super::super::isolation::COLLECTIONS.join("\n")
+        )
+        .as_bytes(),
+    )
 }
 pub(crate) async fn capture(
     store: &ArchiveStore,
@@ -49,17 +55,16 @@ pub(crate) async fn capture(
     {
         return Err(REFUSED);
     }
-    let ids = identities(&store.database, &request.sandbox_id, &mut session).await?;
-    let filter = scope(&request.sandbox_id, &ids);
+    let closure =
+        super::census::identities(&store.database, &request.sandbox_id, &mut session).await?;
+    super::census::validate_catalog()?;
     let mut records = Vec::new();
     let mut external = Vec::new();
     let mut total = 0;
     let mut document_count = 0;
     for name in super::super::isolation::COLLECTIONS {
-        let mut selected = filter.clone();
-        if *name == "checkpoint_archive_tombstones" {
-            selected = doc! {"$or":[filter.clone(),{"object_key":{"$regex":format!("^cma/checkpoints/{}/",digest(request.sandbox_id.as_bytes()))}}]};
-        }
+        let selected =
+            super::census::selection(&store.database, name, &closure, &mut session).await?;
         let mut cursor = store
             .database
             .collection::<mongodb::bson::RawDocumentBuf>(name)
@@ -82,17 +87,6 @@ pub(crate) async fn capture(
         while cursor.advance(&mut session).await.map_err(|_| REFUSED)? {
             let raw = cursor.deserialize_current().map_err(|_| REFUSED)?;
             let document = Document::try_from(&raw).map_err(|_| REFUSED)?;
-            // The retired checkpoint transport must not be silently reactivated.
-            // Every source object must have a supported reader before retirement.
-            if [
-                "checkpoint_objects",
-                "checkpoint_archive_tombstones",
-                "binding_event_media_uploads",
-            ]
-            .contains(name)
-            {
-                return Err(REFUSED);
-            }
             if *name == crate::document_artifacts::COLLECTION {
                 external.extend(document_objects(&document, custody, blobs, request).await?);
             }
@@ -130,117 +124,6 @@ pub(crate) async fn capture(
     external.sort_by(|a, b| a.key.cmp(&b.key));
     external.dedup();
     Ok((records, external))
-}
-async fn identities(
-    db: &Database,
-    sandbox: &str,
-    session: &mut ClientSession,
-) -> Result<Vec<String>> {
-    let mut ids = BTreeSet::from([sandbox.to_string()]);
-    for name in ["workspaces", "worktrees", "agents"] {
-        let mut cursor = db
-            .collection::<Document>(name)
-            .find(scope(sandbox, &ids.iter().cloned().collect::<Vec<_>>()))
-            .session(&mut *session)
-            .await
-            .map_err(|_| REFUSED)?;
-        while cursor.advance(&mut *session).await.map_err(|_| REFUSED)? {
-            let document = cursor.deserialize_current().map_err(|_| REFUSED)?;
-            let id = document.get_str("_id").map_err(|_| REFUSED)?;
-            let (owner_parent, workspace, worktree) = match name {
-                "workspaces" => {
-                    let value =
-                        super::super::workspaces::read_workspace(&document).map_err(|_| REFUSED)?;
-                    (value.sandbox_id.to_string(), None, None)
-                }
-                "worktrees" => {
-                    let value =
-                        super::super::worktrees::read_worktree(&document).map_err(|_| REFUSED)?;
-                    (
-                        value.sandbox_id.to_string(),
-                        Some(value.workspace_id.to_string()),
-                        None,
-                    )
-                }
-                "agents" => {
-                    let value = super::super::agents::read_agent(&document).map_err(|_| REFUSED)?;
-                    if document.contains_key(super::super::agent_log_integrity::QUARANTINE_FIELD) {
-                        return Err(REFUSED);
-                    }
-                    super::super::agent_log_integrity::scan_collection(
-                        super::super::agent_log_telemetry::ScanCaller::RecoveryProof,
-                        &db.collection::<Document>("agent_log"),
-                        &value.id,
-                        value.conversation.last_seq,
-                        session,
-                        true,
-                        |entry| {
-                            if let layer2_core::sandbox::AgentLogKind::Created {
-                                workspace_id,
-                                worktree_id,
-                            } = &entry.kind
-                            {
-                                if entry.seq != 1
-                                    || workspace_id != &value.workspace_id
-                                    || worktree_id != value.creation_worktree_id()
-                                {
-                                    return Err(
-                                        layer2_core::sandbox::store::SandboxStoreError::Conflict,
-                                    );
-                                }
-                            }
-                            Ok(())
-                        },
-                    )
-                    .await
-                    .map_err(|_| REFUSED)?;
-                    (
-                        value.sandbox_id.to_string(),
-                        Some(value.workspace_id.to_string()),
-                        Some(value.worktree_id.to_string()),
-                    )
-                }
-                _ => return Err(REFUSED),
-            };
-            if owner_parent != sandbox
-                || workspace.as_ref().is_some_and(|id| !ids.contains(id))
-                || worktree.as_ref().is_some_and(|id| !ids.contains(id))
-            {
-                return Err(REFUSED);
-            }
-            if !ids.insert(id.to_string()) || ids.len() > 100_000 {
-                return Err(REFUSED);
-            }
-        }
-    }
-    Ok(ids.into_iter().collect())
-}
-fn scope(sandbox: &str, ids: &[String]) -> Document {
-    let mut clauses = vec![doc! {"_id":{"$in":ids}}];
-    for field in ["sandbox_id", "agent_id", "workspace_id", "worktree_id"] {
-        for prefix in [
-            "",
-            "record.",
-            "record.metadata.",
-            "binding.",
-            "target.",
-            "record.target.",
-        ] {
-            let mut clause = Document::new();
-            clause.insert(format!("{prefix}{field}"), doc! {"$in":ids});
-            clauses.push(clause);
-        }
-    }
-    for field in [
-        "record.metadata.origin_agent_id",
-        "record.runtime_author_agent_id",
-    ] {
-        let mut clause = Document::new();
-        clause.insert(field, doc! {"$in":ids});
-        clauses.push(clause);
-    }
-    clauses.push(doc! {"sandbox_id":sandbox});
-    doc! {"$or":clauses}
 }
 async fn document_objects(
     document: &Document,
