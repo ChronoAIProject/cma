@@ -16,6 +16,7 @@ use crate::{
 
 pub(super) const PROTOCOL_VERSION: u32 = 1;
 pub(super) const CALL_DEADLINE: Duration = Duration::from_secs(30);
+pub(super) use crate::conversation_channel::RETAINED_HISTORY_IDLE_DEADLINE;
 pub(super) const SIGN_IN_DEADLINE: Duration = Duration::from_secs(16 * 60);
 const DECLARATION_DEADLINE: Duration = Duration::from_secs(10);
 const INPUT_BUFFER: usize = 1;
@@ -105,6 +106,7 @@ pub(super) struct Bridge {
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub(super) context_goal: Mutex<Option<(String, bool)>>,
     pub(super) recovering_context: AtomicU64,
+    pub(super) retained_history_deadline: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
 }
 
 pub(super) struct OpenedBridge {

@@ -147,7 +147,7 @@
   {"operation":"POST /api/v1/responses","positive":"responses-create-completes","negative":"responses-create-foreign","proof":"contract"},
   {"operation":"POST /api/v1/responses/{response_id}/cancel","positive":"responses-cancel-refused","negative":"","proof":"unsupported"},
   {"operation":"POST /api/v1/sandboxes","positive":"sandbox-create","negative":"sandbox-create-denied","proof":"profile-creation"},
-  {"operation":"POST /api/v1/sandboxes/{id}/always-on","positive":"auto-pause-owner-always-on","negative":"auto-pause-owner-forbidden","proof":"probe"},
+  {"operation":"POST /api/v1/sandboxes/{id}/always-on","positive":"auto-pause-owner-disable-unset","negative":"auto-pause-owner-forbidden","proof":"probe"},
   {"operation":"POST /api/v1/sandboxes/{id}/commands","positive":"sandbox-command-owner-admission","negative":"sandbox-command-revoked","proof":"contract"},
   {"operation":"POST /api/v1/sandboxes/{id}/pause","positive":"sandbox-pause","negative":"sandbox-pause-denied","proof":"probe"},
   {"operation":"POST /api/v1/sandboxes/{id}/revive","positive":"sandbox-revive-accepted","negative":"sandbox-revive-not-paused-denied","proof":"probe"},
