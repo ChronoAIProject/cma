@@ -180,14 +180,7 @@ impl DurableAgentUpdateRecorder {
                 "conversation update timestamp is invalid",
             ));
         }
-        let (source, update, shared) = match &update {
-            ConversationUpdate::RuntimeOutput { receipt, update } => (
-                Some(&receipt.source),
-                update.as_deref(),
-                update.as_ref().is_some_and(|update| update.is_shared()),
-            ),
-            update => (None, Some(update), false),
-        };
+        let (source, update, shared) = output::update_parts(&update);
         let fingerprint = output::fingerprint(source, update);
         let update_id = if let Some(pending) = &assembly.pending_update {
             if pending.fingerprint != fingerprint

@@ -135,7 +135,7 @@ Typed domain/prepared updates, derived persistent strings and diagnostic
 formatting, pending RPC bookkeeping, fold/serialization copies, codec fragments,
 desktop output and global assemblies remain separate owners under #1702. The
 component reservations (raw 16 MiB, permission 8 MiB, live fragment 32 MiB,
-parsed tree 32 MiB and scratch 13 MiB) total 101 MiB; the remaining aggregate
+parsed tree 32 MiB, scratch 13 MiB and sign-in notices 8 MiB) total 109 MiB; the remaining aggregate
 128 MiB envelope must include all other owners and allocation metadata. This
 slice does not establish the final aggregate or 70% RSS acceptance criterion.
 
@@ -151,3 +151,7 @@ policy is enabled. This prevents reparsing an outer JSON string into an unreserv
 container tree. See [embedded error bounds](CMA_Embedded_Error_JSON.md) for the
 classification, scratch and qualification scope; complete typed ownership remains
 separate work under #1702.
+
+Sign-in notice strings have their own pre-allocation reservation under this
+policy, including early bootstrap delivery. See [sign-in storage](CMA_Sign_In_Retention.md)
+for the selected-field allowance, final-owner contract and remaining scope.
