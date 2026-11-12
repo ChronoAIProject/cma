@@ -15,8 +15,9 @@ Document identity and content-addressed object identity are idempotent. Retrying
 an already reserved object consumes no additional count or bytes, including at
 capacity. Different content under an uncertain create key still consumes retained
 bytes. Failed upload replies, cancellation and metadata conflicts keep their
-reservations because an immutable object may already exist. There is no automatic
-refund, TTL, delete or reset. Retirement of an Agent does not retire its documents.
+reservations because an immutable object may already exist. Release requires proof that an object is unreferenced and its deletion has
+completed; an HTTP failure alone never refunds a reservation. There is no TTL or
+reset. Retirement of an Agent does not retire its documents.
 Existing over-limit data is retained; fresh growth is refused with the existing
 typed `document_capacity` response. Unknown baseline or unavailable accounting
 fails closed through the existing storage-unavailable response.
@@ -24,19 +25,20 @@ fails closed through the existing storage-unavailable response.
 Reads, history, title-only changes, sharing and owner grant/link revocation do not
 reserve source storage. Exact committed metadata retries precede quota admission.
 Runtime publication revalidates authority before reservation and after upload.
-This change is source accounting, not completion of document deletion, orphan
-cleanup or the separate #1480 retained-data deletion acceptance.
+Document deletion and the separate #1480 retained-data deletion acceptance remain
+separate work. The gated reclaim worker below handles ledgered orphan sources.
 
 ## Durable format and bounds
 
 Agent Manager owns `cma_document_quotas`, added to its exact schema/role registry
 and startup version guard even while the feature is off. Rows use schema version
-1 and the existing `_id` index: one activation marker, one owner aggregate, one
+1 with the `_id` and `{kind: 1, state: 1, reserved_at: 1}` indexes: one activation marker, one owner aggregate, one
 document reservation per owner/document and one object reservation per
 owner/document/digest. Owner identifiers are SHA-256 digests. Object rows retain
 only the charged length; no source text, title, credential or grant is copied.
 Existing document, revision, receipt, object-key and storage-generation formats
-are unchanged. No application collection or object is deleted or rewritten.
+are unchanged. Reclaim removes only condemned object reservations after successful
+object deletion and decrements their owner accounting in the same transaction.
 
 Admission uses point lookups and bounded transaction retries under a three-second
 deadline. Uncertain commit outcomes remain charged or are safely retried under
@@ -132,8 +134,10 @@ production document or source edit is authorized by this document; the retained
 fixture contract remains binding. Larger inventories or cleanup need their own
 explicit scope and window.
 
-This is an additive expand/install/enforce migration. Existing data/recovery units
-remain intact and no destructive transform needs a new pre-delete backup. Retain
+Baseline installation is an additive expand/install/enforce migration and does
+not delete recovery units. Separately activating reclaim does delete eligible
+objects; retain a qualified pre-activation backup as recorded in the reclaim
+migration. Retain
 the private inventory digest, writer/drain receipts, dry-run result, aggregate
 import progress, ready state, deployed source/digest/config and compatible rollback
 receipt. Startup collection creation/version checks have no new wall-time bound;
@@ -144,7 +148,7 @@ the flag false deliberately blocks new source writes after preparation; it never
 refunds uncertain capacity or restores unaccounted legacy writing. Read/revoke and
 committed metadata replay remain available. Recovery is forward-only when the
 baseline is incomplete or uncertain. Storage-owner authorized orphan cleanup and
-any future reservation release must prove object finality and preserve exact
+reservation release must prove object finality and preserve exact
 operation replay in their own migration; neither is inferred from HTTP failure.
 
 ## Source object commit states and bounded writers
@@ -216,3 +220,170 @@ it is never queued. Metadata-only mutations do not consume these permits.
 - **Completion:** verify old rows, exact retries, condemned write rejection,
   CAS conflict behavior and the 16-slot busy response before enabling any
   production writer.
+
+
+## Gated reclaim and finality
+
+Automatic reclaim requires all three prerequisites before scanning candidates or
+writing any row:
+
+1. `CHRONO_DOCUMENT_RECLAIM_ENABLED=true` (strict boolean, default `false`).
+2. `CHRONO_DOCUMENT_QUOTAS_ENABLED=true` and a valid ready activation marker.
+3. The separately scoped maintenance client proves deletion support. Its
+   `CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED` switch stays `false` until the E1
+   storage contract and E2 scopes in [Dependency contracts](Dependency_Contracts.md)
+   are independently verified.
+
+Before activation, deploy this release's reservation-ID writer to every reserving
+process and drain older reservers. The PR-3 commit marker remains the minimum
+metadata publication contract; same-key incarnation fencing additionally requires
+this release's reservation writer.
+
+A missing prerequisite records a blocked reason without candidate scans,
+condemnation, deletion or accounting changes. In particular, unsupported deletion
+must never leave a reservation condemned and permanently refuse a same-key save.
+The worker shares the process background budget, waits 30 seconds after startup,
+and runs a bounded 30-second step every five minutes. Budget denial skips that
+round without queuing database work. It processes at most 64 rows per round and
+at most four object deletes concurrently. A deletion failure stops new deletes
+in that batch, retains condemned rows, and respects a longer `Retry-After`.
+
+The object state machine is `reserved -> committed` in the metadata transaction,
+or `reserved -> condemned -> deleted` through reclaim. Legacy rows without a
+state are reserved. New reservations include a unique `reservation_id`; judgement,
+finalization and unknown-outcome reads match the captured reservation incarnation.
+A stale candidate cannot release a fresh reservation under the same content key.
+Legacy rows without an ID match only another missing ID, so older reservers must
+be drained before reclaim begins. A candidate must be older than the 30-minute grace period;
+its judgement transaction rereads both the document and its age. A revision
+referencing the exact key repairs the row to committed. Otherwise the conditional
+condemnation writes the same row as the source commit transaction, forcing the
+writer or the judge to lose their write conflict. The grace reduces aborted slow
+writers; it supplies no concurrency proof.
+
+Deletion runs outside transactions. Both deleted and already absent responses
+permit finalization. A separate transaction increments the owner fence, deletes
+only a condemned object row, and decrements bytes and objects only when that row
+was removed. This serializes with reserve and makes accounting release exactly
+once across processes. It also releases a failed-create document slot only after
+the main document and its last object row are absent. Negative counters abort
+with corruption and preserve the transaction's rows. Unknown commits are
+reconciled using the transaction operation time; ambiguous work remains retryable.
+
+New baseline installs retain immutable `baseline_documents`, `baseline_bytes`
+and `baseline_objects` on owner rows, and publish a server `activated_at` timestamp
+on the activation marker. Legacy objects with no reservation time can use that
+activation timestamp. If both timestamps are missing, reclaim skips them rather
+than inventing their age. Operators must investigate those rows with a private
+inventory before certifying a complete sweep.
+
+Release means finality was proved, followed by accounting settlement. Under a
+healthy dependency and a batch without backlog, grace plus interval plus step
+is about 36 minutes. Larger queues, denied budget or dependency backoff can take
+longer; the metric age is the operational evidence, not a fixed completion SLA.
+Referenced revisions remain retained. Removing an Agent still does not remove
+its independent documents.
+
+## Reconciliation and authorized orphan cleanup
+
+The authorization policy distinguishes two populations. Ledgered, transactionally
+proved unreferenced reservations are eligible for automatic reclaim under the
+approved policy. Objects outside the ledger require an operator's explicit
+report review, dry-run and apply. Neither command authorizes document deletion,
+checkpoint cleanup or changes to another service's data.
+
+Run with the service's existing Mongo authority and storage environment:
+
+```text
+cma --document-quota-reconcile --report /private/document-reconcile.json
+cma --document-quota-reconcile --report /private/document-reconcile.json --resume
+cma --document-quota-reconcile --report /private/owner-reconcile.json --owner <owner-hash>
+cma --document-quota-orphan-cleanup /private/document-reconcile.json --dry-run
+cma --document-quota-orphan-cleanup /private/document-reconcile.json --apply
+```
+
+Reconciliation is read-only against the database and storage. It pages for at
+most 60 seconds per invocation, preserving progress in the private report for
+`--resume`. Keep its path and contents private: keys can appear in the report,
+but never owner subjects, titles or document bodies. Standard output is aggregate
+JSON only. Every invariant is `PASS`, `FAIL` or `NOT_CHECKED`; partial scans and
+unavailable capabilities must not masquerade as successful zero counts. The
+report records the age observation interval. When resuming after ledger progress,
+I3 is `NOT_CHECKED` because earlier row ages were not reread; start a fresh report
+for current age evidence. Reports are bounded to 32 MiB, with a smaller staged
+state limit reserving serialization space; if capacity is exhausted, start a
+new owner-scoped report. Resume and cleanup bind to a digest of the database URI,
+database name and storage bucket; configuration or credential changes require
+fresh reconciliation. Repeat the same `--owner` when resuming an owner-scoped
+report. If listing becomes available, resume can continue its
+previously unchecked listing phase. Duplicate keys or cycling cursors refuse the
+listing evidence rather than double-counting objects. Reads are bounded majority
+pages, not a single cross-invocation database snapshot; review concurrent changes
+and repeat a failed check in the approved observation window.
+
+- I1 compares owner counters with their document and object rows.
+- I2 requires a committed object row for every revision reference.
+- I3 checks reserved age against grace plus interval and condemned age against
+  one interval. Purge lifecycle age is outside this release's scope.
+- I4 checks listed keys against ledger rows, counts outside keys as
+  `orphan_blob_count`, and excludes referenced keys from cleanup. Without listing
+  capability it is `NOT_CHECKED`, with an unknown count rather than zero.
+- I5 computes `count_overshoot=max(0, documents-100)` and
+  `bytes_overshoot=max(0, bytes-1073741824)`. Existing baseline overshoot is shown
+  separately; owners with retained baseline counters can be checked for growth.
+  This compares current usage with the baseline; proving no historical growth
+  requires retained observations throughout the activation window.
+  Legacy baseline comparison is `NOT_CHECKED` when the original counters are
+  unavailable; current usage cannot reconstruct the baseline.
+
+The maintenance interface currently lists only a single owner or document
+prefix. Global reconciliation enumerates owners known through ledger or revision
+records and explicitly reports this limited coverage. Its I4 is `NOT_CHECKED`
+and `orphan_blob_count` is `null`; `observed_orphan_blob_count` contains the extras
+actually found under known owners. Only an explicit `--owner` scan can return
+a definitive logical-key orphan count or I4 `PASS` for that prefix. It cannot prove absence of
+objects under an unknown owner prefix. Obtain the independent complete inventory
+from the storage owner for global acceptance. Listing covers logical keys only;
+zero logical orphans does not prove that hidden versions or soft-deleted bytes
+are gone. Retain the provider's physical-version/finality evidence separately.
+
+Before applying an outside-ledger cleanup, stop source-writing admission and
+prove all in-flight source uploads and commits have drained. Keep the ledger
+ready. This operational exclusion is required because absence rechecks cannot
+fence a new reservation for a previously absent content-addressed key. Do not
+use a fixed sleep as drain proof. Review the completed report and run dry-run,
+then apply the same file. Apply writes a private `<report>.audit` JSONL intent
+with the report digest and aggregate count before any delete, followed by its
+aggregate outcome. An intent without a final result means the effect is uncertain.
+Both modes refuse an unready ledger; apply rechecks
+every key for ledger absence and absence from every revision before deletion.
+Dry-run changes no database or object. Retain aggregate receipts and the report
+digest for audit. An error or uncertain delete requires fresh reconciliation;
+never infer absence from a failed request.
+
+## Reclaim observations and rollback
+
+Background rounds emit `cma_document_reclaim_pending_objects` (stale reserved
+plus condemned), `cma_document_orphan_oldest_age_seconds` and
+`cma_document_reclaim_blocked`. Counters use
+`cma_document_reclaim_objects_total{outcome}` with `committed`, `condemned`,
+`released` and `delete_failed`. Counts are observations of this process's work,
+not a second durable ledger. No online request gains a metrics query. Blocked
+rounds leave backlog observations unknown or at their last successful sample;
+consult blocked status before interpreting them.
+
+Alert when orphan age exceeds 86,400 seconds or blocked status persists after
+activation. Check E1/E2, activation, all-writer versions, budget pressure and
+retry delay before intervening. A delete failure must retain its reservation.
+The storage-owner acceptance must also cover delayed concurrent deletes and
+same-key reuse: accounting exactly once alone cannot prove that a late external
+delete cannot erase a fresh upload. Keep deletion/reclaim closed until that
+external finality contract is demonstrated.
+
+Disable `CHRONO_DOCUMENT_RECLAIM_ENABLED` and restart to stop new rounds. Retain
+all additive rows, indexes and compatible source writers. Reclaim activation
+requires this release's reservation-ID writers; rollback with reclaim off retains
+the PR-3-or-later commit-marker floor. Closing
+the switch does not restore an already deleted object. Restore only through an
+independently verified backup/recovery procedure that preserves reference and
+ledger consistency; this release grants no restore or production cleanup action.

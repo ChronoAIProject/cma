@@ -70,8 +70,14 @@ for deterministic coverage and the remaining provider acceptance evidence.
 Without a configured bucket, storage-dependent requests return an explicit
 unavailable response and the document tools are omitted from discovery. There
 is no memory-backed production fallback. Failed metadata commits can leave an
-unreferenced immutable blob; they cannot overwrite a live source or acknowledge
-a document that has not been durably recorded.
+unreferenced immutable blob. With reclaim enabled, a ready quota ledger and
+proved storage deletion support, an unreferenced reservation is judged after a
+30-minute grace and reclaimed in bounded background batches; referenced baseline
+rows are repaired to committed. Failed or uncertain object writes remain charged
+until finality is proved. Outside-ledger objects need an operator report and
+authorized CLI cleanup. See [Document quotas](CMA_Document_Quotas.md) for gates,
+release and reconciliation. Failed commits cannot acknowledge a document that
+has not been durably recorded.
 
 ## Editing and concurrency
 

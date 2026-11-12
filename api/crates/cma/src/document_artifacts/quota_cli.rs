@@ -2,6 +2,7 @@
 use super::{quota::*, quota_baseline::*};
 use mongodb::{bson::doc, options::ClientOptions, Client};
 use std::io::Read;
+use tracing::instrument::WithSubscriber;
 
 pub(crate) fn is_command(arguments: &[String]) -> bool {
     arguments
@@ -10,17 +11,29 @@ pub(crate) fn is_command(arguments: &[String]) -> bool {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<serde_json::Value, &'static str> {
-    tokio::time::timeout(std::time::Duration::from_secs(60), execute(arguments)).await
-        .map_err(|_| "quota command deadline; retain the original manifest and resume after inspecting status")?
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    tokio::time::timeout_at(
+        deadline,
+        execute(arguments, deadline).with_subscriber(tracing::subscriber::NoSubscriber::default()),
+    )
+    .await
+    .map_err(|_| {
+        "quota command deadline; retain the original manifest and resume after inspecting status"
+    })?
 }
 
-async fn execute(arguments: &[String]) -> Result<serde_json::Value, &'static str> {
+async fn execute(
+    arguments: &[String],
+    deadline: tokio::time::Instant,
+) -> Result<serde_json::Value, &'static str> {
     enum Action {
         Status,
         Prepare(String),
         Install(Inventory, bool),
+        Maintenance,
     }
     let action = match arguments.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["--document-quota-reconcile" | "--document-quota-orphan-cleanup", ..] => Action::Maintenance,
         ["--document-quota-status"] => Action::Status,
         ["--document-quota-prepare", id] if valid_activation(id) => Action::Prepare((*id).into()),
         ["--document-quota-install", path, mode @ ("--dry-run" | "--apply")] => {
@@ -65,10 +78,13 @@ async fn execute(arguments: &[String]) -> Result<serde_json::Value, &'static str
     {
         return Err("deploy compatible readers and initialize the quota collection first");
     }
+    if matches!(action, Action::Maintenance) {
+        return super::reconcile::execute(&database, arguments, deadline).await;
+    }
     let store = MongoDocumentQuotaStore::new(&database, true);
     let dry_run = matches!(&action, Action::Install(_, false));
     match action {
-        Action::Status => {},
+        Action::Status | Action::Maintenance => {},
         Action::Prepare(id) => store.prepare(&id).await.map_err(|_| "source-write fence refused; inspect retained activation state")?,
         Action::Install(inventory, apply) => store.install(&database, &inventory, apply).await.map_err(|_| "baseline import refused; keep source writes fenced and retain the original inventory")?,
     }
