@@ -59,6 +59,19 @@ pub(super) fn unavailable() -> Response {
     error(StatusCode::SERVICE_UNAVAILABLE, "response_unavailable", "The response cannot be observed right now. Retry with the same idempotency key or retrieve the admitted response.", None)
 }
 
+pub(super) fn admission_paused() -> Response {
+    let mut response = error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "admission_paused",
+        layer2_core::admission::ADMISSION_PAUSED_GUIDANCE,
+        None,
+    );
+    response
+        .headers_mut()
+        .insert("retry-after", "60".parse().unwrap());
+    response
+}
+
 pub(super) fn binding_admission(value: CommandAdmissionError) -> Response {
     if matches!(
         value,
@@ -122,6 +135,10 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         );
     }
     match value {
+        CommandAdmissionError::Ledger(CommandLedgerError::AdmissionPaused)
+        | CommandAdmissionError::Input(
+            layer2_core::sandbox::AgentOperationError::AdmissionPaused,
+        ) => admission_paused(),
         CommandAdmissionError::ModelMismatch => field(
             "model",
             "model_mismatch",
@@ -193,5 +210,34 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
             None,
         ),
         _ => unavailable(),
+    }
+}
+
+#[cfg(test)]
+mod admission_pause_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn response_admission_and_binding_admission_keep_operator_pause_typed() {
+        for response in [
+            admission(CommandAdmissionError::Ledger(
+                CommandLedgerError::AdmissionPaused,
+            )),
+            binding_admission(CommandAdmissionError::Ledger(
+                CommandLedgerError::AdmissionPaused,
+            )),
+        ] {
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()["retry-after"], "60");
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["error"]["code"], "admission_paused");
+            assert_eq!(
+                body["error"]["message"],
+                layer2_core::admission::ADMISSION_PAUSED_GUIDANCE
+            );
+        }
     }
 }
