@@ -40,18 +40,42 @@ pub(in crate::store) async fn reconcile(
     result: &Binary,
     session: &mut ClientSession,
 ) -> Result<Outcome, SandboxStoreError> {
+    reconcile_mode(store, operation, expected, logs, result, session, true).await
+}
+
+pub(in crate::store) async fn reconcile_transaction(
+    store: &MongoSandboxStore,
+    operation: &PublicationIdentity,
+    expected: &Agent,
+    logs: &[AgentLogEntry],
+    result: &Binary,
+    session: &mut ClientSession,
+) -> Result<Outcome, SandboxStoreError> {
+    reconcile_mode(store, operation, expected, logs, result, session, false).await
+}
+
+async fn reconcile_mode(
+    store: &MongoSandboxStore,
+    operation: &PublicationIdentity,
+    expected: &Agent,
+    logs: &[AgentLogEntry],
+    result: &Binary,
+    session: &mut ClientSession,
+    snapshot: bool,
+) -> Result<Outcome, SandboxStoreError> {
     operation.validate()?;
     ensure_append_batch_size(logs.len())?;
     let incarnation = digest::incarnation(expected);
     let publications = collection(store, PUBLICATIONS);
-    let receipt = publications
-        .find_one(doc! {
-            "_id":publication::identity(expected.id.as_str(), &incarnation, &operation.key),
-        })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut *session)
-        .await
-        .map_err(driver)?;
+    let query = publications.find_one(doc! {
+        "_id":publication::identity(expected.id.as_str(), &incarnation, &operation.key),
+    });
+    let query = if snapshot {
+        query.read_concern(ReadConcern::snapshot())
+    } else {
+        query
+    };
+    let receipt = query.session(&mut *session).await.map_err(driver)?;
     let Some(row) = receipt else {
         return Ok(Outcome::Unknown);
     };
@@ -68,10 +92,13 @@ pub(in crate::store) async fn reconcile(
     {
         return Err(corrupt());
     }
-    let row = store
-        .agents
-        .find_one(doc! {"_id":expected.id.as_str()})
-        .read_concern(ReadConcern::snapshot())
+    let query = store.agents.find_one(doc! {"_id":expected.id.as_str()});
+    let query = if snapshot {
+        query.read_concern(ReadConcern::snapshot())
+    } else {
+        query
+    };
+    let row = query
         .session(&mut *session)
         .await
         .map_err(driver)?
@@ -80,8 +107,10 @@ pub(in crate::store) async fn reconcile(
         return Err(corrupt());
     }
     let current = read_agent(&row)?;
-    let head = read_head(store, &row, session, true).await.map_err(error)?;
-    verify_head(store, &receipt, &current, &head, session).await?;
+    let head = read_head(store, &row, session, snapshot)
+        .await
+        .map_err(error)?;
+    verify_head(store, &receipt, &current, &head, session, snapshot).await?;
     if !logs.is_empty() {
         let mut offset = 0;
         visit_range(
@@ -93,7 +122,7 @@ pub(in crate::store) async fn reconcile(
                 limit: logs.len() as u16,
             },
             session,
-            true,
+            snapshot,
             |entry| {
                 if logs.get(offset) != Some(&entry) {
                     return Err(corrupt());
@@ -117,6 +146,7 @@ async fn verify_head(
     current: &Agent,
     head: &super::Head,
     session: &mut ClientSession,
+    snapshot: bool,
 ) -> Result<(), SandboxStoreError> {
     if head.incarnation != receipt.incarnation
         || current.revision < receipt.result_revision as u64
@@ -132,9 +162,14 @@ async fn verify_head(
     if receipt.active_ordinal > 0 {
         let ordinal = receipt.active_ordinal - 1;
         let seals = collection(store, SEGMENTS);
-        let seal = seals
-            .find_one(doc! {"_id":Seal::identity(&head.agent_id, &head.incarnation, ordinal)})
-            .read_concern(ReadConcern::snapshot())
+        let query =
+            seals.find_one(doc! {"_id":Seal::identity(&head.agent_id, &head.incarnation, ordinal)});
+        let query = if snapshot {
+            query.read_concern(ReadConcern::snapshot())
+        } else {
+            query
+        };
+        let seal = query
             .session(&mut *session)
             .await
             .map_err(driver)?
