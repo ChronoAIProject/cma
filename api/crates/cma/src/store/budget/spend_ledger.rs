@@ -11,8 +11,7 @@ use mongodb::bson::doc;
 use mongodb::ClientSession;
 
 use super::period::{
-    ensure_period_row, load_or_open, period_key, read_snapshot, save_period, snapshot,
-    PolicySnapshot,
+    ensure_period_row, load_or_open, read_snapshot, save_period, snapshot, PolicySnapshot,
 };
 use super::{decode, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use crate::store::sandbox_mongo::{
@@ -38,7 +37,12 @@ impl MongoSandboxStore {
         &self,
         period_start: u64,
     ) -> Result<Option<super::period_storage::PeriodState>, BudgetError> {
-        super::period_storage::read_plain(&self.model_budget, period_start).await
+        super::period_storage::read_plain(
+            &self.model_budget,
+            period_start,
+            self.platform_counter_shards,
+        )
+        .await
     }
 
     /// Time-driven decisions use plain reads, then commit entries, lifts and
@@ -246,6 +250,14 @@ async fn observe_in(
         .await
         .map_err(ApplyError::Driver)?;
     let (mut ledger, _) = load_or_open(store, &platform, snapshot.revision, session).await?;
+    if ledger.counters.is_some() {
+        super::period::fence_settings(
+            &store.budget_settings,
+            "platform_counter_increase_fence",
+            session,
+        )
+        .await?;
+    }
     ledger
         .ledger
         .record_cloud(observation)

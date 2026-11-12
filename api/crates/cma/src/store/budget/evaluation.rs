@@ -6,7 +6,7 @@ use layer2_core::budget::PlatformBudgetPolicy;
 const REFRESH_SECONDS: u64 = 60;
 
 impl MongoSandboxStore {
-    pub(super) async fn persist_evaluation(
+    pub(in crate::store::budget) async fn persist_evaluation(
         &self,
         platform: &PlatformBudgetPolicy,
         revision: u64,
