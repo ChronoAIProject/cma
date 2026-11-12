@@ -93,7 +93,7 @@ pub(crate) struct Bridge {
     ended: tokio::sync::watch::Sender<bool>,
     writer_session_root: Option<i32>,
     observation: Option<Arc<Mutex<observation::NativeObservation>>>,
-    capacity_recovery: Mutex<Option<(String, u64, Instant)>>,
+    capacity_recovery: Mutex<recovery::LeaseState>,
 }
 
 impl Bridge {
@@ -174,7 +174,7 @@ impl Bridge {
             ended,
             writer_session_root,
             observation,
-            capacity_recovery: Mutex::new(None),
+            capacity_recovery: Mutex::new(recovery::LeaseState::default()),
         })
     }
 
@@ -340,9 +340,16 @@ async fn publish(
     observation: &Option<Arc<Mutex<observation::NativeObservation>>>,
 ) {
     if let Some(observation) = observation {
-        observation.lock().await.output(&frame);
+        // A full output window can await an ACK. Mark the in-flight boundary
+        // instead of holding a state lock across backpressure.
+        observation.lock().await.pending_output = true;
+        retained_output.retain(&frame).await;
+        let mut observed = observation.lock().await;
+        observed.output(&frame);
+        observed.pending_output = false;
+    } else {
+        retained_output.retain(&frame).await;
     }
-    retained_output.retain(&frame).await;
     if output.send(Outbound::Frame(frame.clone())).is_err() {
         pending.lock().await.push(frame);
     }

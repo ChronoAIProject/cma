@@ -5,6 +5,8 @@ use serde_json::Value;
 
 #[derive(Default)]
 pub(in crate::bridge) struct NativeObservation {
+    pub revision: u64,
+    pub pending_output: bool,
     pub conversation_id: Option<String>,
     pub native_state: Option<ConfirmedAgentState>,
     pending_open: Option<(Value, Option<String>)>,
@@ -21,6 +23,7 @@ impl NativeObservation {
     }
 
     pub fn input(&mut self, frame: &[u8]) {
+        self.revision = self.revision.saturating_add(1);
         let Ok(value) = serde_json::from_slice::<Value>(frame) else {
             self.invalidate();
             return;
@@ -69,6 +72,7 @@ impl NativeObservation {
     }
 
     pub fn output(&mut self, frame: &[u8]) {
+        self.revision = self.revision.saturating_add(1);
         let Ok(value) = serde_json::from_slice::<Value>(frame) else {
             self.invalidate();
             return;
