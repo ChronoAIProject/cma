@@ -340,6 +340,10 @@ liability and would strand admitted work.
    because their rotation starts a runtime even on a paused Sandbox; they run
    again after the lift.
 
+The sweep's cached STOP answer only proposes a pause. Maintenance admission
+rechecks the enabled policy and persisted STOP, with actual writes that conflict
+with policy edits and closure lifts, before committing the pause.
+
 A failed pause can leave a retained home and runtime eligible for recovery.
 Recovery admission checks the platform state in its transaction before starting
 any replacement runtime. STOP or unavailable metering refuses that new
@@ -359,9 +363,12 @@ present. Staleness alone refuses new commitments and leaves running work alone.
   by any replica is therefore honored by the next admission on every replica.
   Cached reads may refuse early, never admit.
 - **Running turns:** the `SpendSource` monitor polls each second per live Agent.
-  It reads the period row with a plain read — no transaction, no fence — behind
-  a 5-second process-local cache that can only report "closed". The cancel is
-  sent within the cache window plus one poll plus the runtime round-trip.
+  A 5-second process-local cache schedules a fresh check when it reports STOP.
+  A new exact-turn cancellation receipt commits only after checking and fencing
+  the current settings and period STOP in the same transaction. A lift or policy
+  change conflicts with that transaction. Previously committed receipts remain
+  valid for their original turn after a lift. A cached open answer may delay
+  STOP by the cache window plus one poll and the runtime round-trip.
 - **Time-driven transitions and the pause sweep** run as a phase of the existing
   15-second reconciliation sweep on every replica; there is no separate worker
   or lease. The phase pre-creates the row, recomputes `cloud(now)`, enters or
@@ -619,8 +626,10 @@ Marked so they can be overturned without re-reading:
     guarded by both settings and period revisions; stale decisions are discarded.
 14. Zero-liability admissions read settings and the period row without the
     settings fence.
-15. Stop polling reads the period row without a transaction behind a 5-second
-    cache that may stop but never admit.
+15. Stop polling uses a 5-second cache as a hint. Every new cancellation receipt
+    and platform pause requires current settings and period STOP authority
+    fenced inside its committing transaction. A cached positive cannot stop
+    newly admitted work after a lift.
 16. A process-wide `PlatformWrites` mutex schedules local period-row writers,
     and budget request transactions share `contention::backoff`.
 17. Registration is refused at the sign-in callback (authority, fail closed)
