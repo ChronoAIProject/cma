@@ -401,6 +401,9 @@ pub(crate) struct AgentTranscriptView {
     pub(crate) agent_id: String,
     pub(crate) through_seq: u64,
     pub(crate) turns: Vec<AgentTranscriptTurnView>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Object)]
+    pub(crate) next: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
