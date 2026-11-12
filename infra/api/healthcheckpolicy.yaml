@@ -11,7 +11,8 @@
 # continue routing external traffic after this instance loses its session
 # store. /ready serves a cached result without a Mongo checkout per request;
 # its background check has a two-second deadline and a five-second freshness
-# bound. Kubelet liveness remains process-only in deployment.yaml.
+# bound. It also requires local execution schedulers; optional warm capacity
+# does not remove traffic. Kubelet liveness remains process-only in deployment.yaml.
 #
 # The neighbouring control planes each declare one of these; CMA simply
 # lacked it.

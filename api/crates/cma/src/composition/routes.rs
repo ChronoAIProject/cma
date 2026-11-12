@@ -14,7 +14,7 @@ pub(super) fn compose(
     auth: Arc<AuthState>,
     recorder: Arc<ActivityRecorder>,
     (limits, reads): (Arc<RateLimiters>, Arc<crate::expensive_reads::ReadBudget>),
-    stores: Arc<MongoStores>,
+    health: Router,
     tools: Router,
 ) -> Router {
     let public = crate::rest_router(resources)
@@ -42,7 +42,7 @@ pub(super) fn compose(
         .layer(axum::middleware::from_fn(
             crate::background::interactive_request,
         ))
-        .merge(crate::health::router(stores))
+        .merge(health)
         .merge(crate::telemetry::browser::router())
         .layer(axum::middleware::from_fn_with_state(
             limits,
