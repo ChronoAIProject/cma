@@ -107,6 +107,7 @@
   {"operation":"GET /api/v2/conversations/{conversation_id}","positive":"responses-v2-conversation","negative":"responses-v2-conversation-foreign","proof":"contract"},
   {"operation":"GET /api/v2/conversations/{conversation_id}/items","positive":"responses-v2-items","negative":"responses-v2-items-foreign","proof":"contract"},
   {"operation":"GET /api/v2/responses/{response_id}","positive":"responses-v2-retrieve","negative":"responses-v2-retrieve-foreign","proof":"contract"},
+  {"operation":"GET /api/v2/responses/{response_id}/output","positive":"responses-v2-output-success","negative":"responses-v2-output-foreign","proof":"contract"},
   {"operation":"GET /api/v2/responses/{response_id}/events","positive":"responses-v2-replay","negative":"responses-v2-replay-foreign","proof":"contract"},
   {"operation":"PATCH /api/v1/agents/{id}/preferences","positive":"agent-preferences-update","negative":"preferences-agent-input-unavailable-denied","proof":"probe"},
   {"operation":"PATCH /api/v1/agents/{id}/settings","positive":"agent-settings-update","negative":"settings-agent-input-unavailable-denied","proof":"probe"},

@@ -1,4 +1,9 @@
 import {
+  readTranscript,
+  readTranscriptPage,
+  type TranscriptPageOptions,
+} from './agents/transcript.js';
+import {
   readAgentPreferences,
   changeAgentPreferences,
   type UpdateAgentPreferencesRequest,
@@ -55,7 +60,6 @@ import {
   agentResources,
   agentSummary,
   agentTextRequest,
-  agentTranscript,
   agentUsage,
   approvalDecisionRequest,
   createAgentRequest,
@@ -100,18 +104,15 @@ import {
   type DeliverableResource,
 } from './agents/deliverables.js';
 import type { DocumentAccessOptions } from './documents.js';
-
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
   readonly workspace?: string;
   readonly status?: AgentStatus;
 }
-
 export interface AccessibleAgentListOptions extends AgentListOptions {
   /** Canonical organization ID; omission selects personal inventory. */
   readonly organization?: string;
 }
-
 export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOptions {
   readonly taskStatus?: import('./instances/types.js').AgentTaskStatus;
   /** Explicit incoming shares across current organizations; mutually exclusive with organization. */
@@ -123,11 +124,9 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
   /** Filter any retained channel attachment/use history, including detached bindings. */
   readonly channelHistory?: boolean;
 }
-
 /** Public Agent REST commands and durable read projections. */
 export class Agents {
   constructor(private readonly config: ResolvedConfig) {}
-
   suggestions(
     id: string,
     scope: import('./answer-context.js').AnswerContext,
@@ -135,7 +134,6 @@ export class Agents {
   ) {
     return readSuggestions(this.config, id, scope, options);
   }
-
   feedbackDetails(id: string, messageId: string, options: OperationOptions = {}) {
     return feedbackDetails(this.config, id, messageId, options);
   }
@@ -147,7 +145,6 @@ export class Agents {
   ) {
     return setFeedbackReasons(this.config, id, messageId, body, options);
   }
-
   /** Read saved owner votes; use next as after until pagination completes. */
   messageFeedback(id: string, options: EventOptions = {}) {
     return listMessageFeedback(this.config, id, options);
@@ -161,7 +158,6 @@ export class Agents {
   ) {
     return setMessageFeedback(this.config, id, messageId, vote, options);
   }
-
   /** Discover the owner-authenticated desktop stream. The host opens its WebSocket. */
   desktop(id: string, options: OperationOptions = {}) {
     return read(
@@ -183,7 +179,6 @@ export class Agents {
   installSkill(id: string, body: InstallAgentSkillRequest, options: CommandOptions) {
     return installAgentSkill(this.config, id, body, options);
   }
-
   /** Read editable owner preferences and current native instruction support. */
   preferences(id: string, options: OperationOptions = {}) {
     return readAgentPreferences(this.config, id, options);
@@ -200,7 +195,6 @@ export class Agents {
   updateSettings(id: string, body: UpdateAgentSettingsRequest, options: CommandOptions) {
     return changeAgentSettings(this.config, id, body, options);
   }
-
   /** Read durable owner-visible service requests without granting access. */
   accessRequests(id: string, options: OperationOptions = {}) {
     return listAgentAccessRequests(this.config, id, options);
@@ -222,12 +216,10 @@ export class Agents {
   denyAccessRequest(id: string, requestId: string, options: CommandOptions) {
     return denyAgentAccess(this.config, id, requestId, options);
   }
-
   /** Admit or resume the exact same inline request with its original idempotency key. */
   createLifecycle(body: AgentLifecycleCreateRequest, options: CommandOptions) {
     return createAgentLifecycle(this.config, body, options);
   }
-
   desktopCapability(scope: DesktopScope = {}, options: OperationOptions = {}) {
     return readDesktopCapability(this.config, scope, options);
   }
@@ -433,7 +425,10 @@ export class Agents {
   }
 
   transcript(id: string, options: OperationOptions = {}) {
-    return this.readProjection(id, 'transcript', agentTranscript, options);
+    return readTranscript(this.config, id, options);
+  }
+  transcriptPage(id: string, options: TranscriptPageOptions = {}) {
+    return readTranscriptPage(this.config, id, options);
   }
   usage(id: string, options: OperationOptions = {}) {
     return this.readProjection(id, 'usage', agentUsage, options);
