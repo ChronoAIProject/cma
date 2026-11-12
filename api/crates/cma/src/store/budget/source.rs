@@ -11,13 +11,18 @@ use mongodb::bson::doc;
 use super::period::{period_key, snapshot, PolicySnapshot};
 use super::{decode, owner_key, turn_key, MongoSandboxStore, TurnRecord, DOCUMENT_SCHEMA_VERSION};
 
+#[cfg(test)]
+#[path = "source_tests.rs"]
+mod tests;
+
 /// How long one plain read of the period row answers the stop poll.
 const PLATFORM_STOP_TTL: Duration = Duration::from_secs(5);
 
 /// Process-local hints from platform reads (concurrency rules 3, 5): whether
 /// the last settings read showed an enabled platform policy, which schedules
 /// period-row writers, and the last stop read of the period row. A stale entry
-/// can delay a stop by one TTL; it is never authority to admit anything.
+/// can delay a stop by one TTL; a positive only schedules an authoritative
+/// transaction before a new durable cancellation receipt is created.
 #[derive(Default)]
 pub(in crate::store) struct PlatformStopCache {
     platform_enabled: Option<bool>,
@@ -171,6 +176,9 @@ impl MongoSandboxStore {
         if self
             .platform_stopped(snapshot.as_ref().and_then(|value| value.platform.as_ref()))
             .await?
+            && self
+                .record_platform_stop(&format!("stop:{}:{turn}", agent.id.as_str()))
+                .await?
         {
             return Ok(Some(BudgetError::PlatformExhausted));
         }
