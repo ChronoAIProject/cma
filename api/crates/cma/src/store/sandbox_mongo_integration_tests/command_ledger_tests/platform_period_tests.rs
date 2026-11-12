@@ -323,11 +323,13 @@ async fn two_stores_crossing_the_stop_level_record_one_closure() {
         "the allowance that did not fit stopped nothing"
     );
     // One more observed unit brings committed to disposable: both stores'
-    // next admissions are refused and exactly one stop is recorded.
+    // next admissions are refused and exactly one stop is recorded. Both come
+    // from the owner with a raised day limit, so whichever owner won above,
+    // the owner check cannot refuse first.
     observe(&store, &capped(cap), 1, seconds(NOW)).await;
     let (first, second) = tokio::join!(
         store.reserve_command(request(&agent, &parent, "third")),
-        peer.reserve_command(request(&other, &other_parent, "fourth")),
+        peer.reserve_command(request(&agent, &parent, "fourth")),
     );
     for refused in [first, second] {
         assert_eq!(
