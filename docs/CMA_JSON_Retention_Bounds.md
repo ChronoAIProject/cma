@@ -144,3 +144,10 @@ keep their reservations until they actually drop. Production activation and
 acceptance remain coordinated through the dedicated harness and release owner.
 
 Part of #1472. Implementation child #1718 under #1702.
+
+
+Embedded credit-error diagnostics use a borrowed discriminator parser when this
+policy is enabled. This prevents reparsing an outer JSON string into an unreserved
+container tree. See [embedded error bounds](CMA_Embedded_Error_JSON.md) for the
+classification, scratch and qualification scope; complete typed ownership remains
+separate work under #1702.

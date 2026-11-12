@@ -41,7 +41,10 @@ impl Bridge {
                         }
                         updates
                             .send(super::acp_turn::scoped_turn_outcome(
-                                super::acp_turn::turn_outcome(&*frame),
+                                super::acp_turn::turn_outcome_with_policy(
+                                    &*frame,
+                                    self.json_pools.is_some(),
+                                ),
                                 true,
                                 prompt_id,
                             ))
@@ -64,7 +67,8 @@ impl Bridge {
                         // still carry a valid terminal identity to the durable
                         // recorder before it can ACK the retained frame.
                         if let Some(prompt_id) = crate::PromptIdentity::parse(id) {
-                            if let Some(outcome) = prompt_outcome(&frame) {
+                            if let Some(outcome) = prompt_outcome(&frame, self.json_pools.is_some())
+                            {
                                 self.mark_prompt_completed(id).await;
                                 self.orphaned_prompt_response
                                     .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -378,13 +382,13 @@ pub(crate) fn outcome_for(
     serde_json::json!({ "outcome": "cancelled" })
 }
 
-fn prompt_outcome(frame: &serde_json::Value) -> Option<super::acp::Outcome> {
+fn prompt_outcome(frame: &serde_json::Value, bounded_json: bool) -> Option<super::acp::Outcome> {
     let terminal = frame.get("error").is_some()
         || frame
             .get("result")
             .and_then(serde_json::Value::as_object)
             .is_some_and(|result| result.contains_key("stopReason"));
-    terminal.then(|| super::acp_turn::turn_outcome(frame))
+    terminal.then(|| super::acp_turn::turn_outcome_with_policy(frame, bounded_json))
 }
 
 pub(super) fn valid_call(call: &serde_json::Value) -> bool {

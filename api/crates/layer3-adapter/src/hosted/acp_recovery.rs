@@ -98,7 +98,8 @@ impl Bridge {
         }
         recovery.mark_completed(id);
         recovery.expected = None;
-        let outcome = crate::hosted::acp_turn::turn_outcome(frame);
+        let outcome =
+            crate::hosted::acp_turn::turn_outcome_with_policy(frame, self.json_pools.is_some());
         if recovery.verified {
             updates
                 .send(crate::hosted::acp_turn::scoped_turn_outcome(
