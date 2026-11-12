@@ -11,6 +11,7 @@ reservation pool while preserving their individual component limits:
 | Parser and preflight scratch | 13 MiB | Before preflight through the end of owned parsing |
 | Permission table and retained replay entries | 8 MiB | Table teardown and final in-flight replay owner |
 | Retained live fragments | 32 MiB | Last subscriber, deferred delivery or retained source clone |
+| Sign-in notice strings and immutable envelope | 8 MiB | Through early bootstrap delivery and the final effect owner |
 
 Enabling it requires `CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED`,
 `CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED`,
@@ -38,7 +39,7 @@ the accepted source ACK progresses. No pressure path fabricates an ACK or termin
 
 This pool bounds reservations for the named owners. It does not establish a
 complete ingress heap or process RSS limit. The existing component maxima total
-101 MiB; the shared coordinator becomes necessary as further ownership boundaries
+109 MiB including the later sign-in notice component; the shared coordinator becomes necessary as further ownership boundaries
 join the same envelope. Unwired storage must not be represented as charged.
 
 Remaining owners under #1702 include typed domain/prepared effects, codec and

@@ -161,6 +161,8 @@ pub enum TurnEvidence {
 /// One ordered update from the ACP conversation.
 #[derive(Debug, Clone)]
 pub enum ConversationUpdate {
+    /// Immutable domain storage whose reservation follows every shared owner.
+    RetainedEffect(crate::RuntimeOutputUpdate),
     /// One ordered runtime frame. A protocol-only frame still needs a durable cursor.
     RuntimeOutput {
         receipt: crate::RuntimeOutputReceipt,
@@ -198,6 +200,14 @@ pub enum ConversationUpdate {
 }
 
 impl ConversationUpdate {
+    /// Borrow a domain effect without separating it from its storage owner.
+    pub fn effect(&self) -> &Self {
+        match self {
+            Self::RetainedEffect(update) => update.effect(),
+            update => update,
+        }
+    }
+
     pub fn without_prompt_evidence(self) -> Self {
         match self {
             already @ Self::WithoutPromptEvidence(_) => already,
@@ -207,6 +217,7 @@ impl ConversationUpdate {
 
     pub fn turn_evidence(&self) -> Option<TurnEvidence> {
         match self {
+            Self::RetainedEffect(update) => update.turn_evidence(),
             Self::RuntimeOutput { update, .. } => update.as_deref().and_then(Self::turn_evidence),
             Self::WithoutPromptEvidence(_) => None,
             Self::Said(SessionUpdate::AgentMessageChunk(_)) => {

@@ -24,6 +24,7 @@ pub(super) struct JsonPools {
     trees: Arc<Semaphore>,
     scratch: Arc<Semaphore>,
     aggregate: Option<IngressBudget>,
+    sign_ins: Arc<Semaphore>,
 }
 
 impl JsonPools {
@@ -39,12 +40,20 @@ impl JsonPools {
             trees: Arc::new(Semaphore::new(trees)),
             scratch: Arc::new(Semaphore::new(scratch)),
             aggregate: None,
+            sign_ins: super::sign_in_retention::process_pool(),
         }
     }
 
     pub(super) fn with_aggregate(mut self, aggregate: Option<IngressBudget>) -> Self {
         self.aggregate = aggregate;
         self
+    }
+
+    pub(super) fn admit_sign_in(
+        &self,
+        frame: &Value,
+    ) -> crate::Result<Option<super::sign_in_retention::Admission>> {
+        super::sign_in_retention::admit(frame, &self.sign_ins, self.aggregate.as_ref())
     }
 
     pub(super) fn admit(&self, payload: &[u8]) -> crate::Result<JsonAdmission> {
@@ -193,6 +202,11 @@ impl fmt::Debug for JsonFrame {
 
 #[cfg(test)]
 impl JsonPools {
+    pub(super) fn with_sign_in_pool(mut self, pool: Arc<Semaphore>) -> Self {
+        self.sign_ins = pool;
+        self
+    }
+
     pub(super) fn available(&self) -> (usize, usize) {
         (
             self.trees.available_permits(),
