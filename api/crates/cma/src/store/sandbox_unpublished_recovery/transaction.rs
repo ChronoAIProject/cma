@@ -12,6 +12,7 @@ use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 use sha2::{Digest, Sha256};
 
+use super::super::agent_capacity_recovery::source::{capture_segmented, fence_agent};
 use super::super::agent_log::scan_complete_log_with_session;
 use super::super::agent_log_integrity::TransactionLogError;
 use super::super::lifecycle_execution::{load_sandbox_agents, LifecycleLoadError};
@@ -22,6 +23,9 @@ use super::super::sandbox_events::{
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::super::workspaces::read_workspace;
+
+mod scoped;
+pub(super) use scoped::{apply_scoped, load_retained_scoped, load_scoped};
 
 #[derive(Debug)]
 pub(in crate::store) enum ApplyError {
@@ -73,9 +77,7 @@ pub(super) async fn load(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
-    load_for_inspection(store, id, session, true, false)
-        .await
-        .map(|(snapshot, seq, _)| (snapshot, seq))
+    load_with_sources(store, id, session, None).await
 }
 
 pub(in crate::store) async fn load_reopen(
@@ -83,7 +85,7 @@ pub(in crate::store) async fn load_reopen(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
-    load_for_inspection(store, id, session, true, true).await
+    load_for_inspection(store, id, session, true, true, None).await
 }
 
 pub(super) async fn load_retained(
@@ -91,7 +93,17 @@ pub(super) async fn load_retained(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, ApplyError> {
-    let (snapshot, last_seq, _) = load_for_inspection(store, id, session, false, false).await?;
+    load_retained_with_sources(store, id, session, None).await
+}
+
+async fn load_retained_with_sources(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    sources: Option<&scoped::NativeFacts>,
+) -> Result<layer2_core::sandbox::RetainedRecoverySnapshot, ApplyError> {
+    let (snapshot, last_seq, _) =
+        load_for_inspection(store, id, session, false, false, sources).await?;
     validate_in_transaction(store, id, last_seq, session).await?;
     Ok(layer2_core::sandbox::RetainedRecoverySnapshot {
         sandbox: snapshot.sandbox,
@@ -100,12 +112,24 @@ pub(super) async fn load_retained(
     })
 }
 
+async fn load_with_sources(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    sources: Option<&scoped::NativeFacts>,
+) -> Result<(SandboxUnpublishedRecoverySnapshot, u64), ApplyError> {
+    load_for_inspection(store, id, session, true, false, sources)
+        .await
+        .map(|(snapshot, seq, _)| (snapshot, seq))
+}
+
 async fn load_for_inspection(
     store: &MongoSandboxStore,
     id: &SandboxId,
     session: &mut ClientSession,
     require_unpublished: bool,
     require_reopen: bool,
+    sources: Option<&scoped::NativeFacts>,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
     let document = store
         .sandboxes
@@ -120,7 +144,10 @@ async fn load_for_inspection(
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
     let last_seq = unsigned(last_seq, "recovery event sequence")
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?;
-    let agents = load_sandbox_agents(store, id, session).await?;
+    let agents = match sources {
+        Some(sources) => sources.agents.clone(),
+        None => load_sandbox_agents(store, id, session).await?,
+    };
     let generation = sandbox
         .unpublished_recovery_binding()
         .and_then(|binding| binding.provision_generation);
@@ -130,6 +157,50 @@ async fn load_for_inspection(
     let mut history_digest = Sha256::new();
     for agent in &agents {
         let mut observation = Observation::new(Stage::PublicationLog);
+        let facts = match sources
+            .map(|sources| sources.for_agent(agent))
+            .transpose()?
+            .flatten()
+        {
+            Some(facts) => Some(facts),
+            None => match capture_segmented(store, agent, session).await {
+                Ok(source) => source.map(|source| {
+                    (
+                        source.max_opened_generation(),
+                        source.max_retired_generation(),
+                    )
+                }),
+                Err(error) => {
+                    observation.finish(match &error {
+                        TransactionLogError::Driver(_)
+                        | TransactionLogError::Domain(SandboxStoreError::Unavailable(_)) => {
+                            Reason::Unavailable
+                        }
+                        _ => Reason::CorruptHistory,
+                    });
+                    return Err(error.into());
+                }
+            },
+        };
+        if let Some((opened, retired)) = facts {
+            if require_reopen {
+                observation.finish(Reason::Unavailable);
+                return Err(ApplyError::Domain(SandboxStoreError::Unavailable(
+                    "segmented retained reopen requires its original bounded history proof".into(),
+                )));
+            }
+            if require_unpublished
+                && generation
+                    .is_some_and(|generation| opened >= generation || retired >= generation)
+            {
+                observation.finish(Reason::PublishedGeneration);
+                return Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(
+                    "runtime generation was already published",
+                )));
+            }
+            observation.finish(Reason::Success);
+            continue;
+        }
         let mut published = false;
         let mut entries = Vec::new();
         let result = if require_unpublished {
@@ -191,22 +262,27 @@ async fn load_for_inspection(
             ensure_reopen_capacity(&summary).map_err(ApplyError::Domain)?;
         }
     }
-    let mut cursor = store
-        .workspaces
-        .find(doc! { "sandbox_id": id.as_str() })
-        .sort(doc! { "_id": 1 })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    let mut workspaces = Vec::new();
-    while let Some(document) = cursor
-        .stream(&mut *session)
-        .try_next()
-        .await
-        .map_err(ApplyError::Driver)?
-    {
-        workspaces.push(read_workspace(&document).map_err(ApplyError::Domain)?);
-    }
+    let workspaces = if let Some(sources) = sources {
+        sources.workspaces.clone()
+    } else {
+        let mut cursor = store
+            .workspaces
+            .find(doc! { "sandbox_id": id.as_str() })
+            .sort(doc! { "_id": 1 })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        let mut workspaces = Vec::new();
+        while let Some(document) = cursor
+            .stream(&mut *session)
+            .try_next()
+            .await
+            .map_err(ApplyError::Driver)?
+        {
+            workspaces.push(read_workspace(&document).map_err(ApplyError::Domain)?);
+        }
+        workspaces
+    };
     Ok((
         SandboxUnpublishedRecoverySnapshot {
             sandbox,
@@ -223,23 +299,24 @@ pub(super) async fn apply(
     request: &SandboxUnpublishedRecoveryRequest,
     session: &mut ClientSession,
 ) -> Result<Receipt, ApplyError> {
-    let (current, last_seq) = load(store, &request.snapshot.sandbox.id, session).await?;
+    apply_with_sources(store, request, session, None).await
+}
+
+async fn apply_with_sources(
+    store: &MongoSandboxStore,
+    request: &SandboxUnpublishedRecoveryRequest,
+    session: &mut ClientSession,
+    sources: Option<&scoped::NativeFacts>,
+) -> Result<Receipt, ApplyError> {
+    let (current, last_seq) =
+        load_with_sources(store, &request.snapshot.sandbox.id, session, sources).await?;
     let mutation =
         apply_unpublished_runtime_recovery(&current, request).map_err(ApplyError::Domain)?;
     validate_in_transaction(store, &current.sandbox.id, last_seq, session).await?;
     // Actual writes to every child serialize native proof with dispatch, cleanup,
     // Workspace setup and lifecycle publication. Preserve every child byte.
     for agent in &current.agents {
-        let result = store.agents.update_one(doc! {
-            "_id": agent.id.as_str(), "sandbox_id": current.sandbox.id.as_str(),
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "revision": signed(agent.revision, "recovery Agent revision").map_err(corrupt)?,
-            "last_seq": signed(agent.conversation.last_seq, "recovery Agent log sequence").map_err(corrupt)?,
-        }, doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
-            .session(&mut *session).await.map_err(ApplyError::Driver)?;
-        if result.matched_count != 1 {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
+        fence_agent(store, agent, "sandbox_recovery_fence", session).await?;
     }
     for workspace in &current.workspaces {
         let result = store.workspaces.update_one(doc! {

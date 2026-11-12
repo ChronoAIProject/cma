@@ -8,6 +8,7 @@ import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
+const fixturePredicate = 'not test(store::migrations::tests::segments_runtime::)';
 const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}))`;
 
 function fixture(scenario, reuse = false) {
@@ -37,7 +38,7 @@ if (command === 'openssl') {
   console.log(scenario === 'entropy-malformed' ? 'bad-suffix' : process.pid.toString(16).padStart(24, '0'));
   process.exit(0);
 }
-fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CHRONO_TEST_MONGODB_URI})+'\\n');
+fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CHRONO_TEST_MONGODB_URI,authenticatedUri:process.env.CMA_IM_TEST_MONGODB_URI})+'\\n');
 if (command === 'cargo') {
   if (args[1] === 'run' && args.filter(value => value === '--no-tests').length !== 1) process.exit(24);
   if (args[1] === 'list') {
@@ -152,6 +153,7 @@ if (command === 'cargo') {
   const env = {
     ...process.env, CI: reuse ? 'true' : 'false', PATH: `${directory}:${process.env.PATH}`, CMA_RUNNER_SCENARIO: scenario, CMA_RUNNER_LOG: log,
     CHRONO_TEST_MONGODB_URI: 'must-not-use-caller-uri', CHRONO_TEST_MONGODB_FAILPOINT_URI: 'must-not-use-caller-uri',
+    CMA_IM_TEST_MONGODB_URI: 'must-not-use-authenticated-caller-uri',
   };
   if (reuse) env.CMA_NEXTEST_REUSE = '1'; else delete env.CMA_NEXTEST_REUSE;
   return {
@@ -174,8 +176,9 @@ for (const reuse of [false, true]) {
         if (scenario === 'success') run(); else assert.throws(run, error => error.status === (scenario === 'cpu-error' ? 7 : 4));
         const cargo = f.calls().filter(row => row.command === 'cargo');
         assert.equal(cargo.length, 1);
+        assert.ok(f.calls().every(row => row.authenticatedUri === undefined), 'ordinary fixtures discard authenticated caller authority');
         const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
-        const selection = `package(=cma) and test(::cpu_profile::) & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
+        const selection = `package(=cma) and test(::cpu_profile::) & ${fixturePredicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
         assert.deepEqual(cargo[0].args, ['nextest', 'run', ...build, '--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', '--success-output', 'final', '--run-ignored', 'only', '-E', selection]);
         assert.match(cargo[0].uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\/\?directConnection=true&replicaSet=cma_ci$/);
         assert.equal(f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run').length, 1);
@@ -194,11 +197,12 @@ for (const reuse of [false, true]) {
         if (scenario === 'success') run(); else assert.throws(run);
         if (scenario.startsWith('entropy-')) { assert.deepEqual(f.calls().map(row => [row.command,row.args[1]]), [['cargo','list']]); continue; }
         const calls = f.calls();
+        assert.ok(calls.every(row => row.authenticatedUri === undefined), 'listing and execution discard authenticated caller authority');
         const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
         for (const row of calls.filter(row => row.command === 'cargo')) {
           const action = row.args[1];
           const predicate = action === 'list' ? 'all()' : row === cargo[0] ? `package(=cma) and test(=${scaleTest})` : row === cargo[1] ? `package(=cma) and test(=${ownerTest})` : ordinaryPredicate;
-          const selection = `${predicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
+          const selection = `${predicate} & ${fixturePredicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
           const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
           const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(cargo.indexOf(row) < 2 ? ['--success-output', 'final'] : ['--partition', row.args[row.args.indexOf('--partition')+1]])];
           assert.deepEqual(row.args, ['nextest', action, ...build, ...operation, '--run-ignored', 'only', '-E', selection]);
@@ -433,8 +437,8 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
   const {before, after} = JSON.parse(result);
   assert.equal(before['owner-allocation'], undefined);
-  assert.ok(before.ordinary.startsWith(`not test(=${scaleTest}) & (`));
-  assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & (`));
-  assert.ok(after['owner-allocation'].startsWith(`package(=cma) and test(=${ownerTest}) & (`));
+  assert.ok(before.ordinary.startsWith(`not test(=${scaleTest}) & ${fixturePredicate} & (`));
+  assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & ${fixturePredicate} & (`));
+  assert.ok(after['owner-allocation'].startsWith(`package(=cma) and test(=${ownerTest}) & ${fixturePredicate} & (`));
   for (const mode of ['all', 'scale', 'cpu-profile']) assert.equal(before[mode], after[mode]);
 });
