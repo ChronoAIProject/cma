@@ -135,24 +135,29 @@ pub(super) fn observe(options: &mut ClientOptions) {
 }
 
 fn attach(options: &mut ClientOptions, observer: Observer) {
-    // Command monitoring makes mongodb 3.9 decode complete commands and replies
-    // before invoking the callback, even when it only reads duration. Keep it
-    // disabled so diagnostics do not add BSON decoding to every database call.
-    options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
-        CmapEvent::ConnectionCheckedOut(event) => observer.checked_out(
-            connection_key(&event.address, event.connection_id),
-            event.duration,
-        ),
-        CmapEvent::ConnectionCheckedIn(event) => {
-            observer.returned(connection_key(&event.address, event.connection_id), false)
+    // mongodb 3.9 decodes full replies when monitoring is installed. Keep the
+    // diagnostic rollout reversible; benchmark this cost on realistic replies.
+    let diagnostics = super::mongo_diagnostics::install(options, "general");
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
         }
-        CmapEvent::ConnectionClosed(event) => {
-            observer.returned(connection_key(&event.address, event.connection_id), true)
+        match event {
+            CmapEvent::ConnectionCheckedOut(event) => observer.checked_out(
+                connection_key(&event.address, event.connection_id),
+                event.duration,
+            ),
+            CmapEvent::ConnectionCheckedIn(event) => {
+                observer.returned(connection_key(&event.address, event.connection_id), false)
+            }
+            CmapEvent::ConnectionClosed(event) => {
+                observer.returned(connection_key(&event.address, event.connection_id), true)
+            }
+            CmapEvent::ConnectionCheckoutFailed(event) => observer.record(0, event.duration, true),
+            CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
+            CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),
+            _ => {}
         }
-        CmapEvent::ConnectionCheckoutFailed(event) => observer.record(0, event.duration, true),
-        CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
-        CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),
-        _ => {}
     }));
 }
 
