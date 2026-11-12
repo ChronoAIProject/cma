@@ -11,8 +11,9 @@ No issue closes without its required production evidence.
 provisional `5e82a9e7b` are included normally. Strict combined Rust and unit gates
 are queued against the immutable source; independent QA owns the exact-source
 Mongo and parity/failure matrix. Earlier results below qualify only their named
-source. The PR is not open. S4 ordinary output/checkpoint/command settlement and
-S5 final service qualification remain prerequisites. The PR target is 15:30;
+source. The PR is not open. The lead relays S5 source GO at its integrated pin;
+combined executable qualification remains pending. S4-B1 ordinary publication
+is allocated to S4 with a 15:00 pin target. The PR opens after that pin and gates;
 writer/recovery activation remains closed and no source finding is waived.
 
 ## Handoffs included normally
@@ -399,9 +400,19 @@ reports up to date. Current develop `d08742c70` is also an ancestor.
 
 S4's final admission checkpoint explicitly does not implement ordinary
 conversation mutation, checkpoint apply/write or command reconciliation.
-The lead has been asked to allocate those implementations; another admission
-evidence pin alone cannot close P1-1. Integration continues with strict
+The lead has allocated S4-B1 to the writer owner, with a 15:00 pin target:
+`store/agent_conversation_store/publication.rs`,
+`store/agent_conversation_store/checkpoint.rs` and
+`store/agent_commands/reconcile.rs`, plus the necessary focused tests.
+Another admission evidence pin alone cannot close P1-1. Integration continues with strict
 CMA/core/public/adapter and combined units, then Rust SDK qualification.
 Independent QA owns the complete actual Mongo and parity/failure inventory at
 the same immutable source. Count only completed, source-bound gates with exact
 selected/executed inventories and successful fixture cleanup.
+
+The lead relays S5 GO on the reviewed source. Published source
+`5e82a9e7b5d3946ade04e5f27ae3f89fb53143eb` is already included by normal merge;
+an explicit normal merge confirms up to date. This source approval is distinct
+from the running combined executable gates. After S4-B1 lands, merge normally,
+qualify its affected combined paths and supply the final-head delta to the
+security reviewer before the combined PR's merge relay.
