@@ -2,8 +2,9 @@
 
 Friday source-contract slice of #1569; this does not close the external-dependency
 gate. Audited against develop `304b44fd9b9d75d282399ccd6ea34e035eb632ca`
-on 2026-11-11, plus the storage deadline change in this PR. The reviewed PR head
-pins the resulting source and fixtures. `api/Cargo.lock` pins reqwest **0.12.28**
+on 2026-11-11. Bounded-token and provisional maintenance contracts are documented
+with their source and fixture evidence below. The reviewed PR head pins the
+resulting source and fixtures. `api/Cargo.lock` pins reqwest **0.12.28**
 and Tokio **1.53.3**; validation uses `--locked`.
 
 Release acceptance must additionally bind these contracts to the train's actual
@@ -22,6 +23,10 @@ scopes and receipt rejection. Disable the switch on every API process to roll
 back the policy; there is no persistent data migration. Receipt mismatch
 counters and field-only warnings activate with the resilience policy.
 
+Maintenance uses a separate token instance and the shared refresh mechanism
+under `CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED`. The online resilience switch
+neither enables maintenance nor changes its scopes. Both switches default off.
+
 | Candidate operation | Pinned request/response contract | Bounds and failure |
 | --- | --- | --- |
 | Ornn skill resolution | GET `/api/v1/proxy/s/ornn-api/api/v1/skills/{id}?version={version}` through the configured NyxID origin. Uses the admitted Sandbox credential. Envelope `data` supplies matching `guid`, canonical literal `version`, safe `name`, and lowercase 64-hex `skillHash`; non-null `error` is refused. Mutable tags resolve once into persisted literal version/digest material. | At most 32 distinct references, four lookups in flight; 15 seconds per request including body, 30 seconds for the whole resolution including credential lookup. Maximum 1 MiB metadata. No client retry. 403/404 become `NotFound`; 401/408/429/5xx become `Unavailable`; malformed/pin-changing material becomes `Invalid`. No partial collection on error. |
@@ -30,6 +35,8 @@ counters and field-only warnings activate with the resilience policy.
 | Object-storage token | POST `/oauth/token`, form grant `client_credentials`, configured machine identity and scopes `proxy object:create object:read object:download`. Accept nonempty `access_token` up to 16 KiB and `expires_in` 120–86,400 seconds. | Token envelope capped at 16 KiB. One shared refresh runs independently of its waiters, with a 3-second connection and 12-second request limit. Failed refreshes have exponential backoff (nominally 2 seconds, doubling to 30 seconds; 75–100% jitter); calls needing a token fail fast inside that window. Below 20% remaining lifetime, a still-usable token is served while one background refresh runs; at 60 seconds remaining or less, callers wait. Success resets backoff and advances the token generation. Every caller waits within its own 30-second operation budget. Transport/status/invalid-token failures are `Unavailable`; an oversized envelope is `Corrupt` for shared waiters, then negatively cached as `Unavailable`. |
 | Object upload | POST `/api/v1/proxy/s/chrono-storage-service/api/buckets/{bucket}/objects`, content-addressed key, `mutationGeneration=1`, `contentSha256`, Markdown content type. Receipt must match key, byte count, digest, generation 1 and fence version 1. | 3-second connection, 12-second HTTP, 30-second total operation limits. At most two object attempts, only after the first returns 401, with a fresh/replaced token. No replay on timeout, 429 or 5xx. Wrong receipt is `Corrupt`; unavailable service is `Unavailable`. |
 | Object download | GET the same proxy's `/objects/download?key=...`, using the cached/current machine token. No caller-supplied storage URL. | Same connection/request/total deadlines. At most one transport retry for connection failures, request timeouts (including body reads), or 502/503/504, after 100–300 ms jitter and only with at least 3 seconds remaining. At most one 401 refresh/replay across all attempts; only rejection of the current generation invalidates the cache. A transport retry plus a 401 replay permits at most three object requests. Bounded document body; redirects and oversize bodies are rejected. Configuration absence uses `UnavailableDocuments`, not an in-memory success fallback. |
+| Object delete | **Provisional, unverified E1 contract; default off.** DELETE the same proxy's `/objects?key=...`. A separately instantiated maintenance token requests provisional scopes `proxy object:read object:list object:delete`; online scopes remain unchanged. Only generated document object keys are accepted. | `CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED=false` refuses both maintenance operations before token lookup or HTTP. When explicitly enabled for contract testing, only 200 and 204 map to `Deleted`, 404 to `Absent`, and all other statuses (including 202 Accepted) to `Unavailable`. A 429 exposes a request-local optional retry delay (seconds or HTTP date), capped at 3,600 seconds with past dates treated as zero, through `BlobMaintenanceError`; the caller's worker backs off. No inline transport/status retry; at most one 401 refresh/replay. Redirects are disabled. Connection/request/total budgets remain 3s/12s/30s, including token waits. Storage-owner confirmation and NyxID scope grants are required before enabling in production. |
+| Object list | **Provisional, unverified E1 contract; default off.** GET the same proxy's `/objects?prefix=...&cursor=...&limit=256`, expecting `{"data":{"keys":[...],"next":null}}`. Prefixes are limited to `documents/{64-lowercase-hex}/` or that owner's `doc_{32-lowercase-hex}/`. Cursor values are opaque query data, never destinations. | Same gate, separate token, deadlines, redirect refusal and retry rules as delete. Response bodies are capped at 256 KiB, pages at 256 keys and cursors at 4 KiB. Malformed envelopes, non-null errors, excessive pages and keys outside the requested prefix are `Corrupt`. Bad request keys/prefixes/cursor bounds are `Invalid` without HTTP. Listing completeness, including hidden object versions, is unverified; an empty page is not proof of physical erasure. |
 
 The GCS dependency named in #1569 crosses **chrono-storage-service** in this
 candidate. CMA's source describes that service as S3-backed and contains no direct
@@ -48,6 +55,7 @@ do not authorize new archive capture or substitute for document storage.
 | Runtime archive pins and bounded extraction | `api/crates/layer4-runtime/src/skills.rs:98`; `supervisor_startup.rs:146` | Existing `skills_tests.rs` and `agent_skill_install_tests.rs` cover archive/pin safety. This PR does not add or claim a runtime download-outage acceptance run. |
 | Storage operation deadlines, shared refresh and bounded retries | `api/crates/cma/src/document_storage.rs`; `document_storage/token.rs` | `document_storage_token_tests.rs`: 100 concurrent callers, first-waiter cancellation, negative-cache backoff and reset, early refresh, hard expiry margin, stale-generation rejection and bounded waits without late object calls. `document_storage_transport_tests.rs`: connection/status recovery, retry exhaustion, insufficient remaining budget, PUT refusal to replay transport failures, and a single 401 replay across transport attempts. `document_storage_failure_tests.rs` retains token-form, invalid-envelope, 401, held-body/header and shared-budget coverage. |
 | Storage authority, receipts and disabled composition | `api/crates/cma/src/document_storage.rs`; `config/documents.rs:12`; `telemetry.rs` | Existing `document_storage_tests.rs`: rejected receipts/redirects/oversize bodies; invalid paths and wrong content never contact storage; successful refresh/cache reuse. `document_storage_receipt_tests.rs` verifies per-field receipt mismatch counters, `Corrupt`, and warnings containing only the field name, without private request context. Configuration tests require the complete canonical deployment config. |
+| Provisional maintenance capability, authority and pagination | `api/crates/layer2-core/src/document_artifacts/blob_maintenance.rs`; `api/crates/cma/src/document_storage/maintenance.rs`; `composition/documents.rs` | `document_storage_maintenance_tests.rs`: independent maintenance/online token scopes, zero requests while disabled, deletion completion limited to 200/204, rejected 202 and other success statuses, idempotent 404, rejected foreign prefixes, bounded pages and opaque cursors, malformed/foreign rows, shared 30-second budget and no late calls. `document_storage_maintenance_retry_tests.rs`: request-local Retry-After capped at one hour for huge seconds and far-future dates, zero delay for past dates, one 429 request, refused redirects, bounded chunked/stalled bodies and fixture-only rewrite after deletion. `blob_maintenance_tests.rs`: deterministic deletion, rewrite, isolation and pagination. `config/features/document_maintenance_tests.rs`: independent strict boolean, default off. These are local provisional-contract evidence only. |
 
 The added HTTP fixtures bind only ephemeral loopback ports and use synthetic
 authority. Production client constructors retain their configured timeout and
@@ -78,9 +86,11 @@ remain. This allowance is shared across the complete download, including body
 reads. Uploads never retry transport failures or 5xx. Receipt mismatches return
 `Corrupt`, increment `cma_document_storage_receipt_mismatch_total` by field
 (`key`, `length`, `generation`, `digest`, `fence`), and log only the field name.
-The default-off process switch is the only new deployment key; existing machine
+The online resilience switch defaults off; existing machine
 credentials and online scopes are unchanged. The policy requires separate
 dependency qualification before activation.
+The separately gated maintenance client has its own pending authorization
+contract described above.
 
 A timed-out upload may already have reached the service. It remains an uncertain
 write and cannot be acknowledged as saved. The existing content-addressed key,
@@ -88,6 +98,25 @@ generation fence and durable metadata/idempotency path still govern recovery.
 The deadline does not cancel remote side effects or reclaim orphan blobs.
 
 ## Explicit remaining acceptance gaps
+
+The E1 object-maintenance contract awaits the storage owner's answers and pinned
+service evidence for all of the following:
+
+- Delete endpoint and semantics, including whether 404 proves absence.
+- Versioning or soft deletion and the lifetime of non-current versions.
+- Whether the same content-addressed key can be rewritten after deletion.
+- The maximum landing delay of an abandoned PUT and whether deletion fences it.
+- Listing pagination and completeness, including hidden versions and owner scope.
+- Exact delete/list scope names and the corresponding NyxID grants (E2).
+- Rate limits, 429 behavior and Retry-After representation.
+- The real backend's GCS or S3 mapping and pinned implementation version.
+
+Until those answers and grants are verified, keep the maintenance switch off.
+No purge, reclaim or account-erasure worker consumes the maintenance port.
+Each future caller must record a typed blocked state when
+`deletion_supported()` is false.
+Synthetic delete/rewrite fixtures do not establish production rewrite semantics,
+physical deletion, listing completeness or a zero-residual-storage guarantee.
 
 - Dependency-owner availability, quota/capacity and version commitments for the
   real Ornn and object-storage service, including its actual GCS backend mapping.
