@@ -26,6 +26,17 @@ async fn segmented_ranges_replay_original_rows_across_boundaries_and_frozen_head
             }
         }
     }
+    layer2_core::sandbox::store::agent_log_contract::assert_tail_page_contract(&store, &entries)
+        .await;
+    for (after, through, limit) in [(0, 0, 1), (0, 3, 2), (2, 5, 3), (8, 8, 1)] {
+        assert_eq!(
+            tail_page(&store, &agent.id, after, through, limit)
+                .await
+                .unwrap(),
+            entries
+                [after.saturating_sub(1) as usize..through.min(after + u64::from(limit)) as usize]
+        );
+    }
     for entry in &entries {
         assert_eq!(
             store.agent_log_entry(&agent.id, entry.seq).await.unwrap(),
@@ -53,6 +64,10 @@ async fn segmented_ranges_replay_original_rows_across_boundaries_and_frozen_head
         store.agent_log_range(&agent.id, 3, 8, 4).await.unwrap(),
         entries[3..7]
     );
+    assert_eq!(
+        tail_page(&store, &agent.id, 3, 8, 4).await.unwrap(),
+        entries[2..7]
+    );
     client.database(&name).drop().await.unwrap();
 }
 
@@ -76,6 +91,11 @@ async fn segmented_ranges_refuse_corruption_missing_sidecars_and_uncommitted_tai
             .agent_log_range(&agent.id, (seq - 1) as u64, seq as u64, 1)
             .await
             .is_err());
+        assert!(
+            tail_page(&store, &agent.id, (seq - 1) as u64, seq as u64, 1)
+                .await
+                .is_err()
+        );
         store.agent_log.insert_one(old.clone()).await.unwrap();
         store
             .agent_log
@@ -103,6 +123,7 @@ async fn segmented_ranges_refuse_corruption_missing_sidecars_and_uncommitted_tai
         .await
         .unwrap();
     assert!(store.agent_log_range(&agent.id, 8, 8, 1).await.is_err());
+    assert!(tail_page(&store, &agent.id, 8, 8, 1).await.is_err());
     collection(&store, HEADS).insert_one(head).await.unwrap();
     for ordinal in 0..3_i64 {
         let filter = doc! {"agent_id":agent.id.as_str(),"ordinal":ordinal};
@@ -116,6 +137,7 @@ async fn segmented_ranges_refuse_corruption_missing_sidecars_and_uncommitted_tai
             .await
             .unwrap();
         assert!(store.agent_log_range(&agent.id, 2, 4, 2).await.is_err());
+        assert!(tail_page(&store, &agent.id, 2, 4, 2).await.is_err());
         collection(&store, SEGMENTS).insert_one(seal).await.unwrap();
     }
     let extra = AgentLogEntry {
@@ -129,6 +151,7 @@ async fn segmented_ranges_refuse_corruption_missing_sidecars_and_uncommitted_tai
         .unwrap();
     assert!(store.agent_log_range(&agent.id, 0, 1, 1).await.is_err());
     assert!(store.agent_log_range(&agent.id, 8, 8, 1).await.is_err());
+    assert!(tail_page(&store, &agent.id, 8, 8, 1).await.is_err());
     client.database(&name).drop().await.unwrap();
 }
 
@@ -175,3 +198,5 @@ async fn segment_schema_is_additive_restartable_and_refuses_drift() {
     assert!(schema::migrate(&db).await.is_err());
     db.drop().await.unwrap();
 }
+
+use layer2_core::sandbox::store::agent_log_contract::tail_page;
