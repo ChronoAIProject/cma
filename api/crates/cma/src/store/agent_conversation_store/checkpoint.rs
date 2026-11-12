@@ -95,6 +95,12 @@ pub(super) async fn commit(
     if let Some(mutation) = &mutation {
         ensure_append_batch_size(mutation.agent_logs.len())?;
     }
+    let adoption = match (&authority, mutation.as_ref()) {
+        (Authority::Live, Some(mutation)) => {
+            scoped::adoption::prepare(store, mutation, Some(&next)).await?
+        }
+        _ => None,
+    };
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         if attempt > 0 {
@@ -118,7 +124,7 @@ pub(super) async fn commit(
         };
         let applied = scoped::checkpoint::apply(
             store,
-            &current,
+            (&current, adoption.as_ref()),
             previous.as_ref(),
             &next,
             mutation.as_ref(),
