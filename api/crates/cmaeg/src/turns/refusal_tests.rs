@@ -1,5 +1,6 @@
 use super::refusal::{classify_start_failure, ProviderCall};
 use crate::providers::ProviderError;
+use cmaeg_core::problem::ProblemCode;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
@@ -32,13 +33,19 @@ fn logged(error: ProviderError) -> String {
 }
 
 #[test]
-fn rejected_codes_are_logged_only_as_bounded_machine_tokens() {
+fn rejected_codes_are_logged_only_from_the_closed_vocabulary() {
     for code in [
-        "a",
-        "0",
-        "_-.:",
-        "quota.limit:guest-42_denied",
-        &"a".repeat(64),
+        "media_source_refused",
+        "partition_agent_missing",
+        "partition_agent_unavailable",
+        "agent_command_admission_conflict",
+        "agent_command_key_conflict",
+        "binding_not_ready",
+        "binding_resources_unavailable",
+        "command_authority_required",
+        "response_forbidden",
+        "response_not_found",
+        "model_mismatch",
     ] {
         let line = logged(ProviderError::Rejected {
             status: 403,
@@ -50,7 +57,18 @@ fn rejected_codes_are_logged_only_as_bounded_machine_tokens() {
         );
         assert!(line.contains("upstream_status=403"), "{line}");
     }
+}
+
+#[test]
+fn unknown_codes_are_redacted_from_logs_and_public_metadata() {
     for code in [
+        "a",
+        "0",
+        "_-.",
+        "quota.limit-guest-42_denied",
+        "private-account-identifier_42",
+        "media_source_refused.private-value",
+        &"a".repeat(64),
         "",
         &"a".repeat(65),
         "DENIED",
@@ -78,6 +96,26 @@ fn rejected_codes_are_logged_only_as_bounded_machine_tokens() {
         for forbidden in ["forged", "denied", "script"] {
             assert!(!line.contains(forbidden), "{line}");
         }
+        let refusal = classify_start_failure(
+            "nyxbot",
+            ProviderCall::Responses.failed(ProviderError::Rejected {
+                status: 403,
+                code: code.into(),
+            }),
+        );
+        let body = cmaeg_core::problem::Problem::new(refusal.code, refusal.status, refusal.detail)
+            .with_upstream(refusal.upstream.unwrap());
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(json["code"], "provider_rejected");
+        assert_eq!(json["status"], 502);
+        assert_eq!(
+            json["upstream"],
+            serde_json::json!({
+                "operation": "responses", "status": 403, "code": "unrecognized"
+            })
+        );
+        assert!(!line.contains("private-account-identifier_42"));
+        assert!(!line.contains("media_source_refused.private-value"));
     }
 }
 
@@ -119,4 +157,44 @@ fn other_errors_log_only_static_variant_labels() {
             assert!(!line.contains(forbidden), "{line}");
         }
     }
+}
+
+#[test]
+fn rejected_provider_detail_is_carried_as_a_bounded_relay_contract() {
+    let refusal = classify_start_failure(
+        "nyxbot",
+        ProviderCall::Responses.failed(ProviderError::Rejected {
+            status: 403,
+            code: "media_source_refused".into(),
+        }),
+    );
+    assert_eq!(refusal.code, ProblemCode::ProviderRejected);
+    let upstream = refusal.upstream.expect("provider detail");
+    assert_eq!(upstream.operation, "responses");
+    assert_eq!(upstream.status, 403);
+    assert_eq!(upstream.code, "media_source_refused");
+    let body = cmaeg_core::problem::Problem::new(refusal.code, refusal.status, refusal.detail)
+        .with_upstream(upstream);
+    let json = serde_json::to_value(body).unwrap();
+    assert_eq!(json["code"], "provider_rejected");
+    assert_eq!(json["upstream"]["operation"], "responses");
+    assert_eq!(json["upstream"]["status"], 403);
+    assert_eq!(json["upstream"]["code"], "media_source_refused");
+}
+
+#[test]
+fn malformed_provider_code_is_normalized_before_relay_serialization() {
+    let refusal = classify_start_failure(
+        "nyxbot",
+        ProviderCall::Conversation.failed(ProviderError::Rejected {
+            status: 403,
+            code: "secret detail with spaces".into(),
+        }),
+    );
+    let upstream = refusal.upstream.expect("provider detail");
+    assert_eq!(upstream.operation, "conversation");
+    assert_eq!(upstream.code, "unrecognized");
+    assert!(!serde_json::to_string(&upstream)
+        .unwrap()
+        .contains("secret detail"));
 }
