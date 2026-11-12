@@ -15,9 +15,9 @@ current candidates; it cannot reconstruct that exact historical cohort by itself
 
 The decision is prevention plus operational disposition using existing owner
 operations. **There is no repair tool or automatic sweep in this change.** A
-future runtime capability is tracked separately: **[NEW ISSUE — to be filed by
-the reviewer]**. Keep the historical assessments on `fix/stale-turn-repair` for
-reference; this document is the consolidated operational guide.
+future runtime capability is tracked separately in
+[#1734](https://github.com/ChronoAIProject/cma/issues/1734). Keep the historical
+assessments on `fix/stale-turn-repair` for reference; this document is the consolidated operational guide.
 
 ## Prevention evidence
 
@@ -96,24 +96,34 @@ case for owner review, never proves native completion or authorizes stop/delete.
 Legitimate long reasoning may have no new durable output. Inspect owner-visible
 command/Response state before requesting a disposition.
 
-The following `mongosh` script scans **20 Agent documents per invocation**, emits
-at most 20 candidate/review rows, and reads at most 2,048 projected log rows per
-eligible Agent. Set `afterId` to the prior page's `next_after_id`; continue manually
-until `has_more` is false. The `_id_` index bounds the Agent scan before filtering
-Working status; the existing unique `agent_log_sequence` index is
-`{agent_id:1, seq:1}` (`api/crates/cma/src/store/agent_log.rs:32`). This avoids an
-unindexed global status/age query. Cost is at most 21 Agent page reads, 20 exact
-Agent rechecks and 40,960 projected log rows per page, each query capped at two
+The following `mongosh` script scans **20 Agent documents per page**, emits at
+most 20 candidate/review rows per page, and reads at most 2,048 projected log rows
+per eligible Agent. `maxPages` defaults to **25** (at most 500 Agents); set it to
+**1 for a single page** or another integer up to the hard ceiling of 100. It waits
+250 ms between pages, stops at the page cap or end of the scan, and stops
+immediately on any query error or timeout, without retrying. For another bounded
+run, set `afterId` to the coverage summary's `last_id`.
+
+The `_id_` index bounds the Agent scan before filtering Working status; the
+existing unique `agent_log_sequence` index is `{agent_id:1, seq:1}`
+(`api/crates/cma/src/store/agent_log.rs:32`). This avoids an unindexed global
+status/age query. Every page retains its bounds: at most 21 Agent page reads,
+20 exact Agent rechecks and 40,960 projected log rows, each query capped at two
 seconds. Projection limits returned data, not underlying Mongo document fetch
-bytes. Timeouts, missing indexes, unknown schema, malformed data, oversized turn
-spans, gaps and concurrent changes are review holds. No `createIndex` is needed.
+bytes. Unknown schema, malformed data, oversized turn spans, gaps and concurrent
+changes produce review holds. Query failures (including missing indexes) abort the
+run and print content-free coverage; no `createIndex` is needed.
 
 ```javascript
-// Use the already selected CMA database. Paste/run once per page.
-(() => {
-  const afterId = ""; // Replace only with the previous next_after_id.
+// Use the already selected CMA database. One bounded run per invocation.
+(async () => {
+  let afterId = ""; // Resume from a previous coverage summary's last_id.
+  const maxPages = 25; // Set 1 for single-page mode; allowed range: 1..100.
+  const PAUSE_MS = 250;
   const PAGE = 20, LOG_CAP = 2048, MAX_MS = 2000, THRESHOLD_MS = 30 * 60 * 1000;
-  const observedAt = new Date(), cutoff = observedAt.getTime() - THRESHOLD_MS;
+  if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 100) {
+    throw new Error("maxPages must be an integer from 1 through 100");
+  }
   const projection = {
     _id: 1, document_schema_version: 1, status: 1, sandbox_id: 1,
     "record.id": 1, "record.status": 1, "record.revision": 1,
@@ -123,8 +133,6 @@ spans, gaps and concurrent changes are review holds. No `createIndex` is needed.
     const n = v == null ? NaN : Number(v.toString());
     return Number.isSafeInteger(n) ? n : NaN;
   };
-  const page = db.agents.find(afterId ? {_id: {$gt: afterId}} : {}, projection)
-    .hint("_id_").sort({_id: 1}).limit(PAGE + 1).maxTimeMS(MAX_MS).toArray();
   const lifecycle = new Set(["work_step_completed", "work_step_failed"]);
   const activity = new Set([
     "turn_started", "turn_metadata_set", "owner_message", "agent_message",
@@ -135,63 +143,88 @@ spans, gaps and concurrent changes are review holds. No `createIndex` is needed.
     "first_message_changed", "title_set", "skill_installation_changed"
   ]);
   const terminal = new Set(["turn_completed", "turn_failed", "turn_interrupted"]);
-  let emitted = 0;
-  for (const a of page.slice(0, PAGE)) {
-    const c = a.record?.conversation, turn = integer(c?.active_turn);
-    const last = integer(c?.last_seq);
-    const emit = (result, reason, extra = {}) => {
-      ++emitted;
-      print(EJSON.stringify({agent_id: a._id, sandbox_id: a.sandbox_id,
-        turn_sequence: Number.isFinite(turn) ? turn : null,
-        result, reason, observed_at: observedAt.toISOString(), ...extra}));
-    };
-    if (integer(a.document_schema_version) !== 1 || a.record?.id !== a._id ||
-        !(integer(a.record?.revision) > 0) || typeof a.sandbox_id !== "string" ||
-        a.status !== a.record?.status) { emit("review", "schema_or_identity"); continue; }
-    if (a.status !== "working") continue;
-    if (!(turn > 0 && last >= turn) || !Number.isSafeInteger(last)) {
-      emit("review", "invalid_turn_range"); continue;
-    }
-    if (last - turn + 1 > LOG_CAP) { emit("review", "turn_scan_cap"); continue; }
-    const logs = db.agent_log.find({agent_id: a._id, seq: {$gte: turn, $lte: last}}, {
-      _id: 0, document_schema_version: 1, agent_id: 1, seq: 1,
-      "record.agent_id": 1, "record.seq": 1, "record.appended_at": 1,
-      "record.kind.type": 1, "record.kind.turn_sequence": 1
-    }).hint("agent_log_sequence").sort({seq: 1}).limit(LOG_CAP)
-      .maxTimeMS(MAX_MS).toArray();
-    let reason = null, latest = -Infinity;
-    if (logs.length !== last - turn + 1) reason = "log_gap";
-    for (let i = 0; !reason && i < logs.length; ++i) {
-      const l = logs[i], k = l.record?.kind, t = Date.parse(l.record?.appended_at);
-      if (integer(l.document_schema_version) !== 1 || l.agent_id !== a._id ||
-          l.record?.agent_id !== a._id || integer(l.seq) !== turn + i ||
-          integer(l.record?.seq) !== turn + i || !Number.isFinite(t) ||
-          t > observedAt.getTime()) { reason = "log_shape_or_time"; break; }
-      if (i === 0 && (k?.type !== "turn_started" || integer(k.turn_sequence) !== turn)) {
-        reason = "missing_turn_start"; break;
+  let pages = 0, agentsScanned = 0, totalEmitted = 0, completed = false;
+  let failed = false, stopReason = "max_pages";
+  try {
+    for (let pageNumber = 0; pageNumber < maxPages; ++pageNumber) {
+      const observedAt = new Date(), cutoff = observedAt.getTime() - THRESHOLD_MS;
+      const page = await db.agents.find(afterId ? {_id: {$gt: afterId}} : {}, projection)
+        .hint("_id_").sort({_id: 1}).limit(PAGE + 1).maxTimeMS(MAX_MS).toArray();
+      ++pages;
+      let emitted = 0;
+      const inspect = async a => {
+        const c = a.record?.conversation, turn = integer(c?.active_turn);
+        const last = integer(c?.last_seq);
+        const emit = (result, reason, extra = {}) => {
+          ++emitted; ++totalEmitted;
+          print(EJSON.stringify({agent_id: a._id, sandbox_id: a.sandbox_id,
+            turn_sequence: Number.isFinite(turn) ? turn : null,
+            result, reason, observed_at: observedAt.toISOString(), ...extra}));
+        };
+        if (integer(a.document_schema_version) !== 1 || a.record?.id !== a._id ||
+            !(integer(a.record?.revision) > 0) || typeof a.sandbox_id !== "string" ||
+            a.status !== a.record?.status) { emit("review", "schema_or_identity"); return; }
+        if (a.status !== "working") return;
+        if (!(turn > 0 && last >= turn) || !Number.isSafeInteger(last)) {
+          emit("review", "invalid_turn_range"); return;
+        }
+        if (last - turn + 1 > LOG_CAP) { emit("review", "turn_scan_cap"); return; }
+        const logs = await db.agent_log.find({agent_id: a._id, seq: {$gte: turn, $lte: last}}, {
+          _id: 0, document_schema_version: 1, agent_id: 1, seq: 1,
+          "record.agent_id": 1, "record.seq": 1, "record.appended_at": 1,
+          "record.kind.type": 1, "record.kind.turn_sequence": 1
+        }).hint("agent_log_sequence").sort({seq: 1}).limit(LOG_CAP)
+          .maxTimeMS(MAX_MS).toArray();
+        let reason = null, latest = -Infinity;
+        if (logs.length !== last - turn + 1) reason = "log_gap";
+        for (let i = 0; !reason && i < logs.length; ++i) {
+          const l = logs[i], k = l.record?.kind, t = Date.parse(l.record?.appended_at);
+          if (integer(l.document_schema_version) !== 1 || l.agent_id !== a._id ||
+              l.record?.agent_id !== a._id || integer(l.seq) !== turn + i ||
+              integer(l.record?.seq) !== turn + i || !Number.isFinite(t) ||
+              t > observedAt.getTime()) { reason = "log_shape_or_time"; break; }
+          if (i === 0 && (k?.type !== "turn_started" || integer(k.turn_sequence) !== turn)) {
+            reason = "missing_turn_start"; break;
+          }
+          if (terminal.has(k?.type)) { reason = "terminal_already_present"; break; }
+          if (k?.turn_sequence != null && integer(k.turn_sequence) !== turn) {
+            reason = "different_turn"; break;
+          }
+          if (k?.type === "turn_started" && i !== 0) { reason = "later_turn"; break; }
+          if (lifecycle.has(k?.type)) continue;
+          if (!activity.has(k?.type)) { reason = "unclassified_event"; break; }
+          latest = Math.max(latest, t);
+        }
+        const reread = (await db.agents.find({_id: a._id}, projection).hint("_id_")
+          .limit(1).maxTimeMS(MAX_MS).toArray())[0];
+        if (!reread || EJSON.stringify(reread) !== EJSON.stringify(a)) reason = "agent_changed";
+        if (reason) { emit("review", reason); return; }
+        if (latest <= cutoff) emit("candidate", "recorded_activity_older_than_threshold", {
+          last_turn_activity_at: new Date(latest).toISOString(),
+          inactive_seconds: Math.floor((observedAt.getTime() - latest) / 1000),
+          observed_revision: integer(a.record.revision), observed_cursor: last
+        });
+      };
+      for (const a of page.slice(0, PAGE)) {
+        await inspect(a);
+        ++agentsScanned;
+        afterId = a._id; // Advance only after this Agent's inspection finishes.
       }
-      if (terminal.has(k?.type)) { reason = "terminal_already_present"; break; }
-      if (k?.turn_sequence != null && integer(k.turn_sequence) !== turn) {
-        reason = "different_turn"; break;
-      }
-      if (k?.type === "turn_started" && i !== 0) { reason = "later_turn"; break; }
-      if (lifecycle.has(k?.type)) continue;
-      if (!activity.has(k?.type)) { reason = "unclassified_event"; break; }
-      latest = Math.max(latest, t);
+      const hasMore = page.length > PAGE;
+      print(EJSON.stringify({type: "page", page: pages,
+        scanned: Math.min(PAGE, page.length), emitted, next_after_id: afterId,
+        has_more: hasMore, threshold_seconds: THRESHOLD_MS / 1000}));
+      if (!hasMore) { completed = true; stopReason = "end_of_scan"; break; }
+      if (pageNumber + 1 < maxPages) await sleep(PAUSE_MS);
     }
-    const reread = db.agents.find({_id: a._id}, projection).hint("_id_")
-      .limit(1).maxTimeMS(MAX_MS).toArray()[0];
-    if (!reread || EJSON.stringify(reread) !== EJSON.stringify(a)) reason = "agent_changed";
-    if (reason) { emit("review", reason); continue; }
-    if (latest <= cutoff) emit("candidate", "recorded_activity_older_than_threshold", {
-      last_turn_activity_at: new Date(latest).toISOString(),
-      inactive_seconds: Math.floor((observedAt.getTime() - latest) / 1000),
-      observed_revision: integer(a.record.revision), observed_cursor: last
-    });
+  } catch (_) {
+    failed = true;
+    stopReason = "query_error_or_timeout";
+  } finally {
+    print(EJSON.stringify({type: "coverage", pages, agents_scanned: agentsScanned,
+      last_id: afterId, completed, stop_reason: stopReason, emitted: totalEmitted}));
   }
-  print(EJSON.stringify({scanned: Math.min(PAGE, page.length), emitted,
-    next_after_id: page[Math.min(PAGE, page.length) - 1]?._id ?? afterId,
-    has_more: page.length > PAGE, threshold_seconds: THRESHOLD_MS / 1000}));
+  if (failed) throw new Error("Discovery stopped after a query error or timeout; see coverage");
 })();
 ```
 
@@ -201,8 +234,15 @@ projected. Non-lifecycle metadata is conservatively counted as activity. No
 candidate from a partial/error run should be acted on without a fresh complete
 read. Repeat discovery immediately before review; concurrent production activity
 and API-only buffered text make this a nomination, not a consistent native proof.
-Do not automatically loop through all pages or infer that an empty page means
-there are no candidates elsewhere. Operators must record scan coverage.
+The coverage summary records page queries that succeeded (`pages`), Agents whose
+inspection finished (`agents_scanned`), the last fully inspected `_id` (`last_id`),
+and `completed`. Completion means the scan reached `has_more=false` from the
+chosen starting cursor, not that every historical incident was identified. A page
+cap or error reports `completed=false`; after an error, resolve it before a new
+bounded run. The cursor never advances past the failing Agent, even if part of a
+page was inspected. No further query or pause occurs after failure. Error text
+contains no raw database exception. Record coverage and do not wrap this snippet
+in an unbounded retry/page loop.
 
 ## Owner decisions and exact effects
 
