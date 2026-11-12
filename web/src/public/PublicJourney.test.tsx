@@ -193,6 +193,71 @@ describe('public visitor admission', () => {
     });
   });
 
+  it('clears the saved intent after a settled quota refusal and starts again with a fresh key', async () => {
+    const resetAt = '2026-11-13T00:00:00Z';
+    const intent = createIntent(route);
+    const client = publicClient();
+    vi.mocked(client.requests.createOrResume)
+      .mockRejectedValueOnce(
+        new ApiError(429, 'unsafe Launch resource_quota', 'resource_quota', undefined, undefined, {
+          resource: 'visitor_launches',
+          limit: 5,
+          reset_at: resetAt,
+        }),
+      )
+      .mockResolvedValue(PUBLIC_RECORD);
+    const test = setup(auth(signedIn), client);
+    const formatted = new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(resetAt));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(formatted);
+    expect(readIntent(path)).toBeUndefined();
+    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(test.navigate).not.toHaveBeenCalled();
+
+    await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(test.navigate).toHaveBeenCalled());
+    const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[2].idempotencyKey).toBe(intent.key);
+    expect(calls[1]?.[2].idempotencyKey).not.toBe(intent.key);
+    expect(calls[1]?.[1]).toEqual(intent.body);
+  });
+
+  it.each([
+    [429, 'resource_quota', { resource: 'visitor_launches' }],
+    [429, 'resource_quota', { resource: 'visitor_launches', reset_at: 'unknown' }],
+    [429, 'resource_quota', { resource: 'sandboxes', reset_at: '2026-11-13T00:00:00Z' }],
+    [429, 'rate_limited', { resource: 'visitor_launches', reset_at: '2026-11-13T00:00:00Z' }],
+    [503, 'resource_quota', { resource: 'visitor_launches', reset_at: '2026-11-13T00:00:00Z' }],
+  ])(
+    'preserves the intent and key for an unsettled refusal: %i %s %j',
+    async (status, code, extensions) => {
+      const intent = createIntent(route);
+      const client = publicClient();
+      vi.mocked(client.requests.createOrResume)
+        .mockRejectedValueOnce(
+          new ApiError(status, 'Unknown', code, undefined, undefined, extensions),
+        )
+        .mockResolvedValue(PUBLIC_RECORD);
+      const test = setup(auth(signedIn), client);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Your previous choices are saved');
+      expect(readIntent(path)).toEqual({ ...intent, owner: PUBLIC_USER.id, submitted: true });
+      expect(test.navigate).not.toHaveBeenCalled();
+
+      await test.user.click(screen.getByRole('button', { name: 'Try again' }));
+      await waitFor(() => expect(test.navigate).toHaveBeenCalled());
+      const calls = vi.mocked(client.requests.createOrResume).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(calls[0]);
+    },
+  );
+
   it.each(['resume', 'new'] as const)(
     'submits the explicit repeat %s choice with a fresh key',
     async (choice) => {

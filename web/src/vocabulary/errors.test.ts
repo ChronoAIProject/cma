@@ -1,5 +1,63 @@
 import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
-import { readableError } from './errors';
+import { failureRemediation, readableError, refusalSentence } from './errors';
+
+describe('public allowance guidance', () => {
+  it('explains the daily allowance with its local reset time without exposing wire words', () => {
+    const resetAt = '2026-11-13T00:00:00Z';
+    const error = new ApiError(
+      429,
+      'unsafe Launch resource_quota',
+      'resource_quota',
+      undefined,
+      undefined,
+      {
+        resource: 'visitor_launches',
+        limit: 5,
+        reset_at: resetAt,
+      },
+    );
+    const sentence = refusalSentence(error);
+    const formatted = new Intl.DateTimeFormat(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(new Date(resetAt));
+
+    expect(sentence).toContain(formatted);
+    expect(sentence).toMatch(/daily allowance/i);
+    expect(sentence).toMatch(/try again/i);
+    expect(sentence).not.toMatch(
+      /\b(launch|revision|digest|idempotency|reconcile|retained|capability|ceiling|checkpoint|reach|fence|userservice|mib|millis)\b|\b[a-z]+_[a-z_]+\b/i,
+    );
+  });
+
+  it.each([undefined, null, '', 'unknown', 1794528000])(
+    'keeps an uncertain result when the reset time is unusable: %j',
+    (resetAt) => {
+      const error = new ApiError(
+        429,
+        'unsafe Launch resource_quota',
+        'resource_quota',
+        undefined,
+        undefined,
+        {
+          resource: 'visitor_launches',
+          reset_at: resetAt,
+        },
+      );
+      expect(refusalSentence(error)).toBe(refusalSentence(new Error('offline')));
+    },
+  );
+
+  it('explains that a full Sandbox allowance needs a completed deletion before starting again', () => {
+    const sentence = failureRemediation('sandbox_limit_reached');
+    expect(sentence).toMatch(/delete.*sandbox/i);
+    expect(sentence).toMatch(/wait.*deletion.*complete/i);
+    expect(sentence).toMatch(/start again/i);
+    expect(sentence).not.toMatch(/\b(launch|revision|idempotency)\b|\b[a-z]+_[a-z_]+\b/i);
+  });
+});
 
 describe('readableError', () => {
   it('keeps a service sentence written for people', () => {
