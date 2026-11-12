@@ -1,0 +1,1097 @@
+{
+  "scope": "Original local review files before publication-path normalization; captures and logs remain restricted locally.",
+  "files": [
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/controller-offline-tests.json",
+      "sha256": "676a095a42a80d972bdc1550f4cca2b553d0a1562711ef049c9728ea4c7adc37",
+      "bytes": 342,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/controller-offline-tests.log",
+      "sha256": "8969a5d1a9d85d72e1ebffde6ba4df0153dcbe360f961cb94062df0a3615c5b0",
+      "bytes": 13508,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-487c44a3-offline-tests.json",
+      "sha256": "305d4bd334f86778ad1a1c6456f60abd7dec0fe515bde4efd85d718c461c82ee",
+      "bytes": 342,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-487c44a3-offline-tests.log",
+      "sha256": "304830b278823ba990c218b053faa8b9f7c666dbe605fb6d6327834fde54273b",
+      "bytes": 15349,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-487c44a3-review.json",
+      "sha256": "143abdcf4a0b21a14863b7d9fffb2743c22efb88faa987f56661b125ab68a5c0",
+      "bytes": 1149,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-487c44a3-review.md",
+      "sha256": "4e4b414fb946c8625491c148ed0eb866f84637e0fd20ab9d8082697edf34913f",
+      "bytes": 5340,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-capture-readback.json",
+      "sha256": "56163e18087fb475d0ef54f320e4529663506abe9e0eb781601f6f07cb86bf14",
+      "bytes": 498,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-capture-repro.json",
+      "sha256": "19834e8386dee4b28ac3c8d4c413d35140d2c033500629fe10fca1e76d85abc8",
+      "bytes": 261,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-capture-repro.py",
+      "sha256": "ec4923aaf7640688bd0729a38288f49282ccf55425c537e019f63065c0d44607",
+      "bytes": 909,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-injected-mount.json",
+      "sha256": "77dfbe6f270126f10ad7a830c0d50b109270cbea5a5c594ee89ad74274f71974",
+      "bytes": 457,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-offline-tests.json",
+      "sha256": "2a918e47f9996889da51bcf035c3fbd9a5fab5ed9d2ea4c28c113a95e64ee74f",
+      "bytes": 323,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-offline-tests.log",
+      "sha256": "6fe3d506fd53ed9624c7378f43c9065dd1b37e3c11cad29701f493d4a0266047",
+      "bytes": 15035,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-review.json",
+      "sha256": "e5e03fdf0faf0928d703914effd76004a18238c0f26ef2f200e98acecfdcf63d",
+      "bytes": 1047,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/delta-5a53e116-review.md",
+      "sha256": "8500cbffc42643e820fafe741cc7eabcde3b6a0efa1d5d7c5c0036cafda38be9",
+      "bytes": 3889,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/live-config.json",
+      "sha256": "32882e89072d284ce349ff90e0548d3c5aa25fe9d90db0e0add9ab290c7fd8c2",
+      "bytes": 2819,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/performance-evaluator-checks.json",
+      "sha256": "7ce8ba8a3c9eee955c20608cc9aed23806a06d1195a58c55fdea446d05061a9c",
+      "bytes": 1702,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/review-state.json",
+      "sha256": "a9ebbc751b1f18bf30f541bd0bb99349b1cebc992f808e0ac060c11f1a025616",
+      "bytes": 2362,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/review.md",
+      "sha256": "f8c9e039d6dee08f05da733ae1b106f7230f4399a6b43710298ccb9a9b0bd40d",
+      "bytes": 5975,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/rollback-overlap-repro.json",
+      "sha256": "c89b948b1219521d126c2ce9e320968a26ca1d9fcf65d8b0c12e75fbe6406d66",
+      "bytes": 670,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-bounded-admission-activation/rollback-overlap-repro.py",
+      "sha256": "51a6542fa0e777f66ef0bd402a3d97c6c45765a5bce4cafbcfa688cc67b88b35",
+      "bytes": 2303,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/README.md",
+      "sha256": "08e0a61a2e05debe1da928736b2d39be160a15b8b1f8ce7b20a6d4ca3a2d1eb6",
+      "bytes": 827,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/accepted-contract.txt",
+      "sha256": "b2369601f0a3a974c25b95856b9454afaaefe0ea1b69f893a428448f9f3fd23a",
+      "bytes": 1943,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/checks-final.json",
+      "sha256": "91af46886aa220b651d024feb06c0226a0cc4bbd13cb2926ef6d0c9417f8fe8c",
+      "bytes": 7033,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/checks-latest.json",
+      "sha256": "91af46886aa220b651d024feb06c0226a0cc4bbd13cb2926ef6d0c9417f8fe8c",
+      "bytes": 7033,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/cleanup.json",
+      "sha256": "d5cf8f988be85c04e4b604c1a1d3e201458d863a03b37e07a73c1d39606e0433",
+      "bytes": 659,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/cma-test-build.log",
+      "sha256": "34f92d6c1faf6390ddc5ca068ee66f89245dfb5f54aaf5462546dbc7eccf2c17",
+      "bytes": 360,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/core-budget-tests.log",
+      "sha256": "0865d3b66bb79c97e5223de433330181c4606671da6fe2166a85a7d0b4adf376",
+      "bytes": 14703,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/file-size-gate.log",
+      "sha256": "50838afaac3f54ca90af8ed657475fef4cdc5dab932249adeff5c78733d8d386",
+      "bytes": 51,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/file-size.json",
+      "sha256": "14974cfb2600ea3b57c31ea1e84afff14189de7382e906a3c2e0bf361975ba48",
+      "bytes": 77,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/mongo-repro-newer-lift.log",
+      "sha256": "7844916360184d2a1e9e87c1694a66a0a4df16e279ef70c5bce16e43ec7962ae",
+      "bytes": 156,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/mongo-repro.log",
+      "sha256": "d3aa146f6d17df43578ab988e8c07722a1fc8c5a847743b06fe782dc87d3cc22",
+      "bytes": 121,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/registration-tests.log",
+      "sha256": "57980635d4369bf59910fee499636a3d5847e4c27ab21853d73f9df8ca3b5aca",
+      "bytes": 1501,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/registration-unfiltered.log",
+      "sha256": "a347a5947a0f55ba4c9d610e209d7ed592454106b16443285477de80531ce990",
+      "bytes": 1649,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/reproduce-stale-closure.js",
+      "sha256": "b612f2733f1514507915e0b52b5bf14bfc73f5b3e2df0d27c62132ee88122241",
+      "bytes": 2008,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/reviewer-regressions.rs",
+      "sha256": "1e58e67bfdac647dc8164c6d89e992275afcd8643dc2e77d403dca0374b03447",
+      "bytes": 3474,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/rust-mongo-tests.log",
+      "sha256": "9d557672ab2c97855ee7807c000c256e67687517c87fe15a45d43275e6a63f00",
+      "bytes": 6131,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/scope.json",
+      "sha256": "82a4074d69f22f3bdb9a6be4e874568ed617336636fb821e9560b67e745ab180",
+      "bytes": 8070,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/source-hashes.json",
+      "sha256": "fe0c4af100b69cae1ecea26b4ee152698248106c5affa8db9ac524ed1ac59d9d",
+      "bytes": 16515,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec/source-integrity.json",
+      "sha256": "224e4cc1613f9f547d40c7ccddda5160dc56bd5fd9e71543c708b84df1151944",
+      "bytes": 348,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1741-sec-review.md",
+      "sha256": "37edd46e2e48c58d6e760082f21403d7713fecc95ae0ba278ea612f962be239a",
+      "bytes": 19714,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/256a105e8-merge-resolution.patch",
+      "sha256": "84d9cec994148c887127b463b6ad9e41bbf5c1b10a2b80bf35619f3ec8273ecb",
+      "bytes": 10010,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/373ec7476-merge-resolution.patch",
+      "sha256": "63c569cb644cc3666b14890fc03c111a3c35a6363aaeb849164d370f6e285364",
+      "bytes": 9573,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/62cd33869-merge-resolution.patch",
+      "sha256": "d24ea9ef53cf29fb4cfa947d4823ffca2389b0887ca087866eb1ef61d2072a11",
+      "bytes": 14603,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/64a481f3f-merge-resolution.patch",
+      "sha256": "c1031d3f772eaba7ecb2c565c63715db365fa1ec0476bf445af95fde83ef02bf",
+      "bytes": 21501,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/all-slice-merges.json",
+      "sha256": "1a317afb01caf824e23245c55b7178f3da8455e18bc5c65d6f520260583d1284",
+      "bytes": 44132,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/cleanup.json",
+      "sha256": "b68a729c3cf58328804c7ee77757de76c432b681bfb86d60b76b6d0551a235bf",
+      "bytes": 287,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/composition-proof.json",
+      "sha256": "443fa4c1370f36c8bbf3d87f458e46e07ecd1cf5ebb56cf4d6a7227688261706",
+      "bytes": 21630,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/core-reads.log",
+      "sha256": "42205ae49b91c9a8f4e1349b507ab10d96c8b110ac9bdb05760980a0af5f847e",
+      "bytes": 21077,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/evidence-sha256.json",
+      "sha256": "d65dedd2e21922eb9829284c23db562730617a045bf60fcd4fc7784112b58a42",
+      "bytes": 2060,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/head-changed-file-sha256.json",
+      "sha256": "8f4760411be9db5c7b31736f1fef8658e3447b23ffa72098e1096f8fdcb3b7c0",
+      "bytes": 75244,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/migration-source-equality.json",
+      "sha256": "a8f9cac0dd74ba59dc2c477490922fd06f3ab21f3ea429e6da51b844c781f58e",
+      "bytes": 10840,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/mongo-selector-union.json",
+      "sha256": "d5cce9d0ee03807047f3e9282ac75ec50f4a894c99c611b6d8ff37f80a316619",
+      "bytes": 633,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/pr-final-check.json",
+      "sha256": "ee271f374c0faadebfeafbe2c282b0fa4ccd0eb47fac4a02a9828947034c7968",
+      "bytes": 2828,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/pr-snapshot.json",
+      "sha256": "e786995324fc7be02751a3273736aa609159dfd13f7e07189d3b307258f94d7a",
+      "bytes": 12816,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/public-contract-gates.json",
+      "sha256": "94d2483fd2a6be046e1b88d0ee9a9d1f91731bd85f77c6ea2efa86169afb918b",
+      "bytes": 259,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/public-contracts.log",
+      "sha256": "b92d2247afc36a706a6438dfe1e67768be14e8c0a2a97e516bbd2063b83cbf26",
+      "bytes": 7416,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/public-responses.log",
+      "sha256": "b6baba8a4bc68ffeaa99489019bc29e2d128fccff1e78512c083ae41a6acc2bc",
+      "bytes": 13707,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/qa-inventory-verified.json",
+      "sha256": "f712d28d6a82047938cc1a42af6834f4d1306f7809dcf5766aa4aba0ebaf157a",
+      "bytes": 612,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/qualification-tree-equality.json",
+      "sha256": "68e50d8e55f4f3cddee09029158901aff0ec43054ec73b15574994d28e3ea928",
+      "bytes": 1329,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/reader-gates.json",
+      "sha256": "bbeb377c8b9e54ae2981a3c7de34433da5bbd85f5aa80142e68c71934c921f55",
+      "bytes": 481,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/review-coverage.json",
+      "sha256": "d9836882905e653274683fc0e3747fc03d0089100ffe6c0bd20f3373f40b1a9a",
+      "bytes": 5139,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-composition/slice-source-equality.json",
+      "sha256": "ad07e4aad37b79d4bcaaddc9c20111e3134886aed117bd28e043f30a78e26310",
+      "bytes": 1761,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/author-gates-verified.json",
+      "sha256": "6123dab97846540fc7b9a57712576a9ccdcf777e52ba52e561b8be24ff1bbda7",
+      "bytes": 10420,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/automatic-merge.txt",
+      "sha256": "c341acfe7cb3d293ca5abd3393269d677330cfba388bcbda6238731df9cc5104",
+      "bytes": 760,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/develop-mongo-contract-tests.sh",
+      "sha256": "bfe0857975f12d28c505f0234bd7d16bd6968bafaf134ef5d8d6157c0a71f3d7",
+      "bytes": 9633,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/develop-sandbox_unpublished_recovery.rs",
+      "sha256": "eeed37d7f6e9398681814e6a53a4b670a0c4469e5b666b8178e81fa1aa706b06",
+      "bytes": 5583,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/evidence-sha256.json",
+      "sha256": "c407b39b5ea537cbff48619cfb4413a93790698214c9f37d303c67b13ec0ac4d",
+      "bytes": 2105,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/expected-merge.json",
+      "sha256": "c99d31d997b8588e5d27c01b8b1d2c47ae0a996ef5218f2b206d1743d1fee406",
+      "bytes": 405,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/expected-sandbox_unpublished_recovery.rs",
+      "sha256": "36588e09fb93e14e147e985c30c826307b4882cd4a23caca53daca5958008334",
+      "bytes": 7023,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/ordered-prefix-check.json",
+      "sha256": "1295204deb088270d084f6c105ebb2aca1d7ef20f97a9d4a6d7a38f78bbb6ec4",
+      "bytes": 52,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/parent-selector-inventory.json",
+      "sha256": "b47c170da25848f9e688f674d4659833df6a1843246841d01ba4af249fa4c456",
+      "bytes": 8180,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/pr-final-check.json",
+      "sha256": "1302d9196481ddcd0a27dda08aa31a4a5acb772ad28a009bff36fa6a705006ff",
+      "bytes": 1969,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/preparation.md",
+      "sha256": "eb9f5c267fdbbdad7635eddd0be92b11e175c50db9ede6de3dbaa645a6494337",
+      "bytes": 2155,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/provisional-tree-check.json",
+      "sha256": "6331cedb3778dc7d21abf7fc0ebfb8c82afa1fa777684a17ad270bd2b11605d7",
+      "bytes": 387,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/recovery-rustfmt-result.json",
+      "sha256": "c9eea569237a19158e7ed815ca33382de6ff54680d0b598e2ca6cd75fd8ab05a",
+      "bytes": 96,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/recovery-rustfmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/resolved-sandbox_unpublished_recovery.rs",
+      "sha256": "36588e09fb93e14e147e985c30c826307b4882cd4a23caca53daca5958008334",
+      "bytes": 7023,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/reviewed-mongo-contract-tests.sh",
+      "sha256": "9e4617cf74a90ed18e600732567eb94c126955838f2d1a298ae34bbf42863627",
+      "bytes": 10241,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/reviewed-sandbox_unpublished_recovery.rs",
+      "sha256": "94f8f1a6ea4ecf393e15e1835153c8f7f7969374b39cc724a287232f11398ea7",
+      "bytes": 6505,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/runner-test-result.json",
+      "sha256": "f79a08c31b434dab3bf5496d65271cf5d9db6ae6dc4afcb2cde5b922cf0b3754",
+      "bytes": 260,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/runner-tests.log",
+      "sha256": "ce00f1aca4533140605045a83d339a07c38f6aab0345c87611938d6ee1a940e6",
+      "bytes": 3487,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/selector-union.json",
+      "sha256": "744e45531b4896a795d0e1a464b1dd3a853fe8d4ae04691961bfa53db78240c9",
+      "bytes": 4595,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/tested-script-sha256.json",
+      "sha256": "76e269455a97dce257828a810bdca2fc4932444684fffb96d36766a0460610ec",
+      "bytes": 12706,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict/union-proof.json",
+      "sha256": "7534354f97d5a1dbf4acd34bc78d818e8084fe9e3f30c6d36ff78f12b26be6a6",
+      "bytes": 472,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-conflict-review.md",
+      "sha256": "ed7948adb6dad3410ca5f32acaed3648946b1b79fc322be202c7ac7abc8d91d0",
+      "bytes": 6336,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1766-review.md",
+      "sha256": "18fb115435e0e2001b3d56085a8f4ddbe410336a298cfaec1493ae941b3af6c2",
+      "bytes": 17835,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/build.log",
+      "sha256": "e8b4e67430b1e62ea44f48cbb184e80413b669e37e73b698db4264f8a605b51b",
+      "bytes": 12598,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/capacity-counts.json",
+      "sha256": "b20c8abd52f0d08925d57fe991ef43bd2159c7fc95ee8e5a226b0738edeb90a2",
+      "bytes": 439,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/checks-final.json",
+      "sha256": "2b3bb834a671f8d83767dfa9e87bf166169a9a936218d6f5f4edf4340afee5bc",
+      "bytes": 6953,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/checks-latest.json",
+      "sha256": "2bad2ae46608cf77b013f9bf29998c171929d93898954a17200c561e8c08059e",
+      "bytes": 6933,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/cleanup.json",
+      "sha256": "eea8ee4504295124523cbdafb5e4f1d8c23f865436a980c35011335a595aa36a",
+      "bytes": 761,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/file-size.log",
+      "sha256": "a859d13b4f436ef3cf9a152691f3be79ff434a5e9833ff9dd76f7115d375ac6e",
+      "bytes": 51,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/fmt.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/mechanical-review.json",
+      "sha256": "4e81f5b5a2514fe4a467bd7874e270ec280fcf5672a7b6b75620f321199eeaf9",
+      "bytes": 3904,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/mongo-tests.log",
+      "sha256": "f96e0212dc74b57c51f638082da563f24e44676dbbea8a2b332802b61235b89e",
+      "bytes": 3958,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/pr.json",
+      "sha256": "11cb68da0b9da7f2d9c5f043520a667b48cdbb184f42564e94fbb18ebdbb20b8",
+      "bytes": 8740,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779/validation.json",
+      "sha256": "6afc2b1bb4622d4f2c850ec2b9fa22718e4b1f6186c2665f2ec0537c100d1cd4",
+      "bytes": 343,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-pr1779-review.md",
+      "sha256": "b689a4a6ad258aa720c358acafb51dc0044527f912849fddb1f4856ac6dd8d02",
+      "bytes": 8181,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/census-edge-results.json",
+      "sha256": "1b3273cab7b77a12357c153a09c9b0c354e410d4ceeed32e2671b056f24010c3",
+      "bytes": 3405,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/census-edge-review.py",
+      "sha256": "f2b86200e6449cc76ec452f6668cf9543ebdc43e88e41e92ef60ecfa1ff266ed",
+      "bytes": 3886,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/census-edge-run.log",
+      "sha256": "e158d238ba3fc0f3267b6e5e11455414e0c06deadbb0c25cb23820d40164cbd2",
+      "bytes": 68,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/cleanup.json",
+      "sha256": "98daeaaaf4500213eea4302a2897e0fe5ae466c0943e89b416af88bc506fd359",
+      "bytes": 582,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/dependencies.log",
+      "sha256": "a6f753037cb8929e4f679cc26fd3b710da3ceea1a6ebdcbe63fc1f58a8b0ee96",
+      "bytes": 2291,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/driver-proof.json",
+      "sha256": "d818c34349d51bc45861fe76aecd073bcee0e6fedc3310cea2990b66f8f65338",
+      "bytes": 634,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/evidence-sha256.json",
+      "sha256": "e3b88892e2aec28a26c624d814959eae07c68a3f2de02473ee98bdc6ab1239f8",
+      "bytes": 1434,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/local-rehearsal-result.json",
+      "sha256": "a3e8bb2386589667dfaf712ed5b7c0239f8ab03dbbc23d309970afb4b559a684",
+      "bytes": 44932,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/local-rehearsal-run.log",
+      "sha256": "eac28a852a0118992de86acd3f8545d5fa5d73326bff0ea08da37ca3f5815692",
+      "bytes": 8261,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/offline-tests.log",
+      "sha256": "e787f4159e9b83eb132652e793a7302a85df387ab109326f356880ba1f320041",
+      "bytes": 2541,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/packet-hashes.json",
+      "sha256": "47727812c390a253c6134f778cf94f33d04a3637dabf6a0982ebcba8cf4eed1f",
+      "bytes": 7926,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/production-call-audit.json",
+      "sha256": "c4f41997bc98bab475011a26bf379889555d599511a84750d31e053ddcb68ac6",
+      "bytes": 3281,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/progress.json",
+      "sha256": "accf5a9792d90d0edc1df3a97ec0d101b3e66265c3a3e58c62ec2570ab78858b",
+      "bytes": 812,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions/source-copy-binding.json",
+      "sha256": "def0a869b2a0f412e2c3ce62e1ecf754feb3180882574616a7fb8d43d663e859",
+      "bytes": 1309,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-preconditions-review.md",
+      "sha256": "1e0b048ab6a65a73c7437c207842a45a2b0c98a46e602c9b78e2868db2c1a06c",
+      "bytes": 11413,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/command-evidence.log",
+      "sha256": "ad3936c8f2613c749a702038e060eb961e9e9de582f8223bda9f9adc085105c7",
+      "bytes": 3464,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/contract-admit.log",
+      "sha256": "d6c1507945aa7ad04a62dee90bb92c23104a8b385c86b5c5d1a67464943bb3c3",
+      "bytes": 472,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/contract-dry-run.log",
+      "sha256": "5e3af51338f38f3ed3d89b659d7f6665312a348a824cfa8f20275e2969138790",
+      "bytes": 1370,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/contract-read-status.log",
+      "sha256": "aa6e86105e99c6bef1458ed185b7945aea7d8f43e841bc23037ee1ab135b2385",
+      "bytes": 472,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/contract-request-status.log",
+      "sha256": "22cc21c71a05ce6cbfeccd4aa67f95766b0919a10d1cc2d72efe18f38c8b7519",
+      "bytes": 472,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/contract-resume.log",
+      "sha256": "b8bfbb75f377b6ad9f746e29f1e0671481b861bfc72e674caa00db7bc74063f0",
+      "bytes": 472,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/file-size.log",
+      "sha256": "b0588d5b4e71fffe99f91221b4a4b300f630989d4b024a4f45c98b510ead33f2",
+      "bytes": 51,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/initial-contract-dry-run.log",
+      "sha256": "a7d6b13dfed2af245385a40919b7fd455f3183ff3022fab659ebb47d39e64c76",
+      "bytes": 755,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/initial-heavy-run.json",
+      "sha256": "286ddc97b0f2aa0f1fd7d824bee33cbf9ae53c36cf259364d23aecc622ccaa89",
+      "bytes": 55,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/initial-review-gates.json",
+      "sha256": "10d69a2d9fa7c4fd4bdf04737e66bb327239d4caf1626ddcfd9f925f06061b0d",
+      "bytes": 201,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/light-gates.json",
+      "sha256": "f3f2b323477f97134a0c818d35b8f31da4f4872d84888aabd8d1016eb7d37718",
+      "bytes": 108,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/recovery-authorization.log",
+      "sha256": "8474ec36b2dc46943580661c82e849629e632371de762d3a55c240a56b8e1f56",
+      "bytes": 1313,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/review-gates.json",
+      "sha256": "81f6d999263b074984b13fa5c61e74734ef2268bdab9ab5c800c9a9cba5e24dc",
+      "bytes": 734,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/reviewed-source-manifest.json",
+      "sha256": "74ecd4d7ab96b70d159c4a7743cb2fbe37fccbe111cbe4d1779cb213362e618d",
+      "bytes": 8739,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/rust-sdk-gates.json",
+      "sha256": "b6ccc665515e14d2483ccf8559c046a3a3cc42bd1ea139c041e5bbccff1e85a0",
+      "bytes": 240,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/typescript-contract.json",
+      "sha256": "7df1785f5a0f414b51026fe87fb574c7d366a348aa52eab912eb6867d45fd12a",
+      "bytes": 40,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta/typescript-contract.log",
+      "sha256": "264ba090baeac0b92633cc08cb0d1db45da3ea7b6853e43c886c40b00ebe8fa3",
+      "bytes": 1533,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/backend-dry-run.log",
+      "sha256": "b4ae0971e083c9a9cdfa2984513a86620ccc8b73083bb8895930829a2724b499",
+      "bytes": 1068,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/cleanup.json",
+      "sha256": "4f546db39b5c8862641c167eeb6dc7bd5e03fbf27114daa80fb4a726354b8a89",
+      "bytes": 209,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/file-size.log",
+      "sha256": "53c1f0f4e6b91e1b749978c18153d31ec34ea4f58ba6bf559209fb75c3aaba1f",
+      "bytes": 51,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/light-gates.json",
+      "sha256": "02e460f30b087626450999ee074d9efeff13f4a8d5e551ca089c60b103234a52",
+      "bytes": 113,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/npm-install.log",
+      "sha256": "c0009e3807bc2462663e365252a249be371112284b877b2b4a9383d8b99a4b76",
+      "bytes": 374,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/reviewed-source-manifest.json",
+      "sha256": "e56adac4e18c27080e55d59bdb1bf3d30e790b407318e4959c80765cf7cd38fe",
+      "bytes": 2676,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-admit.log",
+      "sha256": "88bf2d48376934cb699e00c6f81cba5164efddb638ebff27ba153534907a817c",
+      "bytes": 532,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-dry-run.log",
+      "sha256": "f474f2b7b5edd23b16594661173b1bdcffed6f2e6db3f48e971bb2781df0e999",
+      "bytes": 709,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-format.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-gates.json",
+      "sha256": "b3d2eab69ceae2c0c10b7d9531108efaa0524b35dc1013d20bca890c81c4be0f",
+      "bytes": 2481,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-outcomes.log",
+      "sha256": "f230dd3986bd20f5a91b0e5895e6ab89dcf177494d0b0fcaf069c9aaca1b405b",
+      "bytes": 2795,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-read-status.log",
+      "sha256": "0f512aad8f0909cd655d750cfbe8d5b0e988be7086b72273bfc748f493270493",
+      "bytes": 532,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-request-status.log",
+      "sha256": "2b10b3bc9f311904e3c8e94fabfb16b64cf0e89de90ca103a7e4f5f1069625ba",
+      "bytes": 532,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/rust-resume.log",
+      "sha256": "0838035c56089f2a40cad7de6db701484b3381ecf1225175128b652fc95d5d28",
+      "bytes": 532,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/typescript-gates.json",
+      "sha256": "c733b601929c785b06df00f2290d9942620a1f2ec92d531263b0f7156e01062d",
+      "bytes": 812,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/typescript-outcomes.log",
+      "sha256": "c63b71a83f0fa9c31c925f25ae5c648587e4d98122f4b7d9b43be1d0ab98882a",
+      "bytes": 338,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059/typescript-replay.log",
+      "sha256": "12fd2b2ae06b141974f61b5e1255d68e7c0dd09769c5c65ddc3b63dd5552fc5f",
+      "bytes": 355,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta-05a309059.md",
+      "sha256": "8fc18240c1feb87b3f64fa8abbf9e56c95222c449757dd1ccf3c095c43904a09",
+      "bytes": 5276,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-integration-sec-delta.md",
+      "sha256": "96ab6cbfee91d54e192f8347cff074e98bcd0580cec4c84d641f6bd3d26269cf",
+      "bytes": 9841,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-b1-delta/author-evidence-binding.json",
+      "sha256": "aaedbcd33f245cf67074b9a4895a05b187bae89d2fa329132ffd85d07bb444fa",
+      "bytes": 984,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-b1-delta/review-result.json",
+      "sha256": "1f5e94deca5e2d9dba9834f122bb4fe3610b88bec5a4c470a0df1c8a9d61b061",
+      "bytes": 553,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-b1-delta/reviewer-core-tests.json",
+      "sha256": "f676288393006f920dbc065f6652e2df1c7333d1d7b798af9f63986881363d04",
+      "bytes": 146,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-b1-delta/reviewer-core-tests.log",
+      "sha256": "528f0a568f86fcef5749b242509bece43eb57211140aacfd1d894e67e8b4dee2",
+      "bytes": 3277,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-b1-delta/source-manifest.json",
+      "sha256": "20ba4e0a140787d7dc245235e4a8f7b737ebc9bc8e09cd0501d93697fd0001a2",
+      "bytes": 5517,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-b1-delta-review.md",
+      "sha256": "1a840ce82d4121dc6397819a4f1836dfe9697040527034b4f7393b3d39d6b96a",
+      "bytes": 6961,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-s5/cleanup.json",
+      "sha256": "7a73154e9c0d34ffe4ac71dec7119f497dfa1b654b1dbe4045e36554e2533655",
+      "bytes": 502,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-s5/file-sizes-5582969d4.json",
+      "sha256": "1513c0e2f8a0676cb2dd2d8eb8de2846e0cbab77cf45a4bd0fd6a60aa5e0ab00",
+      "bytes": 137,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-s5/file-sizes.json",
+      "sha256": "b15e2ad301bb059c7ffa0381d223c04b552aa77623a50362fab7bd5e94938398",
+      "bytes": 34881,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-s5/review-state.json",
+      "sha256": "5ec00daf0387ba489b27a5a8052529ff0e114cd7f7f342a2f47c127d60c7cffe",
+      "bytes": 1580,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-s5/size-c9b981830.log",
+      "sha256": "5f32e35db59c1f592ccb7a264787dfaf81dda7b336406b1544322b93189addbf",
+      "bytes": 51,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-segmentation-s4-s5-review.md",
+      "sha256": "b244f5bcf6f5eeacbf8c6ed07f48b55c47bf44987a63f9c9d5adef89fdd5a403",
+      "bytes": 11561,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/author-evidence-verified.json",
+      "sha256": "ac170291cbe51c55d673344171dbdd3ba190e265ab3ca6693c8ae48720e9047f",
+      "bytes": 12301,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/caller-file-sha256.json",
+      "sha256": "eb79cb7ff8fa8b0fa0341c8b45035d1471e81586b44630870ac91b0a86eeccba",
+      "bytes": 1771,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/cleanup.json",
+      "sha256": "476563ac6ee398f6b387eff33d16a59a9a4ba759abc43daef450ffd91dc6ffc8",
+      "bytes": 204,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/develop-conflict-equality.json",
+      "sha256": "9a23b1194684c023473f7d787bec3e65a207863344229e384b64a97c740ec9c7",
+      "bytes": 424,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/evidence-sha256.json",
+      "sha256": "05db11fced8a92c4037f80525bc1507e3c1a5aafa9a75c10248e0cf3dc583501",
+      "bytes": 667,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/fmt-results.json",
+      "sha256": "def2127dff863d3fbf78a6e3afc546982dbfd03c4ca28d5c8c441b483411d440",
+      "bytes": 1351,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/remote-readback.json",
+      "sha256": "3c97db6ab49ec1e4e314ae8a0e7e7b12c238b5db7ca93eea69832b3cac2e4cde",
+      "bytes": 316,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller/scope-proof.json",
+      "sha256": "45365b6e4accb36319df0f3fa6356a7a67d5fef85c68a97a841cde87882d7977",
+      "bytes": 1981,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-caller-review.md",
+      "sha256": "4fc36a0537794290162e604f1f40fd9abd6465b2ccccfe1e3b25484407539cb3",
+      "bytes": 10559,
+      "publication": "report"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/cleanup.json",
+      "sha256": "937b0a6f7b04b57028ae55ad4e7e5badefafc8fefcb1035e4dc1a4b6e426884e",
+      "bytes": 248,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/evidence-sha256.json",
+      "sha256": "a71d5e7ac74118ac37f16632005160f451c3a63ea60d6eedbaa292bcb55e2e6b",
+      "bytes": 1096,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/fleet-policy-binding.json",
+      "sha256": "8501307e6d0da9ba806808c4fe162c0b79a7a3b7def685e18310aefee559f1eb",
+      "bytes": 495,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/fleet-policy-tests.log",
+      "sha256": "354e9dc52c425e9a46908e90b3e70850eedca4275bf1b48add06f5e6f9e5bba1",
+      "bytes": 1100,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/local-evidence-proof.json",
+      "sha256": "c2dcfe94939ed79b2affbeb2975b648c334aed6222b79ef4d34c7360314711e7",
+      "bytes": 396,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/observer-offline-results.json",
+      "sha256": "2f5362df181cc9bc51c5b49ba0c08a8fe0077a54d960446f78eaaeb46f0e3e3b",
+      "bytes": 1336,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/observer-offline-review.cjs",
+      "sha256": "d203b78204d8d7eff64b71aff36b539cd59ad3374c315cc938f180003cd91bd0",
+      "bytes": 5798,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/operator-source-proof.json",
+      "sha256": "820b4e8c1976ccb171477d361df8df6ef1720ccf912445437c06e7f81a63020c",
+      "bytes": 6499,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/packet-hashes.json",
+      "sha256": "becc2687684b5566b0c3aac31ba58dd78cc74590e932496c748ef26a96aadbfc",
+      "bytes": 9183,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet/reviewed-source-hashes.json",
+      "sha256": "495406de8b34e08bb777dc722337591138d7a75f2189161c7ef020bbc088be2c",
+      "bytes": 3993,
+      "publication": "restricted local evidence"
+    },
+    {
+      "path": "notes/reviews/2026-11-12-writer-packet-review.md",
+      "sha256": "cd375c59ac8295b86f9bf9c1ef495ef3793b89eed95a0b3210f330d743c39081",
+      "bytes": 10850,
+      "publication": "report"
+    }
+  ]
+}
