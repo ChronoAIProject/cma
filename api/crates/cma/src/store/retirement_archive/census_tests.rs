@@ -300,5 +300,27 @@ async fn real_activity_store_keeps_prefixed_and_concrete_path_resource_history()
             .await
             .unwrap();
     }
+    let encoded = ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded).on(
+        ActivityTarget::Resource(format!(
+            "/api/v1/sandboxes/{}",
+            request.sandbox_id.replace('_', "%5f")
+        )),
+    );
+    activity.append(&encoded).await.unwrap();
+    store.admit(&request, &bytes).await.unwrap();
+    assert!(
+        export::publish(&store, &request, &bytes, &Custody::default(), None)
+            .await
+            .is_err()
+    );
+    assert!(store.manifest(&request, &bytes).await.is_err());
+    // Remove only this deliberately ambiguous test fixture before the success
+    // branch. Production refusal requires a reviewed reader, never row removal.
+    store
+        .database
+        .collection::<Document>("activity")
+        .delete_one(doc! {"_id":&encoded.id.0})
+        .await
+        .unwrap();
     support::roundtrip((temp, store, request, bytes), expected).await;
 }
