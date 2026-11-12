@@ -303,6 +303,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
+            config.features.command_reconcile_pacing,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(

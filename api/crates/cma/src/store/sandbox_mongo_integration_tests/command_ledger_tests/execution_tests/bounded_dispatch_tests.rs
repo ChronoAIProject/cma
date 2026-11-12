@@ -168,7 +168,11 @@ async fn latest_started_turn_survives_all_outcomes_and_restart_at_dispatch() {
                     target == Some(997),
                     "{outcome} {target:?}: {result:?}"
                 );
-                assert_eq!(snapshot(ScanCaller::CommandAdmission, true)[0], 0);
+                assert_eq!(
+                    (snapshot(ScanCaller::CommandAdmission, true)[0]
+                        + snapshot(ScanCaller::CommandReconciliation, true)[0]),
+                    0
+                );
             })
             .await;
             client.database(&name).drop().await.unwrap();

@@ -20,6 +20,7 @@ pub(in crate::store) mod lane_records;
 mod queued_cancellation;
 mod queued_input;
 pub(in crate::store) mod reconcile;
+mod reconcile_heads;
 pub(in crate::store) mod records;
 pub(in crate::store) mod reserve;
 mod retry;
