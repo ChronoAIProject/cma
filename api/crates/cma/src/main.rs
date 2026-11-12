@@ -438,6 +438,7 @@ fn request_span(_request: &Request) -> tracing::Span {
         .split_once(' ')
         .unwrap_or(("OTHER", "unmatched"));
     tracing::info_span!(
+        parent: None,
         "http.request",
         request_hash = %context.request_hash,
         route = %context.route,

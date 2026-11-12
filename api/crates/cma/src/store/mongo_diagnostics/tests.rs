@@ -70,6 +70,7 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
     diagnostics.0.lock().unwrap().holds.insert(
         1,
         Hold {
+            hash: "c".repeat(64).into(),
             start: Instant::now() - SLOW,
             context,
             last: Some(command),
@@ -90,6 +91,7 @@ async fn slow_success_failure_and_hold_emit_safe_fields_without_parent_values() 
         for key in [
             "route",
             "request_hash",
+            "hold_hash",
             "worker",
             "phase",
             "command",
@@ -143,6 +145,7 @@ fn fast_events_are_sampled_but_totals_and_closed_connection_cleanup_are_complete
     diagnostics.0.lock().unwrap().holds.insert(
         2,
         Hold {
+            hash: "c".repeat(64).into(),
             start: Instant::now(),
             context: DiagnosticContext::default(),
             last: None,

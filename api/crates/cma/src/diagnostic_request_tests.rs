@@ -104,6 +104,8 @@ async fn request_log_uses_the_same_hash_and_never_raw_path_query_or_header() {
         .with_writer(output.clone())
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
+    let outer = tracing::info_span!("private", owner = "private-owner");
+    let _entered = outer.enter();
     let app = crate::with_request_context(Router::new().route("/agents/{id}", get(streaming)));
     let response = app
         .oneshot(
