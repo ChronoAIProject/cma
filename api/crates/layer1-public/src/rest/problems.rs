@@ -128,6 +128,10 @@ pub struct Problem(pub CoreError);
 impl IntoResponse for Problem {
     fn into_response(self) -> Response {
         let (status, slug) = match &self.0 {
+            CoreError::AdmissionPaused => return super::admission_problem::paused(),
+            CoreError::AdmissionControlWritesUnavailable => {
+                return super::admission_problem::writes_unavailable()
+            }
             CoreError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             CoreError::InvalidRequest(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid-request"),
             CoreError::InvalidState(_) => (StatusCode::CONFLICT, "invalid-state"),
