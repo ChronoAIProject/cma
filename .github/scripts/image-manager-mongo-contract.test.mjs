@@ -18,7 +18,7 @@ const selections = [
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~organization_channels::)', 'only', true],
   ['package(=cmaeg) and kind(test) and binary(=github_source)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~tools::threads::ledger::mongo_tests::)', 'only', true],
-  ['package(=cma) and test(~store::isolation::tests::real_)', 'only', false],
+  ['package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))', 'only', false],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~binary::compiled_binary_)', 'all', true],
   ['package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)', 'only', true],
   ['package(=cma) and test(~gateway::tests::)', 'only', false],

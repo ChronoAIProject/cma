@@ -11,7 +11,7 @@ use super::super::agents::read_agent;
 use super::super::sandbox_mongo::MongoSandboxStore;
 use super::{lane_records, records, worker_apply, ApplyError};
 
-pub(super) async fn apply(
+pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     id: &AgentCommandId,
     session: &mut ClientSession,
@@ -42,7 +42,45 @@ pub(super) async fn apply(
         .await?
         .ok_or(CommandLedgerError::Corrupt)?;
     let mut lane = lane_records::read(&lane, agent_id.as_str())?;
-    let mut evidence = CommandEvidence::new(&command)?;
+    let evidence = match super::super::agent_log_segments::command_evidence::read_transaction(
+        store, &agent, &agent_row, &command, session,
+    )
+    .await
+    .map_err(evidence_error)?
+    {
+        Some(evidence) => evidence,
+        // The segmented reader returns None exclusively for legacy roots.
+        None => legacy_evidence(store, &agent, &agent_row, &command, session).await?,
+    };
+    let retry_current = if evidence.has_source_deferred() {
+        let current = store
+            .bindings
+            .continuation_retry_authority(&command.receipt.envelope, session)
+            .await?;
+        let fenced = store.agents.update_one(doc! {"_id":agent.id.as_str(),"revision":i64::try_from(agent.revision).map_err(|_|CommandLedgerError::Corrupt)?},doc! {"$inc":{"agent_command_admission_fence":1_i64}}).session(&mut *session).await?;
+        if fenced.matched_count != 1 {
+            return Err(CommandLedgerError::Conflict.into());
+        }
+        current
+    } else {
+        false
+    };
+    let revision = command.revision;
+    if evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)? {
+        worker_apply::write(store, &command, revision, &lane, session).await?;
+    }
+    Ok(command)
+}
+
+async fn legacy_evidence(
+    store: &MongoSandboxStore,
+    agent: &layer2_core::sandbox::Agent,
+    agent_row: &mongodb::bson::Document,
+    command: &AdmittedAgentCommand,
+    session: &mut ClientSession,
+) -> Result<CommandEvidence, ApplyError> {
+    let agent_id = &agent.id;
+    let mut evidence = CommandEvidence::new(command)?;
     let dispatch = command
         .work
         .dispatch
@@ -63,21 +101,18 @@ pub(super) async fn apply(
         && suffix_length.is_some_and(|length| length <= 16)
         && super::super::agent_log_integrity::trusted_summary(
             store,
-            &agent,
-            &agent_row,
+            agent,
+            agent_row,
             ScanCaller::CommandAdmission,
             session,
             false,
         )
         .await
-        .map_err(|error| match error {
-            TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
-            TransactionLogError::Driver(error) => ApplyError::Driver(error),
-        })?
+        .map_err(evidence_error)?
         .is_some();
     if bounded {
         use futures_util::TryStreamExt;
-        evidence = CommandEvidence::from_trusted_message_prefix(&command)?;
+        evidence = CommandEvidence::from_trusted_message_prefix(command)?;
         let mut observation =
             crate::store::mongo_read_telemetry::Read::find(store.agent_log.name());
         let collection = store
@@ -114,27 +149,17 @@ pub(super) async fn apply(
             },
         )
         .await
-        .map_err(|error| match error {
-            TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
-            TransactionLogError::Driver(error) => ApplyError::Driver(error),
-        })?;
+        .map_err(evidence_error)?;
     }
-    let retry_current = if evidence.has_source_deferred() {
-        let current = store
-            .bindings
-            .continuation_retry_authority(&command.receipt.envelope, session)
-            .await?;
-        let fenced = store.agents.update_one(doc! {"_id":agent.id.as_str(),"revision":i64::try_from(agent.revision).map_err(|_|CommandLedgerError::Corrupt)?},doc! {"$inc":{"agent_command_admission_fence":1_i64}}).session(&mut *session).await?;
-        if fenced.matched_count != 1 {
-            return Err(CommandLedgerError::Conflict.into());
+    Ok(evidence)
+}
+
+fn evidence_error(error: TransactionLogError) -> ApplyError {
+    match error {
+        TransactionLogError::Domain(SandboxStoreError::Unavailable(_)) => {
+            ApplyError::Domain(CommandLedgerError::Unavailable)
         }
-        current
-    } else {
-        false
-    };
-    let revision = command.revision;
-    if evidence.apply_with_continuation_retry(&mut command, &mut lane, &agent, retry_current)? {
-        worker_apply::write(store, &command, revision, &lane, session).await?;
+        TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
+        TransactionLogError::Driver(error) => ApplyError::Driver(error),
     }
-    Ok(command)
 }

@@ -82,6 +82,7 @@ async fn complete_scan_callers_distinguish_worker_settlement_proof_and_public_pr
             &[1, 10_001]
         );
         let receipt = crate::store::agent_worker_transaction::PublicationReceipt {
+            segmented: None,
             agent: retry.agent.clone(),
             worktree: None,
             logs: vec![],
