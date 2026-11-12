@@ -6,14 +6,15 @@ One default-off combined PR to develop; target PR 15:30, review 16:30, merge 17:
 then the owner-mandated deployment and verification tonight. Writer and recovery activation remain closed.
 No issue closes without its required production evidence.
 
-**Current outcome:** the combined source is `c9b981830`; later checkpoints through
-`ea5c57af8` change only this ledger. S3 `9c2db4a46`, S4 `5875b8ddf` and S5's
-provisional `5e82a9e7b` are included normally. Strict combined Rust and unit gates
-are queued against the immutable source; independent QA owns the exact-source
-Mongo and parity/failure matrix. Earlier results below qualify only their named
-source. The PR is not open. The lead relays S5 source GO at its integrated pin;
-combined executable qualification remains pending. S4-B1 ordinary publication
-is allocated to S4 with a 15:00 pin target. The PR opens after that pin and gates;
+**Current outcome:** executable source `54d5821f7` includes current develop
+`fa292b834` (#1664), S3 `9c2db4a46`, S4 `5875b8ddf` and S5's fixture correction
+`ec015b274` through `577a15793`, all merged normally. Strict combined lint passed
+at preceding source `c9b981830`; the new combined Rust/unit/SDK and corrected
+recovery gates are queued at `54d5821f7`. Independent QA continues its broader
+Mongo and parity/failure matrix at `c9b981830`. Earlier results below qualify
+only their named source. The PR is not open. S5 source GO is recorded separately
+from executable qualification. S4-B1 ordinary publication is allocated to S4
+with a 15:00 pin target. The PR opens after that pin and gates;
 writer/recovery activation remains closed and no source finding is waived.
 
 ## Handoffs included normally
@@ -416,3 +417,29 @@ an explicit normal merge confirms up to date. This source approval is distinct
 from the running combined executable gates. After S4-B1 lands, merge normally,
 qualify its affected combined paths and supply the final-head delta to the
 security reviewer before the combined PR's merge relay.
+
+## Develop integration and recovery fixture correction
+
+Normal develop merge `62cd33869` includes observability #1664. Resolve its three
+shared conflicts by retaining both Mongo suite inventories in identical order,
+both public-operation contracts and both TypeScript SDK exports. Recovery merge
+`dcd4e0be6` includes `ec015b274`: the full-history fixture now atomically sets the
+query and aggregate sequence, then checks the stored Agent before real adoption.
+The production corruption decoder stays strict. This corrects the common setup
+failure observed in five recovery cases during independent QA; the old failures
+remain recorded and corrected recovery execution is still required.
+
+Source `54d5821f7` moves unchanged stream-budget assembly into the existing route
+composition module, preserving its call before delegated-router cloning. This
+keeps the combined composition source under 500 lines after observability adds
+its worker snapshot. All 433 changed source files satisfy the strict bound.
+
+TypeScript qualification at this source: 4,383 passed, one existing skip;
+typecheck, lint, build, docs and formatting pass. Rust formatting, configuration
+docs, canonical source size (6,420 files), whitespace and delta secret scan pass.
+The Mongo runner contract suite initially had one child-start timeout under
+load; its focused rerun and subsequent complete serial runner rerun pass.
+All 40 files in the migration review's scoped hash inventory still match the
+reviewed source exactly. The new combined Rust and recovery batch is queued;
+no pending gate is counted as success. Obsolete exports and frontend build
+artifacts were removed; only one build target and its active source remain.
