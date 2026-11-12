@@ -307,6 +307,14 @@ impl Sweep {
                 if self.skip_held_candidate(reconciler) {
                     return Ok(0);
                 }
+                // A platform spend stop defers managed runtime updates: their
+                // rotation starts a runtime even on a paused Sandbox, and an
+                // outstanding one would keep the candidate from the pause.
+                // They run again after the lift (decision 26).
+                if reconciler.platform_spend_stop(now).await {
+                    self.phase = Phase::IdlePause;
+                    return Ok(0);
+                }
                 let id = self
                     .candidates
                     .front()
