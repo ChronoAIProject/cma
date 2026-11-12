@@ -256,6 +256,7 @@ async fn serve() -> Result<(), String> {
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
     composition.sandbox_lifecycle.spawn(&mut shutdown);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
+    shutdown.push(composition.document_maintenance.spawn(shutdown.subscribe()));
     composition.usage.spawn(&mut shutdown);
     composition.usage_metrics.spawn(&mut shutdown);
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);

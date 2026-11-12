@@ -294,3 +294,77 @@ deadline. The deadline can expire after `commitTransaction` has been sent, so
 the caller returns `Unavailable` when the final result is uncertain. The same
 create idempotency key or update receipt is the recovery path for reconciling
 that outcome.
+
+## 2026-11-13-am-document-reclaim
+
+- **Service, issue and phase:** Agent Manager, #1479 PR-5; additive expansion and
+  gated reclaim. Release owner records the actual merge/source SHA, executable
+  checksum, immutable image and writer census before activation. Prerequisite:
+  `2026-11-13-am-document-source-commit-state` and the separately scoped storage
+  maintenance client. This record grants no production deletion authority.
+- **Stores and formats:** existing `cma_document_quotas`, schema version 1;
+  startup adds the non-unique `{kind: 1, state: 1, reserved_at: 1}` index through
+  the existing document-store index initializer. No collection or TTL is added.
+  The reclaim judgement writer conditionally changes reserved or missing-state
+  object rows to `committed` or `condemned`; new object rows also receive a unique
+  `reservation_id`. Judgement, finalization and unknown-commit readback match that
+  incarnation so old candidates cannot release a fresh same-key reservation.
+  Legacy rows match only a missing reservation ID. Condemnation writes server
+  `condemned_at`. New baseline owner rows add immutable `baseline_documents`,
+  `baseline_bytes`, `baseline_objects`; the ready transition adds server
+  `activated_at`. Old partial imports retain missing baseline fields instead of
+  fabricating original usage. Legacy object age uses activation only when it is
+  present; unknown-age rows require manual investigation.
+- **Reader floor and gates:** every source writer and the qualified rollback
+  image must contain PR-3's identity-compatible quota reader and atomic source
+  commit marker. Active reclaim additionally requires this release's
+  reservation-ID writer on every reserving process; with reclaim disabled,
+  rollback retains the PR-3 commit-marker floor. Old writers that do not mark
+  object commits are incompatible with reclaim and must be drained before
+  activation; a grace period is no
+  substitute. Retain the all-writer census and drain proof. Reclaim requires
+  `CHRONO_DOCUMENT_RECLAIM_ENABLED=true`, enabled ready quotas, and proved
+  maintenance deletion support. All feature switches remain default-off in code
+  and manifests. E1/E2 storage/finality/scope evidence is still external.
+- **Migration and work bounds:** existing index creation is idempotent, outside
+  user requests and readiness retries; it has no new DDL completion guarantee.
+  Candidate queries have a three-second maximum, indexed state selection, and
+  at most 64 rows. Startup waits 30 seconds; each five-minute round uses the
+  shared background budget with a 30-second deadline, no queued admission and
+  at most four external deletions. Failed deletion preserves condemned rows and
+  respects dependency retry delay. No transaction contains storage I/O.
+- **Counter writers and recovery:** finalization fences the same owner row as
+  reserve, removes only a condemned object row, and subtracts bytes/objects only
+  for the transaction that removed it. A missing main document plus no remaining
+  object rows allows document-reservation removal and documents decrement.
+  Any negative result aborts the whole transaction as corruption. Shared
+  transaction helpers reconcile unknown commits using a snapshot at operation
+  time; ambiguous results retry without inventing a release. Process metrics
+  observe work and do not replace durable accounting.
+- **External finality and authorization:** automatic deletion covers only
+  ledgered objects proved unreferenced in the judgement transaction. The E1
+  contract must prove delayed concurrent deletes cannot remove a new generation
+  after same-key reuse; state-conditional accounting alone does not prove this.
+  Outside-ledger cleanup requires private report review, ready ledger, proved
+  writer quiescence, dry-run and explicit CLI apply; apply rechecks current
+  ledger/reference absence. The owner-scoped listing interface cannot attest a
+  complete global physical inventory. Retain the independent storage-owner
+  inventory and version/soft-deletion evidence.
+- **Recovery and backup:** retain the private baseline inventory and digest,
+  pre-activation Mongo/object backup, all-writer/drain evidence, storage contract,
+  report digests, aggregate CLI receipts, source/image/config and compatible
+  rollback receipt. Reconciliation is read-only, checkpointed within a 60-second
+  call, and incomplete or unsupported checks are `NOT_CHECKED`. Reports contain
+  hashes/keys and aggregates, never subjects, titles or source text.
+- **Rollback:** disable `CHRONO_DOCUMENT_RECLAIM_ENABLED` and restart to stop new
+  rounds. Preserve the index, activation and ledger rows. A closed switch cannot
+  restore objects already deleted. Restoring any object/reference/accounting
+  unit needs an independently verified recovery procedure; do not reset owner
+  counters or re-enable pre-PR-3 writers.
+- **Completion:** local unit and disposable-replica-set tests must verify
+  writer/judge serialization, exactly-once release across stores, reserve/finalize
+  owner fencing, condemned retry, negative-count refusal, indexed selection,
+  report invariants/resume/privacy and cleanup refusals. Production completion
+  remains blocked on E1/E2/E3, approval of automatic cleanup, qualified backups
+  and actual deployed writer/storage evidence. Do not substitute fixture PASS
+  for provider or production acceptance.

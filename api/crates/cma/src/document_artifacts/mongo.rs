@@ -10,6 +10,16 @@ pub struct MongoDocumentStore {
     pub(super) rows: Collection<Document>,
 }
 impl MongoDocumentStore {
+    pub(crate) fn reclaim(&self, enabled: bool) -> super::MongoDocumentReclaimStore {
+        super::MongoDocumentReclaimStore::new(
+            &self
+                .rows
+                .client()
+                .database(self.rows.namespace().db.as_str()),
+            enabled,
+        )
+    }
+
     pub(crate) fn quota(&self, enabled: bool) -> super::MongoDocumentQuotaStore {
         super::MongoDocumentQuotaStore::new(
             &self
@@ -47,6 +57,14 @@ impl MongoDocumentStore {
                 .await
                 .map_err(|_| DocumentError::Unavailable)?;
         }
+        self.quota_rows()
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"kind": 1, "state": 1, "reserved_at": 1})
+                    .build(),
+            )
+            .await
+            .map_err(|_| DocumentError::Unavailable)?;
         Ok(())
     }
 }

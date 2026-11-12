@@ -447,6 +447,11 @@ impl ControlPlaneComposition {
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = stores.worker_observations();
+        let reclaim = Arc::new(
+            stores
+                .document_artifacts
+                .reclaim(config.features.document_quotas),
+        );
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -462,8 +467,9 @@ impl ControlPlaneComposition {
                 config.gateway.as_ref(),
             )?),
         );
-        Ok(Self {
+        let mut composition = Self {
             document_blob_maintenance,
+            document_maintenance: Default::default(),
             worker_observations,
             router,
             auth,
@@ -480,6 +486,12 @@ impl ControlPlaneComposition {
             native_warm_pools,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
-        })
+        };
+        composition.document_maintenance = documents::worker(
+            config,
+            reclaim,
+            composition.document_blob_maintenance.clone(),
+        );
+        Ok(composition)
     }
 }

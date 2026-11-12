@@ -38,6 +38,7 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
     );
     metrics::gauge!("cma_readiness_check_success").set(0);
     metrics::gauge!("cma_readiness_check_timestamp_seconds").set(0);
+    crate::document_artifacts::worker::describe_metrics();
     work::initialize();
     browser::initialize();
     worker::initialize();

@@ -1,10 +1,10 @@
 //! Assembled control-plane services and worker handles.
 use super::*;
 pub(crate) struct ControlPlaneComposition {
-    // Reserved for document purge/reclaim and account erasure workers, never routes.
-    #[allow(dead_code)]
+    // Maintenance capabilities never enter the public request routes.
     pub document_blob_maintenance:
         Option<Arc<dyn layer2_core::document_artifacts::DocumentBlobMaintenance>>,
+    pub document_maintenance: crate::document_artifacts::worker::DocumentMaintenanceWorker,
     pub router: Router,
     pub worker_observations: crate::store::worker_observations::Observations,
     pub bindings: bindings::BindingComposition,

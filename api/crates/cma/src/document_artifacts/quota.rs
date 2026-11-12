@@ -228,7 +228,8 @@ pub(super) fn object_row(source: &DocumentSourceReservation) -> Result<Document,
         "document_schema_version": 1_i64, "kind": "object", "bytes": source.bytes as i64,
         // Correctness does not depend on this client timestamp; it only bounds
         // the reclaim grace period until a server-time migration is available.
-        "state": "reserved", "reserved_at": mongodb::bson::DateTime::now()},
+        "state": "reserved", "reserved_at": mongodb::bson::DateTime::now(),
+        "reservation_id": uuid::Uuid::new_v4().to_string()},
     )
 }
 pub(super) fn unavailable(_: mongodb::error::Error) -> DocumentError {

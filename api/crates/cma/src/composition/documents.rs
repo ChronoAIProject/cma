@@ -44,3 +44,16 @@ pub(super) fn compose(
         maintenance,
     })
 }
+
+pub(super) fn worker(
+    config: &Config,
+    reclaim: Arc<dyn layer2_core::document_artifacts::DocumentReclaimStore>,
+    blobs: Option<Arc<dyn DocumentBlobMaintenance>>,
+) -> crate::document_artifacts::worker::DocumentMaintenanceWorker {
+    let maintenance = blobs
+        .filter(|_| config.features.document_reclaim)
+        .map(|blobs| {
+            layer2_core::document_artifacts::DocumentMaintenance::new(reclaim, blobs, true)
+        });
+    crate::document_artifacts::worker::DocumentMaintenanceWorker::new(maintenance)
+}
