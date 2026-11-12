@@ -65,22 +65,6 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /api/image-manager
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: /
-      backendRefs:
-        - group: ""
-          kind: Service
-          name: cma-image-manager
-          port: 80
-          weight: 1
-    - matches:
-        - path:
-            type: PathPrefix
             value: /api/agent-manager
       filters:
         - type: URLRewrite
@@ -119,17 +103,6 @@ spec:
         - group: ""
           kind: Service
           name: cma-agent-manager
-          port: 80
-          weight: 1
-    # Image Manager remains optional; this discovery route does not enable it.
-    - matches:
-        - path:
-            type: Exact
-            value: /image-manager/openapi.json
-      backendRefs:
-        - group: ""
-          kind: Service
-          name: cma-image-manager
           port: 80
           weight: 1
     - matches:
@@ -203,22 +176,6 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /api/image-manager
-      filters:
-        - type: URLRewrite
-          urlRewrite:
-            path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: /
-      backendRefs:
-        - group: ""
-          kind: Service
-          name: cma-image-manager
-          port: 80
-          weight: 1
-    - matches:
-        - path:
-            type: PathPrefix
             value: /api/agent-manager
       filters:
         - type: URLRewrite
@@ -257,17 +214,6 @@ spec:
         - group: ""
           kind: Service
           name: cma-agent-manager
-          port: 80
-          weight: 1
-    # Image Manager remains optional; this discovery route does not enable it.
-    - matches:
-        - path:
-            type: Exact
-            value: /image-manager/openapi.json
-      backendRefs:
-        - group: ""
-          kind: Service
-          name: cma-image-manager
           port: 80
           weight: 1
     - matches:
