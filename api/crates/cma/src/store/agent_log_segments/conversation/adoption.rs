@@ -8,6 +8,14 @@ use crate::store::agent_log_segments::{
     writer_gate::{self, GateName},
 };
 
+impl MongoSandboxStore {
+    /// A process-local dispatch switch, never authority to admit a publication.
+    pub(crate) fn with_segment_adoption_enabled(mut self, enabled: bool) -> Self {
+        self.segment_adoption_enabled = enabled;
+        self
+    }
+}
+
 pub(in crate::store) struct Prepared {
     pub(super) admission: Admission,
     pub(super) bootstrap: BootstrapPlan,
@@ -18,6 +26,11 @@ pub(in crate::store) async fn prepare(
     mutation: &AgentConversationMutation,
     checkpoint: Option<&AgentMessageCheckpoint>,
 ) -> Result<Option<Prepared>, SandboxStoreError> {
+    // The default path must issue exactly the original Mongo commands, not even
+    // a gate lookup or an empty transaction. Existing v2 publication is separate.
+    if !store.segment_adoption_enabled {
+        return Ok(None);
+    }
     let mut session = store.client.start_session().await.map_err(driver)?;
     let mut scope = TransactionScope::start(&mut session)
         .await
