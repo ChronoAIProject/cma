@@ -25,33 +25,41 @@ pub struct SharedAgentDetail {
 }
 
 impl AgentReadService {
-    /// Public transcript read with a format-aware bounded fast path. Stores
-    /// return `None` when the Agent is legacy, untrusted, corrupt, or the
-    /// rollout flag is closed; those cases use the exact complete fold below.
+    /// Public transcript with certified segmented dispatch and legacy compatibility.
+    /// Segmented proof refusal never falls back to a complete legacy scan.
     pub async fn transcript_bounded(
         &self,
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentTranscript, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        require_granted(&lineage.agent, crate::RuntimeCapability::Conversation)?;
-        self.read_transcript(&lineage.agent).await
+        let (lineage, held) = self
+            .owner_projection_authority(caller, id, crate::RuntimeCapability::Conversation)
+            .await?;
+        let result = self.read_transcript(&lineage.agent).await?;
+        self.finish_owner_projection(
+            caller,
+            id,
+            &lineage,
+            held,
+            crate::RuntimeCapability::Conversation,
+        )
+        .await?;
+        Ok(result)
     }
 
-    /// Public usage read with the same trusted bounded adapter used by the
-    /// transcript path. Stores return `None` when the Agent is legacy,
-    /// untrusted, corrupt, or the rollout flag is closed; those cases use the
-    /// exact complete fold below.
+    /// Public usage with captured-source dispatch and final owner authority.
     pub async fn usage_bounded(
         &self,
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentUsageReading, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        require_granted(&lineage.agent, crate::RuntimeCapability::Usage)?;
-        self.read_usage(&lineage.agent).await
+        let (lineage, held) = self
+            .owner_projection_authority(caller, id, crate::RuntimeCapability::Usage)
+            .await?;
+        let result = self.read_usage(&lineage.agent).await?;
+        self.finish_owner_projection(caller, id, &lineage, held, crate::RuntimeCapability::Usage)
+            .await?;
+        Ok(result)
     }
 
     pub async fn detail_authorized(
@@ -118,12 +126,20 @@ impl AgentReadService {
         Ok(transcript)
     }
 
-    async fn read_transcript(&self, agent: &Agent) -> Result<AgentTranscript, AgentReadError> {
+    pub(super) async fn read_transcript(
+        &self,
+        agent: &Agent,
+    ) -> Result<AgentTranscript, AgentReadError> {
         if let Some(transcript) = self
             .store
             .agent_log_transcript_projection(agent)
             .await
-            .map_err(super::store_error)?
+            .map_err(|error| match error {
+                // A complete transcript is one implicit page. The segmented
+                // store refuses that page when it exceeds its result budget.
+                SandboxStoreError::InvalidPage => AgentReadError::TranscriptPaginationRequired,
+                error => super::store_error(error),
+            })?
         {
             return Ok(transcript);
         }

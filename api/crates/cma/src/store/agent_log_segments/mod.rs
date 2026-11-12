@@ -71,4 +71,4 @@ where
 }
 
 #[cfg(test)]
-mod mongo_tests;
+pub(in crate::store) mod mongo_tests;
