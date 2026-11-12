@@ -8,8 +8,6 @@ mod inventory;
 mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]
 mod sandbox_inventory;
-#[path = "resource_access_tests/sandbox_snapshot.rs"]
-mod sandbox_snapshot;
 #[path = "resource_access_tests/share_links.rs"]
 mod share_links;
 #[path = "resource_access_tests/snapshot_reads.rs"]

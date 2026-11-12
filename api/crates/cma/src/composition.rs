@@ -181,7 +181,6 @@ impl ControlPlaneComposition {
             authoring_bounds,
         );
         let hierarchy = HierarchyReadService::new(stores.sandbox_model.clone())
-            .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
         let native_warm_pools = runtime.warm_pools;

@@ -81,11 +81,7 @@ pub(super) async fn fixture(
         .await
         .unwrap()
         .share;
-    fixture.state.hierarchy = fixture
-        .state
-        .hierarchy
-        .with_detail_timings(true)
-        .with_resource_access(access.clone());
+    fixture.state.hierarchy = fixture.state.hierarchy.with_resource_access(access.clone());
     fixture.router = hierarchy_router(fixture.state.clone());
     *authority.0.lock().unwrap() = reply;
     (fixture, access, authority, share)

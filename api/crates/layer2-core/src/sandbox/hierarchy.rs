@@ -8,8 +8,6 @@ use crate::resource_access::{ResourceAccessError, ResourceAccessService};
 use crate::{AgentId, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 
 mod authorized;
-mod timing;
-pub use timing::{SandboxDetailPhase, SandboxDetailTimer};
 mod inventory;
 mod projection;
 use projection::{sandbox_view, workspace_view};
@@ -226,7 +224,6 @@ impl HierarchyReadError {
 pub struct HierarchyReadService {
     store: Arc<dyn HierarchyReadStore>,
     access: Option<Arc<ResourceAccessService>>,
-    detail_timings: bool,
 }
 
 pub struct SandboxSnapshotDownload {
@@ -263,7 +260,6 @@ impl HierarchyReadService {
         Arc::new(Self {
             store,
             access: None,
-            detail_timings: false,
         })
     }
 
@@ -271,7 +267,6 @@ impl HierarchyReadService {
         Arc::new(Self {
             store: self.store.clone(),
             access: Some(access),
-            detail_timings: self.detail_timings,
         })
     }
 

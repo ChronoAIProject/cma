@@ -14,10 +14,7 @@ impl HierarchyReadService {
         let target = ResourceTarget::Sandbox {
             sandbox_id: id.clone(),
         };
-        let held = self
-            .detail_phase(SandboxDetailPhase::Auth)
-            .result(self.authorize(context, credential, &target))
-            .await?;
+        let held = self.authorize(context, credential, &target).await?;
         let result = self.sandbox_held(&held, id).await?;
         Ok(if personal(&held, &context.caller) {
             SandboxHierarchyReading::Personal(Box::new(result))
@@ -70,10 +67,7 @@ impl HierarchyReadService {
         let target = ResourceTarget::Sandbox {
             sandbox_id: id.clone(),
         };
-        let held = self
-            .detail_phase(SandboxDetailPhase::Auth)
-            .result(self.personal(caller, &target))
-            .await?;
+        let held = self.personal(caller, &target).await?;
         self.sandbox_held(&held, id).await
     }
     pub(super) async fn workspace_personal(
@@ -168,7 +162,6 @@ impl HierarchyReadService {
         held: &AuthorizedResource,
         id: &SandboxId,
     ) -> Result<SandboxHierarchyView, HierarchyReadError> {
-        let timer = self.detail_phase(SandboxDetailPhase::Hierarchy);
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(15),
             self.store.read_sandbox_hierarchy(id),
@@ -186,15 +179,13 @@ impl HierarchyReadService {
             }
             sandbox_view(record)
         })();
-        timer.record(&projected);
-        self.detail_phase(SandboxDetailPhase::FinalFence)
-            .result(self.finish(
-                held,
-                &ResourceTarget::Sandbox {
-                    sandbox_id: id.clone(),
-                },
-            ))
-            .await?;
+        self.finish(
+            held,
+            &ResourceTarget::Sandbox {
+                sandbox_id: id.clone(),
+            },
+        )
+        .await?;
         projected
     }
 

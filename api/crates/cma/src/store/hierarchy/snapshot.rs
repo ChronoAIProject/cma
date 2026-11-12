@@ -4,7 +4,6 @@ use layer2_core::sandbox::{
 use layer2_core::{SandboxId, WorkspaceId};
 use mongodb::{
     bson::{doc, Document},
-    options::{CollectionOptions, ReadConcern},
     ClientSession, Collection,
 };
 
@@ -39,36 +38,22 @@ impl From<mongodb::error::Error> for Error {
     }
 }
 
-impl MongoSandboxStore {
-    pub(crate) fn with_sandbox_snapshot_reads(mut self, enabled: bool) -> Self {
-        self.sandbox_snapshot_reads = enabled;
-        self
-    }
-}
-
 pub(super) async fn read(
     store: &MongoSandboxStore,
     target: Target<'_>,
 ) -> Result<Reading, SandboxStoreError> {
-    let snapshot_session = store.sandbox_snapshot_reads && matches!(target, Target::Sandbox(_));
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store
             .client
             .start_session()
-            .snapshot(snapshot_session)
             .await
             .map_err(super::unavailable)?;
-        if !snapshot_session {
-            start_transaction(&mut session)
-                .await
-                .map_err(super::unavailable)?;
-        }
+        start_transaction(&mut session)
+            .await
+            .map_err(super::unavailable)?;
         let result = read_in_snapshot(store, &target, &mut session).await;
-        // Snapshot sessions pin one atClusterTime across all reads without a
-        // transaction or an abort checkout. Keep the rollout fallback unchanged.
-        if !snapshot_session {
-            let _ = session.abort_transaction().await;
-        }
+        // No writes occurred; releasing this transaction cannot mutate resources.
+        let _ = session.abort_transaction().await;
         match result {
             Ok(value) => return Ok(value),
             Err(Error::Domain(error)) => return Err(error),
@@ -89,14 +74,8 @@ async fn read_in_snapshot(
     let duration = std::time::Duration::from_secs(10);
     match target {
         Target::Sandbox(id) => {
-            // Snapshot sessions preserve an inherited majority concern in the
-            // driver. Override it explicitly without cloning the whole store.
-            let snapshot = store.sandbox_snapshot_reads;
-            let sandboxes = collection(&store.sandboxes, snapshot);
-            let workspaces = collection(&store.workspaces, snapshot);
-            let worktrees = collection(&store.worktrees, snapshot);
-            let agents = collection(&store.agents, snapshot);
-            let Some(document) = sandboxes
+            let Some(document) = store
+                .sandboxes
                 .find_one(doc! {"_id":id.as_str()})
                 .max_time(duration)
                 .session(&mut *session)
@@ -106,21 +85,21 @@ async fn read_in_snapshot(
             };
             let sandbox = read_sandbox(&document)?;
             let workspaces = children(
-                &workspaces,
+                &store.workspaces,
                 doc! {"sandbox_id":id.as_str()},
                 session,
                 read_workspace,
             )
             .await?;
             let worktrees = children(
-                &worktrees,
+                &store.worktrees,
                 doc! {"sandbox_id":id.as_str()},
                 session,
                 read_worktree,
             )
             .await?;
             let agents = children(
-                &agents,
+                &store.agents,
                 doc! {"sandbox_id":id.as_str()},
                 session,
                 read_agent,
@@ -192,22 +171,4 @@ async fn children<T>(
         values.push(parse(&cursor.deserialize_current()?)?);
     }
     Ok(values)
-}
-
-fn collection(source: &Collection<Document>, snapshot: bool) -> Collection<Document> {
-    if snapshot {
-        source
-            .client()
-            .database(&source.namespace().db)
-            .collection_with_options(
-                source.name(),
-                CollectionOptions::builder()
-                    .read_concern(ReadConcern::snapshot())
-                    .write_concern(source.write_concern().cloned())
-                    .selection_criteria(source.selection_criteria().cloned())
-                    .build(),
-            )
-    } else {
-        source.clone()
-    }
 }
