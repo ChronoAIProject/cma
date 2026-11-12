@@ -295,6 +295,8 @@ async fn failed_output_commit_rolls_back_parent_and_all_sidecars_before_retry() 
             .unwrap();
         assert!(matches!(result, Err(SandboxStoreError::Unavailable(_))));
         assert_eq!(support::all_rows(&store).await, before);
+        support::observe_transaction_cleanup(&store).await;
+        assert_eq!(support::all_rows(&store).await, before);
         write_output(&store, &current, &next, kind).await.unwrap();
         client.database(&name).drop().await.unwrap();
     }

@@ -234,6 +234,8 @@ async fn failed_unclaimed_commit_rolls_back_parent_and_command_then_retry_settle
         .unwrap();
     assert_eq!(result, Err(CommandLedgerError::Unavailable));
     assert_eq!(all_rows(&store).await, before);
+    support::observe_transaction_cleanup(&store).await;
+    assert_eq!(all_rows(&store).await, before);
     reject(&store, &command).await.unwrap();
     assert_settled_once(&store, &command).await;
     client.database(&name).drop().await.unwrap();

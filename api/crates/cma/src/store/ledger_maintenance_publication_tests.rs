@@ -61,20 +61,21 @@ async fn prepared_publication_refuses_a_hold_with_missing_audit_without_any_writ
 
 #[tokio::test]
 #[ignore = "requires an owned disposable replica set and publication hooks"]
-async fn publication_refuses_missing_or_foreign_parent_custody_without_writes() {
+async fn publication_refuses_missing_parent_or_cross_owner_custody_without_writes() {
     for missing in [false, true] {
-        let (client, name, store, agent, observed) = fixture().await;
+        let (client, name, store, mut agent, observed) = fixture().await;
         let id = observed.sandbox.id.as_str();
         if missing {
             store.sandboxes.delete_one(doc! {"_id":id}).await.unwrap();
         } else {
-            let mut changed = observed.sandbox.clone();
-            changed.owner = layer2_core::SubjectId::new("foreign-fixture");
+            // Retain the admitted parent's original replay metadata. Give the
+            // actual child a different custodian, also used by its publication.
+            agent.owner = layer2_core::SubjectId::new("foreign-fixture");
             store
-                .sandboxes
-                .replace_one(
-                    doc! {"_id":id},
-                    crate::store::sandboxes::sandbox_document(&changed, 0).unwrap(),
+                .agents
+                .update_one(
+                    doc! {"_id":agent.id.as_str()},
+                    doc! {"$set":crate::store::agents::agent_replacement_fields(&agent).unwrap()},
                 )
                 .await
                 .unwrap();

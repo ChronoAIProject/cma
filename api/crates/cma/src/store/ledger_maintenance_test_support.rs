@@ -272,6 +272,35 @@ pub(super) async fn disable_failpoint_and_observe_majority(store: &MongoSandboxS
         .is_some());
 }
 
+/// A rejected commit command can leave the server transaction open until its
+/// normal timeout. These tests exclusively own their disposable replica set and
+/// run serially. Observe server cleanup before testing a new attempt; never kill
+/// sessions, retry the failed mutation, or change the server's transaction limit.
+pub(super) async fn observe_transaction_cleanup(store: &MongoSandboxStore) {
+    tokio::time::timeout(std::time::Duration::from_secs(90), async {
+        loop {
+            let status = store
+                .client
+                .database("admin")
+                .run_command(doc! {"serverStatus":1,"maxTimeMS":5000})
+                .await
+                .unwrap();
+            let open = status
+                .get_document("transactions")
+                .unwrap()
+                .get_i64("currentOpen")
+                .unwrap();
+            assert!(open >= 0);
+            if open == 0 {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .expect("disposable Mongo transaction cleanup exceeded its deadline");
+}
+
 /// Propose E1 from the current disposable database, before admission only.
 /// This contains no execution binding and proves no provider/storage exclusion.
 pub(super) async fn pre_exclusion(

@@ -135,6 +135,8 @@ async fn failed_publication_commit_leaves_no_parent_child_log_or_event_change() 
         .unwrap();
     assert!(matches!(outcome, Err(SandboxStoreError::Unavailable(_))));
     assert_eq!(support::all_rows(&store).await, before);
+    support::observe_transaction_cleanup(&store).await;
+    assert_eq!(support::all_rows(&store).await, before);
     store.commit_agent_work(done.clone()).await.unwrap();
     assert!(store.get_agent(&done.agent.id).await.unwrap().unwrap() == done.agent);
     client.database(&name).drop().await.unwrap();
