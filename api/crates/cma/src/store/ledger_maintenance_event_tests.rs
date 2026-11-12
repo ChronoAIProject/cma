@@ -123,3 +123,63 @@ async fn event_insertion_failure_rolls_back_parent_sequence_fence_and_usage() {
     assert_eq!(maintenance::fence_value(&store, &parent).await, 1);
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires an owned disposable failpoint replica set and standalone event hook"]
+async fn event_unknown_commit_requires_durable_proof_and_never_reappends() {
+    for committed in [false, true] {
+        let (client, name, store) = database().await;
+        let parent = support::fixture(&store, true)
+            .await
+            .accepted
+            .plan()
+            .source
+            .sandbox
+            .clone();
+        let before = all_rows(&store).await;
+        let (mode, data) = if committed {
+            (
+                mongodb::bson::Bson::Document(doc! {"times":5}),
+                doc! {"failCommands":["commitTransaction"],
+                "writeConcernError":{"code":50,"codeName":"MaxTimeMSExpired","errmsg":"fixture unknown event commit"}},
+            )
+        } else {
+            (
+                mongodb::bson::Bson::String("alwaysOn".into()),
+                doc! {"failCommands":["commitTransaction"],"errorCode":1,
+                "errorLabels":["UnknownTransactionCommitResult"]},
+            )
+        };
+        client
+            .database("admin")
+            .run_command(doc! {
+                "configureFailPoint":"failCommand","mode":mode,"data":data,
+            })
+            .await
+            .unwrap();
+        let result = store
+            .append_sandbox_event(&parent.id, NOW.into(), SandboxEventKind::Created)
+            .await;
+        support::disable_failpoint_and_observe_majority(&store).await;
+        let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+        if committed {
+            let event = result.unwrap();
+            assert_eq!(event.seq, 1);
+            assert_eq!(
+                reopened.sandbox_events(&parent.id, 0, 100).await.unwrap(),
+                vec![event]
+            );
+            assert_eq!(maintenance::fence_value(&store, &parent).await, 1);
+        } else {
+            assert!(matches!(result, Err(SandboxStoreError::Unavailable(_))));
+            assert_eq!(all_rows(&store).await, before);
+            support::observe_transaction_cleanup(&store).await;
+            assert_eq!(all_rows(&reopened).await, before);
+        }
+        assert_eq!(
+            reopened.get_sandbox(&parent.id).await.unwrap(),
+            Some(parent)
+        );
+        client.database(&name).drop().await.unwrap();
+    }
+}
