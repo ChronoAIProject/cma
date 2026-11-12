@@ -1,10 +1,8 @@
 //! Registered under the ordinary worker tests; reuse the actual success fixture.
 use super::*;
+use crate::store::ledger_maintenance_publication::test_support as maintenance;
 use crate::store::ledger_maintenance_test_support as support;
 use layer2_core::sandbox::RuntimeBinding;
-
-#[path = "ledger_maintenance_publication_test_support.rs"]
-mod maintenance;
 
 async fn publication(store: &MongoSandboxStore) -> (Sandbox, AgentWorkMutation) {
     let (mut parent, mut tree, claimed) = claimed_agent_work_fixture(store, "held_publish").await;

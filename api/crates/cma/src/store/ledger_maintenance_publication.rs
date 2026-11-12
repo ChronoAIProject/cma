@@ -12,6 +12,10 @@ use super::agent_log_integrity::TransactionLogError as Error;
 use super::ledger_maintenance::ApplyError;
 use super::sandbox_mongo::MongoSandboxStore;
 
+#[cfg(test)]
+#[path = "ledger_maintenance_publication_test_support.rs"]
+pub(super) mod test_support;
+
 /// `current` is the actual Agent loaded in this same transaction, before any
 /// prepared/history work. A prior worker claim cannot bypass a later hold.
 pub(super) async fn fence(

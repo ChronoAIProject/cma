@@ -1,10 +1,8 @@
 //! Registered beneath prepared_open_ready_tests to reuse the real public port.
 use super::*;
+use crate::store::ledger_maintenance_publication::test_support as maintenance;
 use crate::store::ledger_maintenance_test_support as support;
 use layer2_core::sandbox::store::ledger_maintenance_pre_exclusion::LedgerPreExclusionStore;
-
-#[path = "ledger_maintenance_publication_test_support.rs"]
-mod maintenance;
 
 #[tokio::test]
 #[ignore = "requires an owned disposable replica set and publication hooks"]

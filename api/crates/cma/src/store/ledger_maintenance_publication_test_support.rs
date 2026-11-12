@@ -12,7 +12,7 @@ use layer3_adapter::runtime_ledger_maintenance::{
     LedgerBindingV1, LedgerSourceFormatV1, LEDGER_BINDING_FORMAT,
 };
 
-pub(super) async fn hold(store: &MongoSandboxStore, parent: &Sandbox, v1: bool) {
+pub(in crate::store) async fn hold(store: &MongoSandboxStore, parent: &Sandbox, v1: bool) {
     let (policy, input) = support::pre_exclusion(store, parent, support::NOW).await;
     if !v1 {
         store.admit_pre_exclusion(policy, input).await.unwrap();
@@ -61,7 +61,7 @@ pub(super) async fn hold(store: &MongoSandboxStore, parent: &Sandbox, v1: bool) 
         .unwrap();
 }
 
-pub(super) async fn fence_value(store: &MongoSandboxStore, parent: &Sandbox) -> i64 {
+pub(in crate::store) async fn fence_value(store: &MongoSandboxStore, parent: &Sandbox) -> i64 {
     let row = store
         .sandboxes
         .find_one(mongodb::bson::doc! {"_id": parent.id.as_str()})
