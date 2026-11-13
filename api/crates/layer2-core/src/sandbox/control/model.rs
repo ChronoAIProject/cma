@@ -243,6 +243,8 @@ impl SandboxControlRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxControlError {
+    #[error("model budget refused a new Sandbox commitment: {0}")]
+    Budget(crate::budget::BudgetError),
     #[error("invalid Sandbox control request")]
     Invalid,
     #[error("Sandbox command is not available")]

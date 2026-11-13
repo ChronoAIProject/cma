@@ -1,7 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use super::acp::{Blocked, Bridge};
-use super::acp_inbound::{blocked_from_locator, permission_id, permission_locator, valid_call};
+use super::acp_inbound::{blocked_from_locator, permission_id, permission_locator};
 use super::update_relay::UpdateRelay;
 use crate::{ConversationUpdate, PermissionDecision, PermissionLocator, PermissionRequest};
 
@@ -27,7 +27,8 @@ impl Bridge {
             self.refuse_invalid_call(frame).await;
             return Ok(());
         }
-        let Some(call) = frame.get("id").cloned().filter(valid_call) else {
+        let Some(call) = super::acp_correlation::permission_call(frame, self.json_pools.is_some())
+        else {
             tracing::warn!("ACP permission request has an invalid correlation id");
             return Ok(());
         };

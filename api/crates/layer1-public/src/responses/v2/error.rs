@@ -165,6 +165,7 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
             "The Agent command queue is full. Retry the same request after capacity is available.",
             None,
         ),
+        // A final 402: the helper adds Retry-After only to 429 and 503.
         CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => error(
             StatusCode::PAYMENT_REQUIRED,
             reason.code(),

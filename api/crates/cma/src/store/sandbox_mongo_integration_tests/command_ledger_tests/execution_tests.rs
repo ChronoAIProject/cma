@@ -493,3 +493,9 @@ mod operation_lookup_tests;
 
 #[path = "budget_execution_tests.rs"]
 mod budget_execution;
+
+#[path = "platform_period_tests.rs"]
+mod platform_period_tests;
+
+#[path = "platform_unbudgeted_tests.rs"]
+mod platform_unbudgeted_tests;
