@@ -4,7 +4,8 @@ This records the local accounting comparison for #1496 and the counter reader
 extension owned by #1741. It is not an activation approval or the final PR
 verdict. The original-head review and correctness corrections are recorded in
 [primary review](2026-11-13-pr1741-primary-review.md) and
-[correction evidence](2026-11-13-pr1741-fix-evidence.md).
+[correction evidence](2026-11-13-pr1741-fix-evidence.md). Final integration and
+the qualified source verdict are in the [candidate review](2026-11-13-pr1741-candidate-review.md).
 
 ## Measured trade-off and activation decision
 
@@ -93,8 +94,10 @@ Tests exercise all partitions and timestamp boundaries, incidental ownership
 exclusion, refusal without releasing the archive hold, and byte-exact restoration
 of reservation `period_start`/`period_shard` fields. The root layout marker does
 not change the period's independent ownership. The catalogue and its hash do
-not change. Integration with merged #1754 and a complete converted-layout
-fixture remain prerequisites to the final exact-head verdict.
+not change. Integration with #1754's classification is committed in `dc23792a3`;
+the complete converted-layout fixture is `e36a272d9`. The candidate also includes
+#1754's merged develop history at `dd5284968`. Both source and history integration
+are complete; compatible artifact deployment remains a prerequisite to activation.
 
 ## Verification checkpoints
 
@@ -110,7 +113,8 @@ regression, replay, current authorization, counter/census checks and B1–B7.
 Clippy for `cma`, `layer2-core` and `layer1-public`, with all targets, all
 features, locked dependencies and warnings denied, passed after that run.
 Formatting, whitespace, source-size, deployment-key and configuration-doc
-checks also passed. Final integrated gates remain separate checks.
+checks also passed. The separate completed integration gates are recorded in
+the candidate review linked above.
 
 The root-write baseline disables conversion while keeping the new assertion on
 the original accounting path. It fails at “routine reservation and settlement
@@ -129,9 +133,9 @@ The measurements, outcome descriptions and test source are committed evidence;
 raw fixture logs are temporary local supporting material. No production data,
 identities, credentials or financial figures are included here.
 
-The counter first-refusal and census baseline selection failed **0/2**, both at
-the intended behavior boundary. The earlier draft returned the expected budget
-refusal but did not persist STOP; the old census refused capture of canonical
+The counter first-refusal and census baseline selection passed **0/2**; both
+tests failed at the intended behavior boundary. The earlier draft returned the
+expected budget refusal but did not persist STOP; the old census refused capture of canonical
 counter keys. Production sources were restored automatically before the next
 selection. Baseline log SHA-256:
 `c5c032edee813dfd02d2b75d9435ca46bee8f9d51f250d3f90270a38b5824d35`.
@@ -146,3 +150,30 @@ The inclusive log SHA-256 is
 `cb5f469a1626e54e58142e88e606c8892fe4530aca45d1c851d65b53f72561a2`.
 
 Clippy log SHA-256: `1d87d253f11cded46ee6e54ff06c35ce6038d2dc284e8e24de431857a5f69572`.
+
+## Final source measurement
+
+The same harness passed again in the **91/91** Mongo integration run at
+`095cbab547eeec8e29a97f69822cd1e1f96c3817`. Each phase still used 30 operations.
+Concurrent admission p95 was **63.224 → 55.244 ms**, while concurrent settlement
+p95 was **30.606 → 9.797 ms**. The first two samples showed admission regression;
+this third sample changed its timing direction on the shared host. Admission
+still reads more data and its reply payload remains **82,140 → 168,090 bytes**.
+The initial **96.564 → 114.219 ms** admission trade-off remains material evidence.
+No sample authorizes activation; the counter switch remains default OFF.
+
+| Layout | Schedule / phase | Commands / checkouts | Request bytes | Reply bytes | Root reads / writes | Counter reads / writes | p50 µs | p95 µs | Elapsed µs |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Original | Sequential reserve | 150 | 71,970 | 82,140 | 30 / 30 | 0 / 0 | 3,179 | 4,255 | 100,434 |
+| Original | Sequential settle | 90 | 46,770 | 30,300 | 30 / 30 | 0 / 0 | 2,098 | 2,971 | 67,671 |
+| Original | Concurrent reserve | 150 | 71,970 | 82,140 | 30 / 30 | 0 / 0 | 26,960 | 63,224 | 125,572 |
+| Original | Concurrent settle | 90 | 46,770 | 30,300 | 30 / 30 | 0 / 0 | 15,702 | 30,606 | 61,519 |
+| Distributed | Sequential reserve | 150 | 83,964 | 168,090 | 30 / 0 | 30 / 30 | 3,531 | 11,164 | 134,744 |
+| Distributed | Sequential settle | 90 | 40,956 | 24,462 | 0 / 0 | 30 / 30 | 1,824 | 2,267 | 56,333 |
+| Distributed | Concurrent reserve | 150 | 83,964 | 168,090 | 30 / 0 | 30 / 30 | 29,017 | 55,244 | 113,189 |
+| Distributed | Concurrent settle | 90 | 40,956 | 24,222 | 0 / 0 | 30 / 30 | 7,099 | 9,797 | 17,274 |
+
+All phases again reported zero collection scans. Converted phases had zero root
+writes, and converted settlement had zero root reads. The complete integration
+log fingerprint is
+`b304104d69f7ee013f5d6c1642fb5b6163732b6d775f29ba44e45813f314b4eb`.
