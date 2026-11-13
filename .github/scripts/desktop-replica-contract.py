@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 PARENT_PREFIX = "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::"
 PARENTS = [
+    PARENT_PREFIX + "public_legacy_provider_connects_before_receiver_activation",
     PARENT_PREFIX + "public_replica_handoff_and_revocation_use_actual_receiver",
     PARENT_PREFIX + "public_uncertain_confirm_and_receiver_restart_preserve_fencing",
     PARENT_PREFIX + "delayed_receiver_renewal_ack_cannot_restore_public_authority",

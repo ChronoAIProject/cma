@@ -51,6 +51,31 @@ fn refusal(result: Result<Socket, Error>, expected: u16) {
 
 #[tokio::test]
 #[ignore = "requires dedicated desktop-replica fixture runner and disposable Mongo"]
+async fn public_legacy_provider_connects_before_receiver_activation() {
+    let f = Fixture::new(false).await;
+    assert_eq!(f.discovery(0).await.status(), 200);
+    let result = f.connect(0).await;
+    let failure = match result {
+        Ok(mut socket) => {
+            echo(&mut socket, 50).await;
+            socket.close(None).await.unwrap();
+            f.available(0, Duration::from_secs(5)).await;
+            None
+        }
+        Err(Error::Http(response)) => Some(format!("public status {}", response.status().as_u16())),
+        Err(_) => Some("public transport failure".into()),
+    };
+    let opens = f.proxy.state.opens.load(Ordering::SeqCst);
+    assert!(f.proxy.state.confirmations.lock().unwrap().is_empty());
+    assert!(!f.root.path.join("state/desktop-owner/floor.json").exists());
+    assert!(!f.root.path.join("state/desktop-owner.activated").exists());
+    f.cleanup().await;
+    assert_eq!(failure, None, "never-activated legacy must return the echo");
+    assert_eq!(opens, 1);
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated desktop-replica fixture runner and disposable Mongo"]
 async fn public_replica_handoff_and_revocation_use_actual_receiver() {
     let f = Fixture::new(true).await;
     let anonymous = f.ingresses[0]
