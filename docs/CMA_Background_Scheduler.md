@@ -1,5 +1,56 @@
 # Agent reconciliation background scheduler
 
+## Reserved Sandbox recovery capacity
+
+`CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED` is a strict boolean,
+default `false`, independent of the Agent reconciliation and command pacing
+switches. The disabled path retains the shared background budget and its
+foreground admission rule. When enabled at process composition, the Sandbox
+reconciler reserves one permit from the two-permit shared budget and owns an
+independent one-permit lane. Shared workers retain one permit even while
+foreground requests are active. The total remains two background chains,
+including when there are no foreground requests. A busy or invalid reservation
+fails startup instead of silently falling back to shared admission.
+
+The same switch replaces the outer 15-second batch tick with the background
+work's next-run deadline. A denied or yielded attempt resumes after the existing
+187–250 ms jittered delay; failures retain the existing exponential 2–60 second
+backoff with 75–100% jitter, and completed sweeps retain the jittered 15-second
+interval. The disabled path keeps its original 15-second tick. Supervision
+heartbeats continue during work, only one owned attempt runs at a time, waiting
+shutdown exits immediately, and shutdown drains an in-flight attempt without
+cancelling it. The 30-second work deadline and all sweep, operation, binding
+opportunity and hold bounds are unchanged.
+
+The reservation lasts through all owned reconciliation attempts and returns
+only when the reconciler's background work is dropped. It does not authorize
+runtime adoption, recovery, reclamation, or a write: all existing durable
+identity/revision checks, binding holds and cleanup proofs remain mandatory.
+No persistent state, reader format, or migration is introduced. Rollback sets
+the switch to `false` and restarts the API through the release owner.
+
+Ship disabled. The release owner captures and compares background admission,
+slot occupancy, full-sweep and binding-pass wall times, completed recovery,
+Mongo and native HTTP checkout wait, route latency, CPU, readiness and restarts
+before activation. Existing production baseline evidence is recorded in #1791;
+local scheduling tests do not establish a production latency improvement.
+Track `cma_background_attempts_total`, `cma_background_deferred_total`,
+`cma_background_pending_since_timestamp_seconds` and
+`cma_background_completion_timestamp_seconds` for `sandbox_reconciliation`,
+plus `sandbox maintenance sweep completed` and phase-progress logs. The initial
+production targets in #1791 are a full-sweep p95 within 15 minutes and a binding
+pass within three minutes under comparable load. Reserved-lane shared-budget
+denials should be zero. Activation and its one-hour observation window belong
+to the release owner; default-off merge is not production verification.
+
+Binding-refresh rules before retained tail work are unchanged. Changing tail
+fairness requires the conditional measurements in #1791. Policy gating of
+runtime updates, optional provenance backfill cadence, and hold causes remain
+outside this scheduling change. Roll back on the existing Mongo/native HTTP
+checkout, route latency, readiness or restart gates, or lost recovery progress.
+
+## Agent reconciliation
+
 The Agent Manager scheduler performs two independent jobs: due Agent work and
 connection reconciliation. Due work keeps its existing one-second discovery
 cadence. Reconciliation checks durable live-Agent candidates and repairs a lost
