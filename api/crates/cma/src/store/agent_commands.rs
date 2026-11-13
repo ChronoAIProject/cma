@@ -228,6 +228,15 @@ impl AgentCommandStore for MongoSandboxStore {
                 request.require_current_authority()?;
                 self.prepare_fleet_log(&request.envelope.agent_id).await;
             }
+            // Local period-row writers are scheduled for the whole retry loop
+            // (concurrency rule 5); the guard drops with this block, before
+            // the admission telemetry below is recorded.
+            let _platform = match request.envelope.command {
+                layer2_core::sandbox::agent_io::AgentCommand::Message { .. } => {
+                    self.platform_write_guard().await
+                }
+                _ => None,
+            };
             let mut retries = retry::CommandAdmissionRetries::new(request.authority_deadline);
             while retries.next().await {
                 request.require_current_authority()?;

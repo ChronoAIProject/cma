@@ -61,7 +61,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -135,7 +136,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -274,7 +276,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -345,7 +348,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -481,7 +485,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -547,7 +552,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
