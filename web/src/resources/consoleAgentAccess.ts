@@ -44,6 +44,7 @@ export function useConsoleAgentAccess(
     viewerId,
     personalAgentId !== undefined && !accessUncertain,
     opening.retained || shared !== undefined || agentAccess.state.status === 'error',
+    agentAccess.personalLineage,
   );
   return { agentAccess, accessUncertain, shared, personalAgentId };
 }
