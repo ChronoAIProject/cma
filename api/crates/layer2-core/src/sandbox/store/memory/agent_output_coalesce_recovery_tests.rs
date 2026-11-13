@@ -2,9 +2,14 @@ use super::*;
 
 #[tokio::test]
 async fn crash_replay_and_disabled_rollback_preserve_durable_logs_assembly_and_turn() {
+    let (seed, working, _) = working_agent().await;
+    let initial = seed.lock().clone();
     let mut results = Vec::new();
     for mode in ["disabled", "enabled", "crash", "rollback"] {
-        let (store, working, disabled) = working_agent().await;
+        // Every run starts from exactly the same IDs and durable history.
+        let store = crate::sandbox::store::InMemorySandboxStore::default();
+        *store.lock() = initial.clone();
+        let disabled = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
         let enabled = recorder(Arc::new(store.clone()), 64);
         let mut assembly = AgentMessageAssembly::default();
         let chosen = if mode == "disabled" {
@@ -101,9 +106,7 @@ async fn crash_replay_and_disabled_rollback_preserve_durable_logs_assembly_and_t
         assert!(terminal.outcome.turn_closed);
         let log = store.agent_log(&working.id, 0, 200).await.unwrap();
         results.push((
-            log.into_iter()
-                .map(|entry| (entry.seq, entry.kind))
-                .collect::<Vec<_>>(),
+            log,
             store
                 .agent_message_checkpoint(&working.id)
                 .await
