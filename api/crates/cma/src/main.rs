@@ -298,8 +298,8 @@ async fn serve() -> Result<(), String> {
             result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),
             () = async {
                 match &composition.agent_manager {
-                    Some(manager) => tokio::select! { _ = shutdown_signal() => (), _ = manager.failed() => () },
-                    None => shutdown_signal().await,
+                    Some(manager) => tokio::select! { _ = shutdown::shutdown_signal() => (), _ = manager.failed() => () },
+                    None => shutdown::shutdown_signal().await,
                 }
             } => {
                 if let Some(manager) = &composition.agent_manager { manager.drain().await; }
@@ -486,31 +486,6 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
         request.headers_mut().insert(X_REQUEST_ID, normalized);
     }
     next.run(request).await
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
-        }
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
-            }
-            Err(_) => std::future::pending::<()>().await,
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => {},
-        () = terminate => {},
-    }
 }
 
 #[cfg(test)]

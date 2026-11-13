@@ -117,3 +117,6 @@ mod tests {
         assert_eq!(draining.await.unwrap(), 1);
     }
 }
+
+mod signals;
+pub(crate) use signals::shutdown_signal;

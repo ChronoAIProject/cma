@@ -31,6 +31,7 @@ export interface OperatorClient {
     | 'pauseIdleNow'
     | 'setSandboxAlwaysOn'
     | 'listActivity'
+    | 'listActivitySummary'
     | 'listWarmPools'
     | 'configureWarmPool'
     | 'resizeWarmPool'

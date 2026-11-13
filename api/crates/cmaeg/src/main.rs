@@ -7,7 +7,7 @@ use cmaeg::{
 };
 use std::{ffi::OsString, io::Write, path::Path};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
+const USAGE: &str = "usage: cmaeg [--replica-drain | --print-openapi | --migrate | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -53,7 +53,9 @@ fn main() {
     };
     match arguments.as_slice() {
         [] => serve(),
+        ["--replica-drain"] => replica_drain(),
         [command @ ("--migrate"
+        | "--migrate-replicas"
         | "--print-runtime-role"
         | "--print-migration-role"
         | "--migrate-worker-credentials"
@@ -125,6 +127,16 @@ fn serve() {
     }
 }
 
+fn replica_drain() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap_or_else(|_| fail("replica drain runtime unavailable"));
+    if let Err(error) = runtime.block_on(cmaeg::replicas::drain_cli()) {
+        fail(error);
+    }
+}
+
 /// The custom attachment rollback audit. It exits 0 only when no setting
 /// remains and every record could be read.
 fn audit(clear: bool) {
@@ -188,6 +200,7 @@ fn run_database_command(command: &str) {
         if !matches!(
             command,
             "--migrate"
+                | "--migrate-replicas"
                 | "--migrate-automation"
                 | "--migrate-worker-credentials"
                 | "--migrate-thread-fences"
@@ -239,7 +252,9 @@ fn run_database_command(command: &str) {
                 .map_err(|_| "Gateway automation migration failed; details withheld")?;
             return Ok(());
         }
-        if command == "--migrate-worker-credentials" {
+        if command == "--migrate-replicas" {
+            cmaeg::records::mongo::migrate_replicas(&client.database(&database)).await
+        } else if command == "--migrate-worker-credentials" {
             cmaeg::worker_credentials::mongo::migrate(&client.database(&database)).await
         } else if command == "--migrate-thread-fences" {
             cmaeg::records::mongo::migrate_thread_fences(&client.database(&database)).await
