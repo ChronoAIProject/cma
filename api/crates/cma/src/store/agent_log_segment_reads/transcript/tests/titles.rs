@@ -166,14 +166,20 @@ async fn segmented_automatic_title_completes_exact_claim_and_refuses_corrupt_sou
                     .unwrap(),
             )
             .unwrap();
+            let later = AgentLogKind::ModeChanged {
+                mode: "later".into(),
+            };
+            let identity = layer2_core::sandbox::store::AgentLogPublicationIdentity {
+                key: "after-title".into(),
+                fingerprint: segments::publication::request_digest(&later)
+                    .unwrap()
+                    .bytes
+                    .try_into()
+                    .unwrap(),
+                appended_at: NOW.into(),
+            };
             store
-                .append_agent_log(
-                    &agent.id,
-                    NOW.into(),
-                    AgentLogKind::ModeChanged {
-                        mode: "later".into(),
-                    },
-                )
+                .append_agent_log_keyed(&agent.id, &identity, later)
                 .await
                 .unwrap();
             let operation = segments::publication::PublicationIdentity {
