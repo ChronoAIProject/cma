@@ -60,6 +60,8 @@ impl Fixture {
 #[derive(Default)]
 struct ProviderState {
     block_verification: AtomicBool,
+    reject_verification: AtomicBool,
+    reject_duplicates: AtomicBool,
     verified: Notify,
     release_verification: Notify,
     block_post: AtomicBool,
@@ -87,6 +89,9 @@ impl Provider {
                 if state.block_verification.swap(false, Ordering::SeqCst) {
                     state.release_verification.notified().await;
                 }
+                if state.reject_verification.swap(false, Ordering::SeqCst) {
+                    return Json(json!({"subscription":null}));
+                }
                 Json(json!({"subscription":{"external_id":"owner-fixture:starter","external_customer_id":"owner-fixture",
                     "plan_code":"starter","status":"active","billing_time":"calendar","plan":{"charges":payload::METRICS.map(|code|json!({"billable_metric_code":code,"charge_model":"standard"}))}}}))
             }))
@@ -101,6 +106,13 @@ impl Provider {
                 // idempotency. It is not evidence about an arbitrary endpoint.
                 {
                     let mut effects = state.effects.lock().unwrap();
+                    if state.reject_duplicates.load(Ordering::SeqCst)
+                        && body["events"].as_array().unwrap().iter().any(|event| {
+                            effects.contains_key(event["transaction_id"].as_str().unwrap())
+                        })
+                    {
+                        return axum::http::StatusCode::UNPROCESSABLE_ENTITY;
+                    }
                     for event in body["events"].as_array().unwrap() {
                         let id = event["transaction_id"].as_str().unwrap().to_owned();
                         if let Some(previous) = effects.get(&id) {
@@ -220,6 +232,78 @@ async fn ahead_replica_cannot_bypass_provider_retry_pacing() {
         "provider_outcome_unknown"
     );
     assert!(row.get_i64("billing_retry_at").unwrap() > now());
+    f.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn later_attempt_failure_cannot_erase_an_unknown_provider_outcome() {
+    let f = Fixture::new().await;
+    let provider = Provider::new().await;
+    provider.state.block_post.store(true, Ordering::SeqCst);
+    let first = f.first.claim_usage_delivery(now()).await.unwrap().unwrap();
+    let worker = Exporter::new(f.first.clone(), config(&provider.url)).unwrap();
+    let attempt = tokio::spawn(async move { worker.deliver(&first).await });
+    tokio::time::timeout(Duration::from_secs(5), provider.state.posted.notified())
+        .await
+        .unwrap();
+    attempt.abort();
+    assert!(attempt.await.unwrap_err().is_cancelled());
+    assert_eq!(provider.state.effects.lock().unwrap().len(), 6);
+    f.expire().await;
+    let worker = Exporter::new(f.second.clone(), config(&provider.url)).unwrap();
+    provider
+        .state
+        .reject_verification
+        .store(true, Ordering::SeqCst);
+    provider
+        .state
+        .reject_duplicates
+        .store(true, Ordering::SeqCst);
+    for expected in [
+        "subscription_identity_or_status_mismatch",
+        "provider_rejected_events",
+    ] {
+        let successor = f.second.claim_usage_delivery(now()).await.unwrap().unwrap();
+        let result = worker.deliver(&successor).await;
+        assert_eq!(result, Err(expected));
+        f.second
+            .finish_usage_delivery(&successor, now(), result.err())
+            .await
+            .unwrap();
+        let row = f.row().await;
+        assert!(!row.get_bool("billing_delivered").unwrap());
+        assert_eq!(
+            row.get_str("billing_error").unwrap(),
+            "provider_outcome_unknown"
+        );
+        // Advance only the test fixture's retry clock, preserving the frozen body.
+        f.rows()
+            .update_one(
+                doc! {"_id":event().transaction_id()},
+                doc! {"$set":{"billing_retry_at":0_i64}},
+            )
+            .await
+            .unwrap();
+    }
+    provider
+        .state
+        .reject_duplicates
+        .store(false, Ordering::SeqCst);
+    let successor = f.second.claim_usage_delivery(now()).await.unwrap().unwrap();
+    worker.deliver(&successor).await.unwrap();
+    f.second
+        .finish_usage_delivery(&successor, now(), None)
+        .await
+        .unwrap();
+    let row = f.row().await;
+    assert!(row.get_bool("billing_delivered").unwrap());
+    assert!(matches!(
+        row.get("billing_error"),
+        Some(mongodb::bson::Bson::Null)
+    ));
+    assert_eq!(provider.state.effects.lock().unwrap().len(), 6);
+    provider.state.release_post.notify_one();
     f.database.drop().await.unwrap();
 }
 
