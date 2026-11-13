@@ -58,23 +58,27 @@ pub(in crate::store::agent_commands) async fn resources(
     parent: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    for (collection, id, revision, created_at) in [
+    // Both supported Agent envelopes were decoded in this same transaction.
+    // The Sandbox retains its own format; adoption must not disable cancellation.
+    for (collection, id, revision, created_at, versions) in [
         (
             &store.agents,
             agent.id.as_str(),
             agent.revision,
             &agent.created_at,
+            vec![1_i64, 2_i64],
         ),
         (
             &store.sandboxes,
             parent.id.as_str(),
             parent.revision,
             &parent.created_at,
+            vec![DOCUMENT_SCHEMA_VERSION],
         ),
     ] {
         let revision =
             signed(revision, "resource revision").map_err(|_| CommandLedgerError::Corrupt)?;
-        let changed = collection.update_one(doc! {"_id": id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": revision, "record.created_at": created_at}, doc! {"$inc": {"agent_command_admission_fence": 1_i64}}).session(&mut *session).await?;
+        let changed = collection.update_one(doc! {"_id": id, "document_schema_version": {"$in":versions}, "revision": revision, "record.created_at": created_at}, doc! {"$inc": {"agent_command_admission_fence": 1_i64}}).session(&mut *session).await?;
         if changed.matched_count != 1 {
             return Err(CommandLedgerError::Conflict.into());
         }

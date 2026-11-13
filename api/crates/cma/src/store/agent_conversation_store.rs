@@ -66,7 +66,14 @@ impl From<TransactionLogError> for ApplyError {
     }
 }
 
-async fn commit_conversation(
+fn commit_conversation(
+    store: &MongoSandboxStore,
+    mutation: AgentConversationMutation,
+) -> impl std::future::Future<Output = Result<Vec<AgentLogEntry>, SandboxStoreError>> + '_ {
+    Box::pin(commit_conversation_inner(store, mutation))
+}
+
+async fn commit_conversation_inner(
     store: &MongoSandboxStore,
     mutation: AgentConversationMutation,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
@@ -74,7 +81,7 @@ async fn commit_conversation(
     store.prepare_fleet_log(&mutation.agent.id).await;
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
     let _platform = store.conversation_platform_guard(&mutation).await;
-    let adoption = scoped::adoption::prepare(store, &mutation, None).await?;
+    let adoption = Box::pin(scoped::adoption::prepare(store, &mutation, None)).await?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         contention::backoff(attempt).await;
@@ -94,7 +101,7 @@ async fn commit_conversation(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let applied = scoped::apply(
+        let applied = Box::pin(scoped::apply(
             ScanCaller::ConversationPublication,
             store,
             &mutation,
@@ -102,7 +109,7 @@ async fn commit_conversation(
             None,
             adoption.as_ref(),
             &mut scope,
-        )
+        ))
         .await;
         scope.release();
         let receipt = match applied {
@@ -138,7 +145,13 @@ async fn commit_conversation(
                 let unresolved_error = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("agent conversation commit", async move {
-                    if reconcile_conversation_after_commit(&store, &receipt, snapshot_time).await? {
+                    if Box::pin(reconcile_conversation_after_commit(
+                        &store,
+                        &receipt,
+                        snapshot_time,
+                    ))
+                    .await?
+                    {
                         crate::telemetry::work::published(&receipt.logs, "reconciled");
                         Ok(receipt.logs)
                     } else {
