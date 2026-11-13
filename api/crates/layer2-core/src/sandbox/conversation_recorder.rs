@@ -12,7 +12,8 @@ use super::store::{
     SandboxStoreError,
 };
 use super::{
-    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
+    AgentConversationError, AgentMessageAssembly, AgentOutputCategory, AgentUpdateOutcome,
+    AgentUpdateRecorder,
 };
 
 const MAX_CONVERSATION_COMMIT_RETRIES: usize = 8;
@@ -69,10 +70,14 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             ));
         }
         for _ in 0..MAX_CONVERSATION_COMMIT_RETRIES {
-            let current = AgentStore::get_agent(self.store.as_ref(), id)
+            let snapshot = self
+                .store
+                .agent_message_snapshot(id)
                 .await
                 .map_err(store_error)?
                 .ok_or(AgentConversationError::NotFound)?;
+            let current = snapshot.agent;
+            let previous = snapshot.checkpoint;
             if runtime_generation == 0
                 || current.conversation.runtime_generation != Some(runtime_generation)
             {
@@ -83,11 +88,6 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
                     "assembly restoration requires a live agent",
                 ));
             }
-            let previous = self
-                .store
-                .agent_message_checkpoint(id)
-                .await
-                .map_err(store_error)?;
             let recovered = match checkpoint::recover_assembly(
                 self.store.as_ref(),
                 &current,
@@ -195,10 +195,14 @@ impl DurableAgentUpdateRecorder {
             uuid::Uuid::new_v4().to_string()
         };
         for _ in 0..MAX_CONVERSATION_COMMIT_RETRIES {
-            let persisted = AgentStore::get_agent(self.store.as_ref(), id)
+            let snapshot = self
+                .store
+                .agent_message_snapshot(id)
                 .await
                 .map_err(store_error)?
                 .ok_or(AgentConversationError::NotFound)?;
+            let persisted = snapshot.agent;
+            let previous = snapshot.checkpoint;
             let current = match guard {
                 Some(guard) => guard
                     .project(&persisted)
@@ -208,11 +212,6 @@ impl DurableAgentUpdateRecorder {
             if current.conversation.runtime_generation != Some(runtime_generation) {
                 return Err(AgentConversationError::StaleGeneration);
             }
-            let previous = self
-                .store
-                .agent_message_checkpoint(id)
-                .await
-                .map_err(store_error)?;
             if guard.is_none()
                 && previous
                     .as_ref()
@@ -250,8 +249,8 @@ impl DurableAgentUpdateRecorder {
             {
                 Ok(recovered) => recovered,
                 Err(error) => {
-                    // Aggregate and checkpoint reads are separate. A concurrent
-                    // append may invalidate their apparent anchor relationship.
+                    // Semantic history can advance after the atomic snapshot.
+                    // Retry recovery if that history belongs to a newer aggregate.
                     let refreshed = AgentStore::get_agent(self.store.as_ref(), id)
                         .await
                         .map_err(store_error)?;
@@ -262,6 +261,7 @@ impl DurableAgentUpdateRecorder {
                 }
             };
             if replayed {
+                AgentOutputCategory::Replay.observe();
                 // A reconnect may parse an old terminal as a no-op after the turn closed.
                 // The immutable source position is the receipt, independent of that parsing.
                 if let Some(reanchored) = previous
@@ -303,6 +303,7 @@ impl DurableAgentUpdateRecorder {
                 return Ok(AgentUpdateOutcome::quiet());
             }
             if let Some(recorded) = recorded {
+                AgentOutputCategory::Replay.observe();
                 if let Some(reanchored) = recorded.reanchored(&current) {
                     // An exact receipt retry must also persist a verified repair.
                     // Otherwise a later control write still sees the obsolete anchor.
@@ -391,6 +392,7 @@ impl DurableAgentUpdateRecorder {
             let durable_assembly_changed = next_assembly.message_id != recovered.message_id
                 || next_assembly.content != recovered.content
                 || next_assembly.prompt_evidence != recovered.prompt_evidence;
+            AgentOutputCategory::observe_fold(!logs.is_empty(), durable_assembly_changed);
             let recovered_anchor = !recovered.is_empty()
                 && previous
                     .as_ref()

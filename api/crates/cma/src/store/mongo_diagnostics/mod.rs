@@ -87,9 +87,10 @@ pub(super) fn install_configured(
     pool: &'static str,
     value: Option<&str>,
 ) -> Option<Diagnostics> {
-    // Override driver environment defaults, including query-text collection.
-    options.tracing = Some(metadata_hook::disabled());
     if value != Some("true") || !output::initialize() {
+        // Count commands in an output recording scope even when detailed
+        // diagnostics are disabled; the hook never requests query text.
+        metadata_hook::install(options, None);
         return None;
     }
     let diagnostics = Diagnostics(
@@ -97,7 +98,7 @@ pub(super) fn install_configured(
         pool,
         crate::readiness_diagnostics::configured(),
     );
-    metadata_hook::install(options, diagnostics.clone());
+    metadata_hook::install(options, Some(diagnostics.clone()));
     // Dropping the handle detaches; the task only keeps a Weak client state.
     drop(periodic::start(&diagnostics));
     Some(diagnostics)

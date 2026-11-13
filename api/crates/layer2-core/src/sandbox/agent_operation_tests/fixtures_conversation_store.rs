@@ -2,6 +2,13 @@ use super::*;
 
 #[async_trait]
 impl AgentConversationStore for RejectingConversationStore {
+    async fn agent_message_snapshot(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<crate::sandbox::store::AgentMessageSnapshot>, SandboxStoreError> {
+        self.inner.agent_message_snapshot(id).await
+    }
+
     async fn agent_message_checkpoint(
         &self,
         id: &AgentId,

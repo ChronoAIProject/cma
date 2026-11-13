@@ -43,6 +43,42 @@ Deploy compatible API readers everywhere before enabling this runtime image for 
 
 The runtime tests cover disconnect replay, cumulative ACK validation, 1,024-frame backlog delivery, byte/frame overflow, terminal transport replay, and both legacy mode transitions. Adapter tests cover a 302-frame backlog whose terminal precedes handshake completion. Core tests cover lost commit replies, lost acknowledgements, no-op cursor persistence, foreign and skipped positions, and old-terminal replay after a later turn. CMA tests enforce no acknowledgement before durable success. Mongo checkpoint tests exercise cursor persistence and exact replay after reopening the store.
 
+## Recorder cost observations
+
+The API reads the Agent and its private checkpoint together. Quiet and text-only
+transactions reuse their already validated Agent row for the checkpoint write,
+preserving the revision, log sequence, log format and history-seal predicates.
+A log append can change that envelope, so its checkpoint write still validates
+the resulting row. Checkpoint version 1 and the persistence-before-display/ACK
+ordering are unchanged. Quiet receipts continue to commit individually.
+
+| Process metric | Meaning |
+| --- | --- |
+| `cma_agent_output_record_attempts_total` | Recorder attempts by fixed `category` and `outcome` labels. |
+| `cma_agent_output_record_seconds` | Time in one recorder attempt, including its internal transaction retries. |
+| `cma_agent_output_mongo_commands` | Actual driver command attempts, including commit/abort and inherited reconciliation commands. |
+
+Categories are `appended_log`, `durable_assembly`, `quiet_receipt`, `replay` and
+`unclassified`. Outcomes distinguish `recorded`, `unavailable`, `stale_generation`,
+`capacity` and `rejected`; cancelled command scopes use `cancelled`. Labels never
+contain Agent/user identifiers, message content, database addresses or errors.
+The Mongo observer uses metadata-only driver spans with query text disabled,
+including when detailed Mongo diagnostics are disabled.
+
+For frame mix and arrival-rate estimates, select `outcome="recorded"` and the
+first three categories; inspect replay and failure rates separately. A retry
+after storage unavailability is another attempt. The command histogram is
+emitted when all inherited reconciliation work finishes, which can follow the
+attempt-duration observation. These are process observations, not durable
+accounting or proof that a runtime has received an ACK.
+
+The isolated `output_frame_replay_measurement` test replays a fixed 60% reasoning,
+30% text and 10% tool mix at 10/30/60 frames per second against a disposable real
+Mongo replica set. It reports every latency/command/lag sample and checks four
+commands for ordinary quiet/text frames. Use `RUST_MIN_STACK=16777216` for the
+existing deeply nested tool transaction path. The snapshot and replay tests also
+cover corruption, history-seal refusal and uncertain commits.
+
 ## Long turns, steering and interruption
 
 The API keeps a prompt waiter until the provider returns its result or the

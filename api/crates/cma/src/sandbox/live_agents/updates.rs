@@ -100,16 +100,19 @@ pub(crate) async fn record_update(
         _ => None,
     };
     loop {
-        match recorder
-            .record_update(
-                agent_id,
-                runtime_generation,
-                assembly,
-                update.clone(),
-                now_rfc3339(),
-            )
-            .await
-        {
+        let attempt = recorder.record_update(
+            agent_id,
+            runtime_generation,
+            assembly,
+            update.clone(),
+            now_rfc3339(),
+        );
+        let result = if receipt.is_some() {
+            crate::telemetry::agent_output::observe(attempt).await
+        } else {
+            attempt.await
+        };
+        match result {
             Ok(outcome) => {
                 if outcome.appended.iter().any(|entry| matches!(&entry.kind,
                     layer2_core::sandbox::AgentLogKind::TurnFailed { failure, .. }

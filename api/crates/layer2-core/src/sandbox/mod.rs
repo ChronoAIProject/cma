@@ -77,7 +77,9 @@ pub use conversation_observation::{
 };
 pub mod agent_ledger_recovery;
 mod conversation_fold_support;
+mod conversation_record_observation;
 mod conversation_recorder;
+pub use conversation_record_observation::{observe_agent_output, AgentOutputCategory};
 mod creation_admission;
 pub mod ledger_census;
 pub mod ledger_collection_artifact;

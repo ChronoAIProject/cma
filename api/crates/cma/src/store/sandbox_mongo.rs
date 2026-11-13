@@ -358,10 +358,12 @@ where
             "{context} cannot start while {MAX_PENDING_RECONCILIATIONS} prior reconciliations remain pending"
         )
     })?;
-    let mut task = tokio::spawn(async move {
-        let _permit = permit;
-        future.await
-    });
+    let mut task = tokio::spawn(crate::telemetry::agent_output::inherit_commands(
+        async move {
+            let _permit = permit;
+            future.await
+        },
+    ));
     match tokio::time::timeout(deadline, &mut task).await {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(error)) => {
