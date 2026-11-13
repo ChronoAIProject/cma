@@ -121,9 +121,13 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         handle: &RuntimeHandle,
     ) -> crate::Result<crate::DesktopConnectionHandle> {
         let endpoint = self.endpoint(handle).await?;
-        let stream = self
-            .native_stream(&endpoint, RuntimeStreamKind::Desktop)
-            .await?;
+        let stream = match &self.client {
+            RuntimeDiscovery::AgentSandbox(_) => Some(
+                self.native_stream(&endpoint, RuntimeStreamKind::Desktop)
+                    .await?,
+            ),
+            RuntimeDiscovery::Provider(_) => None,
+        };
         let mut request = endpoint
             .desktop()?
             .as_str()
@@ -139,14 +143,24 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             max_frame_size: Some(8 * 1024 * 1024),
             ..WebSocketConfig::default()
         };
-        let (socket, _) = tokio::time::timeout(
-            CONNECT_DEADLINE,
-            tokio_tungstenite::client_async_with_config(request, stream, Some(config)),
-        )
-        .await
-        .map_err(|_| AdapterError::Unavailable("runtime desktop connection timed out".into()))?
-        .map_err(|_| AdapterError::Unavailable("runtime desktop WebSocket failed".into()))?;
-        Ok(Box::new(TungsteniteDesktopConnection { socket }))
+        let connected = async {
+            let connection: crate::DesktopConnectionHandle = if let Some(stream) = stream {
+                let (socket, _) =
+                    tokio_tungstenite::client_async_with_config(request, stream, Some(config))
+                        .await?;
+                Box::new(TungsteniteDesktopConnection { socket })
+            } else {
+                let (socket, _) =
+                    tokio_tungstenite::connect_async_with_config(request, Some(config), false)
+                        .await?;
+                Box::new(TungsteniteDesktopConnection { socket })
+            };
+            Ok::<_, tokio_tungstenite::tungstenite::Error>(connection)
+        };
+        tokio::time::timeout(CONNECT_DEADLINE, connected)
+            .await
+            .map_err(|_| AdapterError::Unavailable("runtime desktop connection timed out".into()))?
+            .map_err(|_| AdapterError::Unavailable("runtime desktop WebSocket failed".into()))
     }
 
     async fn inspect_native_status(
@@ -304,12 +318,14 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
     }
 }
 
-struct TungsteniteDesktopConnection {
-    socket: tokio_tungstenite::WebSocketStream<crate::agent_sandbox::RuntimeStream>,
+struct TungsteniteDesktopConnection<S> {
+    socket: tokio_tungstenite::WebSocketStream<S>,
 }
 
 #[async_trait::async_trait]
-impl crate::DesktopConnection for TungsteniteDesktopConnection {
+impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static>
+    crate::DesktopConnection for TungsteniteDesktopConnection<S>
+{
     async fn recv(&mut self) -> crate::Result<Option<crate::DesktopFrame>> {
         use futures_util::StreamExt as _;
         let Some(message) = self.socket.next().await else {
