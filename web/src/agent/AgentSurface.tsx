@@ -158,6 +158,7 @@ export function AgentSurface({
     return (
       <AgentUnavailable
         message={state.message}
+        retryAt={state.retryAt}
         headingRef={headingRef}
         onRetry={controller.reload}
       />
