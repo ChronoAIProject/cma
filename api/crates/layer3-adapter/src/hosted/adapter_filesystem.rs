@@ -1,4 +1,5 @@
 use super::HostedAdapter;
+use crate::file_read_diagnostics::{measure, Stage};
 use crate::wire::{RequestFrame, ResponseFrame};
 use crate::{AdapterError, RuntimeHandle};
 
@@ -145,7 +146,7 @@ impl HostedAdapter {
         if !home.request.policy.mounts_full_home() {
             return Err(unsupported());
         }
-        let status = self.inspect_runtime_status(handle).await?;
+        let status = measure(Stage::RuntimeStatus, self.inspect_runtime_status(handle)).await?;
         validate_identity(
             &state,
             &request.sandbox_id,
@@ -160,12 +161,14 @@ impl HostedAdapter {
                 "runtime is not ready for filesystem access".into(),
             ));
         }
-        let response = self
-            .exchange(handle, RequestFrame::ReadAgentFile(request.clone()))
-            .await?;
+        let response = measure(
+            Stage::RuntimeRead,
+            self.exchange(handle, RequestFrame::ReadAgentFile(request.clone())),
+        )
+        .await?;
         match response {
             ResponseFrame::ReadAgentFile(receipt) => {
-                receipt.content()?;
+                measure(Stage::ReceiptValidation, async { receipt.content() }).await?;
                 Ok(receipt)
             }
             _ => unreachable!("exchange verifies response operation"),
