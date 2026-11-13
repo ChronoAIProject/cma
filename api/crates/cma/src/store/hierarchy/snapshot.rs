@@ -4,7 +4,6 @@ use layer2_core::sandbox::{
 use layer2_core::{SandboxId, WorkspaceId};
 use mongodb::{
     bson::{doc, Document},
-    options::{CollectionOptions, ReadConcern},
     ClientSession, Collection,
 };
 
@@ -12,6 +11,7 @@ use super::super::{
     agents::read_agent,
     sandbox_mongo::{is_transient, start_transaction, MongoSandboxStore, TRANSACTION_ATTEMPTS},
     sandboxes::read_sandbox,
+    snapshot_collection::collection,
     workspaces::read_workspace,
     worktrees::read_worktree,
 };
@@ -211,22 +211,4 @@ async fn children<T>(
         values.push(parse(&cursor.deserialize_current()?)?);
     }
     Ok(values)
-}
-
-fn collection(source: &Collection<Document>, snapshot: bool) -> Collection<Document> {
-    if snapshot {
-        source
-            .client()
-            .database(&source.namespace().db)
-            .collection_with_options(
-                source.name(),
-                CollectionOptions::builder()
-                    .read_concern(ReadConcern::snapshot())
-                    .write_concern(source.write_concern().cloned())
-                    .selection_criteria(source.selection_criteria().cloned())
-                    .build(),
-            )
-    } else {
-        source.clone()
-    }
 }

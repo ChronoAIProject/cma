@@ -29,6 +29,7 @@ mod provider_tool_relay;
 mod public_streams;
 mod rate_limit;
 mod read_telemetry;
+mod readiness_diagnostics;
 mod retirement_archive;
 mod sandbox;
 mod sandbox_metrics;
@@ -38,6 +39,7 @@ mod telemetry;
 mod trigger;
 mod usage_billing;
 mod warm_pools;
+mod worker_supervision;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -237,13 +239,19 @@ async fn serve() -> Result<(), String> {
         shutdown.push(continuations.spawn(shutdown.subscribe()));
     }
     let worker_signal = shutdown.subscribe();
-    shutdown.push(composition.launch_scheduler.spawn(worker_signal));
-    shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
     shutdown.push(
         composition
-            .sandbox_control_scheduler
-            .spawn(shutdown.subscribe()),
+            .launch_scheduler
+            .spawn_supervised(worker_signal, composition.workers.get("launches")),
     );
+    shutdown.push(composition.command_scheduler.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("agent_commands"),
+    ));
+    shutdown.push(composition.sandbox_control_scheduler.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("sandbox_commands"),
+    ));
     shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
     shutdown.push(
         composition
@@ -251,12 +259,20 @@ async fn serve() -> Result<(), String> {
             .clone()
             .spawn_observations(shutdown.subscribe()),
     );
-    shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
+    shutdown.push(composition.native_warm_pools.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("native_warm_pools"),
+    ));
     shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
-    composition.sandbox_lifecycle.spawn(&mut shutdown);
+    composition
+        .sandbox_lifecycle
+        .spawn(&mut shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
-    shutdown.push(composition.document_maintenance.spawn(shutdown.subscribe()));
+    shutdown.push(composition.document_maintenance.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("document_maintenance"),
+    ));
     composition.usage.spawn(&mut shutdown);
     composition.usage_metrics.spawn(&mut shutdown);
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
@@ -434,7 +450,7 @@ fn with_request_context(router: Router) -> Router {
         .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(request_span)
+                .make_span_with(diagnostic_request::request_span)
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
@@ -451,22 +467,6 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
         request.headers_mut().insert(X_REQUEST_ID, normalized);
     }
     next.run(request).await
-}
-
-fn request_span(_request: &Request) -> tracing::Span {
-    let context = layer2_core::diagnostic_context::DiagnosticContext::current();
-    let (method, path) = context
-        .route
-        .split_once(' ')
-        .unwrap_or(("OTHER", "unmatched"));
-    tracing::info_span!(
-        parent: None,
-        "http.request",
-        request_hash = %context.request_hash,
-        route = context.route.as_ref(),
-        method,
-        path,
-    )
 }
 
 async fn shutdown_signal() {
