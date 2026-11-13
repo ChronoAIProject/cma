@@ -17,6 +17,7 @@ function sources() {
   const base = installed.includes(after) ? installed.replace(after, before) : installed;
   const digest = (source) => createHash("sha256").update(source).digest("hex");
   const compositions = {
+    "fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7": "8c09bddfed33f2cb07766bf438f8be83cc4023ef8e2804660b7a03c9bff284e3",
     "ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66": "92c1131392cf39f1cd9bd0af9404f32ba416db509d27eb53b5b6190f504e6f85",
     "186537078bb1a13292c927a7da1290f345fd76c7918025fb603a5c1eb89c8203": "09f179f1e1681b87df06fbf73a66922f62e3c8f56ef79524f4a1298063e09034",
     "84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c": "b0d4c534287a41824d94b87ea0f3dcf629f9052c03705238624dd48d80d88301",
