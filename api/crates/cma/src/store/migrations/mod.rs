@@ -8,6 +8,7 @@ mod activity_indexes;
 mod activity_page_index;
 mod agent_log_segments;
 mod collection_indexes;
+pub(in crate::store) mod opening_index;
 mod steps;
 use steps::Step;
 mod authority;
