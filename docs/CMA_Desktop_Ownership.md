@@ -90,3 +90,30 @@ provider-proxy control client; Kubernetes control preserves its existing no-repl
 transport contract. Ambiguous open or revoke leaves durable claim release to
 expiry. Local transport fixtures and a synthetic display do not qualify retained
 production images, real Kubernetes/provider behavior or the desktop latency gate.
+
+## Local receiver child fixture
+
+The ignored runtime test
+`link::desktop::tests::child_fixture::desktop_receiver_child` exposes the actual
+control handlers, token middleware, upgrade function and relay to a synthetic echo
+display. It is test-only and does not run the Linux desktop launcher. A parent
+invokes the compiled runtime test binary with `--exact` and that selector,
+`--ignored --nocapture --test-threads=1`, and `CMA_DESKTOP_RECEIVER_CHILD=1`.
+
+The parent sends one JSON line on stdin containing `sandbox_id`, an absolute
+existing dedicated temporary `root` directory and a `control_token` of 64 lowercase
+hexadecimal characters. Readiness is a stdout line containing
+`CMA_DESKTOP_RECEIVER_READY ` followed by protocol version 1, a loopback `address`,
+Sandbox/generation metadata and route/retained-floor paths. Output never includes
+the credential. The parent keeps stdin open; EOF closes local admission, cancels
+and joins relay tasks and exits. The parent owns the exact process and root,
+retains the root for restart tests, and removes it after the child exits. Runtime
+home, state and checkpoint directories are children of that root.
+
+Requests still require `x-cma-runtime-token`. A provider-proxy fixture must verify
+its own provider credential before translating to that runtime token. This helper
+does not supply a provider authentication guarantee or public-endpoint latency
+result. Its ordinary parent regression checks authenticated I/O, refusal, EOF
+drain and retained-floor behavior through two distinct child processes. The
+ignored child is outside the CMA binary Mongo selector; it is never an ordinary
+Mongo fixture or a standalone pass without its parent protocol.

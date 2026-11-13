@@ -15,68 +15,9 @@ async fn authenticated_control_drains_real_legacy_and_owned_websockets() {
     let state = config.state_root.clone();
     let checkpoint = config.checkpoint_root.clone();
     let sandbox = config.sandbox_id.clone();
-    let supervisor =
-        Supervisor::new(config, crate::writer_fence::SupervisorBoundary::default()).unwrap();
-    let display = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let display_url = format!("ws://{}/display", display.local_addr().unwrap());
-    let display_server = tokio::spawn(async move {
-        let mut streams = tokio::task::JoinSet::new();
-        loop {
-            let (stream, _) = display.accept().await.unwrap();
-            streams.spawn(async move {
-                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-                while let Some(Ok(message)) = socket.next().await {
-                    if message.is_close() {
-                        break;
-                    }
-                    if socket.send(message).await.is_err() {
-                        break;
-                    }
-                }
-            });
-            while streams.try_join_next().is_some() {}
-        }
-    });
     let token = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-    let auth = crate::control_auth::ControlAuth::from_token(token.clone()).unwrap();
-    let receiver = supervisor.desktop_ownership.clone();
-    let app = Router::new()
-        .route(
-            "/runtime/desktop",
-            get(
-                move |ws: WebSocketUpgrade, headers: axum::http::HeaderMap| {
-                    upgrade(
-                        ws,
-                        receiver.clone(),
-                        "display-test".into(),
-                        display_url.clone(),
-                        headers,
-                    )
-                },
-            ),
-        )
-        .route(
-            "/runtime/desktop/ownership/challenge",
-            post(crate::link::desktop_control::challenge),
-        )
-        .route(
-            "/runtime/desktop/ownership/confirm",
-            post(crate::link::desktop_control::confirm),
-        )
-        .route(
-            "/runtime/desktop/ownership/revoke",
-            post(crate::link::desktop_control::revoke),
-        )
-        .with_state(supervisor.clone())
-        .layer(axum::middleware::from_fn_with_state(
-            auth,
-            crate::control_auth::authenticate,
-        ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
-    });
+    let fixture = test_support::Fixture::start(config, token.clone()).await;
+    let address = fixture.address;
     let http = reqwest::Client::new();
     let url = format!("http://{address}/runtime/desktop/ownership");
     let request = DesktopChallengeRequest {
@@ -197,12 +138,12 @@ async fn authenticated_control_drains_real_legacy_and_owned_websockets() {
             .status(),
         400
     );
-    server.abort();
-    display_server.abort();
-    let _ = server.await;
-    let _ = display_server.await;
-    drop(supervisor);
+    fixture.stop().await;
     for path in [home, state, checkpoint] {
         let _ = std::fs::remove_dir_all(path);
     }
 }
+
+mod child_fixture;
+mod child_process_tests;
+mod test_support;
