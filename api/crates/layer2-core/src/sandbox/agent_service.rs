@@ -85,6 +85,8 @@ pub enum AgentServiceError {
     LogCapacityExceeded,
     #[error("model budget refused the commitment: {0}")]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("invalid agent request: {0}")]
     InvalidRequest(String),
     #[error("agent data is not usable: {0}")]
@@ -98,6 +100,7 @@ impl AgentServiceError {
         match self {
             Self::Connection(error) => error.code(),
             Self::Budget(reason) => reason.code(),
+            Self::AdmissionPaused => "admission_paused",
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "agent_profile_not_found",
             Self::WorkspaceNotFound => "workspace_not_found",

@@ -29,7 +29,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `interrupt_with_input`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
 | `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
-| `admin()` | `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
+| `admin()` | `read_admission`, `stop_admission`, `resume_admission`, `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
 | `usage()` | `summary`, `sandboxes`, `sandbox`, `events`, `admin_summary`, `admin_sandboxes` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
@@ -947,3 +947,36 @@ must never treat that error as `unknown` or reuse a negative result as a cache.
 anonymous category to `POST /api/v1/telemetry/browser` and requires bodyless
 204. It omits the configured bearer and performs no automatic retry. Reports
 contain no exception text or identifiers and are not durable work receipts.
+
+## Operator admission control
+
+`admin().read_admission()` returns `AdmissionControlReadView`: current state in
+`control` plus up to twenty immutable changes in `history`, newest revision
+first. Stop and resume return `AdmissionControlView` without history. All three
+operations require `configure_platform`.
+
+```rust,no_run
+# async fn example(client: cma_sdk::Client) -> cma_sdk::Result<()> {
+use cma_sdk::admin::ChangeAdmissionRequest;
+let current = client.admin().read_admission().await?;
+let stopped = client.admin().stop_admission(&ChangeAdmissionRequest {
+    reason: "Contain new work during incident investigation".into(),
+    expected_revision: current.control.revision,
+}).await?;
+assert!(stopped.operator_stop.is_some());
+# Ok(())
+# }
+```
+
+Reasons are nonblank, at most 512 UTF-8 bytes and contain no control characters.
+A duplicate stop preserves the original stop. Resume requires its current
+revision; use `resume_admission` only after verifying that admission may reopen.
+Neither POST is retried implicitly. On a conflict or uncertain response, read
+current state before deciding whether to issue another command.
+
+The deployment write gate defaults off. Its named refusal is
+`admission_control_writes_unavailable`; stored stops remain enforced while the
+gate is closed. A stopped platform refuses new work with `admission_paused`
+and HTTP 503 / `Retry-After: 60`. Existing admitted work and authorized exact
+receipt recovery remain available. This switch enforces the next admission
+snapshot; it does not prove the separate hard commit-time containment bound.

@@ -110,6 +110,7 @@ async fn an_aborted_reservation_transaction_leaves_the_period_row_untouched() {
         &current,
         "rolled-back-command",
         seconds(NOW),
+        layer2_core::admission::AdmissionCause::Fresh,
         &mut session,
     )
     .await
@@ -411,6 +412,7 @@ async fn zero_liability_admission_never_writes_the_settings_fence() {
         &store.budget_settings,
         &store.model_budget,
         seconds(NOW),
+        layer2_core::admission::AdmissionCause::Fresh,
         &mut session,
     )
     .await;
