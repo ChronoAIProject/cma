@@ -167,7 +167,7 @@ async fn apply_publication_observed(
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let history = if segmented.is_none() {
         Some(
-            publication_history::read(
+            Box::pin(publication_history::read(
                 store,
                 &current,
                 &current_row,
@@ -178,7 +178,7 @@ async fn apply_publication_observed(
                 },
                 history_cache,
                 session,
-            )
+            ))
             .await?,
         )
     } else {

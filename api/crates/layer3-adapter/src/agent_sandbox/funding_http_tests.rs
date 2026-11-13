@@ -135,14 +135,7 @@ async fn two_and_three_callers_cannot_shorten_newer_confirmed_funding() {
             (200, final_value), // a subsequent valid extension
         ]);
         let fixture = Fixture::start(replies).await;
-        let clients: Vec<_> = (0..count)
-            .map(|_| {
-                fixture
-                    .client
-                    .clone()
-                    .with_monotonic_funding_deadlines(true)
-            })
-            .collect();
+        let clients: Vec<_> = (0..count).map(|_| fixture.client.clone()).collect();
         let handle = handle(&object);
         clients[0]
             .set_runtime_deadline(&handle, &request, newer)

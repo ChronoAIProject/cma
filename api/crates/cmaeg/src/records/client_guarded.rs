@@ -93,6 +93,7 @@ impl RecordClient {
                     expires_at: Some(write.expires_at),
                     condition: None,
                     guard: None,
+                    channel: None,
                     projection: Some(projection),
                 }])
                 .await?;
