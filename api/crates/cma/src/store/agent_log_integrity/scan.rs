@@ -269,15 +269,15 @@ where
     let mut entry_count = 0_u64;
     let mut encoded_bytes = 0_usize;
     let mut head_hash = [0_u8; HASH_BYTES];
-    while let Some(raw) = observation
-        .observe(cursor.stream(session).try_next(), true)
-        .await
-        .map_err(TransactionLogError::Driver)?
-    {
+    // Keep row validation independent of cursor delivery so every path retains
+    // the same sequence, capacity, hash and visitor failure boundaries.
+    let mut consume = |raw: &mongodb::bson::RawDocument,
+                       observation: &mut crate::store::agent_log_telemetry::Scan<C>|
+     -> Result<(), TransactionLogError> {
         let document_bytes = raw.as_bytes().len();
         observation.document(document_bytes);
         read.document(document_bytes);
-        let document = Document::try_from(&raw).map_err(|error| {
+        let document = Document::try_from(raw).map_err(|error| {
             TransactionLogError::Domain(SandboxStoreError::Corrupt(error.to_string()))
         })?;
         let entry = read_entry(&document).map_err(TransactionLogError::Domain)?;
@@ -305,6 +305,14 @@ where
         visit(entry).map_err(TransactionLogError::Domain)?;
         head_hash = hash_raw(raw.as_bytes());
         entry_count = expected.unwrap_or_default();
+        Ok(())
+    };
+    while let Some(raw) = observation
+        .observe(cursor.stream(session).try_next(), true)
+        .await
+        .map_err(TransactionLogError::Driver)?
+    {
+        consume(raw.as_ref(), &mut observation)?;
         observation.checkpoint().await;
     }
     if entry_count != last_seq {
