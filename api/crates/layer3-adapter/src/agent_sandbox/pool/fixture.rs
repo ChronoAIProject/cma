@@ -21,7 +21,16 @@ pub(super) struct State {
     pub inspections: usize,
     pub exec_mutations: Vec<(String, String, Value)>,
     pub native_annotation_generation: bool,
+    pub response_gates: VecDeque<ResponseGate>,
     version: u64,
+}
+
+#[derive(Clone)]
+pub(super) struct ResponseGate {
+    pub call: String,
+    pub after_call: Option<String>,
+    pub entered: Arc<tokio::sync::Notify>,
+    pub release: Arc<tokio::sync::Notify>,
 }
 
 pub(super) struct Fixture {
@@ -109,8 +118,36 @@ impl Fixture {
                 if lose {
                     continue;
                 }
+                let gate = {
+                    let mut state = owned.lock().unwrap();
+                    if state.response_gates.front().is_some_and(|gate| {
+                        gate.call == format!("{method} {}", path.split('?').next().unwrap())
+                            && gate.after_call.as_ref().is_none_or(|after| {
+                                state.calls.iter().any(|(call, _)| call == after)
+                            })
+                    }) {
+                        state.response_gates.pop_front()
+                    } else {
+                        None
+                    }
+                };
+                if let Some(gate) = &gate {
+                    gate.entered.notify_one();
+                    gate.release.notified().await;
+                }
                 let bytes = body.to_string();
-                socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{bytes}",bytes.len()).as_bytes()).await.unwrap();
+                let written = socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{bytes}",bytes.len()).as_bytes()).await;
+                if let Err(error) = written {
+                    assert!(
+                        gate.is_some()
+                            && matches!(
+                                error.kind(),
+                                std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::ConnectionReset
+                            ),
+                        "unexpected fixture response error: {error}"
+                    );
+                }
             }
         });
         let kubernetes = kube::Client::try_from(kube::Config::new(
@@ -132,6 +169,21 @@ impl Fixture {
             .unwrap()
             .lose
             .push(format!("{method} {}/{}", prefix(), resource));
+    }
+
+    pub fn gate(&self, call: String, after_call: Option<String>) -> ResponseGate {
+        let gate = ResponseGate {
+            call,
+            after_call,
+            entered: Arc::default(),
+            release: Arc::default(),
+        };
+        self.state
+            .lock()
+            .unwrap()
+            .response_gates
+            .push_back(gate.clone());
+        gate
     }
 
     pub fn edit(&self, resource: &str, name: &str, mutate: impl FnOnce(&mut Value)) {
