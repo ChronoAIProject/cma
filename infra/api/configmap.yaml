@@ -137,6 +137,14 @@ data:
   CHRONO_MODEL_BUDGET_WRITES_ENABLED: "false"
   # Request model policies need a later reader baseline even if foundation writes are on.
   CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED: "false"
+  # Cloud spend policy fields and platform observations need a later reader baseline
+  # even if both model budget write gates are on.
+  CHRONO_PLATFORM_SPEND_WRITES_ENABLED: "false"
+  # Convert active period counters only after every reader supports the layout.
+  # OFF keeps existing distributed counters readable and settlement-capable.
+  CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED: "false"
+  # Open only after every replica understands the shared operator stop.
+  CHRONO_ADMISSION_CONTROL_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"

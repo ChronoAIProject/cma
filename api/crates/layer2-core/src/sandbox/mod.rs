@@ -27,6 +27,7 @@ pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFenc
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
+mod admission;
 mod admission_checkpoint;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
@@ -292,8 +293,9 @@ pub use hierarchy::{
 pub use home::SandboxHome;
 pub use inactivity::{
     has_open_desktop_session, inactivity_pause_notice, is_inactivity_pause_candidate,
-    register_open_desktop_session, unregister_open_desktop_session, SandboxAgentActivity,
-    SandboxAgentLogActivity,
+    is_platform_stop_pause_candidate, is_quiet_pause_candidate, register_open_desktop_session,
+    unregister_open_desktop_session, SandboxAgentActivity, SandboxAgentLogActivity,
+    PLATFORM_SPEND_PAUSE_NOTICE,
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{
