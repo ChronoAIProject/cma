@@ -1,5 +1,32 @@
 # Agent reconciliation background scheduler
 
+## Reserved Sandbox recovery capacity
+
+`CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED` is a strict boolean,
+default `false`, independent of the Agent reconciliation and command pacing
+switches. The disabled path retains the shared background budget and its
+foreground admission rule. When enabled at process composition, the Sandbox
+reconciler reserves one permit from the two-permit shared budget and owns an
+independent one-permit lane. Shared workers retain one permit even while
+foreground requests are active. The total remains two background chains,
+including when there are no foreground requests. A busy or invalid reservation
+fails startup instead of silently falling back to shared admission.
+
+The reservation lasts through all owned reconciliation attempts and returns
+only when the reconciler's background work is dropped. It does not authorize
+runtime adoption, recovery, reclamation, or a write: all existing durable
+identity/revision checks, binding holds and cleanup proofs remain mandatory.
+No persistent state, reader format, or migration is introduced. Rollback sets
+the switch to `false` and restarts the API through the release owner.
+
+Ship disabled. The release owner captures and compares background admission,
+slot occupancy, full-sweep and binding-pass wall times, completed recovery,
+Mongo and native HTTP checkout wait, route latency, CPU, readiness and restarts
+before activation. Existing production baseline evidence is recorded in #1791;
+local scheduling tests do not establish a production latency improvement.
+
+## Agent reconciliation
+
 The Agent Manager scheduler performs two independent jobs: due Agent work and
 connection reconciliation. Due work keeps its existing one-second discovery
 cadence. Reconciliation checks durable live-Agent candidates and repairs a lost

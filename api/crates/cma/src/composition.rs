@@ -261,7 +261,7 @@ impl ControlPlaneComposition {
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
             runtime::lifecycle_config(config, worker_holder.clone()),
-        );
+        )?;
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             common_first_messages: config.features.trigger_command_admission,
             agent_reads: projections.reads(),
