@@ -3415,3 +3415,30 @@ Use `time() - cmaeg_provider_permit_oldest_wait_timestamp_seconds` only with
 See [permit semantics](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
 Worker/readiness changes belong to [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740)
 and a separate PR.
+
+## Provider refusal reason verification
+
+The optional `upstream` problem extension in [the protocol](CMAEG_Protocol.md)
+adds a closed reason code, failing operation and actual provider HTTP status.
+It adds no configuration, storage operation, retry or platform send. The outer
+callback status and configured failure reply keep their existing behavior.
+
+After an authorized CMAEG deployment, the release owner should record the
+serving source SHA and image digest, deployment time, and matched natural-traffic
+windows. Compare guest and owner `telegram-new` outcomes using aggregate counts
+and hashed correlations only. Guests should receive ordinary assistant answers;
+a delivered failure notification is not a successful turn. Count relay 502s and
+provider-start refusals by operation, status and allowlisted code, and confirm
+that successful traffic does not gain additional provider attempts. Stop the
+rollout investigation on new failure classes or evidence of changed retry,
+authorization or delivery behavior; preserve the original correlation hashes.
+
+Owner-visible reasons also require the NyxID callback consumer to read the
+bounded problem extension on non-2xx replies, validate its operation/status/code,
+and retain only those safe fields for owner diagnostics. At NyxID source
+`da70dddc9ad9a8de7026b4319909a6927cd2d3e1`, `channel_relay_service.rs` only
+reads the 202 disposition body and does not consume non-2xx problem metadata.
+Verify a compatible NyxID reader and owner surface before claiming that reasons
+are visible there. Older consumers retain their existing HTTP failure behavior.
+No production verification or downstream-reader deployment is established by
+the local refusal, logging, OpenAPI or latency tests.

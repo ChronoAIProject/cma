@@ -38,7 +38,7 @@ use layer2_core::{
         AgentContextService, HierarchyReadService, SandboxOperatorService, SandboxService,
         StoredSandboxRetirement, WorkspaceService,
     },
-    ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
+    ActivityService, OperationStore, UserDirectory,
 };
 mod state;
 pub(crate) use state::ControlPlaneComposition;
@@ -66,13 +66,7 @@ impl ControlPlaneComposition {
             )
             .with_maintenance(stores.sandbox_model.clone()),
         );
-        let settings = Arc::new(
-            PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity))
-                .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
-                .with_model_request_budget_writes_enabled(
-                    config.features.model_request_budget_writes_enabled,
-                ),
-        );
+        let settings = stores::platform_settings(&stores, config, &activity);
         let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
             Arc::clone(&settings),
             config.baseline_services.clone(),
@@ -123,6 +117,7 @@ impl ControlPlaneComposition {
             sandbox_policy.clone(),
             connection_prerequisite.clone(),
         );
+        sandbox_service.attach_platform_spend(stores.sandbox_model.clone());
         let workspace_service = WorkspaceService::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
@@ -199,7 +194,8 @@ impl ControlPlaneComposition {
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(native_warm_pools.clone());
+        .with_warm_pools(native_warm_pools.clone())
+        .with_platform_spend(stores::platform_spend(&stores, &activity, &settings));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -325,6 +321,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
+        sandbox_control_service.attach_platform_spend(stores.sandbox_model.clone());
         let deliverables = access::deliverables(
             &stores,
             projections.reads(),

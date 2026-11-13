@@ -1,4 +1,5 @@
 use super::*;
+mod platform_tests;
 mod worker_tests;
 use crate::resource_access::*;
 use crate::sandbox::agent_io::{
@@ -526,7 +527,7 @@ async fn sandbox_controls_forged_audit_and_corrupt_discovery_are_refused() {
     forged.admission_audit.policy_revision = 99;
     assert!(forged.validate().is_ok());
     assert_eq!(
-        f.store.reserve_sandbox_control(forged, proof).await,
+        f.store.reserve_sandbox_control(forged, proof, Ok(())).await,
         Err(SandboxControlError::Conflict)
     );
     assert!(f

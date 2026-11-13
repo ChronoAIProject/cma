@@ -28,6 +28,15 @@ pub(super) enum AdmissionError {
     PreparedLeaseBusy,
 }
 
+impl From<super::agent_conversation_store::ApplyError> for AdmissionError {
+    fn from(error: super::agent_conversation_store::ApplyError) -> Self {
+        match error {
+            super::agent_conversation_store::ApplyError::Domain(error) => Self::Domain(error),
+            super::agent_conversation_store::ApplyError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
 enum AdmissionReceipt {
     Created {
         sandbox: Sandbox,
@@ -133,6 +142,7 @@ where
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
+    super::budget::require_open(store, super::budget::now_seconds(), session).await?;
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
     let prepared_outcome = if admission.binding.is_none() {
