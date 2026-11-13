@@ -20,6 +20,35 @@ pub(super) struct Store {
 }
 #[async_trait]
 impl MetricsStore for Store {
+    async fn latest(
+        &self,
+        scope: &Scope,
+        selection: &ViewSelection,
+        at: u64,
+    ) -> Result<ReportView> {
+        let saved = self.saved.lock().unwrap().clone();
+        let report = match saved {
+            Some(report) => report,
+            None => {
+                self.submit(scope.clone(), selection.query.clone(), at)
+                    .await?
+            }
+        };
+        Ok(ReportView {
+            schema_version: 1,
+            window: selection.window,
+            requested_range: selection.query.range(),
+            generated_at: Some(at),
+            stale: false,
+            refresh: ViewRefresh {
+                state: RefreshState::Idle,
+                report_id: None,
+                retry_after_seconds: 0,
+            },
+            report,
+        })
+    }
+
     async fn owner_allocations(
         &self,
         r: &Report,

@@ -40,6 +40,7 @@ async fn metrics_options_honor_circuit_without_commands_and_recover_with_polling
         signer: fixture.signer.clone(),
         circuit: fixture.circuit.clone(),
         notifications: fixture.notifications.clone(),
+        view_policy: fixture.view_policy.clone(),
     });
     let operator = scope("operator", true);
     store.circuit.store(now() + 30, Ordering::SeqCst);

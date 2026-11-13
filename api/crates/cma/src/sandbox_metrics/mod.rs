@@ -6,6 +6,7 @@ mod report;
 mod report_trace;
 mod source;
 mod summary;
+mod warmer;
 use crate::{config::Config, store::usage_reports::ReportingStore};
 use layer2_core::sandbox_metrics::{MetricsError, MetricsService};
 use layer3_adapter::{
@@ -36,6 +37,7 @@ impl MetricsWorkers {
         )
         .await
         .map_err(|e| e.to_string())?;
+        let store = store.with_view_policy(config.usage_metrics.views.clone());
         let enabled = config.usage_metrics.enabled;
         let (source, native) = if enabled {
             let source = if let Some(url) = &config.usage_metrics.source_url {
@@ -81,6 +83,13 @@ impl MetricsWorkers {
             let signal = shutdown.subscribe();
             shutdown.push(tokio::spawn(async move {
                 tokio::select!{_ = crate::shutdown::signalled(signal)=>{},_ = layer2_core::diagnostic_context::DiagnosticContext::background("metrics").scope(worker.reports(slot))=>{}}
+            }));
+        }
+        if self.store.view_policy.enabled && self.store.view_policy.warm_enabled {
+            let worker = self.clone();
+            let signal = shutdown.subscribe();
+            shutdown.push(tokio::spawn(async move {
+                tokio::select! { _ = crate::shutdown::signalled(signal) => {}, _ = worker.warm_views() => {} }
             }));
         }
         if self.enabled {
@@ -165,3 +174,6 @@ pub(crate) async fn generate_fixture_with_collection(
         .await
         .map_err(|_| MetricsError::Unavailable)?
 }
+
+#[cfg(test)]
+pub(crate) use warmer::warm_fixture;
