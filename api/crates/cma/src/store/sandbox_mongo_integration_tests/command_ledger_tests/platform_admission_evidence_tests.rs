@@ -42,7 +42,7 @@ async fn admission_derives_missing_stale_and_finished_metering_without_evaluator
         assert!(state.configured);
         assert_eq!(
             state.commitment_refusal(),
-            Some(BudgetError::Unavailable),
+            Some(BudgetError::Unavailable.into()),
             "{evidence}"
         );
         assert!(state.closed_for_registration(), "{evidence}");
@@ -80,7 +80,7 @@ async fn admission_derives_thresholds_but_does_not_lift_persisted_closures() {
             .await
             .unwrap()
             .commitment_refusal(),
-        Some(BudgetError::PlatformExhausted)
+        Some(BudgetError::PlatformExhausted.into())
     );
     store.evaluate_period(now).await.unwrap();
     observe(&store, &platform, 0, now).await;
@@ -91,7 +91,7 @@ async fn admission_derives_thresholds_but_does_not_lift_persisted_closures() {
             .await
             .unwrap()
             .commitment_refusal(),
-        Some(BudgetError::PlatformExhausted)
+        Some(BudgetError::PlatformExhausted.into())
     );
     store.evaluate_period(now).await.unwrap();
     assert!(!store

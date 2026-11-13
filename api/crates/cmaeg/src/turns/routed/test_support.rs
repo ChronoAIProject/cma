@@ -261,6 +261,8 @@ pub fn recovery_frame(
 ) -> crate::providers::RecoveryEvent {
     use crate::providers::{RecoveryEvent, ResponsesEvent};
     RecoveryEvent {
+        trace_contract: false,
+        trace: None,
         response_id: response.into(),
         sequence_number: sequence,
         event: if terminal {

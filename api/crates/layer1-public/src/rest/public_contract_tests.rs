@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 mod account_deletion_cases;
+mod admission_control_cases;
 mod agent_access_cases;
 mod agent_cases;
 mod agent_customization_cases;
@@ -171,6 +172,9 @@ fn paths() -> Vec<PathBuf> {
 
 async fn scenario(name: &str) -> Scenario {
     if let Some(scenario) = account_deletion_cases::scenario(name) {
+        return scenario;
+    }
+    if let Some(scenario) = admission_control_cases::scenario(name).await {
         return scenario;
     }
     if let Some(scenario) = capacity_recovery_cases::scenario(name).await {
