@@ -45,6 +45,7 @@ impl AgentMessageCheckpoint {
                 .as_ref()
                 .is_some_and(|id| id.len() > 4096)
             || self.assembly.pending_update.is_some()
+            || self.assembly.output_state.is_some()
             || self.outcome.appended.len() > MAX_AGENT_LOG_BATCH_SIZE
             || self
                 .outcome
@@ -134,4 +135,12 @@ impl AgentMessageCheckpoint {
         checkpoint.after_seq = next.conversation.last_seq;
         Some(checkpoint)
     }
+}
+
+/// Agent and private checkpoint from one storage snapshot. Callers must still
+/// use the commit CAS: semantic history can advance after this read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentMessageSnapshot {
+    pub agent: Agent,
+    pub checkpoint: Option<AgentMessageCheckpoint>,
 }

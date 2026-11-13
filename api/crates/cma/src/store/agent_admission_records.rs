@@ -18,6 +18,8 @@ use super::sandboxes::read_sandbox;
 use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
 
+mod source;
+
 pub(super) struct CreatedReceipt {
     pub(super) creation: AgentCreation,
     pub(super) provenance: layer2_core::sandbox::AgentCreationProvenance,
@@ -28,14 +30,21 @@ pub(super) struct CreatedReceipt {
     pub(super) agent_event: SandboxEvent,
 }
 
+pub(super) struct ReusedReceipt {
+    pub creation: AgentCreation,
+    pub recorded: super::agent_log_segments::writer_commit::Recorded,
+}
+
 pub(super) enum AdmissionReceipt {
     Created(Box<CreatedReceipt>),
     Existing(Box<AgentCreation>),
+    Reused(Box<ReusedReceipt>),
 }
 
 impl AdmissionReceipt {
     pub(super) fn result(&self) -> AgentAdmissionResult {
         match self {
+            Self::Reused(receipt) => AgentAdmissionResult::Existing(receipt.creation.clone()),
             Self::Created(receipt) => AgentAdmissionResult::Created(receipt.creation.clone()),
             Self::Existing(creation) => AgentAdmissionResult::Existing(creation.as_ref().clone()),
         }
@@ -67,7 +76,29 @@ pub(super) async fn replay_in_transaction(
     admission: &AgentAdmission,
     session: &mut ClientSession,
 ) -> Result<Option<AdmissionReceipt>, LoadError> {
-    load_replay_with_session(store, admission, session, ReplayRead::Transaction).await
+    Box::pin(load_replay_with_session(
+        store,
+        admission,
+        session,
+        ReplayRead::Transaction,
+    ))
+    .await
+}
+
+pub(super) async fn replay_at_snapshot(
+    store: &MongoSandboxStore,
+    admission: &AgentAdmission,
+    session: &mut ClientSession,
+) -> Result<Option<AgentAdmissionResult>, SandboxStoreError> {
+    Box::pin(load_replay_with_session(
+        store,
+        admission,
+        session,
+        ReplayRead::Snapshot,
+    ))
+    .await
+    .map(|receipt| receipt.map(|receipt| receipt.result()))
+    .map_err(load_error)
 }
 
 #[derive(Clone, Copy)]
@@ -99,8 +130,9 @@ async fn load_replay_with_session(
         "creation_key": &admission.creation_key,
     };
     if let Some(binding) = &binding {
-        if binding.get_i64("document_schema_version").ok()
-            != Some(super::sandbox_mongo::DOCUMENT_SCHEMA_VERSION)
+        let version = binding.get_i64("document_schema_version").ok();
+        if !matches!(version, Some(1 | 2))
+            || (version == Some(2)) != binding.contains_key("log_publication")
             || binding.get_str("owner").ok() != Some(admission.owner.as_str())
             || binding.get_str("creation_key").ok() != Some(admission.creation_key.as_str())
         {
@@ -134,6 +166,19 @@ async fn load_replay_with_session(
         };
     };
     let agent = read_agent(&agent_document).map_err(LoadError::Domain)?;
+    if let Some(binding) = &binding {
+        Box::pin(super::agent_log_segments::admission::replay::require(
+            store,
+            admission,
+            &agent,
+            &agent_document,
+            binding,
+            session,
+            matches!(read, ReplayRead::Snapshot),
+        ))
+        .await?;
+    }
+
     match read {
         ReplayRead::Transaction => {
             super::trigger_first_messages::require_command_receipt(store, &agent, session).await
@@ -156,42 +201,20 @@ async fn load_replay_with_session(
         .session(&mut *session)
         .await
         .map_err(LoadError::Driver)?;
-    let last_seq = agent.conversation.last_seq;
-    let mut initial_log = None;
-    match read {
-        ReplayRead::Transaction => {
-            scan_complete_log_with_session(
-                ScanCaller::CommandAdmission,
-                store,
-                &agent.id,
-                last_seq,
-                session,
-                |entry| {
-                    if initial_log.is_none() {
-                        initial_log = Some(entry);
-                    }
-                    Ok(())
-                },
-            )
-            .await?;
-        }
-        ReplayRead::Snapshot => {
-            scan_complete_log_with_snapshot_session(
-                ScanCaller::CommandAdmission,
-                store,
-                &agent.id,
-                last_seq,
-                session,
-                |entry| {
-                    if initial_log.is_none() {
-                        initial_log = Some(entry);
-                    }
-                    Ok(())
-                },
-            )
-            .await?;
-        }
-    }
+    let initial_log = match super::agent_log_segment_reads::range_with_snapshot(
+        store,
+        &agent,
+        session,
+        0,
+        1,
+        matches!(read, ReplayRead::Snapshot),
+    )
+    .await
+    .map_err(LoadError::Domain)?
+    {
+        Some(entries) => entries.into_iter().next(),
+        None => source::legacy_initial(store, &agent, session, read).await?,
+    };
     let creation =
         assemble_creation(agent, worktree_document, initial_log).map_err(LoadError::Domain)?;
     if binding.is_some() {
@@ -230,10 +253,15 @@ pub(super) async fn replay_after_duplicate(
         .snapshot_time(snapshot_time)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    load_replay_with_session(store, admission, &mut session, ReplayRead::Snapshot)
-        .await
-        .map(|receipt| receipt.map(|receipt| receipt.result()))
-        .map_err(load_error)
+    Box::pin(load_replay_with_session(
+        store,
+        admission,
+        &mut session,
+        ReplayRead::Snapshot,
+    ))
+    .await
+    .map(|receipt| receipt.map(|receipt| receipt.result()))
+    .map_err(load_error)
 }
 
 fn assemble_creation(

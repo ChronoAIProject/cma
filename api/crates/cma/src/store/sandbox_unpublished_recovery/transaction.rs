@@ -24,7 +24,9 @@ use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::super::workspaces::read_workspace;
 
+mod reopen;
 mod scoped;
+pub(in crate::store) use scoped::NativeFacts;
 pub(super) use scoped::{apply_scoped, load_retained_scoped, load_scoped};
 
 #[derive(Debug)]
@@ -80,12 +82,13 @@ pub(super) async fn load(
     load_with_sources(store, id, session, None).await
 }
 
-pub(in crate::store) async fn load_reopen(
+pub(in crate::store) async fn load_reopen_with_sources(
     store: &MongoSandboxStore,
     id: &SandboxId,
     session: &mut ClientSession,
+    sources: Option<&NativeFacts>,
 ) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
-    load_for_inspection(store, id, session, true, true, None).await
+    load_for_inspection(store, id, session, true, true, sources).await
 }
 
 pub(super) async fn load_retained(
@@ -184,10 +187,13 @@ async fn load_for_inspection(
         };
         if let Some((opened, retired)) = facts {
             if require_reopen {
-                observation.finish(Reason::Unavailable);
-                return Err(ApplyError::Domain(SandboxStoreError::Unavailable(
-                    "segmented retained reopen requires its original bounded history proof".into(),
-                )));
+                let proof = sources
+                    .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?
+                    .reopen_proof(agent)?;
+                // Preserve the original-event digest for legacy Agents. New
+                // format histories bind their certified prefix and active leaves.
+                history_digest.update((proof.len() as u64).to_be_bytes());
+                history_digest.update(proof);
             }
             if require_unpublished
                 && generation

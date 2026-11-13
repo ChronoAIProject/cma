@@ -21,3 +21,11 @@ export function retainHistoryOnFailure(
     ? { ...current, historyLoading: false, historyUnavailable: true }
     : undefined;
 }
+
+export function agentReadRetryAt(state: AgentResourceState): number {
+  return state.status === 'error'
+    ? (state.retryAt ?? 0)
+    : state.status === 'ready'
+      ? (state.historyRetryAt ?? 0)
+      : 0;
+}
