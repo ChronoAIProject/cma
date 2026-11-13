@@ -417,6 +417,20 @@ impl AgentLogStore for MongoSandboxStore {
         super::agent_log_segment_reads::transcript_page(self, expected, &mut session, request).await
     }
 
+    async fn agent_log_final_answer(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+        sequence: u64,
+    ) -> Result<Option<layer2_core::sandbox::store::AgentLogFinalAnswer>, SandboxStoreError> {
+        let mut session = self
+            .client
+            .start_session()
+            .snapshot(true)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        super::agent_log_segment_reads::answer::read(self, expected, sequence, &mut session).await
+    }
+
     async fn agent_log_transcript_projection(
         &self,
         expected: &layer2_core::sandbox::Agent,
