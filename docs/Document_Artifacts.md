@@ -138,11 +138,33 @@ The rollout is an expand/contract sequence; only cma-web-hotfix changes producti
    compatible-reader image. Expanded documents remain readable, revoked access
    remains denied, and exact retries work. New mutations that exceed the old
    bounds return capacity. Disabling the flag does not shrink persisted records
-   or make pre-reader images safe. Never trim receipts or restore grants.
+   or make pre-reader images safe. Never restore grants. Never trim receipts,
+   except for the account erasure redaction described below.
 
 The activation is separate from this PR's default-off deployment. #1593 and
 #1472 remain open until activation and production verification are relayed;
 shipping the reader alone does not complete full-capacity revocation.
+
+## Account erasure reference redaction
+
+Account erasure is a pending product decision. The implementation removes the
+erased account from another owner's document grants and deletes that account's
+comments. It keeps each idempotency receipt, replacing an erased comment's
+`author_subject` with `deleted-account` and clearing its body. The receipt's
+identity and fingerprint remain, so a retry cannot recreate the deleted comment.
+This is the explicit exception to the prohibition on trimming or changing receipts.
+The document, its source revisions, the owner's comments and other recipients
+remain readable. Redaction uses the document's existing revision compare and
+exchange and increments that revision; a concurrent owner mutation wins its
+revision and forces erasure to read again before retrying.
+
+The current `StoredDocument` validator accepts these sanitized receipts because
+receipt comments are replay outcomes rather than live comments. Live comments
+still require a nonempty body. Real-store compatibility coverage reads both the
+rewritten aggregate and its listing through `MongoDocumentStore` and verifies
+that a stale redactor cannot overwrite another recipient's concurrent grant.
+See [Account deletion](CMA_Account_Deletion.md) for the writer gate and rollback
+reader floor. Disabling deletion does not restore erased receipt contents.
 
 ## Sharing and comments
 
