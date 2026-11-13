@@ -103,6 +103,7 @@ mod embed_tests;
 #[cfg(test)]
 mod history_export_tests;
 pub mod openapi;
+pub mod openapi_cache;
 mod openapi_shapes;
 mod organizations;
 pub mod pagination;
@@ -434,12 +435,12 @@ pub(crate) async fn conformance() -> Json<ConformanceDocument> {
     Json(ConformanceDocument::default())
 }
 
-async fn openapi_document() -> Json<utoipa::openapi::OpenApi> {
-    Json(openapi::document())
+async fn openapi_document(headers: HeaderMap) -> Response {
+    openapi_cache::document(&headers)
 }
 
-async fn agent_manager_openapi_document() -> Json<serde_json::Value> {
-    Json(openapi::agent_manager_document())
+async fn agent_manager_openapi_document(headers: HeaderMap) -> Response {
+    openapi_cache::agent_manager_document(&headers)
 }
 
 /// Public router for health-independent discovery infrastructure.

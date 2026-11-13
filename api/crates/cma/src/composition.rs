@@ -2,6 +2,7 @@
 use std::sync::Arc;
 mod access;
 mod account_deletion;
+pub(crate) mod activity;
 mod adapter;
 mod bindings;
 mod bots;
@@ -16,7 +17,6 @@ mod routes;
 mod runtime;
 mod stores;
 use crate::{
-    activity::ActivityRecorder,
     auth::{service_portal, AuthState},
     config::Config,
     profile_authoring::CmaProfileAuthoringSource,
@@ -43,7 +43,7 @@ use layer2_core::{
 mod state;
 pub(crate) use state::ControlPlaneComposition;
 impl ControlPlaneComposition {
-    pub(crate) async fn build(config: &Config) -> Result<Self, String> {
+    async fn assemble(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());
@@ -223,7 +223,7 @@ impl ControlPlaneComposition {
             stores.sandbox_model.clone(),
             Arc::new(layer2_core::sandbox::colors::SystemColorRandom::new()),
         ));
-        let recorder = ActivityRecorder::new(Arc::clone(&activity));
+        let (recorder, activity_worker) = activity::compose(config, &activity, &stores);
         let profile_authoring = ProfileAuthoringService::new(
             authoring_bounds,
             CmaProfileAuthoringSource::production(config, Arc::clone(&auth))?,
@@ -476,6 +476,7 @@ impl ControlPlaneComposition {
             )?),
         );
         Ok(Self {
+            activity_worker,
             workers,
             document_blob_maintenance,
             worker_observations,

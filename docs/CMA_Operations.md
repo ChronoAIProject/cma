@@ -1056,7 +1056,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED` | Strict boolean, default `false`. Shares immutable retained live fragments under one 32 MiB process budget; exhaustion uses the existing live-gap/catch-up path. Decoder, assembly, serialized replay and RSS qualification remain separate. See [Live fragment budget](CMA_Live_Fragment_Budget.md). |
 | `CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED` | Strict boolean, default `false`. Before owned decoding, validates Ready and retained ACP JSON against 4 MiB, 8,192 nodes and 64 container levels. Requires retained-output capability; refused output is never ACKed. See [Hosted output JSON budget](CMA_Runtime_Output_JSON_Budget.md) for recovery and accounting limits. |
 | `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
-| `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication within the shared cohort. Capacity settlement, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` | Strict boolean, default `false`. Repeated failures of the same step/class retain one diagnostic row and update attempts/ready time under the existing lease and revision fences. First/class-changed failures and success still append. Capacity/ledger markers retain priority. Rollback resumes ordinary appends without data repair. |
+| `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication and zero-entry repeated failures within the shared cohort. Repeated retries fully audit on first use after restart and at least hourly; identical conflict snapshots can reuse history within one invocation. First markers, capacity state changes, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED` | Strict boolean, default `false`. Enables row prechecks and exact terminal-Agent head proofs for runtime-loss recovery; live Agents use trusted summaries only inside the existing bounded-log cohort. Reserved retries receive at most 25 s and include CAS races. Roll back by setting `false` and restarting; no data migration. |
+| `CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED` | Strict boolean, default `false`. Adds cooperative checkpoints to complete Agent-log scans with a fixed 2 ms budget, checked every eight completed rows. Enable only after at least 30 minutes with the switch off establishes #1787 case A (at least 1,000 rows and longest-section p95 at least 10 ms), using #1805 runtime/checkout observations. Roll back by setting `false` and rolling the same API image; no data migration, Sandbox restart, identifier change or history rewrite. |
 | `CHRONO_AGENT_SKILL_UPGRADE_ENABLED` | Strict boolean, default `false`. Gates new installed-skill version replacements for owner-authorized idle Agents on capable runtimes. Keep closed until migration `2026-11-11-am-agent-skill-upgrade` reader/drain and recovery evidence is approved. Closing admission preserves reads, global exact-key replay, and already-admitted worker/recovery settlement. It does not remove the reader floor. See [skill upgrade migration record](CMA_Agent_Skills_Runtime.md#reader-floor-and-rollback-record-2026-11-11-am-agent-skill-upgrade). |
 | `CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED` | Strict boolean, default `false`. Enables the CMAEG retained-context API path that carries one buffered command through current authorization and the final release fence, with phase timing and no second command lookup. Keep disabled until the compatible API image is deployed and matched success/failure, binding-rotation and latency evidence is reviewed; disable and restart to roll back. The CMAEG three-second client deadline is unchanged. |
 | `CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED` | `false` | Require retained runtime output and bound compact pending/replay permission state across attachments. See [permission state bounds](CMA_Permission_State_Bounds.md). |
@@ -1088,6 +1091,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS` | Per-command bound 1-600; default 600 |
 | `CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS` | Total ordered-command bound, at least command bound and at most 1800; default 1800 |
 | `CHRONO_CLONE_DEPTH` | Git clone depth 1-1000; default 50 |
+| `CHRONO_ACTIVITY_ASYNC_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Enables bounded asynchronous request telemetry only. Explicit authorization and operations audits still synchronously await majority persistence. See request activity buffering below. |
 | `CHRONO_ACTIVITY_RETENTION_DAYS` | Activity TTL, 1-3650 days; default 90 |
 | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` | Pre-auth network budget/burst; default 6000 |
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
@@ -1096,6 +1100,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED` | Strict boolean, default `false`. Opts exact registered existing-Agent input submissions into the existing Input budget, including Responses v2 and its Agent alias; preserves local and Mongo enforcement. See [Response input rate policy](CMA_Response_Input_Rate_Policy.md) for the route inventory and separate activation/rollback. |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
 | `CHRONO_SERVER_RATE_CONTROL_ENABLED` | Strict boolean, default `false`. Separately activates the independent recovery/control policy; while false, prior Create/Input classification and shared keys are preserved. |
+| `CHRONO_SERVER_RATE_DEFAULT_LEASE_ENABLED` | Strict boolean, default `false`. Separately opts Default requests into prepaid Mongo credits: 10-second leases, at most `max(1, per_minute / 20)` credits, and 16,384 tracked keys per process. Create, Input, Control, admission, and health policies are unchanged. See [prepaid Default budgets](CMA_Response_Input_Rate_Policy.md#prepaid-default-budgets) for guarantees, metrics, and rollback. |
 | `CHRONO_SERVER_RATE_CONTROL_PER_MINUTE` | Independent per-subject Control budget/burst; default 120, positive integer. Protects recovery and controls of admitted work after the Create allowance is exhausted. |
 | `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
 | `CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED` | Strict default-off hosted output backpressure; requires retained ACK support. See [hosted update backpressure](CMA_Hosted_Update_Backpressure.md). |
@@ -2426,6 +2431,31 @@ See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.
 
+### Cooperative full-scan activation and rollback
+
+`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves scheduling behavior
+while retaining the execution measurements. The budget is fixed at 2 ms; it is
+not a deployment parameter. Every eighth completed row checks elapsed time,
+and a yield occurs only after validation, the visitor, hashing and row accounting
+finish. Individual driver polls, rows and visitors cannot be preempted, so 2 ms
+is a checkpoint budget rather than a hard upper bound on every poll.
+
+The release owner first records at least 30 minutes under natural load with the
+switch off. If longest sections for scans of at least 1,000 rows have p95 at least
+10 ms (case A), enable the switch in the same image and observe at least 60
+minutes. A driver-poll p95 of at least 5 ms (case B) separately justifies a batch
+limit investigation and its extra getMore/checkout cost. If every caller has
+section p99 below 2 ms (case C), leave cooperation off and retain measurements.
+Local reproduction guides implementation; it does not replace production
+attribution or authorize activation.
+
+Immediately roll back to `false` if scan failures/quarantine rise, publication
+retries rise above baseline, the reporting circuit opens, or new route 5xx
+appear. Roll only API replicas with the same image. Existing Sandboxes,
+Workspaces, Agents, identifiers and history stay intact. Offline retirement
+archive census explicitly uses the disabled strategy. No persistence format
+changes, migration, row omission or weaker validation accompanies this switch.
+
 ## Browser identity reads
 
 `CHRONO_AUTH_BROWSER_SESSION_JOIN_ENABLED` defaults to `false` and accepts only
@@ -2508,3 +2538,71 @@ establish a hard ≤60-second late-commit bound. Record N, flags, source/image,
 environment, exact time window and raw results for the M-OPS-03/M-SCALE-04/TC-100
 drill. Production qualification and the request-arrival/commit-time definition
 remain release-owner work; see [the contract](CMA_Admission_Control.md).
+
+
+### Request activity buffering
+
+`CHRONO_ACTIVITY_ASYNC_ENABLED=false` preserves the existing awaited request
+activity write and its warn-and-return failure behavior. With `true`, admitted
+non-health requests synchronously try to enqueue telemetry after the handler
+finishes and return without awaiting Mongo. The queue accepts at most 10,000
+records and 16 MiB of estimated JSON-serialized record bytes per process. Both
+limits include the batch in flight and retained retries; these are payload
+budgets, not a bound on allocator, channel or Mongo driver overhead.
+
+A single worker writes unordered batches of at most 256 records, flushing within
+250 ms of the oldest queued record when storage is available. Writes retain
+majority write concern and record IDs as Mongo `_id`. Duplicate-key-only batch
+results count as success; mixed errors and write-concern failures retry the
+retained batch with exponential backoff from 100 ms to 5 s. Requests never wait
+for retries. A storage outage can therefore exhaust either queue budget. Overflow
+drops the arriving record, preserving accepted records, with fixed reasons
+`queue_full`, `byte_budget`, or `shutdown`; warnings occur at power-of-two totals
+per reason. No request headers, credentials, bodies, or resource identifiers are
+included in these metrics or new worker logs.
+
+`ActivityRecord.at` remains the event time captured at request completion.
+Mongo `recorded_at` remains insertion time, used by cursor ordering and TTL.
+Normally these times can differ by one batch interval; outages and retries can
+increase that gap. Retention, public record fields, and read cursors are unchanged.
+
+After HTTP draining, the existing shutdown coordinator stops queue admission and
+gives background workers a shared 30-second drain deadline. A clean completed
+drain loses no accepted records. Deadline cancellation counts every remaining
+record (including the batch in flight) as a `shutdown` drop; an ambiguous Mongo
+outcome may already have persisted some of those records. New arrivals after
+closure also count as `shutdown`. A crash, SIGKILL, or forced termination can lose
+all outstanding in-memory records, bounded by 10,000 records / 16 MiB estimated
+payload, and cannot reliably emit final drop metrics. This is request telemetry,
+not desired state, accepted operations, or permission audits. Mongo remains the
+sole authority for those records; explicit audit callers still await
+`ActivityService::record` directly and retain their existing failure behavior.
+
+The private metrics endpoint exports:
+
+| Metric | Meaning |
+| --- | --- |
+| `cma_activity_queue_records` | Outstanding accepted records, including writes/retries in flight |
+| `cma_activity_queue_bytes` | Estimated serialized bytes for those records |
+| `cma_activity_queue_oldest_seconds` | Oldest outstanding age, refreshed every 250 ms even during blocked writes |
+| `cma_activity_batch_records` | Histogram of records per write attempt |
+| `cma_activity_batch_write_seconds` | Histogram of completed write attempt duration, including failures |
+| `cma_activity_dropped_total{reason}` | Dropped records by `queue_full`, `byte_budget`, or `shutdown` |
+
+The owner authorizes activation separately. Deployment engineers first capture a
+flag-off diagnostic baseline: activity insert command/checkout distributions,
+command rate, sample count and window; HTTP header latency p50/p95/p99 by route;
+and mean Mongo checkout wait. Then enable this switch alone and observe at least
+60 minutes, comparing `/api/v2/ui/task-experience` and `/auth/session`, verifying
+zero normal-load drops and reconciling persisted records against admitted
+non-health requests. Confirm no per-request synchronous activity insert, fewer
+batch writes than requests, added latency p99 <= 50 ms, and <= 100 ms with a
+30-second storage stall. Exercise successful drain and deadline cancellation.
+Record before/after evidence against #1543 and #1796. These production checks
+remain required after local tests; merging the default-off implementation does
+not constitute activation or production validation.
+
+Rollback sets `CHRONO_ACTIVITY_ASYNC_ENABLED=false` and restarts through the
+reviewed release route. Normal restart drains the old queue first; no data repair
+is needed. The stated deadline and crash loss boundary still apply if Mongo is
+unavailable during rollback.

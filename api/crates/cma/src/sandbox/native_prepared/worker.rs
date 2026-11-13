@@ -147,7 +147,7 @@ impl NativePreparedWorker {
                             None => {}
                         }
                     }
-                    _ = ticker.tick() => {
+                    _ = super::refill::changed(&mut ticker, &worker.store.native_prepared_changed) => {
                         if let Err(error) = worker.store.reconcile_native_prepared_target(worker.desired.as_ref(), worker.target, &now_rfc3339()).await {
                             tracing::warn!(%error, "native preparation target reconciliation deferred");
                             continue;

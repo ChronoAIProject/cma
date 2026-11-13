@@ -26,9 +26,12 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
             .clone()
+            .with_runtime_loss_bounded_proof(config.features.runtime_loss_bounded_proof_enabled)
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_platform_counter_shards(config.features.platform_counter_shards)
             .with_bounded_close_retries(config.features.bounded_close_retries)
+            .with_retry_single_marker(config.features.retry_single_marker_enabled)
+            .with_scan_cooperation(config.features.agent_log_scan_cooperative_enabled)
             .with_bounded_approval_reads(config.features.bounded_approval_reads)
             .with_fleet_log_percentage(config.agent_log_fleet_percent)
             .with_segment_adoption_enabled(config.features.segment_adoption_enabled)

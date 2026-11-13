@@ -24,7 +24,7 @@ pub(super) async fn validate_summary(
             &agent.id,
             agent.conversation.last_seq,
             session,
-            snapshot,
+            crate::store::agent_log_integrity::ScanOptions::new(snapshot, store.scan_cooperation),
         )
         .await;
     }
@@ -217,7 +217,7 @@ pub(in crate::store) async fn trusted_summary(
     }
 }
 
-async fn point_read(
+pub(super) async fn point_read(
     store: &MongoSandboxStore,
     filter: Document,
     id_only: bool,
