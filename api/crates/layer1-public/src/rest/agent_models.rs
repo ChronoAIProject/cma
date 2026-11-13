@@ -108,24 +108,24 @@ pub(crate) async fn list(
         Some(read) => read.lineage.clone(),
         None => state.reads.lineage(&caller, &id).await?,
     };
-    let mut models = state
-        .catalog
-        .models(&lineage.sandbox)
-        .await
-        .map_err(|_| InstanceProblem::Unavailable)?;
-    let available = matches!(
+    let eligible = matches!(
         lineage.agent.status,
         AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
     ) && matches!(
         lineage.sandbox.status,
         SandboxStatus::Active | SandboxStatus::CredentialRotating
-    ) && lineage.sandbox.lifecycle.checkpoint_capture.is_none()
-        && state.support.supported(&lineage.sandbox).await;
-    for model in &mut models {
-        model.available = available;
-    }
+    ) && lineage.sandbox.lifecycle.checkpoint_capture.is_none();
+    // These independent discovery reads share the captured lineage; one need
+    // not spend the other's network latency before it can start.
+    let discovery = tokio::try_join!(state.catalog.models(&lineage.sandbox), async {
+        Ok(eligible && state.support.supported(&lineage.sandbox).await)
+    });
     if let Some(read) = &read {
         state.reads.validate_configuration_read(read).await?;
+    }
+    let (mut models, available) = discovery.map_err(|_| InstanceProblem::Unavailable)?;
+    for model in &mut models {
+        model.available = available;
     }
     Ok((
         [(header::CACHE_CONTROL, "no-store")],
