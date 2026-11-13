@@ -271,6 +271,16 @@ async fn apply(
         );
         filter.insert("record.title", record_title_value(agent));
     }
+    if let ChildWriterClaim::Workspace(workspace) = claim {
+        let lease = workspace
+            .work
+            .lease
+            .as_ref()
+            .ok_or(ClaimError::Domain(SandboxStoreError::Conflict))?;
+        let acquisition =
+            super::work_claim_authority::eligible(&lease.expires_at).map_err(ClaimError::Domain)?;
+        filter = doc! {"$and":[filter, acquisition]};
+    }
     let mut fields = claim.fields().map_err(ClaimError::Domain)?;
     if let ChildWriterClaim::Agent(agent) = claim {
         store

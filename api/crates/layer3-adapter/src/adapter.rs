@@ -1,5 +1,6 @@
 //! The kernel-neutral sandbox adapter contract.
 
+use crate::desktop_ownership::{challenge, open, DesktopOwnedRuntime};
 use tokio::sync::mpsc;
 
 mod runtime_inspection;
@@ -32,21 +33,24 @@ pub trait SandboxAdapter: Send + Sync {
     async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         Err(unsupported("runtime desktop is unavailable"))
     }
+    fn desktop_ownership(&self, _: &RuntimeHandle) -> Option<&dyn DesktopOwnedRuntime> {
+        None
+    }
     /// Issue before Mongo acquisition so delayed confirmation cannot extend time.
     async fn desktop_ownership_challenge(
         &self,
-        _: &RuntimeHandle,
+        handle: &RuntimeHandle,
     ) -> Result<crate::DesktopOwnershipChallenge> {
-        Err(unsupported("runtime desktop ownership is unavailable"))
+        challenge(self.desktop_ownership(handle), handle).await
     }
     /// Never fall back to an unfenced socket when ownership is required.
     async fn open_desktop_owned(
         &self,
-        _: &RuntimeHandle,
-        _: &crate::DesktopOwnership,
-        _: &crate::DesktopOwnershipChallenge,
+        handle: &RuntimeHandle,
+        owner: &crate::DesktopOwnership,
+        challenge: &crate::DesktopOwnershipChallenge,
     ) -> Result<crate::DesktopConnectionHandle> {
-        Err(unsupported("runtime desktop ownership is unavailable"))
+        open(self.desktop_ownership(handle), handle, owner, challenge).await
     }
     /// Optional durable storage authority; absence must never fall back to an empty home.
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {

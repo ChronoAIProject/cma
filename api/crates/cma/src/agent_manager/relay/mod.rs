@@ -6,6 +6,8 @@ mod http;
 mod ingress;
 mod live;
 mod maintenance;
+pub(crate) mod public_access;
+pub(crate) use public_access::PublicAccess;
 mod reopen;
 pub(crate) use reopen::ReopenCall;
 
@@ -30,6 +32,7 @@ pub(crate) struct Relay {
     reopen: std::sync::OnceLock<Arc<crate::sandbox::worker::SandboxWorker>>,
     updates: Weak<DurableAgentUpdateRecorder>,
     authentication: authentication::Authentication,
+    public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
     client: reqwest::Client,
     slots: Arc<Semaphore>,
     body_budget: Arc<Semaphore>,
@@ -53,6 +56,7 @@ impl Relay {
             reopen: std::sync::OnceLock::new(),
             updates: Arc::downgrade(updates),
             authentication: authentication::Authentication::new(key),
+            public_access: std::sync::OnceLock::new(),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
                 .read_timeout(Duration::from_secs(10))
@@ -63,6 +67,12 @@ impl Relay {
             slots: Arc::new(Semaphore::new(MAX_STREAMS)),
             body_budget: Arc::new(Semaphore::new(MAX_BUFFERED_BODY_BYTES)),
         }))
+    }
+
+    pub(crate) fn install_public_access(&self, access: Arc<PublicAccess>) -> Result<(), String> {
+        self.public_access
+            .set(access)
+            .map_err(|_| "public relay authorization already installed".into())
     }
 
     async fn destination(&self, id: &AgentId) -> Result<Destination, ()> {

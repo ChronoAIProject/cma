@@ -44,6 +44,7 @@ mod provider_metadata;
 mod public_contract_tests;
 mod records;
 mod refresh;
+pub(crate) mod relay;
 mod resource_request;
 mod sandbox_prerequisite;
 pub(crate) mod service_portal;

@@ -1,5 +1,48 @@
 //! Retry only a Mongo transaction known to have aborted, never an uncertain commit.
 use super::{failure, RecordError};
+use std::{future::Future, time::Duration};
+
+const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// One deadline includes every attempt and backoff, including direct root writes
+/// which do not pass through the partition store's separate outer timeout.
+pub(super) async fn run<F: Future<Output = Result<Vec<u64>, AttemptError>>>(
+    mut attempt: impl FnMut() -> F,
+) -> Result<Vec<u64>, RecordError> {
+    let deadline = tokio::time::Instant::now() + WRITE_TIMEOUT;
+    tokio::time::timeout_at(deadline, async {
+        for number in 0..5 {
+            if tokio::time::Instant::now() >= deadline {
+                return Err(deadline_error());
+            }
+            if number > 0 {
+                metrics::counter!("cmaeg_replica_transaction_retries_total").increment(1);
+            }
+            match attempt().await {
+                Ok(versions) => return Ok(versions),
+                Err(AttemptError::Record(error)) => return Err(error),
+                Err(AttemptError::Aborted) => {
+                    if number == 4 {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5 << number)).await;
+                }
+            }
+        }
+        Err(RecordError::Unavailable(
+            "replica transaction contention budget exhausted".into(),
+        ))
+    })
+    .await
+    .map_err(|_| deadline_error())?
+}
+
+fn deadline_error() -> RecordError {
+    // Cancellation may race a server commit. Preserve uncertainty: there is
+    // no retry here and the caller must reconcile the same retained intent.
+    tracing::warn!("replica transaction deadline exceeded; commit outcome uncertain");
+    RecordError::Unavailable("replica transaction deadline exceeded".into())
+}
 
 pub(super) enum AttemptError {
     Aborted,
@@ -30,7 +73,7 @@ mod tests {
     use super::*;
     use mongodb::error::{ErrorKind, WriteConcernError, WriteFailure};
 
-    fn error(labels: &[&str]) -> mongodb::error::Error {
+    pub(super) fn error(labels: &[&str]) -> mongodb::error::Error {
         let concern: WriteConcernError = serde_json::from_value(serde_json::json!({
             "code": 91,
             "codeName": "ShutdownInProgress",
@@ -72,3 +115,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "mongo_replica_deadline_tests.rs"]
+pub(super) mod deadline_tests;

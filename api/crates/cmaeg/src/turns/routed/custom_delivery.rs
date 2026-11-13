@@ -287,7 +287,7 @@ impl RoutedDelivery {
         // becomes an aggregate Confirmed receipt, even with zero webhooks.
         self.record(lease, DeliveryStatus::Settled { receipt: None })
             .await?;
-        if effect.terminal() && !self.close(plan, target).await? {
+        if effect.terminal() && !self.close(plan, target, lease).await? {
             return Ok(FrameDelivery::Unknown);
         }
         self.journal

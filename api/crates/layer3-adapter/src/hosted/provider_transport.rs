@@ -38,6 +38,7 @@ pub struct ProviderHostedControlTransport {
     client: RuntimeDiscovery,
     owner_router: Option<Arc<crate::owner_control::OwnerControlRoute>>,
     http: reqwest::Client,
+    desktop_http: reqwest::Client,
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
@@ -59,6 +60,7 @@ enum RuntimeDiscovery {
 
 #[derive(Default)]
 struct TransportState {
+    desktop_challenges: BTreeMap<String, desktop::Pending>,
     next_link_id: u64,
     runtime_epochs: BTreeMap<RuntimeHandle, u64>,
     slot_epochs: BTreeMap<(RuntimeHandle, AgentSlot), u64>,
@@ -432,6 +434,9 @@ mod native_transport;
 
 #[path = "provider_transport_impl.rs"]
 mod transport_impl;
+
+#[path = "provider_desktop.rs"]
+mod desktop;
 
 #[cfg(test)]
 #[path = "provider_transport_tests.rs"]

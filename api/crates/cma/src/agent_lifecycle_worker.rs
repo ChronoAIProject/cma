@@ -123,14 +123,18 @@ impl InlineAgentLifecycle {
             },
         );
         tokio::pin!(work);
-        // Claim already granted a fresh lease; renew only after its first period.
-        let mut heartbeat =
-            tokio::time::interval_at(tokio::time::Instant::now() + HEARTBEAT, HEARTBEAT);
+        // Claim delivery can itself be delayed. Reconfirm the captured token
+        // before polling provider work, then bound every renewal wait.
+        let mut heartbeat = tokio::time::interval(HEARTBEAT);
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let outcome = loop {
             tokio::select! {
                 biased;
-                _ = heartbeat.tick() => self.operations.renew(&lease).await?,
+                _ = heartbeat.tick() => {
+                    tokio::time::timeout(Duration::from_secs(5), self.operations.renew(&lease))
+                        .await
+                        .map_err(|_| layer2_core::StoreError::Unavailable("lifecycle lease renewal timed out".into()))??;
+                },
                 result = &mut work => break result,
             }
         };

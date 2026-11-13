@@ -59,7 +59,7 @@ impl CheckpointArchiveStoreFactory for RecordingFactory {
     }
 }
 
-async fn listener() -> tokio::net::TcpListener {
+pub(super) async fn listener() -> tokio::net::TcpListener {
     tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("HTTP fixture binds")
@@ -76,7 +76,7 @@ fn http_response(status: &str, headers: &[(&str, String)], body: &[u8]) -> Vec<u
     response
 }
 
-fn json_response(value: &impl serde::Serialize) -> Vec<u8> {
+pub(super) fn json_response(value: &impl serde::Serialize) -> Vec<u8> {
     let body = serde_json::to_vec(value).expect("fixture JSON serializes");
     http_response(
         "200 OK",
@@ -104,7 +104,7 @@ fn spawn_http(
     })
 }
 
-async fn read_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+pub(super) async fn read_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
     let mut request = Vec::new();
     let header_end = loop {
         let mut chunk = [0_u8; 1_024];
@@ -161,7 +161,7 @@ async fn transport_fixture(
     (transport, provider_task, runtime_task)
 }
 
-fn request_text(request: Vec<u8>) -> String {
+pub(super) fn request_text(request: Vec<u8>) -> String {
     String::from_utf8(request).expect("fixture request is text")
 }
 
