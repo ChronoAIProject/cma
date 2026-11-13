@@ -64,6 +64,8 @@ for name,binary,config,port,ready,live,memory in [
           'securityContext':{'runAsNonRoot':True,'runAsUser':10001,'runAsGroup':10001,'fsGroup':10001,'seccompProfile':{'type':'RuntimeDefault'}},
           'terminationGracePeriodSeconds':760 if binary=='cma' else 735,
           'topologySpreadConstraints':[{'maxSkew':1,'topologyKey':'kubernetes.io/hostname','whenUnsatisfiable':'DoNotSchedule','nodeTaintsPolicy':'Honor',
+                                       # Count each rollout revision separately; old pods must not mask new-pod skew.
+                                       'matchLabelKeys':['pod-template-hash'],
                                        'labelSelector':{'matchLabels':{'app.kubernetes.io/name':name}}}]}
     if binary=='cma':
         spec['serviceAccountName']='cma-scale-am'

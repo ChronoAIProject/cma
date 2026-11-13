@@ -25,7 +25,16 @@ metrics-server was verified 1/1. No authenticated journey baseline is active.
 Placement at 00:30 is degraded: both AM pods share one worker, and both EG pods
 share the other. Existing service-wide spread constraints do not rebalance after
 old rollout pods disappear. Earlier placement and native-arm64 measurements do
-not qualify these images or this topology.
+not qualify these images or this topology. A proposed renderer correction adds
+`matchLabelKeys: [pod-template-hash]` to both host-spread constraints so every
+rollout revision is spread separately. The generated constraints passed Kubernetes
+server dry-run against both current Deployments at 00:37 SGT. See
+`evidence/placement-server-dry-run.json`; the exact current-image projection is
+`private/placement-proposed.json`. This proposal is not installed. It needs the
+exact-source reviewer verdict, a fresh unchanged-template check and a controlled
+rollout with post-rollout worker-hash verification before placement can pass.
+The active generated `manifests/apps.json` is deliberately not overwritten by
+this code change, because the peer helper uses that file during build/load.
 
 ## Isolation and capacity
 
