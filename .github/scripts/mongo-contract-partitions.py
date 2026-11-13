@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+import runpy
 import signal
 import subprocess
 import sys
@@ -32,6 +33,7 @@ def partition_count(script):
         text=True,
     )
     metadata = json.loads(listing.stdout)
+    runpy.run_path(str(Path(__file__).with_name("mongo-contract-completeness.py")))["check_metadata"](metadata)
     selected = [
         (name, test)
         for suite in metadata["rust-suites"].values()

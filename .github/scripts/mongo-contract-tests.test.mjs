@@ -5,12 +5,13 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
+import './mongo-contract-completeness.test.mjs';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
 const auditTest = 'store::agent_log_segments::mongo_tests::audit_bounds::near_capacity_audit_keeps_source_bounds_and_limits_each_write_transaction';
 const diagnosticsTest = 'store::mongo_diagnostics::mongo_tests::real_mongo_monitoring_privacy_and_overhead';
-const fixturePredicate = 'not test(store::migrations::tests::segments_runtime::)';
+const fixturePredicate = 'not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child)';
 const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}))`;
 
 function fixture(scenario, reuse = false) {
@@ -19,7 +20,7 @@ function fixture(scenario, reuse = false) {
   const scripts = join(root, '.github/scripts');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(join(root, 'api/target/nextest'), {recursive: true});
-  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'backend-nextest.sh']) {
+  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   const metadata = join(root, 'api/target/nextest');
@@ -62,8 +63,13 @@ if (command === 'cargo') {
     if (!['list-empty', 'list-no-diagnostics'].includes(scenario)) {
       testcases[${JSON.stringify(diagnosticsTest)}] = {ignored:scenario !== 'list-diagnostics-not-ignored', 'filter-match':{status:'matches'}};
     }
-    testcases.filtered = {ignored:true, 'filter-match':{status:'mismatch'}};
-    const suites = {fixture:{testcases}};
+    for (const name of Object.keys(JSON.parse(fs.readFileSync(path.join(process.cwd(), '../.github/scripts/mongo-contract-exceptions.json'))))) {
+      testcases[name] = {ignored:true, 'filter-match':{status:'mismatch'}};
+    }
+    if (scenario === 'list-omitted-module') testcases['new_module::mongo_contract'] = {ignored:true, 'filter-match':{status:'mismatch'}};
+    if (scenario === 'list-selected-helper') testcases['sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child']['filter-match'].status = 'matches';
+    if (scenario === 'list-stale-exception') delete testcases['sandbox::agent_worker_tests::sdk_conformance_tests::official_responses_sdk_server'];
+    const suites = {'cma::bin/cma':{'package-name':'cma', 'binary-name':'cma', kind:'bin', testcases}};
     if (scenario === 'list-duplicate-scale') suites.duplicate = {testcases:{[${JSON.stringify(scaleTest)}]:testcases[${JSON.stringify(scaleTest)}]}};
     if (scenario === 'list-duplicate-owner') suites.duplicate = {testcases:{[${JSON.stringify(ownerTest)}]:testcases[${JSON.stringify(ownerTest)}]}};
     if (scenario === 'list-duplicate-audit') suites.duplicate = {testcases:{[${JSON.stringify(auditTest)}]:testcases[${JSON.stringify(auditTest)}]}};
@@ -398,7 +404,7 @@ for (const reuse of [false, true]) {
   });
 
   test(`${mode}: unavailable, malformed, empty or non-ignored selection fails before allocating any fixture`, () => {
-    for (const scenario of ['list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale','list-no-owner','list-owner-not-ignored','list-duplicate-owner','list-no-audit','list-audit-not-ignored','list-duplicate-audit','list-no-diagnostics','list-diagnostics-not-ignored','list-duplicate-diagnostics','list-no-ordinary']) {
+    for (const scenario of ['list-omitted-module','list-selected-helper','list-stale-exception','list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale','list-no-owner','list-owner-not-ignored','list-duplicate-owner','list-no-audit','list-audit-not-ignored','list-duplicate-audit','list-no-diagnostics','list-diagnostics-not-ignored','list-duplicate-diagnostics','list-no-ordinary']) {
       const f = fixture(scenario, reuse);
       try {
         assert.throws(() => execFileSync('bash', f.args, {env:f.env, timeout:5000, stdio:'pipe'}));
