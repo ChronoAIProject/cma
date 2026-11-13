@@ -78,6 +78,7 @@ pub(crate) async fn preview(
                         requested_at: now_rfc3339(),
                         pause_after_seconds: threshold,
                         auto_pause_enabled: true,
+                        cause: Default::default(),
                     },
                 )
                 .await
@@ -137,6 +138,7 @@ pub(crate) async fn pause_idle_now(
                         requested_at: requested_at.clone(),
                         pause_after_seconds: threshold,
                         auto_pause_enabled: true,
+                        cause: Default::default(),
                     },
                 )
                 .await
