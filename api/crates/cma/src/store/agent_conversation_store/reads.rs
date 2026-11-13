@@ -41,7 +41,7 @@ pub(in crate::store) async fn pending_approvals_snapshot(
         id,
         head.last_seq,
         session,
-        true,
+        crate::store::agent_log_integrity::ScanOptions::new(true, store.scan_cooperation),
         |entry| {
             head.validate_lineage(&entry)?;
             pending.observe(&entry);

@@ -1,9 +1,111 @@
-use layer2_core::budget::{BudgetError, BudgetPolicy, BudgetStop, OwnerBudget, SpendSource};
+use std::time::{Duration, Instant};
+
+use layer2_core::budget::{
+    BudgetError, BudgetStop, ClosureReason, OwnerBudget, PlatformBudgetPolicy, SpendSource,
+};
 use layer2_core::sandbox::{store::AgentStore, Agent};
 use layer2_core::AgentId;
 use mongodb::bson::doc;
 
+use super::period::{period_key, snapshot, PolicySnapshot};
 use super::{decode, owner_key, turn_key, MongoSandboxStore, TurnRecord, DOCUMENT_SCHEMA_VERSION};
+
+#[cfg(test)]
+#[path = "source_tests.rs"]
+mod tests;
+
+/// How long one plain read of the period row answers the stop poll.
+const PLATFORM_STOP_TTL: Duration = Duration::from_secs(5);
+
+/// Process-local hints from platform reads (concurrency rules 3, 5): whether
+/// the last settings read showed an enabled platform policy, which schedules
+/// period-row writers, and the last stop read of the period row. A stale entry
+/// can delay a stop by one TTL; a positive only schedules an authoritative
+/// transaction before a new durable cancellation receipt is created.
+#[derive(Default)]
+pub(in crate::store) struct PlatformStopCache {
+    platform_enabled: Option<bool>,
+    stop: Option<StopRead>,
+}
+
+struct StopRead {
+    period_key: String,
+    closed: bool,
+    read_at: Instant,
+}
+
+impl MongoSandboxStore {
+    /// Whether period-row writers should be scheduled; unknown counts as enabled.
+    pub(in crate::store) fn platform_enabled_hint(&self) -> bool {
+        self.platform
+            .stop_cache
+            .lock()
+            .map(|cache| cache.platform_enabled.unwrap_or(true))
+            .unwrap_or(true)
+    }
+
+    pub(super) fn note_platform_enabled(&self, enabled: bool) {
+        if let Ok(mut cache) = self.platform.stop_cache.lock() {
+            cache.platform_enabled = Some(enabled);
+        }
+    }
+
+    /// `SpendStop` on the current period row, read without a session or the
+    /// settings fence and served from the cache within its TTL.
+    async fn platform_stopped(
+        &self,
+        platform: Option<&PlatformBudgetPolicy>,
+    ) -> Result<bool, BudgetError> {
+        self.note_platform_enabled(platform.is_some());
+        let Some(platform) = platform else {
+            return Ok(false);
+        };
+        let key = period_key(platform.period_bounds()?.0);
+        if let Some(closed) = self.cached_stop(&key) {
+            return Ok(closed);
+        }
+        let closed = match self
+            .model_budget
+            .find_one(doc! {"_id": &key})
+            .await
+            .map_err(|_| BudgetError::Unavailable)?
+        {
+            Some(document) => super::period_storage::PeriodState::root(&document)
+                .map_err(|_| BudgetError::Unavailable)?
+                .ledger
+                .closures
+                .iter()
+                .any(|closure| closure.reason == ClosureReason::SpendStop),
+            None => false,
+        };
+        if let Ok(mut cache) = self.platform.stop_cache.lock() {
+            cache.stop = Some(StopRead {
+                period_key: key,
+                closed,
+                read_at: Instant::now(),
+            });
+        }
+        Ok(closed)
+    }
+
+    fn cached_stop(&self, key: &str) -> Option<bool> {
+        let cache = self.platform.stop_cache.lock().ok()?;
+        cache
+            .stop
+            .as_ref()
+            .filter(|read| read.period_key == key && read.read_at.elapsed() < PLATFORM_STOP_TTL)
+            .map(|read| read.closed)
+    }
+
+    #[cfg(test)]
+    pub(in crate::store) fn age_platform_stop_cache(&self, by: Duration) {
+        if let Ok(mut cache) = self.platform.stop_cache.lock() {
+            if let Some(read) = cache.stop.as_mut() {
+                read.read_at = read.read_at.checked_sub(by).unwrap_or(read.read_at);
+            }
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl SpendSource for MongoSandboxStore {
@@ -69,7 +171,18 @@ impl MongoSandboxStore {
         turn: u64,
         now: u64,
     ) -> Result<Option<BudgetError>, BudgetError> {
-        let policy = self.current_budget_policy(agent).await?;
+        let snapshot = self.current_budget_snapshot(agent).await?;
+        // The platform stop binds every active turn, budgeted owner or not.
+        if self
+            .platform_stopped(snapshot.as_ref().and_then(|value| value.platform.as_ref()))
+            .await?
+            && self
+                .record_platform_stop(&format!("stop:{}:{turn}", agent.id.as_str()))
+                .await?
+        {
+            return Ok(Some(BudgetError::PlatformExhausted));
+        }
+        let policy = snapshot.and_then(|value| value.owner);
         let document = self
             .model_budget
             .find_one(doc! {"_id": turn_key(agent, turn)})
@@ -115,10 +228,10 @@ impl MongoSandboxStore {
         Ok(None)
     }
 
-    async fn current_budget_policy(
+    async fn current_budget_snapshot(
         &self,
         agent: &Agent,
-    ) -> Result<Option<BudgetPolicy>, BudgetError> {
+    ) -> Result<Option<PolicySnapshot>, BudgetError> {
         let Some(document) = self
             .budget_settings
             .find_one(doc! {"_id": "platform"})
@@ -127,14 +240,6 @@ impl MongoSandboxStore {
         else {
             return Ok(None);
         };
-        let settings: layer2_core::PlatformSettings = mongodb::bson::deserialize_from_document(
-            document
-                .get_document("settings")
-                .map_err(|_| BudgetError::Unavailable)?
-                .clone(),
-        )
-        .map_err(|_| BudgetError::Unavailable)?;
-        settings.model_budget.validate()?;
-        Ok(settings.model_budget.for_owner(&agent.owner).cloned())
+        snapshot(&document, Some(&agent.owner)).map(Some)
     }
 }

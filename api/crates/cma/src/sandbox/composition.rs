@@ -45,6 +45,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 
 pub(crate) struct SandboxLifecycleConfig {
     pub parent_not_ready_pacing_enabled: bool,
+    pub retry_single_marker_enabled: bool,
     pub bounded_live_fragments: bool,
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
@@ -91,6 +92,7 @@ impl SandboxLifecycleComposition {
         )
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
+        .with_platform_spend(dependencies.store.clone())
         .with_failed_runtime_recovery(Arc::new(
             layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                 dependencies.store.clone(),
@@ -158,6 +160,7 @@ impl SandboxLifecycleComposition {
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
+            .with_retry_single_marker(config.retry_single_marker_enabled)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );
@@ -242,20 +245,33 @@ impl SandboxLifecycleComposition {
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
 
-    pub(crate) fn spawn(self, shutdown: &mut ShutdownCoordinator) {
+    pub(crate) fn spawn(
+        self,
+        shutdown: &mut ShutdownCoordinator,
+        workers: &crate::worker_supervision::Workers,
+    ) {
         if let Some(scheduler) = self.capacity_recovery {
-            shutdown.push(scheduler.spawn(shutdown.subscribe()));
+            shutdown.push(
+                scheduler
+                    .spawn_supervised(shutdown.subscribe(), workers.get("agent_capacity_recovery")),
+            );
         }
         shutdown.push(self.warmup.spawn(shutdown.subscribe()));
         let signal = shutdown.subscribe();
-        shutdown.push(self.reconciliation.spawn(signal));
-        shutdown.push(self.agent.spawn(shutdown.subscribe()));
+        shutdown.push(
+            self.reconciliation
+                .spawn_supervised(signal, workers.get("sandbox_reconciliation")),
+        );
+        shutdown.push(
+            self.agent
+                .spawn_supervised(shutdown.subscribe(), workers.get("agents")),
+        );
         shutdown.push(self.titles.spawn(shutdown.subscribe()));
         shutdown.push(self.funding_renewal.spawn(shutdown.subscribe()));
         shutdown.push(self.suggestions.spawn(shutdown.subscribe()));
-        for scheduler in [self.sandbox, self.workspace] {
+        for (scheduler, name) in [(self.sandbox, "sandboxes"), (self.workspace, "workspaces")] {
             let signal = shutdown.subscribe();
-            shutdown.push(scheduler.spawn(signal));
+            shutdown.push(scheduler.spawn_supervised(signal, workers.get(name)));
         }
     }
 }

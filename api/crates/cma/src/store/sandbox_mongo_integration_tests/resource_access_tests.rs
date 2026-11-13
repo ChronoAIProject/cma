@@ -1,7 +1,11 @@
+#[path = "resource_access_tests/access_snapshot_session.rs"]
+mod access_snapshot_session;
 #[path = "resource_access_tests/artifacts.rs"]
 mod artifacts;
 #[path = "resource_access_tests/hierarchy.rs"]
 mod hierarchy;
+#[path = "resource_access_tests/history_measurement.rs"]
+mod history_measurement;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
 #[path = "resource_access_tests/provenance.rs"]

@@ -1,4 +1,4 @@
-//! Process liveness and a single bounded, cached application-store check.
+//! Process liveness and cached store/local execution capability readiness.
 
 use layer2_core::diagnostic_context::DiagnosticContext;
 use std::{sync::Arc, time::Duration};
@@ -8,7 +8,7 @@ use layer2_core::StoreError;
 use tokio::{sync::watch, time::Instant};
 
 use crate::{
-    readiness_diagnostics::{self, Attempt, Recorder, Timer},
+    readiness_diagnostics::{self, Attempt, Recorder},
     store::MongoStores,
 };
 
@@ -45,12 +45,36 @@ struct CompletedCheck {
 
 type CheckState = watch::Receiver<Option<CompletedCheck>>;
 
+#[derive(Clone)]
+struct HealthState {
+    store: CheckState,
+    workers: Option<crate::worker_supervision::Workers>,
+    diagnostics: Option<Arc<Recorder>>,
+}
+
+#[cfg(test)]
 pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
     router_with_diagnostics(probe, readiness_diagnostics::configured())
 }
 
+pub(crate) fn router_with_workers(
+    probe: Arc<dyn ReadinessProbe>,
+    workers: crate::worker_supervision::Workers,
+) -> Router {
+    monitored(probe, Some(workers), readiness_diagnostics::configured())
+}
+
+#[cfg(test)]
 fn router_with_diagnostics(
     probe: Arc<dyn ReadinessProbe>,
+    diagnostics: Option<Arc<Recorder>>,
+) -> Router {
+    monitored(probe, None, diagnostics)
+}
+
+fn monitored(
+    probe: Arc<dyn ReadinessProbe>,
+    workers: Option<crate::worker_supervision::Workers>,
     diagnostics: Option<Arc<Recorder>>,
 ) -> Router {
     let (result, state) = watch::channel(None);
@@ -63,23 +87,27 @@ fn router_with_diagnostics(
             diagnostics.clone(),
         )),
     );
-    routes(state, diagnostics)
+    health_routes(HealthState {
+        store: state,
+        workers,
+        diagnostics,
+    })
 }
 
-#[derive(Clone)]
-struct HealthState {
-    checks: CheckState,
-    diagnostics: Option<Arc<Recorder>>,
-}
-
+#[cfg(test)]
 fn routes(state: CheckState, diagnostics: Option<Arc<Recorder>>) -> Router {
+    health_routes(HealthState {
+        store: state,
+        workers: None,
+        diagnostics,
+    })
+}
+
+fn health_routes(state: HealthState) -> Router {
     Router::new()
         .route("/livez", get(liveness))
         .route("/ready", get(readiness))
-        .with_state(HealthState {
-            checks: state,
-            diagnostics,
-        })
+        .with_state(state)
 }
 
 async fn monitor(
@@ -87,7 +115,6 @@ async fn monitor(
     result: watch::Sender<Option<CompletedCheck>>,
     diagnostics: Option<Arc<Recorder>>,
 ) {
-    let _timer = Timer::start(diagnostics.as_ref());
     let mut scheduled = Instant::now();
     tokio::select! {
         biased;
@@ -149,18 +176,30 @@ async fn liveness() -> &'static str {
 }
 
 async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
-    let check = state.checks.borrow().clone();
+    let check = state.store.borrow().clone();
     let age = check.as_ref().map(|check| check.completed.elapsed());
     let failure = match &check {
         None => Some("pending"),
         Some(_) if age.is_some_and(|age| age >= MAX_CHECK_AGE) => Some("stale"),
         Some(check) => check.failure,
     };
-    let ready = failure.is_none();
+    let workers = state
+        .workers
+        .as_ref()
+        .map(|workers| workers.snapshot())
+        .unwrap_or_default();
+    let execution_available = workers.iter().all(|worker| worker.available());
+    let ready = failure.is_none() && execution_available;
     if let Some(diagnostics) = &state.diagnostics {
+        // Response evidence must include worker refusal even after a healthy ping.
+        // Keep a dependency failure's more specific phase reason when both fail.
         diagnostics.response(
             check.as_ref().map_or(0, |c| c.diagnostic_check),
-            failure.unwrap_or("ready"),
+            failure.unwrap_or(if execution_available {
+                "ready"
+            } else {
+                "workers"
+            }),
             age,
             check.as_ref().map_or(0, |c| {
                 c.duration_ms.saturating_mul(1000).min(u128::from(u64::MAX)) as u64
@@ -175,7 +214,8 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
         },
         Json(serde_json::json!({
             "status": if ready { "ready" } else { "not-ready" },
-            "reason": if ready { None } else { Some("store") },
+            "reason": if failure.is_some() { Some("store") } else if !execution_available { Some("workers") } else { None },
+            "workers": workers,
             "dependency": {
                 "checked_at": check.as_ref().map(|check| &check.checked_at),
                 "age_ms": age.map(|age| age.as_millis()),
@@ -186,6 +226,8 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
     )
 }
 
+#[cfg(test)]
+mod discovery_tests;
 #[cfg(test)]
 mod gateway_tests;
 #[cfg(test)]

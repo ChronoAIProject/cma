@@ -17,6 +17,7 @@ mod binding;
 mod bots;
 mod browser_login;
 mod browser_origins;
+mod browser_session;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;
@@ -31,6 +32,7 @@ mod middleware;
 #[cfg(test)]
 pub(super) mod nyxid_contract_tests;
 pub(crate) mod nyxid_proxy;
+mod oauth_commands;
 pub mod organizations;
 mod permissions;
 pub mod persistence;
@@ -118,8 +120,10 @@ pub struct AuthState {
     platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
+    oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
     silent_sign_in_enabled: bool,
+    browser_session_join_enabled: bool,
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
@@ -138,6 +142,7 @@ pub struct AuthState {
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
+    spend: Option<Arc<dyn layer2_core::budget::PlatformSpendLedger>>,
 }
 
 pub(super) struct RequestAuth {
@@ -193,8 +198,10 @@ impl AuthState {
             bot_father_username: None,
             bindings: None,
             agent_key_service_id: None,
+            oauth_api_resource: None,
             resource_request_enabled: false,
             silent_sign_in_enabled: false,
+            browser_session_join_enabled: false,
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,
@@ -202,6 +209,7 @@ impl AuthState {
             nyxid_public_url,
             browser_origins,
             records,
+            spend: None,
             store,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
@@ -311,12 +319,17 @@ impl AuthState {
             AuthMode::Provider { .. } => {
                 if let Some(cookie) = session_routes::request_cookie(headers, AUTH_COOKIE) {
                     let id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, cookie);
-                    if let Some(login) = self.store.browser_login(&id).await? {
+                    if let Some((login, state)) = self.read_browser_session(&id).await? {
                         if login.expires_at <= SystemTime::now() {
                             let _ = self.store.delete_browser_login(&id).await;
                             return Ok(None);
                         }
-                        let Some(mut state) = self.store.subject(&login.subject).await? else {
+                        let state = if self.browser_session_join_enabled {
+                            state
+                        } else {
+                            self.store.subject(&login.subject).await?
+                        };
+                        let Some(mut state) = state else {
                             return Ok(Some(RequestAuth {
                                 binding: None,
                                 credential_source:

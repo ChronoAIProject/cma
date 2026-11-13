@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+mod access_snapshot;
 mod admission_log;
 mod global_admission;
 mod provider_tool_relay;
@@ -21,6 +22,7 @@ mod agent_sandbox;
 mod execution;
 mod gateway;
 mod home;
+mod oauth_resource;
 mod profiles;
 mod public_streams;
 mod runtime;
@@ -30,6 +32,7 @@ mod task_experience;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
+mod browser_session;
 mod documents;
 mod sandbox_billing;
 pub(crate) mod sandbox_metrics;
@@ -192,6 +195,7 @@ pub struct Config {
     pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
+    pub nyxid_oauth_api_resource: Option<String>,
     pub nyxid_proxy_issuer: Option<String>,
     pub nyxid_proxy_jwks_url: Option<String>,
     pub nyxid_proxy_audience: Option<String>,
@@ -212,6 +216,7 @@ pub struct Config {
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
     pub auth_mode: AuthMode,
+    pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -426,6 +431,9 @@ impl Config {
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
+            nyxid_oauth_api_resource: oauth_resource::parse(lookup(
+                "CHRONO_NYXID_OAUTH_API_RESOURCE",
+            )?)?,
             nyxid_proxy_issuer: lookup("CHRONO_NYXID_PROXY_ISSUER")?,
             nyxid_proxy_jwks_url: lookup("CHRONO_NYXID_PROXY_JWKS_URL")?,
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
@@ -449,6 +457,7 @@ impl Config {
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
                 .filter(|value| !value.is_empty()),
             auth_mode,
+            browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,

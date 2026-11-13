@@ -22,6 +22,8 @@ mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+#[cfg(any(test, feature = "test-support"))]
+pub mod agent_log_contract;
 mod agent_response_log;
 pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
@@ -71,12 +73,17 @@ pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
 mod agent_log_capacity;
 pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
+mod agent_repeated_failure;
+pub use agent_repeated_failure::{
+    plan_agent_repeated_failure, validate_agent_repeated_failure, AgentRepeatedFailure,
+};
 mod agent_cleanup_capacity;
 pub use agent_cleanup_capacity::{
     agent_cleanup_capacity_retry, agent_cleanup_capacity_retry_hint,
     plan_agent_cleanup_capacity_retry, plan_agent_marked_cleanup_capacity_retry,
     plan_agent_runtime_ledger_hold_retry, validate_agent_cleanup_capacity_log,
-    AGENT_RUNTIME_LEDGER_HOLD, AGENT_RUNTIME_LEDGER_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
+    validate_agent_cleanup_capacity_log_with_retry, AGENT_RUNTIME_LEDGER_HOLD,
+    AGENT_RUNTIME_LEDGER_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
 };
 mod agent_sign_in;
 pub use agent_lifecycle::{
@@ -165,6 +172,8 @@ pub struct Page<T> {
 pub enum SandboxStoreError {
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]
@@ -398,6 +407,9 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    admission_control: crate::admission::AdmissionControl,
+    admission_audit: Vec<crate::ActivityRecord>,
+    admission_history: Vec<crate::admission::AdmissionChange>,
     retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,

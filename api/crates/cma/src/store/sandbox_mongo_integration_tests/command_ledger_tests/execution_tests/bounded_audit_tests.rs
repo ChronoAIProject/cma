@@ -59,7 +59,7 @@ async fn semantic_audit_quarantines_middle_damage_across_revision_writes_and_res
                 &agent.id,
                 1000,
                 &mut snapshot_session,
-                true,
+                crate::store::agent_log_integrity::ScanOptions::new(true, Default::default()),
                 |_| Ok(()),
             )
             .await
