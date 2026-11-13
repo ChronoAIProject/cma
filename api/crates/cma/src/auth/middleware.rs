@@ -162,6 +162,7 @@ pub(super) fn identity_failure() -> Response {
             "status": 503,
             "detail": "The identity service is temporarily unavailable. Please retry shortly.",
             "code": "identity_unavailable",
+            "retryable": true,
         })),
     )
         .into_response()
@@ -176,6 +177,9 @@ pub(super) fn store_failure() -> Response {
             "status": 503,
             "detail": "Authentication authority is temporarily unavailable.",
             "code": "store_failed",
+            // Invalid provider evidence also reaches this response. A 503 alone
+            // must not authorize automatic browser identity retries.
+            "retryable": false,
         })),
     )
         .into_response()
@@ -469,3 +473,7 @@ mod tests {
             .expect("request builds")
     }
 }
+
+#[cfg(test)]
+#[path = "error_metadata_tests.rs"]
+mod error_metadata_tests;

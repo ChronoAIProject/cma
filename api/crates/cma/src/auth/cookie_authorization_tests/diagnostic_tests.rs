@@ -138,6 +138,9 @@ async fn authentication_logs_one_content_free_counter_per_503_only() {
                     .unwrap();
             if let Some(code) = code {
                 assert_eq!(body["code"], code);
+                assert_eq!(body["retryable"], code == "identity_unavailable");
+            } else {
+                assert!(body.get("retryable").is_none());
             }
         }
     }
