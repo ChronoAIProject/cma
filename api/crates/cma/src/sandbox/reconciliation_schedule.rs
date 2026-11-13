@@ -4,6 +4,9 @@ use super::*;
 impl SandboxReconciler {
     pub(crate) async fn run_due(&self, now: SystemTime) -> Result<bool, SandboxStoreError> {
         let mut progress = self.progress.lock().await;
+        // Independent of sweep progress: a failing earlier phase must not hold
+        // back platform spend transitions (contract §5.3).
+        self.platform_spend_stop(now).await;
         // The progress lock serializes both lanes, including outer cancellation.
         if self.failed_runtime_recovery.is_some() {
             let mut recovery = self.recovery_schedule.lock().await;

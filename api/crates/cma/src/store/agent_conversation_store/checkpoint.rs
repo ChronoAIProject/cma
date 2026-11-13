@@ -82,6 +82,10 @@ pub(super) async fn commit(
 ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
     next.validate()?;
     let _writer = store.agent_writes.lock(&current.id).await;
+    let _platform = match &mutation {
+        Some(mutation) => store.conversation_platform_guard(mutation).await,
+        None => None,
+    };
     let reanchor = mutation.is_none()
         && previous
             .as_ref()

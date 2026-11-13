@@ -310,6 +310,19 @@ async fn apply_with_sources(
 ) -> Result<Receipt, ApplyError> {
     let (current, last_seq) =
         load_with_sources(store, &request.snapshot.sandbox.id, session, sources).await?;
+    // A failed pause can retain a recoverable runtime binding after losing its
+    // pause operation. Recovery starts a new runtime commitment, so discovery
+    // or an earlier sweep result cannot authorize it under a current stop.
+    crate::store::budget::require_open(store, crate::store::budget::now_seconds(), session)
+        .await
+        .map_err(|error| match error {
+            crate::store::agent_conversation_store::ApplyError::Domain(error) => {
+                ApplyError::Domain(error)
+            }
+            crate::store::agent_conversation_store::ApplyError::Driver(error) => {
+                ApplyError::Driver(error)
+            }
+        })?;
     let mutation =
         apply_unpublished_runtime_recovery(&current, request).map_err(ApplyError::Domain)?;
     validate_in_transaction(store, &current.sandbox.id, last_seq, session).await?;
