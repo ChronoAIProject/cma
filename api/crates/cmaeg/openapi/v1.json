@@ -1339,7 +1339,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/MediaDownload",
-                "description": "With view `download` and status `ready`: the one command that saves\nthe original. It carries a single-use link."
+                "description": "With view `download` and status `ready`: the one command that saves\nthe original. It carries a scoped, short-lived, single-use link."
               },
               {
                 "type": "null"
@@ -4839,6 +4839,25 @@
         ],
         "type": "object"
       },
+      "MediaAuthorization": {
+        "additionalProperties": false,
+        "description": "The structured header credential for a ready download. The token is\nscoped to one event attachment and is single-use; it is never logged.",
+        "properties": {
+          "scheme": {
+            "description": "The HTTP authorization scheme; always `Bearer`.",
+            "type": "string"
+          },
+          "token": {
+            "description": "The single-use media capability.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scheme",
+          "token"
+        ],
+        "type": "object"
+      },
       "MediaContinuationKind": {
         "enum": [
           "original",
@@ -4904,10 +4923,14 @@
       },
       "MediaDownload": {
         "additionalProperties": false,
-        "description": "A ready download: one `curl` command that works once and expires at\n`expires_at`. Only `curl` carries the link; `url` never does.",
+        "description": "A ready download: one `curl` command and a structured authorization header\nthat work once and expire at `expires_at`. The URL never carries the link.",
         "properties": {
+          "authorization": {
+            "$ref": "#/components/schemas/MediaAuthorization",
+            "description": "The structured credential for clients that cannot execute shell text."
+          },
           "curl": {
-            "description": "The command to run once in the agent's workspace; its\n`Authorization` header carries the link.",
+            "description": "The command to run once in the agent's workspace; its\n`Authorization` header carries the same link as `authorization`.",
             "type": "string"
           },
           "expires_at": {
@@ -4928,6 +4951,7 @@
           "method",
           "url",
           "expires_at",
+          "authorization",
           "curl"
         ],
         "type": "object"
