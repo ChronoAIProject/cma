@@ -20,8 +20,9 @@ the removed legacy `background` option. The build command is bounded to 2,100
 seconds by the Job and reports sanitized inventory, start, 30-second heartbeat,
 finish and verification phases. The outer Job deadline is 3,900 seconds.
 
-The sizing Job at `infra/api/activity-index-job.yaml` and build Job at
-`infra/api/activity-index-build-job.yaml` are separately named, immutable
+The sizing Job at `infra/api/activity-index-job.yaml`, build Job at
+`infra/api/activity-index-build-job.yaml`, and postcheck Job at
+`infra/api/activity-index-postcheck-job.yaml` are separately named, immutable
 one-off operations. Each references the serving API's `cma-agent-manager`
 ConfigMap and Secret through `envFrom`, uses `chrono-bot-ksa`, and contains no
 credential values. The release owner must replace the image and
@@ -142,17 +143,17 @@ manifest is recorded because older migration registries reject the new history.
 ## 5. Verify the result and release
 
 1. Run the existing migration status command with the exact manifest ID and
-   inspect the sanitized completed receipt. Create a separately named postcheck
-   Job from the retained sizing template, then retain its post-build inventory
-   and explain:
+   inspect the sanitized completed receipt. Apply the separately named
+   postcheck Job, then retain its post-build inventory and explain:
 
    ```sh
-   kubectl -n chrono-bot create job cma-activity-index-postcheck-<utc> \
-     --from=job/cma-activity-index-size
-   kubectl -n chrono-bot logs job/cma-activity-index-postcheck-<utc>
+   kubectl -n chrono-bot apply -f infra/api/activity-index-postcheck-job.yaml
+   kubectl -n chrono-bot logs job/cma-activity-index-postcheck
    ```
 
-   Never delete or mutate an active Job to reuse its pod template.
+   Never delete or mutate an active Job to reuse its pod template. If a new
+   postcheck is needed, render this reviewed manifest with a fresh explicit
+   `metadata.name` and retain the rendered artifact before applying it.
 2. The unhinted explain for the Activity first page must use
    `activity_recorded_at_id_desc`, examine approximately `limit+1` keys/docs, and
    contain no blocking `COLLSCAN` or `SORT`. Preserve the before/after explain
