@@ -90,7 +90,11 @@ full ownership contract, pod loss or node loss.
 For a compiled test binary, `mongo-local.py` creates and removes its own Mongo
 container and runs exactly one selected test. It cannot attach to an existing
 cluster. Passing cohort markers and fixed rejection/after-response custody
-observations are retained; raw response bodies are discarded. Use `--test-name` for the original executable control; the default selects
+observations are retained even for incomplete/censored execution; raw response
+bodies and stdout are discarded after hashing and allowlist extraction. Inspect
+failure_phase/error_class, timed_out, exit_code/termination_signal,
+process_cleanup and container_cleanup before interpreting a receipt. An
+unconfirmed child exit never claims complete cleanup. Use `--test-name` for the original executable control; the default selects
 the replica test. The fixed 1 GiB database filesystem matches the existing
 repository runner and the oplog is bounded to 64 MiB. A 512 MiB filesystem failed
 index creation with Mongo 14031 and was corrected; this was a runner sizing bug.

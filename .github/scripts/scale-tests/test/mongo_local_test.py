@@ -1,5 +1,6 @@
 """Exercise fixture isolation/cleanup paths without contacting Docker."""
 import importlib.util
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -51,6 +52,8 @@ class FixtureRunnerTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(result["cleanup"])
         self.assertEqual(result["tests_passed"], 1)
+        self.assertFalse(result["censored"])
+        self.assertFalse(result["timed_out"])
         self.assertTrue(any(args[:2] == ["docker", "rm"] for args in self.calls))
         self.assertNotIn("a" * 48, json.dumps(self.calls))
         self.assertEqual(result["mongo_limits"]["db_tmpfs_mib"], 1024)
@@ -86,6 +89,10 @@ class FixtureRunnerTests(unittest.TestCase):
             return self.external(arguments, **options)
         _, result = self.execute(fail_run)
         self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["failure_phase"], "container_create")
+        self.assertEqual(result["error_class"], "fixture_error")
+        self.assertEqual(result["code"], "local_fixture_command_failed")
+        self.assertIsNone(result["output_sha256"])
         self.assertTrue(result["cleanup"])
         self.assertTrue(any(args[:2] == ["docker", "rm"] for args in self.calls))
 
@@ -109,6 +116,7 @@ class FixtureRunnerTests(unittest.TestCase):
                 RUNNER.cleanup_container("synthetic", "label", "owner")
 
     def test_timeouts_terminate_owned_process_group_and_clean_container(self):
+        self.process.returncode = -9
         self.process.communicate.side_effect = [subprocess.TimeoutExpired("fixture", 120),
                                                subprocess.TimeoutExpired("fixture", 10), (b"", None)]
         with patch.object(RUNNER.os, "killpg") as kill:
@@ -116,6 +124,86 @@ class FixtureRunnerTests(unittest.TestCase):
         self.assertEqual(kill.call_count, 2)
         self.assertTrue(result["cleanup"])
         self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["code"], "process_test_deadline")
+        self.assertEqual(result["failure_phase"], "test_wait")
+        self.assertEqual(result["termination_signal"], 9)
+        self.assertTrue(result["censored"])
+        self.assertTrue(result["timed_out"])
+
+    def test_timeout_keeps_partial_whitelisted_output_and_never_claims_completion(self):
+        partial = (b"private-body replica_fixture replicas=1 status=PASS ownership=true "
+                   b"ingress_rejection=routed_admission_unavailable "
+                   b"replica_failure replicas=2 ownership=true accepted=1 durable_plan=true target_present=0")
+        self.process.returncode = -15
+        self.process.communicate.side_effect = [subprocess.TimeoutExpired("fixture", 120, output=partial),
+                                               (b"", None)]
+        with patch.object(RUNNER.os, "killpg"):
+            _, result = self.execute()
+        self.assertEqual(result["output_sha256"], hashlib.sha256(partial).hexdigest())
+        self.assertEqual(result["completed_ownership_cohorts"], [{"replicas": 1, "enabled": True}])
+        self.assertEqual(result["failed_cohort_observations"][0]["accepted_responses"], 1)
+        self.assertEqual(result["ingress_rejections"], ["routed_admission_unavailable"])
+        self.assertEqual(result["exit_code"], -15)
+        self.assertEqual(result["tests_passed"], 0)
+        self.assertTrue(result["timed_out"])
+        self.assertNotIn("private-body", json.dumps(result))
+
+    def test_setup_timeout_is_separate_from_test_deadline(self):
+        def setup_timeout(arguments, **options):
+            if arguments[:2] == ["docker", "run"]:
+                raise subprocess.TimeoutExpired("private-command", 60, output=b"private-output")
+            return self.external(arguments, **options)
+        _, result = self.execute(setup_timeout)
+        self.assertEqual(result["failure_phase"], "container_create")
+        self.assertEqual(result["error_class"], "command_timeout")
+        self.assertTrue(result["timed_out"])
+        self.assertTrue(result["cleanup"])
+        self.assertIsNone(result["exit_code"])
+        self.assertIsNone(result["output_sha256"])
+        self.assertNotIn("private-", json.dumps(result))
+
+    def test_unconfirmed_exit_retains_latest_partial_output_and_incomplete_cleanup(self):
+        partial = b"replica_fixture replicas=1 status=PASS ownership=true"
+        self.process.returncode = None
+        self.process.communicate.side_effect = [
+            subprocess.TimeoutExpired("fixture", 120),
+            subprocess.TimeoutExpired("fixture", 10),
+            subprocess.TimeoutExpired("fixture", 10, output=partial)]
+        with patch.object(RUNNER.os, "killpg"):
+            _, result = self.execute()
+        self.assertEqual(result["output_sha256"], hashlib.sha256(partial).hexdigest())
+        self.assertFalse(result["process_cleanup"])
+        self.assertTrue(result["container_cleanup"])
+        self.assertFalse(result["cleanup"])
+        self.assertEqual(result["cleanup_failure_phase"], "process_termination")
+        self.assertEqual(result["code"], "process_test_deadline")
+        self.assertEqual(result["status"], "BLOCKED")
+
+    def test_spawn_error_has_no_false_test_outcome(self):
+        with patch.object(RUNNER.subprocess, "Popen", side_effect=OSError("private spawn detail")), \
+             patch.object(RUNNER.subprocess, "run", side_effect=self.external), \
+             patch.object(RUNNER.secrets, "token_hex", side_effect=lambda n: "a" * (2 * n)), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(RUNNER.run(self.binary, self.root / "spawn", "runner_binary::test"), 2)
+        result = json.loads((self.root / "spawn/mongo-process-results.json").read_text())
+        self.assertEqual(result["failure_phase"], "test_spawn")
+        self.assertEqual(result["error_class"], "os_error")
+        self.assertTrue(result["cleanup"])
+        self.assertNotIn("private spawn detail", json.dumps(result))
+
+    def test_mongo_readiness_deadline_has_setup_phase_and_no_test_output(self):
+        def unready(arguments, **options):
+            if arguments[:2] == ["docker", "exec"]:
+                return subprocess.CompletedProcess(arguments, 1, b"private readiness", b"")
+            return self.external(arguments, **options)
+        with patch.object(RUNNER.time, "sleep"):
+            _, result = self.execute(unready)
+        self.assertEqual(result["failure_phase"], "mongo_initialize")
+        self.assertEqual(result["code"], "mongo_readiness_deadline")
+        self.assertTrue(result["timed_out"])
+        self.assertTrue(result["cleanup"])
+        self.assertIsNone(result["output_sha256"])
+        self.process.communicate.assert_not_called()
 
     def test_remote_published_endpoint_is_refused_before_binary_start(self):
         def remote(arguments, **options):
