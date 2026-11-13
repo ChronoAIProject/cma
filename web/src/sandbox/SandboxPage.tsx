@@ -3,6 +3,7 @@ import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
+import { createPagePollDelay, sandboxPollKey } from './pollDelay';
 import type { SandboxDetail } from '../api/types';
 import { routePath, type AppRoute } from '../routing/routes';
 import { PageHeader } from '../ui/PageHeader';
@@ -113,6 +114,7 @@ export function SandboxPage({
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
+    const delay = createPagePollDelay();
     const poll = () => {
       if (abort.signal.aborted || inFlight || document.hidden) return;
       clearTimeout(timer);
@@ -143,11 +145,17 @@ export function SandboxPage({
           );
           timer = setTimeout(
             poll,
-            sandbox.workspaces.some(
-              (workspace) => workspace.status === 'preparing' || workspace.status === 'removing',
-            )
-              ? 1500
-              : sandboxRefreshDelay(sandbox),
+            delay.next(
+              JSON.stringify([
+                sandboxPollKey(sandbox),
+                sandbox.workspaces.map((row) => row.status),
+              ]),
+              sandbox.workspaces.some(
+                (workspace) => workspace.status === 'preparing' || workspace.status === 'removing',
+              )
+                ? 1500
+                : sandboxRefreshDelay(sandbox),
+            ),
           );
         })
         .catch((error: unknown) => {
@@ -180,12 +188,18 @@ export function SandboxPage({
           inFlight = false;
         });
     };
-    document.addEventListener('visibilitychange', poll);
+    const visible = () => {
+      clearTimeout(timer);
+      if (document.hidden) return;
+      delay.reset();
+      poll();
+    };
+    document.addEventListener('visibilitychange', visible);
     poll();
     return () => {
       abort.abort();
       clearTimeout(timer);
-      document.removeEventListener('visibilitychange', poll);
+      document.removeEventListener('visibilitychange', visible);
     };
   }, [client, sandboxId, request, views, viewerId]);
   useDocumentTitle(documentTitle);
