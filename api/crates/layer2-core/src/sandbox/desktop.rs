@@ -8,12 +8,16 @@ use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use super::{
     register_open_desktop_session, unregister_open_desktop_session, AgentReadService, AgentStatus,
-    SandboxStatus,
+    RuntimeBinding, SandboxStatus,
 };
 use crate::ids::SandboxCommandId;
 use crate::{rfc3339_at, AgentId, Caller, Capability, SandboxId};
 
 pub use layer3_adapter::DesktopFrame;
+
+mod authorization;
+mod owned;
+pub use authorization::DesktopAuthorization;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DesktopError {
@@ -23,12 +27,16 @@ pub enum DesktopError {
     Busy,
     #[error("desktop runtime could not be reached")]
     RuntimeUnavailable,
+    #[error("desktop session authority is temporarily unavailable")]
+    AuthorityUnavailable,
 }
 
+#[derive(Clone)]
 pub struct DesktopService {
     reads: Arc<AgentReadService>,
     adapter: Arc<dyn SandboxAdapter>,
-    leases: Mutex<BTreeMap<String, Weak<Mutex<()>>>>,
+    leases: Arc<Mutex<BTreeMap<String, Weak<Mutex<()>>>>>,
+    replicas_enabled: bool,
 }
 
 pub struct DesktopConnection {
@@ -36,21 +44,23 @@ pub struct DesktopConnection {
     sandbox_id: SandboxId,
     session_id: String,
     runtime_id: String,
-    _lease: OwnedMutexGuard<()>,
+    _lease: Option<OwnedMutexGuard<()>>,
+    owned: Option<owned::ConnectionState>,
 }
 
 impl Drop for DesktopConnection {
     fn drop(&mut self) {
-        unregister_open_desktop_session(&self.sandbox_id);
+        if self.owned.is_none() {
+            unregister_open_desktop_session(&self.sandbox_id);
+        }
     }
 }
 
 impl DesktopConnection {
-    pub fn session_ids(&self) -> (SandboxId, String) {
-        (self.sandbox_id.clone(), self.session_id.clone())
-    }
-
     pub async fn send(&mut self, frame: DesktopFrame) -> Result<(), DesktopError> {
+        if let Some(owned) = &mut self.owned {
+            return owned.send(&mut self.connection, frame).await;
+        }
         self.connection
             .send(frame)
             .await
@@ -58,6 +68,9 @@ impl DesktopConnection {
     }
 
     pub async fn recv(&mut self) -> Result<Option<DesktopFrame>, DesktopError> {
+        if let Some(owned) = &mut self.owned {
+            return owned.recv(&mut self.connection).await;
+        }
         self.connection
             .recv()
             .await
@@ -70,15 +83,21 @@ impl DesktopService {
         Self {
             reads,
             adapter,
-            leases: Mutex::new(BTreeMap::new()),
+            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            replicas_enabled: false,
         }
+    }
+
+    pub fn with_replicas_enabled(mut self, enabled: bool) -> Self {
+        self.replicas_enabled = enabled;
+        self
     }
 
     async fn authorize(
         &self,
         caller: &Caller,
         id: &AgentId,
-    ) -> Result<(String, String), DesktopError> {
+    ) -> Result<(SandboxId, RuntimeBinding), DesktopError> {
         if !caller.authorization.allows(Capability::UseOwnSandboxes) {
             return Err(DesktopError::Unavailable);
         }
@@ -111,7 +130,7 @@ impl DesktopService {
             .runtime
             .filter(|runtime| !runtime.runtime_id.trim().is_empty())
             .ok_or(DesktopError::Unavailable)?;
-        Ok((lineage.sandbox.id.to_string(), runtime.runtime_id))
+        Ok((lineage.sandbox.id, runtime))
     }
 
     pub async fn available(&self, caller: &Caller, id: &AgentId) -> Result<(), DesktopError> {
@@ -124,27 +143,34 @@ impl DesktopService {
         id: &AgentId,
         connection: &mut DesktopConnection,
     ) -> bool {
+        if let Some(owned) = &connection.owned {
+            // Replica-mode renewal revalidates caller/binding independently of
+            // frame forwarding; this check never stalls frames on Mongo I/O.
+            return owned.valid();
+        }
         let Ok((sandbox_id, runtime)) = self.authorize(caller, id).await else {
             return false;
         };
-        if runtime != connection.runtime_id {
+        if runtime.runtime_id != connection.runtime_id {
             return false;
         }
         self.reads
-            .renew_sandbox_session(
-                &SandboxId(sandbox_id),
-                &connection.session_id,
-                &session_expiry(),
-            )
+            .renew_sandbox_session(&sandbox_id, &connection.session_id, &session_expiry())
             .await
             .is_ok()
     }
 
-    pub async fn close(&self, sandbox_id: SandboxId, session_id: String) {
-        let _ = self
+    pub async fn close_connection(&self, connection: &mut DesktopConnection) {
+        if let Some(owned) = &mut connection.owned {
+            owned.close(&self.reads).await;
+        } else if self
             .reads
-            .close_sandbox_session(&sandbox_id, &session_id)
-            .await;
+            .close_sandbox_session(&connection.sandbox_id, &connection.session_id)
+            .await
+            .is_err()
+        {
+            tracing::warn!("desktop session cleanup failed; expiry retains recovery");
+        }
     }
 
     pub async fn open(
@@ -152,7 +178,13 @@ impl DesktopService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<DesktopConnection, DesktopError> {
-        let (sandbox_id, runtime_id) = self.authorize(caller, id).await?;
+        if self.replicas_enabled {
+            // A captured Caller alone cannot observe logout or revoked credentials.
+            return Err(DesktopError::AuthorityUnavailable);
+        }
+        let (sandbox_id, runtime) = self.authorize(caller, id).await?;
+        let sandbox_id = sandbox_id.to_string();
+        let runtime_id = runtime.runtime_id;
         let lease = {
             let mut leases = self.leases.lock().await;
             leases.retain(|_, value| value.strong_count() > 0);
@@ -183,7 +215,8 @@ impl DesktopService {
             sandbox_id,
             session_id,
             runtime_id,
-            _lease: lease,
+            _lease: Some(lease),
+            owned: None,
         })
     }
 }

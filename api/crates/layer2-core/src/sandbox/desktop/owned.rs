@@ -1,0 +1,305 @@
+//! Fenced desktop streams renew through an independent receiver control port.
+use super::*;
+use crate::sandbox::store::{DesktopSessionRequest, SandboxSessionStore, SandboxStoreError};
+use layer3_adapter::{DesktopOwnership, DesktopOwnershipChallenge, DesktopOwnershipControl};
+use tokio::{sync::watch, task::JoinHandle, time::Instant};
+
+pub(super) struct ConnectionState {
+    authority: Arc<Mutex<DesktopOwnership>>,
+    control: Arc<dyn DesktopOwnershipControl>,
+    validity: watch::Receiver<Option<Instant>>,
+    renewal: Option<JoinHandle<()>>,
+}
+
+impl Drop for ConnectionState {
+    fn drop(&mut self) {
+        if let Some(renewal) = &self.renewal {
+            renewal.abort();
+        }
+    }
+}
+
+impl ConnectionState {
+    pub(super) fn valid(&self) -> bool {
+        self.deadline().is_ok()
+    }
+
+    fn deadline(&self) -> Result<Instant, DesktopError> {
+        self.validity
+            .has_changed()
+            .map_err(|_| DesktopError::Unavailable)?;
+        self.validity
+            .borrow()
+            .filter(|deadline| *deadline > Instant::now())
+            .ok_or(DesktopError::Unavailable)
+    }
+
+    pub(super) async fn send(
+        &mut self,
+        connection: &mut DesktopConnectionHandle,
+        frame: DesktopFrame,
+    ) -> Result<(), DesktopError> {
+        let deadline = self.deadline()?;
+        tokio::select! {
+            biased;
+            _ = invalidated(&mut self.validity) => Err(DesktopError::Unavailable),
+            result = tokio::time::timeout_at(deadline, connection.send(frame)) => {
+                result.map_err(|_| DesktopError::Unavailable)?
+                    .map_err(|_| DesktopError::RuntimeUnavailable)
+            }
+        }
+    }
+
+    pub(super) async fn recv(
+        &mut self,
+        connection: &mut DesktopConnectionHandle,
+    ) -> Result<Option<DesktopFrame>, DesktopError> {
+        loop {
+            let deadline = self.deadline()?;
+            tokio::select! {
+                biased;
+                changed = self.validity.changed() => {
+                    changed.map_err(|_| DesktopError::Unavailable)?;
+                },
+                result = tokio::time::timeout_at(deadline, connection.recv()) => {
+                    return result.map_err(|_| DesktopError::Unavailable)?
+                        .map_err(|_| DesktopError::RuntimeUnavailable);
+                }
+            }
+        }
+    }
+
+    pub(super) async fn close(&mut self, reads: &AgentReadService) {
+        // The exact claim survives an ambiguous renew; revoke covers its epoch,
+        // not a guessed latest expiry. Await cancellation before taking the token.
+        if let Some(renewal) = self.renewal.take() {
+            renewal.abort();
+            if let Err(error) = renewal.await {
+                if !error.is_cancelled() {
+                    tracing::warn!("desktop renewal task failed during close");
+                }
+            }
+        }
+        let authority = self.authority.lock().await.clone();
+        let revoked = tokio::time::timeout(
+            Duration::from_secs(2),
+            self.control.revoke_ownership(&authority),
+        )
+        .await;
+        if !matches!(revoked, Ok(Ok(()))) {
+            tracing::warn!("desktop revocation uncertain; retaining claim until expiry");
+            return;
+        }
+        match reads.session_store() {
+            Ok(store) => release(&store, &authority).await,
+            Err(_) => tracing::warn!("desktop session store unavailable during close"),
+        }
+    }
+}
+
+async fn invalidated(validity: &mut watch::Receiver<Option<Instant>>) {
+    while validity.borrow().is_some() {
+        if validity.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+impl DesktopService {
+    pub(super) async fn open_owned(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        sandbox_id: SandboxId,
+        runtime: RuntimeBinding,
+        authorization: Arc<dyn DesktopAuthorization>,
+    ) -> Result<DesktopConnection, DesktopError> {
+        let store = self
+            .reads
+            .session_store()
+            .map_err(|_| DesktopError::AuthorityUnavailable)?;
+        let request = DesktopSessionRequest {
+            sandbox_id,
+            runtime,
+            session_id: SandboxCommandId::generate().to_string(),
+        };
+        let handle = RuntimeHandle::new(request.runtime.runtime_id.clone());
+        let started = Instant::now();
+        let challenge = tokio::time::timeout(
+            Duration::from_secs(3),
+            self.adapter.desktop_ownership_challenge(&handle),
+        )
+        .await
+        .map_err(|_| DesktopError::RuntimeUnavailable)?
+        .map_err(|_| DesktopError::RuntimeUnavailable)?;
+        let deadline = deadline(started, &challenge)?;
+        let authority =
+            tokio::time::timeout_at(deadline, store.acquire_exclusive_sandbox_session(&request))
+                .await
+                .map_err(|_| DesktopError::AuthorityUnavailable)?
+                .map_err(|error| match error {
+                    SandboxStoreError::Conflict => DesktopError::Busy,
+                    _ => DesktopError::AuthorityUnavailable,
+                })?;
+        let opened = tokio::time::timeout_at(
+            deadline,
+            self.adapter
+                .open_desktop_owned(&handle, &authority, &challenge),
+        )
+        .await;
+        let connection = match opened {
+            Ok(Ok(connection)) => connection,
+            Ok(Err(layer3_adapter::AdapterError::Unsupported(_))) => {
+                // Unsupported is a definite no-effect outcome. A timeout or
+                // transport error may have installed authority at the receiver.
+                release(&store, &authority).await;
+                return Err(DesktopError::RuntimeUnavailable);
+            }
+            _ => return Err(DesktopError::RuntimeUnavailable),
+        };
+        let control = connection
+            .ownership_control()
+            .ok_or(DesktopError::RuntimeUnavailable)?;
+        // An open may wait for provider I/O. Recheck the actual caller and exact
+        // binding before exposing its socket; heartbeat revalidation follows.
+        let current = tokio::time::timeout_at(deadline, async {
+            authorization.current(caller).await?;
+            self.authorize(caller, id).await
+        })
+        .await;
+        if !matches!(current, Ok(Ok((ref sandbox_id, ref runtime)))
+            if sandbox_id == &request.sandbox_id && runtime == &request.runtime)
+        {
+            if matches!(
+                tokio::time::timeout(Duration::from_secs(2), control.revoke_ownership(&authority))
+                    .await,
+                Ok(Ok(()))
+            ) {
+                release(&store, &authority).await;
+            } else {
+                tracing::warn!("desktop post-open revocation uncertain; retaining claim");
+            }
+            return Err(DesktopError::Unavailable);
+        }
+        let authority = Arc::new(Mutex::new(authority));
+        let (validity, receiver) = watch::channel(Some(deadline));
+        let renewal = tokio::spawn(renew(
+            self.clone(),
+            RenewalCaller {
+                caller: caller.clone(),
+                id: id.clone(),
+                authorization,
+            },
+            request.clone(),
+            control.clone(),
+            authority.clone(),
+            validity,
+        ));
+        Ok(DesktopConnection {
+            connection,
+            sandbox_id: request.sandbox_id,
+            session_id: request.session_id,
+            runtime_id: request.runtime.runtime_id,
+            _lease: None,
+            owned: Some(ConnectionState {
+                authority,
+                control,
+                validity: receiver,
+                renewal: Some(renewal),
+            }),
+        })
+    }
+}
+
+struct RenewalCaller {
+    caller: Caller,
+    id: AgentId,
+    authorization: Arc<dyn DesktopAuthorization>,
+}
+
+async fn renew(
+    service: DesktopService,
+    context: RenewalCaller,
+    request: DesktopSessionRequest,
+    control: Arc<dyn DesktopOwnershipControl>,
+    authority: Arc<Mutex<DesktopOwnership>>,
+    validity: watch::Sender<Option<Instant>>,
+) {
+    loop {
+        // Open already revalidated after provider I/O. Avoid an immediate
+        // duplicate read/renew transaction while the first frames are arriving.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let current = *validity.borrow();
+        let Some(current) = current else { return };
+        let result = tokio::time::timeout_at(current, async {
+            context.authorization.current(&context.caller).await?;
+            let (sandbox_id, runtime) = service.authorize(&context.caller, &context.id).await?;
+            if sandbox_id != request.sandbox_id || runtime != request.runtime {
+                return Err(DesktopError::Unavailable);
+            }
+            let started = Instant::now();
+            let challenge = control
+                .ownership_challenge()
+                .await
+                .map_err(|_| DesktopError::RuntimeUnavailable)?;
+            let deadline = deadline(started, &challenge)?;
+            let store = service
+                .reads
+                .session_store()
+                .map_err(|_| DesktopError::Unavailable)?;
+            let previous = authority.lock().await.clone();
+            let next = store
+                .renew_exclusive_sandbox_session(&request, &previous)
+                .await
+                .map_err(|_| DesktopError::Unavailable)?;
+            *authority.lock().await = next.clone();
+            tokio::time::timeout_at(deadline, control.renew_ownership(&next, &challenge))
+                .await
+                .map_err(|_| DesktopError::Unavailable)?
+                .map_err(|_| DesktopError::RuntimeUnavailable)?;
+            Ok::<_, DesktopError>(deadline)
+        })
+        .await;
+        match result {
+            Ok(Ok(deadline)) if deadline > Instant::now() => {
+                if validity.send(Some(deadline)).is_err() {
+                    return;
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    "desktop authority lost; closing stream without early lease release"
+                );
+                validity.send_replace(None);
+                return;
+            }
+        }
+    }
+}
+
+fn deadline(
+    started: Instant,
+    challenge: &DesktopOwnershipChallenge,
+) -> Result<Instant, DesktopError> {
+    challenge
+        .validate()
+        .map_err(|_| DesktopError::RuntimeUnavailable)?;
+    let deadline = started + Duration::from_millis(challenge.valid_for_ms);
+    if deadline <= Instant::now() {
+        return Err(DesktopError::Unavailable);
+    }
+    Ok(deadline)
+}
+
+async fn release(store: &Arc<dyn SandboxSessionStore>, authority: &DesktopOwnership) {
+    if !matches!(
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            store.release_exclusive_sandbox_session(authority)
+        )
+        .await,
+        Ok(Ok(()))
+    ) {
+        tracing::warn!("desktop claim release failed; expiry retains recovery");
+    }
+}
