@@ -393,6 +393,9 @@ and it does not enable Default-tier prepaid leases or change rate-limit behavior
 When enabled, authorized file-content/download reads emit `agent_file_read_phase`
 with fixed `phase`/`outcome` labels, registered route, opaque request hash and
 `elapsed_us`. No file path, content, runtime address or credential is recorded.
+Emission uses a content-free root span at the event's level and target, so text
+and JSON formatters cannot inherit private request fields. A filter that disables
+this root also suppresses the diagnostic; it does not change the read result.
 
 The serial outer phases are `auth`, `runtime_status`, `runtime_read`,
 `receipt_validation`, and `final_fence`. Runtime status includes

@@ -2,6 +2,7 @@ import { vi } from 'vitest';
 import { createClient } from '@chronoai/cma-sdk';
 import { agentClient } from '../../test/agent';
 import { createAgentTransport } from './client';
+import type { CurrentUser } from './identityGate';
 import {
   commandStatus,
   controlReceipt,
@@ -79,7 +80,7 @@ export function harness(storage: Storage = sessionStorage) {
     ),
   );
   const cancel = vi.fn();
-  const currentUser = vi.fn(async () => 'alice' as string | undefined);
+  const currentUser = vi.fn<CurrentUser>(async () => 'alice');
   const listQueued = vi.fn(async () =>
     json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null }),
   );
