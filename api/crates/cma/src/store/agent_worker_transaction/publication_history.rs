@@ -1,17 +1,61 @@
-//! Narrow trusted-history selection for ordinary failed CloseProcess retries.
+//! Same-snapshot proofs, periodic audits, and invocation-local conflict reuse.
+use super::retry_audit::telemetry::{self, Verification};
 use super::*;
 use crate::store::agent_log_integrity::{
-    trusted_summary, AppendCapacity, LogSummary, NORMAL_AGENT_LOG_ENTRIES,
+    trusted_summary, AppendCapacity, LogSummary, INTEGRITY_FIELD, NORMAL_AGENT_LOG_ENTRIES,
+    QUARANTINE_FIELD,
 };
 use layer2_core::sandbox::AgentLogKind;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Instant;
 
 pub(super) struct History {
     pub(super) summary: LogSummary,
     pub(super) entries: Vec<AgentLogEntry>,
     pub(super) last: Option<AgentLogEntry>,
+    audit_at: Option<Instant>,
+    audit_recorded: AtomicBool,
+}
+
+impl History {
+    pub(super) fn audited(&self, current: &Agent) {
+        // Conflict reuse can revisit semantic validation for this same scan.
+        // Count its completed audit once, independently of commit certainty.
+        if self.audit_at.is_some() && !self.audit_recorded.swap(true, Ordering::Relaxed) {
+            telemetry::record(current.work.step, Verification::CompletedFull);
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct AttemptHistory {
+    validated: Option<(Agent, Vec<u8>, Arc<History>)>,
+}
+
+impl AttemptHistory {
+    pub(super) fn committed(&self, store: &MongoSandboxStore) {
+        if let Some((agent, _, history)) = &self.validated {
+            if let Some(at) = history.audit_at {
+                store.retry_audits.record(agent, at);
+            }
+        }
+    }
+}
+
+pub(super) struct Selection {
+    pub ordinary: bool,
+    pub repeated: bool,
 }
 
 impl MongoSandboxStore {
+    pub(crate) fn with_retry_single_marker(mut self, enabled: bool) -> Self {
+        self.retry_single_marker_enabled = enabled;
+        self
+    }
+
     pub(crate) fn with_bounded_close_retries(mut self, enabled: bool) -> Self {
         self.bounded_close_retries = enabled;
         self
@@ -23,11 +67,31 @@ pub(super) async fn read(
     current: &Agent,
     row: &Document,
     mutation: &AgentWorkMutation,
-    ordinary: bool,
+    selection: Selection,
+    cache: &mut AttemptHistory,
     session: &mut mongodb::ClientSession,
-) -> Result<History, ApplyError> {
-    let needs_marker = agent_cleanup_capacity_retry(current, mutation);
-    let caller = if needs_marker
+) -> Result<Arc<History>, ApplyError> {
+    let needs_marker = agent_cleanup_capacity_retry(current, mutation) || selection.repeated;
+    let repeat = needs_marker && mutation.agent_logs.is_empty();
+    let bounded =
+        selection.ordinary && store.bounded_close_retries && store.bounded_log_enabled(&current.id);
+    let key = bounded.then(|| snapshot_key(row)).transpose()?;
+    if let Some(key) = &key {
+        if let Some((agent, proof, history)) = &cache.validated {
+            if agent == current && proof == key {
+                if repeat {
+                    telemetry::record(current.work.step, Verification::SkippedConflictReuse);
+                }
+                tracing::debug!(
+                    step = current.work.step.operation_name(),
+                    "Reused Agent history after aborted publication"
+                );
+                return Ok(Arc::clone(history));
+            }
+        }
+    }
+    cache.validated = None;
+    let caller = if needs_marker && !selection.repeated
         || crate::store::agent_worker_capacity::capacity_failure_evidence_matches(current, mutation)
     {
         ScanCaller::CapacitySettlement(current.work.step)
@@ -39,27 +103,40 @@ pub(super) async fn read(
     } else {
         "worker_publication"
     };
-    layer2_core::diagnostic_context::DiagnosticContext::current()
+    let history = layer2_core::diagnostic_context::DiagnosticContext::current()
         .with_worker(work)
         .with_phase(current.work.step.operation_name())
         .scope(async {
-            if ordinary
-                && store.bounded_close_retries
-                && store.bounded_log_enabled(&current.id)
-                && eligible(current, mutation)
+            if bounded
+                && ((!store.retry_single_marker_enabled && eligible(current, mutation))
+                    || repeat && store.retry_audits.recent(current))
             {
                 if let Some(summary) =
                     trusted_summary(store, current, row, caller, session, false).await?
                 {
-                    return Ok(History {
+                    let last = if needs_marker {
+                        last_entry(store, current, session).await?
+                    } else {
+                        None
+                    };
+                    if repeat {
+                        telemetry::record(current.work.step, Verification::SkippedProof);
+                    }
+                    return Ok::<_, ApplyError>(History {
                         summary,
                         entries: vec![],
-                        last: None,
+                        last,
+                        audit_at: None,
+                        audit_recorded: AtomicBool::new(false),
                     });
                 }
+                if repeat {
+                    telemetry::fallback(current, row).map_err(ApplyError::Domain)?;
+                }
             }
-            // Capacity/cleanup markers, successful effects and all other publications
-            // keep their complete audit. A missing/untrusted proof also follows it.
+            // Audit age is process-local, so restart and eviction force a complete
+            // verification. First failures, effects and untrusted proofs retain it.
+            let audit_at = repeat.then(Instant::now);
             let mut entries = Vec::new();
             let mut last = None;
             let summary = scan_complete_log_with_session(
@@ -81,9 +158,16 @@ pub(super) async fn read(
                 summary,
                 entries,
                 last,
+                audit_at,
+                audit_recorded: AtomicBool::new(false),
             })
         })
-        .await
+        .await?;
+    let history = Arc::new(history);
+    if let Some(key) = key {
+        cache.validated = Some((current.clone(), key, Arc::clone(&history)));
+    }
+    Ok(history)
 }
 
 fn eligible(current: &Agent, mutation: &AgentWorkMutation) -> bool {
@@ -103,4 +187,40 @@ fn eligible(current: &Agent, mutation: &AgentWorkMutation) -> bool {
                 ..
             }]
         )
+}
+
+fn snapshot_key(row: &Document) -> Result<Vec<u8>, ApplyError> {
+    let mut proof = Document::new();
+    for field in [INTEGRITY_FIELD, QUARANTINE_FIELD] {
+        // Absence and BSON null are distinct: even a null quarantine blocks trust.
+        if let Some(value) = row.get(field) {
+            proof.insert(field, value.clone());
+        }
+    }
+    proof
+        .to_vec()
+        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))
+}
+
+async fn last_entry(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    session: &mut mongodb::ClientSession,
+) -> Result<Option<AgentLogEntry>, ApplyError> {
+    let mut read = crate::store::mongo_read_telemetry::Read::find(store.agent_log.name());
+    let raw = store.agent_log.clone_with_type::<mongodb::bson::RawDocumentBuf>()
+        .find_one(doc! {"_id": super::super::agent_log::log_id(&current.id, current.conversation.last_seq)})
+        .session(session).await.map_err(ApplyError::Driver)?;
+    if let Some(raw) = &raw {
+        read.document(raw.as_bytes().len());
+    }
+    read.complete();
+    raw.as_ref()
+        .map(|raw| {
+            let row = Document::try_from(raw).map_err(|error| {
+                ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string()))
+            })?;
+            super::super::agent_log::read_entry(&row).map_err(ApplyError::Domain)
+        })
+        .transpose()
 }
