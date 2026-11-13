@@ -51,6 +51,7 @@ impl AppendCapacity {
 }
 
 #[derive(Default)]
+#[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub(super) struct LogSummary {
     entry_count: u64,
     encoded_bytes: usize,
@@ -77,6 +78,8 @@ pub(crate) mod fleet;
 mod metadata;
 mod preparation;
 mod proof;
+mod recovery;
+pub(super) use recovery::exact_recovery_head;
 #[cfg(test)]
 mod quarantine_tests;
 pub(super) mod read;
@@ -91,7 +94,7 @@ pub(super) use layer2_core::sandbox::AgentLogCheckpoint as SemanticCheckpoint;
 pub(super) use metadata::parse_integrity;
 use metadata::{hash_raw, history_identity, LogIntegrity};
 pub(super) use proof::trusted_summary;
-pub(super) use scan::scan_collection;
+pub(super) use scan::{scan_collection, ScanOptions};
 pub(super) use scan::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
 pub(super) use semantic::audit_checkpoint;
 
