@@ -12,6 +12,7 @@ use std::{
     time::{Instant, SystemTime},
 };
 
+#[cfg(test)]
 pub(super) fn disabled() -> OpentelemetryOptions {
     OpentelemetryOptions::builder()
         .enabled(false)
@@ -19,7 +20,7 @@ pub(super) fn disabled() -> OpentelemetryOptions {
         .build()
 }
 
-pub(super) fn install(options: &mut ClientOptions, diagnostics: Diagnostics) {
+pub(super) fn install(options: &mut ClientOptions, diagnostics: Option<Diagnostics>) {
     // A public command handler forces complete reply decoding in driver 3.9.1.
     options.command_event_handler = None;
     options.tracing = Some(
@@ -32,7 +33,7 @@ pub(super) fn install(options: &mut ClientOptions, diagnostics: Diagnostics) {
 }
 
 #[derive(Clone)]
-struct Provider(Diagnostics);
+struct Provider(Option<Diagnostics>);
 impl TracerProvider for Provider {
     type Tracer = Self;
     fn tracer_with_scope(&self, _scope: InstrumentationScope) -> Self {
@@ -45,14 +46,19 @@ impl Tracer for Provider {
         let attributes = builder.attributes.as_deref().unwrap_or_default();
         // Operation/transaction spans are not command attempts; don't double count.
         let command = text(attributes, "db.command.name");
-        let tracked = command.zip(connection(attributes)).and_then(|(name, key)| {
-            let collection = text(attributes, "db.collection.name").unwrap_or("");
-            let session = attributes
-                .iter()
-                .any(|a| a.key.as_str() == "db.mongodb.lsid");
-            self.0
-                .started(key, metadata(name, collection, session, false))
-                .map(|id| (key, id))
+        if command.is_some() {
+            crate::telemetry::agent_output::command_started();
+        }
+        let tracked = self.0.as_ref().and_then(|diagnostics| {
+            command.zip(connection(attributes)).and_then(|(name, key)| {
+                let collection = text(attributes, "db.collection.name").unwrap_or("");
+                let session = attributes
+                    .iter()
+                    .any(|a| a.key.as_str() == "db.mongodb.lsid");
+                diagnostics
+                    .started(key, metadata(name, collection, session, false))
+                    .map(|id| (key, id))
+            })
         });
         // No attributes, span name, namespace, lsid, error or query text survives.
         MetadataSpan {
@@ -104,7 +110,7 @@ fn connection(attributes: &[KeyValue]) -> Option<u64> {
     Some(hash.finish())
 }
 struct MetadataSpan {
-    diagnostics: Diagnostics,
+    diagnostics: Option<Diagnostics>,
     tracked: Option<(u64, u64)>,
     started: Instant,
     context: SpanContext,
@@ -113,8 +119,10 @@ struct MetadataSpan {
 }
 impl MetadataSpan {
     fn complete(&mut self) {
-        if let Some((connection, id)) = self.tracked.take() {
-            self.diagnostics.finished(
+        if let (Some(diagnostics), Some((connection, id))) =
+            (&self.diagnostics, self.tracked.take())
+        {
+            diagnostics.finished(
                 connection,
                 id,
                 self.started.elapsed(),
