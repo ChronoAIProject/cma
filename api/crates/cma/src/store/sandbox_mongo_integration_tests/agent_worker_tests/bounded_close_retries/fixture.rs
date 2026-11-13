@@ -8,6 +8,9 @@ pub(super) struct Fixture {
     pub store: MongoSandboxStore,
     pub agent: Agent,
     pub checkouts: Arc<AtomicU64>,
+    pub commands: Arc<AtomicU64>,
+    pub attempts: Arc<AtomicU64>,
+    pub updates: Arc<AtomicU64>,
     pub complete_reads: Arc<AtomicU64>,
     pub ambiguous_commits: Arc<AtomicU64>,
     pub app: String,
@@ -30,28 +33,45 @@ impl Fixture {
         }));
         let complete_reads = Arc::new(AtomicU64::new(0));
         let ambiguous_commits = Arc::new(AtomicU64::new(0));
+        let commands = Arc::new(AtomicU64::new(0));
+        let attempts = Arc::new(AtomicU64::new(0));
+        let updates = Arc::new(AtomicU64::new(0));
+        let update_count = updates.clone();
+        let command_count = commands.clone();
+        let attempt_count = attempts.clone();
         let complete = complete_reads.clone();
         let ambiguous = ambiguous_commits.clone();
-        options.command_event_handler = Some(EventHandler::callback(move |event| match event {
-            CommandEvent::Started(event)
-                if event.command.get_str("find").ok() == Some(AGENT_LOG)
-                    && event.command.get_document("filter").is_ok_and(|filter| {
-                        filter.len() == 1 && filter.contains_key("agent_id")
-                    })
-                    && event.command.get_document("sort").ok() == Some(&doc! { "seq": 1 }) =>
-            {
-                complete.fetch_add(1, Ordering::SeqCst);
+        options.command_event_handler = Some(EventHandler::callback(move |event| {
+            if let CommandEvent::Started(event) = &event {
+                command_count.fetch_add(1, Ordering::SeqCst);
+                if event.command_name == "update" {
+                    update_count.fetch_add(1, Ordering::SeqCst);
+                }
+                if event.command.get_bool("startTransaction").unwrap_or(false) {
+                    attempt_count.fetch_add(1, Ordering::SeqCst);
+                }
             }
-            CommandEvent::Succeeded(event)
-                if event.command_name == "commitTransaction"
-                    && event
-                        .reply
-                        .get_document("writeConcernError")
-                        .is_ok_and(|error| error.get_i32("code").ok() == Some(50)) =>
-            {
-                ambiguous.fetch_add(1, Ordering::SeqCst);
+            match event {
+                CommandEvent::Started(event)
+                    if event.command.get_str("find").ok() == Some(AGENT_LOG)
+                        && event.command.get_document("filter").is_ok_and(|filter| {
+                            filter.len() == 1 && filter.contains_key("agent_id")
+                        })
+                        && event.command.get_document("sort").ok() == Some(&doc! { "seq": 1 }) =>
+                {
+                    complete.fetch_add(1, Ordering::SeqCst);
+                }
+                CommandEvent::Succeeded(event)
+                    if event.command_name == "commitTransaction"
+                        && event
+                            .reply
+                            .get_document("writeConcernError")
+                            .is_ok_and(|error| error.get_i32("code").ok() == Some(50)) =>
+                {
+                    ambiguous.fetch_add(1, Ordering::SeqCst);
+                }
+                _ => {}
             }
-            _ => {}
         }));
         let client = Client::with_options(options).unwrap();
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
@@ -137,6 +157,9 @@ impl Fixture {
             store,
             agent,
             checkouts,
+            commands,
+            attempts,
+            updates,
             complete_reads,
             ambiguous_commits,
             app,
