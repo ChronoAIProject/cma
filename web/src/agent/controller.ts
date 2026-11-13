@@ -5,7 +5,7 @@ import { usePreparationProgress } from './preparationProgress';
 import { queueObservationRevision } from './queueObservationRevision';
 import { ReadinessWake } from './readinessWait';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { errorMessage, retainHistoryOnFailure } from './controllerError';
+import { agentReadRetryAt, errorMessage, retainHistoryOnFailure } from './controllerError';
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
 import type { CmaWebClient } from '../api/client';
@@ -161,87 +161,90 @@ export function useAgentController(
   useEffect(() => {
     if (suspended) return;
     let failures = 0;
-    const observer = observeRead(async (lifetimeSignal) => {
-      const operation = new AbortController();
-      const signal = AbortSignal.any([lifetimeSignal, operation.signal]);
-      setActionError(undefined);
-      setStreamError(undefined);
-      setPending(undefined);
-      if (agentId === undefined) {
-        loaded.current = undefined;
-        setState({ status: 'idle' });
-        return;
-      }
-      if (
-        loaded.current?.client === client &&
-        loaded.current.agentId === agentId &&
-        loaded.current.revision === revision &&
-        loaded.current.lineage === lineage &&
-        stateRef.current.status === 'ready'
-      )
-        return;
-      const retained = stateRef.current;
-      const reopen =
-        retained.status === 'ready' && !retained.historyLoading && !retained.historyUnavailable;
-      loaded.current = { client, agentId, revision, lineage };
-      hydration.current.reset(reopen ? retained.conversation : undefined);
-      if (!reopen && retained.status !== 'ready') setState({ status: 'loading' });
-      else if (reopen) liveCursor.current = retained.conversation.cursor;
-      return (
-        reopen
-          ? reopenAgent(client, retained, signal, lineage)
-          : loadAgent(
-              client,
-              agentId,
-              signal,
-              true,
-              (ready) => {
-                if (!signal.aborted) publishHistory(ready);
-              },
-              lineage,
-              (ready) => {
-                if (!signal.aborted) publishHistory(ready, true);
-              },
-            )
-      )
-        .then((ready) => {
-          if (signal.aborted) return;
-          setState((current) => {
-            const conversation =
-              reopen && current.status === 'ready'
-                ? current.conversation
-                : hydration.current.merge(ready.conversation, agentId, !ready.historyUnavailable);
-            liveCursor.current = conversation.cursor;
-            return { status: 'ready', ...ready, conversation };
-          });
-          return undefined;
-        })
-        .catch((error: unknown) => {
-          if (!lifetimeSignal.aborted) {
-            operation.abort();
-            const schedule = transientReadFailure(error)
-              ? retrySchedule(error, ++failures)
-              : undefined;
-            const retained = retainHistoryOnFailure(error, stateRef.current, agentId);
-            if (retained !== undefined) {
-              setState({
-                ...retained,
-                ...(schedule ? { historyRetryAt: Date.now() + schedule.next } : {}),
-              });
-              return;
-            }
-            actionAbortRef.current?.abort();
-            replayAbortRef.current?.abort();
-            hydration.current.reset();
-            setState({
-              status: 'error',
-              message: errorMessage(error),
-              ...(schedule ? { retryAt: Date.now() + schedule.next } : {}),
+    const observer = observeRead(
+      async (lifetimeSignal) => {
+        const operation = new AbortController();
+        const signal = AbortSignal.any([lifetimeSignal, operation.signal]);
+        setActionError(undefined);
+        setStreamError(undefined);
+        setPending(undefined);
+        if (agentId === undefined) {
+          loaded.current = undefined;
+          setState({ status: 'idle' });
+          return;
+        }
+        if (
+          loaded.current?.client === client &&
+          loaded.current.agentId === agentId &&
+          loaded.current.revision === revision &&
+          loaded.current.lineage === lineage &&
+          stateRef.current.status === 'ready'
+        )
+          return;
+        const retained = stateRef.current;
+        const reopen =
+          retained.status === 'ready' && !retained.historyLoading && !retained.historyUnavailable;
+        loaded.current = { client, agentId, revision, lineage };
+        hydration.current.reset(reopen ? retained.conversation : undefined);
+        if (!reopen && retained.status !== 'ready') setState({ status: 'loading' });
+        else if (reopen) liveCursor.current = retained.conversation.cursor;
+        return (
+          reopen
+            ? reopenAgent(client, retained, signal, lineage)
+            : loadAgent(
+                client,
+                agentId,
+                signal,
+                true,
+                (ready) => {
+                  if (!signal.aborted) publishHistory(ready);
+                },
+                lineage,
+                (ready) => {
+                  if (!signal.aborted) publishHistory(ready, true);
+                },
+              )
+        )
+          .then((ready) => {
+            if (signal.aborted) return;
+            setState((current) => {
+              const conversation =
+                reopen && current.status === 'ready'
+                  ? current.conversation
+                  : hydration.current.merge(ready.conversation, agentId, !ready.historyUnavailable);
+              liveCursor.current = conversation.cursor;
+              return { status: 'ready', ...ready, conversation };
             });
-            return schedule;
-          }
-        });
-    });
+            return undefined;
+          })
+          .catch((error: unknown) => {
+            if (!lifetimeSignal.aborted) {
+              operation.abort();
+              const schedule = transientReadFailure(error)
+                ? retrySchedule(error, ++failures)
+                : undefined;
+              const retained = retainHistoryOnFailure(error, stateRef.current, agentId);
+              if (retained !== undefined) {
+                setState({
+                  ...retained,
+                  ...(schedule ? { historyRetryAt: Date.now() + schedule.next } : {}),
+                });
+                return;
+              }
+              actionAbortRef.current?.abort();
+              replayAbortRef.current?.abort();
+              hydration.current.reset();
+              setState({
+                status: 'error',
+                message: errorMessage(error),
+                ...(schedule ? { retryAt: Date.now() + schedule.next } : {}),
+              });
+              return schedule;
+            }
+          });
+      },
+      { initialDelay: Math.max(0, agentReadRetryAt(stateRef.current) - Date.now()) },
+    );
     return () => observer.dispose();
   }, [agentId, client, lineage, publishHistory, revision, setState, stateRef, suspended]);
 
@@ -391,14 +394,14 @@ export function useAgentController(
       }
     };
   }, [agentId, client, options.viewerId, suspended]);
-
   const applyAgentTitle = useAgentTitle(agentId, setState);
   const reload = useCallback(() => {
+    if (agentReadRetryAt(stateRef.current) > Date.now()) return;
     setActionError(undefined);
     setStreamError(undefined);
     setState(agentId === undefined ? { status: 'idle' } : { status: 'loading' });
     setRevision((value) => value + 1);
-  }, [agentId, setState]);
+  }, [agentId, setState, stateRef]);
   const { run, command, recoverPending } = useAgentActions({
     agentId: suspended ? undefined : agentId,
     client,
