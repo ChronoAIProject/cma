@@ -1166,6 +1166,24 @@ arrives. Send still requires current Sandbox state and required connections; an
 early activity page alone does not authorize interaction. Rich history completes
 independently with its own fresh authorization check.
 
+Intentional Agent navigation may start exact-owner transport selection while the
+access classification is pending. Protected Agent reads still wait for personal
+classification and the loader's fresh identity check. A matching creation
+preparation transfers once; shared or refused access, route/client/account
+changes and unmount cancel unconsumed work, including a transferred selection.
+Hover and focus alone do not persist a transport choice. Opening the Agent does
+not fetch the provider model catalog; saved settings remain visible and the
+catalog loads when the settings picker expands, with its existing loading,
+error and retry states. Sandbox readiness still fences sending independently of
+visible content and rich history.
+
+Completed initial projections may publish together after metadata resolves and
+a fresh identity check starts for that completed batch. Data arriving after the
+check starts waits for another check. Publication callbacks are synchronous,
+with cancellation and the journal epoch checked before each callback; closing
+the load settles queued and active publication waiters immediately. The final
+full-history publication retains its separate fresh identity check.
+
 Once a retained creation operation names its actual Agent, its modal may prepare
 that exact Agent's transport and owner-authorized connection check while lineage
 is checked. Transfer both once to the same Agent, owner and client after personal
@@ -6347,3 +6365,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-13 | Keep valid composer observations through slow refreshes and short tab switches; bound freshness by poll delay plus request timeout, distinguish revalidation from unavailability, and retain checkpoint, lifecycle and denial fences (#1801). |
 
 | 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
+
+| 2026-11-13 | Overlap intentional Agent navigation's transport selection with access classification while preserving fresh load and publication checks; cancel unconsumed route preparation, retain creation handoffs, batch completed early projections behind a fresh check, and defer model discovery until the settings picker opens (#1910). |
