@@ -4,6 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+mod upstream_schema;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -49,8 +50,11 @@ pub enum ProblemCode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamRefusal {
+    #[schema(schema_with = upstream_schema::operation)]
     pub operation: String,
+    #[schema(minimum = 100, maximum = 599)]
     pub status: u16,
+    #[schema(schema_with = upstream_schema::code)]
     pub code: String,
 }
 

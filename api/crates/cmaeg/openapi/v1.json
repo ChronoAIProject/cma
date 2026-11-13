@@ -9548,14 +9548,33 @@
         "description": "Bounded metadata about a provider refusal. This is safe to expose to a\ngateway peer: it contains no provider response body, credentials or\nrequest data.",
         "properties": {
           "code": {
+            "enum": [
+              "media_source_refused",
+              "partition_agent_missing",
+              "partition_agent_unavailable",
+              "agent_command_admission_conflict",
+              "agent_command_key_conflict",
+              "binding_not_ready",
+              "binding_resources_unavailable",
+              "command_authority_required",
+              "response_forbidden",
+              "response_not_found",
+              "model_mismatch",
+              "unrecognized"
+            ],
             "type": "string"
           },
           "operation": {
+            "enum": [
+              "responses",
+              "conversation"
+            ],
             "type": "string"
           },
           "status": {
             "format": "int32",
-            "minimum": 0,
+            "maximum": 599,
+            "minimum": 100,
             "type": "integer"
           }
         },
