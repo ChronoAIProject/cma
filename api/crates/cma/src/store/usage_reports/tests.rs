@@ -1,3 +1,4 @@
+mod binding_fence;
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::*;
