@@ -78,7 +78,7 @@ pub(crate) mod binding_lifecycle_test_support {
     };
     pub(crate) use super::live_agent_stopper::DurableLiveAgentStopper;
     pub(crate) use super::live_agents::{
-        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+        spawn_update_task, DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
         LiveAgentConnectionLossHandler,
     };
     pub(crate) use super::workspace_worker::{
