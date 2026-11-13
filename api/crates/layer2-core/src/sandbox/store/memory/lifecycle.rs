@@ -151,6 +151,48 @@ impl SandboxWorkerStore for InMemorySandboxStore {
         Ok(Some(claimed))
     }
 
+    async fn renew_sandbox_work(
+        &self,
+        claimed: &Sandbox,
+        now: &str,
+        requested_until: &str,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        let Some(original) = &claimed.work.lease else {
+            return Err(SandboxStoreError::Conflict);
+        };
+        let until = super::super::work_lease::renewal_deadline(now, requested_until)?;
+        let mut state = self.lock();
+        let Some(current) = state.sandboxes.get_mut(&claimed.id) else {
+            return Ok(None);
+        };
+        if current.work.step != claimed.work.step
+            || current.owner != claimed.owner
+            || current
+                .lifecycle
+                .operation
+                .as_ref()
+                .map(|value| &value.authority().operation_id)
+                != claimed
+                    .lifecycle
+                    .operation
+                    .as_ref()
+                    .map(|value| &value.authority().operation_id)
+            || current.retirement_archive_pending()
+            || current.lifecycle.checkpoint_capture.is_some()
+        {
+            return Ok(None);
+        }
+        let Some(lease) = current.work.lease.as_mut().filter(|lease| {
+            lease.holder == original.holder
+                && lease.fence == original.fence
+                && lease.expires_at.as_str() > now
+        }) else {
+            return Ok(None);
+        };
+        lease.expires_at = lease.expires_at.clone().max(until);
+        Ok(Some(lease.expires_at.clone()))
+    }
+
     async fn purge_sandbox(
         &self,
         id: &SandboxId,

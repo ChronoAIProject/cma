@@ -76,6 +76,15 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
         Ok(ids)
     }
 
+    async fn renew_workspace_work(
+        &self,
+        claimed: &layer2_core::sandbox::Workspace,
+        _now: &str,
+        requested_until: &str,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        super::work_lease_parent::renew(self, claimed, requested_until).await
+    }
+
     async fn claim_workspace_work(
         &self,
         id: &WorkspaceId,

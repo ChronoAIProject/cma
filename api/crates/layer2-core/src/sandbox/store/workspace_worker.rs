@@ -36,4 +36,12 @@ pub trait WorkspaceWorkerStore: Send + Sync {
         now: String,
         lease_expires_at: String,
     ) -> Result<Option<Workspace>, SandboxStoreError>;
+    /// Keep the original holder/fence and revision; expired authority cannot be
+    /// renewed. Durable implementations use server time, not the caller hint.
+    async fn renew_workspace_work(
+        &self,
+        claimed: &Workspace,
+        now: &str,
+        requested_until: &str,
+    ) -> Result<Option<String>, SandboxStoreError>;
 }
