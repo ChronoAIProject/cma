@@ -1,5 +1,9 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
 mod fence;
+#[cfg(test)]
+mod native_fixture;
+#[cfg(test)]
+mod native_tests;
 pub(crate) mod receipts;
 use super::{
     context,
