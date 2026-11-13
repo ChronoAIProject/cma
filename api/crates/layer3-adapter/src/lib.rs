@@ -82,9 +82,17 @@ pub enum DesktopFrame {
 pub trait DesktopConnection: Send {
     async fn recv(&mut self) -> Result<Option<DesktopFrame>>;
     async fn send(&mut self, frame: DesktopFrame) -> Result<()>;
+
+    /// An independent control port keeps lease renewal out of the frame loop.
+    fn ownership_control(&self) -> Option<std::sync::Arc<dyn DesktopOwnershipControl>> {
+        None
+    }
 }
 
 pub type DesktopConnectionHandle = Box<dyn DesktopConnection>;
+
+pub mod desktop_ownership;
+pub use desktop_ownership::{DesktopOwnership, DesktopOwnershipChallenge, DesktopOwnershipControl};
 
 pub mod agent_sandbox;
 pub mod codex;
