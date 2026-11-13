@@ -96,3 +96,36 @@ it('clears failures, separates identities and IDs, and fences disposed scopes', 
   other.dispose();
   expect(await separate).toMatchObject({ name: 'AbortError' });
 });
+
+it.each([
+  'readAgentTranscript',
+  'readAgentUsage',
+  'readAgentResources',
+  'readAgentSource',
+  'readAgentProvenance',
+] as const)(
+  'shares pending %s across sibling readers without reusing completed authority',
+  async (method) => {
+    let finish!: () => void;
+    const read = vi.fn(
+      () =>
+        new Promise<never>((resolve) => {
+          finish = () => resolve({} as never);
+        }),
+    );
+    const source = agentClient({ [method]: read });
+    const scope = coalesceDetailReads(source);
+    const first = scope.client[method]('agt_1');
+    const second = scope.client[method]('agt_1');
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledOnce();
+    finish();
+    await Promise.all([first, second]);
+    const fresh = scope.client[method]('agt_1');
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledTimes(2);
+    finish();
+    await fresh;
+    scope.dispose();
+  },
+);
