@@ -1,7 +1,7 @@
 use super::*;
 use crate::agent_lifecycle::{ImageManagerResolver, InlineAgentLifecycle};
 use crate::store::{MongoAgentLifecycleStore, MongoProfileStore, MongoSandboxStore};
-use authority::PersonalAuthority;
+use authority::{task_experience_policy, PersonalAuthority};
 use axum::body::{to_bytes, Body};
 use layer2_core::profiles::ProfileCapacityBounds;
 use layer2_core::resource_access::{
@@ -184,7 +184,8 @@ async fn router_with_support(
             )
             .unwrap()
         }),
-    );
+    )
+    .with_task_experience(task_experience_policy());
     let mut routes = services
         .with_lifecycle(lifecycle.clone())
         .with_lifecycle_operations(lifecycle)
