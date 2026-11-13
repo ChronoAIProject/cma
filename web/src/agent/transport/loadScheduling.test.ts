@@ -3,11 +3,46 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../../test/agent';
 import { workspaceFixture } from '../../test/hierarchy';
 import { cursor, harness, incarnation, json, page } from './controller.fixture';
 import { loadV2Agent } from './load';
+import { readAgentProjections } from './projections';
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+it('offers an already completed route transcript before metadata publication authorization starts', async () => {
+  const h = harness();
+  const session = (await h.client.agentTransport!.open('agt_1'))!;
+  await session.authorizeLoad(new AbortController().signal);
+  const reads = readAgentProjections(h.client, 'agt_1', new AbortController().signal);
+  await Promise.all([reads.hierarchy, reads.transcript, reads.usage]);
+  h.currentUser.mockClear();
+  const proofCounts: number[] = [];
+  const result = await loadV2Agent(
+    h.client,
+    'agt_1',
+    new AbortController().signal,
+    session,
+    true,
+    undefined,
+    undefined,
+    () => {
+      proofCounts.push(h.currentUser.mock.calls.length);
+    },
+    undefined,
+    async () => ({
+      owner: 'alice',
+      reads,
+      assertCurrent: () => {
+        session.journal.read();
+      },
+    }),
+  );
+  expect(proofCounts).toEqual([2, 2]);
+  expect(h.currentUser).toHaveBeenCalledTimes(3);
+  expect(result.historyLoading).toBe(false);
+  expect(h.post).not.toHaveBeenCalled();
 });
 
 it('batches completed projections behind one fresh check, then checks again after their callbacks', async () => {
