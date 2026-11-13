@@ -198,3 +198,7 @@ fn refused() -> AdapterError {
 #[cfg(test)]
 #[path = "provider_desktop_tests.rs"]
 pub(super) mod tests;
+
+#[cfg(test)]
+#[path = "provider_desktop_legacy_tests.rs"]
+mod legacy_tests;

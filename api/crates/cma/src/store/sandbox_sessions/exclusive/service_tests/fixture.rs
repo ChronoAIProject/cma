@@ -146,9 +146,9 @@ impl Services {
     }
 }
 
-fn service(
+pub(super) fn service(
     store: MongoSandboxStore,
-    receiver: Arc<receiver::Receiver>,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     replicas: bool,
 ) -> DesktopService {
     let store = Arc::new(store);
@@ -162,7 +162,7 @@ fn service(
     let reads = AgentReadService::new(store.clone(), Arc::new(Resources))
         .with_sessions(store)
         .with_resource_access(access);
-    DesktopService::new(reads, receiver).with_replicas_enabled(replicas)
+    DesktopService::new(reads, adapter).with_replicas_enabled(replicas)
 }
 
 fn worktree(agent: &Agent, index: usize) -> Worktree {

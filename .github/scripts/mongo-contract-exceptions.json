@@ -71,6 +71,26 @@
     "kind": "helper",
     "reason": "Invoked only by independent_processes_preserve_claim_after_holder_exit with its dedicated process inputs."
   },
+  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority": {
+    "kind": "fixture",
+    "reason": "Requires the dedicated desktop-replica-contract.py runner with an exact runtime child and owned Mongo; measurement windows additionally require preregistered noise and isolated execution."
+  },
+  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows": {
+    "kind": "fixture",
+    "reason": "Requires the dedicated desktop-replica-contract.py runner with an exact runtime child and owned Mongo; measurement windows additionally require preregistered noise and isolated execution."
+  },
+  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation": {
+    "kind": "fixture",
+    "reason": "Requires the exact compiled runtime receiver child, local IdP/provider proxy and owned disposable Mongo; selected explicitly by desktop-replica-contract.py."
+  },
+  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver": {
+    "kind": "fixture",
+    "reason": "Requires the exact compiled runtime receiver child, local IdP/provider proxy and owned disposable Mongo; selected explicitly by desktop-replica-contract.py."
+  },
+  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing": {
+    "kind": "fixture",
+    "reason": "Requires the exact compiled runtime receiver child, local IdP/provider proxy and owned disposable Mongo; selected explicitly by desktop-replica-contract.py."
+  },
   "store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows": {
     "kind": "fixture",
     "reason": "Requires separate matched legacy/owned connection measurements with preregistered noise; never run concurrently with ordinary Mongo partitions."
