@@ -6,7 +6,9 @@ use serde_json::{json, Value};
 
 mod activity_index_cli;
 mod activity_indexes;
+mod activity_inventory;
 mod activity_page_index;
+mod activity_plan;
 mod agent_log_segments;
 mod collection_indexes;
 pub(in crate::store) mod opening_index;

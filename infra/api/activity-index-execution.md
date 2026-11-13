@@ -20,32 +20,36 @@ the removed legacy `background` option. The build command is bounded to 2,100
 seconds by the Job and reports sanitized inventory, start, 30-second heartbeat,
 finish and verification phases. The outer Job deadline is 3,900 seconds.
 
-The Job at `infra/api/activity-index-job.yaml` defaults to sizing. It references
-the serving API's `cma-agent-manager` ConfigMap and Secret through `envFrom`,
-uses `chrono-bot-ksa`, and contains no credential values. The release owner must
-replace both image occurrences with the same immutable API image that contains
-the CLI modes, then bind that digest to the release record. `size` is the only
-initial mode; changing `ACTIVITY_INDEX_JOB_MODE` to `build` is a separate
-approved step.
+The sizing Job at `infra/api/activity-index-job.yaml` and build Job at
+`infra/api/activity-index-build-job.yaml` are separately named, immutable
+one-off operations. Each references the serving API's `cma-agent-manager`
+ConfigMap and Secret through `envFrom`, uses `chrono-bot-ksa`, and contains no
+credential values. The release owner must replace the image and
+`ACTIVITY_INDEX_RELEASE_IMAGE` in the build Job with the same immutable API
+image that contains the CLI modes before creating either Job.
 
 ## 1. Size before any build
 
 1. Confirm the release image digest, source SHA, database name, MongoDB version,
    replica-set or mongos topology, and the operator approval ID. Confirm that
-   the deployment's database credential has the Activity `collStats` read and
-   ordinary `find`/`listIndexes` authority. Do not copy or print the URI or any
-   secret.
-2. Apply the Job unchanged and wait for the default `size` mode:
+   the deployment's database credential has the explicit Activity-operation
+   grants: Activity `collStats` for sizing, and `find`, `insert`, `update`, and
+   `createCollection` on `agent_manager_migrations` for build mode, alongside
+   ordinary runtime authority. In isolated mode the effective grants must match
+   the checked-in operation role exactly; in shared-schema mode retain an
+   effective-grant receipt and reject Activity or database-wide `dropIndex`.
+   Do not copy or print the URI or any secret.
+2. Apply the sizing Job unchanged:
 
    ```sh
    kubectl -n chrono-bot apply -f infra/api/activity-index-job.yaml
-   kubectl -n chrono-bot logs job/cma-activity-index-operation
+   kubectl -n chrono-bot logs job/cma-activity-index-size
    ```
 
    The single JSON result contains only the Activity document count, logical,
    storage and index bytes, sanitized index definitions, and the unhinted
    first-page explain. Every server command has `maxTimeMS=5000`. A sizing error
-   or timeout is a no-go; do not switch the same Job to `build`.
+   or timeout is a no-go; do not create the build Job.
 3. Retain the sanitized output with the candidate image digest, source SHA,
    database/cluster identifier, UTC time, and command result. Never retain raw
    documents, connection strings, authenticated usernames or secret values.
@@ -71,18 +75,24 @@ entry creation, temporary disk, commit-quorum and replication work.
 
 ## 3. Start the bounded online build
 
-After a fresh go decision, update only the Job's non-secret operation values:
+After a fresh go decision, update only the build Job's non-secret release values:
 
 ```yaml
-ACTIVITY_INDEX_JOB_MODE: "build"
 ACTIVITY_INDEX_MANIFEST_CHECKSUM: "64811936c3025cefcb9ff7210c1994986fcfe491152e05f0eee2cef0ecb91c8b"
 ACTIVITY_INDEX_RELEASE_IMAGE: "<the exact immutable API image digest>"
 ACTIVITY_INDEX_BUILD_TIMEOUT_SECONDS: "2100"
 ```
 
 The image field and `ACTIVITY_INDEX_RELEASE_IMAGE` must identify the same API
-release. Apply the reviewed Job once. `backoffLimit: 0` prevents an automatic
-second DDL attempt. The command acquires the existing migration lease, verifies
+release. Apply the reviewed build Job once:
+
+```sh
+kubectl -n chrono-bot apply -f infra/api/activity-index-build-job.yaml
+kubectl -n chrono-bot logs job/cma-activity-index-build
+```
+
+`backoffLimit: 0` prevents an automatic second DDL attempt. The command acquires
+the existing migration lease, verifies
 the exact manifest and options, and records a durable attempt. A repeated
 successful invocation returns `already_completed`; a completed manifest with a
 missing or drifted index refuses. It never changes Activity documents or the TTL
@@ -132,8 +142,17 @@ manifest is recorded because older migration registries reject the new history.
 ## 5. Verify the result and release
 
 1. Run the existing migration status command with the exact manifest ID and
-   inspect the sanitized completed receipt. Re-run the sizing mode and retain
-   the post-build index inventory and explain.
+   inspect the sanitized completed receipt. Create a separately named postcheck
+   Job from the retained sizing template, then retain its post-build inventory
+   and explain:
+
+   ```sh
+   kubectl -n chrono-bot create job cma-activity-index-postcheck-<utc> \
+     --from=job/cma-activity-index-size
+   kubectl -n chrono-bot logs job/cma-activity-index-postcheck-<utc>
+   ```
+
+   Never delete or mutate an active Job to reuse its pod template.
 2. The unhinted explain for the Activity first page must use
    `activity_recorded_at_id_desc`, examine approximately `limit+1` keys/docs, and
    contain no blocking `COLLSCAN` or `SORT`. Preserve the before/after explain

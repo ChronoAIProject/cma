@@ -3,23 +3,23 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: cma-activity-index-operation
+  name: cma-activity-index-size
   namespace: chrono-bot
   labels:
-    app.kubernetes.io/name: cma-activity-index-operation
+    app.kubernetes.io/name: cma-activity-index-size
     app.kubernetes.io/part-of: cma
     app.kubernetes.io/component: migration
   annotations:
-    cma.chronoai.dev/operation: activity-index-sizing-or-build
+    cma.chronoai.dev/operation: activity-index-sizing
     cma.chronoai.dev/approval: deployment-engineer-01
 spec:
   backoffLimit: 0
-  activeDeadlineSeconds: 3900
+  activeDeadlineSeconds: 300
   ttlSecondsAfterFinished: 86400
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: cma-activity-index-operation
+        app.kubernetes.io/name: cma-activity-index-size
         app.kubernetes.io/part-of: cma
         app.kubernetes.io/component: migration
     spec:
@@ -34,29 +34,12 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: activity-index
+        - name: activity-index-size
           # The release controller must replace this with the exact immutable
           # API image that contains these CLI modes before creating the Job.
           image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-ec"]
-          args:
-            - |
-              case "${ACTIVITY_INDEX_JOB_MODE:-size}" in
-                size)
-                  exec /usr/local/bin/cma --activity-index-size
-                  ;;
-                build)
-                  exec /usr/local/bin/cma --activity-index-build \
-                    "${ACTIVITY_INDEX_MANIFEST_CHECKSUM}" \
-                    "${ACTIVITY_INDEX_RELEASE_IMAGE}" \
-                    "${ACTIVITY_INDEX_BUILD_TIMEOUT_SECONDS}"
-                  ;;
-                *)
-                  echo 'ACTIVITY_INDEX_JOB_MODE must be size or build' >&2
-                  exit 2
-                  ;;
-              esac
+          command: ["/usr/local/bin/cma", "--activity-index-size"]
           envFrom:
             # These are the same references as the serving API. Secret values
             # remain in the cluster and are never copied into this manifest or
@@ -65,15 +48,6 @@ spec:
                 name: cma-agent-manager
             - secretRef:
                 name: cma-agent-manager
-          env:
-            - name: ACTIVITY_INDEX_JOB_MODE
-              value: "size"
-            - name: ACTIVITY_INDEX_MANIFEST_CHECKSUM
-              value: "64811936c3025cefcb9ff7210c1994986fcfe491152e05f0eee2cef0ecb91c8b"
-            - name: ACTIVITY_INDEX_RELEASE_IMAGE
-              value: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36"
-            - name: ACTIVITY_INDEX_BUILD_TIMEOUT_SECONDS
-              value: "2100"
           resources:
             requests:
               cpu: "100m"
