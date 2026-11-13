@@ -240,6 +240,7 @@ jobs:
         run: |
           python3 .github/scripts/web-build-identity-tests.py
           python3 .github/scripts/web-image-smoke-tests.py
+          python3 .github/scripts/web-image-processes-tests.py
           ruby .github/scripts/web-build-contract.rb
       - name: Final image metadata declarations
         run: bash .github/image-metadata-tests.sh
@@ -1189,6 +1190,12 @@ jobs:
       - name: Install web image browser harness
         if: matrix.component == 'web'
         run: npm ci --prefix web
+      - name: Detached browser cleanup regression
+        if: matrix.component == 'web'
+        timeout-minutes: 2
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+        run: python3 .github/scripts/web-image-watchdog-tests.py
       - name: Render exact web image with stale retained assets
         if: matrix.component == 'web'
         # Includes image startup, the 240s suite and bounded evidence/cleanup time.
