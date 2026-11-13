@@ -6,9 +6,11 @@ impl SandboxReconciler {
         let mut progress = self.progress.lock().await;
         // Independent of sweep progress: a failing earlier phase must not hold
         // back platform spend transitions (contract §5.3).
-        self.platform_spend_stop(now).await;
+        let platform_stop = self.platform_spend_stop(now).await;
         // The progress lock serializes both lanes, including outer cancellation.
-        if self.failed_runtime_recovery.is_some() {
+        // In-transaction require_open remains authoritative; this hint only
+        // avoids repeated provider proofs for recovery refused during STOP.
+        if !platform_stop && self.failed_runtime_recovery.is_some() {
             let mut recovery = self.recovery_schedule.lock().await;
             if recovery.take_turn() {
                 recovery.run(self).await?;
