@@ -61,8 +61,10 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
     if proof.is_none_or(|proof| proof.owner != drain_token() || proof.sender != "prestop") {
         return StatusCode::FORBIDDEN.into_response();
     }
-    state.manager.drain().await;
-    StatusCode::NO_CONTENT.into_response()
+    match state.manager.drain().await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
 }
 
 fn drain_token() -> OwnershipToken {

@@ -13,9 +13,13 @@ pub(super) fn readiness_delay(started: tokio::time::Instant) -> Duration {
 }
 
 impl InlineAgentLifecycle {
+    pub(crate) fn drain_handle(&self) -> LifecycleDrain {
+        self.tasks.clone()
+    }
+
     pub(crate) fn resume_pending(self: &Arc<Self>) {
         let weak = Arc::downgrade(self);
-        tokio::spawn(async move {
+        if !self.tasks.spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(10));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -34,7 +38,9 @@ impl InlineAgentLifecycle {
                     }
                 }
             }
-        });
+        }) {
+            tracing::debug!("lifecycle discovery admission closed or locally full");
+        }
     }
 
     pub(super) async fn wait_for_agent_ready(
@@ -72,12 +78,14 @@ impl InlineAgentLifecycle {
         let Ok(slot) = this.worker_slots.clone().try_acquire_owned() else {
             return;
         };
-        tokio::spawn(async move {
+        if !self.tasks.spawn(async move {
             let _slot = slot;
             if let Err(error) = this.run_worker(&operation_id).await {
                 tracing::error!(operation = %operation_id, error = %error, "Agent lifecycle worker lost storage or claim; discovery will retry");
             }
-        });
+        }) {
+            tracing::debug!("lifecycle worker deferred; durable operation remains discoverable");
+        }
     }
 
     async fn run_worker(&self, operation_id: &str) -> Result<(), layer2_core::StoreError> {

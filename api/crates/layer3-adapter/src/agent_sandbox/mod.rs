@@ -71,7 +71,6 @@ pub struct AgentSandboxClient {
     native_home_scope: HomeVolumeScope,
     runtime_streams: std::sync::Arc<tokio::sync::Semaphore>,
     runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
-    monotonic_funding_deadlines: bool,
 }
 
 impl AgentSandboxClient {
@@ -79,7 +78,6 @@ impl AgentSandboxClient {
         std::sync::Arc::ptr_eq(&self.pools, &other.pools)
             && self.config == other.config
             && self.native_home_scope == other.native_home_scope
-            && self.monotonic_funding_deadlines == other.monotonic_funding_deadlines
     }
 
     pub async fn infer(config: AgentSandboxConfig) -> Result<Self> {
@@ -110,15 +108,7 @@ impl AgentSandboxClient {
             config,
             runtime_streams: std::sync::Arc::new(tokio::sync::Semaphore::new(64)),
             runtime_requests: std::sync::Arc::new(tokio::sync::Semaphore::new(32)),
-            monotonic_funding_deadlines: false,
         })
-    }
-
-    /// Participating managers must never shorten another caller's confirmed funding.
-    #[must_use]
-    pub fn with_monotonic_funding_deadlines(mut self, enabled: bool) -> Self {
-        self.monotonic_funding_deadlines = enabled;
-        self
     }
 
     pub fn warm_pools(&self) -> &AgentSandboxPools {
