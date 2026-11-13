@@ -14,6 +14,7 @@ use crate::{
 pub(crate) async fn serve(
     config: Config,
     complete_replies: bool,
+    commonmark_relay: bool,
     native_media: bool,
     relay_text_edits: bool,
     native_discord_edits: bool,
@@ -161,6 +162,7 @@ pub(crate) async fn serve(
         .with_discord_voice_decoder(media.as_ref().and_then(|service| service.voice_decoder()))
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
+        .with_commonmark_relay(commonmark_relay)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
         .with_discord_reactions(config.native_discord_reactions_enabled)
@@ -261,6 +263,7 @@ pub(crate) async fn serve(
             .transpose()?
             .map(Arc::new),
         complete_replies_enabled: complete_replies,
+        commonmark_relay_enabled: commonmark_relay,
         routed_replies: routed
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),

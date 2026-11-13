@@ -400,6 +400,17 @@ replies keep separate requests. Native Telegram and interactive/edit constraints
 retain their existing behavior. The default remains legacy chunking until the
 NyxID full-send contract is verified; see the [rollout procedure](CMAEG_Operations.md#coordinated-complete-reply-rollout).
 
+For Telegram relay CommonMark, independently enable
+`CMAEG_NYXID_COMMONMARK_RELAY_ENABLED` after verifying NyxID's explicit
+CommonMark reply/thread/update routes. CMAEG then preserves original source,
+including literal backslashes, and sends ordinary replies, keyboards and media
+captions through those routes without local splitting. Rust embedders select
+`RelayClient::with_commonmark_relay(true)` and match
+`ToolsState.commonmark_relay_enabled` so ordinary Telegram reply tools allow the
+18 s outer wait. Native and other-platform rendering stay unchanged. The switch
+defaults off and never enables endpoint fallback after uncertain submission;
+see [CommonMark rollout](CMAEG_Operations.md#commonmark-relay-rollout).
+
 Rust embedders select this mode with `RelayClient::with_complete_replies(true)`
 when composing the delivery engine. Existing `Config` and `DeliveryConfig`
 struct shapes and constructor signatures are retained. Embedders must also set

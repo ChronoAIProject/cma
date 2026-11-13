@@ -2,6 +2,7 @@
 use super::{storage, ExecutionError, FrozenTurn, Lease, Phase, ReplayEffect};
 use crate::{
     providers::{OutputItem, RecoveryEvent, ResponsesEvent},
+    telemetry::turn_trace::AssociationSlot,
     turns::{outcomes::TurnOutcome, projection::Projection},
 };
 use cmaeg_core::message::OutboundMessage;
@@ -10,6 +11,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReplayProjection {
+    #[serde(default, skip_serializing_if = "AssociationSlot::is_empty")]
+    pub trace: AssociationSlot,
     pub response_id: String,
     pub native_agent_id: Option<String>,
     pub last: Option<ProjectedFrame>,
@@ -21,6 +24,8 @@ pub(super) struct ReplayProjection {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ProjectedFrame {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub trace_contract: bool,
     pub sequence: u64,
     pub frame_hash: String,
     pub terminal: bool,
@@ -29,6 +34,7 @@ pub(super) struct ProjectedFrame {
 impl ReplayProjection {
     pub fn new(response_id: String) -> Self {
         Self {
+            trace: AssociationSlot::default(),
             response_id,
             native_agent_id: None,
             last: None,
@@ -95,6 +101,14 @@ impl ReplayProjection {
             (Some(last), Phase::Accepted { durable_cursor: Some(cursor), .. })
             if last.terminal && last.sequence == *cursor)
     }
+
+    pub fn retain_trace_contract(&self, frame: &mut RecoveryEvent) {
+        // A writer rollback cannot change the execution digest contract of an
+        // already admitted response, including frames not seen before restart.
+        frame.trace_contract |=
+            !self.trace.is_empty() || self.last.as_ref().is_some_and(|last| last.trace_contract);
+    }
+
     pub fn pending_effect(
         &self,
         frame: &RecoveryEvent,
@@ -104,7 +118,12 @@ impl ReplayProjection {
         }
         if let Some(last) = &self.last {
             if last.sequence == frame.sequence_number {
-                if last.frame_hash != storage::hash(&storage::bytes(&frame.raw)?) {
+                if last.frame_hash
+                    != super::replay_frame::hash(
+                        frame,
+                        last.trace_contract || frame.trace_contract,
+                    )?
+                {
                     return Err(ExecutionError::Corrupt);
                 }
                 return Ok(Some(last.effect.clone()));
@@ -145,6 +164,11 @@ impl ReplayProjection {
     ) -> Result<ReplayEffect, ExecutionError> {
         if self.pending_effect(frame)?.is_some() {
             return Err(ExecutionError::Invalid);
+        }
+        if frame.trace_contract {
+            if let Some(association) = frame.trace {
+                self.trace.bind(association);
+            }
         }
         self.tool_replied |= tool_replied;
         if let ResponsesEvent::Created { thread_reply, .. } = &frame.event {
@@ -200,8 +224,9 @@ impl ReplayProjection {
             })
         };
         self.last = Some(ProjectedFrame {
+            trace_contract: frame.trace_contract,
             sequence: frame.sequence_number,
-            frame_hash: storage::hash(&storage::bytes(&frame.raw)?),
+            frame_hash: super::replay_frame::hash(frame, frame.trace_contract)?,
             terminal: matches!(
                 frame.event,
                 ResponsesEvent::Completed { .. }

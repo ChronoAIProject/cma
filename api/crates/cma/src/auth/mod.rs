@@ -17,6 +17,7 @@ mod binding;
 mod bots;
 mod browser_login;
 mod browser_origins;
+mod browser_session;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;
@@ -122,6 +123,7 @@ pub struct AuthState {
     oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
     silent_sign_in_enabled: bool,
+    browser_session_join_enabled: bool,
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
@@ -199,6 +201,7 @@ impl AuthState {
             oauth_api_resource: None,
             resource_request_enabled: false,
             silent_sign_in_enabled: false,
+            browser_session_join_enabled: false,
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,
@@ -316,12 +319,17 @@ impl AuthState {
             AuthMode::Provider { .. } => {
                 if let Some(cookie) = session_routes::request_cookie(headers, AUTH_COOKIE) {
                     let id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, cookie);
-                    if let Some(login) = self.store.browser_login(&id).await? {
+                    if let Some((login, state)) = self.read_browser_session(&id).await? {
                         if login.expires_at <= SystemTime::now() {
                             let _ = self.store.delete_browser_login(&id).await;
                             return Ok(None);
                         }
-                        let Some(mut state) = self.store.subject(&login.subject).await? else {
+                        let state = if self.browser_session_join_enabled {
+                            state
+                        } else {
+                            self.store.subject(&login.subject).await?
+                        };
+                        let Some(mut state) = state else {
                             return Ok(Some(RequestAuth {
                                 binding: None,
                                 credential_source:

@@ -5,7 +5,8 @@ use tokio::sync::mpsc;
 use super::{
     malformed, timeout_error, ProviderError, RecoveryEvent, RecoveryIdentity, ResponsesEvent,
 };
-use crate::providers::{parse_event, parse_sse, SseFrame};
+use crate::providers::{parse_sse, SseFrame};
+use crate::telemetry::turn_trace::ProviderReader;
 
 const MAX_REPLAY_BYTES: usize = 16 * 1024 * 1024;
 
@@ -16,6 +17,7 @@ pub(super) async fn forward(
     sender: mpsc::Sender<Result<RecoveryEvent, ProviderError>>,
     _permit: super::super::permits::Permit,
     deadline: tokio::time::Instant,
+    mut trace: Option<Box<ProviderReader>>,
 ) {
     let mut bytes = 0usize;
     let wire = response.bytes_stream().map(move |chunk| {
@@ -35,7 +37,7 @@ pub(super) async fn forward(
             frame = frames.next() => frame,
         };
         let event = match frame {
-            Some(Ok(frame)) => decode(&frame, &mut identity, next),
+            Some(Ok(frame)) => decode(&frame, &mut identity, next, trace.as_deref_mut()),
             Some(Err(error)) => Err(ProviderError::Sse(error.to_string())),
             None => Err(ProviderError::Sse(
                 "durable replay ended before completion".into(),
@@ -70,6 +72,7 @@ fn decode(
     frame: &SseFrame,
     identity: &mut RecoveryIdentity,
     next: u64,
+    mut trace: Option<&mut ProviderReader>,
 ) -> Result<RecoveryEvent, ProviderError> {
     let value: Value =
         serde_json::from_str(&frame.data).map_err(|_| malformed("invalid replay JSON"))?;
@@ -126,8 +129,11 @@ fn decode(
     ) {
         return Err(malformed("replay lifecycle event lacks its response"));
     }
-    let event = parse_event(frame).map_err(|_| malformed("invalid replay event shape"))?;
+    let event = crate::providers::responses::parse_event_with_trace(frame, trace.as_deref_mut())
+        .map_err(|_| malformed("invalid replay event shape"))?;
     Ok(RecoveryEvent {
+        trace_contract: trace.is_some(),
+        trace: trace.and_then(|reader| reader.association()),
         response_id: identity.response_id.clone(),
         sequence_number: sequence,
         event,
