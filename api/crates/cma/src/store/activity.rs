@@ -20,7 +20,7 @@ pub(super) const ACTIVITY: &str = "activity";
 const EXPIRY_INDEX: &str = "activity_expiry";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ActivityDoc {
+pub(super) struct ActivityDoc {
     #[serde(rename = "_id")]
     id: String,
     document_schema_version: i64,
@@ -29,7 +29,7 @@ struct ActivityDoc {
 }
 
 impl ActivityDoc {
-    fn from_record(record: &ActivityRecord) -> Self {
+    pub(super) fn from_record(record: &ActivityRecord) -> Self {
         Self {
             id: record.id.0.clone(),
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
