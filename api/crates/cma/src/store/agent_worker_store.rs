@@ -207,6 +207,17 @@ impl AgentWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Agents,
+                &self.agents,
+                doc! {"work_pending":true},
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
@@ -229,6 +240,8 @@ impl AgentWorkerStore for MongoSandboxStore {
             ));
         }
         read.complete();
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
         Ok(ids)
     }
 

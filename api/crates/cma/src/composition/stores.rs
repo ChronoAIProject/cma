@@ -48,7 +48,9 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .await?,
     );
     Ok(Arc::new(
-        stores.with_writer_policy(config.task_experience.clone()),
+        stores
+            .with_empty_discovery(config.features.empty_discovery)
+            .with_writer_policy(config.task_experience.clone()),
     ))
 }
 

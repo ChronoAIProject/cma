@@ -106,8 +106,9 @@ data:
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
   CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
-  # Opt-in fresh Agent validation reuse.
+  # Opt-in fresh Agent validation reuse and overlapping empty discovery.
   CHRONO_AGENT_RECONCILIATION_VALIDATION_REUSE_ENABLED: "false"
+  CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED: "false"
   # Bound fresh native readiness; preserves assigned Claim and home identity.
   CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED: "false"
   CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED: "false"

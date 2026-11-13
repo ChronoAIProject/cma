@@ -46,6 +46,13 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    pub(crate) fn with_empty_discovery(mut self, enabled: bool) -> Self {
+        let policy = super::empty_discovery::Policy::new(enabled);
+        Arc::make_mut(&mut self.sandbox_model).empty_discovery = policy.clone();
+        Arc::make_mut(&mut self.trigger_definitions).empty_discovery = policy;
+        self
+    }
+
     pub(crate) fn worker_observations(&self) -> super::worker_observations::Observations {
         super::worker_observations::Observations::new(self.client.database(&self.database))
     }

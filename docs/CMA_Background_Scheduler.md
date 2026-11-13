@@ -169,8 +169,44 @@ unchanged. `cma_agent_discovery_validation_total` and
 `cma_agent_discovery_validation_seconds` use fixed outcomes; cache bytes and
 entries are exposed as gauges. No Agent IDs or document contents are metric labels.
 
-Activation requires a separate owner decision. Compare validation counters,
-charged memory, CPU, checkout tails, foreground latency and durable completion.
-Disable the switch if recovery, readiness or latency regresses; no data migration
-or persisted-format rollback is needed. Local measurements do not complete
-#1421 production or multi-replica acceptance.
+`CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED` is independent and defaults to `false`.
+It coalesces overlapping discovery requests into one fresh snapshot aggregate
+with bounded pending-population probes. Commands, Sandbox controls, Agent work,
+Sandbox work, Workspace work, bindings, binding conversations, Agent access and
+launches keep separate results. Supersets include future-ready and leased work;
+any possible pending work takes the ordinary query and validation/claim path.
+The failed-binding recovery predicate is included, and disabling new admission
+does not suppress already accepted work.
+
+There is **no absence TTL or change to scheduler cadence**. Requests that arrive
+after a batch starts IO form a new batch. A single request bypasses probing.
+Each batch verifies collection presence and preserves the command reader's
+mandatory index hint. At most 16 requests queue per batch and two probe batches
+run concurrently; excess, errors and timeouts fall through to normal discovery.
+The aggregate has a 25 ms server time limit and each caller waits at most
+50 ms for coordination, subject to executor scheduling. A late probe retains its
+slot until the driver completes; callers immediately resume ordinary discovery
+without waiting for that cleanup. Two stalled probes disable extra probing.
+Positive/failed probes suppress further extra probes for
+30 seconds while ordinary discovery continues at its existing cadence. No mutex
+spans IO. Cancellation drops the caller's interest; at most two probes retain IO
+slots
+until completion, and runtime shutdown cancels their tasks. No recurring task or
+unbounded waiter map is introduced.
+
+Existing admission notifications and timers remain responsible for wakes. A
+remote/missed wake is rediscovered on the existing scheduler interval (250 ms for
+commands; the existing intervals for the other workers), plus normal scheduling
+and query time and at most the probe wait above. Cursor continuation, newly due
+records and lease expiry take ordinary discovery when a pending population
+exists. Batched emptiness replaces only the participating request, never a later
+tick. `cma_empty_discovery_total`, `cma_empty_discovery_batches_total`,
+`cma_empty_discovery_probe_seconds` and `cma_empty_discovery_batch_requests` expose
+fixed worker/outcome labels, failures, savings and overhead.
+
+Both switches require a separate owner activation decision. Compare scan and
+validation counters, cache memory, process CPU, checkout wait/hold, foreground
+request tails and durable work completion under empty, mixed and busy loads.
+Disable the affected switch if work latency, recovery, errors or request tails
+regress; no data migration or persisted format rollback is needed. Local
+measurements do not complete #1421 production or multi-replica acceptance.
