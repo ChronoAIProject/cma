@@ -68,6 +68,8 @@ libc = { workspace = true }
 seccompiler = { workspace = true }
 
 [dev-dependencies]
+# Process CPU measurements include the asynchronous trace serializer.
+libc = { workspace = true }
 # Validate generated OpenAPI payloads without network reference retrieval.
 jsonschema = { version = "0.33.0", default-features = false }
 # The progressive JPEG fixture of the image decode bound test.
