@@ -8,6 +8,21 @@ pub(crate) struct AnonymousPublicConfig {
     pub(crate) concurrency: NonZeroU32,
 }
 
+/// Per-key request budgets enforced by this process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateLimitConfig {
+    pub admission_per_minute: NonZeroU32,
+    pub health_per_minute: NonZeroU32,
+    pub default_per_minute: NonZeroU32,
+    pub create_per_minute: NonZeroU32,
+    pub input_per_minute: NonZeroU32,
+    pub control_per_minute: NonZeroU32,
+    pub control_tier_enabled: bool,
+    pub response_input_tier_enabled: bool,
+    pub anonymous_public: AnonymousPublicConfig,
+    pub default_lease_enabled: bool,
+}
+
 pub(crate) fn from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<AnonymousPublicConfig, String> {

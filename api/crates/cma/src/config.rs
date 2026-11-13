@@ -13,12 +13,14 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 mod access_migration;
 mod access_origins;
 mod access_snapshot;
+mod activity;
 mod admission_log;
 mod anonymous_public;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use anonymous_public::AnonymousPublicConfig;
+pub use anonymous_public::RateLimitConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
 mod agent_sandbox;
 mod execution;
@@ -67,21 +69,6 @@ const PINNED_CLOUDFLARE_PROXY_CIDRS: &str = concat!(
     "2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,",
     "2a06:98c0::/29,2c0f:f248::/32",
 );
-
-/// Per-key request budgets enforced by this process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RateLimitConfig {
-    pub admission_per_minute: NonZeroU32,
-    pub health_per_minute: NonZeroU32,
-    pub default_per_minute: NonZeroU32,
-    pub create_per_minute: NonZeroU32,
-    pub input_per_minute: NonZeroU32,
-    pub control_per_minute: NonZeroU32,
-    pub control_tier_enabled: bool,
-    pub response_input_tier_enabled: bool,
-    pub anonymous_public: AnonymousPublicConfig,
-    pub default_lease_enabled: bool,
-}
 
 impl RateLimitConfig {
     fn from_lookup(
@@ -219,6 +206,7 @@ pub struct Config {
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
+    pub activity_async_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
@@ -260,6 +248,7 @@ impl std::fmt::Debug for Config {
             .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
+            .field("activity_async_enabled", &self.activity_async_enabled)
             .field("default_profiles", &self.default_profiles)
             .field(
                 "agent_manager_sandbox_capacity",
@@ -459,6 +448,7 @@ impl Config {
             baseline_services,
             auth_encryption_key,
             activity_retention,
+            activity_async_enabled: activity::enabled(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?

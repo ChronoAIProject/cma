@@ -303,3 +303,54 @@ async fn budgeted_delivery_shares_source_and_preserves_the_durable_terminal() {
         .any(|entry| matches!(&entry.kind, AgentLogKind::TurnCompleted { .. })));
     assert_eq!(held.delta, "first ");
 }
+
+#[tokio::test(start_paused = true)]
+async fn head_hints_follow_successful_durable_commits_only() {
+    let (store, working, recorder) = working_agent().await;
+    let mut heads = recorder.subscribe_head(&working.id).unwrap();
+    let mut assembly = AgentMessageAssembly::default();
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("reply", "accepted"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    // Checkpoint-only output does not change the durable event head.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), heads.recv())
+            .await
+            .is_err()
+    );
+    assert!(recorder
+        .record_update(&working.id, 2, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), heads.recv())
+            .await
+            .is_err()
+    );
+    let outcome = recorder
+        .record_update(&working.id, 1, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .unwrap();
+    assert!(outcome.turn_closed && !outcome.appended.is_empty());
+    heads.recv().await.unwrap();
+    assert!(store
+        .get_agent(&working.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .conversation
+        .active_turn
+        .is_none());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), heads.recv())
+            .await
+            .is_err()
+    );
+}

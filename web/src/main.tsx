@@ -43,8 +43,8 @@ const authProvider = {
 const sdk = createClient();
 const client = createRestWebClient(sdk, {
   storage: sessionStorage,
-  async currentUser() {
-    const identity = await identityProvider.current();
+  async currentUser(signal) {
+    const identity = await identityProvider.current(signal);
     if (identity.status === 'error') throw new Error(identity.message);
     return identity.status === 'authenticated' ? identity.user.id : undefined;
   },

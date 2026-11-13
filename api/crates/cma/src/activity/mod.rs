@@ -13,13 +13,29 @@ use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget,
 };
 
+pub(crate) mod queue;
+
 pub struct ActivityRecorder {
     activity: Arc<ActivityService>,
+    sink: Option<Arc<dyn queue::ActivitySink>>,
 }
 
 impl ActivityRecorder {
     pub fn new(activity: Arc<ActivityService>) -> Arc<Self> {
-        Arc::new(Self { activity })
+        Arc::new(Self {
+            activity,
+            sink: None,
+        })
+    }
+
+    pub(crate) fn with_sink(
+        activity: Arc<ActivityService>,
+        sink: Arc<dyn queue::ActivitySink>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            activity,
+            sink: Some(sink),
+        })
     }
 }
 
@@ -47,6 +63,10 @@ pub async fn record(
     let mut activity =
         ActivityRecord::new(action, outcome(response.status())).on(ActivityTarget::Resource(path));
     activity.actor = actor;
+    if let Some(sink) = &recorder.sink {
+        sink.try_enqueue(activity);
+        return response;
+    }
     if let Err(error) = recorder.activity.record(&activity).await {
         tracing::warn!(error = %error, "could not persist request activity");
     }
@@ -127,3 +147,8 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod audit_contract_tests;
+#[cfg(test)]
+mod http_tests;
