@@ -59,6 +59,13 @@ class CmaScaleManifestTests < Minitest::Test
     rejects { |d, _, _| pod(d)["topologySpreadConstraints"][0]["nodeTaintsPolicy"] = "Ignore" }
   end
 
+  def test_rejects_spread_that_mixes_rollout_revisions
+    [0, 1].each do |index|
+      rejects { |d, _, _| pod(d)["topologySpreadConstraints"][index].delete("matchLabelKeys") }
+      rejects { |d, _, _| pod(d)["topologySpreadConstraints"][index]["matchLabelKeys"] = ["app.kubernetes.io/name"] }
+    end
+  end
+
   def test_rejects_hard_zone_constraint_that_blocks_zone_loss_recovery
     rejects { |d, _, _| pod(d)["topologySpreadConstraints"][1]["whenUnsatisfiable"] = "DoNotSchedule" }
   end

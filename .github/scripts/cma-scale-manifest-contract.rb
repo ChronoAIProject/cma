@@ -67,7 +67,8 @@ module CmaScaleManifests
       matches = spreads.select { |spread| spread["topologyKey"] == key }
       require_contract(matches.length == 1 && matches[0]["maxSkew"] == 1 &&
         matches[0]["whenUnsatisfiable"] == policy && matches[0]["nodeTaintsPolicy"] == "Honor" &&
-        matches[0].dig("labelSelector", "matchLabels") == label, "eligible-node/zone topology")
+        matches[0]["matchLabelKeys"] == ["pod-template-hash"] &&
+        matches[0]["labelSelector"] == { "matchLabels" => label }, "eligible-node/zone topology per rollout revision")
     end
     require_contract(pdb["spec"] == { "minAvailable" => 1, "unhealthyPodEvictionPolicy" => "AlwaysAllow",
       "selector" => { "matchLabels" => label } },
