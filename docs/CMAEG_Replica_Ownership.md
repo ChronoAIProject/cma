@@ -47,6 +47,20 @@ Completion and head advancement commit atomically. Exact admission replay
 retains its original position; a completed item cannot be appended again.
 Unknown or Partial delivery does not authorize advancement or blind resend.
 
+Mongo transactions retry only an explicit `TransientTransactionError`, with
+at most five attempts inside the existing store deadline. An
+`UnknownTransactionCommitResult` takes precedence over that label and remains
+unavailable for reconciliation. The retries repeat only the same record writes
+and expected versions; they do not repeat an external provider operation.
+Conflicting versions return to the queue's bounded reread loop. Separate item
+and head reads may straddle another admission's commit; finding the work in the
+head requires rereading and validating its exact retained item before success.
+
+`cmaeg_replica_transaction_retries_total` counts known-aborted retries.
+`cmaeg_replica_admission_rereads_total` distinguishes verified concurrent
+insertions from missing or mismatched retained items. Neither counter proves
+which stage committed for an individual rejected HTTP request.
+
 `PartitionLease` is opaque and cloneable. A clone retains the captured instance,
 claim, epoch, work identity and deadline. A journal mutation validates that
 generation and touches the partition record in the same Mongo transaction as
@@ -127,7 +141,12 @@ provisional 760-second termination grace period. Activation remains separate.
 - Every enabled ingress/delivery path's dedupe, rate-limit and cache contract.
   The explicit routed-channel selector and legacy launcher fallback are still a
   concrete whole-service activation blocker. Passing selected-channel tests does
-  not qualify unselected channels or published/connection-completion paths.
+  not qualify unselected channels or connection-completion paths. No additional
+  agent-published producer has yet been identified in this topic's source.
+- Custom Sync streaming uses process-local waiters. Durable admission does not
+  route output back from a different partition owner. Cross-replica streaming
+  and recovery need their own implementation and process tests, including media
+  continuation output; successful selected webhook delivery does not qualify it.
 - Independent real processes against one Mongo: duplicate ingress, abrupt loss,
   zombie mutation, node-loss equivalent, and 2 to 4 to 2 scaling. Independent
   client boundary tests do not substitute for process/provider proof.
