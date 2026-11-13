@@ -236,7 +236,7 @@ those independent consumers and records the full waterfall; passing that check
 does not claim the issue's stricter full-route acceptance. #1888 separately backs
 off navigation; its effect is excluded from the before/after figures above.
 
-The final affected component run passed 293 tests across 27 files. Coverage for
+The pre-integration affected component run passed 293 tests across 27 files. Coverage for
 `pollDelay`, `useSandboxContents`, `useOwnerWorkspace` and `detailReads` was 95.51%
 statements, 90.72% branches, 96.82% functions and 97.59% lines. Web lint, typecheck,
 e2e typecheck and targeted Prettier passed. Existing composer polling assertions
@@ -292,3 +292,9 @@ Rollback uses the existing Web generation rollback. `PROLONGED_POLL_MS` and
 `LONG_POLL_MS` in `sandbox/pollDelay.ts` control the prolonged page ceilings; setting
 both to 1500 restores the old transition cadence. There are no new runtime flags
 or infrastructure changes. Keep the composer's independent maximum unchanged.
+
+After merging develop through `12c74bd8f`, the shared-helper extraction preserves
+#1801's poll-delay-plus-timeout validity window and visibility cancellation. The
+merged tree passed 304 affected tests across 28 files, Web lint, typecheck, e2e
+typecheck and composer formatting. The twelve-minute browser figures above
+precede integration and isolate #1802 from #1888's separate navigation reduction.
