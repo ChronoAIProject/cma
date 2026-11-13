@@ -87,9 +87,12 @@ impl RelayCaller {
     pub(crate) async fn current(&self) -> Result<(), StatusCode> {
         valid(&self.context)?;
         if let Some((login, state)) = &self.browser {
-            cookie_authorization::require_current_custody(&self.auth, state)
+            cookie_authorization::current_custody(&self.auth, state)
                 .await
-                .map_err(|_| StatusCode::UNAUTHORIZED)?;
+                .map_err(|error| match error {
+                    cookie_authorization::CustodyError::Changed => StatusCode::UNAUTHORIZED,
+                    cookie_authorization::CustodyError::Store(_) => StatusCode::SERVICE_UNAVAILABLE,
+                })?;
             require_login(&self.auth, login, &self.context).await?;
         }
         valid(&self.context)
@@ -127,4 +130,4 @@ async fn require_login(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

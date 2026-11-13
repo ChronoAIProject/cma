@@ -227,6 +227,8 @@ fn read_error(error: layer2_core::sandbox::AgentReadError) -> StatusCode {
 }
 
 #[cfg(test)]
+mod custody_tests;
+#[cfg(test)]
 pub(crate) mod fixture;
 #[cfg(test)]
 mod tests;
