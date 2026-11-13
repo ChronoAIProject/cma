@@ -28,7 +28,7 @@ pub trait EffectExecutor: Send + Sync {
         plan: &'a AdmittedPlan,
         target: &'a StoredTarget,
         work_id: &'a str,
-        token: &'a PartitionLease,
+        token: &'a mut PartitionLease,
     ) -> BoxFuture<'a, Result<EffectDisposition, ExecutionError>>;
     /// Repair one bounded page of durable intents whose queue acknowledgement
     /// may have been lost. The cursor must advance past completed roots too.
@@ -91,13 +91,13 @@ impl Executor {
         if item.request_hash != plan.request_hash {
             return Err(ExecutionError::Corrupt);
         }
-        let token = self
+        let mut token = self
             .partitions
             .claim_work(&plan, target, &item.work_id)
             .await?;
         let result = self
             .effects
-            .execute(&plan, target, &item.work_id, &token)
+            .execute(&plan, target, &item.work_id, &mut token)
             .await;
         match result {
             Ok(EffectDisposition::Completed) => {

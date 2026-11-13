@@ -81,7 +81,22 @@ impl Partitions {
             };
             head.validate(&id, &self.membership.deployment, &plan.identity.owner)?;
             if head.queue.contains(&expected.work_id) {
-                return Err(Error::Corrupt);
+                // These majority reads are not one snapshot. A competing
+                // insertion may commit between the item miss and head read.
+                // Require its exact retained item before acknowledging custody.
+                let item = self.store.read::<Item>(&item_key, true).await?;
+                let outcome = match item {
+                    Some((item, _)) if item.same_admission(&expected) => "verified",
+                    Some(_) => "mismatch",
+                    None => "missing",
+                };
+                metrics::counter!("cmaeg_replica_admission_rereads_total", "outcome" => outcome)
+                    .increment(1);
+                return if outcome == "verified" {
+                    Ok(())
+                } else {
+                    Err(Error::Corrupt)
+                };
             }
             if head.queue.len() >= MAX_PENDING {
                 return Err(Error::Capacity);
