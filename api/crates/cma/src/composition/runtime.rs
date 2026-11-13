@@ -53,7 +53,8 @@ impl RuntimeServices {
                     .machine_sandbox_image
                     .clone()
                     .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
-            ),
+            )
+            .with_target_fencing(config.agent_manager_replicas.is_some()),
             updates: Arc::new(
                 layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                     stores.sandbox_model.clone(),
