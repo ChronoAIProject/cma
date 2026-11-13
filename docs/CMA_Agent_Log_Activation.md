@@ -29,7 +29,7 @@ The release owner must request approval for any such canary action separately.
 | Approval unit | What changes | Initial canary and prerequisites |
 | --- | --- | --- |
 | #1648 explicit Agent cohort | `CHRONO_AGENT_LOG_ADMISSION_AGENTS` selects bounded admission/public windows and lazy write preparation. Fleet percentage stays `0`. | Owner-approved test Agent IDs, at most 16; qualify retained history, exact command receipts, quarantine and read-only readers. Keep adoption/recovery false. |
-| #1648 fleet 10%, then 50%, then 100% | Apply the corresponding JSON merge patch to ConfigMap `chrono-bot/cma-agent-manager`, then a reviewed rollout of the same API image. Each stage is a separate approval. Patches clear explicit IDs and keep segment adoption and capacity recovery false. | Explicit owner canary passes first. Percentage buckets are stable but are **not owner-scoped**; even 10% can include other users. Owner approval must explicitly cover fleet exposure before switching from the explicit canary. |
+| #1648 fleet 10%, then 50%, then 100% | Apply the corresponding JSON merge patch to ConfigMap `chrono-bot/cma-agent-manager`, then a reviewed rollout of the same API image. Each stage is a separate approval. Patches change only the two legacy selector keys. Initial stages require unchanged adoption/recovery switches to be false; the release controller must refuse the stage if that readback precondition fails. | Explicit owner canary passes first. Percentage buckets are stable but are **not owner-scoped**; even 10% can include other users. Owner approval must explicitly cover fleet exposure before switching from the explicit canary. |
 | #1666 title reader | `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED=true` enables the proven first-turn prefix on the shared selected cohort. | After #1648 prerequisite 100% plus one stable hour, approve an owner-test cohort check and the actual consumer exposure separately. |
 | #1666 approval reader | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED=true` enables the proven pending-approval suffix on the shared selected cohort. | Approve independently from title reads; preserve the exact pending set, original locators and command authority. |
 | #1350 segment adoption | `CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED=true` enables discovery; durable `agent_log_segments_v1` CAS admission separately authorizes v2 adoption/rollover. These are two approvals. | One eligible owner test Agent first; complete schema, compatible readers/writers/recovery image, old-writer exclusion and backup/restore evidence. Keep the durable policy explicit initially. |
@@ -106,10 +106,11 @@ never a pass. The owner may tighten these proposed thresholds before execution.
 ## Rollback and evidence retention
 
 For fleet rollback, the release controller applies `.github/agent-log-stages/off.json` and rolls the same
-qualified API image after checking Deployment overrides. It clears both selection
-modes and closes new process admission. Preserve quarantine and all trusted
-metadata. The patch alone does not change running processes. Optional reader
-switches are separate approvals and must preserve the required v2 reader floor.
+qualified API image after checking Deployment overrides. It clears both legacy selection
+modes and preserves every independent reader, adoption and recovery switch. Preserve quarantine and all trusted
+metadata. The patch alone does not change running processes. The rollback patch may be used while independently approved writer/recovery
+dispatch remains enabled; it cannot bypass durable-gate closure or accepted-work
+drain. Optional reader switches are separate approvals and must preserve the required v2 reader floor.
 
 For segmentation/recovery, close the relevant durable gate by its exact expected
 revision first. Reconcile/drain already-admitted preparations with their original
