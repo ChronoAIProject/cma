@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import { useCallback, useEffect, useState } from 'react';
-import type { ActivityAction, ActivityRecord } from '@chronoai/cma-sdk';
+import type { ActivityAction, ActivitySummary } from '@chronoai/cma-sdk';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Table, TableCell } from '../ui/Table';
@@ -24,7 +24,7 @@ const OUTCOMES = {
   refused: { label: 'Refused', tone: 'warning' },
   failed: { label: 'Failed', tone: 'error' },
 } as const satisfies Record<
-  ActivityRecord['outcome']['status'],
+  ActivitySummary['outcome']['status'],
   { readonly label: string; readonly tone: StatusTone }
 >;
 
@@ -40,6 +40,9 @@ const actions: readonly ActivityAction[] = [
   'update',
   'delete',
   'configure',
+  'gateway_record_write',
+  'gateway_record_read',
+  'gateway_record_delete',
 ];
 
 export function Activity({ client }: { readonly client: OperatorClient }) {
@@ -51,7 +54,7 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
   // actors as pages arrive so the filter is still a stable selector instead of
   // asking an operator to type an opaque subject id.
   const [actorOptions, setActorOptions] = useState<readonly { value: string; label: string }[]>([]);
-  const rememberActors = useCallback((items: readonly ActivityRecord[]) => {
+  const rememberActors = useCallback((items: readonly ActivitySummary[]) => {
     setActorOptions((previous) => {
       const known = new Map(previous.map((option) => [option.value, option]));
       for (const row of items) {
@@ -99,7 +102,7 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
           Apply filters
         </Button>
       </form>
-      <ActivityRecords
+      <ActivitySummarys
         key={JSON.stringify(filters)}
         client={client}
         filters={filters}
@@ -109,18 +112,18 @@ export function Activity({ client }: { readonly client: OperatorClient }) {
   );
 }
 
-function ActivityRecords({
+function ActivitySummarys({
   client,
   filters,
   onItemsLoaded,
 }: {
   readonly client: OperatorClient;
   readonly filters: { readonly actor: string; readonly action: ActivityAction | '' };
-  readonly onItemsLoaded: (items: readonly ActivityRecord[]) => void;
+  readonly onItemsLoaded: (items: readonly ActivitySummary[]) => void;
 }) {
   const load = useCallback(
     (cursor: string | undefined, signal: AbortSignal) =>
-      client.admin.listActivity({
+      client.admin.listActivitySummary({
         cursor,
         signal,
         limit: 50,
@@ -129,7 +132,7 @@ function ActivityRecords({
       }),
     [client, filters],
   );
-  const records = useRecords(load);
+  const records = useRecords(load, { retainOnError: false });
   useEffect(() => {
     if (records.page !== undefined) onItemsLoaded(records.page.items);
   }, [records.page, onItemsLoaded]);
@@ -142,7 +145,7 @@ function ActivityRecords({
         placement="operator-table"
         columns={COLUMNS}
         loading={records.loading}
-        loadingLabel="Loading records"
+        loadingLabel={records.page === undefined ? 'Loading records' : 'Refreshing records'}
         empty={records.page === undefined ? undefined : 'No records match these filters.'}
       >
         {records.page?.items.map((row) => (

@@ -10,6 +10,7 @@ mod guards;
 mod readiness;
 mod reclaim;
 mod reuse;
+mod segmented;
 mod unknown_commit;
 mod worker;
 use fixtures::*;

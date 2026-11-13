@@ -53,6 +53,7 @@ import {
 import {
   activityAction,
   activityRecord,
+  activitySummary,
   adminPage,
   adminProfileSummary,
   adminSandbox,
@@ -337,6 +338,23 @@ export class Administration {
   }
   readRuntimeInventory(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/runtime-inventory', runtimeInventory, options);
+  }
+  /** Table fields only; use listActivity for the complete retained audit details. */
+  listActivitySummary(options: ActivityListOptions = {}) {
+    bound(options);
+    if (options.action !== undefined) input(activityAction, options.action);
+    return read(
+      this.config,
+      query('/api/v1/admin/activity', {
+        view: 'summary',
+        actor: options.actor,
+        action: options.action,
+        cursor: options.cursor,
+        limit: options.limit,
+      }),
+      adminPage(activitySummary),
+      options,
+    );
   }
   listActivity(options: ActivityListOptions = {}) {
     bound(options);
