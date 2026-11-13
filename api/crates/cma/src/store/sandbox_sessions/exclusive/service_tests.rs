@@ -10,6 +10,9 @@ mod fixture;
 mod receiver;
 use fixture::Services;
 
+mod recovery_tests;
+mod router_tests;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn two_services_and_two_agents_share_one_exclusive_desktop() {
