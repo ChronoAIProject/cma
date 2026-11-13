@@ -131,6 +131,21 @@ impl RuntimeEndpoint {
         self.with_path(&["runtime", "agents", agent_id, "conversation"], true)
     }
 
+    pub(super) fn conversation_for_capacity_recovery(
+        &self,
+        agent_id: &str,
+        challenge: &str,
+    ) -> crate::Result<Url> {
+        let mut url = self.conversation(agent_id)?;
+        url.query_pairs_mut()
+            .append_pair("capacityRecoveryChallenge", challenge);
+        Ok(url)
+    }
+
+    pub(super) fn capacity_recovery(&self, agent_id: &str) -> crate::Result<Url> {
+        self.with_path(&["runtime", "agents", agent_id, "capacity-recovery"], false)
+    }
+
     pub(super) fn history(&self, agent_id: &str) -> crate::Result<Url> {
         self.with_path(&["runtime", "agents", agent_id, "history"], false)
     }
