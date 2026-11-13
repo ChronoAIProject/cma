@@ -44,6 +44,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub runtime_loss_bounded_proof_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub bounded_live_fragments: bool,
@@ -110,6 +111,7 @@ impl SandboxLifecycleComposition {
             Duration::from_secs(15),
         ))
         .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
+        .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
         .with_platform_spend(dependencies.store.clone())
