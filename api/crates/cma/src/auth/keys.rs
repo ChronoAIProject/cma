@@ -20,6 +20,8 @@ mod bots;
 pub(crate) use bots::owner_matches;
 mod catalog;
 mod dispatch;
+#[cfg(all(test, unix))]
+mod fixture_contract_tests;
 mod grant;
 mod identifiers;
 #[cfg(test)]
