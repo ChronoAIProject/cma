@@ -124,6 +124,8 @@ data:
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
+  # Owner-controlled attribution of file preview waits; disabled until requested.
+  CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED: "false"
   # The release controller opts in with the planned diagnostic deployment.
   CHRONO_MONGO_DIAGNOSTICS_ENABLED: "false"
   # Response projection uses a proven target-turn window; independent rollout.
