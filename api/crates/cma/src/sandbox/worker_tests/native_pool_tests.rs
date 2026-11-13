@@ -21,6 +21,7 @@ pub(super) struct Pools {
     stall_observe: AtomicBool,
     observe_error: Mutex<Option<AdapterError>>,
     adopt_error: Mutex<Option<AdapterError>>,
+    observation: cadence::ObservationTrace,
     observed: Notify,
     entered: Notify,
     resume: Notify,
@@ -162,6 +163,11 @@ impl NativePoolControl for Pools {
         &self,
         original: &NativePoolClaim,
     ) -> layer3_adapter::Result<NativePoolClaim> {
+        let _read = self.observation.start();
+        // Capture server state before response latency; a later assignment
+        // requires another observation rather than changing an in-flight reply.
+        let pending = self.pending_claim.load(Ordering::SeqCst);
+        self.observation.respond().await;
         if self.stall_observe.load(Ordering::SeqCst) {
             return std::future::pending().await;
         }
@@ -176,7 +182,7 @@ impl NativePoolControl for Pools {
             Some(original)
         );
         let mut claim = original.clone();
-        if !self.pending_claim.load(Ordering::SeqCst) {
+        if !pending {
             claim.sandbox_name = Some("warm-member".into());
         }
         *self.claim.lock().unwrap() = Some(claim.clone());
@@ -447,6 +453,7 @@ pub(super) fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> 
         stall_observe: AtomicBool::new(false),
         observe_error: Mutex::new(None),
         adopt_error: Mutex::new(None),
+        observation: Default::default(),
         observed: Notify::new(),
         entered: Notify::new(),
         resume: Notify::new(),
@@ -464,3 +471,6 @@ mod admission_conflict;
 
 #[path = "native_claim_assignment_tests.rs"]
 mod assignment;
+
+#[path = "native_claim_cadence_tests.rs"]
+mod cadence;

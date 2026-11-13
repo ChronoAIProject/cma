@@ -90,6 +90,31 @@ impl ActivityRecord {
     }
 }
 
+/// Displayed Activity fields; omission of detail is explicit in the list contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivitySummary {
+    pub id: ActivityId,
+    pub at: String,
+    pub actor: Option<SubjectId>,
+    pub action: ActivityAction,
+    pub target: Option<ActivityTarget>,
+    pub outcome: ActivityOutcome,
+}
+
+impl From<ActivityRecord> for ActivitySummary {
+    fn from(record: ActivityRecord) -> Self {
+        Self {
+            id: record.id,
+            at: record.at,
+            actor: record.actor,
+            action: record.action,
+            target: record.target,
+            outcome: record.outcome,
+        }
+    }
+}
+
 /// Bounded activity-list filter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -117,6 +142,17 @@ impl ActivityQuery {
             return Err(crate::CoreError::InvalidRequest(format!(
                 "activity limit must be between 1 and {MAX_ACTIVITY_LIMIT}"
             )));
+        }
+        if let Some(cursor) = &self.cursor {
+            let valid = cursor.len() <= 256
+                && cursor
+                    .split_once(':')
+                    .is_some_and(|(at, id)| at.parse::<i64>().is_ok() && !id.is_empty());
+            if !valid {
+                return Err(crate::CoreError::InvalidRequest(
+                    "activity cursor is invalid".into(),
+                ));
+            }
         }
         Ok(())
     }

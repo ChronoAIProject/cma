@@ -23,19 +23,39 @@ use mongodb::{
 use ring::rand::SecureRandom;
 use std::sync::Arc;
 
-pub(super) struct Fixture {
+pub(crate) struct Fixture {
     admin: Client,
     database: String,
     uri: String,
     password: String,
     keys: Arc<MasterKeyRing>,
 }
-pub(super) struct Node {
+pub(crate) struct Node {
     pub partitions: Partitions,
     pub worker: Option<Worker>,
     pub control: Control,
 }
+impl Node {
+    pub fn journal(&self) -> crate::turns::routed::Journal {
+        crate::turns::routed::Journal::new(
+            self.partitions.store.records.clone(),
+            self.partitions.store.keys.clone(),
+        )
+        .with_partitions(self.partitions.clone())
+    }
+    pub fn plans(&self) -> crate::ingress::routing_store::PlanStore {
+        crate::ingress::routing_store::PlanStore::new(
+            self.partitions.store.records.clone(),
+            self.partitions.store.keys.clone(),
+        )
+        .with_admission_queue(Arc::new(self.partitions.clone()))
+    }
+}
 impl Fixture {
+    pub fn keys(&self) -> Arc<MasterKeyRing> {
+        self.keys.clone()
+    }
+
     pub async fn new() -> Self {
         let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
             .unwrap_or_else(|_| panic!("authenticated disposable Mongo required"));
