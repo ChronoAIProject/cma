@@ -86,6 +86,7 @@ pub struct AgentFileService {
     access: Arc<ResourceAccessService>,
     adapter: Arc<dyn SandboxAdapter>,
     task_experience: Arc<super::task_experience::TaskExperiencePolicy>,
+    read_timings: bool,
 }
 impl AgentFileService {
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
@@ -93,6 +94,7 @@ impl AgentFileService {
             access,
             adapter,
             task_experience: Default::default(),
+            read_timings: false,
         })
     }
 
@@ -104,6 +106,7 @@ impl AgentFileService {
             access: self.access.clone(),
             adapter: self.adapter.clone(),
             task_experience: policy,
+            read_timings: self.read_timings,
         })
     }
 
