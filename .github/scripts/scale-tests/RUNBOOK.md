@@ -109,8 +109,9 @@ exits while a descendant ignores TERM with file-backed output, including the
 complete runner with mocked Docker and real local processes.
 
 The previous `be5a8a46b` runner is NO-GO under architect F1 / debugger EG-005.
-The corrected source requires an exact-source verdict before another real
-disposable-Mongo run. Historical receipts are unchanged and do not establish
+The c08c55341 correction received exact-source architect and scoped peer GO.
+Its one authorized original-candidate diagnostic remained censored; see RESULTS.
+Any changed instrumentation requires a new exact-source verdict before real use. Historical receipts are unchanged and do not establish
 independent descendant-exit proof. Use `--test-name` for the original executable control; the default selects
 the replica test. The fixed 1 GiB database filesystem matches the existing
 repository runner and the oplog is bounded to 64 MiB. A 512 MiB filesystem failed
@@ -119,6 +120,28 @@ index creation with Mongo 14031 and was corrected; this was a runner sizing bug.
 ```sh
 python3 mongo-local.py --binary /absolute/task-workspace/build-target/debug/deps/relay_ingress-HASH --out /absolute/task-workspace/evidence/mongo
 ```
+
+## Censored diagnostic stages
+
+The original six-cohort diagnostic retained five PASS markers but exhausted the
+120-second test wait before overall completion. PASS markers historically precede
+function-local teardown, so they do not prove the next cohort was entered. The
+added `replica_trace.rs` markers expose cohort entry, setup, migration, each
+replica ready, ingress/headers/body, independent oracle, each exit, reconciliation,
+database cleanup and teardown. The outer wrapper marks cohort completion only
+after the inner future returns and its local fixtures have dropped.
+
+`cohort_stage_observations` retain fixed phase/start/end names, fixture process
+ordinals and monotonic milliseconds relative to that cohort. Values from different
+cohort origins must not be subtracted. An unmatched start remains censored; an
+end means only that boundary returned. `ingress_header_observations` retain status
+codes as each response arrives, before waiting for other replicas. A202 header is
+not proof of durable admission or delivery. No identities, bodies, credentials or
+free-form errors enter these new fields. Earlier receipts remain unchanged.
+
+The instrumentation is compiled and locally tested, but has not been exercised
+against Mongo/EG. Its exact-source review and the next authorized candidate/window
+remain prerequisites; no extra diagnostic or deadline increase is implied.
 
 ## Run
 
@@ -231,8 +254,8 @@ must stop on errors while canaries survive until measured downscale completes.
 `LocalCluster.removePod` submits raw DELETE with `DeleteOptions.preconditions.uid`
 and zero grace for the verified test-owned pod. A replaced name causes a server
 conflict, with no name-only fallback. The request explicitly does not prove
-process death. This correction to architect F2 also requires exact-source review
-before cluster use; the regression uses a mocked API, not a real Kubernetes fault.
+process death. Architect F2 is source-cleared at c08c55341. That verdict does not authorize
+a cluster fault; a scoped environment/window and independent death oracle remain required.
 The driver must independently observe actual termination and exact accepted work.
 The environment manager owns shared cluster lifecycle. Never remove peer worktrees,
 shared build caches or infrastructure. The lead owns this checkout's final cleanup.

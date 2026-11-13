@@ -20,6 +20,7 @@ import tempfile
 import time
 
 from owned_process import OwnedGroup
+from replica_observations import phase_observations
 
 
 IMAGE = "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c"
@@ -56,6 +57,7 @@ def observations(output):
         (b"gateway fixture migration failed", "fixture_migration_failed"),
         (b"Elapsed(())", "gateway_start_or_shutdown_deadline")
     ] if text in output]
+    result.update(phase_observations(output))
     return result
 
 

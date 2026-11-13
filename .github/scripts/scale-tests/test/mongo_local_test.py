@@ -234,6 +234,21 @@ class FixtureRunnerTests(unittest.TestCase):
         self.assertEqual(result["status"], "BLOCKED")
         self.process.communicate.assert_not_called()
 
+    def test_timeout_retains_stage_start_without_end_or_success(self):
+        partial = (
+            b"replica_fixture replicas=3 status=PASS ownership=false\n"
+            b"replica_stage replicas=3 ownership=false phase=teardown state=start ordinal=0 elapsed_ms=30000\n")
+        self.process.returncode = -15
+        self.process.communicate.side_effect = [subprocess.TimeoutExpired('fixture', 120, output=partial), (b'', None)]
+        _, result = self.execute()
+        self.assertEqual(result['status'], 'BLOCKED')
+        self.assertTrue(result['censored'])
+        self.assertEqual(result['tests_passed'], 0)
+        self.assertEqual(result['cohort_stage_observations'], [{
+            'replicas': 3, 'enabled': False, 'phase': 'teardown', 'boundary': 'start',
+            'process_ordinal': 0, 'cohort_elapsed_ms': 30000}])
+        self.assertEqual(result['ingress_header_observations'], [])
+
     def test_existing_evidence_is_not_overwritten(self):
         self.execute()
         with self.assertRaisesRegex(RuntimeError, "existing_evidence_refused"):
