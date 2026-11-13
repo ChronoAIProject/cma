@@ -69,7 +69,7 @@ mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
-pub use agent_message_checkpoint::AgentMessageCheckpoint;
+pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
 mod agent_log_capacity;
