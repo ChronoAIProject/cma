@@ -2076,11 +2076,13 @@ All report, row, chart and owner-search reads reauthorize current access.
 
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
+| `GET /api/v1/usage/metrics/view` | - | window, from, to, step_seconds, filters, refresh | 200/202 UsageMetricView |
 | `POST /api/v1/usage/metrics/reports` | UsageMetricQuery | - | 200/202 UsageMetricReport |
 | `GET /api/v1/usage/metrics/reports/{report}` | - | - | 200 UsageMetricReport |
 | `GET /api/v1/usage/metrics/reports/{report}/sandboxes` | - | limit, cursor, sort, order | 200 UsageMetricPage |
 | `GET /api/v1/usage/metrics/reports/{report}/series` | - | metric*, group_by, series_id, top | 200 UsageMetricSeries |
 | `GET /api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}` | - | - | 200 UsageMetricRow |
+| `GET /api/v1/admin/usage/metrics/view` | - | window, from, to, step_seconds, filters, refresh | 200/202 UsageMetricView |
 | `POST /api/v1/admin/usage/metrics/reports` | UsageMetricQuery | - | 200/202 UsageMetricReport |
 | `POST /api/v1/admin/usage/metrics/options` | UsageFilterOptionsQuery | - | 200 UsageFilterOptions |
 | `GET /api/v1/admin/usage/metrics/reports/{report}` | - | - | 200 UsageMetricReport |
@@ -2706,3 +2708,17 @@ A recorded outcome is HTTP 200; an uncertain commit is HTTP 202 with
 `outcome: unknown`. HTTP 409 may carry `outcome: known_abort` or a named problem.
 A missing receipt never proves abort. Neither result authorizes replaying Agent
 input. Admission refusal does not prevent reconciling already accepted work.
+
+
+### Latest committed Sandbox usage view
+
+The owner and administrator `GET /usage/metrics/view` routes return the newest
+currently authorized immutable snapshot for a stable filter/window selection.
+The complete route names appear in the inventory above. See
+[CMA Usage Report Views](CMA_Usage_Report_Views.md) for fields, error/fallback
+semantics, finite retention, staged writer/warmer activation and rollback.
+`generated_at` and `stale` describe the snapshot; `requested_range` is separate
+from its original effective range. A ready response includes the summary and
+stays usable while refresh is pending or deferred. Only an actually admitted
+initial build returns 202. No response reuses identity or source-ownership
+permission from a previous request.

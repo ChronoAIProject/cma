@@ -1,3 +1,4 @@
+mod view;
 use super::*;
 use crate::{Caller, Capability};
 use async_trait::async_trait;
@@ -5,6 +6,19 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait MetricsStore: Send + Sync {
+    async fn latest(
+        &self,
+        _scope: &Scope,
+        _selection: &ViewSelection,
+        _now: u64,
+    ) -> Result<ReportView> {
+        Err(MetricsError::ViewDisabled)
+    }
+    /// Recheck immutable retained namespace completeness and expiry after child reads.
+    async fn verify_snapshot(&self, _report: &Report) -> Result<()> {
+        Ok(())
+    }
+
     fn check_read_budget(&self) -> Result<()> {
         Ok(())
     }
@@ -54,13 +68,16 @@ impl MetricsService {
         query.validate()?;
         self.store.check_read_budget()?;
         let report = self.ready(caller, true, id, now).await?;
-        self.store
+        let value = self
+            .store
             .owner_allocations(
                 &report,
                 query,
                 OwnerContextAccess::from_authorization(&caller.authorization),
             )
-            .await
+            .await?;
+        self.store.verify_snapshot(&report).await?;
+        Ok(value)
     }
     pub async fn options(&self, caller: &Caller, query: OptionQuery) -> Result<FilterOptions> {
         let scope = authorize(caller, true)?;
@@ -140,7 +157,9 @@ impl MetricsService {
         authorize(caller, admin)?;
         query.validate(admin)?;
         let report = self.ready(caller, admin, id, now).await?;
-        self.store.page(&report, query).await
+        let value = self.store.page(&report, query).await?;
+        self.store.verify_snapshot(&report).await?;
+        Ok(value)
     }
     pub async fn detail(
         &self,
@@ -155,7 +174,9 @@ impl MetricsService {
             return Err(MetricsError::NotFound);
         }
         self.store.authorize_sandbox(&report.scope, id).await?;
-        self.store.detail(&report, id).await
+        let value = self.store.detail(&report, id).await?;
+        self.store.verify_snapshot(&report).await?;
+        Ok(value)
     }
     pub async fn series(
         &self,
@@ -173,7 +194,9 @@ impl MetricsService {
                 self.store.authorize_sandbox(&report.scope, id).await?;
             }
         }
-        self.store.series(&report, query).await
+        let value = self.store.series(&report, query).await?;
+        self.store.verify_snapshot(&report).await?;
+        Ok(value)
     }
     pub async fn owners(
         &self,
@@ -185,7 +208,9 @@ impl MetricsService {
         authorize(caller, true)?;
         query.validate()?;
         let report = self.ready(caller, true, id, now).await?;
-        self.store.owners(&report, query).await
+        let value = self.store.owners(&report, query).await?;
+        self.store.verify_snapshot(&report).await?;
+        Ok(value)
     }
     async fn ready(&self, caller: &Caller, admin: bool, id: &str, now: u64) -> Result<Report> {
         let report = self.report(caller, admin, id, now).await?;

@@ -34,6 +34,7 @@ impl MetricsWorkers {
                         Ok(Err(MetricsError::Busy)) => "budget",
                         Ok(Err(MetricsError::Expired)) => "expired",
                         Ok(Err(MetricsError::Forbidden | MetricsError::NotFound)) => "authority",
+                        Ok(Err(MetricsError::ViewDisabled)) => "disabled",
                         Ok(Err(MetricsError::Invalid(_))) => "invalid",
                     };
                     let result = generation.unwrap_or(Err(MetricsError::Unavailable));
