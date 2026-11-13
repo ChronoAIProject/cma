@@ -42,6 +42,10 @@ async fn retained_default_day_on_seven_day_history_measures_complete_snapshot_an
         states.push(s);
     }
     seed(&store, &states).await;
+    for n in 0..12 {
+        super::owner_names::name(&store, &format!("owner-{n}"), &format!("Public person {n}"))
+            .await;
+    }
     store
         .collection("sandbox_usage_events")
         .create_index(
@@ -122,6 +126,11 @@ async fn retained_default_day_on_seven_day_history_measures_complete_snapshot_an
         .await;
         assert_eq!(page_status, 200);
         assert_eq!(page["items"].as_array().unwrap().len(), 50);
+        assert!(page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["owner"]["display_name"].is_string()));
         assert_eq!(page["total_count"], MEMBERS as u64);
         assert_eq!(commands.event_reads.load(Ordering::SeqCst), 0);
         eprintln!("retained_default read_cycle={cycle} summary_us={summary_us} summary_plus_page_us={} summary_bytes={} first_page_bytes={} event_reads=0",started.elapsed().as_micros(),serde_json::to_vec(&view).unwrap().len(),serde_json::to_vec(&page).unwrap().len());
