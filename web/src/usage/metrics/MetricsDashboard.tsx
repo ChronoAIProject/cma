@@ -11,15 +11,30 @@ import { MetricSummary } from './MetricSummary';
 import { MetricTable } from './MetricTable';
 import { MetricsNotice } from './MetricsNotice';
 import { useUsageReport, useUsageVisible } from './useReport';
+import {
+  UsageReportOwnerContext,
+  anonymousReportOwner,
+  type UsageReportOwner,
+} from './reportOwner';
 import type { MetricsFailure } from './failure';
 import type { Group, Metric, MetricsClient, Selection } from './model';
 import { allocationSelection } from './selection';
 import './Metrics.css';
 
-export function MetricsDashboard({
+export function MetricsDashboard(props: Parameters<typeof MetricsDashboardContent>[0]) {
+  return (
+    <UsageReportOwnerContext value={props.principal ?? anonymousReportOwner}>
+      <MetricsDashboardContent {...props} />
+    </UsageReportOwnerContext>
+  );
+}
+
+function MetricsDashboardContent({
   api,
   history,
   admin,
+  principal = anonymousReportOwner,
+  forceOnMount = false,
   selection,
   onSelection,
   active = true,
@@ -30,6 +45,8 @@ export function MetricsDashboard({
   readonly api: MetricsClient;
   readonly history: Pick<Cma['usage'], 'events'>;
   readonly admin: boolean;
+  readonly principal?: UsageReportOwner;
+  readonly forceOnMount?: boolean;
   readonly selection: Selection;
   readonly onSelection: (value: Selection) => void;
   readonly active?: boolean;
@@ -42,7 +59,7 @@ export function MetricsDashboard({
     [measured, selection],
   );
   const visible = useUsageVisible(active);
-  const state = useUsageReport(api, effectiveSelection, admin, active);
+  const state = useUsageReport(api, effectiveSelection, admin, active, principal, forceOnMount);
   const [group, setGroup] = useState<Group>('total');
   const [metric, setMetric] = useState<Metric>('cpu');
   const [detail, setDetail] = useState<{ report: string; sandbox: string }>();
@@ -98,12 +115,22 @@ export function MetricsDashboard({
           }
         />
       )}
-      <UsageOverviewHeader report={report} busy={state.busy} onRefresh={state.refresh} />
+      <UsageOverviewHeader
+        report={report}
+        generatedAt={state.generatedAt}
+        busy={state.busy}
+        refreshing={state.refreshing}
+        stale={state.stale}
+        onRefresh={state.refresh}
+      />
       {state.busy && (
-        <p role="status">{state.pending ? 'Preparing usage report…' : 'Loading usage report…'}</p>
-      )}
-      {state.stale && (
-        <p role="status">Showing the previous selection. The selected report is not ready.</p>
+        <p role="status">
+          {report
+            ? 'Refreshing usage report…'
+            : state.pending
+              ? 'Preparing usage report…'
+              : 'Loading usage report…'}
+        </p>
       )}
       <MetricsNotice failure={state.error ?? failure} onRetry={state.refresh} />
       {selection.agent && (
