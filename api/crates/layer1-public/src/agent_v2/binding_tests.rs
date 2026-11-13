@@ -68,43 +68,46 @@ impl AgentCommandStore for AlteredCommands {
 
 #[tokio::test]
 async fn replay_refuses_unverifiable_source_identity_turn_owner_incarnation_and_receipt() {
-    for fault in [
-        "command",
-        "agent",
-        "owner",
-        "turn",
-        "fence",
-        "response",
-        "incarnation",
-        "control",
-        "unavailable",
-    ] {
-        let f = fixture(true, false).await;
-        let commands = AgentCommandService::new(
-            Arc::new(AlteredCommands {
-                inner: f.store.clone(),
-                fault,
-            }),
-            f.access.clone(),
-            Arc::new(NoAdmission),
-        );
-        let state = AgentV2State::new(f.state.reads.clone(), commands);
-        let router = super::router(state);
-        let (status, body) = call(&router, Method::GET, SNAPSHOT, "owner-a", None, None).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{fault}: {body}");
-        assert_eq!(
-            body["code"],
-            if fault == "unavailable" {
-                "agent_read_unavailable"
-            } else {
-                "agent_history_unavailable"
-            }
-        );
-        for secret in ["foreign-owner", "private-source", "runtime", "cmd_foreign"] {
-            assert!(
-                !body.to_string().contains(secret),
-                "{fault} leaked {secret}"
+    for enabled in [false, true] {
+        for fault in [
+            "command",
+            "agent",
+            "owner",
+            "turn",
+            "fence",
+            "response",
+            "incarnation",
+            "control",
+            "unavailable",
+        ] {
+            let f = fixture(true, false).await;
+            let commands = AgentCommandService::new(
+                Arc::new(AlteredCommands {
+                    inner: f.store.clone(),
+                    fault,
+                }),
+                f.access.clone(),
+                Arc::new(NoAdmission),
             );
+            let state =
+                AgentV2State::new(f.state.reads.clone(), commands).with_single_fence_pages(enabled);
+            let router = super::router(state);
+            let (status, body) = call(&router, Method::GET, SNAPSHOT, "owner-a", None, None).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{fault}: {body}");
+            assert_eq!(
+                body["code"],
+                if fault == "unavailable" {
+                    "agent_read_unavailable"
+                } else {
+                    "agent_history_unavailable"
+                }
+            );
+            for secret in ["foreign-owner", "private-source", "runtime", "cmd_foreign"] {
+                assert!(
+                    !body.to_string().contains(secret),
+                    "{fault} leaked {secret}"
+                );
+            }
         }
     }
 }
