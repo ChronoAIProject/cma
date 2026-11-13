@@ -39,7 +39,17 @@ pub(in crate::store) enum ApplyError {
 mod errors;
 
 impl MongoSandboxStore {
-    async fn admit_agent_with_reuse(
+    fn admit_agent_with_reuse(
+        &self,
+        admission: AgentAdmission,
+        reuse_existing: bool,
+        initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
+    ) -> impl std::future::Future<Output = Result<AgentAdmissionResult, SandboxStoreError>> + '_
+    {
+        Box::pin(self.admit_agent_with_reuse_inner(admission, reuse_existing, initiation))
+    }
+
+    async fn admit_agent_with_reuse_inner(
         &self,
         admission: AgentAdmission,
         reuse_existing: bool,
@@ -53,7 +63,17 @@ impl MongoSandboxStore {
         Ok(result)
     }
 
-    async fn commit_agent_admission(
+    fn commit_agent_admission(
+        &self,
+        admission: AgentAdmission,
+        reuse_existing: bool,
+        initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
+    ) -> impl std::future::Future<Output = Result<AgentAdmissionResult, SandboxStoreError>> + '_
+    {
+        Box::pin(self.commit_agent_admission_inner(admission, reuse_existing, initiation))
+    }
+
+    async fn commit_agent_admission_inner(
         &self,
         admission: AgentAdmission,
         reuse_existing: bool,
@@ -80,13 +100,13 @@ impl MongoSandboxStore {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
-            let applied = apply_admission(
+            let applied = Box::pin(apply_admission(
                 self,
                 &admission,
                 reuse_existing,
                 initiation.as_ref(),
                 &mut scope,
-            )
+            ))
             .await;
             let session = scope.release();
             let receipt = match applied {
@@ -121,7 +141,7 @@ impl MongoSandboxStore {
                     return wait_for_reconciliation(
                         "agent admission duplicate replay",
                         async move {
-                            replay_after_duplicate(&store, &admission, replay_time)
+                            Box::pin(replay_after_duplicate(&store, &admission, replay_time))
                                 .await?
                                 .ok_or(SandboxStoreError::Duplicate)
                         },
@@ -154,7 +174,9 @@ impl MongoSandboxStore {
                     let unresolved_error = commit_error.clone();
                     let store = self.clone();
                     return wait_for_reconciliation("agent admission commit", async move {
-                        if reconcile_created(&store, &receipt, reconciliation_time).await? {
+                        if Box::pin(reconcile_created(&store, &receipt, reconciliation_time))
+                            .await?
+                        {
                             Ok(AgentAdmissionResult::Created(receipt.creation))
                         } else {
                             Err(SandboxStoreError::Unavailable(format!(
