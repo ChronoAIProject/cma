@@ -73,6 +73,22 @@ impl Drop for DesktopConnection {
 }
 
 impl DesktopConnection {
+    /// Do not keep publishing buffered frames after the connection loses its
+    /// authority while the client transport is blocked by backpressure.
+    pub async fn while_authorized<T>(
+        &mut self,
+        operation: impl std::future::Future<Output = T>,
+    ) -> Result<T, DesktopError> {
+        if self.connection.is_none() {
+            return Err(DesktopError::Unavailable);
+        }
+        if let Some(owned) = &mut self.owned {
+            owned.while_authorized(operation).await
+        } else {
+            Ok(operation.await)
+        }
+    }
+
     pub async fn send(&mut self, frame: DesktopFrame) -> Result<(), DesktopError> {
         let connection = self.connection.as_mut().ok_or(DesktopError::Unavailable)?;
         if let Some(owned) = &mut self.owned {
@@ -156,12 +172,20 @@ impl DesktopService {
         // Discovery makes the old viewer's outstanding lease observable before
         // a new WebSocket hides its refusal headers. Opening still checks atomically.
         if self.replicas_enabled {
-            let store = self.reads.session_store().map_err(|_| DesktopError::AuthorityUnavailable)?;
-            let occupied = tokio::time::timeout(Duration::from_secs(3),
-                store.has_open_sandbox_session(&sandbox_id, &crate::now_rfc3339()))
-                .await.map_err(|_| DesktopError::AuthorityUnavailable)?
+            let store = self
+                .reads
+                .session_store()
                 .map_err(|_| DesktopError::AuthorityUnavailable)?;
-            if occupied { return Err(DesktopError::Busy); }
+            let occupied = tokio::time::timeout(
+                Duration::from_secs(3),
+                store.has_open_sandbox_session(&sandbox_id, &crate::now_rfc3339()),
+            )
+            .await
+            .map_err(|_| DesktopError::AuthorityUnavailable)?
+            .map_err(|_| DesktopError::AuthorityUnavailable)?;
+            if occupied {
+                return Err(DesktopError::Busy);
+            }
         } else {
             let _lease = self.leases.acquire(sandbox_id.as_str()).await?;
         }
@@ -204,7 +228,8 @@ impl DesktopService {
             if connection._lease.take().is_some() {
                 unregister_open_desktop_session(&connection.sandbox_id);
             }
-            self.close(connection.sandbox_id.clone(), connection.session_id.clone()).await;
+            self.close(connection.sandbox_id.clone(), connection.session_id.clone())
+                .await;
         }
     }
 

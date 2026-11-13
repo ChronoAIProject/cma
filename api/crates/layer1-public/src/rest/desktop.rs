@@ -148,7 +148,9 @@ async fn relay(
                     Ok(Some(DesktopFrame::Pong(bytes))) => Message::Pong(bytes.into()),
                     _ => break,
                 };
-                if !matches!(tokio::time::timeout(Duration::from_secs(10), sink.send(message)).await, Ok(Ok(()))) { break; }
+                if !matches!(connection.while_authorized(
+                    tokio::time::timeout(Duration::from_secs(10), sink.send(message))
+                ).await, Ok(Ok(Ok(())))) { break; }
             },
         }
     }
@@ -175,7 +177,10 @@ fn problem(error: DesktopError) -> Response {
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, "no-store, private".parse().unwrap());
-    if matches!(error, DesktopError::Busy | DesktopError::RuntimeUnavailable | DesktopError::AuthorityUnavailable) {
+    if matches!(
+        error,
+        DesktopError::Busy | DesktopError::RuntimeUnavailable | DesktopError::AuthorityUnavailable
+    ) {
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, "1".parse().unwrap());
