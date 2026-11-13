@@ -27,6 +27,7 @@ mod capture_bounds;
 mod capture_segmented_tests;
 mod capture_tests;
 mod capture_transaction_tests;
+mod range_bounds;
 mod ranges;
 mod recovery_shape_fixture;
 mod response_readers;
