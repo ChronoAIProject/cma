@@ -7,6 +7,7 @@ const { execFileSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { processRpc } = require('/opt/codex-fixtures/native_tools_fixture.cjs');
+const browserPage = require('./desktop-browser-page.cjs');
 
 const directory = mkdtempSync('/tmp/cma-desktop-proof-');
 const home = directory + '/home';
@@ -16,6 +17,7 @@ const calls = [];
 let failure;
 let command;
 let retainedProfile;
+const toolStates = new Map();
 function captureFailureScreen() {
   const path = '/tmp/cma-desktop-failed-screen.png';
   try { if (!existsSync(path)) execFileSync('scrot', [path]); }
@@ -49,7 +51,7 @@ const server = createServer(async (request, response) => {
         return;
       }
       response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
-      response.end('<!doctype html><title>cma-desktop-ready</title><body style="margin:0;background:#234"><input id="field" style="position:absolute;left:80px;top:100px;width:300px;height:40px"><button style="position:absolute;left:80px;top:200px;width:250px;height:40px" onclick="localStorage.setItem(\'cma-desktop-proof\',document.getElementById(\'field\').value);document.title=\'cma-ui:\'+document.getElementById(\'field\').value">Verify input</button><script>fetch(\'/profile?value=\'+encodeURIComponent(localStorage.getItem(\'cma-desktop-proof\')||\'\'))</script>');
+      response.end(browserPage(request.url));
       return;
     }
     assert.equal(request.url, '/v1/responses');
@@ -59,10 +61,11 @@ const server = createServer(async (request, response) => {
     calls.push(value);
     const index = calls.length;
     let item;
-    if (index === 1) item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 10000, max_output_tokens: 2000 });
+    if (index === 1) item = call(value, index, 'exec_command', { cmd: command, yield_time_ms: 30000, max_output_tokens: 2000 });
     else if (index === 2) {
       // The command fits within one native tool wait; prove its screen interaction
       // before asking the model to view the resulting image.
+      assert(existsSync(screenshot), 'desktop input command did not finish; inspect native tool output for the failed acknowledgement');
       const title = execFileSync('xdotool', ['getactivewindow', 'getwindowname'], { encoding: 'utf8' }).trim();
       assert(title.startsWith('cma-ui:cma-codex'), 'desktop click/type did not update the browser title: ' + title);
       item = call(value, index, 'view_image', { path: screenshot });
@@ -106,39 +109,39 @@ const server = createServer(async (request, response) => {
     '[model_providers.fixture]', 'name="Offline desktop acceptance"',
     'base_url="' + origin + '/v1"', 'wire_api="responses"', 'requires_openai_auth=false',
   ].join('\n'));
-  const window = execFileSync('xdotool', ['search', '--onlyvisible', '--class', 'chromium'], { encoding: 'utf8' }).trim().split('\n')[0];
-  assert(/^\d+$/.test(window));
   command = [
     'set -e',
     'export DISPLAY=:99',
-    'xdotool windowactivate --sync ' + window,
-    'xdotool key --clearmodifiers ctrl+l',
-    "xdotool type --clearmodifiers '" + origin + "/desktop-test'",
-    'xdotool key Return',
-    "for i in $(seq 1 30); do xdotool getactivewindow getwindowname | grep -q cma-desktop-ready && break; sleep 0.1; done",
-    // Chromium's own full-screen command hides its browser chrome. Merely
-    // changing the window-manager state leaves the page origin offset by it.
-    'xdotool key --clearmodifiers F11', 'sleep 0.5',
-    'xdotool mousemove 120 120 click 1', 'xdotool type --clearmodifiers cma-codex',
-    'xdotool mousemove 120 220 click 1', 'sleep 0.1',
+    'python3 /opt/desktop-browser-reopen.py',
+    '/usr/local/bin/cma-desktop-session --browser ' + origin + '/desktop-test',
+    '/usr/local/bin/cma-desktop-session --browser',
+    'python3 /opt/desktop-browser-input.py ' + origin,
     'scrot ' + screenshot,
     'xdotool getactivewindow getwindowname',
   ].join('\n');
   const bridge = processRpc(process.execPath, ['/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js'], {
     cwd: directory, env: { PATH: process.env.PATH, DISPLAY: ':99', CODEX_HOME: home, CODEX_PATH: '/usr/local/bin/codex' },
-  });
+  }, frame => {
+    const update = frame.params?.update;
+    if (update?.toolCallId && update.status) toolStates.set(update.toolCallId, update.status);
+  }, 60000);
   try {
     await bridge.call('initialize', { protocolVersion: 1, clientCapabilities: {} });
     const { sessionId } = await bridge.call('session/new', { cwd: directory, mcpServers: [] });
     await bridge.call('session/set_mode', { sessionId, modeId: 'agent-full-access' });
-    await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Use the desktop, enter cma-codex, click Verify input, then inspect a screenshot.' }] });
+    const completed = await bridge.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'Use the desktop, enter cma-codex, click Verify input, then inspect a screenshot.' }] });
     if (failure) throw failure;
+    assert.equal(completed.stopReason, 'end_turn');
+    assert(toolStates.size > 0, 'native tool terminal evidence is missing');
+    assert([...toolStates.values()].every(status => status === 'completed'), 'native tools remain active');
     assert.equal(calls.length, 3);
     for (let i = 0; retainedProfile === undefined && i < 30; i++) await delay(100);
+    assert.notEqual(retainedProfile, undefined, 'timed out waiting for the browser profile acknowledgement');
     assert.equal(retainedProfile, process.env.CMA_DESKTOP_EXPECT_RETAINED === '1' ? 'cma-user' : '');
     const bytes = readFileSync(screenshot);
     assert.equal(bytes.subarray(1, 4).toString(), 'PNG');
     assert(bytes.length > 1000);
+    assert(execFileSync('xdotool', ['getactivewindow', 'getwindowname'], { encoding: 'utf8' }).startsWith('cma-ui:cma-codex'), 'page did not remain open after end_turn');
     // A user takes over the very same browser through the authenticated stream.
     const child = require('node:child_process').spawn('python3', ['/opt/desktop-vnc-probe.py'], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let logs = '';
@@ -153,7 +156,7 @@ const server = createServer(async (request, response) => {
       await delay(100);
     }
     assert(title.startsWith('cma-ui:cma-user'), 'user input did not reach the same browser: ' + title);
-    console.log(JSON.stringify({ checks: ['codex-shell-click-type', 'codex-view-image', 'authenticated-framebuffer', 'shared-browser-user-input'], screenshotSha256: createHash('sha256').update(bytes).digest('hex') }));
+    console.log(JSON.stringify({ checks: ['browser-reopen-tool-completed', 'native-end-turn-with-page-open', 'codex-shell-click-type', 'codex-view-image', 'authenticated-framebuffer', 'shared-browser-user-input'], screenshotSha256: createHash('sha256').update(bytes).digest('hex') }));
   } finally {
     await bridge.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }

@@ -88,6 +88,7 @@ async fn start(
         .await
         .map_err(ManagementError::Provider)?;
     let request = TurnRequest {
+        nyxid_trace: state.providers.nyxid_trace_contract(provider),
         timing: None,
         conversation_id,
         input: vec![

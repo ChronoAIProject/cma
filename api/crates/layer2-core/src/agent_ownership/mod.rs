@@ -16,8 +16,10 @@ pub use observations::{observe_transport, observed_transport, transport_observat
 use crate::AgentId;
 
 pub const PROTOCOL_VERSION: u32 = 1;
-pub const DEFAULT_LEASE_MS: u64 = 30_000;
-pub const HEARTBEAT_INTERVAL_MS: u64 = 5_000;
+// The receiver starts its shorter monotonic deadline before this lease is
+// renewed at Mongo. Takeover still requires actual expiry or proved revocation.
+pub const DEFAULT_LEASE_MS: u64 = 15_000;
+pub const HEARTBEAT_INTERVAL_MS: u64 = 3_000;
 pub const STORE_DEADLINE_MS: u64 = 2_000;
 pub const DEFAULT_MAX_OWNED_AGENTS: u32 = 256;
 

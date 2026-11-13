@@ -103,6 +103,7 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
                   },
           },
     profile: value.profile,
+    alwaysOn: value.always_on,
     lastActivityAt: value.last_activity_at,
     createdAt: value.created_at,
     updatedAt: value.updated_at,
@@ -177,6 +178,7 @@ export function worktree(value: Wire.Worktree): Worktree {
 function agentSummary(value: Wire.HierarchyAgentSummary): AgentSummary {
   return {
     taskStatus: value.task_status,
+    taskStartedAt: value.task_started_at,
     id: value.id,
     workspaceId: value.workspace_id,
     worktreeId: value.worktree_id,

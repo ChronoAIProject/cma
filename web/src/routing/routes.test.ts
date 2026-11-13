@@ -31,6 +31,7 @@ const ROUTES: readonly AppRoute[] = [
   { kind: 'public_trigger', publicId: 'pub_123', placementId: 'plc_123' },
   { kind: 'launch', launchId: 'lch_123' },
   { kind: 'operations' },
+  { kind: 'usage' },
 ];
 
 describe('application routes', () => {
@@ -120,4 +121,51 @@ it('refuses direct Image Manager URLs while the portal is unavailable', () => {
     kind: 'not_found',
     pathname: '/image-manager/images',
   });
+  const { result } = renderHook(() => useAppRouter());
+  act(() => result.current.navigate({ kind: 'image_manager' }));
+  expect(result.current.route).toEqual({ kind: 'not_found', pathname: '/image-manager' });
+});
+
+it.each(['/settings', '/settings/general', '/settings/usage'])(
+  'replaces legacy %s without changing theme or discarding the query',
+  (path) => {
+    localStorage.setItem('cma:appearance', 'light');
+    window.history.replaceState(null, '', path + '?range=7d&sandbox=sbx-2');
+    const entries = window.history.length;
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'usage' });
+    expect(result.current.backgroundRoute).toEqual({ kind: 'agent_manager' });
+    expect(result.current.usageAppearanceNotice).toBe(path !== '/settings/usage');
+    expect(window.location.pathname).toBe('/usage');
+    expect(window.location.search).toBe('?range=7d&sandbox=sbx-2');
+    expect(window.history.length).toBe(entries);
+    expect(localStorage.getItem('cma:appearance')).toBe('light');
+  },
+);
+it('keeps the background route when opening and replaying Usage history', () => {
+  window.history.replaceState(null, '', '/agents/agt_1?view=chat');
+  const { result } = renderHook(() => useAppRouter());
+  const background = result.current.route;
+  act(() => result.current.navigate({ kind: 'usage' }));
+  const saved = window.history.state;
+  expect(result.current.backgroundRoute).toBe(background);
+  expect(saved.usageBackground).toBe('/agents/agt_1?view=chat');
+  act(() => {
+    window.history.replaceState(null, '', '/agents/agt_1?view=chat');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(result.current.route).toEqual(background);
+  act(() => {
+    window.history.replaceState(saved, '', '/usage');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(result.current.backgroundRoute).toEqual(background);
+});
+it('closes a direct Usage link to the safe app shell by replacement', () => {
+  window.history.replaceState(null, '', '/usage');
+  const entries = window.history.length;
+  const { result } = renderHook(() => useAppRouter());
+  act(() => result.current.closeUsage?.());
+  expect(result.current.route).toEqual({ kind: 'agent_manager' });
+  expect(window.history.length).toBe(entries);
 });

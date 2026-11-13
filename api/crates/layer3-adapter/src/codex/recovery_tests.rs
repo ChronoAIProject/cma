@@ -85,3 +85,60 @@ fn recovery_plan_digest_matches_provider_utf8_workspace_paths() {
         "3bfcf358614050535610e2302cefbc84e5b6284e3df6695151e67d1703b7a0a4"
     );
 }
+
+#[test]
+fn idle_reopen_cannot_substitute_the_weaker_inspection_result() {
+    let request = request();
+    let mut input = recovery_input(&request).unwrap();
+    input["action"] = json!("inspect_idle");
+    let mut plan = json!({
+        "runtime": input["runtime"], "agents": input["agents"],
+        "histories": [{"agentId": request.conversations[0].agent_id,
+            "conversationId": request.conversations[0].conversation_id, "historySha256": "f".repeat(64)}]
+    });
+    let response = |plan: &Value| json!({"status":"inspected", "plan":plan, "planSha256":plan_digest(plan).unwrap()});
+    assert!(checked_inspection(&request, &input, response(&plan)).is_err());
+    plan["idleReopen"] = json!(true);
+    assert!(checked_inspection(&request, &input, response(&plan)).is_err());
+    plan["idleLedger"] = json!({"format":"legacy_v1_unused_process_scope", "sha256":"a".repeat(64), "journals":2, "authorities":2});
+    assert!(checked_inspection(&request, &input, response(&plan)).is_ok());
+    plan["idleLedger"]["authorities"] = json!(129);
+    assert!(checked_inspection(&request, &input, response(&plan)).is_err());
+}
+
+#[test]
+fn retained_idle_native_history_success_and_refusal_paths() {
+    let test =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codex/recovery_idle_test.py");
+    let output = std::process::Command::new("python3")
+        .arg("-B")
+        .arg(test)
+        .output()
+        .expect("Python is required for pinned recovery evidence");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn recovery_ledger_refusals_have_fixed_content_free_categories() {
+    for code in [
+        "ledger_capacity",
+        "ledger_unproved",
+        "ledger_unsettled",
+        "ledger_process_scope_used",
+    ] {
+        assert_eq!(provider_refusal(code), Reason::LedgerHeld);
+    }
+    assert_eq!(
+        provider_refusal("ledger_format_unproved"),
+        Reason::LedgerFormatUnproved
+    );
+    assert_eq!(provider_refusal("ledger_changed"), Reason::NativeChanged);
+    assert_eq!(
+        provider_refusal("unrecognized private detail"),
+        Reason::Ineligible
+    );
+}

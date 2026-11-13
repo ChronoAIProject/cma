@@ -75,6 +75,7 @@ impl AgentOperationService {
             command_claim: Some(claim),
             execution_authority: None,
             trigger_authority: Some(authority),
+            skill_upgrades_enabled: self.skill_upgrades_enabled,
             instruction_policy: self.instruction_policy.clone(),
             connections: self.connections.clone(),
             store: self.store.clone(),

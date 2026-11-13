@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "scope": "offline core REST and desktop discovery wire contracts",
+  "releases": [
+    {
+      "name": "previous",
+      "source_commit": "93d4a199a3d36d47f5a89f9117d2bc735900bf4c",
+      "fixtures": [
+        {
+          "file": "previous-agents.json",
+          "source_path": "api/crates/layer1-public/tests/fixtures/public-contract/agents.json",
+          "source_sha256": "cccc410bfc3a3937282f3c60bb05c57de51e0c3ab80e1a0731c34936f7ffb454",
+          "sha256": "881f2a3dc2b78bd637521e482432ec8030ec1c1eb8ad569cc89e034f05aa0e5f",
+          "cases": 20,
+          "selected_case_ids": [
+            "agent-list",
+            "agent-read",
+            "agent-events",
+            "agent-transcript",
+            "agent-usage",
+            "agent-resources",
+            "agent-create",
+            "agent-delete-not-stopped",
+            "agent-steer-no-turn",
+            "agent-interrupt-no-turn",
+            "agent-approval-not-pending",
+            "agent-input-unavailable",
+            "agent-stop",
+            "agent-delete",
+            "agent-missing",
+            "agent-invalid-query",
+            "agent-profile-missing",
+            "agent-workspace-missing",
+            "agent-forbidden",
+            "agent-unauthenticated"
+          ]
+        },
+        {
+          "file": "previous-instances.json",
+          "source_path": "api/crates/layer1-public/tests/fixtures/public-contract/instances.json",
+          "source_sha256": "3c4696d34f61db37ca9e98e8154ebeb965c88d223f850975728882a077184443",
+          "sha256": "89c9cefb3112da38f81fc2888ffffa55d2e35aa0fae19db6420deb4dbd973340",
+          "cases": 27,
+          "selected_case_ids": [
+            "sandbox-list",
+            "sandbox-read",
+            "sandbox-events",
+            "workspace-list",
+            "workspace-read",
+            "worktree-list",
+            "worktree-read",
+            "workspace-live-agent-removal",
+            "sandbox-create",
+            "sandbox-name-conflict",
+            "workspace-create",
+            "workspace-name-conflict",
+            "workspace-delete",
+            "sandbox-delete",
+            "sandbox-pause",
+            "sandbox-revive-not-paused",
+            "sandbox-missing",
+            "workspace-missing",
+            "worktree-missing",
+            "sandbox-limit",
+            "sandbox-profile-missing",
+            "workspace-profile-missing",
+            "sandbox-invalid-name",
+            "sandbox-invalid-query",
+            "sandbox-invalid-page",
+            "sandbox-forbidden",
+            "sandbox-unauthenticated"
+          ]
+        },
+        {
+          "file": "previous-desktop.json",
+          "source_path": "api/crates/layer1-public/tests/fixtures/public-contract/desktop.json",
+          "source_sha256": "c762432007a5017e1e8cd08ca0a585c3dc554ddaa9ad7e18ce72f023a8329e7f",
+          "sha256": "ed92af85adf79a918145ec3f42201cda53980ccdf1c1a16dc79260802e96e569",
+          "cases": 9,
+          "selected_case_ids": [
+            "desktop-discovery",
+            "desktop-discovery-anonymous",
+            "desktop-discovery-other_owner",
+            "desktop-discovery-forbidden",
+            "desktop-discovery-headless",
+            "desktop-discovery-paused",
+            "desktop-discovery-isolated",
+            "desktop-discovery-missing",
+            "desktop-discovery-starting"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "current",
+      "source_commit": "4f03c35a80322673ec00df7a3b6b9399015f5a68",
+      "fixtures": [
+        {
+          "file": "current-agents.json",
+          "source_path": "api/crates/layer1-public/tests/fixtures/public-contract/agents.json",
+          "source_sha256": "cccc410bfc3a3937282f3c60bb05c57de51e0c3ab80e1a0731c34936f7ffb454",
+          "sha256": "881f2a3dc2b78bd637521e482432ec8030ec1c1eb8ad569cc89e034f05aa0e5f",
+          "cases": 20,
+          "selected_case_ids": [
+            "agent-list",
+            "agent-read",
+            "agent-events",
+            "agent-transcript",
+            "agent-usage",
+            "agent-resources",
+            "agent-create",
+            "agent-delete-not-stopped",
+            "agent-steer-no-turn",
+            "agent-interrupt-no-turn",
+            "agent-approval-not-pending",
+            "agent-input-unavailable",
+            "agent-stop",
+            "agent-delete",
+            "agent-missing",
+            "agent-invalid-query",
+            "agent-profile-missing",
+            "agent-workspace-missing",
+            "agent-forbidden",
+            "agent-unauthenticated"
+          ]
+        },
+        {
+          "file": "current-instances.json",
+          "source_path": "api/crates/layer1-public/tests/fixtures/public-contract/instances.json",
+          "source_sha256": "3c4696d34f61db37ca9e98e8154ebeb965c88d223f850975728882a077184443",
+          "sha256": "89c9cefb3112da38f81fc2888ffffa55d2e35aa0fae19db6420deb4dbd973340",
+          "cases": 27,
+          "selected_case_ids": [
+            "sandbox-list",
+            "sandbox-read",
+            "sandbox-events",
+            "workspace-list",
+            "workspace-read",
+            "worktree-list",
+            "worktree-read",
+            "workspace-live-agent-removal",
+            "sandbox-create",
+            "sandbox-name-conflict",
+            "workspace-create",
+            "workspace-name-conflict",
+            "workspace-delete",
+            "sandbox-delete",
+            "sandbox-pause",
+            "sandbox-revive-not-paused",
+            "sandbox-missing",
+            "workspace-missing",
+            "worktree-missing",
+            "sandbox-limit",
+            "sandbox-profile-missing",
+            "workspace-profile-missing",
+            "sandbox-invalid-name",
+            "sandbox-invalid-query",
+            "sandbox-invalid-page",
+            "sandbox-forbidden",
+            "sandbox-unauthenticated"
+          ]
+        },
+        {
+          "file": "current-desktop.json",
+          "source_path": "api/crates/layer1-public/tests/fixtures/public-contract/desktop.json",
+          "source_sha256": "c762432007a5017e1e8cd08ca0a585c3dc554ddaa9ad7e18ce72f023a8329e7f",
+          "sha256": "ed92af85adf79a918145ec3f42201cda53980ccdf1c1a16dc79260802e96e569",
+          "cases": 9,
+          "selected_case_ids": [
+            "desktop-discovery",
+            "desktop-discovery-anonymous",
+            "desktop-discovery-other_owner",
+            "desktop-discovery-forbidden",
+            "desktop-discovery-headless",
+            "desktop-discovery-paused",
+            "desktop-discovery-isolated",
+            "desktop-discovery-missing",
+            "desktop-discovery-starting"
+          ]
+        }
+      ]
+    }
+  ],
+  "desktop_client": {
+    "file": "web/src/test/compatibility/desktopPreparation.release.ts",
+    "source_path": "web/src/agent/desktopPreparation.ts",
+    "sha256": "4cd86d6ea26212d8492a2b8a2ecee842d57103adb8a0cde4f59d68bc882f9da5",
+    "previous_commit": "f779e5310595fb62e19537a76f664ba52e8342f9",
+    "current_commit": "4f03c35a80322673ec00df7a3b6b9399015f5a68"
+  }
+}

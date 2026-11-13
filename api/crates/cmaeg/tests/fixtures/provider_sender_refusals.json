@@ -1,0 +1,41 @@
+[
+  {
+    "status": 403,
+    "content_type": "application/json",
+    "retry_after": null,
+    "body": {
+      "error": {
+        "type": "invalid_request_error",
+        "code": "verified_sender_context_invalid",
+        "message": "The gateway did not attest the original event for this binding.",
+        "param": "event_context"
+      }
+    }
+  },
+  {
+    "status": 422,
+    "content_type": "application/json",
+    "retry_after": null,
+    "body": {
+      "error": {
+        "type": "invalid_request_error",
+        "code": "verified_sender_context_unsupported",
+        "message": "The verified sender context cannot be represented within the input contract.",
+        "param": "event_context"
+      }
+    }
+  },
+  {
+    "status": 503,
+    "content_type": "application/json",
+    "retry_after": "5",
+    "body": {
+      "error": {
+        "type": "server_error",
+        "code": "verified_sender_context_unavailable",
+        "message": "Sender verification is temporarily unavailable; no turn was admitted.",
+        "param": "event_context"
+      }
+    }
+  }
+]

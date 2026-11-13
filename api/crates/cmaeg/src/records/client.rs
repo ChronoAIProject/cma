@@ -7,6 +7,9 @@ use cmaeg_core::{channel::Secret, ids::RecordId};
 use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 
+#[path = "client_guarded.rs"]
+mod guarded;
+
 const RECORD_PATH: &str = "/api/v1/gateway/channel-records";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,10 +25,21 @@ pub struct RecordHead {
     pub version: u64,
 }
 
+/// A versioned authority row that must be written with a guarded interaction
+/// root. This is crate-private because only routed admission may use it.
+#[derive(Clone, Debug)]
+pub(crate) struct AuthorityGuard {
+    pub owner: String,
+    pub kind: &'static str,
+    pub id: String,
+    pub version: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordError {
     NotFound,
     Conflict { expected: u64, actual: Option<u64> },
+    GuardConflict { scope: &'static str, expected: u64 },
     Rejected(String),
     Unavailable(String),
     Malformed(String),
@@ -39,6 +53,12 @@ impl fmt::Display for RecordError {
                 write!(
                     formatter,
                     "channel record version conflict: expected {expected}, actual {actual:?}"
+                )
+            }
+            Self::GuardConflict { scope, expected } => {
+                write!(
+                    formatter,
+                    "guarded {scope} version changed; expected {expected}"
                 )
             }
             Self::Rejected(detail) => {
@@ -159,17 +179,21 @@ impl RecordClient {
             .await
             .is_ok_and(|response| response.status().is_success())
     }
-
     pub fn connections(mut self) -> Self {
         self.record_path = "/api/v1/gateway/connection-records";
         self.record_kind = super::RecordKind::Connection;
+        if let Some(database) = self.database.take() {
+            self.database = Some(database.for_kind(super::RecordKind::Connection));
+        }
         self
     }
-
     pub fn interactions(mut self) -> Self {
         self.record_path = "/api/v1/gateway/interaction-records";
         self.record_kind = super::RecordKind::Interaction;
         self.retention = Default::default();
+        if let Some(database) = self.database.take() {
+            self.database = Some(database.for_kind(super::RecordKind::Interaction));
+        }
         self
     }
 

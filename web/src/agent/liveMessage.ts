@@ -1,5 +1,6 @@
 import type { AgentLiveEvent } from '../api/types';
 import type { ConversationMessage, ConversationState } from './model';
+import { upsert } from './conversationValues';
 
 /** A durable message replaces the pending live block, never appends a second copy. */
 export function consumeLiveMessage(
@@ -11,6 +12,48 @@ export function consumeLiveMessage(
     messages: live === undefined ? messages : messages.filter((message) => message.id !== live.id),
     order: live?.order,
   };
+}
+
+/** Replace a live row in place so its durable successor keeps its timeline slot. */
+export function replaceLiveMessage(
+  messages: readonly ConversationMessage[],
+  runId: string | undefined,
+  message: ConversationMessage,
+) {
+  const index = messages.findIndex((item) => item.liveOnly && item.runId === runId);
+  if (index < 0) return { messages, order: undefined, replaced: false };
+  const order = messages[index]?.order;
+  return {
+    messages: messages.map((item, current) =>
+      current === index
+        ? {
+            ...message,
+            renderKey: message.renderKey ?? item.renderKey ?? item.id,
+            order: message.order ?? order,
+          }
+        : item,
+    ),
+    order,
+    replaced: true,
+  };
+}
+
+export function clearLiveGapRun(runs: ReadonlySet<string> | undefined, runId: string) {
+  if (runs === undefined || !runs.has(runId)) return runs;
+  const next = new Set(runs);
+  next.delete(runId);
+  return next.size === 0 ? undefined : next;
+}
+
+export function durableAssistantMessage(
+  messages: readonly ConversationMessage[],
+  runId: string | undefined,
+  message: ConversationMessage,
+) {
+  const reconciled = replaceLiveMessage(messages, runId, message);
+  return reconciled.replaced
+    ? reconciled.messages
+    : upsert(reconciled.messages, { ...message, order: reconciled.order });
 }
 
 function put(state: ConversationState, message: ConversationMessage): ConversationState {
@@ -42,6 +85,7 @@ export function liveMessage(state: ConversationState, event: AgentLiveEvent): Co
         content: '',
         status: 'streaming',
         at: event.timestamp,
+        renderKey: current?.renderKey ?? id,
         order: current?.order ?? reconciled.order,
       },
     );
@@ -59,6 +103,7 @@ export function liveMessage(state: ConversationState, event: AgentLiveEvent): Co
             status: 'streaming' as const,
             at: event.timestamp,
             liveOnly: true,
+            renderKey: id,
           }
         : undefined);
     return message === undefined

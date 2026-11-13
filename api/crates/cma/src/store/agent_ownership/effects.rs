@@ -60,9 +60,6 @@ impl MongoSandboxStore {
         self.agent_manager_instance.as_deref()
     }
 
-    pub(crate) fn ownership_routing_client(&self) -> Option<Client> {
-        self.agent_ownership.as_ref().map(|_| self.client.clone())
-    }
     pub(crate) async fn enable_agent_ownership(
         mut self,
         instance: String,

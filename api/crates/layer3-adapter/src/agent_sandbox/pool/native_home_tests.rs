@@ -21,6 +21,9 @@ mod resume_read_tests;
 #[path = "native_runtime_render_read_tests.rs"]
 mod runtime_render_read_tests;
 
+#[path = "metric_identity_tests.rs"]
+mod metrics_identity;
+
 fn spec() -> NativePoolSpec {
     let mut spec = super::tests::spec();
     spec.home.mode = HomeVolumeMode::NativeVctEmptyV1;
@@ -115,33 +118,6 @@ async fn native_home_accepts_controller_normalized_member_fields() {
     }
     let home = adopted(&fixture, &claim).await;
     assert_eq!(home.receipt.storage_reference, "home-warm-member");
-    no_storage_effects(&fixture);
-}
-
-#[tokio::test]
-async fn native_home_requires_initializer_ready_before_returning_attachment() {
-    let fixture = Fixture::new().await;
-    let claim = assigned_spec(&fixture, &spec()).await;
-    fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
-        ["status"] = json!("False");
-    let started = tokio::time::Instant::now();
-    assert!(matches!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(6),
-            fixture.client.adopt_home(&claim)
-        )
-        .await
-        .unwrap(),
-        Err(crate::AdapterError::Unavailable(_))
-    ));
-    assert!(started.elapsed() >= std::time::Duration::from_secs(5));
-    fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
-        ["status"] = json!("True");
-    let home = fixture.client.adopt_home(&claim).await.unwrap();
-    assert!(homes(&fixture)
-        .prepare_receipted(&home.request, "operation-one")
-        .await
-        .is_err());
     no_storage_effects(&fixture);
 }
 

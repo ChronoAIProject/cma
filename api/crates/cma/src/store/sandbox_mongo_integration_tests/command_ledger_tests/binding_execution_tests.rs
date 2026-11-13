@@ -6,6 +6,8 @@ use layer2_core::sandbox::binding::*;
 
 #[path = "binding_contention_tests.rs"]
 mod contention_tests;
+#[path = "sender_context_tests.rs"]
+mod sender_context_tests;
 
 async fn binding_for(
     store: &MongoSandboxStore,
@@ -274,3 +276,6 @@ mod event_context_tests;
 
 #[path = "media_continuation_tests.rs"]
 mod media_continuation_tests;
+
+#[path = "binding_preparation_tests.rs"]
+mod preparation;

@@ -23,6 +23,7 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::failure::RuntimeError;
 use crate::supervisor::{Phase, Supervisor};
+use layer3_adapter::agent_capacity_recovery::CapacityRecoveryRequest;
 
 const CONTROL_BODY_BYTES: usize = 384 * 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
@@ -53,6 +54,10 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
         .route(
             "/runtime/agents/{agent_id}/manager-ownership/legacy",
             post(ownership::reset_legacy),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/capacity-recovery",
+            post(capacity_recovery),
         )
         .route("/runtime/desktop", get(desktop::websocket))
         .route("/runtime/agents/{agent_id}/history", get(history))
@@ -106,6 +111,10 @@ async fn history(
         Err(error) => runtime_failure(error),
     }
 }
+
+#[path = "link/capacity_recovery.rs"]
+mod recovery;
+use recovery::capacity_recovery;
 
 async fn control(
     State(supervisor): State<Arc<Supervisor>>,
@@ -184,9 +193,24 @@ async fn control(
                 .flat_map(|value| value.split(','))
                 .any(|value| value.trim() == media_type)
         };
+        status.agent_skill_upgrade =
+            accepts(layer3_adapter::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE);
         status.agent_resource_preparation =
             accepts(layer3_adapter::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE);
         status.agent_browser = accepts(layer3_adapter::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE);
+        if accepts(layer3_adapter::RUNTIME_LEDGER_STATUS_MEDIA_TYPE) {
+            return match supervisor.ledger_observation(status.clone()).await {
+                Ok(observation) => (
+                    [(
+                        header::CONTENT_TYPE,
+                        layer3_adapter::RUNTIME_LEDGER_STATUS_MEDIA_TYPE,
+                    )],
+                    Json(observation),
+                )
+                    .into_response(),
+                Err(error) => Json(error.response(operation)).into_response(),
+            };
+        }
     }
     Json(response).into_response()
 }

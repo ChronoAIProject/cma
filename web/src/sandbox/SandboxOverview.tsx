@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { SandboxDetail, SandboxProfileSettings } from '../api/types';
 import { Button } from '../ui/Button';
 import { codexProviderName } from '../profiles/modelProvider';
@@ -18,6 +18,7 @@ export function SandboxOverview({
   runtime,
   busy,
   stale = false,
+  onAlwaysOnChange,
 }: {
   readonly sandbox: SandboxDetail;
   readonly contents?: SandboxContents;
@@ -28,12 +29,48 @@ export function SandboxOverview({
   readonly runtime?: ReactNode;
   readonly busy: boolean;
   readonly stale?: boolean;
+  readonly onAlwaysOnChange?: (alwaysOn: boolean) => Promise<void>;
 }) {
+  const [alwaysOnBusy, setAlwaysOnBusy] = useState(false);
+  const [alwaysOnError, setAlwaysOnError] = useState<string>();
   const resourceAgent = contents?.agents.find((agent) => agent.status !== 'deleted');
   const workspaces = sandbox.workspaces.filter((workspace) => workspace.status !== 'removed');
   return (
     <>
       {runtime}
+      <section className="sandbox-page__band">
+        {onAlwaysOnChange === undefined ? null : (
+          <div>
+            <h2>Sandbox controls</h2>
+            <h3>Always on</h3>
+            <p className="sandbox-page__hint">
+              {sandbox.alwaysOn === true
+                ? 'An administrator approved Always on, so automatic pause skips this Sandbox.'
+                : 'Always on is off. Only an administrator can approve an exception.'}
+            </p>
+            {sandbox.alwaysOn === true ? (
+              <Button
+                size="sm"
+                disabled={alwaysOnBusy || busy || stale}
+                onClick={() => {
+                  setAlwaysOnBusy(true);
+                  setAlwaysOnError(undefined);
+                  void onAlwaysOnChange(false)
+                    .catch((error: unknown) => {
+                      setAlwaysOnError(
+                        error instanceof Error ? error.message : 'Could not turn off Always on.',
+                      );
+                    })
+                    .finally(() => setAlwaysOnBusy(false));
+                }}
+              >
+                Turn off Always on
+              </Button>
+            ) : null}
+            {alwaysOnError === undefined ? null : <p role="alert">{alwaysOnError}</p>}
+          </div>
+        )}
+      </section>
       <section className="sandbox-page__band">
         <h2>Machine resources</h2>
         <p className="sandbox-page__hint">

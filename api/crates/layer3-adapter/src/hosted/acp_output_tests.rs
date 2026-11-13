@@ -4,7 +4,7 @@ fn stream() -> uuid::Uuid {
     uuid::Uuid::parse_str("d99003d1-0c3c-46cd-aa47-9bbdbed50b12").unwrap()
 }
 
-async fn reliable_ready(server: &mut ServerSocket) {
+pub(super) async fn reliable_ready(server: &mut ServerSocket) {
     server
         .send(Message::Text(
             serde_json::json!({
@@ -17,7 +17,7 @@ async fn reliable_ready(server: &mut ServerSocket) {
         .unwrap();
 }
 
-async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Value) {
+pub(super) async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Value) {
     let mut bytes = vec![LANE_RETAINED_OUTPUT];
     bytes.extend_from_slice(stream().as_bytes());
     bytes.extend_from_slice(&cursor.to_be_bytes());
@@ -25,157 +25,133 @@ async fn retained(server: &mut ServerSocket, cursor: u64, value: serde_json::Val
     server.send(Message::Binary(bytes)).await.unwrap();
 }
 
-#[tokio::test]
-async fn retained_backlog_over_256_keeps_terminal_and_receipts_ordered_through_handshake() {
-    retained_backlog_with_owner(None).await;
-}
-
-#[tokio::test]
-async fn owned_terminal_interleaving_preserves_receipts_and_rejects_late_ack_for_three_epochs() {
-    for epoch in 1..=3 {
-        retained_backlog_with_owner(Some(
-            crate::owner_protocol::test_support::TestAuthority::new(epoch),
-        ))
-        .await;
-    }
-}
-
-async fn retained_backlog_with_owner(
-    authority: Option<std::sync::Arc<crate::owner_protocol::test_support::TestAuthority>>,
-) {
-    use crate::owner_protocol::{scope, TransportAuthority};
-    let prompt = crate::PromptIdentity::new("conversation-held", 19, 157);
-    let expected_id = prompt.as_str().to_owned();
-    let (client, mut server) = socket_pair().await;
-    if let Some(authority) = &authority {
-        server
-            .send(Message::Text(
-                serde_json::json!({
-                    "t":"ready", "wireVersion":1,"lanes":["ctl","conv"],"agentId":"agent-1",
-                    "outputAcknowledgement":{"version":1,"streamId":stream()},
-                    "managerOwnership":{"protocol":1,"owner":authority.owner()},
-                })
-                .to_string(),
-            ))
-            .await
-            .unwrap();
-    } else {
-        reliable_ready(&mut server).await;
-    }
-    let (backlog_sent, backlog_received) = tokio::sync::oneshot::channel();
-    let (verify, verified) = tokio::sync::oneshot::channel();
-    let server_task = tokio::spawn(async move {
-        let initialize = receive_json(&mut server).await;
-        for cursor in 1..=300 {
-            retained(&mut server, cursor, serde_json::json!({
-                "jsonrpc": "2.0", "method": "session/update", "params": {
-                    "sessionId": "conversation-held", "update": {
-                        "sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "x"},
-                    },
-                },
-            })).await;
-        }
-        retained(
-            &mut server,
-            301,
-            serde_json::json!({
-                "jsonrpc": "2.0", "id": expected_id, "result": {"stopReason": "end_turn"},
-            }),
-        )
-        .await;
-        backlog_sent.send(()).unwrap();
-        verified.await.unwrap();
-        retained(&mut server, 302, serde_json::json!({
-            "jsonrpc": "2.0", "id": initialize["id"], "error": {
-                "code": -32603, "message": "Internal error", "data": {"details": "Already initialized"}
-            },
-        })).await;
+async fn next_conversation(server: &mut ServerSocket) -> serde_json::Value {
+    loop {
         let message = tokio::time::timeout(Duration::from_secs(2), server.next())
             .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        let Message::Binary(bytes) = message else {
-            panic!("expected acknowledgement")
+            .expect("client frame arrives")
+            .expect("client socket remains open")
+            .expect("client frame is readable");
+        let Message::Binary(frame) = message else {
+            panic!("expected binary client frame")
         };
-        assert_eq!(bytes[0], LANE_OUTPUT_ACK);
-        assert_eq!(&bytes[1..17], stream().as_bytes());
-        assert_eq!(u64::from_be_bytes(bytes[17..25].try_into().unwrap()), 1);
-    });
-    let (updates, mut received) = mpsc::channel(4);
-    let opening_future = Bridge::open_with_subscription_and_prompt(
-        client,
-        "agent-1",
-        "/workspace".into(),
-        (settings(None, false), None),
-        Some("conversation-held".into()),
-        Some(prompt),
-        updates,
-    );
-    let opening_owner = authority.clone();
-    let opening = tokio::spawn(async move {
-        match opening_owner {
-            Some(owner) => scope(owner, opening_future).await,
-            None => opening_future.await,
-        }
-    });
-    backlog_received.await.unwrap();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(40), received.recv())
-            .await
-            .is_err()
-    );
-    verify.send(()).unwrap();
-    let opened = opening
-        .await
-        .unwrap()
-        .expect("backlog does not block handshake RPC");
-    let mut first_receipt = None;
-    for cursor in 1..=302 {
-        let next = tokio::time::timeout(Duration::from_secs(2), received.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        let ConversationUpdate::RuntimeOutput { receipt, update } = next else {
-            panic!("all frames must retain their receipt")
-        };
-        assert_eq!(receipt.source.cursor, cursor);
-        assert_eq!(receipt.source.native_conversation_id, "conversation-held");
-        if cursor == 301 {
-            assert!(matches!(
-                update.as_deref(),
-                Some(ConversationUpdate::TurnEnded(_))
-            ));
-        } else if cursor == 302 {
-            assert!(update.is_none());
-        } else {
-            assert!(matches!(
-                update.as_deref(),
-                Some(ConversationUpdate::WithoutPromptEvidence(_))
-            ));
-        }
-        if cursor == 1 {
-            first_receipt = Some(receipt);
+        match frame.first() {
+            Some(&LANE_OUTPUT_ACK) => continue,
+            Some(&LANE_CONVERSATION) => {
+                return serde_json::from_slice(&frame[1..]).expect("conversation frame is JSON");
+            }
+            lane => panic!("unexpected client lane: {lane:?}"),
         }
     }
-    // Enqueueing and parsing all 302 frames did not acknowledge anything.
-    use crate::ConversationSettingsSupport;
-    let mut progress = opened.bridge.managed_context_progress().await.unwrap();
-    assert_eq!(*progress.borrow(), 0);
-    let first_receipt = first_receipt.unwrap();
-    let source = first_receipt.source.clone();
-    first_receipt.acknowledge().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(2), progress.changed())
+}
+
+#[path = "acp_output_startup_tests.rs"]
+mod startup;
+
+#[tokio::test]
+async fn terminal_identity_survives_passive_and_owner_first_output_scheduling() {
+    for owner_first in [false, true] {
+        let prompt = crate::PromptIdentity::new("conversation-scheduled", 1, 1);
+        let (client, mut server) = socket_pair().await;
+        reliable_ready(&mut server).await;
+        let expected_id = prompt.as_str().to_owned();
+        let server_task = tokio::spawn(async move {
+            let initialize = receive_json(&mut server).await;
+            retained(
+                &mut server,
+                1,
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":initialize["id"], "result":{}
+                }),
+            )
+            .await;
+            let open = next_conversation(&mut server).await;
+            assert_eq!(open["method"], "session/new");
+            retained(
+                &mut server,
+                2,
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":open["id"],
+                    "result":{"sessionId":"conversation-scheduled"}
+                }),
+            )
+            .await;
+            if owner_first {
+                let request = next_conversation(&mut server).await;
+                assert_eq!(request["method"], "session/prompt");
+                assert_eq!(request["id"], expected_id);
+            }
+            retained(
+                &mut server,
+                3,
+                serde_json::json!({
+                    "jsonrpc":"2.0", "id":expected_id,
+                    "result":{"stopReason":"end_turn"},
+                }),
+            )
+            .await;
+            loop {
+                let message = tokio::time::timeout(Duration::from_secs(2), server.next())
+                    .await
+                    .expect("terminal acknowledgement arrives")
+                    .expect("client socket remains open")
+                    .expect("terminal acknowledgement is readable");
+                let Message::Binary(ack) = message else {
+                    panic!("expected terminal acknowledgement")
+                };
+                if ack[0] == LANE_OUTPUT_ACK {
+                    let cursor = u64::from_be_bytes(ack[17..25].try_into().unwrap());
+                    if cursor == 3 {
+                        break;
+                    }
+                }
+            }
+        });
+        let (updates, mut received) = mpsc::channel(8);
+        let opened = Bridge::open(
+            client,
+            "agent-1",
+            "/workspace".into(),
+            settings(None, false),
+            None,
+            updates,
+        )
         .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(*progress.borrow(), 1);
-    if let Some(authority) = authority {
-        authority.revoke();
-        assert!(opened.bridge.acknowledge_output(source).await.is_err());
+        .expect("bridge opens");
+        if owner_first {
+            opened
+                .channel
+                .input
+                .send(ConversationInput::RecoverablePrompt {
+                    content: vec![ContentBlock::from("already admitted")],
+                    prompt_id: prompt.clone(),
+                })
+                .await
+                .expect("owner prompt writes");
+        }
+        let mut terminal = false;
+        for _ in 0..3 {
+            let update = tokio::time::timeout(Duration::from_secs(2), received.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            let ConversationUpdate::RuntimeOutput { receipt, update } = update else {
+                panic!("terminal must retain its output receipt")
+            };
+            terminal |= matches!(
+                update.as_deref(),
+                Some(ConversationUpdate::TurnEndedForPrompt { prompt_id, .. })
+                    if prompt_id == &prompt
+            );
+            receipt.acknowledge().await.unwrap();
+            if terminal {
+                break;
+            }
+        }
+        assert!(terminal, "identified terminal was not delivered");
+        server_task.await.unwrap();
+        stop(opened).await;
     }
-    server_task.await.unwrap();
-    stop(opened).await;
 }
 
 #[test]
@@ -185,46 +161,13 @@ fn output_capability_is_optional_and_rejects_unknown_versions() {
             "t": "ready", "wireVersion": 1, "lanes": ["ctl", "conv"], "agentId": "agent-1",
             "outputAcknowledgement": {"version": version, "streamId": stream()},
         });
-        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1").is_err());
+        assert!(validate_ready(Message::Text(ready.to_string()), "agent-1", false, None).is_err());
     }
     let ready = serde_json::json!({"t":"ready", "wireVersion":1, "lanes":["ctl","conv"], "agentId":"agent-1"});
     assert_eq!(
-        validate_ready(Message::Text(ready.to_string()), "agent-1").unwrap(),
+        validate_ready(Message::Text(ready.to_string()), "agent-1", false, None).unwrap(),
         None
     );
-}
-
-#[tokio::test]
-async fn owned_ready_requires_exact_epoch_and_durable_output_without_legacy_downgrade() {
-    use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
-    let authority = TestAuthority::new(2);
-    let base = serde_json::json!({
-        "t":"ready", "wireVersion":1,"lanes":["ctl","conv"],"agentId":"agent-1",
-        "outputAcknowledgement":{"version":1,"streamId":stream()},
-        "managerOwnership":{"protocol":1,"owner":authority.owner()},
-    });
-    for defect in ["missing", "epoch", "protocol", "ack"] {
-        let mut ready = base.clone();
-        match defect {
-            "missing" => {
-                ready.as_object_mut().unwrap().remove("managerOwnership");
-            }
-            "epoch" => ready["managerOwnership"]["owner"]["epoch"] = 1.into(),
-            "protocol" => ready["managerOwnership"]["protocol"] = 2.into(),
-            _ => {
-                ready
-                    .as_object_mut()
-                    .unwrap()
-                    .remove("outputAcknowledgement");
-            }
-        }
-        assert!(scope(authority.clone(), async {
-            validate_ready(Message::Text(ready.to_string()), "agent-1")
-        })
-        .await
-        .is_err());
-    }
-    assert!(validate_ready(Message::Text(base.to_string()), "agent-1").is_err());
 }
 
 #[tokio::test]
@@ -438,3 +381,9 @@ async fn cancelling_open_closes_its_reader_and_relay_before_retained_output_can_
         None | Some(Ok(Message::Close(_))) | Some(Err(_))
     ));
 }
+
+#[path = "acp_output_json_tests.rs"]
+mod json_budget_tests;
+
+#[path = "acp_owned_output_tests.rs"]
+mod owned;

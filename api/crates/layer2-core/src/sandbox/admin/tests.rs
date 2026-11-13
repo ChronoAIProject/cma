@@ -56,7 +56,8 @@ fn fixture() -> Fixture {
         profiles.clone(),
         retirement,
         ActivityService::new(activity.clone()),
-    );
+    )
+    .with_maintenance(sandboxes.clone());
     Fixture {
         service,
         sandboxes,
@@ -82,6 +83,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus, runtime_version: &str) 
             id: crate::SandboxProfileId("sbp_test".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: sandbox_profile_content(),
         },
         status,
@@ -252,3 +254,5 @@ fn agent_profile(id: &str, owner: &str, visibility: ProfileVisibility) -> AgentP
 
 mod controls;
 mod reads;
+
+mod always_on;

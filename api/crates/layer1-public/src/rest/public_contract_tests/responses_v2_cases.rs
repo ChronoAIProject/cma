@@ -13,7 +13,7 @@ use layer2_core::{
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("responses_v2_")?;
-    assert!(["owner", "foreign", "anonymous", "failed"].contains(&mode));
+    assert!(["owner", "output_owner", "foreign", "anonymous", "failed"].contains(&mode));
     let f = fixture().await;
     let agent = f
         .store
@@ -111,6 +111,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             .reconcile_command(&claimed.receipt.envelope.command_id)
             .await
             .unwrap();
+        // Output pages carry no completion timestamp. Seed that symbol only
+        // for the response-object scenario that declares and consumes it.
         if mode == "owner" {
             use layer2_core::sandbox::store::AgentLogStore;
             let history = f.store.agent_log(&agent.id, 0, 100).await.unwrap();

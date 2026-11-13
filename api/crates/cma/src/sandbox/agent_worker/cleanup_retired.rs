@@ -1,4 +1,6 @@
+use super::super::support::bump_log_sequence;
 use super::*;
+use layer2_core::{rfc3339_at, sandbox::store::AgentWorkMutation};
 
 impl AgentWorker {
     pub(super) async fn complete_retired_cleanup(

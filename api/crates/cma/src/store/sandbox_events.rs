@@ -1,6 +1,5 @@
 //! Gap-free Mongo event stream for sandbox lifecycle changes.
 
-use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{SandboxEventStore, SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind};
@@ -79,6 +78,7 @@ pub(super) async fn validate_in_transaction(
     last_seq: u64,
     session: &mut ClientSession,
 ) -> Result<(), TransactionEventError> {
+    let mut read = super::mongo_read_telemetry::Read::find(store.sandbox_events.name());
     let mut cursor = store
         .sandbox_events
         .find(doc! { "sandbox_id": sandbox_id.as_str() })
@@ -87,9 +87,8 @@ pub(super) async fn validate_in_transaction(
         .await
         .map_err(TransactionEventError::Driver)?;
     let mut sequence = 0_u64;
-    while let Some(document) = cursor
-        .stream(&mut *session)
-        .try_next()
+    while let Some(document) = read
+        .next_in_session(&mut cursor, &mut *session)
         .await
         .map_err(TransactionEventError::Driver)?
     {
@@ -106,6 +105,7 @@ pub(super) async fn validate_in_transaction(
             SandboxStoreError::SequenceConflict,
         ));
     }
+    read.complete();
     Ok(())
 }
 
@@ -391,6 +391,7 @@ impl SandboxEventStore for MongoSandboxStore {
             signed(after, "sandbox event cursor").map_err(|_| SandboxStoreError::InvalidPage)?;
         let high_water =
             signed(last_seq, "sandbox event high water").map_err(SandboxStoreError::Corrupt)?;
+        let mut read = super::mongo_read_telemetry::Read::find(self.sandbox_events.name());
         let mut cursor = self
             .sandbox_events
             .find(doc! {
@@ -402,14 +403,15 @@ impl SandboxEventStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut events = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
+        while let Some(document) = read
+            .next(&mut cursor)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
             events.push(read_event(&document)?);
         }
         verify_contiguous(after, last_seq, limit, &events)?;
+        read.complete();
         Ok(events)
     }
 }

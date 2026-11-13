@@ -12,8 +12,11 @@ use super::BodyProblem;
 
 #[derive(Clone)]
 pub struct HierarchyState {
+    pub(super) concurrent_detail_enrichment: bool,
     pub(super) colors: Option<Arc<layer2_core::sandbox::colors::SandboxColorService>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
+    pub(super) retained_recovery: Option<Arc<layer2_core::sandbox::RetainedRecoveryService>>,
+    pub(super) retained_reopening: Option<Arc<layer2_core::sandbox::RetainedReopenService>>,
     pub(super) users: Option<Arc<layer2_core::UserDirectory>>,
     pub(super) sandboxes: Arc<SandboxService>,
     pub(super) workspaces: Arc<WorkspaceService>,
@@ -29,9 +32,12 @@ impl HierarchyState {
         operations: Arc<dyn OperationStore>,
     ) -> Self {
         Self {
+            concurrent_detail_enrichment: false,
             colors: None,
             users: None,
             runtime_updates: None,
+            retained_recovery: None,
+            retained_reopening: None,
             sandboxes,
             workspaces,
             hierarchy,
@@ -39,11 +45,32 @@ impl HierarchyState {
         }
     }
 
+    pub fn with_concurrent_detail_enrichment(mut self, enabled: bool) -> Self {
+        self.concurrent_detail_enrichment = enabled;
+        self
+    }
+
     pub fn with_runtime_updates(
         mut self,
         service: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
     ) -> Self {
         self.runtime_updates = Some(service);
+        self
+    }
+
+    pub fn with_retained_recovery(
+        mut self,
+        service: Arc<layer2_core::sandbox::RetainedRecoveryService>,
+    ) -> Self {
+        self.retained_recovery = Some(service);
+        self
+    }
+
+    pub fn with_retained_reopening(
+        mut self,
+        service: Arc<layer2_core::sandbox::RetainedReopenService>,
+    ) -> Self {
+        self.retained_reopening = Some(service);
         self
     }
 

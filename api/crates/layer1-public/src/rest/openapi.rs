@@ -12,7 +12,7 @@ use super::admin::sandboxes::{
 use super::admin::settings::{
     InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
     PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody,
+    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
 };
 use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView};
 use super::agent_openapi_shapes::*;
@@ -181,7 +181,7 @@ use super::trigger_openapi_shapes::*;
         super::sandboxes::read,
         super::sandboxes::remove,
         super::sandboxes::pause,
-        super::sandboxes::revive,
+        super::sandboxes::revive, super::sandbox_always_on::always_on,
         super::sandbox_runtime_update::update,
         super::sandbox_commands::create,
         super::sandbox_commands::read,
@@ -202,7 +202,7 @@ use super::trigger_openapi_shapes::*;
         super::admin::sandboxes::list,
         super::admin::sandboxes::read,
         super::admin::sandboxes::events,
-        super::admin::sandboxes::retire,
+        super::admin::sandboxes::retire, super::admin::sandboxes::always_on, super::admin::auto_pause::preview, super::admin::auto_pause::pause_idle_now,
         super::admin::runtime_update::update,
         super::admin::profiles::list,
         super::admin::profiles::retire,
@@ -444,6 +444,8 @@ use super::trigger_openapi_shapes::*;
         ProfileReferenceBody,
         PlatformDefaultsBody,
         InactivitySettingsBody,
+        UsageReportingSettingsBody,
+        super::sandbox_always_on::AlwaysOnRequest, super::admin::sandboxes::AdminAlwaysOnRequest, super::admin::auto_pause::AutoPausePreviewView, super::admin::auto_pause::PauseIdleNowRequest, super::admin::auto_pause::PauseIdleNowView,
         RetentionSettingsBody,
         PlatformLimitsBody,
         TriggerSettingsBody,

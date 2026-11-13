@@ -89,7 +89,7 @@ describe('native warm pool operations', () => {
     rerender(<Operations client={client} capabilities={['read_all_sandboxes']} />);
     expect(screen.queryByRole('tab', { name: 'Warm pools' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Disable pool' })).not.toBeInTheDocument();
-    await screen.findByRole('cell', { name: 'Alex Chen' });
+    await screen.findByText('Alex Chen', { exact: true });
   });
 
   it('reports observed desired/ready/pending counts and retains each original image', async () => {

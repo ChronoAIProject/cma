@@ -44,7 +44,8 @@ async fn capture_pages(router: &axum::Router, agent: &str) -> Vec<Value> {
 #[tokio::test]
 async fn operation_replay_freezes_page_boundaries_and_does_not_admit_commands() {
     let fixture = fixture(true, false).await;
-    let recorder = DurableAgentUpdateRecorder::new(fixture.store.clone());
+    let recorder =
+        DurableAgentUpdateRecorder::with_writer_policy(fixture.store.clone(), task_policy());
     let mut assembly = AgentMessageAssembly::default();
     for number in 1..=3 {
         for update in [
@@ -136,7 +137,8 @@ async fn native_operations_survive_public_replay_and_browser_reload() {
         ],
     )
     .await;
-    let recorder = DurableAgentUpdateRecorder::new(fixture.store.clone());
+    let recorder =
+        DurableAgentUpdateRecorder::with_writer_policy(fixture.store.clone(), task_policy());
     let mut assembly = AgentMessageAssembly::default();
     for update in capture["updates"]
         .as_array()

@@ -36,7 +36,7 @@ export function CreationFlow({
   const initial = request.kind === 'profile_use' ? fromProfileUse(request.selection) : undefined;
   if (request.kind === 'new_agent') {
     return (
-      <Modal open title="New task" onClose={onClose}>
+      <Modal open presentation="task" title="New task" onClose={onClose}>
         <TaskHome
           client={client}
           viewerId={viewerId}

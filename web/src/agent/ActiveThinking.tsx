@@ -1,23 +1,32 @@
+import { elapsedTime, toolDuration } from './workspaceTime';
 import type { ConversationState } from './model';
 import { Thinking } from './Thinking';
 import { isPendingTool } from './toolStatus';
-import { visibleTurnText } from './tokenEstimate';
 import { Presence } from '../ui/Presence';
 import { useThinkingPlacement } from './thinkingPlacement';
-import { characterForTurn } from '../character/status';
 
 /** Ephemeral turn status follows the reply in the conversation, never in stored history. */
 export function ActiveThinking({ conversation }: { readonly conversation: ConversationState }) {
   const runId = conversation.activeRunId;
   const placement = useThinkingPlacement(conversation);
-  const visibleText = visibleTurnText(conversation);
   const activities = conversation.toolCalls.filter(
     (item) => item.runId === runId && isPendingTool(item),
   );
-  const pose = characterForTurn({
-    pendingTools: activities.length,
-    replying: visibleText.some((part) => part.id === 'reply' && part.text !== ''),
-  });
+  const last = conversation.latestTurnId;
+  const lastTiming = last === undefined ? undefined : conversation.turnTiming?.[last];
+  const stoppedDuration = toolDuration(lastTiming?.startedAt, lastTiming?.finishedAt);
+  if (runId === undefined && last && conversation.turnOutcomes?.[last] === 'interrupted') {
+    return (
+      <div className="workspace-stopped" role="status">
+        <span aria-hidden="true">■</span>
+        <span>
+          {stoppedDuration === undefined
+            ? 'Stopped'
+            : `Stopped after ${elapsedTime(stoppedDuration)}`}
+        </span>
+      </div>
+    );
+  }
   return (
     <Presence>
       {runId === undefined ? null : (
@@ -26,18 +35,6 @@ export function ActiveThinking({ conversation }: { readonly conversation: Conver
             <Thinking
               key={runId}
               startedAt={conversation.activeRunStartedAt}
-              pose={pose}
-              visibleText={visibleText}
-              visibleAnchor={
-                String(conversation.visibleUsageAnchor?.turnSequence) === runId
-                  ? conversation.visibleUsageAnchor?.parts
-                  : undefined
-              }
-              usage={
-                String(conversation.usage?.currentTurn?.turnSequence) === runId
-                  ? conversation.usage?.currentTurn
-                  : undefined
-              }
               text={conversation.reasoning
                 .filter((item) => item.runId === runId)
                 .map((item) => item.content)

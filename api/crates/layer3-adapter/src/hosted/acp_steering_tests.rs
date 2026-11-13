@@ -118,9 +118,12 @@ async fn steering_keeps_one_prompt_waiter_and_cancel_survives_a_long_turn() {
             .await
             .unwrap()
             .unwrap();
-        assert!(
-            matches!(outcome, ConversationUpdate::TurnEnded(response) if response.stop_reason == TurnStopReason::Cancelled)
-        );
+        assert!(matches!(
+            outcome,
+            ConversationUpdate::TurnEndedForPrompt { prompt_id, response }
+                if prompt_id == crate::PromptIdentity::new("held-turn", 7, 1)
+                    && response.stop_reason == TurnStopReason::Cancelled
+        ));
         assert!(
             receiver.try_recv().is_err(),
             "steering has no second terminal"

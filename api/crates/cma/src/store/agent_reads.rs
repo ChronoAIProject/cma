@@ -1,6 +1,5 @@
 //! Mongo owner-agent filtering for the Layer 2 read model.
 
-use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::sandbox::store::{
     AgentReadQueryStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
@@ -37,6 +36,7 @@ impl AgentReadQueryStore for MongoSandboxStore {
             filter.insert("_id", doc! { "$gt": cursor });
         }
 
+        let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
             .find(filter)
@@ -45,8 +45,8 @@ impl AgentReadQueryStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
-        while let Some(document) = cursor
-            .try_next()
+        while let Some(document) = read
+            .next(&mut cursor)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
@@ -63,6 +63,7 @@ impl AgentReadQueryStore for MongoSandboxStore {
                 .id
                 .to_string()
         });
+        read.complete();
         Ok(Page { items, next })
     }
 }

@@ -60,6 +60,9 @@ pub struct BindingRefusal {
 }
 #[derive(Serialize, ToSchema)]
 pub struct BindingView {
+    /// Maximum queue wait for newly admitted binding messages, in seconds.
+    #[schema(required = false)]
+    pub queue_lifetime_seconds: u32,
     pub binding_id: String,
     #[serde(skip_serializing_if = "BindingTarget::is_profile")]
     pub target: BindingTarget,
@@ -390,6 +393,7 @@ impl From<ProviderBinding> for BindingView {
             BindingState::Failed { reason } => ("failed", Some(reason)),
         };
         Self {
+            queue_lifetime_seconds: value.profile.effective_queue_lifetime_seconds(),
             binding_id: value.binding_id,
             target: value
                 .existing_agent
@@ -438,6 +442,7 @@ impl From<BindingConversation> for BindingConversationView {
 }
 fn error(error: BindingError) -> Response {
     let (status, code) = match &error {
+        BindingError::AdmissionPaused => return super::admission_problem::paused(),
         BindingError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
         BindingError::NotFound => (StatusCode::NOT_FOUND, "binding_not_found"),
         BindingError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, "invalid_binding"),

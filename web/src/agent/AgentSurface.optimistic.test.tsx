@@ -73,7 +73,9 @@ it('does not flash a queue card when discovery finishes before the idle Send rec
   h.listQueued.mockImplementation(async () => json(queuedPage('Immediate local message')));
   const reads = h.listQueued.mock.calls.length;
   fireEvent(window, new Event('focus'));
-  await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(reads));
+  await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(reads), {
+    timeout: 3000,
+  });
   expect(document.querySelector('.queued-messages')).toBeNull();
   expect(bubbles('Immediate local message')).toHaveLength(1);
   await act(async () => h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));

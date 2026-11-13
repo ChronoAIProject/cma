@@ -6,6 +6,41 @@ use tokio::sync::Notify;
 
 use super::*;
 
+pub(crate) struct DrivenScheduler {
+    work: ScheduledWork,
+    interval: Duration,
+}
+
+impl CommandScheduler {
+    pub(crate) fn driven(self) -> DrivenScheduler {
+        DrivenScheduler {
+            work: ScheduledWork::new(self.worker, self.concurrency, self.reconcile_pacing),
+            interval: self.interval,
+        }
+    }
+}
+
+impl DrivenScheduler {
+    pub(crate) async fn poll(&mut self) {
+        // Keep real cooldowns and discovery cadence, but finish each poll's
+        // work before the next one so slow Mongo scans cannot lose attempts.
+        tokio::time::sleep(self.interval).await;
+        self.work.poll();
+        while let Some(result) = self.work.tasks.join_next_with_id().await {
+            match &result {
+                Err(error) => panic!("driven scheduler task failed: {error}"),
+                Ok((_, Err(error))) => panic!("driven scheduler work failed: {error:?}"),
+                Ok((_, Ok(_))) => {}
+            }
+            self.work.completed(result);
+            self.work.fill_slots();
+        }
+        assert!(self.work.in_flight.is_empty());
+        assert!(self.work.queued.is_empty());
+        assert!(!self.work.polling);
+    }
+}
+
 #[derive(Clone)]
 enum Behavior {
     Complete,
@@ -13,11 +48,14 @@ enum Behavior {
     Deferred(Duration),
     Wait(Arc<Notify>),
     Fail,
+    Conflict,
+    Stale,
     Panic,
 }
 
 #[derive(Default)]
 struct Probe {
+    dispatched: Mutex<BTreeMap<AgentCommandId, bool>>,
     jobs: Mutex<BTreeMap<AgentCommandId, Behavior>>,
     calls: Mutex<Vec<AgentCommandId>>,
     active: AtomicUsize,
@@ -47,6 +85,7 @@ impl Probe {
             interval: POLL_INTERVAL,
             concurrency,
             drain_timeout: Duration::from_secs(5),
+            reconcile_pacing: false,
         }
     }
 }
@@ -64,7 +103,7 @@ impl CommandScheduleWork for Probe {
     async fn discover(
         &self,
         page: &PageRequest,
-    ) -> Result<Page<AgentCommandId>, CommandLedgerError> {
+    ) -> Result<Page<ScheduledAgentCommand>, CommandLedgerError> {
         if self.fail_poll.swap(false, Ordering::SeqCst) {
             return Err(CommandLedgerError::Unavailable);
         }
@@ -82,7 +121,20 @@ impl CommandScheduleWork for Probe {
         let next = (ids.len() > usize::from(page.limit))
             .then(|| ids[usize::from(page.limit) - 1].to_string());
         ids.truncate(usize::from(page.limit));
-        Ok(Page { items: ids, next })
+        Ok(Page {
+            items: ids
+                .into_iter()
+                .map(|id| {
+                    let dispatched = self.dispatched.lock().unwrap();
+                    ScheduledAgentCommand {
+                        dispatched: dispatched.contains_key(&id),
+                        reconcile_current: dispatched.get(&id).copied().unwrap_or(false),
+                        id,
+                    }
+                })
+                .collect(),
+            next,
+        })
     }
 
     async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
@@ -99,6 +151,8 @@ impl CommandScheduleWork for Probe {
             Behavior::Deferred(delay) => return Ok(delay),
             Behavior::Wait(release) => release.notified().await,
             Behavior::Fail => return Err(CommandLedgerError::Unavailable),
+            Behavior::Conflict => return Err(CommandLedgerError::Conflict),
+            Behavior::Stale => return Err(CommandLedgerError::StaleClaim),
             Behavior::Panic => panic!("simulated worker panic"),
         }
         self.jobs.lock().unwrap().remove(id);
@@ -273,3 +327,6 @@ async fn deferred_messages_release_slots_for_a_later_page_interrupt() {
     shutdown.send(true).unwrap();
     scheduler.await.unwrap();
 }
+
+#[path = "scheduler_pacing_tests.rs"]
+mod pacing;

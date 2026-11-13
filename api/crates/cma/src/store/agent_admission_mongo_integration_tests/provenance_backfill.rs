@@ -244,3 +244,6 @@ async fn provenance_backfill_recovers_an_ambiguous_commit_without_rewriting_fact
     );
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "provenance_backfill/progress_tests.rs"]
+mod progress_tests;

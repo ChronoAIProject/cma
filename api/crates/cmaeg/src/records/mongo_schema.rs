@@ -144,17 +144,28 @@ pub async fn verify_with_authority(
     }
     Ok(())
 }
+
+/// Whether the additive channel guard validator/index has been installed.
+pub async fn guard_migration_required(db: &Database) -> Result<bool, RecordError> {
+    Ok(db
+        .collection::<Document>(MIGRATIONS)
+        .find_one(doc! {"_id":"github_channel_guard","version":1})
+        .await
+        .map_err(failure)?
+        .is_none())
+}
 /// Independent optional migrations must preserve every supported marker.
 pub(crate) fn migration_validator() -> Document {
     doc! {
         "$jsonSchema":{"bsonType":"object","additionalProperties":false,
             "required":["_id","version"],"properties":{
-                "_id":{"bsonType":"string"},"version":{"enum":[1,2]}}},
+                "_id":{"bsonType":"string"},"version":{"enum":[1,2,3,4,5,6]}}},
         "$or":[{"_id":"schema","version":2},
             {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
             {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
             {"_id":"worker_tracking_cutover","version":1},
-            {"_id":"github_integrations","version":{"$in":[1,2]}}]
+            {"_id":"github_channel_guard","version":1},
+            {"_id":"github_integrations","version":{"$in":[1,2,3,4,5,6]}}]
     }
 }
 pub async fn migrate(db: &Database) -> Result<(), RecordError> {
@@ -162,7 +173,7 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .await
         .map_err(failure)?;
     let record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
-    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]}}}};
+    "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
     let mut interaction_validator = record_validator.clone();
     let interaction_schema = interaction_validator
         .get_document_mut("$jsonSchema")
@@ -210,6 +221,14 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .map_err(failure)?;
     db.collection::<Document>(MIGRATIONS)
         .update_one(doc! {"_id":"schema"}, doc! {"$set":{"version":2}})
+        .upsert(true)
+        .await
+        .map_err(failure)?;
+    db.collection::<Document>(MIGRATIONS)
+        .update_one(
+            doc! {"_id":"github_channel_guard"},
+            doc! {"$set":{"version":1}},
+        )
         .upsert(true)
         .await
         .map_err(failure)?;

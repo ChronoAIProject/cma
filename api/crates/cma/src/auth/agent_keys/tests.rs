@@ -18,11 +18,13 @@ use std::{
 use tokio::sync::RwLock;
 
 mod http;
+mod security;
 
 struct Fixture {
     base: String,
     response: Arc<RwLock<Value>>,
     status: Arc<RwLock<StatusCode>>,
+    response_headers: Arc<RwLock<HeaderMap>>,
     introspections: Arc<AtomicUsize>,
     bindings: Arc<InMemorySandboxStore>,
     store: Arc<MemoryAuthStore>,
@@ -43,6 +45,8 @@ impl Fixture {
         let control = response.clone();
         let status = Arc::new(RwLock::new(StatusCode::OK));
         let controlled_status = status.clone();
+        let response_headers = Arc::new(RwLock::new(HeaderMap::new()));
+        let controlled_headers = response_headers.clone();
         let introspections = Arc::new(AtomicUsize::new(0));
         let observed = introspections.clone();
         let app = Router::new().route(
@@ -51,13 +55,18 @@ impl Fixture {
                 let control = control.clone();
                 let status = controlled_status.clone();
                 let observed = observed.clone();
+                let response_headers = controlled_headers.clone();
                 async move {
                     assert_eq!(form["service_id"], "cma-service");
                     assert_eq!(form["token_type_hint"], "api_key");
                     assert_eq!(form["client_id"], "cma-client");
                     assert!(is_agent_key(&form["token"]));
                     observed.fetch_add(1, Ordering::SeqCst);
-                    (*status.read().await, Json(control.read().await.clone()))
+                    (
+                        *status.read().await,
+                        response_headers.read().await.clone(),
+                        Json(control.read().await.clone()),
+                    )
                 }
             }),
         );
@@ -70,6 +79,7 @@ impl Fixture {
             base,
             response,
             status,
+            response_headers,
             introspections,
             bindings: Arc::new(InMemorySandboxStore::default()),
             store: Arc::new(MemoryAuthStore::default()),

@@ -12,13 +12,19 @@ pub(super) enum Failure {
     Deadline,
     Unavailable,
     Corrupt,
+    Delay(Duration),
 }
 
 pub(super) struct Store {
     pub(super) inner: InMemorySandboxStore,
     pub(super) calls: Mutex<Vec<(String, String)>>,
+    pub(super) pauses: Mutex<Vec<SandboxInactivityPauseRequest>>,
     pub(super) failure: Mutex<Option<(&'static str, String, Failure)>>,
+    pub(super) loss_race: Mutex<Option<Sandbox>>,
     pub(super) delay: Duration,
+    /// When set, pause requests are decided by this store instead of being
+    /// refused: the fixture candidates have no live runtimes of their own.
+    pub(super) pause_decisions: std::sync::OnceLock<InMemorySandboxStore>,
 }
 
 impl Store {
@@ -26,8 +32,11 @@ impl Store {
         Arc::new(Self {
             inner: InMemorySandboxStore::default(),
             calls: Mutex::default(),
+            pauses: Mutex::default(),
             failure: Mutex::default(),
+            loss_race: Mutex::default(),
             delay,
+            pause_decisions: std::sync::OnceLock::new(),
         })
     }
     pub(super) fn fail(&self, phase: &'static str, key: &str, failure: Failure) {
@@ -59,6 +68,10 @@ impl Store {
             Some(Failure::Deadline) => std::future::pending().await,
             Some(Failure::Unavailable) => Err(SandboxStoreError::Unavailable("fixture".into())),
             Some(Failure::Corrupt) => Err(SandboxStoreError::Corrupt("fixture".into())),
+            Some(Failure::Delay(delay)) => {
+                tokio::time::sleep(delay).await;
+                Ok(())
+            }
             None => {
                 if !self.delay.is_zero() {
                     tokio::time::sleep(self.delay).await;
@@ -80,6 +93,21 @@ impl SandboxStore for Store {
     }
     async fn save_sandbox(&self, revision: u64, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
         self.inner.save_sandbox(revision, sandbox).await
+    }
+    async fn unpublished_runtime_recovery_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<SandboxUnpublishedRecoverySnapshot, SandboxStoreError> {
+        self.observe("recovery_snapshot", id.as_str()).await?;
+        self.inner.unpublished_runtime_recovery_snapshot(id).await
+    }
+    async fn admit_unpublished_runtime_recovery(
+        &self,
+        request: SandboxUnpublishedRecoveryRequest,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        self.observe("recovery_admit", request.snapshot.sandbox.id.as_str())
+            .await?;
+        self.inner.admit_unpublished_runtime_recovery(request).await
     }
     async fn list_sandboxes(
         &self,
@@ -109,7 +137,15 @@ impl SandboxReconciliationStore for Store {
         &self,
         request: SandboxRuntimeLossRequest,
     ) -> Result<SandboxRuntimeLossOutcome, SandboxStoreError> {
-        self.inner.recover_runtime_loss(request).await
+        let id = request.sandbox_id.clone();
+        self.observe("loss", id.as_str()).await?;
+        let race = self.loss_race.lock().unwrap().take();
+        if let Some(newer) = race {
+            self.inner.save_sandbox(newer.revision - 1, newer).await?;
+        }
+        let outcome = self.inner.recover_runtime_loss(request).await?;
+        self.observe("loss_reply", id.as_str()).await?;
+        Ok(outcome)
     }
     async fn unowned_runtime_authority(
         &self,
@@ -147,13 +183,33 @@ impl SandboxMaintenanceStore for Store {
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         self.observe("pause", request.sandbox_id.as_str()).await?;
-        Ok(SandboxMaintenanceOutcome::NotEligible)
+        self.pauses.lock().unwrap().push(request.clone());
+        match self.pause_decisions.get() {
+            Some(decisions) => decisions.schedule_inactivity_pause(request).await,
+            None => Ok(SandboxMaintenanceOutcome::NotEligible),
+        }
     }
     async fn schedule_image_rotation(
         &self,
         request: SandboxImageRotationRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         self.inner.schedule_image_rotation(request).await
+    }
+    async fn preview_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        self.inner.preview_inactivity_pause(request).await
+    }
+    async fn set_sandbox_always_on(
+        &self,
+        sandbox_id: SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        self.inner
+            .set_sandbox_always_on(sandbox_id, expected_revision, always_on)
+            .await
     }
 }
 
@@ -165,6 +221,7 @@ pub(super) fn sandbox(index: usize) -> Sandbox {
         name: format!("fixture-{index}"),
         origin: SandboxOrigin::Manual,
         profile: SandboxProfileSnapshot {
+            always_on: None,
             id: SandboxProfileId("sbp_fixture".into()),
             revision: 1,
             digest: "a".repeat(64),

@@ -412,3 +412,55 @@ async fn output_only_tool_updates_still_reject_stopped_agents() {
 
 #[path = "tool_writer_admission_tests.rs"]
 mod writer_admission_tests;
+
+#[tokio::test]
+async fn file_diffs_on_initial_tool_events_survive_the_status_only_completion() {
+    let (store, working, _) = working_agent().await;
+    let store = Arc::new(store);
+    let recorder = DurableAgentUpdateRecorder::with_writer_policy(
+        store.clone(),
+        Arc::new(
+            serde_json::from_value(serde_json::json!({
+                "mode":"all", "accounts":[], "capabilities":["replay_presentation"]
+            }))
+            .unwrap(),
+        ),
+    );
+    let mut assembly = AgentMessageAssembly::default();
+    let started = serde_json::from_value(serde_json::json!({
+        "sessionUpdate":"tool_call", "toolCallId":"edit-proof", "title":"Editing files", "kind":"edit", "status":"in_progress",
+        "content":[{"type":"diff", "path":"/home/cma/app.js", "oldText":"old\n", "newText":"new\nextra\n"}]
+    })).unwrap();
+    let start = recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Said(started),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        start.appended[0].kind,
+        AgentLogKind::ToolCallStarted { .. }
+    ));
+    let AgentLogKind::ToolOutputReported { output, .. } = &start.appended[1].kind else {
+        panic!("file diff must be durable");
+    };
+    assert!(output.text.contains("File: \"/home/cma/app.js\" +2 −1"));
+    assert!(output.text.contains("-old\n+new\n+extra\n"));
+    assert!(!output.truncated);
+    let completed = serde_json::from_value(serde_json::json!({"sessionUpdate":"tool_call_update","toolCallId":"edit-proof","status":"completed"})).unwrap();
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            ConversationUpdate::Said(completed),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert!(store.agent_log(&working.id, 0, 200).await.unwrap().iter().any(|entry| matches!(&entry.kind, AgentLogKind::ToolOutputReported { output, .. } if output.text.contains("+extra"))));
+}

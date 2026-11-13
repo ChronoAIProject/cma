@@ -35,12 +35,14 @@ pub(super) async fn production_adapter(
     let mut owner_controls = Vec::new();
     let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
 
-    let routing_client = match store.ownership_routing_client() {
-        Some(client) => client,
-        None => mongodb::Client::with_uri_str(&config.mongodb_uri)
-            .await
-            .map_err(|_| "runtime routing database unavailable")?,
-    };
+    let mut routing_options = mongodb::options::ClientOptions::parse(&config.mongodb_uri)
+        .await
+        .map_err(|_| "runtime routing database unavailable")?;
+    routing_options.cmap_event_handler = Some(mongodb::event::EventHandler::callback(
+        crate::store::mongo_latency::observer(&routing_options, "routing"),
+    ));
+    let routing_client = mongodb::Client::with_options(routing_options)
+        .map_err(|_| "runtime routing database unavailable")?;
     let runtime_database = routing_client.database(&config.mongodb_database);
     crate::store::isolation::verify_with_authority(&runtime_database, config.mongodb_authority)
         .await
@@ -75,7 +77,14 @@ pub(super) async fn production_adapter(
         .with_reclaimer(reclaimer);
         let transport = ProviderHostedControlTransport::for_retained_opensandbox(client.clone())
             .map_err(|e| e.to_string())?
-            .with_subscriptions(subscriptions.clone());
+            .with_subscriptions(subscriptions.clone())
+            .with_retained_json(config.features.retained_json)
+            .with_coordinated_ingress(config.features.coordinated_ingress)
+            .with_bounded_raw_output(config.features.bounded_raw_output)
+            .with_bounded_permission_state(config.features.bounded_permission_state)
+            .with_bounded_update_relay(config.features.bounded_update_relay)
+            .with_output_json_budget(config.features.output_json_budget)
+            .with_shared_runtime_output(config.features.shared_runtime_output);
         let transport = register_owner_control(config, "hosted", transport, &mut owner_controls);
         backends.opensandbox = Some(Arc::new(
             ProviderHostedBackend::new(client, transport, &config.deployment_id)
@@ -147,7 +156,14 @@ pub(super) async fn production_adapter(
             config.runtime.agent_sandbox_runtime_transport,
         )
         .map_err(|e| e.to_string())?
-        .with_subscriptions(subscriptions);
+        .with_subscriptions(subscriptions)
+        .with_retained_json(config.features.retained_json)
+        .with_coordinated_ingress(config.features.coordinated_ingress)
+        .with_bounded_raw_output(config.features.bounded_raw_output)
+        .with_bounded_permission_state(config.features.bounded_permission_state)
+        .with_bounded_update_relay(config.features.bounded_update_relay)
+        .with_output_json_budget(config.features.output_json_budget)
+        .with_shared_runtime_output(config.features.shared_runtime_output);
         let transport = register_owner_control(config, "native", transport, &mut owner_controls);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client, transport,

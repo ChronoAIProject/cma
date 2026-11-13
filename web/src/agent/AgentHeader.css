@@ -55,7 +55,7 @@
   box-shadow: var(--focus-ring);
 }
 .agent-toolbar__heading {
-  min-width: 0;
+  min-width: var(--dsw-alias-workspace-title-min);
   margin: 0;
   font-size: 14px;
   line-height: 20px;
@@ -156,4 +156,11 @@
   .agent-toolbar__title {
     transition: none;
   }
+}
+
+.agent-toolbar__actions button[aria-controls='agent-files-panel'][aria-expanded='true'] {
+  background: var(--dsw-alias-workspace-selected);
+}
+.agent-toolbar__actions button[aria-controls='agent-files-panel'][aria-expanded='false'] {
+  background: transparent;
 }

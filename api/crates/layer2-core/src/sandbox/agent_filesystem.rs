@@ -23,6 +23,7 @@ mod browser_control;
 #[path = "agent_environment_service.rs"]
 mod environment;
 
+mod read;
 mod read_check;
 mod scope;
 use scope::{public_path, require_home_mutation};
@@ -65,7 +66,18 @@ impl From<AdapterError> for AgentFileError {
                 Self::Conflict
             }
             AdapterError::Rejected(_) | AdapterError::OperationIdentityConflict(_) => Self::Invalid,
-            _ => Self::Unavailable,
+            error => {
+                use crate::dependency_diagnostics::{Dependency, Failure, Reason};
+                let reason = match error {
+                    AdapterError::AtCapacity(_) => Reason::Capacity,
+                    AdapterError::RuntimeLedgerHold(_) => Reason::RuntimeLedgerHold,
+                    AdapterError::InputAuthorityUnavailable(_) => Reason::InputAuthority,
+                    AdapterError::PromptNotWritten(_) => Reason::PromptNotWritten,
+                    _ => Reason::Unavailable,
+                };
+                Failure::new(Dependency::Runtime, reason).record();
+                Self::Unavailable
+            }
         }
     }
 }
@@ -74,6 +86,8 @@ pub struct AgentFileService {
     access: Arc<ResourceAccessService>,
     adapter: Arc<dyn SandboxAdapter>,
     task_experience: Arc<super::task_experience::TaskExperiencePolicy>,
+    environment_cache: Option<Arc<environment::ObservationCache>>,
+    read_timings: bool,
 }
 impl AgentFileService {
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
@@ -81,6 +95,8 @@ impl AgentFileService {
             access,
             adapter,
             task_experience: Default::default(),
+            environment_cache: None,
+            read_timings: false,
         })
     }
 
@@ -92,6 +108,18 @@ impl AgentFileService {
             access: self.access.clone(),
             adapter: self.adapter.clone(),
             task_experience: policy,
+            environment_cache: self.environment_cache.clone(),
+            read_timings: self.read_timings,
+        })
+    }
+
+    pub fn with_background_environment(self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::new(Self {
+            access: self.access.clone(),
+            adapter: self.adapter.clone(),
+            task_experience: self.task_experience.clone(),
+            environment_cache: enabled.then(|| Arc::new(environment::ObservationCache::new())),
+            read_timings: self.read_timings,
         })
     }
 
@@ -143,56 +171,6 @@ impl AgentFileService {
         response
             .entries
             .retain(|entry| public_path(agent_id, &entry.path, false).is_ok());
-        Ok(response)
-    }
-
-    pub async fn read(
-        &self,
-        caller: &crate::Caller,
-        context: Option<&CallerContext>,
-        credential: Option<&str>,
-        agent_id: &AgentId,
-        path: &str,
-        max_bytes: u64,
-    ) -> Result<AgentFileReadReceipt, AgentFileError> {
-        let authorized = self
-            .authorize(
-                caller,
-                context,
-                credential,
-                agent_id,
-                ResourceCapability::ViewFiles,
-                AccessPurpose::Read,
-            )
-            .await?;
-        let request = runtime_request(
-            &authorized.snapshot.lineage.sandbox,
-            agent_id,
-            path,
-            false,
-            |sandbox, boot_id| {
-                Ok(AgentFileReadRequest {
-                    owner_access: authorized
-                        .decision
-                        .allows(ResourceCapability::ManageSharing),
-                    protected_paths: Vec::new(),
-                    sandbox_id: sandbox.id.to_string(),
-                    runtime_generation: generation(sandbox)?,
-                    boot_id,
-                    path: path.into(),
-                    max_bytes,
-                })
-            },
-        )?;
-        let response = self
-            .adapter
-            .read_agent_file(
-                &RuntimeHandle(runtime(&authorized.snapshot.lineage.sandbox)?),
-                &request,
-            )
-            .await?;
-        self.finish(&authorized, agent_id, ResourceCapability::ViewFiles)
-            .await?;
         Ok(response)
     }
 

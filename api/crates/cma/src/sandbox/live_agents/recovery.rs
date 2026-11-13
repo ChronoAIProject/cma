@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use crate::sandbox::agent_worker::{CapacityRecoveryReconnect, ReconnectAction};
 use layer2_core::sandbox::store::{
     AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest,
     AgentLifecycleStore, SandboxStoreError,
@@ -32,11 +33,23 @@ pub(crate) trait LiveAgentConnectionLossHandler: Send + Sync {
 
 pub(crate) struct DurableAgentConnectionLossHandler {
     store: Arc<dyn AgentLifecycleStore>,
+    capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
 }
 
 impl DurableAgentConnectionLossHandler {
+    #[cfg(test)]
     pub(crate) fn new(store: Arc<dyn AgentLifecycleStore>) -> Arc<Self> {
-        Arc::new(Self { store })
+        Self::with_capacity_recovery(store, Arc::new(OnceLock::new()))
+    }
+
+    pub(crate) fn with_capacity_recovery(
+        store: Arc<dyn AgentLifecycleStore>,
+        capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            capacity_restart,
+        })
     }
 }
 
@@ -85,6 +98,14 @@ impl DurableAgentConnectionLossHandler {
                         != Some(current.work.next_fence))
             {
                 return;
+            }
+            if let Some(recovery) = self.capacity_restart.get() {
+                match recovery.route(&attachment.agent_id).await {
+                    Ok(ReconnectAction::Ordinary) => {}
+                    // Failed/unknown attachment outcomes remain durable and
+                    // are retried by the restart sweep. Never reopen or replay.
+                    Ok(ReconnectAction::Recovered | ReconnectAction::Deferred) | Err(_) => return,
+                }
             }
             let request = AgentConnectionRecoveryRequest {
                 agent_id: attachment.agent_id.clone(),

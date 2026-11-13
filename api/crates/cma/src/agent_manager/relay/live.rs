@@ -16,6 +16,8 @@ use layer2_core::sandbox::{
 struct Frame {
     owner: OwnershipToken,
     fragment: Option<AgentLiveFragment>,
+    #[serde(default)]
+    head_changed: bool,
 }
 
 struct LiveSource(Arc<Relay>);
@@ -131,6 +133,14 @@ impl Relay {
                 bounded(self.coordinator.store.check(&frame.owner))
                     .await
                     .map_err(|_| ())?;
+                if frame.head_changed {
+                    let updates = self.updates.upgrade().ok_or(())?;
+                    if !updates
+                        .notify_owned_head(&destination.token.agent_id, &destination.authority)
+                    {
+                        return Err(());
+                    }
+                }
                 if let Some(fragment) = frame.fragment {
                     if fragment.agent_id != destination.token.agent_id
                         || fragment.delta.len() > 16 * 1024
@@ -162,21 +172,24 @@ pub(super) async fn serve(
         return http::unavailable();
     };
     let subscription = updates.subscribe_local(&authority.token.agent_id);
+    let heads = updates.subscribe_local_head(&authority.token.agent_id);
     let stream = futures_util::stream::unfold(
-        (subscription, authority, permit),
-        |(mut subscription, authority, permit)| async move {
-            let fragment = tokio::select! {
+        (subscription, heads, authority, permit),
+        |(mut subscription, mut heads, authority, permit)| async move {
+            let (fragment, head_changed) = tokio::select! {
                 biased;
                 _ = authority.revoked() => return None,
-                next = subscription.recv() => match next { Ok(fragment) => Some(fragment), Err(_) => return None },
-                _ = tokio::time::sleep(Duration::from_secs(1)) => None,
+                next = heads.recv() => match next { Ok(()) => (None, true), Err(_) => return None },
+                next = subscription.recv() => match next { Ok(fragment) => (Some(fragment), false), Err(_) => return None },
+                _ = tokio::time::sleep(Duration::from_secs(1)) => (None, false),
             };
             if !authority.is_current() {
                 return None;
             }
             let mut frame = serde_json::to_vec(&Frame {
                 owner: authority.token.clone(),
-                fragment,
+                fragment: fragment.map(|delivery| (*delivery).clone()),
+                head_changed,
             })
             .ok()?;
             if frame.len() >= MAX_FRAME {
@@ -185,7 +198,7 @@ pub(super) async fn serve(
             frame.push(b'\n');
             Some((
                 Ok::<_, std::io::Error>(frame),
-                (subscription, authority, permit),
+                (subscription, heads, authority, permit),
             ))
         },
     );

@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { IconCheckOutline16 } from './icons';
+import { MenuRow } from './MenuRow';
+import { Input } from './Input';
 import { placeMenu, type MenuAlign, type MenuSide } from './menuPlacement';
 import { presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Menu.css';
@@ -36,6 +37,7 @@ export interface MenuItem {
   readonly label: ReactNode;
   readonly disabled?: boolean;
   readonly reason?: string;
+  readonly role?: 'menuitemradio' | 'menuitemcheckbox';
   /** A leading 16px glyph. */
   readonly icon?: ReactNode;
   /** Destructive: error-coloured, with its own hover fill. */
@@ -74,10 +76,6 @@ export interface MenuChoices {
 
 export type MenuEntry = MenuItem | MenuSeparator | MenuLabel | MenuChoices;
 
-function isChoosable(entry: MenuEntry): entry is MenuItem {
-  return !('type' in entry);
-}
-
 /**
  * Laid out but invisible, so the placement effect can measure a real box.
  *
@@ -88,7 +86,14 @@ function isChoosable(entry: MenuEntry): entry is MenuItem {
 const MEASURING: CSSProperties = { visibility: 'hidden', left: 0, top: 0 };
 
 interface MenuProps {
+  readonly search?: {
+    readonly label: string;
+    readonly value: string;
+    readonly onChange: (value: string) => void;
+  };
+  readonly footer?: ReactNode;
   readonly open: boolean;
+  readonly presentation?: 'run-target';
   /** The trigger, rendered in place. */
   readonly anchor: ReactNode;
   readonly items: readonly MenuEntry[];
@@ -124,6 +129,7 @@ interface MenuProps {
 
 export function Menu({
   open,
+  presentation,
   anchor,
   items,
   selectedId,
@@ -136,6 +142,8 @@ export function Menu({
   placement,
   matchAnchorWidth = false,
   label,
+  search,
+  footer,
 }: MenuProps) {
   const rootRef = useRef<HTMLSpanElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -186,11 +194,20 @@ export function Menu({
      */
     window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
-    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(place);
+    let frame: number | undefined;
+    const schedulePlace = () => {
+      frame ??= requestAnimationFrame(() => {
+        frame = undefined;
+        place();
+      });
+    };
+    const observer =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedulePlace);
     if (listRef.current) observer?.observe(listRef.current);
     if (rootRef.current) observer?.observe(rootRef.current);
     return () => {
       observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
@@ -237,7 +254,7 @@ export function Menu({
     }
     const rows = rowsIn(listRef.current);
     const chosen = rows.find((row) => row.dataset.id === selectedId);
-    (chosen ?? rows[0])?.focus();
+    (listRef.current?.querySelector('input') ?? chosen ?? rows[0])?.focus();
   }, [interactive, selectedId]);
 
   /*
@@ -265,6 +282,11 @@ export function Menu({
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!interactive) return;
+    if (
+      event.target instanceof HTMLInputElement &&
+      !['ArrowDown', 'ArrowUp', 'Escape'].includes(event.key)
+    )
+      return;
     const rows = rowsIn(listRef.current);
     if (rows.length === 0) {
       return;
@@ -292,7 +314,7 @@ export function Menu({
         move(here + 1);
         return;
       case 'ArrowUp':
-        move(here - 1);
+        move(here < 0 ? rows.length - 1 : here - 1);
         return;
       case 'Home':
         move(0);
@@ -310,6 +332,7 @@ export function Menu({
       className={['menu', dense ? 'menu--dense' : '', 'menu--portal'].filter(Boolean).join(' ')}
       style={MEASURING}
       role="menu"
+      data-presentation={presentation}
       aria-label={label}
       {...presenceAttributes(exiting)}
       onKeyDown={onListKeyDown}
@@ -322,6 +345,15 @@ export function Menu({
         event.stopPropagation();
       }}
     >
+      {search && (
+        <Input
+          aria-label={search.label}
+          placeholder="Search by name"
+          value={search.value}
+          maxLength={128}
+          onChange={(event) => search.onChange(event.target.value)}
+        />
+      )}
       {items.map((entry) => (
         <MenuRow
           key={entry.id}
@@ -333,6 +365,7 @@ export function Menu({
           }}
         />
       ))}
+      {footer}
     </div>
   );
 
@@ -359,137 +392,4 @@ export function Menu({
 /** Every focusable row, in order. Separators and headings are neither. */
 function rowsIn(list: HTMLElement | null): HTMLElement[] {
   return list === null ? [] : [...list.querySelectorAll<HTMLElement>('.menu__item')];
-}
-
-function MenuRow({
-  entry,
-  selected,
-  choosing,
-  onSelect,
-}: {
-  readonly entry: MenuEntry;
-  readonly selected: boolean;
-  /** Whether this menu is picking a value rather than running an action. */
-  readonly choosing: boolean;
-  readonly onSelect: (id: string) => void;
-}) {
-  if ('type' in entry && entry.type === 'separator') {
-    return <div className="menu__separator" role="separator" />;
-  }
-  if ('type' in entry && entry.type === 'label') {
-    return (
-      <div className="menu__label" role="presentation">
-        {entry.text}
-      </div>
-    );
-  }
-  if ('type' in entry && entry.type === 'choices') {
-    return (
-      <div className="menu__choice-group" role="group" aria-label={entry.text}>
-        <div className="menu__label" aria-hidden="true">
-          {entry.text}
-        </div>
-        <div className="menu__choices">
-          {entry.choices.map((choice) => (
-            <button
-              key={choice.id}
-              type="button"
-              role="menuitemradio"
-              className="menu__item menu__choice"
-              data-id={choice.id}
-              aria-checked={entry.selectedId === choice.id}
-              onClick={() => onSelect(choice.id)}
-            >
-              {choice.label}
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
-  if (!isChoosable(entry)) {
-    return null;
-  }
-
-  const unavailable = entry.disabled === true;
-  const content = (
-    <>
-      {entry.icon === undefined ? null : (
-        <span className="menu__icon" aria-hidden="true">
-          {entry.icon}
-        </span>
-      )}
-      <span className="menu__itemlabel">
-        {entry.reason === undefined ? (
-          entry.label
-        ) : (
-          <>
-            <span className="menu__labeltext">{entry.label}</span>{' '}
-            <span className="menu__reason">{entry.reason}</span>
-          </>
-        )}
-      </span>
-      {selected ? <IconCheckOutline16 className="menu__check" /> : null}
-    </>
-  );
-  const shared = {
-    /*
-     * A menu with a current value is a set of alternatives, not a list of
-     * actions, and `menuitemradio` is what says so — it is also the role
-     * `aria-checked` is actually defined for.
-     */
-    role: choosing ? 'menuitemradio' : 'menuitem',
-    'data-id': entry.id,
-    'data-has-reason': entry.reason === undefined ? undefined : '',
-    className: ['menu__item', entry.danger === true ? 'menu__item--danger' : '']
-      .filter(Boolean)
-      .join(' '),
-    /*
-     * `aria-disabled` rather than `disabled`, so the row keeps its place in
-     * the keyboard order. A row that cannot be reached cannot have its
-     * reason read, and the reason is the whole point of listing something
-     * that cannot be chosen (§12.3).
-     */
-    'aria-disabled': unavailable,
-    'aria-checked': choosing ? selected : undefined,
-  } as const;
-  if (entry.href !== undefined && !unavailable) {
-    return (
-      <a
-        {...shared}
-        href={entry.href}
-        onClick={(event) => {
-          // A modified click is the browser's: a new tab or window, not a
-          // selection in this one.
-          if (
-            event.button !== 0 ||
-            event.metaKey ||
-            event.ctrlKey ||
-            event.shiftKey ||
-            event.altKey
-          ) {
-            return;
-          }
-          event.preventDefault();
-          onSelect(entry.id);
-        }}
-      >
-        {content}
-      </a>
-    );
-  }
-  return (
-    <button
-      type="button"
-      {...shared}
-      onClick={() => {
-        if (unavailable) {
-          return;
-        }
-        onSelect(entry.id);
-      }}
-    >
-      {content}
-    </button>
-  );
 }

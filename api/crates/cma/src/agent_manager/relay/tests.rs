@@ -89,7 +89,7 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
                     }),
                 )
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_BUFFERED_BODY_BYTES)),
-        );
+        ).layer(axum::middleware::from_fn(test_auth));
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
@@ -102,6 +102,24 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
         });
     }
     (store, instances)
+}
+
+async fn test_auth(
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if request
+        .headers()
+        .get("authorization")
+        .is_some_and(|value| value == "Bearer synthetic-authorized")
+    {
+        request
+            .extensions_mut()
+            .insert(layer1_public::AuthenticatedSubject(
+                layer2_core::SubjectId::new("synthetic-caller"),
+            ));
+    }
+    next.run(request).await
 }
 
 pub(crate) async fn acquire(
@@ -204,6 +222,7 @@ async fn two_and_three_instances_route_to_exact_owner_and_preserve_authorization
                     "{}/api/v1/agents/{id}/environment",
                     instances[other].address
                 ))
+                .header("authorization", "Bearer synthetic-authorized")
                 .send()
                 .await
                 .unwrap()
@@ -239,7 +258,7 @@ async fn next(lane: &mut AgentLiveSubscription) -> AgentLiveFragment {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             match lane.recv().await {
-                Ok(fragment) => return fragment,
+                Ok(fragment) => return (*fragment).clone(),
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => (),
                 Err(error) => panic!("{error}"),
             }
@@ -404,6 +423,9 @@ async fn public_lane_bounds_connections_and_revokes_already_buffered_local_frame
 #[path = "mongo_tests.rs"]
 mod mongo;
 
+#[path = "head_tests.rs"]
+mod heads;
+
 #[tokio::test]
 async fn slow_owner_response_keeps_relay_capacity_until_reader_disconnects() {
     let (store, instances) = cluster(2).await;
@@ -418,12 +440,23 @@ async fn slow_owner_response_keeps_relay_capacity_until_reader_disconnects() {
         .await
         .unwrap();
     let url = format!("{}/api/v1/agents/{id}/files/slow", peer.address);
-    let mut response = client().get(&url).send().await.unwrap();
+    let mut response = client()
+        .get(&url)
+        .header("authorization", "Bearer synthetic-authorized")
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.chunk().await.unwrap().unwrap(), "first");
     assert_eq!(peer.relay.slots.available_permits(), 0);
     assert_eq!(
-        client().get(&url).send().await.unwrap().status(),
+        client()
+            .get(&url)
+            .header("authorization", "Bearer synthetic-authorized")
+            .send()
+            .await
+            .unwrap()
+            .status(),
         StatusCode::SERVICE_UNAVAILABLE
     );
     drop(response);

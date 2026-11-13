@@ -100,7 +100,7 @@ it('waits for acquisition receipt, sends real viewport input through the public 
   fireEvent.click(screen.getByRole('button', { name: 'Type text' }));
   await waitFor(() => expect(mutations.at(-1)?.input).toEqual({ kind: 'text', text: 'USER-17' }));
   fireEvent.click(screen.getByRole('button', { name: 'Return to Agent' }));
-  await screen.findByText('Agent is controlling');
+  await screen.findByText('Agent paused · Desktop is idle');
   const count = mutations.length;
   fireEvent.click(image, { clientX: 100, clientY: 90 });
   expect(mutations).toHaveLength(count);
@@ -216,7 +216,7 @@ it.each([true, false])(
         operation_id: returned.operation_id,
       },
     });
-    expect(screen.getByText('Agent is controlling')).toBeVisible();
+    expect(screen.getByText('Agent paused · Desktop is idle')).toBeVisible();
     expect(screen.getByRole('application')).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
     expect(requests.filter((request) => request.method === 'POST')).toEqual(mutations);

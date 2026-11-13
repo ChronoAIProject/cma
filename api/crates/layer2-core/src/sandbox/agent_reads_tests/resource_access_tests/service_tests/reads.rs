@@ -2,8 +2,14 @@ use super::*;
 
 #[path = "reads/fences.rs"]
 mod fences;
+#[path = "reads/history.rs"]
+mod history_tests;
+#[path = "reads/response.rs"]
+mod response;
 #[path = "reads/stream.rs"]
 mod stream;
+#[path = "reads/transcript_pages.rs"]
+mod transcript_pages;
 #[path = "reads/window.rs"]
 mod window;
 #[path = "reads/window_probe_tests.rs"]

@@ -90,7 +90,19 @@ impl Setup {
     }
 
     async fn launch_github(&self, request: LaunchRequest, bytes: &[u8]) -> LaunchOutcome {
-        self.state.launch_github(request, bytes.to_vec()).await
+        self.state
+            .launch_github(
+                request,
+                bytes.to_vec(),
+                super::github::GithubAuthorityFence {
+                    owner: "user-1".into(),
+                    integration_id: "github-pilot".into(),
+                    integration_version: 1,
+                    binding_id: "binding-fixture".into(),
+                    binding_version: 1,
+                },
+            )
+            .await
     }
 }
 fn request() -> LaunchRequest {
@@ -144,27 +156,18 @@ fn github_request() -> LaunchRequest {
 }
 
 #[tokio::test]
-async fn github_event_reaches_durable_routed_admission() {
+async fn github_event_refuses_when_the_guarded_root_is_unavailable() {
     let request = github_request();
     let setup = Setup::new(&request, true).await;
 
     let outcome = setup
         .launch_github(request, br#"{"action":"opened"}"#)
         .await;
-    let (admission_id, conversation_id) = admitted(outcome);
-
-    let restored = setup
-        .server
-        .store()
-        .lookup_task("user-1", &admission_id)
-        .await
-        .unwrap()
-        .expect("durable GitHub admission");
-    assert_eq!(restored.admission_id, admission_id);
-    assert_eq!(
-        restored.targets[0].launch.event.conversation_id,
-        conversation_id
-    );
+    assert!(matches!(
+        outcome,
+        LaunchOutcome::Refused(problem)
+            if problem.detail.as_deref() == Some("github_channel_removed_before_admission")
+    ));
     assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 0);
 }
 

@@ -1,4 +1,7 @@
 //! Native extension resources; pool members carry no tenant configuration.
+mod claim_guard;
+#[cfg(test)]
+mod claim_guard_tests;
 mod claims;
 mod cleanup;
 mod cleanup_inventory;
@@ -6,6 +9,7 @@ mod control;
 mod drain;
 mod home;
 mod home_origin;
+mod metric_controller;
 mod native_home;
 mod native_home_recovery;
 mod native_home_store;

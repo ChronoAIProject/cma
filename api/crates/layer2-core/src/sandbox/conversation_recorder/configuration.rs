@@ -22,25 +22,21 @@ impl DurableAgentUpdateRecorder {
         self.live.subscribe(id)
     }
 
-    pub fn new<S>(store: Arc<S>) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Self::with_writer_policy(store, Arc::default())
+    pub fn subscribe_local_head(&self, id: &AgentId) -> AgentHeadSubscription {
+        self.live.subscribe_head(id)
     }
 
-    pub fn with_writer_policy<S>(
-        store: Arc<S>,
-        writer_policy: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self>
-    where
-        S: AgentConversationUpdateStore + 'static,
-    {
-        Arc::new(Self {
-            store,
-            writer_policy,
-            live: live::AgentLiveHub::default(),
-            live_source: std::sync::OnceLock::new(),
-        })
+    /// A peer hint wakes the existing durable reader; it carries no transcript
+    /// content and cannot replace that reader's current authorization checks.
+    pub fn notify_owned_head(
+        &self,
+        id: &AgentId,
+        authority: &crate::agent_ownership::Authority,
+    ) -> bool {
+        if authority.token.agent_id != *id || !authority.is_current() {
+            return false;
+        }
+        self.live.publish_head(id);
+        true
     }
 }

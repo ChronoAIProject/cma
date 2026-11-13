@@ -265,6 +265,27 @@ it('does not offer changes to an existing immutable agent destination', () => {
   expect(screen.queryByLabelText('Agent ID')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Model')).toHaveValue('gpt-6');
   expect(screen.queryByLabelText('Bot ID')).not.toBeInTheDocument();
+  expect(screen.getByLabelText('Maximum wait (seconds)')).toHaveValue(300);
+});
+it('saves a queue policy while preserving the existing Agent destination and profile fields', async () => {
+  const channel = fixture();
+  const fetcher = vi.fn().mockResolvedValue(reply({ ...channel, version: 8 }));
+  vi.stubGlobal('fetch', fetcher);
+  render(
+    <ChannelEditor
+      channel={channel}
+      section={{ kind: 'consumer', id: 'default' }}
+      onDone={vi.fn()}
+      denied={vi.fn()}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText('Maximum wait (seconds)'), { target: { value: '86400' } });
+  await userEvent.click(screen.getByRole('button', { name: 'Save agent settings' }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalled());
+  const sent = JSON.parse(fetcher.mock.calls[0]![1].body);
+  expect(sent.profile.queue_lifetime_seconds).toBe(86400);
+  expect(sent.profile.future_profile).toEqual({ retained: true });
+  expect(sent.provider.target).toEqual({ type: 'existing_agent', agent_id: 'agt_retained' });
 });
 it('creates a typed custom event schema without a configuration JSON editor', async () => {
   const source = fixture();

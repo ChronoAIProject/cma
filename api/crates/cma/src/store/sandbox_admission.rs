@@ -15,6 +15,7 @@ use super::sandbox_events::{event_document, read_event};
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
+mod global;
 mod retry;
 
 const REPLAY_CANDIDATE_LIMIT: i64 = 2;
@@ -25,6 +26,15 @@ pub(super) enum AdmissionError {
     Retry(mongodb::error::Error),
     Duplicate,
     PreparedLeaseBusy,
+}
+
+impl From<super::agent_conversation_store::ApplyError> for AdmissionError {
+    fn from(error: super::agent_conversation_store::ApplyError) -> Self {
+        match error {
+            super::agent_conversation_store::ApplyError::Domain(error) => Self::Domain(error),
+            super::agent_conversation_store::ApplyError::Driver(error) => Self::Driver(error),
+        }
+    }
 }
 
 enum AdmissionReceipt {
@@ -110,6 +120,7 @@ where
     if let Some(sandbox) = replay_in_transaction(store, admission, session).await? {
         return Ok(AdmissionReceipt::Existing(sandbox));
     }
+    global::admit(store, session).await?;
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
@@ -122,6 +133,13 @@ where
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
+    super::budget::require_open(
+        store,
+        super::budget::now_seconds(),
+        admission.admission_cause(),
+        session,
+    )
+    .await?;
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
     let prepared_outcome = if admission.binding.is_none() {

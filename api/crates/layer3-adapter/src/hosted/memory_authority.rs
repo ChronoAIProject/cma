@@ -28,6 +28,7 @@ pub(super) struct Authority {
     fence: u64,
     disposition: Disposition,
     identity: Identity,
+    skill_sequence: u64,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -58,6 +59,15 @@ pub(super) fn admit(
         request_sha256: request_sha256.into(),
         payload_sha256: payload_sha256.into(),
     };
+    let skill_sequence = if matches!(&resource, ResourceKey::AgentSkill(..)) {
+        operation_id
+            .rsplit_once(":upgrade:")
+            .and_then(|(_, value)| value.strip_suffix(":v1"))
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0)
+    } else {
+        0
+    };
     if let Some(current) = runtime.authorities.get(&resource) {
         if current.disposition == Disposition::Absent && disposition == Disposition::Present {
             return rejected(operation, "mutation_authority_retired");
@@ -65,12 +75,14 @@ pub(super) fn admit(
         if fence < current.fence {
             return rejected(operation, "mutation_authority_stale");
         }
-        if current.disposition == disposition && current.identity != identity {
+        let successor = skill_sequence > current.skill_sequence && fence > current.fence;
+        if current.disposition == disposition && current.identity != identity && !successor {
             return rejected(operation, "mutation_authority_conflict");
         }
         if current.disposition == Disposition::Present
             && disposition == Disposition::Present
             && current.identity != identity
+            && !successor
         {
             return rejected(operation, "mutation_authority_conflict");
         }
@@ -84,6 +96,7 @@ pub(super) fn admit(
             fence,
             disposition,
             identity,
+            skill_sequence,
         },
     );
     Ok(())

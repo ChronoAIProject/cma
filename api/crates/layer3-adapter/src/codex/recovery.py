@@ -25,9 +25,15 @@ LAUNCHER_NATIVES = {
 }
 BRIDGE_PATH = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
 RELAY_SOURCE = "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f"
-DESKTOP_SOURCE = "c03e804c28de395c7501001f390346f2c2ad29349eab2e17cf9929e7902bcf99"
-# Retained Openbox homes coexist with newly admitted XFCE Machines.
-DESKTOP_SOURCES = {DESKTOP_SOURCE, "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d"}
+DESKTOP_SOURCE = "6910bdac6a24cc971f95bc0d2d10f19635a225e6a9f04b333d3555b4cec7ed7e"
+# Retained Openbox/XFCE/Omarchy homes coexist with newly admitted desktop Machines.
+OMARCHY_DESKTOP_SOURCE = "7b290d8bcf9d95de46c43d069d8b1e73def32f55cfc2ede3e04b7720bc6e439e"
+DESKTOP_SOURCES = {
+    DESKTOP_SOURCE, OMARCHY_DESKTOP_SOURCE,
+    "c03e804c28de395c7501001f390346f2c2ad29349eab2e17cf9929e7902bcf99",
+    "b2b88eaf39c2bf6e6018e2a6185d5461cbaabe1f66fa76562c898c24914af609",
+    "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d",
+}
 DESKTOP_PATH = "/usr/local/bin/cma-desktop-session"
 
 
@@ -93,7 +99,7 @@ def validate_services(plan, processes):
 
 def validate(request):
     require(isinstance(request, dict) and request.get("version") == 1, "request_invalid")
-    require(request.get("action") in ("inspect", "quiesce"), "request_invalid")
+    require(request.get("action") in ("inspect", "inspect_idle", "quiesce"), "request_invalid")
     keys = {"version", "action", "runtime", "agents"}
     if request["action"] == "quiesce":
         keys |= {"operationId", "expectedPlan"}
@@ -230,6 +236,7 @@ def topology(agent, processes, supervisor):
 
 def inspect(request):
     with boot_guard(request["runtime"]):
+        ledger = idle_ledger(request["runtime"]) if request["action"] == "inspect_idle" else None
         processes = inventory()
         retained_services = services(processes)
         service_pids = {p["pid"] for p in retained_services}
@@ -256,6 +263,21 @@ def inspect(request):
                 "supervisor": supervisor, "topology": agents, "services": retained_services,
                 "baseline": [{"pid": p["pid"], "start": p["start"]} for p in processes.values() if p["pid"] != os.getpid()],
                 "histories": history}
+        if request["action"] == "inspect_idle":
+            # This proof authorizes only reconnecting the original conversations.
+            # No signaling, journal write, synthetic terminal row or input replay.
+            require(all(not a["processes"] for a in agents), "process_reappeared")
+            require(all(not f["openTurns"] for h in history for f in h["files"]), "native_turn_unsettled")
+            require(proc_identity(supervisor["pid"]) == supervisor, "supervisor_changed")
+            require(absent(plan, inventory()), "process_reappeared")
+            for agent, previous in zip(request["agents"], history):
+                fresh = history_summary(agent, previous["files"])
+                require(fresh["historySha256"] == previous["historySha256"], "history_prefix_changed")
+                require(all(not f["openTurns"] for f in fresh["files"]), "native_turn_unsettled")
+            require(absent(plan, inventory()), "process_reappeared")
+            require(idle_ledger(request["runtime"]) == ledger, "ledger_changed")
+            plan["idleReopen"] = True
+            plan["idleLedger"] = ledger
         require(len(encode(plan)) <= 56 * 1024, "plan_limit")
         verify_boot(request["runtime"])
         return {"version": 1, "status": "inspected", "plan": plan, "planSha256": sha(encode(plan))}
@@ -422,7 +444,7 @@ def main():
         require(len(raw) <= LIMIT, "request_limit")
         request = json.loads(raw)
         validate(request)
-        response = inspect(request) if request["action"] == "inspect" else quiesce(request)
+        response = quiesce(request) if request["action"] == "quiesce" else inspect(request)
         require(len(encode(response)) <= LIMIT, "response_limit")
     except Refused as error:
         response = {"version": 1, "status": "refused", "code": str(error)}

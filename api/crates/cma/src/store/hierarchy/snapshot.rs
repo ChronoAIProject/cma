@@ -11,16 +11,23 @@ use super::super::{
     agents::read_agent,
     sandbox_mongo::{is_transient, start_transaction, MongoSandboxStore, TRANSACTION_ATTEMPTS},
     sandboxes::read_sandbox,
+    snapshot_collection::collection,
     workspaces::read_workspace,
     worktrees::read_worktree,
 };
 
+mod agent_projection;
+mod batched;
+mod sandbox;
+
 pub(super) enum Target<'a> {
     Sandbox(&'a SandboxId),
+    Detail(&'a SandboxId),
     Workspace(&'a WorkspaceId),
 }
 pub(super) enum Reading {
     Sandbox(Option<Box<SandboxHierarchyRecord>>),
+    Detail(Option<Box<layer2_core::sandbox::SandboxDetailRecord>>),
     Workspace(Option<Box<WorkspaceHierarchyRecord>>),
 }
 enum Error {
@@ -38,22 +45,47 @@ impl From<mongodb::error::Error> for Error {
     }
 }
 
+impl MongoSandboxStore {
+    pub(crate) fn with_sandbox_agent_projection(mut self, enabled: bool) -> Self {
+        self.sandbox_agent_projection = enabled;
+        self
+    }
+
+    pub(crate) fn with_sandbox_batched_reads(mut self, enabled: bool) -> Self {
+        self.sandbox_batched_reads = enabled;
+        self
+    }
+
+    pub(crate) fn with_sandbox_snapshot_reads(mut self, enabled: bool) -> Self {
+        self.sandbox_snapshot_reads = enabled;
+        self
+    }
+}
+
 pub(super) async fn read(
     store: &MongoSandboxStore,
     target: Target<'_>,
 ) -> Result<Reading, SandboxStoreError> {
+    let snapshot_session =
+        store.sandbox_snapshot_reads && matches!(target, Target::Sandbox(_) | Target::Detail(_));
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store
             .client
             .start_session()
+            .snapshot(snapshot_session)
             .await
             .map_err(super::unavailable)?;
-        start_transaction(&mut session)
-            .await
-            .map_err(super::unavailable)?;
+        if !snapshot_session {
+            start_transaction(&mut session)
+                .await
+                .map_err(super::unavailable)?;
+        }
         let result = read_in_snapshot(store, &target, &mut session).await;
-        // No writes occurred; releasing this transaction cannot mutate resources.
-        let _ = session.abort_transaction().await;
+        // Snapshot sessions pin one atClusterTime across all reads without a
+        // transaction or an abort checkout. Keep the rollout fallback unchanged.
+        if !snapshot_session {
+            let _ = session.abort_transaction().await;
+        }
         match result {
             Ok(value) => return Ok(value),
             Err(Error::Domain(error)) => return Err(error),
@@ -73,45 +105,18 @@ async fn read_in_snapshot(
 ) -> Result<Reading, Error> {
     let duration = std::time::Duration::from_secs(10);
     match target {
-        Target::Sandbox(id) => {
-            let Some(document) = store
-                .sandboxes
-                .find_one(doc! {"_id":id.as_str()})
-                .max_time(duration)
-                .session(&mut *session)
+        Target::Sandbox(id) => Ok(Reading::Sandbox(
+            sandbox::read::<agent_projection::Complete>(store, id, session)
                 .await?
-            else {
-                return Ok(Reading::Sandbox(None));
-            };
-            let sandbox = read_sandbox(&document)?;
-            let workspaces = children(
-                &store.workspaces,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_workspace,
-            )
-            .await?;
-            let worktrees = children(
-                &store.worktrees,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_worktree,
-            )
-            .await?;
-            let agents = children(
-                &store.agents,
-                doc! {"sandbox_id":id.as_str()},
-                session,
-                read_agent,
-            )
-            .await?;
-            Ok(Reading::Sandbox(Some(Box::new(SandboxHierarchyRecord {
-                sandbox,
-                workspaces,
-                worktrees,
-                agents,
-            }))))
-        }
+                .map(Box::new),
+        )),
+        Target::Detail(id) => Ok(Reading::Detail(
+            sandbox::read::<agent_projection::Projected>(store, id, session)
+                .await?
+                .map(|record| {
+                    Box::new(layer2_core::sandbox::SandboxDetailRecord::Projected(record))
+                }),
+        )),
         Target::Workspace(id) => {
             let Some(document) = store
                 .workspaces
@@ -137,11 +142,14 @@ async fn read_in_snapshot(
                 read_agent,
             )
             .await?;
+            let task_started_at =
+                super::super::agent_task_status::active_starts(store, &agents, session).await?;
             let task_statuses =
                 super::super::agent_task_status::read_many(store, &agents, session).await?;
             Ok(Reading::Workspace(Some(Box::new(
                 WorkspaceHierarchyRecord {
                     task_statuses,
+                    task_started_at,
                     workspace,
                     worktrees,
                     agents,

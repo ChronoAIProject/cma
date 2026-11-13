@@ -27,6 +27,14 @@ pub(super) async fn route(
     if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
         return next.run(request).await;
     }
+    if !private
+        && request
+            .extensions()
+            .get::<layer1_public::AuthenticatedSubject>()
+            .is_none()
+    {
+        return layer1_public::auth::NotAuthenticated.into_response();
+    }
     let Ok(slot) = relay.slots.clone().try_acquire_owned() else {
         return unavailable();
     };
@@ -59,7 +67,7 @@ pub(super) async fn route(
                     raw,
                     request.method(),
                     request.uri(),
-                    request.headers(),
+                    ingress::headers(&request),
                     &bytes,
                 )
                 .ok()
@@ -201,7 +209,7 @@ async fn forward(
 ) -> Response {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let mut headers = HeaderMap::new();
-    for (name, value) in request.headers() {
+    for (name, value) in ingress::headers(&request) {
         if authentication::forwarded(name.as_str()) {
             headers.append(name, value.clone());
         }

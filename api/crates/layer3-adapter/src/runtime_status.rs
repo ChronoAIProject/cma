@@ -42,6 +42,9 @@ pub struct RuntimeStatus {
     /// Absent on retained supervisors that predate the additive operation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_skill_install: bool,
+    /// Fenced replacement of a proved previous installation. Negotiated on status reads.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_skill_upgrade: bool,
     /// Managed model selection can resolve current catalogue aliases.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub agent_model_catalog: bool,
@@ -106,6 +109,7 @@ mod compatibility_tests {
         assert!(!status.agent_filesystem);
         assert!(!status.agent_model_catalog);
         assert!(!status.agent_skill_install);
+        assert!(!status.agent_skill_upgrade);
         assert!(!status.agent_browser);
         assert!(!status.agent_resource_preparation);
         assert_eq!(serde_json::to_value(status).unwrap(), original);

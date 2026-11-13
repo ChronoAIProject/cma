@@ -1,7 +1,8 @@
 //! Atomic Mongo publication for one fenced agent work step.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
-    agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log,
+    agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log_with_retry,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
     SandboxStoreError,
 };
@@ -10,27 +11,31 @@ use layer2_core::sandbox::{
 };
 use mongodb::bson::{doc, Bson, Document};
 
-use super::agent_log::{log_document, scan_complete_log_with_session};
-use super::agent_log_integrity::{
-    ensure_append_batch_size, ensure_append_capacity, TransactionLogError,
-};
+use super::agent_log::scan_complete_log_with_session;
+use super::agent_log_integrity::{ensure_append_batch_size, prepare_append, TransactionLogError};
 use super::agent_worker_capacity::publication_capacity;
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_events::{append_in_transaction, TransactionEventError};
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, record_bson, signed, start_transaction,
+    commit_transaction, is_duplicate_key, is_transient, record_bson, signed,
     wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
     TRANSACTION_ATTEMPTS,
 };
 use super::worktrees::{read_worktree, worktree_replacement_fields};
 
 mod contention;
+mod persistence;
+use persistence::{advance_agent, advance_worktree};
 mod prepared_replay;
 #[cfg(test)]
 mod prepared_replay_tests;
+mod publication_history;
 mod publication_log;
 mod publication_transaction;
+pub(in crate::store) mod retry_audit;
+mod segmented;
 mod sign_in;
+use super::agent_log_segments::transaction_scope::TransactionScope;
 use publication_log::{final_agent_and_logs, insert_logs};
 mod prepared_open_ready;
 #[cfg(test)]
@@ -38,6 +43,7 @@ mod prepared_open_ready_tests;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct PublicationReceipt {
+    pub(super) segmented: Option<super::agent_log_segments::writer_commit::Recorded>,
     pub(super) agent: Agent,
     pub(super) worktree: Option<Worktree>,
     pub(super) logs: Vec<AgentLogEntry>,
@@ -73,7 +79,7 @@ pub(super) async fn commit_agent_work(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(store, mutation, None)
+    publication_transaction::commit(store, mutation, None, None)
         .await
         .map(|_| ())
 }
@@ -83,35 +89,62 @@ pub(super) async fn commit_prepared_agent_open_ready(
     mutation: AgentWorkMutation,
     observed: layer2_core::sandbox::store::PreparedAgentOpenContext,
 ) -> Result<bool, SandboxStoreError> {
-    publication_transaction::commit(store, mutation, Some(&observed)).await
+    publication_transaction::commit(store, mutation, Some(&observed), None).await
 }
 
+#[cfg(test)]
 async fn apply_publication(
     store: &MongoSandboxStore,
     mutation: &AgentWorkMutation,
-    session: &mut mongodb::ClientSession,
+    scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
-    apply_publication_observed(store, mutation, None, session).await
+    apply_publication_observed(
+        store,
+        mutation,
+        None,
+        None,
+        &mut publication_history::AttemptHistory::default(),
+        scope,
+    )
+    .await
+}
+
+pub(super) async fn commit_repeated_failure(
+    store: &MongoSandboxStore,
+    retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
+) -> Result<(), SandboxStoreError> {
+    publication_transaction::commit(store, retry.mutation.clone(), None, Some(&retry.marker))
+        .await
+        .map(|_| ())
 }
 
 async fn apply_publication_observed(
     store: &MongoSandboxStore,
     mutation: &AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
-    session: &mut mongodb::ClientSession,
+    repeated_marker: Option<&AgentLogEntry>,
+    history_cache: &mut publication_history::AttemptHistory,
+    mut scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
-    store
-        .fence_agent_effect(&mutation.agent.id, session)
-        .await
-        .map_err(ApplyError::Domain)?;
-    let current_row = store
-        .agents
-        .find_one(doc! { "_id": mutation.agent.id.as_str() })
-        .session(&mut *session)
+    let current_row = scope
+        .find_one(&store.agents, doc! { "_id": mutation.agent.id.as_str() })
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    let segmented = if super::agent_log_segments::read_format(&current_row)
+        .map_err(ApplyError::Domain)?
+        .is_some()
+    {
+        Some(segmented::publish(store, &current_row, &current, mutation, &mut scope).await?)
+    } else {
+        None
+    };
+    let session = scope.release();
+    store
+        .fence_agent_effect(&mutation.agent.id, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.
@@ -132,22 +165,33 @@ async fn apply_publication_observed(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let needs_capacity_marker = agent_cleanup_capacity_retry(&current, mutation);
-    let mut last_log = None;
-    let complete_log = scan_complete_log_with_session(
-        store,
-        &current.id,
-        current.conversation.last_seq,
-        session,
-        |entry| {
-            if needs_capacity_marker && entry.seq == current.conversation.last_seq {
-                last_log = Some(entry);
-            }
-            Ok(())
-        },
-    )
-    .await?;
-    validate_agent_cleanup_capacity_log(&current, mutation, last_log.as_ref())
+    let history = if segmented.is_none() {
+        Some(
+            publication_history::read(
+                store,
+                &current,
+                &current_row,
+                mutation,
+                publication_history::Selection {
+                    ordinary: observed.is_none(),
+                    repeated: repeated_marker.is_some(),
+                },
+                history_cache,
+                session,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let entry_count = history
+        .as_ref()
+        .map_or(current.conversation.last_seq, |h| h.summary.entry_count());
+    let last_log = segmented
+        .as_ref()
+        .and_then(|r| r.latest_before.as_ref())
+        .or_else(|| history.as_ref().and_then(|h| h.last.as_ref()));
+    validate_agent_cleanup_capacity_log_with_retry(&current, mutation, last_log, repeated_marker)
         .map_err(ApplyError::Domain)?;
     if current.work.step == AgentWorkStep::WaitForWorkspace
         && mutation.agent.work.step == AgentWorkStep::AddWorktree
@@ -198,7 +242,7 @@ async fn apply_publication_observed(
         layer2_core::sandbox::store::validate_prepared_agent_open_ready(
             &current,
             &current_worktree,
-            complete_log.entry_count(),
+            entry_count,
             mutation,
         )
         .map_err(ApplyError::Domain)?;
@@ -237,7 +281,7 @@ async fn apply_publication_observed(
         validate_agent_work_mutation_with_sandbox(
             &current,
             &current_worktree,
-            complete_log.entry_count(),
+            entry_count,
             mutation,
             &sandbox,
         )
@@ -261,37 +305,73 @@ async fn apply_publication_observed(
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
     } else {
-        validate_agent_work_mutation(
-            &current,
-            &current_worktree,
-            complete_log.entry_count(),
-            mutation,
-        )
-        .map_err(ApplyError::Domain)?;
+        validate_agent_work_mutation(&current, &current_worktree, entry_count, mutation)
+            .map_err(ApplyError::Domain)?;
     }
 
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
     let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
-    ensure_append_capacity(
-        &complete_log,
-        &logs,
-        publication_capacity(&current, mutation),
-    )
-    .map_err(ApplyError::Domain)?;
-    advance_agent(
-        store,
-        &current_row,
-        &current,
-        &final_agent,
-        mutation,
-        session,
-    )
-    .await?;
+
+    if let Some(history) = &history {
+        let complete_log = &history.summary;
+        let prior_semantic = match complete_log.semantic() {
+            Some(checkpoint) => checkpoint.clone(),
+            None => {
+                crate::store::agent_log_integrity::audit_checkpoint(
+                    store,
+                    &current,
+                    &history.entries,
+                    session,
+                )
+                .await?
+            }
+        };
+        history.audited(&current);
+        let next_semantic = prior_semantic
+            .after_append(&logs, &final_agent)
+            .map_err(ApplyError::Domain)?;
+        let prepared = prepare_append(
+            &current,
+            complete_log,
+            &logs,
+            final_agent.revision,
+            next_semantic.clone(),
+            publication_capacity(&current, mutation),
+        );
+        let integrity = match prepared {
+            Err(SandboxStoreError::AgentLogCapacityExceeded)
+                if super::agent_worker_capacity::stop_can_use_delete_reserve(
+                    &current, mutation,
+                ) =>
+            {
+                prepare_append(
+                    &current,
+                    complete_log,
+                    &logs,
+                    final_agent.revision,
+                    next_semantic,
+                    super::agent_log_integrity::AppendCapacity::Delete,
+                )
+            }
+            result => result,
+        }
+        .map_err(ApplyError::Domain)?;
+        advance_agent(
+            store,
+            &current_row,
+            &current,
+            &final_agent,
+            mutation,
+            integrity.integrity,
+            session,
+        )
+        .await?;
+        insert_logs(store, &integrity.documents, session).await?;
+    }
     if let Some(versioned) = mutation.worktree.as_ref() {
         advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
     }
-    insert_logs(store, &logs, session).await?;
     let event = match mutation.sandbox_event.as_ref() {
         Some(kind) => Some(
             append_in_transaction(
@@ -306,6 +386,7 @@ async fn apply_publication_observed(
         None => None,
     };
     Ok(PublicationReceipt {
+        segmented,
         agent: final_agent,
         worktree: mutation
             .worktree
@@ -315,114 +396,4 @@ async fn apply_publication_observed(
         event,
         sign_in_sandbox,
     })
-}
-
-async fn advance_agent(
-    store: &MongoSandboxStore,
-    current_row: &Document,
-    current: &Agent,
-    next: &Agent,
-    mutation: &AgentWorkMutation,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
-    let lease = current
-        .work
-        .lease
-        .as_ref()
-        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
-    let mut fields = agent_replacement_fields(next).map_err(ApplyError::Domain)?;
-    super::agent_conversation_store::carry_checkpoint_fields(
-        current_row,
-        current,
-        next,
-        &mut fields,
-    )
-    .map_err(ApplyError::Domain)?;
-    fields.insert(
-        "last_seq",
-        signed(next.conversation.last_seq, "agent log sequence")
-            .map_err(SandboxStoreError::Corrupt)
-            .map_err(ApplyError::Domain)?,
-    );
-    let advanced = store
-        .agents
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": signed(mutation.expected_agent_revision, "agent revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "last_seq": signed(current.conversation.last_seq, "agent log sequence")
-                    .map_err(SandboxStoreError::Corrupt)
-                    .map_err(ApplyError::Domain)?,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "channel_history_seal": { "$exists": false },
-                "work_lease_holder": &mutation.holder,
-                "work_lease_fence": signed(mutation.fence, "agent work lease fence")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "work_lease_expires_at": &lease.expires_at,
-                "work_next_fence": signed(current.work.next_fence, "agent work next fence")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! { "$set": fields },
-        )
-        .session(session)
-        .await
-        .map_err(classify_aggregate_write)?;
-    if advanced.matched_count == 1 {
-        Ok(())
-    } else {
-        Err(ApplyError::Domain(SandboxStoreError::Conflict))
-    }
-}
-
-async fn advance_worktree(
-    store: &MongoSandboxStore,
-    current: &Worktree,
-    next: &Worktree,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), ApplyError> {
-    let agent_id = current
-        .agent_id
-        .as_ref()
-        .map(|id| Bson::String(id.as_str().to_owned()))
-        .unwrap_or(Bson::Null);
-    let advanced = store
-        .worktrees
-        .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "workspace_id": current.workspace_id.as_str(),
-                "sandbox_id": current.sandbox_id.as_str(),
-                "owner": current.owner.as_str(),
-                "name": &current.name,
-                "status": record_bson(&current.status)
-                    .map_err(SandboxStoreError::Corrupt)
-                    .map_err(ApplyError::Domain)?,
-                "revision": signed(current.revision, "worktree revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                "record.path": &current.path,
-                "record.branch": &current.branch,
-                "record.base_commit": &current.base_commit,
-                "record.agent_id": agent_id,
-            },
-            doc! { "$set": worktree_replacement_fields(next).map_err(ApplyError::Domain)? },
-        )
-        .session(session)
-        .await
-        .map_err(classify_aggregate_write)?;
-    if advanced.matched_count == 1 {
-        Ok(())
-    } else {
-        Err(ApplyError::Domain(SandboxStoreError::Conflict))
-    }
-}
-
-fn classify_aggregate_write(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
-        ApplyError::Domain(SandboxStoreError::Duplicate)
-    } else {
-        ApplyError::Driver(error)
-    }
 }

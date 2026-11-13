@@ -12,6 +12,8 @@ use crate::{
 };
 
 use super::*;
+#[path = "ledger_retirement_tests.rs"]
+mod ledger_retirement;
 mod shared;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
@@ -33,6 +35,7 @@ fn sandbox(id: &str, owner: &str, status: SandboxStatus) -> Sandbox {
             id: SandboxProfileId("sbp_hierarchy".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

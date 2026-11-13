@@ -85,6 +85,14 @@ async fn start(
     resume: Option<Checkpoint>,
     jitter: u64,
 ) -> (Socket, watch::Sender<bool>, JoinHandle<GatewayEnd>) {
+    start_observed(journal, resume, jitter, Default::default()).await
+}
+async fn start_observed(
+    journal: Arc<Journal>,
+    resume: Option<Checkpoint>,
+    jitter: u64,
+    status: super::status::StatusAttempt,
+) -> (Socket, watch::Sender<bool>, JoinHandle<GatewayEnd>) {
     let (left, right) = tokio::io::duplex(2 * FRAME_LIMIT);
     let client = WebSocketStream::from_raw_socket(left, Role::Client, Some(socket_config())).await;
     let server = WebSocketStream::from_raw_socket(right, Role::Server, None).await;
@@ -92,6 +100,7 @@ async fn start(
     let task = tokio::spawn(async move {
         GatewayClient::new(Secret::new("gateway-fixture"), "77".into(), MESSAGE_INTENTS)
             .unwrap()
+            .with_status(status)
             .run(client, resume, journal, receiver, jitter)
             .await
     });
@@ -330,3 +339,6 @@ fn missing_message_content_intent_and_untrusted_resume_origins_are_refused() {
         Some("v=10&encoding=json")
     );
 }
+
+#[path = "connection_status_wire_tests.rs"]
+mod connection_status;

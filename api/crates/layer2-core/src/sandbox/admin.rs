@@ -25,6 +25,8 @@ pub struct SandboxAdminQuery {
     pub owner: Option<SubjectId>,
     pub status: Option<SandboxStatus>,
     pub runtime_version: Option<String>,
+    /// True selects explicit exceptions; false includes unset preferences.
+    pub always_on: Option<bool>,
     pub page: PageRequest,
 }
 
@@ -232,54 +234,14 @@ pub enum OperatorError {
     Unavailable(String),
 }
 
-impl OperatorError {
-    fn from_sandbox_store(error: SandboxStoreError) -> Self {
-        match error {
-            SandboxStoreError::NotFound => Self::NotFound,
-            SandboxStoreError::InvalidPage => Self::InvalidRequest(error.to_string()),
-            SandboxStoreError::Conflict
-            | SandboxStoreError::CheckpointInProgress
-            | SandboxStoreError::LifecycleBusy { .. }
-            | SandboxStoreError::Duplicate
-            | SandboxStoreError::SequenceConflict
-            | SandboxStoreError::LimitReached { .. }
-            | SandboxStoreError::SandboxNotReady
-            | SandboxStoreError::WorkspaceNameConflict
-            | SandboxStoreError::WorkspaceLimitReached { .. }
-            | SandboxStoreError::WorkspaceHasLiveAgents
-            | SandboxStoreError::WorkspaceRecoveryConflict
-            | SandboxStoreError::WorkspaceOriginConflict
-            | SandboxStoreError::SandboxOriginConflict
-            | SandboxStoreError::WorkspaceNotReady
-            | SandboxStoreError::AgentLimitReached { .. }
-            | SandboxStoreError::AgentCreationConflict
-            | SandboxStoreError::AgentLogCapacityExceeded
-            | SandboxStoreError::InvalidTransaction(_) => Self::InvalidState(error.to_string()),
-            SandboxStoreError::Unavailable(_) | SandboxStoreError::Corrupt(_) => {
-                Self::Unavailable(error.to_string())
-            }
-        }
-    }
-
-    fn from_profile_store(error: ProfileStoreError) -> Self {
-        match error {
-            ProfileStoreError::NotFound => Self::NotFound,
-            ProfileStoreError::Conflict
-            | ProfileStoreError::Duplicate
-            | ProfileStoreError::ReferenceUnavailable => Self::InvalidState(error.to_string()),
-            ProfileStoreError::Protected => Self::ProtectedProfile,
-            ProfileStoreError::Validation(_) => Self::InvalidRequest(error.to_string()),
-            ProfileStoreError::Unavailable(_) | ProfileStoreError::Corrupt(_) => {
-                Self::Unavailable(error.to_string())
-            }
-        }
-    }
-}
+mod always_on;
+mod errors;
 
 pub struct SandboxOperatorService {
     sandboxes: Arc<dyn SandboxAdminStore>,
     profiles: Arc<dyn ProfileAdminStore>,
     retirement: Arc<dyn SandboxRetirement>,
+    maintenance: Option<Arc<dyn super::SandboxMaintenanceStore>>,
     activity: Arc<ActivityService>,
 }
 
@@ -294,6 +256,7 @@ impl SandboxOperatorService {
             sandboxes,
             profiles,
             retirement,
+            maintenance: None,
             activity,
         }
     }

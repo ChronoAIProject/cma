@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use super::{corrupt, io_error, Record, Status, MAX_JOURNAL_BYTES, MAX_JOURNAL_ENTRIES};
+use super::{corrupt, io_error, Record, Status, MAX_JOURNAL_BYTES};
 use crate::failure::{Result, RuntimeError};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -25,7 +25,10 @@ pub(super) struct JournalFile {
     kind: FileKind,
 }
 
-pub(super) fn scan(state_root: &Path) -> Result<Vec<JournalFile>> {
+pub(super) fn scan(
+    state_root: &Path,
+    budget: &mut crate::mutation_recovery::ScanBudget,
+) -> Result<Vec<JournalFile>> {
     let directory = journal_directory(state_root);
     match std::fs::symlink_metadata(&directory) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -38,11 +41,7 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<JournalFile>> {
     let entries = std::fs::read_dir(&directory)
         .map_err(|error| io_error("list runtime mutation journal", error))?;
     for entry in entries {
-        if files.len() == MAX_JOURNAL_ENTRIES {
-            return Err(corrupt(
-                "runtime mutation journal contains too many entries",
-            ));
-        }
+        budget.entry()?;
         let entry = entry.map_err(|error| io_error("read runtime mutation entry", error))?;
         let name = entry
             .file_name()
@@ -50,7 +49,7 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<JournalFile>> {
             .map_err(|_| corrupt("runtime mutation journal filename is not UTF-8"))?;
         let kind = classify_name(&name)?;
         let path = entry.path();
-        let record = read_record(&path)?
+        let record = read_budgeted(&path, Some(budget))?
             .ok_or_else(|| corrupt("runtime mutation journal entry disappeared"))?;
         files.push(JournalFile { path, record, kind });
     }
@@ -58,7 +57,7 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<JournalFile>> {
     Ok(files)
 }
 
-pub(super) fn reconcile(files: Vec<JournalFile>) -> Result<Vec<JournalFile>> {
+pub(super) fn reconcile(files: Vec<JournalFile>, apply: bool) -> Result<Vec<JournalFile>> {
     let mut canonical = BTreeMap::<PathBuf, JournalFile>::new();
     let mut temporary = BTreeMap::<PathBuf, Vec<JournalFile>>::new();
     for file in files {
@@ -86,13 +85,8 @@ pub(super) fn reconcile(files: Vec<JournalFile>) -> Result<Vec<JournalFile>> {
         let current = canonical
             .get_mut(&target)
             .ok_or_else(|| corrupt("runtime mutation replacement has no canonical record"))?;
-        if replacements.iter().any(|candidate| {
-            candidate.record.status == Status::Started
-                || !same_operation(&candidate.record, &current.record)
-        }) {
-            return Err(corrupt(
-                "runtime mutation replacement does not follow its canonical record",
-            ));
+        for candidate in &replacements {
+            validate_replacement(&current.record, &candidate.record)?;
         }
         let replacement = replacements
             .pop()
@@ -107,18 +101,22 @@ pub(super) fn reconcile(files: Vec<JournalFile>) -> Result<Vec<JournalFile>> {
         }
 
         if current.record.status == Status::Started {
-            crate::fs_durability::rename(&replacement.path, &target)
-                .map_err(|error| io_error("recover runtime mutation replacement", error))?;
+            if apply {
+                crate::fs_durability::rename(&replacement.path, &target)
+                    .map_err(|error| io_error("recover runtime mutation replacement", error))?;
+            }
             current.record = replacement.record;
         } else if current.record != replacement.record {
             return Err(corrupt(
                 "runtime mutation terminal record conflicts with a replacement",
             ));
-        } else {
+        } else if apply {
             remove_temporary(&replacement.path)?;
         }
-        for stale in replacements {
-            remove_temporary(&stale.path)?;
+        if apply {
+            for stale in replacements {
+                remove_temporary(&stale.path)?;
+            }
         }
     }
     Ok(canonical.into_values().collect())
@@ -134,7 +132,50 @@ fn same_operation(left: &Record, right: &Record) -> bool {
         && left.subject == right.subject
 }
 
-fn read_record(path: &Path) -> Result<Option<Record>> {
+pub(super) fn validate_replacement(current: &Record, candidate: &Record) -> Result<()> {
+    if candidate.status == Status::Started || !same_operation(candidate, current) {
+        return Err(corrupt(
+            "runtime mutation replacement does not follow its canonical record",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn has_replacements(state_root: &Path, count: &mut usize, limit: usize) -> Result<bool> {
+    let directory = journal_directory(state_root);
+    match std::fs::symlink_metadata(&directory) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(io_error("inspect runtime mutation journal", error)),
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+        Ok(_) => return Err(corrupt("runtime mutation journal is not a real directory")),
+    }
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| io_error("list runtime mutation journal", error))?
+    {
+        if *count == limit {
+            return Err(crate::mutation_capacity::exhausted());
+        }
+        *count += 1;
+        let name = entry
+            .map_err(|error| io_error("read runtime mutation entry", error))?
+            .file_name()
+            .into_string()
+            .map_err(|_| corrupt("runtime mutation journal filename is not UTF-8"))?;
+        if classify_name(&name)? == FileKind::Temporary {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub(super) fn read_record(path: &Path) -> Result<Option<Record>> {
+    read_budgeted(path, None)
+}
+
+fn read_budgeted(
+    path: &Path,
+    budget: Option<&mut crate::mutation_recovery::ScanBudget>,
+) -> Result<Option<Record>> {
     let mut file = match open_no_follow(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -147,6 +188,9 @@ fn read_record(path: &Path) -> Result<Option<Record>> {
         return Err(corrupt(
             "runtime mutation journal entry is unsafe or oversized",
         ));
+    }
+    if let Some(budget) = budget {
+        budget.bytes(metadata.len())?;
     }
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
     (&mut file)

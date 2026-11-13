@@ -354,11 +354,17 @@ export function useAgentActions({
     async (
       name: Exclude<AgentCommand, 'send' | 'approval'>,
       operation: (id: string, key: string, signal: AbortSignal) => Promise<void>,
+      requireStop = false,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
-      if (currentContext.current !== context || historyIncomplete) return;
+      if (currentContext.current !== context || historyIncomplete) {
+        if (requireStop)
+          throw new Error('Agent activity is still loading. Try again when it is available.');
+        return;
+      }
       if (name === 'interrupt' && !activeTurn) return;
       if (agentId === undefined || (actionAbortRef.current !== undefined && !mayPreemptSend)) {
+        if (requireStop) throw new Error('Another Agent action is still being confirmed.');
         return;
       }
       if (name === 'interrupt') actionAbortRef.current?.abort();
@@ -387,10 +393,11 @@ export function useAgentActions({
         keys.settle(scope);
         options.onHierarchyChange?.();
         if (name === 'delete') options.onDeleted?.();
-        else if (name !== 'interrupt' || v2 === undefined) reload();
+        else if (name !== 'interrupt' || (v2 === undefined && !requireStop)) reload();
       } catch (error: unknown) {
         if (!controller.signal.aborted && !onIdentityChange(error))
           setActionError(errorMessage(error));
+        if (requireStop) throw error;
       } finally {
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;

@@ -11,6 +11,13 @@ use super::AgentWorker;
 
 const MAX_PUBLICATION_RETRIES: usize = 8;
 
+impl super::AgentWorkerConfig {
+    pub(crate) fn with_parent_not_ready_pacing(mut self, enabled: bool) -> Self {
+        self.parent_not_ready_pacing_enabled = enabled;
+        self
+    }
+}
+
 impl AgentWorker {
     pub(super) async fn publish_connection(
         &self,

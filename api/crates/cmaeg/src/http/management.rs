@@ -424,7 +424,7 @@ pub struct ChannelPage {
     pub items: Vec<ChannelListItem>,
     pub next_cursor: Option<String>,
 }
-#[utoipa::path(get,path="/v1/channels",operation_id="listChannels",tag="channels",security(("creatorBearer"=[])),params(ListQuery),responses((status=200,body=ChannelPage),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
+#[utoipa::path(get,path="/v1/channels",operation_id="listChannels",tag="channels",security(("creatorBearer"=[])),params(ListQuery,("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator")),responses((status=200,body=ChannelPage),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn list_channels(
     State(state): State<ManagementState>,
     creator: Creator,

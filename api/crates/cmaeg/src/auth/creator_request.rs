@@ -1,5 +1,5 @@
-//! Method permissions for personal creator requests.
-use super::{bearer, service_error, token_hash, Creator, CreatorAuthError, CreatorAuthState};
+//! Method permissions and current organization scope for creator requests.
+use super::{bearer, service_error, Creator, CreatorAuthError, CreatorAuthState};
 use axum::{extract::FromRequestParts, http::request::Parts};
 
 impl<S> FromRequestParts<S> for Creator
@@ -32,13 +32,9 @@ where
                 .await
                 .map_err(service_error)?;
             principal.require(permission).map_err(service_error)?;
-            return Ok(Creator {
-                subject: principal.subject,
-                organization: false,
-                token_hash: token_hash(
-                    bearer(&parts.headers).ok_or(CreatorAuthError::NotAuthenticated)?,
-                ),
-            });
+            return auth
+                .service_creator(principal.subject, &parts.headers)
+                .await;
         }
         auth.authenticate(&parts.headers).await
     }

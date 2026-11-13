@@ -2,33 +2,51 @@
 
 mod acp;
 mod acp_context_refresh;
+mod acp_correlation;
+mod acp_credit_failure;
 mod acp_handshake;
 mod acp_inbound;
 mod acp_observations;
 mod acp_open_completion;
+mod acp_permission;
+mod acp_session_identity;
 mod acp_settings;
 mod acp_turn;
 mod adapter;
 mod agent_sandbox_backend;
 mod backend;
+mod capacity_recovery;
+pub use capacity_recovery::CapacityRecoveryNativeTransport;
 mod channel_tools;
 mod checkpoint_store;
 mod checkpoint_transport;
+mod context_goal;
 mod control_correlation;
+mod credit_error_json;
 mod deployment;
 mod home;
 #[cfg(test)]
 mod home_tests;
+#[cfg(test)]
+mod indexed_ledger_hold_tests;
 mod inspection_timing;
+#[cfg(test)]
+mod ledger_hold_tests;
 mod managed_context;
 mod memory;
 mod nonexecuting;
+mod observation_retention;
+mod output_json_budget;
+mod permission_state;
 mod provider_backend;
 mod provider_endpoint;
 mod provider_http;
 mod provider_tools;
 mod provider_transport;
 mod reply;
+mod retained_json;
+mod runtime_decode;
+mod sign_in_retention;
 mod startup_timing;
 mod subscriptions;
 mod tool_confirmation;
@@ -88,3 +106,29 @@ mod recovery_tests;
 
 mod access_tools;
 pub use access_tools::{HostedAccessToolBinding, HostedAccessToolSource};
+
+/// Derive the same permission identity used by the ACP bridge and durable replies.
+/// Runtime observations use this contract rather than inventing an approval ID.
+pub fn observed_permission_id(
+    request: &crate::RequestPermissionRequest,
+    call: &serde_json::Value,
+) -> Option<String> {
+    if !acp_correlation::valid_call(call)
+        || permission_state::validate(&request.options).is_err()
+        || request.options.is_empty()
+        || request.options.iter().any(|option| {
+            !matches!(
+                option.kind,
+                crate::PermissionOptionKind::AllowOnce
+                    | crate::PermissionOptionKind::AllowAlways
+                    | crate::PermissionOptionKind::RejectOnce
+                    | crate::PermissionOptionKind::RejectAlways
+            )
+        })
+    {
+        return None;
+    }
+    Some(acp_inbound::permission_id(
+        &acp_inbound::permission_locator(request.session_id.0.as_ref(), call, &request.options),
+    ))
+}

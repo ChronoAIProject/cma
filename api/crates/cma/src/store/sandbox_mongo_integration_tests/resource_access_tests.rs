@@ -1,13 +1,19 @@
+#[path = "resource_access_tests/access_snapshot_session.rs"]
+mod access_snapshot_session;
 #[path = "resource_access_tests/artifacts.rs"]
 mod artifacts;
 #[path = "resource_access_tests/hierarchy.rs"]
 mod hierarchy;
+#[path = "resource_access_tests/history_measurement.rs"]
+mod history_measurement;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
 #[path = "resource_access_tests/provenance.rs"]
 mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]
 mod sandbox_inventory;
+#[path = "resource_access_tests/sandbox_snapshot.rs"]
+mod sandbox_snapshot;
 #[path = "resource_access_tests/share_links.rs"]
 mod share_links;
 #[path = "resource_access_tests/snapshot_reads.rs"]

@@ -47,6 +47,7 @@ pub enum AdmissionError {
     Invalid,
     TooLarge,
     Conflict,
+    GuardConflict,
     Expired,
     /// A conflicting record is no longer readable; never delete/recreate it.
     ExpiredOrUnavailable,

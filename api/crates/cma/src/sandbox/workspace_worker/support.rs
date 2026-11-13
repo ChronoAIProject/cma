@@ -97,8 +97,12 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
     match error {
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativeClaimNotReady(_)
         | AdapterError::Unavailable(_) => {
             WorkerFailure::retryable("workspace runtime is temporarily unavailable")
+        }
+        AdapterError::RuntimeLedgerHold(_) => {
+            WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
         }
         AdapterError::AtCapacity(_) => WorkerFailure::terminal(
             "workspace_resource_quota",
@@ -117,6 +121,7 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
             "repository_source_invalid", "Repository files could not be safely prepared. The task has not run. Check source contents before starting another task.",
         ),
         AdapterError::Rejected(_)
+        | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::Unsupported(_) => WorkerFailure::terminal(
             "workspace_runtime_rejected",

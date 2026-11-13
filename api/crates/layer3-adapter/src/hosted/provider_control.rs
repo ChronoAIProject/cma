@@ -32,9 +32,10 @@ impl ProviderHostedControlTransport {
                 .header(
                     reqwest::header::ACCEPT,
                     format!(
-                        "{}, {}",
+                        "{}, {}, {}",
                         crate::wire::AGENT_RESOURCES_STATUS_MEDIA_TYPE,
                         crate::wire::AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+                        crate::wire::AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
                     ),
                 )
                 .json(request);
@@ -47,9 +48,18 @@ impl ProviderHostedControlTransport {
             })?;
             super::super::provider_http::decode_control(response).await
         };
-        let response = tokio::time::timeout(CONTROL_DEADLINE, exchange)
-            .await
-            .map_err(|_| AdapterError::Unavailable("runtime control request timed out".into()))??;
+        let response = crate::file_read_diagnostics::transport(
+            request.operation(),
+            crate::file_read_diagnostics::TransportPhase::Control,
+            async {
+                tokio::time::timeout(CONTROL_DEADLINE, exchange)
+                    .await
+                    .map_err(|_| {
+                        AdapterError::Unavailable("runtime control request timed out".into())
+                    })?
+            },
+        )
+        .await?;
         control_correlation::validate(request, &response)?;
         if let Some(authority) = crate::owner_protocol::current_authority() {
             authority.check().await?;

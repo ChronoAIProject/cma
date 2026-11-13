@@ -19,6 +19,7 @@ export function BrowserPanel({
   agentId,
   incarnation,
   active,
+  running = false,
   controlAdmission = false,
   onReload,
 }: {
@@ -28,6 +29,7 @@ export function BrowserPanel({
   readonly agentId: string;
   readonly incarnation: string;
   readonly active: boolean;
+  readonly running?: boolean;
   readonly controlAdmission?: boolean;
   readonly onReload: () => void;
 }) {
@@ -37,6 +39,7 @@ export function BrowserPanel({
     state: BrowserStatus;
     frame?: Frame;
     location?: string;
+    address?: string;
     contextId?: string;
   }>();
   const [decoded, setDecoded] = useState<Frame>();
@@ -52,11 +55,13 @@ export function BrowserPanel({
     let contextId: string | undefined;
     let frame: Frame | undefined;
     let location: string | undefined;
+    let address: string | undefined;
     let failures = 0;
     let terminal = false;
     const observer = crypto.randomUUID();
     const publish = (state: BrowserStatus, retained: Frame | null | undefined = frame) => {
-      if (alive) setStored({ scope, state, frame: retained ?? undefined, location, contextId });
+      if (alive)
+        setStored({ scope, state, frame: retained ?? undefined, location, address, contextId });
     };
     const startClock = () => {
       setClock(Date.now());
@@ -99,7 +104,6 @@ export function BrowserPanel({
           return;
         }
         contextId = value.context_id ?? contextId;
-        location = value.location;
         const incoming = value.frame;
         if (
           incoming &&
@@ -107,8 +111,14 @@ export function BrowserPanel({
           (!frame ||
             (incoming.sequence > frame.sequence &&
               Date.parse(incoming.captured_at) >= Date.parse(frame.captured_at)))
-        )
+        ) {
           frame = incoming;
+          location = value.location;
+          address = value.address;
+        } else if (!incoming && !frame) {
+          location = value.location;
+          address = value.address;
+        }
         if (['unsupported', 'not_enabled', 'paused'].includes(value.state)) frame = undefined;
         terminal = ['unsupported', 'not_enabled'].includes(value.state);
         failures = 0;
@@ -118,6 +128,8 @@ export function BrowserPanel({
         failures += 1;
         if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) {
           frame = undefined;
+          location = undefined;
+          address = undefined;
           terminal = true;
           publish(error.status === 409 ? 'disconnected' : 'forbidden');
         } else publish('disconnected');
@@ -180,7 +192,7 @@ export function BrowserPanel({
           not_enabled: 'Browser is not enabled for this environment.',
         }[current?.state ?? 'loading'];
   const picture = frame ? (
-    <figure>
+    <figure aria-label={live ? 'Live browser page' : 'Last browser frame'}>
       <img
         key={frame.sequence}
         src={`data:image/jpeg;base64,${frame.data}`}
@@ -190,15 +202,11 @@ export function BrowserPanel({
         onLoad={() => setDecoded(frame)}
         onError={() => setDecoded(undefined)}
       />
-      <figcaption>
-        {current?.location} ·{' '}
-        <time dateTime={frame.captured_at}>{new Date(frame.captured_at).toLocaleTimeString()}</time>
-      </figcaption>
     </figure>
   ) : null;
   return (
     <section className="agent-browser" aria-label="Browser observation">
-      <p role="status">{message}</p>
+      {!live ? <p role="status">{message}</p> : null}
       {controlClient && controlAccountId && current?.contextId ? (
         <BrowserControl
           key={current.contextId}
@@ -208,14 +216,40 @@ export function BrowserPanel({
           incarnation={incarnation}
           contextId={current.contextId}
           active={!!live && active}
+          running={running}
           admissionAllowed={controlAdmission}
         >
+          <div className="agent-browser__address" aria-label="Browser location">
+            ◎ {current?.address?.replace(/^https?:\/\//, '') ?? current?.location}
+          </div>
           {picture}
         </BrowserControl>
       ) : (
         <>
+          <div className="agent-browser__control">
+            <p className="workspace-control-status" role="status">
+              <span
+                className={`workspace-control-dot${running ? ' workspace-control-dot--running' : ''}`}
+                aria-hidden="true"
+              />
+              {running
+                ? 'Agent is in control · Working in Browser'
+                : 'Agent paused · Desktop is idle'}
+            </p>
+            <Button
+              size="sm"
+              variant="primary"
+              placement="workspace-take-control"
+              disabled
+              title="Control is unavailable with this access."
+            >
+              Take control
+            </Button>
+          </div>
+          <div className="agent-browser__address" aria-label="Browser location">
+            ◎ {current?.address?.replace(/^https?:\/\//, '') ?? current?.location}
+          </div>
           {picture}
-          <p>Observation only</p>
         </>
       )}
       {['disconnected', 'forbidden'].includes(current?.state ?? '') ? (

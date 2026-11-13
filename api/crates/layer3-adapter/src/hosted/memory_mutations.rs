@@ -372,12 +372,7 @@ pub(super) fn install_skill(
     let request = fenced.request;
     validate(
         request.has_valid_sha256(),
-        request.operation_id
-            == format!(
-                "agent:{}:skill:{}:install:v1",
-                request.agent_id.as_str(),
-                request.skill.id
-            ),
+        request.operation_id == request.expected_operation_id(),
         operation,
     )?;
     let payload = request.request_sha256.clone();
@@ -407,10 +402,34 @@ pub(super) fn install_skill(
     let Some(home) = runtime.homes.get_mut(&request.agent_id) else {
         return refused(operation, "agent_home_missing");
     };
-    if !safe_name(&request.skill.id) || home.skills.iter().any(|s| s.id == request.skill.id) {
-        return refused(operation, "skill_destination_exists");
+    if !safe_name(&request.skill.id) {
+        return refused(operation, "skill_destination_invalid");
     }
-    home.skills.push(request.skill.clone());
+    match &request.upgrade {
+        Some(upgrade) => {
+            let Some(previous) = home.skills.iter_mut().find(|s| s.id == request.skill.id) else {
+                return Err(crate::AdapterError::OperationIdentityConflict(
+                    "agent_skill_upgrade_conflict: previous installation differs".into(),
+                ));
+            };
+            if previous.id != upgrade.previous.id
+                || previous.version != upgrade.previous.version
+                || previous.name != upgrade.previous.name
+                || previous.archive_sha256 != upgrade.previous.archive_sha256
+            {
+                return Err(crate::AdapterError::OperationIdentityConflict(
+                    "agent_skill_upgrade_conflict: previous installation differs".into(),
+                ));
+            }
+            *previous = request.skill.clone();
+        }
+        None => {
+            if home.skills.iter().any(|s| s.id == request.skill.id) {
+                return refused(operation, "skill_destination_exists");
+            }
+            home.skills.push(request.skill.clone());
+        }
+    }
     let receipt = crate::AgentSkillInstallReceipt::from_request(&request);
     finish(
         runtime,

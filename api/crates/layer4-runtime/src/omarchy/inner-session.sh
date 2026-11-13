@@ -23,6 +23,7 @@ if [[ ! -s "$HOME/.local/state/omarchy/current/theme.name" ]]; then
   ln -snf /usr/share/cma-desktop/wallpaper.png "$HOME/.local/state/omarchy/current/background"
 fi
 children=()
+# shellcheck disable=SC2329 # Invoked by the desktop signal/exit traps.
 stop() {
   local status=$?
   trap - EXIT INT TERM
@@ -35,10 +36,13 @@ stop() {
       done
     } >/tmp/cma-x11-windows.log 2>&1
   fi
-  kill "${children[@]}" 2>/dev/null || true
-  wait "${children[@]}" 2>/dev/null || true
+  kill "${browser_manager:-}" "${children[@]}" 2>/dev/null || true
+  wait "${browser_manager:-}" "${children[@]}" 2>/dev/null || true
 }
 trap stop EXIT INT TERM
+# Inherit the desktop D-Bus/theme environment and monitor the outer owner.
+python3 /usr/local/bin/cma-desktop-browser --serve "$CMA_DESKTOP_OWNER_PID" --wayland </dev/null >/tmp/cma-browser-manager.log 2>&1 9>&- &
+browser_manager=$!
 export WLR_BACKENDS=headless WLR_HEADLESS_OUTPUTS=1 WLR_RENDERER=pixman
 export WLR_RENDERER_ALLOW_SOFTWARE=1
 for device in /dev/dri/renderD*; do
@@ -126,5 +130,5 @@ done
 hyprctl -j clients | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null
 xdotool windowfocus --sync "$window"
 touch /tmp/cma-omarchy-ready
-wait -n "${children[@]}"
+wait -n "${children[@]}" "$browser_manager"
 exit 1

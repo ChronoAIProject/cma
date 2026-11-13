@@ -121,6 +121,14 @@ pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
                     .build(),
             )
             .build(),
+        IndexModel::builder()
+            .keys(doc! { "retired_at": 1, "_id": 1 })
+            .options(
+                IndexOptions::builder()
+                    .name("sandboxes_global_live".to_string())
+                    .build(),
+            )
+            .build(),
     ]
 }
 
@@ -321,6 +329,9 @@ fn read_admission_replay_metadata(
 }
 
 pub(super) fn sandbox_replacement_fields(sandbox: &Sandbox) -> Result<Document, SandboxStoreError> {
+    if sandbox.retirement_archive_pending() {
+        return Err(SandboxStoreError::Conflict);
+    }
     let mut fields = raw_sandbox_document(sandbox, 0, Bson::Null, Bson::Null)?;
     fields.remove("_id");
     fields.remove("last_seq");

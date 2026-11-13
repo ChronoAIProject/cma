@@ -9,6 +9,7 @@ use layer2_core::sandbox::{
 use super::SandboxWorker;
 
 mod checkpoint;
+mod checkpoint_retry;
 mod conversations;
 mod home_recovery;
 mod pause;

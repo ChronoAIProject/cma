@@ -27,7 +27,7 @@ mod output;
 #[cfg(test)]
 mod output_gap_tests;
 mod parse;
-mod projection;
+pub(super) mod projection;
 pub(crate) mod queued_cancellation;
 pub(crate) mod queued_input;
 mod routes;
@@ -35,7 +35,9 @@ mod routing;
 #[cfg(test)]
 mod routing_tests;
 pub use routing::{BindingEventRouter, BindingRouteError};
+mod sender_context;
 mod stream;
+mod stream_pages;
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -49,8 +51,14 @@ pub struct ResponsesV2State {
     reads: Arc<AgentReadService>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     event_router: Option<Arc<dyn BindingEventRouter>>,
+    paged_events: bool,
+    retained_context_lookup: bool,
 }
 impl ResponsesV2State {
+    pub fn with_paged_events(mut self, enabled: bool) -> Self {
+        self.paged_events = enabled;
+        self
+    }
     pub fn with_event_router(mut self, router: Arc<dyn BindingEventRouter>) -> Self {
         self.event_router = Some(router);
         self
@@ -60,6 +68,14 @@ impl ResponsesV2State {
         bindings: Arc<layer2_core::sandbox::binding::BindingAccessService>,
     ) -> Self {
         self.bindings = Some(bindings);
+        self
+    }
+
+    /// Enables the single-read retained-context path only for an explicit
+    /// rollout. The legacy path remains the default until its security and
+    /// latency evidence is accepted.
+    pub fn with_retained_context_lookup(mut self, enabled: bool) -> Self {
+        self.retained_context_lookup = enabled;
         self
     }
 
@@ -74,6 +90,8 @@ impl ResponsesV2State {
             reads,
             bindings: None,
             event_router: None,
+            paged_events: false,
+            retained_context_lookup: false,
         }
     }
 }
@@ -98,6 +116,10 @@ pub fn router(state: ResponsesV2State) -> Router {
             post(interruption::submit),
         )
         .route("/api/v2/responses/{response_id}", get(routes::retrieve))
+        .route(
+            "/api/v2/responses/{response_id}/output",
+            get(routes::output::output_page),
+        )
         .route("/api/v2/commands/{command_id}", get(controls::status))
         .route(
             "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
@@ -135,6 +157,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             routes::create,
             routes::create_alias,
             routes::retrieve,
+            routes::output::output_page,
             routes::replay,
             controls::observe,
             controls::submit,

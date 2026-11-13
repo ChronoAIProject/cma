@@ -34,8 +34,16 @@ pub(super) struct OutputProjection {
     pub events: Vec<Value>,
     tools: BTreeMap<String, usize>,
     messages: usize,
+    base_index: usize,
 }
 impl OutputProjection {
+    pub(super) fn at(item: usize, message: usize) -> Self {
+        Self {
+            base_index: item,
+            messages: message,
+            ..Self::default()
+        }
+    }
     pub fn observe(&mut self, kind: &AgentLogKind, agent: &AgentId, turn: u64) {
         match kind {
             AgentLogKind::AgentMessage { content } => self.message(agent, turn, content),
@@ -62,11 +70,11 @@ impl OutputProjection {
                 let index = self.items.len();
                 self.push(
                     "response.output_item.added",
-                    json!({"output_index":index,"item":item}),
+                    json!({"output_index":self.base_index+index,"item":item}),
                 );
                 self.push(
                     "response.mcp_call.in_progress",
-                    json!({"output_index":index,"item_id":item.id}),
+                    json!({"output_index":self.base_index+index,"item_id":item.id}),
                 );
                 self.items.push(V2OutputItem::Activity(item));
                 self.tools.insert(call_id.clone(), index);
@@ -121,15 +129,15 @@ impl OutputProjection {
             } else {
                 "response.mcp_call.failed"
             },
-            json!({"output_index":index,"item_id":item.id}),
+            json!({"output_index":self.base_index+index,"item_id":item.id}),
         );
         self.push(
             "response.output_item.done",
-            json!({"output_index":index,"item":item}),
+            json!({"output_index":self.base_index+index,"item":item}),
         );
     }
     fn message(&mut self, agent: &AgentId, turn: u64, text: &str) {
-        let index = self.items.len();
+        let index = self.base_index + self.items.len();
         // Message IDs retain their existing identity in conversation item reads.
         let item = OutputMessage {
             id: super::super::retrieve::output_id(agent, turn, self.messages),

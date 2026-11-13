@@ -11,6 +11,7 @@ pub struct Selection {
     enabled: bool,
     discovery: bool,
     records: Arc<RwLock<BTreeSet<String>>>,
+    status: super::status::StatusRegistry,
 }
 impl Selection {
     pub fn new(config: &NativeDiscordConfig) -> Self {
@@ -22,6 +23,7 @@ impl Selection {
             } else {
                 BTreeSet::new()
             })),
+            status: Default::default(),
         }
     }
     pub fn enabled(&self) -> bool {
@@ -42,6 +44,9 @@ impl Selection {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    pub(crate) fn status(&self) -> super::status::StatusRegistry {
+        self.status.clone()
+    }
     pub(super) fn insert(&self, record: String) -> bool {
         let mut records = self.records.write().unwrap();
         if records.contains(&record) {
@@ -51,5 +56,6 @@ impl Selection {
     }
     pub(super) fn remove(&self, record: &str) {
         self.records.write().unwrap().remove(record);
+        self.status.remove(record);
     }
 }

@@ -1,10 +1,12 @@
-import { render, screen, within } from '@testing-library/react';
+import { NavigationSettingsContext } from './sidebarContext';
+import type { ReactElement } from 'react';
+import { render as renderView, screen, within } from '@testing-library/react';
 import { createClient } from '@chronoai/cma-sdk';
 import { expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import type { AppRoute } from '../routing/routes';
-import { chooseOption } from '../test/select';
+import { chooseOption, expandNavigationFilters } from '../test/select';
 import { ManagerNavigation } from './ManagerNavigation';
 import { navigationFixture } from '../test/hierarchy';
 
@@ -69,7 +71,7 @@ it('distinguishes an unstarted ready task from a successfully completed ready ta
   ).toBeVisible();
 });
 
-it('opens Sandbox management through Settings and returns to the selected filtered task with focus', async () => {
+it('opens Sandbox management through Tasks filters and returns to the selected filtered task with focus', async () => {
   const user = userEvent.setup();
   function Navigation() {
     const [route, navigate] = useState<AppRoute>({ kind: 'agent', agentId: 'agt_1' });
@@ -88,13 +90,13 @@ it('opens Sandbox management through Settings and returns to the selected filter
   }
   render(<Navigation />);
   expect(screen.queryByRole('button', { name: 'Sandboxes' })).not.toBeInTheDocument();
-  await user.click(screen.getByRole('button', { name: 'Filter' }));
+  await expandNavigationFilters(user);
   await chooseOption(user, 'Agent status filter', 'Working');
   const task = screen.getByRole('treeitem', { name: /Agent one/ });
   task.focus();
   await user.keyboard('{Enter}');
-  await user.click(screen.getByRole('button', { name: 'Settings' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+  await expandNavigationFilters(user);
+  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
   expect(screen.getByRole('button', { name: 'Back to tasks' })).toHaveFocus();
   await user.click(screen.getByRole('link', { name: /Atlas/ }));
   expect(screen.getByRole('treeitem', { name: /^Atlas/ })).toHaveAttribute('aria-selected', 'true');
@@ -104,6 +106,8 @@ it('opens Sandbox management through Settings and returns to the selected filter
     'true',
   );
   expect(screen.getByRole('treeitem', { name: /Agent one/ })).toHaveFocus();
+  expect(screen.getByRole('button', { name: 'Filter' })).toHaveAttribute('aria-expanded', 'false');
+  await expandNavigationFilters(user);
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
 });
 
@@ -188,9 +192,9 @@ it('restores shared task scope, focus and scroll after browsing a different envi
   row.focus();
   const scrollport = screen.getByTestId('navigation-scroll');
   scrollport.scrollTop = 240;
-  await user.click(screen.getByRole('button', { name: 'Settings' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
-  await user.click(screen.getByRole('button', { name: 'Filter' }));
+  await expandNavigationFilters(user);
+  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await expandNavigationFilters(user);
   await chooseOption(user, 'Navigation scope', 'Personal');
   await user.click(screen.getByRole('link', { name: /Atlas/ }));
   scrollport.scrollTop = 0;
@@ -238,7 +242,7 @@ it('filters by completed task outcome without confusing ready or failed turns', 
       navigation={{ status: 'ready', items, refresh: vi.fn() }}
     />,
   );
-  await user.click(screen.getByRole('button', { name: 'Filter' }));
+  await expandNavigationFilters(user);
   await chooseOption(user, 'Agent status filter', 'Completed');
   expect(screen.getByRole('treeitem', { name: /^Finished task/ })).toBeVisible();
   expect(screen.queryByRole('treeitem', { name: /^New task/ })).not.toBeInTheDocument();
@@ -281,3 +285,11 @@ it('preserves a failed turn under a paused parent while holding successful tasks
     within(screen.getByRole('treeitem', { name: /^Failed task/ })).getByText('Failed'),
   ).toBeVisible();
 });
+
+function render(view: ReactElement) {
+  const wrap = (content: ReactElement) => (
+    <NavigationSettingsContext value={document.body}>{content}</NavigationSettingsContext>
+  );
+  const result = renderView(wrap(view));
+  return { ...result, rerender: (content: ReactElement) => result.rerender(wrap(content)) };
+}

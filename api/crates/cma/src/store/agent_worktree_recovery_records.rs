@@ -1,5 +1,6 @@
 //! Recovery snapshots, quota/cleanup fences and exact ambiguous-commit evidence.
 use super::{
+    agent_log_integrity::carry_integrity_for_revision,
     agents::{agent_replacement_fields, read_agent},
     sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION},
     sandboxes::read_sandbox,
@@ -153,9 +154,17 @@ pub(super) async fn replace(
     agent.insert("last_seq", last_seq);
     agent.insert("record.conversation.last_seq", last_seq);
     agent.insert("channel_history_seal", doc! {"$exists":false});
+    let current_row = store
+        .agents
+        .find_one(doc! { "_id": current.agent.id.as_str() })
+        .session(&mut *session)
+        .await?
+        .ok_or(Domain::NotFound)?;
+    let mut agent_fields = agent_replacement_fields(&next.agent)?;
+    carry_integrity_for_revision(&current_row, &current.agent, &next.agent, &mut agent_fields)?;
     let result = store
         .agents
-        .update_one(agent, doc! {"$set":agent_replacement_fields(&next.agent)?})
+        .update_one(agent, doc! {"$set":agent_fields})
         .session(&mut *session)
         .await?;
     if result.matched_count != 1 {

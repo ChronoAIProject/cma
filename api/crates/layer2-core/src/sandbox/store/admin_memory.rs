@@ -38,6 +38,9 @@ impl SandboxAdminStore for InMemorySandboxStore {
                     .is_none_or(|owner| &sandbox.owner == owner)
                     && query.status.is_none_or(|status| sandbox.status == status)
                     && query
+                        .always_on
+                        .is_none_or(|value| (sandbox.profile.always_on == Some(true)) == value)
+                    && query
                         .runtime_version
                         .as_deref()
                         .is_none_or(|version| runtime_matches(sandbox, version))

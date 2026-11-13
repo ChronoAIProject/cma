@@ -1,4 +1,7 @@
-use super::protocol::*;
+use super::{
+    protocol::*,
+    status::{FailureCode, Stage, StatusAttempt},
+};
 use cmaeg_core::channel::Secret;
 use futures_util::{future::BoxFuture, SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -18,6 +21,12 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const COMMIT_TIMEOUT: Duration = Duration::from_secs(15);
 const SENDS_PER_MINUTE: usize = 110; // Below Discord's 120/60 s ceiling.
+struct CommittedEvent {
+    checkpoint: Checkpoint,
+    ready: bool,
+    message: bool,
+}
+type PendingCommit = BoxFuture<'static, Result<CommittedEvent, GatewayError>>;
 
 /// One real Discord Gateway connection. The native-source owner must supervise
 /// reconnects, obey retry_after, and retain the last durable checkpoint.
@@ -26,6 +35,7 @@ pub struct GatewayClient {
     token: Secret,
     bot_id: String,
     intents: u64,
+    status: StatusAttempt,
 }
 impl GatewayClient {
     pub fn new(token: Secret, bot_id: String, intents: u64) -> Result<Self, GatewayError> {
@@ -48,7 +58,13 @@ impl GatewayClient {
             token,
             bot_id,
             intents,
+            status: Default::default(),
         })
+    }
+
+    pub(crate) fn with_status(mut self, status: StatusAttempt) -> Self {
+        self.status = status;
+        self
     }
 
     pub async fn connect(
@@ -67,12 +83,14 @@ impl GatewayClient {
                     state.resume_url.as_str()
                 }),
         )?;
+        self.status.step(Stage::Authorize);
         timeout(
             Duration::from_secs(12),
             journal.authorize_connection(resume.as_ref()),
         )
         .await
         .map_err(|_| GatewayError::Unavailable)??;
+        self.status.step(Stage::Socket);
         let socket = timeout(
             IO_TIMEOUT,
             connect_async_with_config(url.as_str(), Some(socket_config()), true),
@@ -97,8 +115,13 @@ impl GatewayClient {
         if *shutdown.borrow() {
             return state.end(EndReason::Stopped, false);
         }
+        self.status.step(Stage::Hello);
         let hello = match timeout(HELLO_TIMEOUT, socket.next()).await {
             Ok(Some(Ok(Message::Text(text)))) => serde_json::from_str::<Value>(&text).ok(),
+            Err(_) => {
+                self.status.failure(FailureCode::HelloTimeout);
+                None
+            }
             _ => None,
         };
         let interval = hello
@@ -106,8 +129,14 @@ impl GatewayClient {
             .filter(|hello| hello["op"] == 10)
             .and_then(|hello| hello["d"]["heartbeat_interval"].as_u64());
         let Some(interval) = interval.filter(|value| (1000..=120_000).contains(value)) else {
+            self.status.failure(FailureCode::HelloInvalid);
             return state.end(EndReason::Protocol, false);
         };
+        self.status.step(if state.committed.is_some() {
+            Stage::Resume
+        } else {
+            Stage::Identify
+        });
         let command = match &state.committed {
             Some(resume) => {
                 json!({"op":6,"d":{"token":self.token.as_str(),"session_id":resume.session_id,"seq":resume.sequence}})
@@ -119,12 +148,15 @@ impl GatewayClient {
         if let Err(reason) = state.send(&mut socket, command).await {
             return state.end(reason, false);
         }
+        self.status.identify_sent();
+        self.status.step(Stage::Ready);
         let interval = Duration::from_millis(interval);
+        self.status.heartbeat_ack(interval.saturating_mul(2));
         let mut heartbeat_at =
             Instant::now() + Duration::from_millis(jitter % interval.as_millis() as u64);
         let mut awaiting_ack = false;
         let mut queue = VecDeque::new();
-        let mut pending: Option<BoxFuture<'static, Result<Checkpoint, GatewayError>>> = None;
+        let mut pending: Option<PendingCommit> = None;
         loop {
             if pending.is_none() {
                 if let Some(event) = queue.pop_front() {
@@ -136,11 +168,18 @@ impl GatewayClient {
                         Err(_) => return state.end(EndReason::Protocol, false),
                     };
                     let journal = journal.clone();
+                    let ready = matches!(event.name.as_str(), "READY" | "RESUMED");
+                    let message = event.name == "MESSAGE_CREATE";
+                    self.status.step(Stage::EventCommit);
                     pending = Some(Box::pin(async move {
                         timeout(COMMIT_TIMEOUT, journal.admit(&next, &event))
                             .await
                             .map_err(|_| GatewayError::Unavailable)??;
-                        Ok(next)
+                        Ok(CommittedEvent {
+                            checkpoint: next,
+                            ready,
+                            message,
+                        })
                     }));
                 }
             }
@@ -152,7 +191,11 @@ impl GatewayClient {
                 committed = async {pending.as_mut().unwrap().await}, if pending.is_some() => {
                     pending = None;
                     match committed {
-                        Ok(checkpoint)=>state.committed=Some(checkpoint),
+                        Ok(CommittedEvent { checkpoint, ready, message })=>{
+                            state.committed=Some(checkpoint);
+                            if ready { self.status.ready(); }
+                            self.status.event_committed(message);
+                        },
                         Err(GatewayError::Authority)=>return state.end(EndReason::AuthorityRevoked,false),
                         Err(_)=>return state.end(EndReason::CommitUnavailable,false),
                     }
@@ -183,6 +226,7 @@ impl GatewayClient {
                             if !value["d"].is_object() {return state.end(EndReason::Protocol,false)}
                             if name=="MESSAGE_CREATE" && snowflake(&value["d"]["id"]).is_none() {return state.end(EndReason::Protocol,false)}
                             if queue.len()>=QUEUE_LIMIT {return state.end(EndReason::Backpressure,false)}
+                            if name == "MESSAGE_CREATE" { self.status.event_received(); }
                             state.received=Some(sequence);
                             queue.push_back(Dispatch {name:name.into(),sequence,data:value["d"].clone()});
                         },
@@ -195,7 +239,7 @@ impl GatewayClient {
                             let Some(resumable)=value["d"].as_bool() else {return state.end(EndReason::Protocol,false)};
                             return state.end(EndReason::InvalidSession,!resumable)
                         },
-                        Some(11)=>awaiting_ack=false,
+                        Some(11)=>{ awaiting_ack=false; self.status.heartbeat_ack(interval.saturating_mul(2)); },
                         _=>return state.end(EndReason::Protocol,false),
                     }
                 }

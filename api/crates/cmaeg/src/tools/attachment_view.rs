@@ -180,13 +180,34 @@ pub struct AttachmentView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<String>,
     /// With view `download` and status `ready`: the one command that saves
-    /// the original. It carries a single-use link.
+    /// the original. It carries a scoped, short-lived, single-use link.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download: Option<MediaDownload>,
 }
 
-/// A ready download: one `curl` command that works once and expires at
-/// `expires_at`. Only `curl` carries the link; `url` never does.
+/// The structured header credential for a ready download. The token is
+/// scoped to one event attachment and is single-use; it is never logged.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MediaAuthorization {
+    /// The HTTP authorization scheme; always `Bearer`.
+    pub scheme: String,
+    /// The single-use media capability.
+    pub token: String,
+}
+
+impl fmt::Debug for MediaAuthorization {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MediaAuthorization")
+            .field("scheme", &self.scheme)
+            .field("token", &"[redacted]")
+            .finish()
+    }
+}
+
+/// A ready download: one `curl` command and a structured authorization header
+/// that work once and expire at `expires_at`. The URL never carries the link.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MediaDownload {
@@ -196,8 +217,10 @@ pub struct MediaDownload {
     pub url: String,
     /// Unix seconds after which the link is refused.
     pub expires_at: i64,
+    /// The structured credential for clients that cannot execute shell text.
+    pub authorization: MediaAuthorization,
     /// The command to run once in the agent's workspace; its
-    /// `Authorization` header carries the link.
+    /// `Authorization` header carries the same link as `authorization`.
     pub curl: String,
 }
 
@@ -209,8 +232,32 @@ impl fmt::Debug for MediaDownload {
             .field("method", &self.method)
             .field("url", &self.url)
             .field("expires_at", &self.expires_at)
+            .field("authorization", &self.authorization)
             .field("curl", &"[redacted]")
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn media_debug_redacts_the_structured_credential() {
+        let download = MediaDownload {
+            method: "GET".into(),
+            url: "https://gateway.example/v1/media/content".into(),
+            expires_at: 1,
+            authorization: MediaAuthorization {
+                scheme: "Bearer".into(),
+                token: "cmaeg1.md.secret".into(),
+            },
+            curl: "curl -H secret".into(),
+        };
+        let debug = format!("{download:?}");
+        assert!(!debug.contains("cmaeg1.md.secret"));
+        assert!(!debug.contains("curl -H secret"));
+        assert!(debug.contains("[redacted]"));
     }
 }
 

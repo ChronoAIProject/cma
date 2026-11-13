@@ -38,6 +38,7 @@ pub(super) fn epoch() -> u64 {
 
 #[derive(Default)]
 pub(super) struct Peer {
+    pub permissions: Vec<String>,
     pub activity: Mutex<Value>,
     pub mint_calls: AtomicUsize,
     pub gateway_calls: AtomicUsize,
@@ -106,6 +107,10 @@ impl Drop for Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
+        Self::with_permissions(&["cma:*"]).await
+    }
+
+    pub async fn with_permissions(permissions: &[&str]) -> Self {
         let store = Arc::new(InMemorySandboxStore::default());
         let profile = json!({"schema_version":1,"metadata":{"name":"Father","owner":{"kind":"human","subject":"father-owner"},"provider":"registered"},
             "model":{"access":"managed","service":AgentProvider::default().connection_services().managed,"api_type":"responses","model":"model-a","thinking_effort":"medium"},
@@ -184,6 +189,10 @@ impl Fixture {
         let activity = json!({"actor":{"kind":"human","id":"sender-a"},"conversation":{"kind":"private","id":"chat-a"},
             "source":{"type":"nyxid_relay","platform":"telegram"},"event_id":"event-a","occurred_at":layer2_core::now_rfc3339(),"kind":{"type":"message","text":"Please help create a bot"}});
         let peer = Arc::new(Peer {
+            permissions: permissions
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
             activity: Mutex::new(activity.clone()),
             ..Default::default()
         });
@@ -200,14 +209,14 @@ impl Fixture {
             )
             .route(
                 "/userinfo",
-                get(|| async {
-                    Json(json!({"sub":"visitor","name":"Visitor","permissions":["cma:*"]}))
+                get(|State(peer): State<Arc<Peer>>| async move {
+                    Json(json!({"sub":"visitor","name":"Visitor","permissions":peer.permissions.clone()}))
                 }),
             )
             .route(
                 "/introspect",
-                post(|| async {
-                    Json(json!({"active":true,"sub":"visitor","permissions":["cma:*"]}))
+                post(|State(peer): State<Arc<Peer>>| async move {
+                    Json(json!({"active":true,"sub":"visitor","permissions":peer.permissions.clone()}))
                 }),
             )
             .route("/api/v1/orgs", get(|headers:HeaderMap| async move {
@@ -335,7 +344,7 @@ impl Fixture {
             .unwrap();
         let state = SubjectAuthState::new(
             SubjectId::new("visitor"),
-            crate::permissions::capabilities_from_permissions(["cma:*"]),
+            crate::permissions::capabilities_from_permissions(&self.peer.permissions),
             Profile::default(),
             Some(DurableSubjectTokens {
                 access_token: SecretValue::new(USER_TOKEN.into()),

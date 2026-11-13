@@ -145,11 +145,15 @@ async fn same_epoch_renewal_is_not_blocked_by_a_long_running_control_effect() {
     confirm(&registry, owner(1)).await;
     let session = registry.session("agent", Some(owner(1))).await.unwrap();
     let permit = session.permit().await.unwrap();
-    tokio::time::advance(Duration::from_secs(10)).await;
+    let half_lease = Duration::from_millis(RECEIVER_LEASE_MS / 2);
+    tokio::time::advance(half_lease).await;
     confirm(&registry, owner(1)).await;
-    tokio::time::advance(Duration::from_secs(11)).await;
+    // Cross the original deadline while remaining inside the renewed lease.
+    tokio::time::advance(half_lease + Duration::from_millis(1)).await;
     drop(permit);
     assert!(session.permit().await.is_ok());
+    tokio::time::advance(half_lease - Duration::from_millis(1)).await;
+    assert!(session.permit().await.is_err());
 }
 
 #[tokio::test(start_paused = true)]

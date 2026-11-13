@@ -24,6 +24,7 @@ pub(crate) fn sandbox(id: &str, owner: &str) -> Sandbox {
             id: SandboxProfileId(format!("profile-{id}")),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

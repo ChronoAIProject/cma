@@ -13,6 +13,8 @@ pub mod v2;
 
 mod conversations;
 mod create;
+#[cfg(test)]
+mod credit_failure_tests;
 mod items;
 mod model;
 #[cfg(test)]

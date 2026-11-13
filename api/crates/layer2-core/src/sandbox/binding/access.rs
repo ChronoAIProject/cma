@@ -48,6 +48,12 @@ pub struct BindingConversationAuthority {
     pub conversation: BindingConversation,
 }
 
+/// Input policy observed with the existing generation check; never persisted.
+pub struct BindingSubmissionPolicy {
+    pub generation: u64,
+    pub sender_context_revision: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct BindingAccessService {
     store: Arc<dyn BindingStore>,
@@ -91,6 +97,14 @@ impl BindingAccessService {
         hash: &str,
         expected: Option<u64>,
     ) -> Result<u64, BindingError> {
+        Ok(self.submission_policy(hash, expected).await?.generation)
+    }
+
+    pub async fn submission_policy(
+        &self,
+        hash: &str,
+        expected: Option<u64>,
+    ) -> Result<BindingSubmissionPolicy, BindingError> {
         let binding = self
             .store
             .find_by_key_hash(hash)
@@ -103,7 +117,13 @@ impl BindingAccessService {
         binding
             .require_generation(expected)
             .map_err(|_| BindingError::Conflict)?;
-        Ok(binding.generation)
+        Ok(BindingSubmissionPolicy {
+            generation: binding.generation,
+            sender_context_revision: binding
+                .profile
+                .verified_sender_context_enabled()
+                .then_some(binding.revision),
+        })
     }
 
     /// Deferred commands retain the binding generation, so replacement of an

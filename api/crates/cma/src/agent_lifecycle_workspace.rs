@@ -234,4 +234,4 @@ fn validate_scopes_for(
 
 #[cfg(test)]
 #[path = "agent_lifecycle_workspace_tests.rs"]
-mod tests;
+pub(super) mod tests;

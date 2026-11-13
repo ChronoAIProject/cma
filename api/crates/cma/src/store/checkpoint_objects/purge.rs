@@ -104,7 +104,8 @@ pub(super) async fn retire_deleted_sandboxes(
             .map_err(|_| unavailable("deleted sandbox archive authority is corrupt"))?;
         // Retirement is irreversible. Never infer it from an orphaned archive or
         // a missing runtime, and do not shorten retained conversation history.
-        if sandbox.id.as_str() != id
+        if sandbox.retirement_archive_pending()
+            || sandbox.id.as_str() != id
             || sandbox.status != SandboxStatus::Retired
             || sandbox.runtime.is_some()
             || sandbox.lifecycle.runtime_provision.is_some()
@@ -128,6 +129,13 @@ async fn channel_retained(
         .find_one(doc! { "_id": sandbox_id })
         .await
         .map_err(|_| unavailable("Channel checkpoint retention authority is unavailable"))?;
+    if let Some(document) = &sandbox {
+        let parent = super::super::sandboxes::read_sandbox(document)
+            .map_err(|_| unavailable("retirement archive authority is corrupt"))?;
+        if parent.retirement_archive_pending() {
+            return Ok(true);
+        }
+    }
     super::super::channel_storage_retention::required(
         &store.client.database(&store.sandboxes.namespace().db),
         sandbox_id,
@@ -219,6 +227,20 @@ async fn cleanup_one(
     manifest: &ManifestDoc,
     now: DateTime,
 ) -> AdapterResult<bool> {
+    // A full-data archive hold protects even incomplete source uploads. Channel
+    // retention protects published history, but still cleans abandoned stages.
+    if let Some(document) = store
+        .sandboxes
+        .find_one(doc! { "_id": &manifest.sandbox_id })
+        .await
+        .map_err(|_| unavailable("retirement archive authority is unavailable"))?
+    {
+        let parent = super::super::sandboxes::read_sandbox(&document)
+            .map_err(|_| unavailable("retirement archive authority is corrupt"))?;
+        if parent.retirement_archive_pending() {
+            return Ok(false);
+        }
+    }
     if manifest.state == ArchiveState::Published {
         return Ok(false);
     }

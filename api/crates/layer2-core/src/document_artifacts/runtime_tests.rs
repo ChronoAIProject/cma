@@ -217,7 +217,7 @@ async fn transient_post_upload_authority_failure_can_retry_same_create_and_updat
     let auth = TransientAuthority {
         requester: identity(),
         calls: 0.into(),
-        failing_at: 2.into(),
+        failing_at: 3.into(), // Initial, pre-reservation, then post-upload authority.
     };
     let rows = Arc::new(memory::MemoryDocuments::default());
     let service = DocumentService::new(
@@ -259,6 +259,39 @@ async fn transient_post_upload_authority_failure_can_retry_same_create_and_updat
             .unwrap(),
         changed
     );
+}
+
+#[tokio::test]
+async fn revoked_runtime_is_checked_before_reserving_document_storage() {
+    struct QuotaCalls(std::sync::atomic::AtomicUsize);
+    #[async_trait::async_trait]
+    impl DocumentQuotaStore for QuotaCalls {
+        async fn reserve(&self, _: &DocumentSourceReservation) -> Result<(), DocumentError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+    let auth = TransientAuthority {
+        requester: identity(),
+        calls: 0.into(),
+        failing_at: 2.into(),
+    };
+    let quota = Arc::new(QuotaCalls(0.into()));
+    let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
+    let service = DocumentService::with_storage_quota(
+        Arc::new(memory::MemoryDocuments::default()),
+        blobs.clone(),
+        false,
+        Some(quota.clone()),
+    );
+    assert_eq!(
+        service
+            .create_for_agent(&auth, "fixture", "create", create())
+            .await,
+        Err(DocumentError::Unavailable)
+    );
+    assert_eq!(quota.0.load(Ordering::SeqCst), 0);
+    assert!(blobs.0.lock().await.is_empty());
 }
 #[tokio::test]
 async fn two_agents_can_publish_the_same_request_key_without_colliding() {

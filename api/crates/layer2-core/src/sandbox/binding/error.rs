@@ -4,6 +4,8 @@ use super::unavailable;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BindingError {
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("forbidden")]
     Forbidden,
     #[error("binding not found")]
@@ -33,6 +35,7 @@ pub enum BindingError {
 impl From<SandboxStoreError> for BindingError {
     fn from(error: SandboxStoreError) -> Self {
         match error {
+            SandboxStoreError::AdmissionPaused => Self::AdmissionPaused,
             SandboxStoreError::NotFound => Self::NotFound,
             SandboxStoreError::Conflict | SandboxStoreError::Duplicate => Self::Conflict,
             SandboxStoreError::Corrupt(detail) => Self::Corrupt(detail),

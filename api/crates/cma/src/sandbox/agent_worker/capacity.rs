@@ -1,15 +1,118 @@
-//! Settle known-aborted capacity failures without waiting for the work lease.
+//! Settle capacity failures and exact marked cleanup retries under the same fences.
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{
-    plan_agent_cleanup_capacity_retry, plan_agent_log_capacity_failure, SandboxStoreError,
+    agent_cleanup_capacity_retry_hint, plan_agent_cleanup_capacity_retry,
+    plan_agent_log_capacity_failure, plan_agent_marked_cleanup_capacity_retry, SandboxStoreError,
 };
 use layer2_core::sandbox::{Agent, AgentWorkStep};
 use layer2_core::{rfc3339_at, seconds_from_rfc3339};
 
 use super::AgentWorker;
 
+#[path = "capacity_recovery.rs"]
+pub(crate) mod recovery;
+
+#[path = "recovery_commands.rs"]
+pub(crate) mod commands;
+
+#[path = "capacity_restart.rs"]
+pub(crate) mod reconnect;
+
 impl AgentWorker {
+    pub(crate) fn capacity_recovery_commands(
+        self: std::sync::Arc<Self>,
+        service: std::sync::Arc<crate::store::agent_capacity_recovery::RecoveryService>,
+    ) -> std::sync::Arc<
+        dyn layer2_core::sandbox::agent_capacity_recovery::commands::CapacityRecoveryCommands,
+    > {
+        self.install_capacity_restart(service.clone());
+        std::sync::Arc::new(commands::AuthorizedRecoveryCommands::new(service, self))
+    }
+
+    /// Background entry for an exact already-published recovery operation.
+    /// The service proves fresh receipt-bound personal authority for every step;
+    /// discovery metadata alone never grants this permission.
+    pub(crate) async fn run_accepted_capacity_recovery(
+        &self,
+        service: &crate::store::agent_capacity_recovery::RecoveryService,
+        request: &layer2_core::sandbox::agent_capacity_recovery::state::RecoveryRequest,
+    ) -> Result<
+        layer2_core::sandbox::agent_capacity_recovery::ports::CommitOutcome<
+            layer2_core::sandbox::agent_capacity_recovery::state::RecoveryWork,
+        >,
+        layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryError,
+    > {
+        let runtime = recovery::RestrictedRecoveryRuntime::new(
+            self.dependencies.adapter.clone(),
+            self.dependencies.registry.clone(),
+            self.dependencies.updates.clone(),
+        );
+        service
+            .run_accepted(&runtime, request, &self.config.holder)
+            .await
+    }
+
+    /// Authenticated accepted-work entry for shared composition. The caller is
+    /// reauthorized by the service on every store operation; a discovery row
+    /// must never be converted into a fabricated owner identity.
+    pub(crate) async fn run_capacity_recovery(
+        &self,
+        service: &crate::store::agent_capacity_recovery::RecoveryService,
+        caller: &layer2_core::Caller,
+        request: &layer2_core::sandbox::agent_capacity_recovery::state::RecoveryRequest,
+    ) -> Result<
+        layer2_core::sandbox::agent_capacity_recovery::ports::CommitOutcome<
+            layer2_core::sandbox::agent_capacity_recovery::state::RecoveryWork,
+        >,
+        layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryError,
+    > {
+        let runtime = recovery::RestrictedRecoveryRuntime::new(
+            self.dependencies.adapter.clone(),
+            self.dependencies.registry.clone(),
+            self.dependencies.updates.clone(),
+        );
+        service
+            .run_one(&runtime, caller, request, &self.config.holder)
+            .await
+    }
+
+    /// Select only from a failed-work retry. A point-tail observation is a hint;
+    /// commit_agent_work still validates the complete history in its transaction.
+    pub(super) async fn retry_marked_capacity_at(
+        &self,
+        agent: &Agent,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
+        if !agent_cleanup_capacity_retry_hint(agent) {
+            return Ok(false);
+        }
+        let started = tokio::time::Instant::now();
+        let fence = super::support::claimed_fence(agent, &self.config.holder)?;
+        let last = self
+            .dependencies
+            .store
+            .agent_log_entry(&agent.id, agent.conversation.last_seq)
+            .await?;
+        let elapsed = started.elapsed();
+        let Some(mutation) = plan_agent_marked_cleanup_capacity_retry(
+            agent,
+            last.as_ref(),
+            &self.config.holder,
+            fence,
+            &rfc3339_at(now + elapsed),
+            &rfc3339_at(ready_at + elapsed),
+        )?
+        else {
+            return Ok(false);
+        };
+        // Propagate conflicts and unknown commits unchanged. Neither authorizes
+        // another proposal or replay of the failed external operation.
+        self.dependencies.store.commit_agent_work(mutation).await?;
+        Ok(true)
+    }
+
     pub(in crate::sandbox) async fn finish_capacity_attempt(
         &self,
         claimed: &Agent,
@@ -46,24 +149,35 @@ impl AgentWorker {
                     | AgentWorkStep::RemoveWorktree
                     | AgentWorkStep::PublishDeleted
             );
+            let failure = super::support::WorkerFailure::retryable(
+                "agent_log_capacity",
+                "agent log capacity requires recovery",
+            );
+            let decision = self.retry_decision(&current, &failure, self.config.retry_delay);
+            let telemetry = (cleanup && self.config.work_retry_policy_enabled).then(|| {
+                crate::sandbox::work_retry::RetryTelemetry::agent(
+                    &current,
+                    failure.retry_kind(),
+                    decision,
+                    at + decision.delay,
+                )
+            });
             let mutation = if cleanup {
+                // This is only a planning observation. The fenced commit below
+                // validates the complete log and this exact tail again, so do
+                // not scan the whole history just to select its final entry.
                 let last = self
                     .dependencies
                     .store
-                    .agent_log(
-                        &current.id,
-                        current.conversation.last_seq.saturating_sub(1),
-                        1,
-                    )
-                    .await?
-                    .pop();
+                    .agent_log_entry(&current.id, current.conversation.last_seq)
+                    .await?;
                 plan_agent_cleanup_capacity_retry(
                     &current,
                     last.as_ref(),
                     &self.config.holder,
                     fence,
                     &rfc3339_at(at),
-                    &rfc3339_at(at + self.config.retry_delay),
+                    &rfc3339_at(at + decision.delay),
                 )?
             } else {
                 let worktree = self
@@ -83,6 +197,9 @@ impl AgentWorker {
             match self.dependencies.store.commit_agent_work(mutation).await {
                 Err(SandboxStoreError::Conflict) if attempt < 7 => tokio::task::yield_now().await,
                 Ok(()) => {
+                    if let Some(telemetry) = telemetry {
+                        telemetry.published();
+                    }
                     if !cleanup {
                         self.dependencies.registry.fence(
                             &current.id,

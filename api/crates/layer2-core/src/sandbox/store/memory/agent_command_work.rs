@@ -103,6 +103,30 @@ pub(super) fn bind_dispatch(
 
 #[async_trait]
 impl AgentCommandWorkerStore for InMemorySandboxStore {
+    async fn command_reconcile_heads(
+        &self,
+        agent_ids: &[crate::AgentId],
+    ) -> Result<Vec<crate::sandbox::agent_io::CommandReconcileHead>, CommandLedgerError> {
+        use crate::sandbox::agent_io::{CommandReconcileHead, MAX_COMMAND_RECONCILE_HEADS};
+        if agent_ids.len() > MAX_COMMAND_RECONCILE_HEADS {
+            return Err(CommandLedgerError::Invalid);
+        }
+        let state = self.lock();
+        Ok(agent_ids
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|id| state.agents.get(id))
+            .map(|agent| CommandReconcileHead {
+                agent_id: agent.id.clone(),
+                last_seq: agent.conversation.last_seq,
+                live: agent.status.is_live(),
+                runtime_generation: agent.conversation.runtime_generation,
+                active_turn: agent.conversation.active_turn,
+            })
+            .collect())
+    }
+
     async fn reject_unclaimed_command(
         &self,
         id: &crate::ids::AgentCommandId,

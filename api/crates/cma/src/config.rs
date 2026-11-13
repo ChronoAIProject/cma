@@ -12,6 +12,10 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+mod access_snapshot;
+mod activity;
+mod admission_log;
+mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -21,28 +25,36 @@ pub(crate) use agent_manager::AgentManagerReplicas;
 mod execution;
 mod gateway;
 mod home;
+mod oauth_resource;
 mod profiles;
+mod public_streams;
+mod rate_default_lease;
 mod runtime;
 
 mod features;
+mod quiet_output;
 mod task_experience;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
+mod browser_session;
 mod documents;
 mod sandbox_billing;
+pub(crate) mod sandbox_metrics;
 mod usage_billing;
 pub(crate) use bot_father::BotFatherConfig;
 pub(crate) use documents::DocumentStorageConfig;
 pub(crate) use profiles::DefaultProfileConfig;
 pub(crate) use runtime::RuntimeConfig;
 pub(crate) use sandbox_billing::SandboxBillingConfig;
+pub(crate) use sandbox_metrics::MetricsConfig;
 pub(crate) use usage_billing::UsageBillingConfig;
 
 const DEFAULT_BIND: &str = "0.0.0.0:8080";
 const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
+pub(crate) const MONGO_DIAGNOSTICS_ENABLED: &str = "CHRONO_MONGO_DIAGNOSTICS_ENABLED";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
 pub(crate) const REQUIRED_BASELINE_SERVICES: &[&str] = &["chrono-llm-public", "ornn-api"];
 const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm-public,ornn-api";
@@ -66,6 +78,10 @@ pub struct RateLimitConfig {
     pub default_per_minute: NonZeroU32,
     pub create_per_minute: NonZeroU32,
     pub input_per_minute: NonZeroU32,
+    pub control_per_minute: NonZeroU32,
+    pub control_tier_enabled: bool,
+    pub response_input_tier_enabled: bool,
+    pub default_lease_enabled: bool,
 }
 
 impl RateLimitConfig {
@@ -73,6 +89,23 @@ impl RateLimitConfig {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         Ok(Self {
+            default_lease_enabled: rate_default_lease::enabled(lookup)?,
+            control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => return Err("CHRONO_SERVER_RATE_CONTROL_ENABLED must be true or false".into()),
+            },
+            response_input_tier_enabled: match lookup("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED")?
+                .as_deref()
+            {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => {
+                    return Err(
+                        "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED must be true or false".into(),
+                    )
+                }
+            },
             admission_per_minute: positive_u32(
                 lookup,
                 "CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE",
@@ -93,6 +126,12 @@ impl RateLimitConfig {
             )?,
             create_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_CREATE_PER_MINUTE", 10, 1)?,
             input_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_INPUT_PER_MINUTE", 120, 1)?,
+            control_per_minute: positive_u32(
+                lookup,
+                "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE",
+                120,
+                1,
+            )?,
         })
     }
 }
@@ -148,7 +187,11 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) global_sandbox_limit: u16,
+    pub(crate) agent_log_fleet_percent: u8,
+    pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
     pub agent_access_retained_origins: Vec<String>,
@@ -159,11 +202,13 @@ pub struct Config {
     pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
+    pub nyxid_oauth_api_resource: Option<String>,
     pub nyxid_proxy_issuer: Option<String>,
     pub nyxid_proxy_jwks_url: Option<String>,
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) public_stream_limit: usize,
     pub trusted_proxies: TrustedProxyConfig,
     pub mongodb_uri: String,
     pub mongodb_database: String,
@@ -174,16 +219,19 @@ pub struct Config {
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
+    pub activity_async_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
     pub auth_mode: AuthMode,
+    pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
     pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
     pub usage_billing: Option<UsageBillingConfig>,
+    pub(crate) usage_metrics: MetricsConfig,
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
@@ -203,6 +251,7 @@ impl std::fmt::Debug for Config {
             .field("nyxid_public_url", &self.nyxid_public_url)
             .field("cors_origins", &self.cors_origins)
             .field("rate_limits", &self.rate_limits)
+            .field("public_stream_limit", &self.public_stream_limit)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("mongodb_uri", &"<redacted>")
             .field("mongodb_database", &self.mongodb_database)
@@ -213,6 +262,7 @@ impl std::fmt::Debug for Config {
             .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
+            .field("activity_async_enabled", &self.activity_async_enabled)
             .field("default_profiles", &self.default_profiles)
             .field(
                 "agent_manager_sandbox_capacity",
@@ -236,6 +286,12 @@ impl Config {
         let bind = value_or(&mut lookup, "CHRONO_SERVER_BIND", DEFAULT_BIND)?
             .parse::<SocketAddr>()
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
+        let metrics_bind = value_or(&mut lookup, "CHRONO_METRICS_BIND", "0.0.0.0:9091")?
+            .parse::<SocketAddr>()
+            .map_err(|error| format!("CHRONO_METRICS_BIND is not a socket address: {error}"))?;
+        if metrics_bind == bind && bind.port() != 0 {
+            return Err("CHRONO_METRICS_BIND must differ from CHRONO_SERVER_BIND".into());
+        }
         let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
         validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
         let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
@@ -277,6 +333,10 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
+        let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
+        let agent_log_fleet_percent =
+            admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
         let rate_limits = RateLimitConfig::from_lookup(&mut lookup)?;
         let trusted_proxies = TrustedProxyConfig::from_lookup(&mut lookup)?;
         let mongodb_uri = required(&mut lookup, "CHRONO_MONGODB_URI")?;
@@ -370,7 +430,10 @@ impl Config {
             );
         }
         Ok(Self {
+            global_sandbox_limit,
             bind,
+            metrics_bind,
+            public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             public_url,
             agent_access_retained_origins,
             agent_access_transport_migration,
@@ -378,6 +441,9 @@ impl Config {
             image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
+            nyxid_oauth_api_resource: oauth_resource::parse(lookup(
+                "CHRONO_NYXID_OAUTH_API_RESOURCE",
+            )?)?,
             nyxid_proxy_issuer: lookup("CHRONO_NYXID_PROXY_ISSUER")?,
             nyxid_proxy_jwks_url: lookup("CHRONO_NYXID_PROXY_JWKS_URL")?,
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
@@ -396,16 +462,21 @@ impl Config {
             baseline_services,
             auth_encryption_key,
             activity_retention,
+            activity_async_enabled: activity::enabled(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
                 .filter(|value| !value.is_empty()),
             auth_mode,
+            browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
             agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
             task_experience: task_experience::from_lookup(&mut lookup)?,
+            bounded_admission_agents,
+            agent_log_fleet_percent,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
+            usage_metrics: MetricsConfig::from_lookup(&mut lookup)?,
             sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,

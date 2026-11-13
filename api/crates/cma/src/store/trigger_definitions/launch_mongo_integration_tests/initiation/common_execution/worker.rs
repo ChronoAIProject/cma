@@ -116,7 +116,35 @@ impl LaunchResourceDriver for Driver {
 #[tokio::test]
 #[ignore = "requires an owned disposable Mongo replica set"]
 async fn trigger_common_real_launch_worker_settles_bound_effect_and_projects_shared_completion() {
+    run_launch_after_admission(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires an owned disposable Mongo replica set"]
+async fn operator_stop_keeps_an_admitted_launch_and_common_first_message_exactly_once() {
+    run_launch_after_admission(true).await;
+}
+
+async fn run_launch_after_admission(stopped: bool) {
     let (f, launch, _) = pending().await;
+    if stopped {
+        use layer2_core::admission::AdmissionControlStore;
+        crate::store::admission_control::MongoAdmissionControlStore::open(
+            &f.seed.client,
+            &f.seed.database,
+        )
+        .await
+        .unwrap()
+        .change(
+            0,
+            &SubjectId::new("operator"),
+            "contain new work",
+            true,
+            100,
+        )
+        .await
+        .unwrap();
+    }
     let f = Arc::new(f);
     let worker = LaunchWorker::new(
         Arc::new(f.seed.store.clone()),
@@ -239,6 +267,19 @@ async fn trigger_common_real_launch_worker_settles_bound_effect_and_projects_sha
         .unwrap();
     assert_eq!(command.status, AgentResponseStatus::Completed);
     assert_eq!(command.receipt, receipt);
+    assert!(!worker
+        .run_scheduled(&launch.id, now + std::time::Duration::from_secs(2))
+        .await
+        .unwrap());
+    assert_eq!(runtime.sends.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        f.resources
+            .agent_commands
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
     f.seed
         .client
         .database(&f.seed.database)

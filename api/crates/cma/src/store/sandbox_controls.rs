@@ -16,14 +16,18 @@ mod transaction;
 pub(super) use records::ensure_indexes;
 
 enum Change<'a> {
-    Reserve(&'a SandboxControlRecord, &'a SandboxControlAuthorization),
+    Reserve(
+        &'a SandboxControlRecord,
+        &'a SandboxControlAuthorization,
+        Result<(), layer2_core::admission::AdmissionRefusal>,
+    ),
     Apply(&'a SandboxControlRecord, &'a SandboxControlAuthorization),
     Reject(&'a SandboxControlRecord, SandboxControlFailure),
 }
 impl Change<'_> {
     fn require_current(&self) -> Result<(), SandboxControlError> {
         match self {
-            Self::Reserve(_, proof) | Self::Apply(_, proof) => proof
+            Self::Reserve(_, proof, _) | Self::Apply(_, proof) => proof
                 .require_current()
                 .map_err(|_| SandboxControlError::Conflict),
             Self::Reject(..) => Ok(()),
@@ -66,8 +70,9 @@ impl SandboxControlStore for MongoSandboxStore {
         &self,
         record: SandboxControlRecord,
         authorization: Arc<SandboxControlAuthorization>,
+        new_commitment: Result<(), layer2_core::admission::AdmissionRefusal>,
     ) -> Result<SandboxControlRecord, SandboxControlError> {
-        self.change_sandbox_control(Change::Reserve(&record, &authorization))
+        self.change_sandbox_control(Change::Reserve(&record, &authorization, new_commitment))
             .await
     }
     async fn sandbox_control(

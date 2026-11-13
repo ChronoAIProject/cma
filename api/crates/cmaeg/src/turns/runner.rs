@@ -4,6 +4,7 @@ use super::{
     outcomes::TurnOutcome,
     preparation,
     preparation::has_attachments,
+    refusal::{ClassifiedFailure, ProviderCall, StartFailure},
     render_media::{self, Audience, RenderMedia},
     sequencer::{Sequencer, Ticket},
     tracker::TurnTracker,
@@ -147,17 +148,24 @@ impl TurnRunner {
             // or not; a later failure is this turn's own.
             ticket.release();
             if custom_replay::eligible(&turn)
-                && started.as_ref().is_err_and(custom_replay::command_conflict)
+                && started
+                    .as_ref()
+                    .is_err_and(|failure| custom_replay::command_conflict(&failure.error))
             {
                 // Both first deliveries may have observed absence. The losing
                 // command reads the winner's admitted context before answering.
-                let replay = custom_replay::lookup(&self.providers, &turn)
-                    .await
-                    .and_then(|outcome| outcome.ok_or_else(custom_replay::conflict))
-                    .map(Some);
+                let replay = custom_replay::lookup(
+                    &self.providers,
+                    &turn,
+                    self.config.context_retry_enabled,
+                )
+                .await
+                .and_then(|outcome| outcome.ok_or_else(custom_replay::conflict))
+                .map(Some);
                 return Ok(custom_replay::answer(replay, &mut admitted).unwrap());
             }
-            let stream = started.map_err(super::refusal::classify)?;
+            let stream = started
+                .map_err(|failure| super::refusal::classify_start_failure(&provider, failure))?;
             consume::consume(
                 stream,
                 turn.clone(),
@@ -167,10 +175,12 @@ impl TurnRunner {
                 &mut admitted,
             )
             .await
-            .map_err(|reason| (ProblemCode::ProviderUnavailable, reason, 503))
+            .map_err(|reason| {
+                super::refusal::failure(ProblemCode::ProviderUnavailable, reason, 503)
+            })
         })
         .await;
-        let error = match result {
+        let error: ClassifiedFailure = match result {
             Ok(Ok(outcome)) => {
                 observation.finish(outcome);
                 if !matches!(outcome, "completed" | "replayed" | "refused") {
@@ -179,20 +189,24 @@ impl TurnRunner {
                 return;
             }
             Ok(Err(error)) => error,
-            Err(_) => (ProblemCode::ProviderUnavailable, "turn_timeout", 503),
+            Err(_) => {
+                super::refusal::failure(ProblemCode::ProviderUnavailable, "turn_timeout", 503)
+            }
         };
-        observation.finish(error.1);
-        provider_error(&provider, error.1);
+        observation.finish(error.detail);
+        provider_error(&provider, error.detail);
         if let Some(sender) = admitted.take() {
-            let _ = sender.send(LaunchOutcome::Refused(Problem::new(
-                error.0, error.2, error.1,
-            )));
+            let mut problem = Problem::new(error.code, error.status, error.detail);
+            if let Some(upstream) = error.upstream {
+                problem = problem.with_upstream(upstream);
+            }
+            let _ = sender.send(LaunchOutcome::Refused(problem));
         }
         self.delivery.terminal(
             turn,
             TurnOutcome::Failed {
-                code: error.1.into(),
-                message: failure_message(error.1).into(),
+                code: error.detail.into(),
+                message: failure_message(error.detail).into(),
             },
         );
     }
@@ -224,16 +238,19 @@ impl TurnRunner {
         turn: &LaunchRequest,
         media: &RenderMedia,
         audience: Audience,
-    ) -> Result<TurnStream, ProviderError> {
+    ) -> Result<TurnStream, StartFailure> {
         let consumer = turn
             .channel
             .consumer(turn.consumer.as_ref())
-            .ok_or_else(unconfigured)?;
+            .ok_or_else(|| ProviderCall::Responses.failed(unconfigured()))?;
         let credential = consumer.credential.ok_or_else(|| {
-            ProviderError::InvalidRequest("channel has no provider credential".into())
+            ProviderCall::Responses.failed(ProviderError::InvalidRequest(
+                "channel has no provider credential".into(),
+            ))
         })?;
         let rendered = preparation::render(turn, media, audience, None);
         let request = TurnRequest {
+            nyxid_trace: self.providers.nyxid_trace_contract(consumer.provider),
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
             input: rendered.input,
@@ -261,6 +278,11 @@ impl TurnRunner {
             )
             .await;
         loop {
+            let call = if ensure_pending {
+                ProviderCall::Conversation
+            } else {
+                ProviderCall::Responses
+            };
             let result = if ensure_pending {
                 match self
                     .providers
@@ -279,7 +301,7 @@ impl TurnRunner {
                     // Keep the same pending conversation and event while the
                     // provider explicitly asks us to wait before admission.
                     Err(error @ ProviderError::Busy { .. }) => Err(error),
-                    Err(error) => return Err(error),
+                    Err(error) => return Err(call.failed(error)),
                 }
             } else {
                 self.providers
@@ -294,7 +316,7 @@ impl TurnRunner {
                 Err(ProviderError::Busy { retry_after }) => {
                     let remaining = retry_deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
-                        return Err(ProviderError::Busy { retry_after });
+                        return Err(call.failed(ProviderError::Busy { retry_after }));
                     }
                     let minimum = retry_after
                         .unwrap_or(Duration::from_millis(500))
@@ -306,10 +328,10 @@ impl TurnRunner {
                         .min(remaining);
                     tokio::time::sleep(delay).await;
                     if Instant::now() >= retry_deadline {
-                        return Err(ProviderError::Busy { retry_after });
+                        return Err(call.failed(ProviderError::Busy { retry_after }));
                     }
                 }
-                result => return result,
+                result => return result.map_err(|error| call.failed(error)),
             }
         }
     }
@@ -333,13 +355,28 @@ impl TurnRunner {
             // Authority/retained-admission reads have their own bounded
             // deadline. Do not turn a slow denied lookup into Deferred/202:
             // at this point no new work has been submitted.
-            match custom_replay::lookup(&self.providers, &request).await {
+            match custom_replay::lookup(
+                &self.providers,
+                &request,
+                self.config.context_retry_enabled,
+            )
+            .await
+            {
                 Ok(Some(outcome)) => return outcome,
                 Err(error) => return LaunchOutcome::Refused(error),
                 Ok(None) => {}
             }
             let deadline = request.received_at + self.config.accept_budget;
-            request.trace = tracing::Span::current();
+            request.trace = if crate::telemetry::turn_trace::enabled()
+                && request
+                    .channel
+                    .consumer(request.consumer.as_ref())
+                    .is_some_and(|consumer| self.providers.nyxid_trace_contract(consumer.provider))
+            {
+                crate::telemetry::turn_trace::scope::span()
+            } else {
+                tracing::Span::current()
+            };
             let turn = Arc::new(request);
             let (sender, accepted) = oneshot::channel();
             let runner = self.clone();

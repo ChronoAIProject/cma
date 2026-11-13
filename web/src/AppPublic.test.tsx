@@ -205,7 +205,7 @@ it.each(
       });
       if (path === '/' && !visitor) {
         expect(screen.getByRole('textbox', { name: 'Your task' })).toHaveValue('');
-        expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
+        expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
       }
       expect(rejectedRequests).toEqual([]);
       expect(resourceWrites).toEqual({

@@ -8,24 +8,11 @@ export async function retainedAssets(page: Page, directory: string, agentId: str
   if (!root) return;
   const before = await (await page.request.get(`/api/v1/agents/${agentId}/transcript`)).json();
   const answer = page.getByRole('article').filter({ hasText: 'The comparison is complete.' });
-  await answer.getByRole('button', { name: 'View plan and replay', exact: true }).click();
-  const replay = page.getByRole('region', { name: 'Operation record replay' });
-  await expect(replay.getByText('History · Read only', { exact: true })).toBeVisible();
-  const replayKey = `cma.operation-replay:owner:${agentId}`;
+  await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
   const transportKey = `cma:agent-transport:v1:owner:${agentId}`;
-  const stored = () =>
-    page.evaluate(
-      ([replayKey, transportKey]) => ({
-        cursor: sessionStorage.getItem(replayKey),
-        transport: sessionStorage.getItem(transportKey),
-      }),
-      [replayKey, transportKey] as const,
-    );
-  await expect(replay.getByRole('button', { name: 'Return Live', exact: true })).toBeEnabled();
-  await expect(replay.getByRole('article')).toBeVisible();
-  await expect.poll(async () => (await stored()).cursor).not.toBeNull();
+  const stored = () => page.evaluate((key) => sessionStorage.getItem(key), transportKey);
   const original = await stored();
-  expect(JSON.parse(original.transport!).transport).toBe('responses_v2');
+  expect(JSON.parse(original!).transport).toBe('responses_v2');
   const served: { path: string; sha256: string }[] = [];
   const useOld = async (route: Route) => {
     const request = route.request();
@@ -55,8 +42,7 @@ export async function retainedAssets(page: Page, directory: string, agentId: str
     page.getByText('Maintenance effort compared for all three tools.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Agent computer' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Operation output', exact: true }).click();
-  await expect(replay.getByText('History · Read only', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: /^(Operation output|Terminal)$/ }).click();
   expect(await stored()).toEqual(original);
   await expect(
     answer.getByRole('button', { name: 'Download report.txt', exact: true }),
@@ -71,11 +57,9 @@ export async function retainedAssets(page: Page, directory: string, agentId: str
     page.getByText('Maintenance effort compared for all three tools.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'Agent computer' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Operation output', exact: true }).click();
-  await expect(replay.getByText('History · Read only', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: /^(Operation output|Terminal)$/ }).click();
   expect(await stored()).toEqual(original);
-  await replay.getByRole('button', { name: 'Return Live', exact: true }).click();
-  await expect(replay.getByText('Live · Recorded operations', { exact: true })).toBeVisible();
+  await expect(page.locator('#computer-page-activity').getByRole('article').first()).toBeVisible();
   const after = await (await page.request.get(`/api/v1/agents/${agentId}/transcript`)).json();
   expect(after).toEqual(before);
   await writeFile(

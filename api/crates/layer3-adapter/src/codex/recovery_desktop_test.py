@@ -51,6 +51,21 @@ class DesktopRecovery(unittest.TestCase):
         source = local if local.is_file() else Path(m.DESKTOP_PATH)
         self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), m.DESKTOP_SOURCE)
 
+    def test_omarchy_launcher_matches_reviewed_source(self):
+        source = SOURCE / "../../../layer4-runtime/src/omarchy/session.sh"
+        if source.is_file():
+            self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), m.OMARCHY_DESKTOP_SOURCE)
+        self.source = m.OMARCHY_DESKTOP_SOURCE
+        self.assertTrue(m.absent(self.plan(), self.live))
+
+    def test_retained_omarchy_launcher_keeps_recovery_authority(self):
+        self.source = "b2b88eaf39c2bf6e6018e2a6185d5461cbaabe1f66fa76562c898c24914af609"
+        self.assertTrue(m.absent(self.plan(), self.live))
+
+    def test_retained_xfce_launcher_keeps_recovery_authority(self):
+        self.source = "c03e804c28de395c7501001f390346f2c2ad29349eab2e17cf9929e7902bcf99"
+        self.assertTrue(m.absent(self.plan(), self.live))
+
     def test_children_and_adopted_helpers_are_admitted_by_ancestry(self):
         # A crash helper can have its own session after double-forking. It is
         # still adopted by the launcher subreaper, never the runtime root.

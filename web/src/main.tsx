@@ -43,8 +43,8 @@ const authProvider = {
 const sdk = createClient();
 const client = createRestWebClient(sdk, {
   storage: sessionStorage,
-  async currentUser() {
-    const identity = await identityProvider.current();
+  async currentUser(signal) {
+    const identity = await identityProvider.current(signal);
     if (identity.status === 'error') throw new Error(identity.message);
     return identity.status === 'authenticated' ? identity.user.id : undefined;
   },
@@ -55,7 +55,16 @@ const operator = createOperatorClient(sdk);
 const publisher = createTriggerPublisherClient(sdk);
 const publicClient = createPublicClient(sdk);
 
-createRoot(container).render(
+createRoot(container, {
+  onUncaughtError(error) {
+    window.cmaReportFatal?.('react_error');
+    console.error(error);
+  },
+  onCaughtError(error) {
+    window.cmaReportFatal?.('react_error');
+    console.error(error);
+  },
+}).render(
   <StrictMode>
     <AuthContextProvider provider={authProvider}>
       <CmaClientProvider

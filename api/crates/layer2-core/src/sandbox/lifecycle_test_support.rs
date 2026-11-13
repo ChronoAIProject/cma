@@ -24,6 +24,7 @@ pub(super) fn sandbox() -> Sandbox {
             id: SandboxProfileId("sbp_lifecycle".into()),
             revision: 3,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

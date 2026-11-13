@@ -2,6 +2,8 @@
 
 use tokio::sync::mpsc;
 
+mod runtime_inspection;
+
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
@@ -169,27 +171,7 @@ pub trait SandboxAdapter: Send + Sync {
         &self,
         request: &RuntimeAdoptionRequest,
     ) -> Result<Option<crate::RuntimeInspection>> {
-        let Some(observation) = self.adopt_runtime(request).await? else {
-            return Ok(None);
-        };
-        if observation.handle != request.handle
-            || observation.sandbox_id != request.spec.sandbox_id
-            || observation.generation != request.generation
-            || !observation.lifecycle.is_running()
-        {
-            return Err(crate::AdapterError::Rejected(
-                "provider did not adopt the exact bound runtime".into(),
-            ));
-        }
-        let status = if request.spec.home_volume.is_some() {
-            Some(self.runtime_status(&request.handle).await?)
-        } else {
-            None
-        };
-        Ok(Some(crate::RuntimeInspection {
-            observation,
-            status,
-        }))
+        runtime_inspection::inspect(self, request).await
     }
 
     /// Reclaim one exact provider observation without trusting a reused handle.
@@ -372,6 +354,20 @@ pub trait SandboxAdapter: Send + Sync {
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel>;
+
+    /// Reattach only a retained native process with independent state/output proof.
+    /// No ordinary reconnect, launch, input or settings fallback is permitted.
+    async fn reconnect_agent_for_capacity_recovery(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<
+        crate::agent_capacity_recovery::CapacityRecoveryConnection,
+    > {
+        request.validate()?;
+        let _ = updates;
+        Err(crate::agent_capacity_recovery::CapacityRecoveryError::Unsupported)
+    }
 
     /// Replay the original open operation while attaching its recorded conversation.
     /// The connection identity does not change the durable launch fingerprint.
