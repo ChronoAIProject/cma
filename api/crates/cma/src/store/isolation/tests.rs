@@ -212,6 +212,56 @@ fn index_removal_is_confined_to_the_binding_migration() {
     assert!(validate(&status, "cma").is_err());
 }
 
+#[test]
+fn activity_metadata_read_is_scoped_to_the_activity_collection() {
+    let grants = role("cma").get_array("privileges").unwrap().clone();
+    validate(&status(grants.clone()), "cma").unwrap();
+
+    let mut missing = grants.clone();
+    let activity = missing
+        .iter_mut()
+        .find(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                == "activity"
+        })
+        .unwrap()
+        .as_document_mut()
+        .unwrap();
+    activity
+        .get_array_mut("actions")
+        .unwrap()
+        .retain(|action| action.as_str() != Some("collStats"));
+    assert!(validate(&status(missing), "cma").is_err());
+
+    let mut foreign = grants;
+    let agents = foreign
+        .iter_mut()
+        .find(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                == "agents"
+        })
+        .unwrap()
+        .as_document_mut()
+        .unwrap();
+    agents
+        .get_array_mut("actions")
+        .unwrap()
+        .push("collStats".into());
+    assert!(validate(&status(foreign), "cma").is_err());
+}
+
 fn progress_grant(database: &str) -> Document {
     doc! {"resource":{"db":database,"collection":super::super::provenance_progress::COLLECTION},
     "actions":super::super::provenance_progress::ACTIONS}
