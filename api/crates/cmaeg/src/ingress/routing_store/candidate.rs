@@ -277,6 +277,13 @@ impl Candidate {
                     keys,
                 )?);
         }
+        Self::from_payload(payload, original.expires_at)
+    }
+    pub(super) fn from_payload(
+        payload: AdmittedPlan,
+        event_expires_at: i64,
+    ) -> Result<Self, AdmissionError> {
+        let now = payload.admitted_at;
         payload.validate()?;
         let bytes = codec::canonical(&payload)?;
         if bytes.len() > MAX_PAYLOAD_BYTES {
@@ -298,7 +305,7 @@ impl Candidate {
         Ok(Self {
             manifest,
             bytes,
-            event_expires_at: original.expires_at,
+            event_expires_at,
         })
     }
     pub fn identity(&self) -> &EventIdentity {
@@ -321,6 +328,9 @@ impl Candidate {
 
 impl AdmittedPlan {
     pub(super) fn validate(&self) -> Result<(), AdmissionError> {
+        if self.is_compatibility() {
+            return self.validate_compatibility();
+        }
         self.identity.validate()?;
         let routing = self
             .activity

@@ -1,3 +1,5 @@
+#[path = "routed_compatibility.rs"]
+mod compatibility;
 #[path = "routed_custom.rs"]
 mod custom;
 #[path = "routed_github.rs"]
