@@ -3,6 +3,7 @@ mod backfill;
 pub mod config;
 pub(crate) mod drain;
 mod drain_cli;
+pub(crate) mod effect_recovery;
 mod effect_roots;
 pub mod effects;
 pub(crate) mod membership;
@@ -62,6 +63,6 @@ impl From<Error> for crate::turns::routed::ExecutionError {
 mod partition_tests;
 
 #[cfg(test)]
-mod mongo_fixture;
+pub(crate) mod mongo_fixture;
 #[cfg(test)]
 mod mongo_tests;

@@ -1198,6 +1198,35 @@ arrives. Send still requires current Sandbox state and required connections; an
 early activity page alone does not authorize interaction. Rich history completes
 independently with its own fresh authorization check.
 
+Intentional Agent navigation may start exact-owner transport selection while the
+access classification is pending. Protected Agent reads still wait for personal
+classification and fresh read-admission authorization. The classified route may
+start detail, transcript and usage while eligibility finishes; its loader consumes
+that exact batch once and retains its own fresh load and publication checks. Keep
+one unconsumed batch per client, expire it after five seconds, and preserve exact
+Agent/owner/client/lineage and sign-in-epoch guards. A matching creation
+preparation transfers once; shared or refused access, route/client/account
+changes and unmount cancel unconsumed work, including a transferred selection.
+Hover and focus alone do not persist a transport choice. Opening the Agent does
+not fetch the provider model catalog; saved settings remain visible and the
+catalog loads when the settings picker expands, with its existing loading,
+error and retry states. Sandbox readiness still fences sending independently of
+visible content and rich history.
+
+A throttled transport selection preserves its retry instruction instead of
+persisting a legacy fallback. Connection-read failures retain the server's
+Retry-After deadline across remounts and explicit retry clicks, including delays
+longer than the local backoff cap. Report busy service state in the existing error
+surface. Successful connection reports are not a reusable authorization cache;
+the existing creation handoff and Send fences remain unchanged.
+
+Completed initial projections may publish together after metadata resolves and
+a fresh identity check starts for that completed batch. Data arriving after the
+check starts waits for another check. Publication callbacks are synchronous,
+with cancellation and the journal epoch checked before each callback; closing
+the load settles queued and active publication waiters immediately. The final
+full-history publication retains its separate fresh identity check.
+
 Once a retained creation operation names its actual Agent, its modal may prepare
 that exact Agent's transport and owner-authorized connection check while lineage
 is checked. Transfer both once to the same Agent, owner and client after personal
@@ -6380,6 +6409,10 @@ existing explicit revision review. Disabled policies retain every entered value.
 
 | 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
 
+| 2026-11-13 | Overlap intentional Agent navigation's transport selection with access classification while preserving fresh load and publication checks; cancel unconsumed route preparation, retain creation handoffs, batch completed early projections behind a fresh check, and defer model discovery until the settings picker opens (#1910). |
+
+| 2026-11-13 | Admit one bounded route projection batch after personal access while transport eligibility finishes, publish already completed transcript data with the metadata batch, and keep content independent of slow connection verification. Preserve fresh load/publication checks and server retry deadlines without caching successful connection authority (#1910). |
+
 ### 2026-11-13 — Retryable Agent reads and desktop recovery
 
 Agent observation failures caused by temporary capacity show an inline busy state
@@ -6403,6 +6436,7 @@ the Browser is unsupported. Use the existing status text, Button, and desktop
 feedback components without introducing new visual tokens.
 
 | 2026-11-13 | Add retry countdowns and disabled retry during server backoff, preserve published Agent content during ancillary revalidation, and automatically recover desktop streams with lease-aware discovery, hidden-view disposal and unchanged freshness/input authority (#1948). |
+
 | 2026-11-13 | Define retained Operations usage reports: exact-key stale-while-revalidate, server-generated As-of and refresh-deferred states, stable child reads during refresh, default/tab prefetch, hidden-tab pause, and Retry-After jitter (#1947). |
 
 | 2026-11-14 | Preserve opaque usage principals, invalidate every mounted report after authority refusal, bound abandoned pending descriptors, and resume pending refreshes with their original retry deadlines (#1947, #1979). |

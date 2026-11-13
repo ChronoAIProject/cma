@@ -287,6 +287,38 @@ impl AgentFileService {
         Ok(response)
     }
 
+    /// Check the exact runtime operation before selecting an owning manager.
+    /// This performs policy reads only; the serving handler still checks before IO.
+    pub async fn authorize_runtime_operation(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        id: &AgentId,
+        capability: ResourceCapability,
+        purpose: AccessPurpose,
+    ) -> Result<(), AgentFileError> {
+        let authorized = self
+            .authorize(
+                &context.caller,
+                Some(context),
+                credential,
+                id,
+                capability,
+                purpose,
+            )
+            .await?;
+        self.access
+            .current_read_snapshot(
+                &authorized,
+                &ResourceTarget::Agent {
+                    agent_id: id.clone(),
+                },
+                capability,
+            )
+            .await?;
+        Ok(())
+    }
+
     async fn authorize(
         &self,
         caller: &crate::Caller,

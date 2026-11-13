@@ -56,6 +56,34 @@ pub(super) async fn route(
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
+    if !private {
+        let Some(access) = relay.public_access.get() else {
+            return unavailable();
+        };
+        let Some(context) = request
+            .extensions()
+            .get::<layer2_core::resource_access::CallerContext>()
+        else {
+            return StatusCode::UNAUTHORIZED.into_response();
+        };
+        let credential = request
+            .extensions()
+            .get::<layer1_public::DelegatedCredential>()
+            .map(layer1_public::DelegatedCredential::value);
+        if let Err(status) = access
+            .authorize(public_access::PublicRequest {
+                id: &id,
+                method: request.method(),
+                uri: request.uri(),
+                headers: ingress::headers(&request),
+                context,
+                credential,
+            })
+            .await
+        {
+            return public_access::refusal(status);
+        }
+    }
     let destination = if let Some(raw) = proof {
         if request.headers().get_all(PROOF).iter().count() != 1 {
             return StatusCode::FORBIDDEN.into_response();

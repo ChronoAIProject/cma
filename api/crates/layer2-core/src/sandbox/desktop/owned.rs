@@ -34,20 +34,29 @@ impl ConnectionState {
             .ok_or(DesktopError::Unavailable)
     }
 
+    pub(super) async fn while_authorized<T>(
+        &mut self,
+        operation: impl std::future::Future<Output = T>,
+    ) -> Result<T, DesktopError> {
+        let deadline = self.deadline()?;
+        tokio::select! {
+            biased;
+            // timeout_at polls the operation first, so an already-ready frame
+            // could win after expiry when this task resumes from a pause.
+            _ = tokio::time::sleep_until(deadline) => Err(DesktopError::Unavailable),
+            _ = invalidated(&mut self.validity) => Err(DesktopError::Unavailable),
+            result = operation => Ok(result),
+        }
+    }
+
     pub(super) async fn send(
         &mut self,
         connection: &mut DesktopConnectionHandle,
         frame: DesktopFrame,
     ) -> Result<(), DesktopError> {
-        let deadline = self.deadline()?;
-        tokio::select! {
-            biased;
-            _ = invalidated(&mut self.validity) => Err(DesktopError::Unavailable),
-            result = tokio::time::timeout_at(deadline, connection.send(frame)) => {
-                result.map_err(|_| DesktopError::Unavailable)?
-                    .map_err(|_| DesktopError::RuntimeUnavailable)
-            }
-        }
+        self.while_authorized(connection.send(frame))
+            .await?
+            .map_err(|_| DesktopError::RuntimeUnavailable)
     }
 
     pub(super) async fn recv(
@@ -58,12 +67,12 @@ impl ConnectionState {
             let deadline = self.deadline()?;
             tokio::select! {
                 biased;
+                _ = tokio::time::sleep_until(deadline) => return Err(DesktopError::Unavailable),
                 changed = self.validity.changed() => {
                     changed.map_err(|_| DesktopError::Unavailable)?;
                 },
-                result = tokio::time::timeout_at(deadline, connection.recv()) => {
-                    return result.map_err(|_| DesktopError::Unavailable)?
-                        .map_err(|_| DesktopError::RuntimeUnavailable);
+                result = connection.recv() => {
+                    return result.map_err(|_| DesktopError::RuntimeUnavailable);
                 }
             }
         }
@@ -303,3 +312,6 @@ async fn release(store: &Arc<dyn SandboxSessionStore>, authority: &DesktopOwners
         tracing::warn!("desktop claim release failed; expiry retains recovery");
     }
 }
+
+#[cfg(test)]
+mod tests;
