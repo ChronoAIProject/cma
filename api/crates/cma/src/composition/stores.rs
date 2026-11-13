@@ -27,6 +27,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         (*stores.sandbox_model)
             .clone()
             .with_global_sandbox_limit(config.global_sandbox_limit)
+            .with_platform_counter_shards(config.features.platform_counter_shards)
             .with_bounded_close_retries(config.features.bounded_close_retries)
             .with_retry_single_marker(config.features.retry_single_marker_enabled)
             .with_scan_cooperation(config.features.agent_log_scan_cooperative_enabled)
@@ -46,4 +47,20 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     Ok(Arc::new(
         stores.with_writer_policy(config.task_experience.clone()),
     ))
+}
+
+/// The operator's platform spend service over the Sandbox store's period row,
+/// writable only behind the platform settings' third write gate.
+pub(super) fn platform_spend(
+    stores: &MongoStores,
+    activity: &Arc<layer2_core::ActivityService>,
+    settings: &layer2_core::PlatformSettingsService,
+) -> Arc<layer2_core::budget::PlatformSpendService> {
+    Arc::new(
+        layer2_core::budget::PlatformSpendService::new(
+            stores.sandbox_model.clone(),
+            Arc::clone(activity),
+        )
+        .with_writes_enabled(settings.platform_spend_writes_enabled()),
+    )
 }

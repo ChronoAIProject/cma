@@ -32,6 +32,8 @@ const LATER: &str = "2026-09-05T00:30:00Z";
 
 #[path = "availability_integration_tests.rs"]
 mod availability;
+#[path = "platform_stop_integration_tests.rs"]
+mod platform_stop_integration_tests;
 #[path = "restored_connection_integration_tests.rs"]
 mod restored_connection_integration_tests;
 #[path = "runtime_update_integration_tests.rs"]
@@ -154,6 +156,7 @@ fn pause(id: &SandboxId) -> SandboxInactivityPauseRequest {
         requested_at: LATER.into(),
         pause_after_seconds: 900,
         auto_pause_enabled: false,
+        cause: Default::default(),
     }
 }
 

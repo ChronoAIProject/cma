@@ -50,11 +50,13 @@ These commands do not invent an idempotency key or
 automatically retry an uncertain result.
 
 Settings reads and successful settings mutations preserve the optional
-`model_budget_writes_available` and `model_request_budget_writes_available`
-booleans. These describe deployment compatibility, separately from policy
-enablement and operator permissions. False or missing means the corresponding
-save capability is unavailable; saving nonempty request-model bounds requires
-both flags to be true. Keep this read-only metadata outside writable settings.
+`model_budget_writes_available`, `model_request_budget_writes_available` and
+`platform_spend_writes_available` booleans. These describe deployment
+compatibility, separately from policy enablement and operator permissions.
+False or missing means the corresponding save capability is unavailable; saving
+nonempty request-model bounds requires the first two flags to be true, and
+saving platform `cloud` spend fields requires the first and third. Keep this
+read-only metadata outside writable settings.
 The server remains authoritative and can refuse a save if availability changes.
 
 Sandbox persistence is owned by Agent Sandbox and its attached PV. CMA exposes

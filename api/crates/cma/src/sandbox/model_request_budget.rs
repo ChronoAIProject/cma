@@ -80,4 +80,4 @@ impl RequestPermit {
 
 #[cfg(test)]
 #[path = "model_request_budget_tests.rs"]
-mod tests;
+pub(super) mod tests;
