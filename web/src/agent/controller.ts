@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule, rateLimitDelay } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
 import { usePreparationProgress } from './preparationProgress';
 import { queueObservationRevision } from './queueObservationRevision';
@@ -158,9 +160,10 @@ export function useAgentController(
 
   useEffect(() => {
     if (suspended) return;
-    const controller = new AbortController();
-    queueMicrotask(() => {
-      if (controller.signal.aborted) return;
+    let failures = 0;
+    const observer = observeRead(async (lifetimeSignal) => {
+      const operation = new AbortController();
+      const signal = AbortSignal.any([lifetimeSignal, operation.signal]);
       setActionError(undefined);
       setStreamError(undefined);
       setPending(undefined);
@@ -184,25 +187,25 @@ export function useAgentController(
       hydration.current.reset(reopen ? retained.conversation : undefined);
       if (!reopen && retained.status !== 'ready') setState({ status: 'loading' });
       else if (reopen) liveCursor.current = retained.conversation.cursor;
-      void (
+      return (
         reopen
-          ? reopenAgent(client, retained, controller.signal, lineage)
+          ? reopenAgent(client, retained, signal, lineage)
           : loadAgent(
               client,
               agentId,
-              controller.signal,
+              signal,
               true,
               (ready) => {
-                if (!controller.signal.aborted) publishHistory(ready);
+                if (!signal.aborted) publishHistory(ready);
               },
               lineage,
               (ready) => {
-                if (!controller.signal.aborted) publishHistory(ready, true);
+                if (!signal.aborted) publishHistory(ready, true);
               },
             )
       )
         .then((ready) => {
-          if (controller.signal.aborted) return;
+          if (signal.aborted) return;
           setState((current) => {
             const conversation =
               reopen && current.status === 'ready'
@@ -211,25 +214,35 @@ export function useAgentController(
             liveCursor.current = conversation.cursor;
             return { status: 'ready', ...ready, conversation };
           });
+          return undefined;
         })
         .catch((error: unknown) => {
-          if (!controller.signal.aborted) {
-            controller.abort();
+          if (!lifetimeSignal.aborted) {
+            operation.abort();
+            const schedule = transientReadFailure(error)
+              ? retrySchedule(error, ++failures)
+              : undefined;
             const retained = retainHistoryOnFailure(error, stateRef.current, agentId);
             if (retained !== undefined) {
-              setState(retained);
+              setState({
+                ...retained,
+                ...(schedule ? { historyRetryAt: Date.now() + schedule.next } : {}),
+              });
               return;
             }
             actionAbortRef.current?.abort();
             replayAbortRef.current?.abort();
             hydration.current.reset();
-            setState({ status: 'error', message: errorMessage(error) });
+            setState({
+              status: 'error',
+              message: errorMessage(error),
+              ...(schedule ? { retryAt: Date.now() + schedule.next } : {}),
+            });
+            return schedule;
           }
         });
     });
-    return () => {
-      controller.abort();
-    };
+    return () => observer.dispose();
   }, [agentId, client, lineage, publishHistory, revision, setState, stateRef, suspended]);
 
   const historyUnavailable =
@@ -241,33 +254,35 @@ export function useAgentController(
     !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useEffect(() => {
     if (suspended || !historyUnavailable || agentId === undefined) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout>;
-    let retryDelay = 5000;
-    const recover = async () => {
-      try {
-        const ready = await loadAgent(client, agentId, request.signal);
-        if (request.signal.aborted) return;
-        publishHistory(ready);
-      } catch (error) {
-        if (request.signal.aborted) return;
-        if (transientReadFailure(error)) {
-          retryDelay = Math.min(retryDelay * 2, 30000);
-          timer = setTimeout(() => void recover(), retryDelay);
-        } else {
+    let failures = 0;
+    let fallback = 5000;
+    const observer = observeRead(
+      async (signal) => {
+        try {
+          const ready = await loadAgent(client, agentId, signal);
+          if (!signal.aborted) publishHistory(ready);
+        } catch (error) {
+          if (signal.aborted) return;
+          if (transientReadFailure(error)) {
+            fallback = Math.min(fallback * 2, 30000);
+            const next = rateLimitDelay(error, fallback, ++failures);
+            return { next, cooldown: next, failed: true };
+          }
           actionAbortRef.current?.abort();
           replayAbortRef.current?.abort();
           hydration.current.reset();
           setState({ status: 'error', message: errorMessage(error) });
         }
-      }
-    };
-    timer = setTimeout(() => void recover(), 5000);
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
-  }, [agentId, client, historyUnavailable, publishHistory, setState, suspended]);
+      },
+      {
+        initialDelay:
+          stateRef.current.status === 'ready' && stateRef.current.historyRetryAt
+            ? Math.max(1, stateRef.current.historyRetryAt - Date.now())
+            : 5000,
+      },
+    );
+    return () => observer.dispose();
+  }, [agentId, client, historyUnavailable, publishHistory, setState, stateRef, suspended]);
 
   const replayEnabled =
     !suspended &&
