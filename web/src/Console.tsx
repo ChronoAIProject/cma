@@ -1,6 +1,6 @@
 import { ComputerContext } from './agent/environment/context';
 import { SkeletonRows } from './ui/Skeleton';
-import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
+import { Documents, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
@@ -45,6 +45,8 @@ import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
 import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
+import { useReportOwner } from './usage/metrics/reportOwner';
+import { OperationsRoute } from './operator/OperationsRoute';
 
 export function Console(props: ConsoleProps) {
   return (
@@ -56,6 +58,7 @@ export function Console(props: ConsoleProps) {
 
 function ConsoleContent({
   user,
+  authEpoch = 0,
   route,
   onSignOut,
   onNavigate,
@@ -118,8 +121,9 @@ function ConsoleContent({
     route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
       ? route.agentId
       : undefined;
-  const operator = useOperatorClient();
-  const publisher = usePublisherClient();
+  const operator = useOperatorClient(),
+    publisher = usePublisherClient();
+  const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
   useEffect(() => {
@@ -308,22 +312,11 @@ function ConsoleContent({
     ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
       <LegacyProfileNotice />
     ) : route.kind === 'operations' ? (
-      operator !== undefined && canOpenOperations(user.capabilities) ? (
-        <Suspense
-          fallback={
-            <section className="console__empty" role="status">
-              Loading Operations
-            </section>
-          }
-        >
-          <Operations client={operator} capabilities={user.capabilities} />
-        </Suspense>
-      ) : (
-        <UnavailableView
-          title="Operations unavailable"
-          reason="Operations is for CMA operators. Ask your CMA administrator if you need access."
-        />
-      )
+      <OperationsRoute
+        operator={operator}
+        capabilities={user.capabilities}
+        principal={usagePrincipal}
+      />
     ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
       publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
         <Suspense
