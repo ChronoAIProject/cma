@@ -26,7 +26,8 @@ metadata:
     cma.chronoai.dev/portal-auth: "agent-manager-shared-login"
     cma.chronoai.dev/source-tree: "f6bf104c2ebadc7f3a722b5cd86b8181bf2da686"
 spec:
-  replicas: 1
+  # Desired floor; after S3 the HPA owns the live replica count. See CMA_Scale_Apply.md.
+  replicas: 2
   minReadySeconds: 30
   strategy:
     type: RollingUpdate
@@ -67,9 +68,32 @@ spec:
     spec:
       serviceAccountName: cmaeg-ksa
       automountServiceAccountToken: false
-      # Thirty seconds of routing propagation, 660 seconds of connection drain,
-      # and 45 seconds for process and kubelet teardown.
-      terminationGracePeriodSeconds: 735
+      # Up to 25s authenticated early drain, 30s routing propagation,
+      # 660s application drain and 45s process/kubelet teardown.
+      # Requires the compatible EG image integrated through #1370.
+      terminationGracePeriodSeconds: 760
+      # Honor taints so dedicated sandbox nodes do not count as placement domains.
+      # Keep zone spread soft: a zone outage must not block replacement capacity.
+      # Old revisions must not hide skew among the replacement pods.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cma-event-gateway
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cma-event-gateway
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -176,12 +200,15 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
+          # The compatible EG image must include replica-participation readiness
+          # and reject /readyz before joining and throughout lease handoff.
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 5
+            failureThreshold: 1
             timeoutSeconds: 2
           livenessProbe:
             httpGet:
@@ -192,8 +219,8 @@ spec:
             timeoutSeconds: 2
           lifecycle:
             preStop:
-              sleep:
-                seconds: 30
+              exec:
+                command: ["/bin/sh", "-c", "/usr/local/bin/cmaeg --replica-drain; status=$?; /bin/sleep 30; exit $status"]
       volumes:
         - name: media-jobs
           emptyDir:
