@@ -140,6 +140,7 @@ pub async fn seed(
         .start_turn(
             &consumer.provider.slug,
             TurnRequest {
+                nyxid_trace: false,
                 timing: None,
                 conversation_id: event.conversation_id.clone(),
                 input: vec![],
