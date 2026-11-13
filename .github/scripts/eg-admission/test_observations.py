@@ -154,6 +154,9 @@ class ObservationsTest(unittest.TestCase):
                 parse_line(line(bad, **kwargs))
         bad = record(
             record_operation="admission_index",
+            transaction_attempt=0,
+            phase="index_update",
+            io_class="write",
             unknown_commit_label=False,
             error_class="transient_transaction",
             label_class="transient_transaction",
@@ -214,6 +217,11 @@ class ObservationsTest(unittest.TestCase):
             validate_event(
                 record(
                     record_operation=operation,
+                    transaction_attempt=0 if operation == "admission_index" else 1,
+                    phase="index_update"
+                    if operation == "admission_index"
+                    else "commit",
+                    io_class="write" if operation == "admission_index" else "commit",
                     error_class="transient_transaction",
                     label_class="transient_transaction",
                     commit_class=commit,
@@ -235,6 +243,62 @@ class ObservationsTest(unittest.TestCase):
         ]:
             with self.assertRaises(ValueError):
                 validate_event(invalid)
+
+    def test_error_boundaries_cannot_claim_unobserved_labels_or_acknowledged_abort(
+        self,
+    ):
+        for error, commit in [("none", "acknowledged"), ("unknown_commit", "aborted")]:
+            event = record(
+                mongo_labels_observed=False,
+                label_class="not_observed",
+                transient_transaction_label=False,
+                unknown_commit_label=False,
+                error_class=error,
+                commit_class=commit,
+            )
+            raw = line(
+                event,
+                target="cmaeg::records::mongo::replica_observation",
+                message="replica persistence observation",
+            ).encode()
+            packet = collect(raw, POD)
+            self.assertEqual(packet["observations"], [])
+            self.assertEqual(packet["rejected_records"], 1)
+
+    def test_operation_ancestors_cannot_be_assigned_to_a_later_admission(self):
+        for spans in [
+            operation("root_write", "e") + ATTEMPT,
+            REQUEST
+            + operation("root_readback", "e")
+            + ATTEMPT
+            + operation("root_lookup", "f"),
+            ATTEMPT + REQUEST + operation("root_lookup", "f"),
+        ]:
+            packet = collect(line(stage(), spans).encode(), POD)
+            self.assertEqual(packet["observations"], [])
+            self.assertEqual(packet["rejected_records"], 1)
+
+    def test_index_observations_have_no_transaction_attempt_or_commit_phase(self):
+        for changes in [
+            {"transaction_attempt": 1, "phase": "index_update", "io_class": "write"},
+            {"transaction_attempt": 0, "phase": "commit", "io_class": "commit"},
+        ]:
+            with self.assertRaises(ValueError):
+                validate_event(record(record_operation="admission_index", **changes))
+        validate_event(
+            record(
+                phase="validate",
+                io_class="local",
+                transaction_attempt=0,
+                boundary="cancelled",
+                outcome="cancelled",
+                error_class="cancelled",
+                label_class="not_observed",
+                mongo_labels_observed=False,
+                transient_transaction_label=False,
+                unknown_commit_label=False,
+            )
+        )
 
     def test_no_inference_from_wrong_missing_or_ambiguous_span_identity(self):
         event = stage()
