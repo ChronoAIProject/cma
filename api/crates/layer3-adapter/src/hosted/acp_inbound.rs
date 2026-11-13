@@ -33,7 +33,14 @@ impl Bridge {
             .map(|pools| pools.admit_sign_in(&frame))
             .transpose()?
             .flatten();
-        self.receive_admitted_frame(frame, updates, sign_in).await
+        let observation = self
+            .json_pools
+            .as_ref()
+            .map(|pools| pools.admit_observation(&frame))
+            .transpose()?
+            .flatten();
+        self.receive_admitted_frame(frame, updates, sign_in, observation)
+            .await
     }
 
     pub(super) async fn receive_admitted_frame(
@@ -41,6 +48,7 @@ impl Bridge {
         frame: super::retained_json::JsonFrame,
         updates: &UpdateRelay,
         sign_in: Option<super::sign_in_retention::Admission>,
+        observation: Option<crate::RuntimeOutputUpdate>,
     ) -> crate::Result<()> {
         if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
@@ -116,7 +124,7 @@ impl Bridge {
 
         match frame.get("method").and_then(serde_json::Value::as_str) {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
-            Some("session/update") => self.session_update(&frame, updates).await,
+            Some("session/update") => self.session_update(&frame, updates, observation).await,
             Some("session/request_permission") => self.blocked_on(&frame, updates).await?,
             Some("elicitation/create") => self.sign_in(&frame, updates, sign_in).await,
             Some(method) => {
@@ -158,7 +166,12 @@ impl Bridge {
         let _ = self.send(&frame).await;
     }
 
-    async fn session_update(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
+    async fn session_update(
+        &self,
+        frame: &super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+        observation: Option<crate::RuntimeOutputUpdate>,
+    ) {
         let Some(session) = frame
             .pointer("/params/sessionId")
             .and_then(serde_json::Value::as_str)
@@ -169,8 +182,13 @@ impl Bridge {
         let Some(value) = frame.pointer("/params/update") else {
             return;
         };
-        self.observe_context_goal(session, value).await;
-        if let Some(update) = super::acp_observations::observation(value) {
+        self.observe_context_frame_goal(frame).await;
+        let observation = match observation {
+            Some(update) => Some(ConversationUpdate::RetainedEffect(update)),
+            None if self.json_pools.is_none() => super::acp_observations::observation(value),
+            None => None,
+        };
+        if let Some(update) = observation {
             self.route_update(session, update, updates).await;
             return;
         }

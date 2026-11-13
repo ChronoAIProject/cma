@@ -23,6 +23,26 @@ The independent response flags remain documented in
 [CMA bounded responses](CMA_Bounded_Responses.md). Their legacy optimization
 switches are not the durable segmented-writer controls.
 
+The runtime has a separate startup switch,
+`CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED`, default `false` in both runtime
+image variants. It accepts `false`/`0` and `true`/`1`; other values fail startup.
+With it off, bridges allocate no native observer and bypass the recovery JSON
+decoding and state locks on every input/output frame. Proof requests are refused.
+Turning on the API admission switch cannot enable observation in an existing
+runtime. A compatible runtime must observe the original successful session
+load/new and exact prompt/permission correlations before it can issue proof.
+Runtime replacement remains subject to the retained-Sandbox continuity rules.
+Once native correlation is lost, later load success cannot erase the uncertainty;
+those cases remain blocked for explicit reconciliation.
+
+A recovery challenge names one 30-second snapshot and is single-use. A newer
+writer fence supersedes an older lease; consumed and expired fences cannot be
+reissued. State changes, pending output retention, output progress, output ACKs,
+and gaps between proof and attachment refuse that snapshot. Retry through the
+fenced recovery worker with renewed authority; never replay a prompt or create
+another conversation to resolve uncertainty. Output following a successful
+attachment uses the existing acknowledged stream and original durable receipts.
+
 ## Activation prerequisites
 
 The reviewed combined artifact must have strict local gates, its exact develop

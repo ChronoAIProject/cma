@@ -120,6 +120,7 @@ if mode == "release"
   end
   cache_changes = {
     "fork cache access" => ["Prepare API Cargo cache identity", "if", "matrix.component == 'api'"],
+    "release push enters develop cache bridge" => ["Prepare API Cargo cache identity", "if", "matrix.component == 'api' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"],
     "unbounded cache transfer" => ["Inject API Cargo cache mounts", "timeout-minutes", 60],
     "mutable cache action" => ["Restore API Cargo cache archive", "uses", "actions/cache/restore@v4"],
     "cache other paths" => ["Restore API Cargo cache archive", "with", { "path" => "~/.cargo" }],

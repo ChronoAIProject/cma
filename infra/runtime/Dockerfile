@@ -155,6 +155,8 @@ ARG RUNTIME_DESKTOP=0
 # privileged. User-space installers therefore write under /home/cma. Python
 # and the archive tools are present for those installers; git prepares CMA
 # workspaces; bubblewrap is the distro path Codex expects on restricted hosts.
+# Repository harnesses call ps (procps) and jq by name, so every variant ships
+# them; the build fails here if either command is missing.
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
@@ -168,6 +170,7 @@ RUN apt-get update \
         build-essential \
         git \
         gzip \
+        jq \
         libdbus-1-3 \
         libgmp-dev \
         libgssapi-krb5-2 \
@@ -175,6 +178,7 @@ RUN apt-get update \
         libssl3t64 \
         libunwind8 \
         ncurses-term \
+        procps \
         python3 \
         ripgrep \
         tar \
@@ -184,6 +188,8 @@ RUN apt-get update \
         zstd \
     && if [ "${RUNTIME_DESKTOP}" = "1" ]; then apt-get install -y --no-install-recommends chromium dbus-x11 fonts-liberation novnc scrot wmctrl x11vnc x11-xserver-utils x11-utils xdotool xvfb websockify xfce4-session xfce4-panel xfdesktop4 xfwm4 xfce4-settings xfce4-appfinder gvfs thunar xfce4-terminal adwaita-icon-theme librsvg2-common; else test "${RUNTIME_DESKTOP}" = "0"; fi \
     && git --version \
+    && ps --version \
+    && jq --version \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -429,6 +435,7 @@ ENV HOME=/home/cma \
     CHRONO_RUNTIME_GENERATION=1 \
     CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color
 EXPOSE 9090
@@ -477,6 +484,7 @@ WORKDIR /home/cma
 USER 10001:10001
 ENV HOME=/home/cma CHRONO_RUNTIME_GENERATION=1 CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin \
+    CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 TERM=xterm-256color \
     CODEX_PATH=/usr/local/bin/codex OMARCHY_PATH=/usr/share/omarchy
 EXPOSE 9090

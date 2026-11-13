@@ -39,7 +39,8 @@ the accepted source ACK progresses. No pressure path fabricates an ACK or termin
 
 This pool bounds reservations for the named owners. It does not establish a
 complete ingress heap or process RSS limit. The existing component maxima total
-109 MiB including the later sign-in notice component; the shared coordinator becomes necessary as further ownership boundaries
+117 MiB including the later sign-in notice and metadata/usage components; the
+shared coordinator becomes necessary as further ownership boundaries
 join the same envelope. Unwired storage must not be represented as charged.
 
 Remaining owners under #1702 include typed domain/prepared effects, codec and
