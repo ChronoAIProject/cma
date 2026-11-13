@@ -60,7 +60,8 @@ pub trait AgentCommandExecution: Send + Sync {
 }
 
 pub struct AgentCommandWorker {
-    store: Arc<dyn AgentCommandWorkerStore>,
+    pub(super) store: Arc<dyn AgentCommandWorkerStore>,
+    pub(super) dispatched_recheck_delay: Duration,
     execution: Arc<dyn AgentCommandExecution>,
     holder: String,
 }
@@ -70,6 +71,15 @@ impl AgentCommandWorker {
         store: Arc<dyn AgentCommandWorkerStore>,
         execution: Arc<dyn AgentCommandExecution>,
         holder: String,
+    ) -> Result<Arc<Self>, CommandLedgerError> {
+        Self::with_recheck_delay(store, execution, holder, Duration::ZERO)
+    }
+
+    pub fn with_recheck_delay(
+        store: Arc<dyn AgentCommandWorkerStore>,
+        execution: Arc<dyn AgentCommandExecution>,
+        holder: String,
+        dispatched_recheck_delay: Duration,
     ) -> Result<Arc<Self>, CommandLedgerError> {
         CommandClaimRequest {
             agent_id: crate::AgentId("validation".into()),
@@ -82,6 +92,7 @@ impl AgentCommandWorker {
             store,
             execution,
             holder,
+            dispatched_recheck_delay,
         }))
     }
 
@@ -132,7 +143,12 @@ impl AgentCommandWorker {
         if candidate.work.dispatch.is_some() {
             return bounded(self.store.reconcile_command(id))
                 .await
-                .map(|_| Duration::ZERO);
+                .map(|command| {
+                    super::reconcile_pacing::recheck_delay(
+                        command.status,
+                        self.dispatched_recheck_delay,
+                    )
+                });
         }
         let delay = candidate.continuation_retry_delay(&now_rfc3339());
         if !delay.is_zero() && !candidate.queue_expired(&now_rfc3339()) {

@@ -8,7 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     Extension, Json,
 };
-use layer1_public::AuthenticatedCaller;
+use layer1_public::{AuthenticatedCaller, AuthenticatedResourceCaller};
 use layer2_core::{account_deletion::OwnerSessionAuthority, Authorization, Capability};
 
 use super::{profile::Profile, AuthState, AUTH_COOKIE};
@@ -18,6 +18,7 @@ pub(super) async fn read(
     caller: Option<AuthenticatedCaller>,
     profile: Option<Extension<Profile>>,
     authority: Option<Extension<OwnerSessionAuthority>>,
+    resource: Option<AuthenticatedResourceCaller>,
     headers: HeaderMap,
 ) -> Response {
     // Middleware already verified this request. A second resolution repeats
@@ -44,8 +45,22 @@ pub(super) async fn read(
                         .into_response()
                 }
             };
+            let api_commands = !erasing && resource.as_ref().is_some_and(|r| {
+                r.credential.as_ref().is_some_and(|credential| {
+                    use layer2_core::resource_access::CredentialSource;
+                    // 中间件已核验这个凭据；只有普通 Key 可以没有过期时间。
+                    let lifetime = match r.context.credential_source {
+                        CredentialSource::Independent { expires_at: Some(expiry) } => expiry > std::time::SystemTime::now(),
+                        CredentialSource::Independent { expires_at: None } => super::agent_keys::is_agent_key(credential.value()),
+                        _ => false,
+                    };
+                    lifetime && auth.permits_oauth_or_key_commands(credential.value())
+                })
+                    && caller.authorization.allows(Capability::UseOwnSandboxes)
+            });
             let mut body = serde_json::json!({
                 "authenticated": true,
+                "api_commands": api_commands,
                 "usage_reporting": usage_reporting,
                 "subject": caller.subject.as_str(),
                 "capabilities": auth.session_entitlements(&caller, authority.as_ref().map(|Extension(authority)| authority)),
