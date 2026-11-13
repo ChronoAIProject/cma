@@ -21,8 +21,9 @@ is monotonic across 10%, 50% and 100%, deterministic across restarts and indepen
 of identity enumeration order. A percentage is an approximate population fraction,
 not an exact quota; record the observed eligible sample count at each stage.
 
-Deploy at 0, qualify the compatible image, then release owner stages 10 -> 50 ->
-100. Configuration is loaded from environment, so every stage requires a
+Deploy at 0, qualify the compatible image and the owner's explicit test cohort,
+then request individual owner approval for fleet stages 10 -> 50 -> 100. Fleet
+percentages can include other users and require that exposure in the approval. Configuration is loaded from environment, so every stage requires a
 same-image API rollout and confirmation that all old processes have drained.
 No existing dynamic control channel is introduced or extended. Keep the explicit
 cohort empty in fleet mode. The kill switch is percentage 0 plus an empty explicit
@@ -42,13 +43,16 @@ qualification; percentage 0 is not evidence that the old binary is safe.
 
 ### Checked-in stage controls
 
-`infra/api/agent-log-stages/{off,10,50,100}.json` are explicit ConfigMap merge
+`.github/agent-log-stages/{off,10,50,100}.json` are explicit ConfigMap merge
 patches for the release controller. They are not included by the base deployment;
 the base ConfigMap remains at 0. Each patch clears the old explicit ID cohort,
-sets the fleet percentage, and closes the independent process switches for
-segment adoption and capacity-recovery admission. Runtime recovery observation,
-durable gates and optional response/transcript/usage readers are separate controls.
-The application configuration tests parse every patch through the actual parsers.
+and sets the fleet percentage. Independent segment-adoption and capacity-recovery
+switches, runtime observation, durable gates and all reader switches are preserved.
+Initial fleet stages require explicit false readback of adoption/recovery before
+any mutation; the release-controller owner must integrate that refusal. The
+application tests parse every patch and preserve both independent switches in
+all four Boolean combinations. See the [owner activation packet](CMA_Agent_Log_Activation.md)
+for complete-operation limits, individual approvals and title/approval HOLDs.
 
 After the release owner approves the image and stage, the controller can patch
 `chrono-bot/cma-agent-manager` with the selected file (`kubectl patch configmap
@@ -58,11 +62,13 @@ standalone resources for `kubectl apply`. Check explicit Deployment environment
 overrides before rollout and verify effective values on every serving process.
 Applying a ConfigMap patch alone does not change an existing process.
 
-Use `off.json` for the fleet kill switch. If segmented adoption or recovery was
-separately enabled, close its durable admission gate and drain accepted
-preparations according to [segmentation operations](CMA_Log_Segments_Operations.md)
-before applying these process controls. Already committed recovery work, exact
-receipt reconciliation, compatible reads and cleanup remain available. Keep the
+Use `off.json` for the fleet kill switch; it remains usable while independently
+approved adoption/recovery support is enabled. Disabling those independent
+controls is a separate operation: close the relevant durable admission gate,
+reconcile/drain accepted uncertainty, then disable process dispatch according to
+[segmentation operations](CMA_Log_Segments_Operations.md). Already committed
+recovery work, exact receipt reconciliation, compatible reads and cleanup remain
+available. Keep the
 qualified reader configuration and original history; an off patch does not lower
 the compatible-image floor or prove that an uncertain operation aborted.
 
@@ -166,8 +172,9 @@ Stop expansion and use same-image percentage-zero rollback on correctness or
 receipt drift, read-side mutation, new quarantine/corruption signals, sustained
 preparation/fallback storms, checkout-wait regression, HTTP latency regression
 or new 503/no-healthy-upstream events. Preserve all durable evidence and diagnose
-the affected Agent independently. Target Thu 2026-11-12 morning train (merge by
-06:00 SGT), Thu evening fallback; final acceptance Fri 2026-11-13 15:00 SGT.
+the affected Agent independently. The owner's updated complete-operation deadline
+is 14 November 2026, 14:00 SGT, as specified in the activation packet; neither a
+favorable p95 nor an early ACK passes a hard completion limit.
 
 ## Local first-use and steady-state measurements
 
