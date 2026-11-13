@@ -1,8 +1,10 @@
 mod conversation;
 mod desktop;
+mod ownership;
+mod upload;
 use conversation::conversation;
+use upload::TemporaryUpload;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -38,6 +40,22 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/challenge",
+            post(ownership::challenge),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/confirm",
+            post(ownership::confirm),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/revoke",
+            post(ownership::revoke),
+        )
+        .route(
+            "/runtime/agents/{agent_id}/manager-ownership/legacy",
+            post(ownership::reset_legacy),
+        )
         .route(
             "/runtime/agents/{agent_id}/capacity-recovery",
             post(capacity_recovery),
@@ -148,6 +166,10 @@ async fn control(
             .into_response()
         }
     };
+    let owner = match conversation::ownership_header(&headers) {
+        Ok(owner) => owner,
+        Err(error) => return runtime_failure(error),
+    };
     if matches!(
         request,
         RequestFrame::Checkpoint(_)
@@ -156,10 +178,11 @@ async fn control(
             | RequestFrame::Restore(_)
             | RequestFrame::ReconcileWorkspaceRemoval(_)
     ) {
-        let result = tokio::spawn(async move { supervisor.dispatch(request).await });
+        let result =
+            tokio::spawn(async move { ownership::dispatch(&supervisor, request, owner).await });
         return heartbeat_json(result, CONTROL_HEARTBEAT);
     }
-    let mut response = supervisor.dispatch(request).await;
+    let mut response = ownership::dispatch(&supervisor, request, owner).await;
     if let layer3_adapter::wire::ResponseFrame::RuntimeStatus(status) = &mut response {
         // Retained API readers deny unknown fields. Only an explicit opt-in may
         // receive the new capability; the request JSON remains compatible.
@@ -455,26 +478,6 @@ fn runtime_failure(error: RuntimeError) -> Response {
         StatusCode::BAD_REQUEST
     };
     protocol_failure(status, error.code, error.detail, error.retryable)
-}
-
-struct TemporaryUpload(Option<PathBuf>);
-
-impl TemporaryUpload {
-    fn new(path: PathBuf) -> Self {
-        Self(Some(path))
-    }
-
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for TemporaryUpload {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_file(path);
-        }
-    }
 }
 
 #[cfg(test)]

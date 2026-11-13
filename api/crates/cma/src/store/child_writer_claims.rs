@@ -157,6 +157,12 @@ async fn apply(
     session: &mut ClientSession,
     diagnostics: &mut diagnostics::ClaimDiagnostics,
 ) -> Result<bool, ClaimError> {
+    if let ChildWriterClaim::Agent(agent) = claim {
+        store
+            .fence_agent_effect(&agent.id, session)
+            .await
+            .map_err(ClaimError::Domain)?;
+    }
     let (id, sandbox_id, owner, _) = claim.identity();
     diagnostics.phase = "parent_read";
     let parent = store
@@ -266,6 +272,11 @@ async fn apply(
         filter.insert("record.title", record_title_value(agent));
     }
     let mut fields = claim.fields().map_err(ClaimError::Domain)?;
+    if let ChildWriterClaim::Agent(agent) = claim {
+        store
+            .agent_work_owner_fields(&agent.id, &mut fields)
+            .map_err(ClaimError::Domain)?;
+    }
     if let (ChildWriterClaim::Agent(agent), Some(current_row)) = (claim, current_agent_row.as_ref())
     {
         carry_integrity_for_revision(
