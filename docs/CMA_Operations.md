@@ -1025,7 +1025,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |
 | `CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED` | Strict boolean, default `false`. Bounds native home pre-adoption and create-time binding readiness to two seconds per guard. The exact owned runtime Pod is checked for `CrashLoopBackOff` and increasing restart count within the observation window. Failure is retryable and preserves the Claim/member/home identities; it does not authorize replacement or prove runtime loss. Resume retains its existing readiness policy. |
-| `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED` | Strict boolean, default `false`. Initial native `ProvisionRuntime` readiness timeouts with an existing Claim may use a one-second retry for their first five attempts. The delay begins at completed observation, rounded up to the durable clock's whole-second precision. Crash/restart observations, transport failures, credentials, retained recovery and cleanup keep their existing policy. |
+| `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED` | Strict boolean, default `false`. Initial native `ProvisionRuntime` deadlines after a validated Pending observation with an existing Claim may use a one-second retry for their first five attempts. The delay begins at completed observation, rounded up to the durable clock's whole-second precision. Crash/restart observations, transport failures, credentials, retained recovery and cleanup keep their existing policy. |
 | `CHRONO_AGENT_SANDBOX_ENABLED` | Optional boolean override for the direct agent-sandbox adapter; defaults to the provider selection |
 | `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free agent-only native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds preparing, ready and retiring reservations to two per image class across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed agent-only prepared capacity while preserving owned Sandboxes and machine spares. |
 | `CHRONO_NATIVE_MACHINE_PREPARED_TARGET` | Independent count of credential-free machine Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires a pinned machine image, native allocation and full native home. Starts the desktop and Agent before owner adoption. Its durable target and admission fence are independent from agent-only preparations. Keep the compatible preparation reader during rollback after enablement. |
@@ -2732,7 +2732,7 @@ the existing five-second retry delay. They cannot schedule home retirement.
 The existing `Ready` maintenance policy for unhealthy unclaimed spares remains
 separate. Ordinary SandboxWorker retries default to 30 seconds. The independent,
 default-off `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED` switch shortens only
-expected initial readiness timeouts; without it, a two-second guard yield can
+validated Pending observation deadlines; without it, a two-second guard yield can
 delay a normally starting cold runtime until a later attempt. Assignment
 observation still allows five seconds. Initial-create
 recovery with an already persisted runtime and no completed-installation proof
@@ -2747,7 +2747,7 @@ to the next worker attempt, and cold-start completion time as well as guard
 duration. The stage deadline is not an end-to-end create deadline.
 
 `cma_native_claim_guard_total` and `cma_native_claim_guard_seconds` use only
-`stage` (`home`, `home_authority`, `bind`) and `outcome` (`ready`, `timeout`, `crash_loop`,
+`stage` (`home`, `home_authority`, `bind`) and `outcome` (`ready`, `pending`, `timeout`, `crash_loop`,
 `restarting`, `error`, `cancelled`). They measure guard attempts, including worker
 retries, not unique user creates. Kubernetes Ready is bootstrap readiness, not
 proof that an Agent or desktop is usable. No pool size, resources or concurrency
@@ -2757,8 +2757,10 @@ remain separate from merging the default-off implementation.
 ### Initial native readiness retry
 
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
-home readiness or create-bind timeout can use a one-second retry after observation
-completion. Durable due times have whole-second precision, so the observation
+home readiness or create-bind deadline reached after validated Pending can use a
+one-second retry after observation completion. An outstanding read or returned
+dependency error clears that evidence and keeps the existing retry policy, even
+when an earlier read observed Pending. Durable due times have whole-second precision, so the observation
 time is rounded up; actual next execution also includes scheduler and lease delay.
 Each attempt still obtains a fresh store lease and validates the same Claim/home.
 No successful or uncertain provider write is cancelled by this scheduling policy.

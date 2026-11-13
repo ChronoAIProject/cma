@@ -18,6 +18,7 @@ pub(super) struct Pools {
     delay_claim: AtomicBool,
     delay_claim_reply: AtomicBool,
     pending_claim: AtomicBool,
+    stall_observe: AtomicBool,
     observe_error: Mutex<Option<AdapterError>>,
     observed: Notify,
     entered: Notify,
@@ -160,6 +161,9 @@ impl NativePoolControl for Pools {
         &self,
         original: &NativePoolClaim,
     ) -> layer3_adapter::Result<NativePoolClaim> {
+        if self.stall_observe.load(Ordering::SeqCst) {
+            return std::future::pending().await;
+        }
         assert_eq!(
             self.home(&original.request.home)
                 .await
@@ -436,6 +440,7 @@ pub(super) fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> 
         delay_claim: AtomicBool::new(false),
         delay_claim_reply: AtomicBool::new(false),
         pending_claim: AtomicBool::new(false),
+        stall_observe: AtomicBool::new(false),
         observe_error: Mutex::new(None),
         observed: Notify::new(),
         entered: Notify::new(),

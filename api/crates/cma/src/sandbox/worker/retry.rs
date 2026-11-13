@@ -62,7 +62,7 @@ impl SandboxWorker {
         // Only expected initial readiness can spend this durable retry budget.
         // A transport outage or observed crash must retain the ordinary backoff.
         (self.config.native_create_retry_enabled
-            && failure.native_claim_timeout
+            && failure.native_claim_pending
             && sandbox.status == SandboxStatus::Provisioning
             && sandbox.work.step == SandboxWorkStep::ProvisionRuntime
             && sandbox.work.attempts < 5

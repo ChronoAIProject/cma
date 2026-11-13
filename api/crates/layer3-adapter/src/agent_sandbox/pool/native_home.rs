@@ -129,24 +129,29 @@ impl AgentSandboxPools {
     ) -> Result<HomeVolumeAttachment> {
         // Only the original published authority may be observed here. Never
         // replay adoption writes or claim allocation while waiting for Ready.
+        let readiness = super::super::NativeReadinessObservation::default();
         let observe = async {
             loop {
                 tokio::time::sleep(Duration::from_millis(250)).await;
-                if let NativeHomeAdoption::Ready(home) = self.observe_native_home(&origin).await? {
-                    return Ok(*home);
+                if let Some(home) = readiness
+                    .observe(async {
+                        Ok(match self.observe_native_home(&origin).await? {
+                            NativeHomeAdoption::Ready(home) => Some(*home),
+                            NativeHomeAdoption::Pending(_) => None,
+                        })
+                    })
+                    .await?
+                {
+                    return Ok(home);
                 }
             }
         };
         if self.config.native_claim_guard_enabled {
-            super::super::claim_guard::bounded("home_authority", observe).await
+            super::super::claim_guard::bounded("home_authority", &readiness, observe).await
         } else {
             tokio::time::timeout(Duration::from_secs(5), observe)
                 .await
-                .map_err(|_| {
-                    crate::AdapterError::NativeClaimNotReady(
-                        super::super::NativeClaimGuardReason::TimedOut,
-                    )
-                })?
+                .map_err(|_| readiness.timeout())?
         }
     }
 

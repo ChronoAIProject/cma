@@ -199,12 +199,12 @@ async fn authority_acknowledgement_timeout_keeps_published_home_for_replay() {
     .unwrap_err();
     assert_eq!(
         error,
-        AdapterError::NativeClaimNotReady(super::super::NativeClaimGuardReason::TimedOut)
+        AdapterError::NativeClaimNotReady(super::super::NativeClaimGuardReason::Pending)
     );
     assert!(handle.render().lines().any(|line| {
         line.starts_with("cma_native_claim_guard_total{")
             && line.contains("stage=\"home_authority\"")
-            && line.contains("outcome=\"timeout\"")
+            && line.contains("outcome=\"pending\"")
             && line.ends_with(" 1")
     }));
     let original_authority = fixture.row("sandboxclaims", &claim.name)["metadata"]["annotations"]
