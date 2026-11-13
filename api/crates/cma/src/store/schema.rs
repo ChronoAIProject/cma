@@ -109,7 +109,7 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 }
 
 fn unknown_version_filter(collection: &str) -> Document {
-    let versions = if collection == "agents" {
+    let versions = if matches!(collection, "agents" | "agent_reuse_bindings") {
         vec![1_i64, 2]
     } else {
         vec![DOCUMENT_SCHEMA_VERSION]
@@ -132,13 +132,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_agent_envelopes_accept_the_additive_reader_version() {
+    fn only_agent_envelopes_and_reuse_bindings_accept_the_additive_version() {
         let versions = |name| {
             unknown_version_filter(name).get_array("$or").unwrap()[0]["document_schema_version"]
                 ["$nin"]
                 .clone()
         };
         assert_eq!(versions("agents"), mongodb::bson::bson!([1_i64, 2_i64]));
+        assert_eq!(
+            versions("agent_reuse_bindings"),
+            mongodb::bson::bson!([1_i64, 2_i64])
+        );
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
         assert_eq!(versions("sandboxes"), mongodb::bson::bson!([1_i64]));
         // Scalar integer and no-array predicates remain present for both paths.
