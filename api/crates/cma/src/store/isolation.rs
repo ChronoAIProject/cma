@@ -158,6 +158,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspaces",
     "worktrees",
 ];
+const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
+const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
 // These privileges confer no access to EG/IM (or legacy gateway) collections.
 const ACTIONS: &[&str] = &[
@@ -170,6 +172,9 @@ const ACTIONS: &[&str] = &[
     "listIndexes",
     "collMod",
 ];
+// The production sizing CLI needs collection metadata, but no other runtime
+// collection should expose that administrative read.
+const ACTIVITY_INSPECTION_ACTIONS: &[&str] = &["collStats"];
 pub(crate) fn role(database: &str) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
@@ -178,9 +183,16 @@ pub(crate) fn role(database: &str) -> Document {
             if *name == "binding_conversations" {
                 actions.push("dropIndex");
             }
+            if *name == "activity" {
+                actions.extend_from_slice(ACTIVITY_INSPECTION_ACTIONS);
+            }
             doc! {"resource":{"db":database,"collection":*name},"actions":actions}
         })
         .collect();
+    // The release's own credential may run the explicit, fenced Activity
+    // migration Job. This grant is limited to ledger rows and cannot create or
+    // drop indexes directly.
+    grants.push(doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS});
     grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
 }
@@ -211,6 +223,7 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
             || resource.get_str("db").ok() != Some(database)
             || (!collection.is_empty()
                 && !COLLECTIONS.contains(&collection)
+                && collection != MIGRATION_COLLECTION
                 && collection != super::provenance_progress::COLLECTION)
         {
             return Err(denied());
@@ -221,6 +234,12 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == MIGRATION_COLLECTION {
+                MIGRATION_ACTIONS.contains(&action)
+            } else if collection == "activity"
+                && (ACTIONS.contains(&action) || ACTIVITY_INSPECTION_ACTIONS.contains(&action))
+            {
+                true
             } else {
                 ACTIONS.contains(&action)
                     || (collection == "binding_conversations" && action == "dropIndex")
@@ -247,6 +266,14 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
         ACTIONS
             .iter()
             .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
+    }) || !grants.get("activity").is_some_and(|actions| {
+        ACTIVITY_INSPECTION_ACTIONS
+            .iter()
+            .all(|action| actions.contains(*action))
+    }) || !grants.get(MIGRATION_COLLECTION).is_some_and(|actions| {
+        MIGRATION_ACTIONS
+            .iter()
+            .all(|action| actions.contains(*action))
     }) || !grants
         .get("binding_conversations")
         .is_some_and(|actions| actions.contains("dropIndex"))
