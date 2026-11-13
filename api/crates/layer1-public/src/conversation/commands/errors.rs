@@ -37,6 +37,7 @@ pub(super) fn observation_timeout() -> Response {
 
 pub(crate) fn admission_failure(error: CommandAdmissionError) -> Response {
     match error {
+        CommandAdmissionError::Ledger(CommandLedgerError::AdmissionPaused) => InstanceProblem::AdmissionPaused.into_response(),
         CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => InstanceProblem::Budget(reason).into_response(),
         CommandAdmissionError::Access(error) => ResourceProblem(error).into_response(),
         CommandAdmissionError::Input(error) => InstanceProblem::from(error).into_response(),

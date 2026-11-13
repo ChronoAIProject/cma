@@ -1732,6 +1732,9 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
+| `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
+| `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
+| `POST /api/v1/admin/admission/resume` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
 | `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
 | `PATCH /api/v1/admin/settings` | PatchRequest | - | 200 SettingsView |
@@ -1743,6 +1746,29 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/warm-pools` | - | - | 200 WarmPoolList |
 | `POST /api/v1/admin/warm-pools` | ConfigureWarmPoolBody; key | - | 202 WarmPoolView |
 | `PUT /api/v1/admin/warm-pools/{id}` | ResizeWarmPoolBody | - | 202 WarmPoolView |
+
+All admission endpoints require `ConfigurePlatform`. `AdmissionView` is
+`{revision, operator_stop, last_change, writes_available}`; GET returns
+`AdmissionReadView`, which also includes `history`: at most 20 immutable
+`AdmissionChange` records, newest first. Each change retains revision, Unix
+`at`, actor, reason, `old_stop` and `new_stop`. Control, activity and immutable
+history are written in one transaction; no-op requests add no records.
+The control revision is independent of platform settings. Stop/resume bodies are
+`{reason, expected_revision}`. Reasons contain 1–512 UTF-8 bytes, nonblank and
+without control characters. Already stopped returns the first writer's current
+stop, even for an old expected revision. Resume must name the current stop's
+revision; stale writes return 409 `admission_control_conflict`. A closed write
+gate returns 503 `admission_control_writes_unavailable`; reading and enforcing
+stored control always remain active.
+
+Fresh admissions while stopped return 503 `admission_paused` with
+`Retry-After: 60` and the fixed public guidance, "New work is temporarily paused.
+Existing work continues." Exact accepted replays and admitted continuations
+proceed. The existing spend checks retain their refusal behavior. New subject
+registration keeps 503 `registration_closed`, and signup options report
+`register_available: false`; existing owners can sign in. See the complete
+[admission contract](CMA_Admission_Control.md) and
+[operator runbook](CMA_Operations.md#operator-admission-stop).
 
 Warm pool views include `config_sha256`, the immutable image/resources/home/Pod
 policy digest. Inventory includes `default_config_sha256` for the current default
