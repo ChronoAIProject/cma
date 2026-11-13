@@ -81,6 +81,9 @@ async fn legacy_reuse_binding_remains_replayable_after_adoption() {
     gate(&store, &creation.agent.id, 0, true).await;
     append(&store, &creation.agent.id, "adopt-after-legacy-reuse").await;
     gate(&store, &creation.agent.id, 1, false).await;
+    original.agent_id = AgentId::generate();
+    original.worktree_id = WorktreeId::generate();
+    original.event_at = "2026-09-05T00:01:00Z".into();
     assert_eq!(
         store
             .admit_agent_reusing_profile(original)
