@@ -7,7 +7,7 @@ fn association() -> Value {
         "ingress_request_id":"22222222-2222-4222-8222-222222222222"})
 }
 
-fn reader(id: Option<&str>) -> ProviderReader {
+fn reader(id: Option<&str>) -> Box<ProviderReader> {
     ProviderReader::new(true, true, id).unwrap()
 }
 
