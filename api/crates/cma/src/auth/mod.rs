@@ -54,6 +54,7 @@ pub(crate) mod test_resources;
 mod token;
 mod tokens;
 mod usage_reporting;
+mod verification_diagnostics;
 mod verification_error;
 mod worker_credentials;
 
