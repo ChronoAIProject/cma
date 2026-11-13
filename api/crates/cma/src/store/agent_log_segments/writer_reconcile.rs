@@ -40,10 +40,13 @@ pub(in crate::store) async fn reconcile(
     result: &Binary,
     session: &mut ClientSession,
 ) -> Result<Outcome, SandboxStoreError> {
-    Box::pin(reconcile_mode(
+    let mut phase = super::telemetry::Phase::new("reconcile", false);
+    let result = Box::pin(reconcile_mode(
         store, operation, expected, logs, result, session, true,
     ))
-    .await
+    .await;
+    phase.reconciliation(&result);
+    result
 }
 
 pub(in crate::store) async fn reconcile_transaction(
