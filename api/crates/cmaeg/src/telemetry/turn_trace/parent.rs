@@ -34,6 +34,13 @@ impl fmt::Display for SpanId {
     }
 }
 
+impl serde::Serialize for SpanId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        // JSON writes the fixed hexadecimal form directly into its output buffer.
+        serializer.collect_str(self)
+    }
+}
+
 /// Validated headers remain diagnostics; they never establish a provider
 /// admission association or change a body, signature, claim or idempotency key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
