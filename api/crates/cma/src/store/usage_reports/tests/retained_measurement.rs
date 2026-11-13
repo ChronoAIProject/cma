@@ -126,7 +126,10 @@ async fn retained_default_day_on_seven_day_history_measures_complete_snapshot_an
         assert_eq!(commands.event_reads.load(Ordering::SeqCst), 0);
         eprintln!("retained_default read_cycle={cycle} summary_us={summary_us} summary_plus_page_us={} summary_bytes={} first_page_bytes={} event_reads=0",started.elapsed().as_micros(),serde_json::to_vec(&view).unwrap().len(),serde_json::to_vec(&page).unwrap().len());
         if cycle == 0 {
-            eprintln!("retained_default cold_admission_through_first_page_us={}", cold_started.elapsed().as_micros());
+            eprintln!(
+                "retained_default cold_admission_through_first_page_us={}",
+                cold_started.elapsed().as_micros()
+            );
             prior_id = id.to_owned();
             let started = Instant::now();
             let (status, refresh) = request(
