@@ -1,9 +1,11 @@
 //! Allowlisted outbound provider clients used by CMAEG turns.
 
+mod binding;
 mod client;
 mod client_types;
 mod context;
 mod context_retry;
+pub(crate) mod trace_contract;
 pub(crate) use context_retry::ContextFailure;
 mod conversation;
 mod inspection;
@@ -23,6 +25,8 @@ mod transport;
 mod worker_classifier;
 pub(crate) use worker_classifier::WorkerClassifierClient;
 
+#[cfg(test)]
+mod trace_throughput;
 #[cfg(test)]
 mod worker_tracking_tests;
 
