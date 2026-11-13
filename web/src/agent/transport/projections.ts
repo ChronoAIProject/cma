@@ -1,5 +1,6 @@
 import type { CmaWebClient } from '../../api/client';
 import type { AgentLoadLineage } from '../loadAgent';
+import type { AgentTranscript } from '../../api/types';
 
 /** Call only after fresh access/identity admission; publication needs its own proof. */
 export function readAgentProjections(
@@ -9,6 +10,7 @@ export function readAgentProjections(
   lineage?: AgentLoadLineage,
 ) {
   signal.throwIfAborted();
+  let completedTranscript: AgentTranscript | undefined;
   const hierarchy = (async () => {
     const detailRead = (async () => client.readAgent(agentId, { signal }))();
     const [detail, preparedWorkspace] = await Promise.all([
@@ -37,6 +39,7 @@ export function readAgentProjections(
     const value = await client.readAgentTranscript(agentId, { signal });
     signal.throwIfAborted();
     if (value.agentId !== agentId) throw new Error('Agent projections changed identity.');
+    completedTranscript = value;
     return value;
   })();
   const usage = (async () => {
@@ -48,7 +51,7 @@ export function readAgentProjections(
   // A route can be cancelled before its loader attaches. Observe every failure
   // now; the original promises still reject when their consumer awaits them.
   void Promise.allSettled([hierarchy, transcript, usage]);
-  return { hierarchy, transcript, usage };
+  return { hierarchy, transcript, usage, completedTranscript: () => completedTranscript };
 }
 
 export type AgentProjectionReads = ReturnType<typeof readAgentProjections>;

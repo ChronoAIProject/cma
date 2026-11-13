@@ -37,7 +37,8 @@ it('reuses a transferred creation selection without restarting or replacing it',
   const view = renderHook(() => useOpeningPreparation(h.client, 'agt_1', 'alice', true, false));
   const result = await loadAgent(h.client, 'agt_1', new AbortController().signal);
   expect(result.v2?.owner).toBe('alice');
-  expect(h.currentUser).toHaveBeenCalledTimes(4);
+  // Early reads have their own fresh admission; load and final checks remain.
+  expect(h.currentUser).toHaveBeenCalledTimes(5);
   expect(h.eligibility).toHaveBeenCalledOnce();
   view.unmount();
   expect(() => result.v2?.journal.read()).not.toThrow();

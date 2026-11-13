@@ -12,6 +12,7 @@ import { conversationFromTranscript, foldAgentEvent, type ConversationState } fr
 import { loadV2Agent } from './transport/load';
 import type { AgentV2Session } from './transport/client';
 import type { V2AgentEventItem } from '@chronoai/cma-sdk';
+import { takeOpeningReads } from './transport/openingReads';
 
 export interface ReadyAgent {
   readonly v2?: AgentV2Session;
@@ -50,18 +51,27 @@ export async function loadAgent(
   lineage?: AgentLoadLineage,
   onInputReady?: (ready: ReadyAgent) => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly AgentEvent[] }> {
-  const v2 = await client.agentTransport?.openForLoad(agentId, { signal });
-  if (v2 !== undefined)
-    return loadV2Agent(
-      client,
-      agentId,
-      signal,
-      v2,
-      allowIncompleteHistory,
-      onHistoryProgress,
-      lineage,
-      onInputReady,
-    );
+  const opening = takeOpeningReads(client, agentId, signal, lineage);
+  try {
+    const v2 = await client.agentTransport?.openForLoad(agentId, { signal });
+    if (v2 !== undefined)
+      return await loadV2Agent(
+        client,
+        agentId,
+        signal,
+        v2,
+        allowIncompleteHistory,
+        onHistoryProgress,
+        lineage,
+        onInputReady,
+        undefined,
+        opening?.read,
+      );
+  } finally {
+    // Legacy keeps its established fresh open/read path; abandoned v2 reads
+    // must never escape that fallback or retain a route's resources.
+    opening?.dispose();
+  }
   const hierarchy = (async () => {
     const detailRead = client.readAgent(agentId, { signal });
     const preparedWorkspace =

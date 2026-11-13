@@ -1,5 +1,6 @@
 import { TransportError, type V2AgentEventItem } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../../api/client';
+import type { AgentTranscript } from '../../api/types';
 import { conversationFromTranscript } from '../conversation';
 import { mergeTranscriptSnapshot } from '../chronology';
 import { transientReadFailure, type AgentLoadLineage, type ReadyAgent } from '../loadAgent';
@@ -10,6 +11,8 @@ import { conversationFromHead } from './liveHead';
 import { createIdentityHandoff, IDENTITY_HANDOFF_ENABLED } from './identityGate';
 import { createProjectionPublication } from './publication';
 import { readAgentProjections } from './projections';
+import type { AuthorizedOpeningReads } from './openingReads';
+import { IdentityChangedError } from './identity';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -21,6 +24,7 @@ export async function loadV2Agent(
   lineage?: AgentLoadLineage,
   onInputReady?: (ready: ReadyAgent) => void,
   onReadAuthorized?: () => void,
+  opening?: () => Promise<AuthorizedOpeningReads>,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
   await v2.authorizeLoad(signal);
   // The same fresh check can publish observed preparation and admit this batch.
@@ -28,7 +32,11 @@ export async function loadV2Agent(
   onReadAuthorized?.();
   signal.throwIfAborted();
   v2.journal.read();
-  const reads = readAgentProjections(client, agentId, signal, lineage);
+  const prepared = opening === undefined ? undefined : await opening();
+  signal.throwIfAborted();
+  prepared?.assertCurrent();
+  if (prepared !== undefined && prepared.owner !== v2.owner) throw new IdentityChangedError();
+  const reads = prepared?.reads ?? readAgentProjections(client, agentId, signal, lineage);
   const readTranscript = async () => {
     try {
       return await reads.transcript;
@@ -80,7 +88,7 @@ export async function loadV2Agent(
             historyLoading: true,
           });
         });
-  const transcriptPublished = readTranscript().then(async (transcript) => {
+  const publishTranscript = async (transcript: AgentTranscript | undefined) => {
     const preview = transcript === undefined ? undefined : conversationFromTranscript(transcript);
     if (preview !== undefined && onInputReady !== undefined)
       await publish((metadata) => {
@@ -93,7 +101,14 @@ export async function loadV2Agent(
         });
       });
     return preview;
-  });
+  };
+  // A completed route read can join metadata's fresh publication check now.
+  // Pending data still waits for completion and can only join a later batch.
+  const completedTranscript = reads.completedTranscript();
+  const transcriptPublished =
+    completedTranscript === undefined
+      ? readTranscript().then(publishTranscript)
+      : publishTranscript(completedTranscript);
   const projections = Promise.all([hierarchy, transcriptPublished]).then(([metadata, preview]) => ({
     ...metadata,
     preview,
