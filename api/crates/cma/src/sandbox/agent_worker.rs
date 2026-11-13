@@ -55,6 +55,7 @@ pub(crate) struct AgentWorkerConfig {
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
@@ -72,6 +73,7 @@ impl AgentWorkerConfig {
             parent_not_ready_pacing_enabled: false,
             retry_single_marker_enabled: false,
             work_retry_policy_enabled: false,
+            cleanup_continuation_enabled: false,
             managed_documents_enabled: false,
             access_transport_migration: None,
             holder: holder.into(),
@@ -104,6 +106,11 @@ impl AgentWorkerConfig {
 
     pub(crate) fn with_work_retry_policy(mut self, enabled: bool) -> Self {
         self.work_retry_policy_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_cleanup_continuation(mut self, enabled: bool) -> Self {
+        self.cleanup_continuation_enabled = enabled;
         self
     }
 
@@ -179,7 +186,7 @@ impl AgentWorker {
         Ok(true)
     }
 
-    /// Follow committed startup steps immediately, keeping each durable claim.
+    /// Follow bounded, committed progress immediately, keeping each durable claim.
     pub(crate) async fn run_scheduled(
         &self,
         id: &AgentId,
@@ -194,7 +201,7 @@ impl AgentWorker {
             let Some(agent) = self.dependencies.store.get_agent(id).await? else {
                 break;
             };
-            if !matches!(
+            let startup = matches!(
                 agent.work.step,
                 AgentWorkStep::AddWorktree
                     | AgentWorkStep::MaterializeHome
@@ -202,8 +209,22 @@ impl AgentWorker {
                     | AgentWorkStep::PublishReady
                     | AgentWorkStep::PublishConnection
                     | AgentWorkStep::DispatchFirstMessage
-            ) || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
-            {
+            );
+            let cleanup = self.config.cleanup_continuation_enabled
+                && agent.work.attempts == 0
+                && matches!(
+                    agent.work.step,
+                    AgentWorkStep::FenceInteraction
+                        | AgentWorkStep::CloseProcess
+                        | AgentWorkStep::PublishStopped
+                        | AgentWorkStep::EnsureProcessClosed
+                        | AgentWorkStep::RemoveHome
+                        | AgentWorkStep::RemoveWorktree
+                        | AgentWorkStep::PublishDeleted
+                );
+            // A published retry is not progress, even when execution exceeded its
+            // deadline. Reclaim only committed successful cleanup transitions.
+            if !(startup || cleanup) || !agent.work.is_due(&rfc3339_at(now + started.elapsed())) {
                 break;
             }
             if !self.run_one(id, now + started.elapsed()).await? {

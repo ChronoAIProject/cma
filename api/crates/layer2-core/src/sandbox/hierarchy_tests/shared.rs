@@ -284,100 +284,103 @@ async fn organization_owner_is_never_personal_or_a_personal_inventory_lookahead(
 
 #[tokio::test]
 async fn buffered_hierarchy_refuses_revocation_and_expiry_without_leaking_counts() {
-    for workspace in [false, true] {
-        for (expire, dependency_failure, timeout) in [
-            (false, false, false),
-            (true, false, false),
-            (false, true, false),
-            (true, true, false),
-            (false, false, true),
-            (true, false, true),
-        ] {
-            let f = fixture().await;
-            let share = grant(&f, true).await;
-            if expire {
-                *f.authority.0.lock().unwrap() = Reply::Expiring;
-            }
-            let entered = Arc::new(tokio::sync::Notify::new());
-            let resume = Arc::new(tokio::sync::Notify::new());
-            let reads = HierarchyReadService::new(Arc::new(BufferedStore {
-                inner: f.store.clone(),
-                sandbox: None,
-                dependency_failure,
-                gate: Some((entered.clone(), resume.clone())),
-            }))
-            .with_detail_timings(true)
-            .with_resource_access(f.access.clone());
-            let sandbox_id = f.parent.id.clone();
-            let workspace_id = f.workspace.id.clone();
-            let task = tokio::spawn(async move {
-                if workspace {
-                    reads
-                        .workspace_authorized(
-                            &context("recipient"),
-                            Some("request-credential"),
-                            &workspace_id,
-                        )
-                        .await
-                        .map(|_| ())
-                } else {
-                    reads
-                        .sandbox_authorized(
-                            &context("recipient"),
-                            Some("request-credential"),
-                            &sandbox_id,
-                        )
-                        .await
-                        .map(|_| ())
+    for projected in [false, true] {
+        for workspace in [false, true] {
+            for (expire, dependency_failure, timeout) in [
+                (false, false, false),
+                (true, false, false),
+                (false, true, false),
+                (true, true, false),
+                (false, false, true),
+                (true, false, true),
+            ] {
+                let f = fixture().await;
+                let share = grant(&f, true).await;
+                if expire {
+                    *f.authority.0.lock().unwrap() = Reply::Expiring;
                 }
-            });
-            tokio::time::timeout(Duration::from_secs(2), entered.notified())
-                .await
-                .unwrap();
-            if expire {
-                tokio::time::pause();
-                tokio::time::advance(Duration::from_secs(2)).await;
-            } else {
-                f.access
-                    .change_share(
-                        &context("owner"),
-                        None,
-                        ShareCommand {
-                            selector: share.selector,
-                            change: ShareChange::Revoke { share_id: share.id },
-                            expected_share_revision: Some(share.revision),
-                            idempotency_key: "revoke".into(),
-                        },
-                    )
+                let entered = Arc::new(tokio::sync::Notify::new());
+                let resume = Arc::new(tokio::sync::Notify::new());
+                let reads = HierarchyReadService::new(Arc::new(BufferedStore {
+                    projected,
+                    inner: f.store.clone(),
+                    sandbox: None,
+                    dependency_failure,
+                    gate: Some((entered.clone(), resume.clone())),
+                }))
+                .with_detail_timings(true)
+                .with_resource_access(f.access.clone());
+                let sandbox_id = f.parent.id.clone();
+                let workspace_id = f.workspace.id.clone();
+                let task = tokio::spawn(async move {
+                    if workspace {
+                        reads
+                            .workspace_authorized(
+                                &context("recipient"),
+                                Some("request-credential"),
+                                &workspace_id,
+                            )
+                            .await
+                            .map(|_| ())
+                    } else {
+                        reads
+                            .sandbox_authorized(
+                                &context("recipient"),
+                                Some("request-credential"),
+                                &sandbox_id,
+                            )
+                            .await
+                            .map(|_| ())
+                    }
+                });
+                tokio::time::timeout(Duration::from_secs(2), entered.notified())
                     .await
                     .unwrap();
-            }
-            if timeout {
-                if !expire {
+                if expire {
                     tokio::time::pause();
+                    tokio::time::advance(Duration::from_secs(2)).await;
+                } else {
+                    f.access
+                        .change_share(
+                            &context("owner"),
+                            None,
+                            ShareCommand {
+                                selector: share.selector,
+                                change: ShareChange::Revoke { share_id: share.id },
+                                expected_share_revision: Some(share.revision),
+                                idempotency_key: "revoke".into(),
+                            },
+                        )
+                        .await
+                        .unwrap();
                 }
-                tokio::time::advance(Duration::from_secs(16)).await;
-            } else {
-                resume.notify_one();
-            }
-            let result = task.await.unwrap();
-            if expire || timeout {
-                tokio::time::resume();
-            }
-            if expire {
-                assert!(matches!(
-                    result,
-                    Err(HierarchyReadError::Access(ResourceAccessError::Access(
-                        AccessError::RevalidationRequired
-                    )))
-                ));
-            } else {
-                assert!(matches!(
-                    result,
-                    Err(HierarchyReadError::Access(ResourceAccessError::Store(
-                        ResourceAccessStoreError::Conflict
-                    )))
-                ));
+                if timeout {
+                    if !expire {
+                        tokio::time::pause();
+                    }
+                    tokio::time::advance(Duration::from_secs(16)).await;
+                } else {
+                    resume.notify_one();
+                }
+                let result = task.await.unwrap();
+                if expire || timeout {
+                    tokio::time::resume();
+                }
+                if expire {
+                    assert!(matches!(
+                        result,
+                        Err(HierarchyReadError::Access(ResourceAccessError::Access(
+                            AccessError::RevalidationRequired
+                        )))
+                    ));
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(HierarchyReadError::Access(ResourceAccessError::Store(
+                            ResourceAccessStoreError::Conflict
+                        )))
+                    ));
+                }
             }
         }
     }
@@ -385,54 +388,57 @@ async fn buffered_hierarchy_refuses_revocation_and_expiry_without_leaking_counts
 
 #[tokio::test]
 async fn corrupt_hierarchy_targets_duplicates_and_cross_workspace_assignments_are_refused() {
-    for fault in [
-        "target",
-        "workspace_duplicate",
-        "tree_duplicate",
-        "agent_duplicate",
-        "cross_workspace",
-        "orphan_assignment",
-    ] {
-        let f = fixture().await;
-        grant(&f, true).await;
-        let mut record = f
-            .store
-            .read_sandbox_hierarchy(&f.parent.id)
-            .await
-            .unwrap()
-            .unwrap();
-        match fault {
-            "target" => record.sandbox.id = SandboxId("substituted".into()),
-            "workspace_duplicate" => record.workspaces.push(record.workspaces[0].clone()),
-            "tree_duplicate" => record.worktrees.push(record.worktrees[0].clone()),
-            "agent_duplicate" => record.agents.push(record.agents[0].clone()),
-            "orphan_assignment" => record.agents.clear(),
-            _ => {
-                let extra = workspace(&f.parent, "wks_other", None);
-                record.agents[0].workspace_id = extra.id.clone();
-                record.workspaces.push(extra);
+    for projected in [false, true] {
+        for fault in [
+            "target",
+            "workspace_duplicate",
+            "tree_duplicate",
+            "agent_duplicate",
+            "cross_workspace",
+            "orphan_assignment",
+        ] {
+            let f = fixture().await;
+            grant(&f, true).await;
+            let mut record = f
+                .store
+                .read_sandbox_hierarchy(&f.parent.id)
+                .await
+                .unwrap()
+                .unwrap();
+            match fault {
+                "target" => record.sandbox.id = SandboxId("substituted".into()),
+                "workspace_duplicate" => record.workspaces.push(record.workspaces[0].clone()),
+                "tree_duplicate" => record.worktrees.push(record.worktrees[0].clone()),
+                "agent_duplicate" => record.agents.push(record.agents[0].clone()),
+                "orphan_assignment" => record.agents.clear(),
+                _ => {
+                    let extra = workspace(&f.parent, "wks_other", None);
+                    record.agents[0].workspace_id = extra.id.clone();
+                    record.workspaces.push(extra);
+                }
             }
+            let reads = HierarchyReadService::new(Arc::new(BufferedStore {
+                projected,
+                inner: f.store.clone(),
+                sandbox: Some(record),
+                dependency_failure: false,
+                gate: None,
+            }))
+            .with_resource_access(f.access);
+            assert!(
+                matches!(
+                    reads
+                        .sandbox_authorized(
+                            &context("recipient"),
+                            Some("request-credential"),
+                            &f.parent.id
+                        )
+                        .await,
+                    Err(HierarchyReadError::Corrupt(_))
+                ),
+                "{fault}"
+            );
         }
-        let reads = HierarchyReadService::new(Arc::new(BufferedStore {
-            inner: f.store.clone(),
-            sandbox: Some(record),
-            dependency_failure: false,
-            gate: None,
-        }))
-        .with_resource_access(f.access);
-        assert!(
-            matches!(
-                reads
-                    .sandbox_authorized(
-                        &context("recipient"),
-                        Some("request-credential"),
-                        &f.parent.id
-                    )
-                    .await,
-                Err(HierarchyReadError::Corrupt(_))
-            ),
-            "{fault}"
-        );
     }
 }
 

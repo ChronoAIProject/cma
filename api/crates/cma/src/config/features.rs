@@ -8,6 +8,8 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub agent_model_discovery_cache: bool,
+    pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
@@ -18,6 +20,7 @@ pub(crate) struct FeatureFlags {
     pub output_json_budget: bool,
     pub bounded_update_relay: bool,
     pub bounded_live_fragments: bool,
+    pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub retain_read_frames: bool,
     pub bounded_permission_state: bool,
     pub parent_not_ready_pacing_enabled: bool,
@@ -33,9 +36,11 @@ pub(crate) struct FeatureFlags {
     pub access_snapshot_session: bool,
     pub single_fence_event_pages: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
+    pub sandbox_agent_projection: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
+    pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
     pub bounded_transcript_reads: bool,
     pub bounded_usage_reads: bool,
@@ -54,9 +59,13 @@ pub(crate) struct FeatureFlags {
     pub bounded_close_retries: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
+    pub native_create_retry_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
+    pub agent_connection_observations: bool,
+    pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
 }
 impl FeatureFlags {
@@ -74,6 +83,11 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            agent_model_discovery_cache: flag(
+                lookup,
+                "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
+            )?,
+            agent_environment_async: flag(lookup, "CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED")?,
             agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
             agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(
@@ -87,6 +101,7 @@ impl FeatureFlags {
             output_json_budget: flag(lookup, "CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED")?,
             bounded_update_relay: flag(lookup, "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED")?,
             bounded_live_fragments: flag(lookup, "CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED")?,
+            quiet_output: super::quiet_output::from_lookup(lookup)?,
             retain_read_frames: flag(lookup, "CHRONO_READ_FRAME_BUDGET_ENABLED")?,
             bounded_permission_state: flag(lookup, "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")?,
             parent_not_ready_pacing_enabled: flag(
@@ -101,6 +116,8 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
             )?,
+            agent_file_read_timings: flag(lookup, "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED")?,
+            sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
@@ -116,6 +133,14 @@ impl FeatureFlags {
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retry_single_marker_enabled: flag(lookup, "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED")?,
             work_retry_policy_enabled: flag(lookup, "CHRONO_WORK_RETRY_POLICY_ENABLED")?,
+            native_create_retry_enabled: flag(
+                lookup,
+                "CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED",
+            )?,
+            cleanup_continuation_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
+            )?,
             agent_log_scan_cooperative_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
@@ -124,6 +149,11 @@ impl FeatureFlags {
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
+            empty_discovery: flag(lookup, "CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED")?,
+            agent_connection_observations: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_VALIDATION_REUSE_ENABLED",
             )?,
             sandbox_reconciliation_reserved_lane: flag(
                 lookup,
@@ -254,3 +284,14 @@ mod admission_control_tests;
 
 #[cfg(test)]
 mod runtime_loss_tests;
+
+#[cfg(test)]
+#[path = "sandbox_projection_tests.rs"]
+mod sandbox_projection_tests;
+
+#[cfg(test)]
+#[path = "features/native_create_retry_tests.rs"]
+mod native_create_retry_tests;
+
+#[cfg(test)]
+mod discovery_tests;
