@@ -11,6 +11,9 @@ pub struct TriggerRevision {
     pub content: TriggerContent,
     pub digest: String,
     pub published_at: String,
+    /// A retained identity for an erased publisher, never executable content.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub publisher_deleted: bool,
 }
 
 impl TriggerRevision {
@@ -31,21 +34,76 @@ impl TriggerRevision {
             digest: trigger_content_digest(&content)?,
             content,
             published_at,
+            publisher_deleted: false,
         })
     }
 
     pub fn validate(&self) -> Result<(), TriggerError> {
-        self.content.validate()?;
         if self.revision == 0 {
             return Err(TriggerError::new("invalid_trigger_revision", "revision"));
         }
         if self.published_at.trim().is_empty() {
             return Err(TriggerError::new("invalid_timestamp", "published_at"));
         }
+        if self.publisher_deleted {
+            if self.content != erased_content()
+                || self.digest.len() != 64
+                || !self
+                    .digest
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err(TriggerError::new("invalid_publisher_tombstone", "content"));
+            }
+            return Ok(());
+        }
+        self.content.validate()?;
         if self.digest != trigger_content_digest(&self.content)? {
             return Err(TriggerError::new("trigger_digest_mismatch", "digest"));
         }
         Ok(())
+    }
+
+    /// Preserve the admitted identity while removing all publisher-authored data.
+    pub fn erase_publisher(&mut self) {
+        self.content = erased_content();
+        self.publisher_deleted = true;
+    }
+}
+
+fn erased_content() -> TriggerContent {
+    use super::{
+        AgentReusePolicy, ButtonLabel, Presentation, ReusePolicy, SandboxReusePolicy, Theme,
+        TriggerConsent, TriggerTarget, WorkspaceReusePolicy,
+    };
+    use crate::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
+    TriggerContent {
+        presentation: Presentation {
+            title: String::new(),
+            description: String::new(),
+            button_label: ButtonLabel::OpenInCma,
+            theme: Theme::Auto,
+            signup_hint: None,
+        },
+        target: TriggerTarget {
+            sandbox_profile: SandboxProfileRef::new(crate::SandboxProfileId(String::new()), 0),
+            workspace_profile: WorkspaceProfileRef::new(
+                crate::WorkspaceProfileId(String::new()),
+                0,
+            ),
+            agent_profile: AgentProfileRef::new(crate::AgentProfileId(String::new()), 0),
+            inline: None,
+        },
+        reuse: ReusePolicy {
+            sandbox: SandboxReusePolicy::AlwaysNew,
+            workspace: WorkspaceReusePolicy::AlwaysNew,
+            agent: AgentReusePolicy::AlwaysNew,
+        },
+        first_message: String::new(),
+        quick_messages: Vec::new(),
+        consent: TriggerConsent {
+            always_review: true,
+        },
     }
 }
 

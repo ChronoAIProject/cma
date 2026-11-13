@@ -1,3 +1,4 @@
+mod admission;
 mod binding;
 mod inline;
 mod lifecycle;
@@ -169,6 +170,7 @@ impl WorkspaceService {
             &revision,
             WorkspaceOrigin::Manual,
             WorkspaceAdmissionKind::Manual,
+            true,
         )
         .await
     }
@@ -223,6 +225,7 @@ impl WorkspaceService {
             &revision,
             WorkspaceOrigin::Manual,
             WorkspaceAdmissionKind::Manual,
+            false,
         )
         .await
     }
@@ -267,6 +270,7 @@ impl WorkspaceService {
             &revision,
             WorkspaceOrigin::Trigger { launch_id },
             WorkspaceAdmissionKind::Trigger,
+            true,
         )
         .await
     }
@@ -293,6 +297,7 @@ impl WorkspaceService {
             &revision,
             WorkspaceOrigin::SandboxProfile { index },
             WorkspaceAdmissionKind::SandboxProfile,
+            true,
         )
         .await
     }
@@ -332,42 +337,6 @@ impl WorkspaceService {
             .begin_workspace_removal(id, &caller.subject, now_rfc3339())
             .await
             .map_err(store_error)
-    }
-
-    async fn admit(
-        &self,
-        sandbox: &Sandbox,
-        revision: &WorkspaceProfileRevision,
-        origin: WorkspaceOrigin,
-        kind: WorkspaceAdmissionKind,
-    ) -> Result<Workspace, WorkspaceServiceError> {
-        let now = now_rfc3339();
-        let workspace = workspace(sandbox, revision, origin, now.clone())?;
-        let result = self
-            .store
-            .admit_workspace(WorkspaceAdmission {
-                binding: None,
-                workspace,
-                kind,
-                event_at: now,
-            })
-            .await
-            .map_err(store_error)?;
-        match result {
-            WorkspaceAdmissionResult::Existing(workspace) => Ok(workspace),
-            WorkspaceAdmissionResult::Created(workspace) => {
-                let locator = MarketplaceLocator::Workspace(workspace.profile.id.clone());
-                if let Err(error) = self.profile_uses.record_profile_use(&locator).await {
-                    tracing::warn!(
-                        workspace_id = %workspace.id,
-                        profile_id = locator.as_str(),
-                        %error,
-                        "workspace profile use was not recorded"
-                    );
-                }
-                Ok(workspace)
-            }
-        }
     }
 
     async fn read_visible_revision(

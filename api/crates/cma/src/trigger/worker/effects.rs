@@ -101,6 +101,7 @@ impl LaunchWorker {
                         return Ok(EffectOutcome::Halted);
                     }
                 }
+                let failure = self.recheck_publisher_refusal(&launch, failure).await?;
                 self.settle_resource_failure(launch, failure, now).await?;
                 return Ok(EffectOutcome::Halted);
             }

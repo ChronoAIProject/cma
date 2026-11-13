@@ -25,6 +25,41 @@ fn assert_capacity(error: Error, subject: &str, class: &str, limit: u64) {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn oversized_owned_profile_population_is_blocked_only_for_its_owner() {
+    let db = database().await;
+    db.collection::<Document>("agent_profiles")
+        .insert_many((0..20_001).map(|n| {
+            doc! {
+                "_id":format!("agp_{n}"),"owner":"a","record":{},
+            }
+        }))
+        .await
+        .unwrap();
+    put(
+        &db,
+        "agent_profiles",
+        doc! {"_id":"agp_other_owner","owner":"b","record":{}},
+    )
+    .await;
+    let subjects = BTreeSet::from(["a".into(), "b".into()]);
+    let error = profile_refs::retained(&db, &subjects).await.unwrap_err();
+    assert_capacity(error, "a", "owned Profiles", 20_000);
+    assert_eq!(count(&db, "agent_profiles").await, 20_002);
+
+    db.collection::<Document>("agent_profiles")
+        .delete_one(doc! {"_id":"agp_20000"})
+        .await
+        .unwrap();
+    assert!(profile_refs::retained(&db, &subjects)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(count(&db, "agent_profiles").await, 20_001);
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn large_organization_descendants_never_enter_the_personal_cache() {
     let db = database().await;
     sandbox(&db, "organization", "sbx_organization").await;
@@ -142,6 +177,7 @@ fn oversized_serialized_cohort_is_attributed_and_releases_cached_state() {
     let mut cursor = Cursor {
         subjects: BTreeSet::from(["a".into(), "b".into()]),
         contexts,
+        retained_profiles: Some(BTreeSet::from(["agp_cached:0000000001".into()])),
         operation: 37,
         after: Some(Bson::String("resumable-page".into())),
         ..Default::default()
@@ -155,6 +191,7 @@ fn oversized_serialized_cohort_is_attributed_and_releases_cached_state() {
         progress::MAX_CURSOR_BYTES as u64,
     );
     assert!(cursor.contexts.is_empty());
+    assert!(cursor.retained_profiles.is_none());
     assert_eq!(cursor.operation, 0);
     assert!(cursor.after.is_none());
     assert!(serde_json::to_vec(&cursor).unwrap().len() <= progress::MAX_CURSOR_BYTES);
@@ -179,10 +216,13 @@ async fn capacity_rejection_keeps_the_real_erasure_cursor_bounded_before_effects
         BTreeSet::from(["a".into(), "b".into()]),
         Options {
             billing_enabled: false,
+            transaction_drain_fallback_secs: 120,
         },
         &progress::operations(),
     );
     cursor.contexts = contexts;
+    cursor.retained_profiles = Some(BTreeSet::from(["agp_cached:0000000001".into()]));
+    cursor.drain_complete = true;
     cursor.after = Some(Bson::String("cached-page".into()));
     let a = SubjectId::new("a");
     let b = SubjectId::new("b");
@@ -212,6 +252,7 @@ async fn capacity_rejection_keeps_the_real_erasure_cursor_bounded_before_effects
     );
     assert_eq!(count(&db, "agents").await, 1);
     assert!(cursor.contexts.is_empty());
+    assert!(cursor.retained_profiles.is_none());
     assert_eq!(cursor.operation, 0);
     assert!(cursor.after.is_none());
     assert!(serde_json::to_vec(&cursor).unwrap().len() <= progress::MAX_CURSOR_BYTES);

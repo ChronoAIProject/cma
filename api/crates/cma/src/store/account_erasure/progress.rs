@@ -77,7 +77,11 @@ pub(super) fn prepare(
     operations: &[(&Entry, bool)],
 ) {
     let digest = layer2_core::document_artifacts::digest(
-        format!("account-record-effects-c1:{operations:?}").as_bytes(),
+        format!(
+            "account-record-effects-v7:{operations:?}:{}",
+            options.transaction_drain_fallback_secs
+        )
+        .as_bytes(),
     );
     let collection = operations
         .get(cursor.operation)
@@ -98,10 +102,14 @@ pub(super) fn prepare(
         || cursor.indexed != indexed
         || cursor.operation > operations.len()
     {
+        #[cfg(test)]
+        let test_drain_seconds = cursor.test_drain_seconds;
         *cursor = Cursor {
             subjects,
             catalog_digest: digest,
             billing_enabled: Some(options.billing_enabled),
+            #[cfg(test)]
+            test_drain_seconds,
             ..Default::default()
         };
         bind(cursor, operations);
@@ -170,7 +178,34 @@ pub(super) fn contributions(
             continue;
         }
         let context = contexts.iter().find(|context| context.subject == *subject);
-        let bytes = context.map(serialized_bytes).transpose()?.unwrap_or(0);
+        let mut bytes = context.map(serialized_bytes).transpose()?.unwrap_or(0);
+        if let Some(graph) = &cursor.profile_discovery {
+            bytes = bytes.saturating_add(graph.contribution(subject)?);
+        }
+        #[derive(serde::Serialize)]
+        struct Retained<'a> {
+            pins: Vec<&'a String>,
+            owners: BTreeMap<&'a String, &'a String>,
+        }
+        let belongs = |pin: &str| {
+            cursor
+                .retained_profile_owners
+                .get(pin.rsplit_once(':').map_or(pin, |(id, _)| id))
+                .is_some_and(|owner| owner == subject)
+        };
+        bytes = bytes.saturating_add(serialized_bytes(&Retained {
+            pins: cursor
+                .retained_profiles
+                .iter()
+                .flatten()
+                .filter(|pin| belongs(pin))
+                .collect(),
+            owners: cursor
+                .retained_profile_owners
+                .iter()
+                .filter(|(_, owner)| *owner == subject)
+                .collect(),
+        })?);
         sizes.insert(subject.clone(), bytes);
     }
     Ok(sizes)

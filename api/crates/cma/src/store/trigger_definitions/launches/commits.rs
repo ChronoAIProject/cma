@@ -134,11 +134,9 @@ async fn commit_once(
         .map_err(LaunchStoreError::from)
         .map_err(AttemptError::Domain)?;
     let trigger = if current.launch.ready_at.is_none() && changed.ready_at.is_some() {
-        Some(
-            counters::record_ready(store, &changed.trigger_id, session)
-                .await
-                .map_err(AttemptError::from)?,
-        )
+        counters::record_ready(store, &changed, session)
+            .await
+            .map_err(AttemptError::from)?
     } else {
         None
     };

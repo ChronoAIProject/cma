@@ -103,7 +103,9 @@ async fn run(
         super::indexes::ensure(db).await?;
         cursor.indexes_ready = true;
     }
-    super::publisher_pending::preflight(db, targets).await?;
+    if !super::barrier::ready(db, targets, cursor, options, batch).await? {
+        return Ok(());
+    }
     if contexts.len() != targets.len() {
         *contexts = context::load_cohort(db, targets).await?;
     }
@@ -155,6 +157,12 @@ async fn run(
         .map(|context| context.subject.clone())
         .collect::<BTreeSet<_>>();
     let agents = selectors::agents(contexts);
+    if cursor.retained_profiles.is_none() {
+        super::profile_refs::page(db, contexts, cursor).await?;
+        progress::cached_capacity(cursor, contexts)?;
+        batch.has_more = true;
+        return Ok(());
+    }
     let operations = progress::operations();
     while let Some((entry, indexed)) = operations.get(cursor.operation).copied() {
         let rules: Vec<_> = entry
@@ -195,10 +203,6 @@ async fn run(
         }
         let mut ids = vec![];
         for row in rows {
-            super::publisher_pending::guard_row(db, entry.collection, row, &subjects).await?;
-            if super::publisher_pending::protected_collection(entry.collection) {
-                continue;
-            }
             for rule in &rules {
                 if matches!(rule, Erasure::ProvenAbsent(_)) {
                     if let Some(context) = contexts
@@ -246,7 +250,7 @@ async fn run(
                         .iter()
                         .any(|context| selectors::matches(*rule, row, context))
             }) {
-                batches::redact(
+                let restart_drain = batches::redact(
                     db,
                     entry,
                     row,
@@ -255,6 +259,7 @@ async fn run(
                         agents: &agents,
                     },
                     now,
+                    cursor.retained_profiles.as_mut().unwrap(),
                     batch,
                 )
                 .await
@@ -262,6 +267,22 @@ async fn run(
                     Some(subject) => error.attribute(subject),
                     None => error,
                 })?;
+                if restart_drain {
+                    // A pre-gate insert can finish after the first drain. Fence
+                    // that new identity before refreshing any reference graph.
+                    cursor.drain_complete = false;
+                    cursor.drain_until = None;
+                    cursor.retained_profiles = None;
+                    cursor.retained_profile_owners.clear();
+                    cursor.profile_discovery = None;
+                    cursor.operation = 0;
+                    cursor.after = None;
+                    cursor.selector = None;
+                    cursor.billing_checked = false;
+                    cursor.billing_after = None;
+                    contexts.clear();
+                    return Ok(());
+                }
             }
         }
         batches::remove(

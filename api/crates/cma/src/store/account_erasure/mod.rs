@@ -7,6 +7,7 @@
         reason = "record effects are consumed by the separately delivered account erasure worker"
     )
 )]
+mod barrier;
 mod batches;
 pub(crate) mod catalog;
 mod context;
@@ -15,8 +16,8 @@ mod identity_activity;
 mod identity_refs;
 mod indexed;
 mod indexes;
+mod profile_refs;
 mod progress;
-mod publisher_pending;
 mod records;
 mod references;
 mod scan;
@@ -32,6 +33,15 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Options {
     pub billing_enabled: bool,
+    pub transaction_drain_fallback_secs: u64,
+}
+impl Options {
+    pub fn from_config(config: &crate::config::Config, billing_enabled: bool) -> Self {
+        Self {
+            billing_enabled,
+            transaction_drain_fallback_secs: config.account_erasure_transaction_drain_seconds,
+        }
+    }
 }
 // Test fixtures choose the disabled billing pilot explicitly. Production callers
 // must supply the actual deployment mode through erase_records_with_options.
@@ -42,6 +52,7 @@ pub(crate) async fn erase_records(
     cursor: &mut Cursor,
     now: &str,
 ) -> Result<Batch, Error> {
+    cursor.test_drain_seconds.get_or_insert(0);
     erase_records_with_options(
         db,
         targets,
@@ -49,6 +60,7 @@ pub(crate) async fn erase_records(
         now,
         Options {
             billing_enabled: false,
+            transaction_drain_fallback_secs: 120,
         },
     )
     .await
@@ -61,7 +73,13 @@ pub(crate) struct AttributedBlock {
 /// Permanent failures without evidence assigning them to a personal account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CohortBlock {
-    CorruptRecord { collection: &'static str },
+    CorruptRecord {
+        collection: &'static str,
+    },
+    InvalidTransactionDrain {
+        parameter: &'static str,
+        maximum_seconds: u64,
+    },
 }
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
@@ -143,9 +161,17 @@ pub(crate) struct Cursor {
     billing_after: Option<mongodb::bson::Bson>,
     billing_checked: bool,
     contexts: Vec<context::Context>,
+    retained_profiles: Option<BTreeSet<String>>,
+    retained_profile_owners: BTreeMap<String, String>,
+    profile_discovery: Option<profile_refs::Discovery>,
     #[serde(skip)]
     capacity_subject: Option<String>,
     indexes_ready: bool,
+    drain_until: Option<mongodb::bson::DateTime>,
+    drain_complete: bool,
+    #[cfg(test)]
+    #[serde(skip)]
+    test_drain_seconds: Option<u64>,
 }
 impl Cursor {
     fn advance(&mut self) {
@@ -155,13 +181,21 @@ impl Cursor {
     }
 }
 #[cfg(test)]
+mod admission_tests;
+#[cfg(test)]
 mod batch_tests;
 #[cfg(test)]
 mod catalog_fixture_tests;
 #[cfg(test)]
+mod draft_admission_tests;
+#[cfg(test)]
 mod history_tests;
 #[cfg(test)]
+mod identity_pending_tests;
+#[cfg(test)]
 mod organization_tests;
+#[cfg(test)]
+mod profile_tests;
 #[cfg(test)]
 mod race_tests;
 #[cfg(test)]
@@ -169,7 +203,13 @@ mod reference_tests;
 #[cfg(test)]
 mod round2_activity_tests;
 #[cfg(test)]
+mod round2_barrier_tests;
+#[cfg(test)]
 mod round2_capacity_tests;
+#[cfg(test)]
+mod round2_hotpath_tests;
+#[cfg(test)]
+mod round2_profile_integrity_tests;
 #[cfg(test)]
 mod round2_query_tests;
 #[cfg(test)]
@@ -179,6 +219,12 @@ mod round3_barrier_tests;
 #[cfg(test)]
 mod round3_capacity_tests;
 #[cfg(test)]
+mod round3_continuation_tests;
+#[cfg(test)]
+mod round3_discovery_tests;
+#[cfg(test)]
+mod round4_continuation_tests;
+#[cfg(test)]
 mod round4_executor_tests;
 #[cfg(test)]
 mod round4_query_tests;
@@ -186,8 +232,3 @@ mod round4_query_tests;
 mod scan_tests;
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod identity_pending_tests;
-#[cfg(test)]
-mod publisher_pending_tests;

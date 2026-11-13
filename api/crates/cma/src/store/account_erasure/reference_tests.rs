@@ -1,12 +1,15 @@
 //! Real-store compatibility and interleaving contracts for account redaction.
 use super::references::{redact, Redaction};
 use crate::document_artifacts::MongoDocumentStore;
-use layer2_core::{document_artifacts::*, SubjectId};
+use layer2_core::{document_artifacts::*, trigger_domain::*, SubjectId};
 use mongodb::{
     bson::{doc, Document},
     Client, Database,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 pub(super) mod fixtures;
 use fixtures::*;
@@ -131,7 +134,7 @@ async fn redaction_uses_revision_cas() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn redacted_document_still_parses_with_current_reader() {
+async fn redacted_document_and_revision_still_parse_with_current_readers() {
     let db = fixture().await;
     let documents = MongoDocumentStore::new(db.clone());
     let original = document();
@@ -152,6 +155,80 @@ async fn redacted_document_still_parses_with_current_reader() {
             .unwrap()
             .len(),
         1
+    );
+    let (revision_row, revision, trigger_id) = revision();
+    db.collection::<Document>("trigger_definition_revisions")
+        .insert_one(revision_row.clone())
+        .await
+        .unwrap();
+    let profiles = Arc::new(
+        crate::store::sandbox_mongo::MongoProfileStore::open(db.client(), db.name())
+            .await
+            .unwrap(),
+    );
+    let triggers =
+        crate::store::MongoTriggerDefinitionStore::open(db.client(), db.name(), profiles)
+            .await
+            .unwrap();
+    let launch = launch(&trigger_id, &revision.digest);
+    let launch_row = encode_launch(&launch);
+    db.collection::<Document>("trigger_launches")
+        .insert_one(launch_row.clone())
+        .await
+        .unwrap();
+    assert!(triggers
+        .launch(&launch.id, &launch.owner)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        redact(
+            &db,
+            "trigger_definition_revisions",
+            &revision_row,
+            &subjects()
+        )
+        .await
+        .unwrap(),
+        Redaction::Updated
+    );
+    let tombstone = triggers
+        .trigger_revision(&trigger_id, &revision.digest)
+        .await
+        .unwrap()
+        .unwrap();
+    tombstone.validate().unwrap();
+    assert_eq!(tombstone.digest, revision.digest);
+    assert_eq!(tombstone.published_at, revision.published_at);
+    assert_eq!(tombstone.revision, revision.revision);
+    assert!(tombstone.content.presentation.title.is_empty());
+    assert!(tombstone.content.presentation.description.is_empty());
+    assert!(tombstone.content.first_message.is_empty());
+    let mut corrupt = tombstone.clone();
+    corrupt.content.first_message = "Restored publisher message".into();
+    assert!(corrupt.validate().is_err());
+    let mut corrupt = tombstone.clone();
+    corrupt.content = revision.content.clone();
+    assert!(corrupt.validate().is_err());
+    let stored = row(
+        &db,
+        "trigger_definition_revisions",
+        revision_row.get_str("_id").unwrap(),
+    )
+    .await;
+    assert_eq!(stored.get_str("owner").unwrap(), "deleted-account");
+    assert_eq!(stored.get_i64("mutation_version").unwrap(), 1);
+    assert_eq!(
+        triggers
+            .launch(&launch.id, &launch.owner)
+            .await
+            .unwrap()
+            .unwrap(),
+        launch
+    );
+    assert_eq!(
+        row(&db, "trigger_launches", launch.id.as_str()).await,
+        launch_row
     );
     db.drop().await.unwrap();
 }
@@ -228,6 +305,30 @@ async fn corrupted_reference_projection_is_refused_without_overwriting_the_row()
     assert_eq!(
         row(&db, "cma_document_artifacts", &original.metadata.id).await,
         corrupted
+    );
+    let (mut invalid, _, _) = revision();
+    invalid
+        .get_document_mut("record")
+        .unwrap()
+        .get_document_mut("content")
+        .unwrap()
+        .insert("first_message", "Changed without digest");
+    db.collection::<Document>("trigger_definition_revisions")
+        .insert_one(invalid.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        redact(&db, "trigger_definition_revisions", &invalid, &subjects()).await,
+        Err(super::Error::InvalidRecord("trigger_definition_revisions"))
+    ));
+    assert_eq!(
+        row(
+            &db,
+            "trigger_definition_revisions",
+            invalid.get_str("_id").unwrap()
+        )
+        .await,
+        invalid
     );
     db.drop().await.unwrap();
 }

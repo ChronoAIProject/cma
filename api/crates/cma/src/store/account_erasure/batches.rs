@@ -109,8 +109,9 @@ pub(super) async fn remove(
 fn count_redaction(name: &str, outcome: Redaction, batch: &mut Batch, counted: bool) {
     match outcome {
         Redaction::Updated if !counted => *batch.redacted.entry(name.into()).or_default() += 1,
+        Redaction::Deleted => *batch.deleted.entry(name.into()).or_default() += 1,
         Redaction::Conflict => batch.has_more = true,
-        Redaction::Waiting => {
+        Redaction::Waiting | Redaction::DrainRequired => {
             batch.waiting = true;
             batch.has_more = true;
         }
@@ -123,13 +124,14 @@ pub(super) async fn redact(
     row: &Document,
     identity_scope: IdentityScope<'_>,
     now: &str,
+    retained: &mut BTreeSet<String>,
     batch: &mut Batch,
-) -> Result<(), Error> {
+) -> Result<bool, Error> {
     let IdentityScope { subjects, agents } = identity_scope;
     let identity = super::identity_refs::redact(db, entry.collection, row, subjects).await?;
     count_redaction(entry.collection, identity, batch, false);
     if matches!(identity, Redaction::Conflict | Redaction::Waiting) {
-        return Ok(());
+        return Ok(false);
     }
     let fresh = if identity == Redaction::Updated {
         majority_collection::<Document>(db, entry.collection)
@@ -141,16 +143,27 @@ pub(super) async fn redact(
         None
     };
     if identity == Redaction::Updated && fresh.is_none() {
-        return Ok(());
+        return Ok(false);
     }
     let row = fresh.as_ref().unwrap_or(row);
-    let outcome =
-        super::references::redact_content(db, entry.collection, row, subjects, agents, now).await?;
+    let outcome = if matches!(
+        entry.collection,
+        "agent_profiles"
+            | "workspace_profiles"
+            | "sandbox_profiles"
+            | "agent_profile_revisions"
+            | "workspace_profile_revisions"
+            | "sandbox_profile_revisions"
+    ) {
+        super::profile_refs::apply(db, entry.collection, row, subjects, retained, now).await?
+    } else {
+        super::references::redact_content(db, entry.collection, row, subjects, agents, now).await?
+    };
     count_redaction(
         entry.collection,
         outcome,
         batch,
         identity == Redaction::Updated,
     );
-    Ok(())
+    Ok(outcome == Redaction::DrainRequired)
 }

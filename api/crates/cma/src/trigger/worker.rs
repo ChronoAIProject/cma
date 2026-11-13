@@ -8,6 +8,7 @@ mod agent;
 mod control;
 mod driver;
 mod effects;
+mod erased_publisher;
 mod existing;
 mod sandbox;
 mod sandbox_progress;
