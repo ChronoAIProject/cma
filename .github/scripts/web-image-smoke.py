@@ -73,7 +73,8 @@ def verify_image(reference):
             # Passing CI suites already consume 176s before CLI overhead. Allow
             # 240s per engine, then SIGINT the actual runner with 30s for artifacts.
             run_browser(
-                ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "e2e/image-smoke.config.ts"],
+                ["node", "--require", str(Path(__file__).with_name("web-image-phases.cjs").resolve()),
+                 "node_modules/@playwright/test/cli.js", "test", "--config", "e2e/image-smoke.config.ts"],
                 cwd=root / "web", env={**os.environ, "CMA_WEB_IMAGE_URL": url,
                                       "CMA_WEB_IMAGE_EVIDENCE_DIR": str(evidence.resolve()),
                                       "CMA_EXPECTED_WEB_REVISION": revision,
