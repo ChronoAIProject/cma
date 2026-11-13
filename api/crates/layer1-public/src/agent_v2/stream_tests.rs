@@ -558,3 +558,62 @@ async fn agent_v2_live_batch_rechecks_standing_between_frames() {
         assert_eq!(open.release(&frame).await, deleting == "unrelated");
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn agent_v2_live_revocation_closes_without_waiting_for_fallback() {
+    use crate::rest::shared_stream_tests::ChangingStanding;
+    for event_wake in [false, true] {
+        for deleting in ["reader", "owner-a", "unrelated", "outage"] {
+            let mut f = fixture(true, true).await;
+            share(&f).await;
+            let standing = Arc::new(ChangingStanding::default());
+            let access = Arc::new(
+                f.access
+                    .as_ref()
+                    .clone()
+                    .with_account_standing(standing.clone()),
+            );
+            f.state.reads = f.state.reads.with_resource_access(access);
+            let auth = AuthenticatedResourceCaller {
+                context: context("reader"),
+                credential: Some(crate::DelegatedCredential::new("fixture-credential".into())),
+            };
+            let mut open = open(
+                f.state.with_event_wake(event_wake, Duration::from_secs(1)),
+                auth,
+                AgentId("agt_fixture".into()),
+                None,
+                HeaderMap::new(),
+            )
+            .await
+            .unwrap();
+            open.pending.clear();
+            open.initial_gap = false;
+            let frame = Frame {
+                event: Event::default().event("cma.agent.live").data("{}"),
+                live: true,
+                fragment: Some(fragment(&open).into()),
+            };
+            open.pending.extend([frame.clone(), frame]);
+            open.live_batch_needs_validation = true;
+            let mut body = response(open).into_body().into_data_stream();
+            assert!(body.next().await.unwrap().is_ok());
+            *standing.0.lock().unwrap() = Some(deleting);
+            let start = tokio::time::Instant::now();
+            let next = body.next().await;
+            if deleting == "unrelated" {
+                assert!(next.unwrap().is_ok());
+            } else {
+                assert!(next.is_none(), "a live frame escaped after {deleting}");
+            }
+            assert_eq!(
+                start.elapsed(),
+                Duration::ZERO,
+                "event_wake={event_wake}, standing={deleting}"
+            );
+        }
+    }
+}
+
+#[path = "stream_wake_tests.rs"]
+mod wake;

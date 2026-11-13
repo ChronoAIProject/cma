@@ -1,6 +1,21 @@
 import { expect, it, vi } from 'vitest';
 import { agentClient, AGENT_DETAIL } from '../test/agent';
-import { coalesceDetailReads } from './detailReads';
+import { coalesceDetailReads, detailReadSource } from './detailReads';
+
+it('identifies a wrapped source without modifying clients or mixing account identities', () => {
+  const original = Object.freeze(agentClient());
+  const wrapped = coalesceDetailReads(original);
+  const nested = coalesceDetailReads(wrapped.client);
+  expect(detailReadSource(original)).toBe(original);
+  expect(detailReadSource(wrapped.client)).toBe(original);
+  expect(detailReadSource(nested.client)).toBe(original);
+  const other = agentClient();
+  expect(detailReadSource(coalesceDetailReads(other).client)).toBe(other);
+  expect(detailReadSource(other)).not.toBe(original);
+  wrapped.dispose();
+  nested.dispose();
+  expect(detailReadSource(wrapped.client)).toBe(original);
+});
 
 function setup() {
   let resolve!: (value: typeof AGENT_DETAIL) => void;
