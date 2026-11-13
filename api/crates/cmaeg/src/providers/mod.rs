@@ -1,5 +1,6 @@
 //! Allowlisted outbound provider clients used by CMAEG turns.
 
+mod binding;
 mod client;
 mod client_types;
 mod context;

@@ -18,8 +18,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     client_types::{
-        BindingRequest, BindingResponse, ProviderError, ProviderHandle, TurnRequest, TurnStream,
-        MAX_METADATA_KEYS, MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES,
+        ProviderError, ProviderHandle, TurnRequest, TurnStream, MAX_METADATA_KEYS,
+        MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES,
     },
     probe::{classify_conformance, AgentCardProbe},
     stream::forward_turn,
@@ -143,52 +143,6 @@ impl ProviderClient {
             .filter(|(_, handle)| handle.entry.paths.recovery.is_some())
             .map(|(slug, _)| slug.as_str().to_owned())
             .collect()
-    }
-
-    pub async fn bind(
-        &self,
-        provider: &ProviderSlug,
-        binding_id: &BindingId,
-        request: &BindingRequest,
-    ) -> Result<BindingResponse, ProviderError> {
-        self.record_worker_key(&request.agent_key).await?;
-        let handle = self.handle(provider)?;
-        let _permit = acquire(&handle.inflight).await?;
-        let url = handle
-            .entry
-            .url("binding", &[("binding_id", binding_id.as_str())])
-            .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        let mut body = json!({
-            "schema_version": request.schema_version,
-            "profile": request.profile,
-            "profile_digest": request.profile_digest,
-            "agent_key": request.agent_key.as_str(),
-            "tools": request.tools,
-        });
-        if !request.target.is_profile() {
-            body["target"] = serde_json::to_value(&request.target)
-                .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
-        }
-        let bearer = self
-            .management_bearer(provider, &url, &request.agent_key)
-            .await?;
-        let response = handle
-            .client
-            .put(url)
-            .bearer_auth(bearer.as_str())
-            // Keep the reviewed provider bytes independent of serde_json's
-            // workspace-unified preserve_order feature, including nested values.
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(canonical_json(body))
-            .timeout(self.request_timeout)
-            .send()
-            .await
-            .map_err(transport_error)?;
-        let response = self.success_or_error(response).await?;
-        response
-            .json::<BindingResponse>()
-            .await
-            .map_err(|error| ProviderError::ResponseMalformed(error.to_string()))
     }
 
     pub async fn unbind(
