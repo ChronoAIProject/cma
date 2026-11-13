@@ -1,4 +1,6 @@
 //! Public document projections; durable policy and mutations belong to Layer 2.
+#[cfg(test)]
+mod deletion_tests;
 mod reads;
 mod shapes;
 mod usage;
@@ -26,7 +28,9 @@ pub fn documents_router(service: Arc<DocumentService>) -> Router {
         .route("/api/v1/documents", get(reads::list).post(writes::create))
         .route(
             "/api/v1/documents/{id}",
-            get(reads::read).patch(writes::update),
+            get(reads::read)
+                .patch(writes::update)
+                .delete(writes::delete),
         )
         .route("/api/v1/documents/{id}/source", get(reads::source))
         .route("/api/v1/documents/{id}/revisions", get(reads::revisions))
@@ -132,6 +136,10 @@ impl IntoResponse for DocumentProblem {
                 },
             ),
             DocumentError::Busy => (StatusCode::TOO_MANY_REQUESTS, "document_write_busy"),
+            DocumentError::DeletionUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "document_deletion_unavailable",
+            ),
             DocumentError::Unavailable | DocumentError::Corrupt => {
                 (StatusCode::SERVICE_UNAVAILABLE, "document_unavailable")
             }
@@ -169,6 +177,7 @@ impl IntoResponse for DocumentProblem {
         reads::comments,
         writes::create,
         writes::update,
+        writes::delete,
         writes::grant,
         writes::revoke,
         writes::create_link,
@@ -180,6 +189,8 @@ impl IntoResponse for DocumentProblem {
         DocumentUsage,
         DocumentUsageCounter,
         DocumentQuotaEnforcement,
+        DocumentDeletion,
+        DocumentPurgeState,
         DocumentView,
         DocumentPage,
         DocumentSource,

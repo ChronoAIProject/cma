@@ -80,7 +80,46 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         }
     }
     drop(records);
-    let service = if mode.starts_with("limit_") || mode.starts_with("usage_") {
+    let service = if mode.starts_with("delete_") {
+        let store: Arc<dyn DocumentStore> = if mode == "delete_unavailable" {
+            Arc::new(Faults {
+                rows: rows.clone(),
+                mode: "unavailable".into(),
+            })
+        } else {
+            rows.clone()
+        };
+        let service =
+            DocumentService::with_deletion(store, blobs, false, None, mode != "delete_off");
+        if matches!(
+            mode,
+            "delete_retry"
+                | "delete_changed"
+                | "delete_blocked"
+                | "delete_complete"
+                | "delete_pending"
+        ) {
+            service
+                .delete(
+                    &owner,
+                    &d.id,
+                    "contract-delete",
+                    DeleteDocument {
+                        expected_revision: 4,
+                    },
+                )
+                .await
+                .unwrap();
+            if mode == "delete_blocked" {
+                rows.set_purge_state(&d.id, DocumentPurgeState::Blocked)
+                    .await;
+            } else if mode == "delete_complete" {
+                rows.set_purge_state(&d.id, DocumentPurgeState::Complete)
+                    .await;
+            }
+        }
+        service
+    } else if mode.starts_with("limit_") || mode.starts_with("usage_") {
         let limits = match mode {
             "limit_documents" => [1, 1024, 128],
             "limit_bytes" => [100, 17, 128],
@@ -128,13 +167,13 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     Some(Scenario {
         router: super::super::documents_router(service),
         subject: match mode {
-            "anonymous" | "usage_anonymous" => None,
+            "anonymous" | "usage_anonymous" | "delete_anonymous" => None,
             "usage_foreign" => Some("document-stranger"),
-            "foreign" | "link" => Some("document-stranger"),
+            "foreign" | "link" | "delete_foreign" => Some("document-stranger"),
             "reader" => Some("document-reader"),
             _ => Some("document-owner"),
         },
-        authorization: if matches!(mode, "forbidden" | "usage_forbidden") {
+        authorization: if matches!(mode, "forbidden" | "usage_forbidden" | "delete_forbidden") {
             Authorization::none()
         } else {
             owner.authorization
@@ -166,8 +205,20 @@ impl DocumentStore for Faults {
         &self,
         _: &StoredDocument,
         _: Option<(&DocumentSourceReservation, SourceTicket)>,
-    ) -> Result<bool, DocumentError> {
+    ) -> Result<InsertOutcome, DocumentError> {
         Err(DocumentError::Unavailable)
+    }
+    async fn delete(&self, _: u64, _: &DocumentTombstone) -> Result<DeleteOutcome, DocumentError> {
+        Err(DocumentError::Unavailable)
+    }
+    async fn tombstone(&self, id: &str) -> Result<Option<DocumentTombstone>, DocumentError> {
+        self.rows.tombstone(id).await
+    }
+    async fn purge_state(&self, id: &str) -> Result<Option<DocumentPurgeState>, DocumentError> {
+        self.rows.purge_state(id).await
+    }
+    async fn pending_deletions(&self, owner_hash: &str) -> Result<u64, DocumentError> {
+        self.rows.pending_deletions(owner_hash).await
     }
     async fn compare_exchange(
         &self,

@@ -157,7 +157,7 @@ async fn documents_usage_requires_authentication_and_returns_private_nullable_co
         if authenticated {
             assert_eq!(
                 body,
-                json!({"enforcement":"not_enforced", "documents":null, "bytes":null, "objects":null})
+                json!({"enforcement":"not_enforced", "documents":null, "bytes":null, "objects":null, "pending_deletions":null})
             );
         } else {
             assert_eq!(body["code"], "not_authenticated");

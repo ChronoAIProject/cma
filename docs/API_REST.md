@@ -2439,9 +2439,21 @@ Owner may grant `read` or `comment` to explicit authenticated subjects, or creat
 
 Runtime MCP `publish_document` and `update_document` derive owner/Agent from confirmed runtime capability; no arbitrary owner field is accepted. Runtime update can change only verified runtime-authored documents for the current Agent/owner. The private runtime author field is separate from caller-supplied origin labels. Full runtime/conversation identity is checked again immediately before metadata commit after object upload, and replay requires current capability. Documents remain owner-accessible even if the originating runtime is removed.
 
-Limits: UTF8 Markdown 1 MiB, title 240 bytes, search 160 bytes, comments 8 KiB; page 1–50 (default 25); source revisions 256; direct grants 128; links 32; comments 256; retained receipts 1024; serialized metadata 12 MiB. Sources are content-addressed by server-derived owner/document/digest keys; callers never select storage locations. A failed metadata CAS may leave an unreachable immutable source object; no document metadata or source is lost. There is no document deletion endpoint in this increment.
+Limits: UTF8 Markdown 1 MiB, title 240 bytes, search 160 bytes, comments 8 KiB; page 1–50 (default 25); source revisions 256; direct grants 128; links 32; comments 256; retained receipts 1024; serialized metadata 12 MiB. Sources are content-addressed by server-derived owner/document/digest keys; callers never select storage locations. A failed metadata CAS may leave an unreachable immutable source object; no document metadata or source is lost. Owner deletion is separately enabled as described below; the ID is never reused.
 
-Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_key/invalid_json;401 not_authenticated;404 document_not_found conceals unavailable authority;409 document_revision_conflict/idempotency_key_reused;413 invalid_json size;415 json_content_type_required;422 invalid_json shape;429 document_capacity/document_write_busy/document_limit_reached/document_bytes_limit_reached/document_objects_limit_reached;503 document_unavailable.
+Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_key/invalid_json;401 not_authenticated;404 document_not_found conceals unavailable authority;409 document_revision_conflict/idempotency_key_reused;413 invalid_json size;415 json_content_type_required;422 invalid_json shape;429 document_capacity/document_write_busy/document_limit_reached/document_bytes_limit_reached/document_objects_limit_reached;503 document_unavailable/document_deletion_unavailable.
+
+Owner `DELETE /api/v1/documents/{id}` requires `Idempotency-Key` and a JSON body
+`{"expected_revision": n}`. It returns 200 `DocumentDeletion` with `id`, `revision`,
+`deleted_at` and `purge` (`pending`, `complete` or `blocked`). The deletion
+transaction removes the main record, immediately revoking owner, share, link,
+comment and runtime access and excluding the document from list/search. A
+non-owner receives 404; a stale revision or changed body under the same deletion
+key receives 409. An exact retry replays the original deletion with the current
+purge state. The default-off deletion switch returns 503
+`document_deletion_unavailable`; storage or persistence failures return 503
+`document_unavailable`. The ID remains tombstoned even after purge. Unsupported
+physical cleanup reports `purge: blocked`, never a fabricated completion.
 
 | Operation | Behavior |
 |---|---|
@@ -2450,6 +2462,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `POST /api/v1/documents` | Create owned Markdown document. |
 | `GET /api/v1/documents/{id}` | Read effective document metadata. |
 | `PATCH /api/v1/documents/{id}` | Owner source/title compare-and-swap. |
+| `DELETE /api/v1/documents/{id}` | Owner terminal deletion; body `DocumentRevisionRequest`, Idempotency-Key; 200 DocumentDeletion, 400/401/404/409/413/415/422/503 ProblemDocument. |
 | `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
 | `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
 | `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
@@ -2462,7 +2475,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `POST /api/v1/documents/{id}/comments` | Add comment under current grant. |
 | `DELETE /api/v1/documents/{id}/comments/{comment_id}` | Owner or author comment removal. |
 
-SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both expose list/create/read/update/source/revisions/shares/grant/revoke/links/createLink(create_link)/revokeLink(revoke_link)/comments/comment/removeComment(remove_comment). Read/comment options accept an explicit share token only in the header. TypeScript `client.usage.documents(options?)` and Rust `client.usage().documents().await` query owner document usage. The response has `enforcement` (`enforced` or `not_enforced`) and nullable `documents`, `bytes`, `objects` counters containing `used` and `limit`. Counters are null when accounting is off or the ledger is not ready. The usage route returns 401 `not_authenticated`, 404 `document_not_found` for missing document authority, or 503 `document_unavailable` for failed reads. Quota refusals use problem type `resource-limit-reached`, include `limit` and pre-reservation `live`, and have no `Retry-After`; bounded metadata capacity keeps `document_capacity`. Full and focused AgentManager OpenAPI documents include all 16 operations.
+SDK surfaces: TypeScript `client.documents`; Rust `client.documents()`. Both expose list/create/read/update/delete/source/revisions/shares/grant/revoke/links/createLink(create_link)/revokeLink(revoke_link)/comments/comment/removeComment(remove_comment). Read/comment options accept an explicit share token only in the header. TypeScript `client.usage.documents(options?)` and Rust `client.usage().documents().await` query owner document usage. The response has `enforcement` (`enforced` or `not_enforced`) and nullable `documents`, `bytes`, `objects` counters containing `used` and `limit`. Counters are null when accounting is off or the ledger is not ready. The usage route returns 401 `not_authenticated`, 404 `document_not_found` for missing document authority, or 503 `document_unavailable` for failed reads. Quota refusals use problem type `resource-limit-reached`, include `limit` and pre-reservation `live`, and have no `Retry-After`; bounded metadata capacity keeps `document_capacity`. The nullable `pending_deletions` field counts this owner's deleting lifecycle rows when deletion is enabled; it is null while deletion is disabled and remains independent of quota enforcement. Pending deletes keep their charged counters until purge release. TypeScript deletion is `client.documents.delete(id, { expectedRevision, idempotencyKey })`; Rust exposes the corresponding typed `delete` method. Full and focused AgentManager OpenAPI documents include all 17 operations.
 
 
 

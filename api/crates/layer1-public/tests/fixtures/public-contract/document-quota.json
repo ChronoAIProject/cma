@@ -31,7 +31,8 @@
           "objects": {
             "used": 1,
             "limit": 32768
-          }
+          },
+          "pending_deletions": null
         },
         "bodyKind": "json"
       },
@@ -67,7 +68,8 @@
           "objects": {
             "used": 0,
             "limit": 32768
-          }
+          },
+          "pending_deletions": null
         },
         "bodyKind": "json"
       },
@@ -94,7 +96,8 @@
           "enforcement": "not_enforced",
           "documents": null,
           "bytes": null,
-          "objects": null
+          "objects": null,
+          "pending_deletions": null
         },
         "bodyKind": "json"
       },
@@ -121,7 +124,8 @@
           "enforcement": "not_enforced",
           "documents": null,
           "bytes": null,
-          "objects": null
+          "objects": null,
+          "pending_deletions": null
         },
         "bodyKind": "json"
       },

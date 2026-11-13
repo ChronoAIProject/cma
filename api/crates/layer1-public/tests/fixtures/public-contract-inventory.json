@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 287,
+  "openapi_operations": 288,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3939,6 +3939,23 @@
         "not_authenticated",
         "document_not_found",
         "document_unavailable"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_deletion_unavailable",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
       ]
     }
   }
