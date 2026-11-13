@@ -275,7 +275,7 @@ pub(super) struct WorkerFailure {
     detail: String,
     retryable: bool,
     retry_kind: WorkRetryFailure,
-    pub(super) native_claim_timeout: bool,
+    pub(super) native_claim_pending: bool,
 }
 
 impl WorkerFailure {
@@ -317,7 +317,7 @@ impl WorkerFailure {
             class,
             detail: safe_detail(detail),
             retryable,
-            native_claim_timeout: false,
+            native_claim_pending: false,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
             } else {
@@ -360,8 +360,8 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         AdapterError::NativeClaimNotReady(reason) => {
             let mut failure =
                 WorkerFailure::retryable("native claim is not ready; original identity retained");
-            failure.native_claim_timeout =
-                reason == layer3_adapter::agent_sandbox::NativeClaimGuardReason::TimedOut;
+            failure.native_claim_pending =
+                reason == layer3_adapter::agent_sandbox::NativeClaimGuardReason::Pending;
             failure
         }
         AdapterError::RuntimeLedgerHold(_) => {

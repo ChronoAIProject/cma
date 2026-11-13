@@ -135,7 +135,9 @@ async fn native_home_requires_initializer_ready_before_returning_attachment() {
         )
         .await
         .unwrap(),
-        Err(crate::AdapterError::Unavailable(_))
+        Err(crate::AdapterError::NativeClaimNotReady(
+            crate::agent_sandbox::NativeClaimGuardReason::Pending
+        ))
     ));
     assert!(started.elapsed() >= std::time::Duration::from_secs(5));
     fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]

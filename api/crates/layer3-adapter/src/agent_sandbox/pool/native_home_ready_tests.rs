@@ -61,7 +61,7 @@ async fn native_home_readiness_deadline_has_typed_timeout_without_replaying_effe
     assert!(matches!(
         error,
         crate::AdapterError::NativeClaimNotReady(
-            crate::agent_sandbox::NativeClaimGuardReason::TimedOut
+            crate::agent_sandbox::NativeClaimGuardReason::Pending
         )
     ));
     writes_once(&fixture, floor, &claim);
