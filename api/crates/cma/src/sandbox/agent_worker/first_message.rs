@@ -105,17 +105,14 @@ impl AgentWorker {
             {
                 return Err(SandboxStoreError::Conflict);
             }
-            let result = self
-                .retry_at(
-                    current,
-                    WorkerFailure::retryable(
-                        "agent_first_message_admission_conflict",
-                        "first-message admission conflicted before dispatch; retrying fresh state",
-                    ),
-                    at,
-                    at + Duration::from_secs(1),
-                )
-                .await;
+            let failure = WorkerFailure::retryable(
+                "agent_first_message_admission_conflict",
+                "first-message admission conflicted before dispatch; retrying fresh state",
+            );
+            let delay = self
+                .retry_decision(&current, &failure, Duration::from_secs(1))
+                .delay;
+            let result = self.retry_at(current, failure, at, at + delay).await;
             match result {
                 Err(SandboxStoreError::Conflict) if attempt < 7 => tokio::task::yield_now().await,
                 result => return result,
