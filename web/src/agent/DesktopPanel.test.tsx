@@ -1,3 +1,6 @@
+import { ApiError, createClient } from '@chronoai/cma-sdk';
+import { CmaClientProvider } from '../api/context';
+import { agentClient } from '../test/agent';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DesktopPanel } from './DesktopPanel';
@@ -46,10 +49,12 @@ vi.mock('@novnc/novnc', () => ({
 }));
 beforeEach(() => {
   connections.length = 0;
+  vi.spyOn(Math, 'random').mockReturnValue(0);
 });
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it('attaches the prepared stream once with input disabled, then reconnects normally', async () => {
@@ -160,11 +165,12 @@ it('requires explicit control and returns input to the running Agent on request'
   expect(connection.disconnect).toHaveBeenCalledOnce();
 });
 
-it('reconnects with input disabled and releases the previous stream', async () => {
+it('reconnects automatically with input disabled and releases the previous stream', async () => {
+  vi.useFakeTimers();
   const view = render(
     <DesktopPanel runtimeReady agentId="agt/one" running={false} onClose={vi.fn()} />,
   );
-  await waitFor(() => expect(connections).toHaveLength(1));
+  await act(async () => {});
   const previous = connectionAt(0);
   expect(previous.url).toContain('/agents/agt%2Fone/desktop/ws');
   act(() => previous.dispatchEvent(new Event('connect')));
@@ -172,8 +178,10 @@ it('reconnects with input disabled and releases the previous stream', async () =
   expect(previous.viewOnly).toBe(false);
   act(() => previous.dispatchEvent(new Event('disconnect')));
   expect(screen.getByRole('status')).toHaveTextContent('Connection lost');
-  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
-  await waitFor(() => expect(connections).toHaveLength(2));
+  await act(() => vi.advanceTimersByTimeAsync(999));
+  expect(connections).toHaveLength(1);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(connections).toHaveLength(2);
   const current = connectionAt(1);
   expect(previous.disconnect).toHaveBeenCalledOnce();
   expect(current.viewOnly).toBe(true);
@@ -260,7 +268,7 @@ it('shows each handoff for five seconds, replaces stale notices, and retains the
   view.unmount();
 });
 
-it('offers recovery after a missing first frame and cancels the old loading timers', async () => {
+it('automatically recovers after a missing first frame and cancels the old loading timers', async () => {
   vi.useFakeTimers();
   const view = render(
     <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={vi.fn()} />,
@@ -273,7 +281,7 @@ it('offers recovery after a missing first frame and cancels the old loading time
   expect(screen.getByRole('status')).toHaveTextContent('taking longer than expected');
   expect(connection.disconnect).toHaveBeenCalledOnce();
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Reconnect' })));
+  await act(() => vi.advanceTimersByTimeAsync(1000));
   const next = connectionAt(1);
   act(() => next.dispatchEvent(new Event('connect')));
   expect(screen.getByRole('status')).toHaveTextContent('Connected');
@@ -298,7 +306,7 @@ it('restores a lost display with input revoked and bounds automatic recovery', a
   expect(first.viewOnly).toBe(true);
   expect(screen.getByRole('status')).toHaveTextContent('Restoring the desktop display');
   expect(screen.getByRole('button', { name: 'Control desktop' })).toBeDisabled();
-  await act(async () => vi.advanceTimersByTime(750));
+  await act(async () => vi.advanceTimersByTime(1000));
   const second = connectionAt(1);
   act(() => second.dispatchEvent(new Event('connect')));
   expect(screen.getByRole('status')).toHaveTextContent('Connected');
@@ -306,18 +314,18 @@ it('restores a lost display with input revoked and bounds automatic recovery', a
   act(() => first.dispatchEvent(new Event('disconnect')));
   expect(screen.getByRole('status')).toHaveTextContent('Connected');
   act(() => second.canvas.dispatchEvent(new Event('contextlost')));
-  await act(async () => vi.advanceTimersByTime(750));
+  await act(async () => vi.advanceTimersByTime(2000));
   const third = connectionAt(2);
   act(() => third.dispatchEvent(new Event('connect')));
   act(() => third.canvas.dispatchEvent(new Event('contextlost')));
-  expect(screen.getByRole('status')).toHaveTextContent('could not be restored');
-  await act(async () => vi.advanceTimersByTime(30_000));
-  expect(connections).toHaveLength(3);
-  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Reconnect' })));
-  const manual = connectionAt(3);
-  act(() => manual.dispatchEvent(new Event('connect')));
-  act(() => manual.canvas.dispatchEvent(new Event('contextlost')));
   expect(screen.getByRole('status')).toHaveTextContent('Restoring the desktop display');
+  await act(() => vi.advanceTimersByTimeAsync(3999));
+  expect(connections).toHaveLength(3);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  const recovered = connectionAt(3);
+  act(() => recovered.dispatchEvent(new Event('connect')));
+  expect(recovered.viewOnly).toBe(true);
+  expect(screen.getByRole('status')).toHaveTextContent('Connected');
   view.unmount();
   await act(async () => vi.advanceTimersByTime(30_000));
   expect(connections).toHaveLength(4);
@@ -414,4 +422,43 @@ it('never grants a stale takeover after a different turn starts', async () => {
   await act(async () => finish());
   expect(connectionAt(0).viewOnly).toBe(true);
   expect(screen.getByRole('alert')).toHaveTextContent('A new Agent turn started');
+});
+
+it('honors discovery Retry-After through manual retry and visibility, with one stream', async () => {
+  vi.useFakeTimers();
+  const sdk = createClient({ baseUrl: 'https://fixture.invalid' });
+  const discover = vi
+    .spyOn(sdk.agents, 'desktop')
+    .mockRejectedValueOnce(new ApiError(429, 'Busy', 'rate_limited', undefined, 20_000))
+    .mockResolvedValue({ websocket_url: '/api/v1/agents/agt_demo/desktop/ws' });
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  const view = render(
+    <CmaClientProvider client={agentClient({ resourceViews: sdk })}>
+      <DesktopPanel runtimeReady agentId="agt_demo" running={false} onClose={vi.fn()} />
+    </CmaClientProvider>,
+  );
+  await act(async () => {});
+  expect(connections).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
+  await act(() => vi.advanceTimersByTimeAsync(19_999));
+  expect(discover).toHaveBeenCalledTimes(1);
+  hidden.mockReturnValue(true);
+  fireEvent(document, new Event('visibilitychange'));
+  await act(() => vi.advanceTimersByTimeAsync(60_000));
+  expect(discover).toHaveBeenCalledTimes(1);
+  hidden.mockReturnValue(false);
+  fireEvent(document, new Event('visibilitychange'));
+  fireEvent(document, new Event('visibilitychange'));
+  await act(async () => {});
+  expect(discover).toHaveBeenCalledTimes(2);
+  expect(connections).toHaveLength(1);
+  const connection = connectionAt(0);
+  act(() => connection.dispatchEvent(new Event('connect')));
+  expect(screen.getByRole('status')).toHaveTextContent('Connected');
+  expect(connection.viewOnly).toBe(true);
+  hidden.mockReturnValue(true);
+  fireEvent(document, new Event('visibilitychange'));
+  expect(connection.disconnect).toHaveBeenCalledOnce();
+  view.unmount();
+  expect(vi.getTimerCount()).toBe(0);
 });

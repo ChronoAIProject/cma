@@ -302,19 +302,21 @@ async fn serve() -> Result<(), String> {
                     None => shutdown::shutdown_signal().await,
                 }
             } => {
-                if let Some(manager) = &composition.agent_manager { manager.drain().await; }
+                let manager_result = shutdown.drain_agent_manager(composition.agent_manager.as_deref()).await;
                 // Existing streams still need their workers until HTTP finishes.
                 let _ = http_stop.send(true);
-                match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
+                let http_result = match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
                     Ok(result) => result.map_err(|error| format!("HTTP server failed: {error}")),
                     Err(_) => Err("HTTP server exceeded its shutdown drain deadline".into()),
-                }
+                };
+                manager_result.and(http_result)
             }
         }
     };
-    if let Some(manager) = &composition.agent_manager {
-        manager.drain().await;
-    }
+    let manager_result = shutdown
+        .drain_agent_manager(composition.agent_manager.as_deref())
+        .await;
+    let server_result = server_result.and(manager_result);
     let aborted = shutdown.drain().await;
     match (server_result, aborted) {
         (Err(error), _) => Err(error),
