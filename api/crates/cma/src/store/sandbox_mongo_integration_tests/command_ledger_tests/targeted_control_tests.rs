@@ -17,6 +17,8 @@ mod inspection;
 mod interrupting_message;
 #[path = "targeted_control_public_tests.rs"]
 mod public;
+#[path = "targeted_control_reproduction_tests.rs"]
+mod reproduction;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
