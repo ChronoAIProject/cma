@@ -84,7 +84,26 @@ impl ToolsState {
         );
         // Redemption comes before every other check, so a refused request
         // also consumes the link.
-        if !self.downloads.redeem(&link.jti) {
+        let fresh = if self.downloads.redeem(&link.jti) {
+            super::media_redemption::Redemptions::new(self.resolver.record_client())
+                .consume(&self.keys, &link)
+                .await
+                .map_err(|_| {
+                    tracing::warn!(
+                        outcome = "unavailable",
+                        "media redemption claim unconfirmed"
+                    );
+                    Refusal::new(
+                        "unavailable",
+                        ProblemCode::MediaUnavailable,
+                        503,
+                        "media_redemption_unavailable",
+                    )
+                })?
+        } else {
+            false
+        };
+        if !fresh {
             return Err(Refusal::new(
                 "used",
                 ProblemCode::MediaUnavailable,
@@ -92,7 +111,11 @@ impl ToolsState {
                 "media_link_used",
             ));
         }
-        let channel = match self.resolver.resolve(link.event.channel_id.as_str()).await {
+        let channel = match self
+            .resolver
+            .resolve_current(link.event.channel_id.as_str())
+            .await
+        {
             Ok(channel) => channel,
             // A deleted or unreadable channel no longer authorizes anything.
             Err(ResolveError::NotFound | ResolveError::Tampered | ResolveError::Invalid) => {
