@@ -6,19 +6,23 @@ impl MongoAgentAccessToolSource {
         &self,
         capability: &str,
         session: &mut ClientSession,
+        snapshot_session: bool,
     ) -> Result<()> {
-        let document = self
-            .store
-            .agent_access_tools
+        let collection = super::super::snapshot_collection::collection(
+            &self.store.agent_access_tools,
+            snapshot_session,
+        );
+        let document = collection
             .find_one(doc! {"_id": records::hash(capability)})
             .session(&mut *session)
             .await?
             .ok_or(Error::Refused)?;
         let record = self.read(&document)?;
-        let snapshot = super::super::agent_provenance::read_snapshot(
+        let snapshot = super::super::agent_provenance::read_snapshot_with_concern(
             &self.store,
             &record.scope.creation.agent_id,
             session,
+            snapshot_session,
         )
         .await?;
         let scope = validation::scope(
@@ -34,7 +38,7 @@ impl MongoAgentAccessToolSource {
             require_conversation(&snapshot, record.conversation.as_deref(), false)?;
         }
         // Discovery returns no Agent identity and cannot admit a grant or a
-        // command. The transaction's snapshot proves the current receipt,
+        // command. The shared snapshot proves the current receipt,
         // lineage and runtime without writing to the concurrently publishing
         // Agent. A write fence here starves MCP initialization as first-turn
         // updates advance that same lineage. Actual tool calls and admission

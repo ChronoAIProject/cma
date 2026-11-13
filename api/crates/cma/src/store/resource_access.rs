@@ -36,6 +36,15 @@ pub(super) async fn read_execution_snapshot(
     snapshot::read(store, target, session).await
 }
 
+pub(super) async fn read_execution_snapshot_with_concern(
+    store: &MongoSandboxStore,
+    target: &ResourceTarget,
+    session: &mut mongodb::ClientSession,
+    snapshot_session: bool,
+) -> Result<ResourceAccessSnapshot, ReadError> {
+    snapshot::read_with_concern(store, target, session, snapshot_session).await
+}
+
 pub(super) fn read_inventory_policy(
     document: &Document,
 ) -> Result<layer2_core::resource_access::ResourcePolicyRecord, ResourceAccessStoreError> {

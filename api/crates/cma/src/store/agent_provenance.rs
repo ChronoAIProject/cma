@@ -7,7 +7,7 @@ use layer2_core::AgentId;
 use mongodb::bson::{doc, Document};
 use mongodb::ClientSession;
 
-use super::resource_access::{read_execution_snapshot, read_inventory_policy, ReadError};
+use super::resource_access::{read_inventory_policy, ReadError};
 use super::sandbox_mongo::{
     is_transient, read_record, record_bson, start_transaction, MongoSandboxStore,
     DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
@@ -116,11 +116,20 @@ pub(super) async fn read_snapshot(
     id: &AgentId,
     session: &mut ClientSession,
 ) -> Result<AgentProvenanceSnapshot, ReadError> {
-    match snapshot::read(store, id, session).await? {
+    read_snapshot_with_concern(store, id, session, false).await
+}
+
+pub(super) async fn read_snapshot_with_concern(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+    session: &mut ClientSession,
+    snapshot_session: bool,
+) -> Result<AgentProvenanceSnapshot, ReadError> {
+    match snapshot::read(store, id, session, snapshot_session).await? {
         Some(snapshot) => Ok(snapshot),
         // Large retained records still use the original readers in the same
-        // transaction; batching must not impose a new aggregate BSON limit.
-        None => read_snapshot_sequential(store, id, session).await,
+        // snapshot; batching must not impose a new aggregate BSON limit.
+        None => read_snapshot_sequential(store, id, session, snapshot_session).await,
     }
 }
 
@@ -128,17 +137,20 @@ async fn read_snapshot_sequential(
     store: &MongoSandboxStore,
     id: &AgentId,
     session: &mut ClientSession,
+    snapshot_session: bool,
 ) -> Result<AgentProvenanceSnapshot, ReadError> {
-    let resource = read_execution_snapshot(
+    let resource = super::resource_access::read_execution_snapshot_with_concern(
         store,
         &ResourceTarget::Agent {
             agent_id: id.clone(),
         },
         session,
+        snapshot_session,
     )
     .await?;
-    let creation = store
-        .agent_creation_provenance
+    let creation_collection =
+        super::snapshot_collection::collection(&store.agent_creation_provenance, snapshot_session);
+    let creation = creation_collection
         .find_one(doc! { "_id": id.as_str() })
         .session(&mut *session)
         .await?
@@ -146,8 +158,8 @@ async fn read_snapshot_sequential(
         .map(read)
         .transpose()
         .map_err(|_| ResourceAccessStoreError::Corrupt)?;
-    let first_log = store
-        .agent_log
+    let log_collection = super::snapshot_collection::collection(&store.agent_log, snapshot_session);
+    let first_log = log_collection
         .find_one(doc! { "agent_id": id.as_str(), "seq": 1_i64 })
         .session(&mut *session)
         .await?
