@@ -72,6 +72,16 @@ async fn apply(
         .map(read_conversation)
         .transpose()?;
     validate_conversation_write(&binding, binding_revision, current.as_ref(), expected, next)?;
+    if expected.is_none()
+        && current.is_none()
+        && matches!(
+            next.state,
+            layer2_core::sandbox::binding::BindingConversationState::Provisioning
+                | layer2_core::sandbox::binding::BindingConversationState::Ready
+        )
+    {
+        crate::store::admission_checks::require_fresh(&store.budget_settings, session).await?;
+    }
     let document = conversation_document(next)?;
     if let Some(expected) = expected {
         let result = store

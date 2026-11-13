@@ -102,6 +102,7 @@ pub(super) fn store_error(error: SandboxStoreError) -> WorkspaceServiceError {
         SandboxStoreError::WorkspaceOriginConflict => WorkspaceServiceError::OriginConflict,
         SandboxStoreError::WorkspaceRecoveryConflict => WorkspaceServiceError::RecoveryConflict,
         SandboxStoreError::Budget(reason) => WorkspaceServiceError::Budget(reason),
+        SandboxStoreError::AdmissionPaused => WorkspaceServiceError::AdmissionPaused,
         SandboxStoreError::Corrupt(detail) => WorkspaceServiceError::Corrupt(detail),
         other => WorkspaceServiceError::Unavailable(other.to_string()),
     }
