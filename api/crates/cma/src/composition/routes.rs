@@ -100,7 +100,8 @@ pub(super) fn agent_files(
             filesystem_adapter,
         )
         .with_task_experience(config.task_experience.clone())
-        .with_background_environment(config.features.agent_environment_async),
+        .with_background_environment(config.features.agent_environment_async)
+        .with_read_timings(config.features.agent_file_read_timings),
     ))
     .merge(layer1_public::rest::agent_artifacts_router(
         layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(store, access),

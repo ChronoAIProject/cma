@@ -2450,6 +2450,13 @@ strings or inherited request spans. Keep it enabled for the diagnostic compariso
 Optional enrichment retains its existing fallback behavior. See
 [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
+`CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. It adds request-correlated file-content/download phase
+timings for authorization, runtime status, mounted-home verification, endpoint
+discovery, control transfer, receipt validation and the final fence. Nested
+phases overlap; see [Mongo diagnostics](CMA_Mongo_Diagnostics.md) before comparing
+phase totals. It changes no read, cache or authorization policy.
+
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.

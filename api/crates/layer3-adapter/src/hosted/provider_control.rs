@@ -45,9 +45,18 @@ impl ProviderHostedControlTransport {
                 })?;
             super::super::provider_http::decode_control(response).await
         };
-        let response = tokio::time::timeout(CONTROL_DEADLINE, exchange)
-            .await
-            .map_err(|_| AdapterError::Unavailable("runtime control request timed out".into()))??;
+        let response = crate::file_read_diagnostics::transport(
+            request.operation(),
+            crate::file_read_diagnostics::TransportPhase::Control,
+            async {
+                tokio::time::timeout(CONTROL_DEADLINE, exchange)
+                    .await
+                    .map_err(|_| {
+                        AdapterError::Unavailable("runtime control request timed out".into())
+                    })?
+            },
+        )
+        .await?;
         control_correlation::validate(request, &response)?;
         Ok(response)
     }
