@@ -90,8 +90,8 @@ refuses the operation; it never selects a legacy lifetime fold or repairs data.
 | Checkpoint/export (`checkpoint_capture`, `checkpoints/agents`) | Captured Agent/projection and global prefix identity through scoped capture. | Native/runtime/worktree identity and acknowledgment semantics remain exact; rebuild stays outside interactive lifecycle transactions. |
 | Reconciliation/maintenance (`sandbox_reconciliation/agents`, `sandbox_maintenance/evidence`, `sandbox_unpublished_recovery`) | Bounded Agent/workspace inventories and scoped certified current-state/native-conversation facts. | Legacy scans are format-1 branches. Existing recovery, maintenance and checkpoint contract tests. |
 | Retained reopen (`retained_reopen`, `sandbox_unpublished_recovery/transaction/reopen`) | Same-transaction creation point and digest of certified head, previous seal, active leaves and projection. Normal startup allowance remains 64 events / 512 KiB; no rollover or cleanup-reserve admission. | Original legacy history digest retained. Exact accepted-receipt replay precedes new capture; corruption refuses without mutation. `transcript/tests/reopen.rs` covers 1/10/100/1,000 segments. |
-| First-message attachment on reuse (`agent_admission_reuse`) | Current legacy transaction root explicitly refuses segmented input before `scan_complete_log`; a common-writer adapter is still required. | Writer ownership/scope tracked with #1350; this inventory does not claim the mutation is implemented. New-format activation must remain closed until supported. |
-| Terminal Trigger first-message publication (`trigger_first_messages/projection`) | Current legacy transaction root explicitly refuses segmented input before scanning. Both worker completion and refusal callers require a common-writer adapter. | Writer ownership/scope tracked with #1350; same activation prerequisite as reuse attachment. |
+| First-message attachment and metadata reuse (`agent_log_segments/admission`) | One scoped capture supplies certified owner-input state and the exact creation point. Common publication preserves the format and updates the head, projection, original event and immutable receipt in the admission transaction. | Reuse bindings retain the exact publication. Restart replay and unknown-commit checks refuse missing artifacts and survive later appends. Legacy creation/admission remains format 1. |
+| Terminal Trigger first-message publication (`agent_log_segments/{command_worker,terminal}`) | Unclaimed refusal, claimed rejection and queued cancellation publish through the common scoped writer in the original command transaction. | Original Trigger binding, command identity and pre-retry timestamp are retained. Missing source refuses atomically; publication is evidence of refusal and emits no input or turn. Legacy projection stays format 1. |
 | Response projections/retention (`segment_response`, response readers) | Separate exact response/command evidence and retention ownership. | #1674 is developer-07's work; this consumer change does not certify or alter that implementation. |
 | Bootstrap/audit/rebuild (`agent_log_segments/{writer_bootstrap,audit}`) | Fenced bounded source capture, resumable physical-segment traversal and exact promotion CAS. | Administrative/background procedures; no synchronous lifetime rebuild on foreground refusal. |
 
@@ -113,6 +113,54 @@ formats remain those of the common segmented reader/writer modules. New-format
 emission remains default off. Source/image, retained-client/recovery artifact,
 gate revision, coherent restore and production verification receipts belong to
 the release record; local consumer tests do not supply those receipts.
+
+## Writer integration contract (#1350)
+
+Migration identity: `2026-11-05-am-log-segment-writer-v1`. The process adoption
+switch and durable cohort gates remain default off. New Agent creation starts
+with envelope 1; the existing fenced adoption procedure installs envelope 2,
+head, projection and original-operation evidence together. This writer step does
+not select a production cohort or alter operator policy.
+
+| Append root | Scoped publication / original identity |
+| --- | --- |
+| Direct keyed append | `agent_log/keyed`; caller publication key/fingerprint/time, durable unresolved-attempt carrier, staged adoption and exact replay. The unkeyed compatibility API explicitly supports legacy format only; repository call sites are test fixtures. |
+| Conversation, tool output and checkpoint | `agent_log_segments/conversation`; original mutation, command claim and checkpoint identity, including optional gated adoption. |
+| Worker, prepared startup and lifecycle | `agent_worker_transaction/segmented`, `lifecycle_transaction/segmented`; original worker lease/fence or lifecycle mutation and existing domain receipt. |
+| Owner controls and title changes | Existing control adapters and `agent_title_writes/scoped`; original request/claim token, aggregate fences and exact recorded result. |
+| Admission/reuse | `agent_log_segments/admission`; original admission creation key, fingerprint and event time. Reuse retains the creation point, worktree/native identity and parent admission fences. |
+| Terminal Trigger first message | `agent_log_segments/command_worker`; original terminal command revision/receipt and refusal or cancellation time, in the command transaction. |
+| Suggestion enqueue, reconciliation, maintenance and retained compatibility | Existing format-aware evidence readers and caller transaction adapters; these do not introduce an independent Agent-log append or synthesize a new operation identity. |
+
+The root starts the exclusive snapshot/majority transaction. Audited adapters
+may invoke domain helpers with that session; those helpers never start, restart,
+commit or abort it. Capture, preparation and persistence remain bound to the
+same scope. A later domain refusal aborts all earlier head, source, projection,
+receipt, command and parent effects. The root alone resolves commit outcome.
+
+Existing segmented appends that fit the active segment work with admission
+closed. Normal overflow requires a revisioned cohort admission. Only an exact
+already-admitted operation may finish its necessary rollover after closure;
+that receipt cannot authorize another key or batch. Terminal reserve rules,
+whole-batch byte/count limits and the prohibition on cleanup-only rollover stay
+in the common planner. Gate closure never downgrades an envelope.
+
+Version-2 reuse bindings require their immutable publication; historical
+version-1 bindings remain readable after adoption. Restart replay cannot select
+a newer profile Agent or repeat the first prompt. In-memory unknown-commit
+reconciliation additionally checks the original attempted result, creation and
+Trigger association in one snapshot. Receipt absence remains unknown. Trigger
+terminal reconciliation checks the exact original terminal command and its
+publication after later unrelated Agent writes. Queued cancellation also checks
+the exact original control record. Neither path resends input.
+
+Executable coverage is in `agent_admission_mongo_integration_tests/segmented`,
+`trigger_definitions/launch_mongo_integration_tests/initiation/common_execution/segmented`,
+and the existing common-writer planner, gate, bootstrap, atomicity, keyed-restart,
+worker/lifecycle and unknown-commit contracts. Release qualification still owns
+actual recovery executable/image identity, coherent restore, active-tail resource
+measurements and the natural production rollover observation. #1913 remains a
+separate malformed-source qualification prerequisite.
 
 ## Historical design baseline — November 5, 2026
 
