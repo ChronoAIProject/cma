@@ -15,6 +15,24 @@ def output(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
+def run_browser(command, *, cwd, env, evidence, timeout, grace=30):
+    """Use a dedicated subreaper so unrelated children of this caller stay unowned."""
+    evidence = Path(evidence).resolve()
+    result_path = evidence / "browser-process.json"
+    result_path.unlink(missing_ok=True)  # Never interpret evidence from an earlier run.
+    helper = Path(__file__).with_name("web_image_supervisor.py")
+    result = subprocess.run([sys.executable, str(helper), str(evidence), str(timeout),
+                             str(grace), *command], cwd=cwd, env=env)
+    if result.returncode:
+        if result_path.exists():
+            recorded = json.loads(result_path.read_text())
+            if recorded["timed_out"]:
+                raise subprocess.TimeoutExpired(command, timeout)
+            if recorded["returncode"]:
+                raise subprocess.CalledProcessError(recorded["returncode"], command)
+        raise subprocess.CalledProcessError(result.returncode, command)
+
+
 def verify_image(reference):
     root = Path(__file__).resolve().parents[2]
     image_id = output("docker", "image", "inspect", reference, "--format", "{{.Id}}")
@@ -49,13 +67,19 @@ def verify_image(reference):
                     time.sleep(0.2)
             else:
                 raise RuntimeError("Web image did not start")
-            subprocess.run(
-                ["npx", "--no-install", "playwright", "test", "--config", "e2e/image-smoke.config.ts"],
+            evidence = Path(os.environ.get("CMA_WEB_IMAGE_EVIDENCE_DIR")
+                            or tempfile.mkdtemp(prefix="cma-web-image-evidence-"))
+            # Passing CI suites already consume 176s before CLI overhead. Allow
+            # 240s per engine, then SIGINT the actual runner with 30s for artifacts.
+            run_browser(
+                ["node", "--require", str(Path(__file__).with_name("web-image-phases.cjs").resolve()),
+                 "node_modules/@playwright/test/cli.js", "test", "--config", "e2e/image-smoke.config.ts"],
                 cwd=root / "web", env={**os.environ, "CMA_WEB_IMAGE_URL": url,
+                                      "CMA_WEB_IMAGE_EVIDENCE_DIR": str(evidence.resolve()),
                                       "CMA_EXPECTED_WEB_REVISION": revision,
                                       "CMA_EXPECTED_WEB_VERSION": version},
-                check=True,
-                timeout=180 * min(3, len(os.environ.get("CMA_E2E_BROWSERS", "chromium").split(","))),
+                evidence=evidence,
+                timeout=240 * min(3, len(os.environ.get("CMA_E2E_BROWSERS", "chromium").split(","))),
             )
             print(json.dumps({"image": image_id, "revision": revision, "version": version,
                               "browsers": os.environ.get("CMA_E2E_BROWSERS", "chromium"),

@@ -33,6 +33,8 @@ pub enum SandboxControlServiceError {
     Store(#[from] SandboxControlError),
     #[error("model budget refused the revival: {0}")]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
 }
 
 pub struct SandboxControlService {
@@ -63,13 +65,20 @@ impl SandboxControlService {
         let _ = self.platform_spend.set(spend);
     }
 
-    async fn require_platform_open(&self) -> Result<(), crate::budget::BudgetError> {
+    async fn require_platform_open(
+        &self,
+        cause: crate::admission::AdmissionCause,
+    ) -> Result<(), crate::admission::AdmissionRefusal> {
         let Some(spend) = self.platform_spend.get() else {
             return Ok(());
         };
         let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
             .ok_or(crate::budget::BudgetError::Unavailable)?;
-        match spend.admission_state(now).await?.commitment_refusal() {
+        match spend
+            .admission_state(now)
+            .await?
+            .commitment_refusal_for(cause)
+        {
             Some(reason) => Err(reason),
             None => Ok(()),
         }
@@ -152,7 +161,8 @@ impl SandboxControlService {
         };
         envelope.validate()?;
         let new_commitment = if envelope.command == SandboxControl::Revive {
-            self.require_platform_open().await
+            self.require_platform_open(crate::admission::AdmissionCause::Fresh)
+                .await
         } else {
             Ok(())
         };
@@ -181,6 +191,7 @@ impl SandboxControlService {
             .reserve_sandbox_control(record, proof, new_commitment)
             .await
             .map_err(|error| match error {
+                SandboxControlError::AdmissionPaused => SandboxControlServiceError::AdmissionPaused,
                 SandboxControlError::Budget(reason) => SandboxControlServiceError::Budget(reason),
                 other => SandboxControlServiceError::Store(other),
             })

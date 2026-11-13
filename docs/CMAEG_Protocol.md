@@ -489,6 +489,35 @@ Transient provider capacity and transport failures retain their 503 behavior.
 Provider response bodies are not forwarded; only recognized safe reason codes
 are retained in diagnostic detail.
 
+A provider refusal during turn startup may additionally carry `upstream`:
+
+```json
+{"type":"about:blank","title":"provider rejected","status":502,"code":"provider_rejected","detail":"provider_rejected","upstream":{"operation":"responses","status":403,"code":"media_source_refused"}}
+```
+
+`upstream.operation` is `responses` or `conversation`, identifying the failed
+provider operation. `upstream.status` is the actual HTTP status in 100–599.
+`upstream.code` uses a closed vocabulary: `media_source_refused`,
+`partition_agent_missing`, `partition_agent_unavailable`,
+`agent_command_admission_conflict`, `agent_command_key_conflict`,
+`binding_not_ready`, `binding_resources_unavailable`,
+`command_authority_required`, `response_forbidden`, `response_not_found`,
+`model_mismatch`, or the fallback `unrecognized`. Every other provider value,
+including a short identifier containing only letters and digits, becomes
+`unrecognized` in both this extension and the provider-start warning log.
+No provider body or arbitrary provider code is forwarded.
+
+The outer HTTP status, problem code, diagnostic detail, retry decisions and
+configured failure reply retain their existing semantics. The extension is
+absent for non-provider failures and older responses. It does not establish
+that a notification was delivered or that a provider turn succeeded. Relay
+consumers may read these fields for owner diagnostics after independently
+validating this closed contract; they must retain the outer error outcome.
+The repository SDK readers reject unknown operations, unknown codes and status
+values outside the integer range 100–599 before exposing the extension. They
+continue to accept older problems that omit it and the generic `unrecognized`
+code produced by the gateway.
+
 A persisted channel whose original creation has not completed returns 409
 `conflict` with detail beginning `channel_creation_pending`. The owner must
 complete the original creation request using its exact reserved `record_id`
