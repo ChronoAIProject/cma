@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 290,
+  "openapi_operations": 291,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3970,6 +3970,18 @@
         "admission_ceilings_writes_unavailable",
         "invalid_request",
         "admission_ceilings_conflict"
+      ]
+    },
+    "POST /api/v1/admin/admission/pending-homes/reconcile": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/pending_homes.rs# ConfigurePlatform and the ceilings write gate protect preview and audited correction; observed counter CAS rejects stale apply commands.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "pending_homes_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "pending_homes_conflict"
       ]
     }
   }

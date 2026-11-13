@@ -130,6 +130,8 @@ pub(super) struct CapacityView {
     registrations: Option<CapacityCountView>,
     retained_homes: Option<CapacityCountView>,
     pending_launch_homes: u64,
+    expected_pending_launch_homes: u64,
+    pending_launch_homes_drift: i64,
     active_sessions: Option<CapacityCountView>,
 }
 
@@ -159,6 +161,8 @@ pub(super) async fn read_view(
             registrations: read.counts.registrations.map(Into::into),
             retained_homes: read.counts.retained_homes.map(Into::into),
             pending_launch_homes: read.counts.pending_launch_homes,
+            expected_pending_launch_homes: read.counts.expected_pending_launch_homes,
+            pending_launch_homes_drift: read.counts.pending_launch_homes_drift,
             active_sessions: read.counts.active_sessions.map(Into::into),
         },
         ceilings_history: read.history.into_iter().map(Into::into).collect(),

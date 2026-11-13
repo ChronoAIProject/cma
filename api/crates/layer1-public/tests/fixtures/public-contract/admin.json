@@ -1219,7 +1219,9 @@
             "registrations": null,
             "retained_homes": null,
             "pending_launch_homes": 0,
-            "active_sessions": null
+            "active_sessions": null,
+            "expected_pending_launch_homes": 0,
+            "pending_launch_homes_drift": 0
           },
           "ceilings_history": [],
           "history": []
@@ -1828,7 +1830,9 @@
             "registrations": null,
             "retained_homes": null,
             "pending_launch_homes": 0,
-            "active_sessions": null
+            "active_sessions": null,
+            "expected_pending_launch_homes": 0,
+            "pending_launch_homes_drift": 0
           },
           "ceilings_history": [],
           "history": [
@@ -2181,6 +2185,226 @@
           "status": 503,
           "detail": "Admission ceilings could not be read or changed. Read the current state before retrying an uncertain command.",
           "code": "admission_ceilings_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-dry-run",
+      "operation": "POST /api/v1/admin/admission/pending-homes/reconcile",
+      "scenario": "admission_pending_homes_dry_run",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/pending-homes/reconcile",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "investigate pending homes",
+          "observed_pending": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "previous_pending_launch_homes": 0,
+          "expected_pending_launch_homes": 0,
+          "pending_launch_homes": 0,
+          "dry_run": true,
+          "corrected": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-closed",
+      "operation": "POST /api/v1/admin/admission/pending-homes/reconcile",
+      "scenario": "admission_pending_homes_closed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/pending-homes/reconcile",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "investigate pending homes",
+          "observed_pending": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "60"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-ceilings-writes-unavailable",
+          "title": "admission ceilings writes unavailable",
+          "status": 503,
+          "detail": "Saving admission ceilings is not available yet.",
+          "code": "admission_ceilings_writes_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-invalid",
+      "operation": "POST /api/v1/admin/admission/pending-homes/reconcile",
+      "scenario": "admission_pending_homes_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/pending-homes/reconcile",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "",
+          "observed_pending": 0
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-pending-homes-reconciliation",
+          "title": "invalid pending homes reconciliation",
+          "status": 422,
+          "detail": "Supply a bounded reason and a nonnegative observed pending count.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-forbidden",
+      "operation": "POST /api/v1/admin/admission/pending-homes/reconcile",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/pending-homes/reconcile",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "investigate pending homes",
+          "observed_pending": 0
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-anonymous",
+      "operation": "POST /api/v1/admin/admission/pending-homes/reconcile",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/pending-homes/reconcile",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "investigate pending homes",
+          "observed_pending": 0
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-unavailable",
+      "operation": "POST /api/v1/admin/admission/pending-homes/reconcile",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/pending-homes/reconcile",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "investigate pending homes",
+          "observed_pending": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "60"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/pending-homes-unavailable",
+          "title": "pending homes unavailable",
+          "status": 503,
+          "detail": "Pending homes could not be reconciled. Read the current state before retrying an uncertain command.",
+          "code": "pending_homes_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-conflict",
+      "operation": "POST /api/v1/admin/admission/pending-homes/reconcile",
+      "scenario": "admission_pending_homes_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/pending-homes/reconcile",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "investigate pending homes",
+          "observed_pending": 1,
+          "dry_run": false
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/pending-homes-conflict",
+          "title": "pending homes conflict",
+          "status": 409,
+          "detail": "The pending home counter changed. Read the current state before issuing a new command.",
+          "code": "pending_homes_conflict"
         },
         "bodyKind": "json"
       },

@@ -25,6 +25,7 @@ use super::{problem_document, problem_response};
 pub(super) mod admission;
 pub(super) mod auto_pause;
 pub(super) mod ceilings;
+mod pending_homes;
 pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
