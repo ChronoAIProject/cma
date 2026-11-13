@@ -242,3 +242,6 @@ fn unavailable() -> SandboxStoreError {
 
 #[cfg(test)]
 mod mongo_tests;
+
+#[cfg(test)]
+mod service_tests;

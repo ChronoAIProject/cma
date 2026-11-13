@@ -10,7 +10,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
+    Extension, Json, Router,
 };
 use futures_util::{SinkExt as _, StreamExt as _};
 use layer2_core::{
@@ -91,6 +91,7 @@ async fn websocket(
     State(state): State<DesktopState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     ws: WebSocketUpgrade,
+    authorization: Option<Extension<Arc<dyn layer2_core::sandbox::DesktopAuthorization>>>,
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
@@ -98,7 +99,11 @@ async fn websocket(
         return StatusCode::FORBIDDEN.into_response();
     }
     let id = AgentId(id);
-    let connection = match state.service.open(&caller, &id).await {
+    let opened = match authorization {
+        Some(Extension(authority)) => state.service.open_authorized(&caller, &id, authority).await,
+        None => state.service.open(&caller, &id).await,
+    };
+    let connection = match opened {
         Ok(connection) => connection,
         Err(error) => return problem(error),
     };
@@ -147,8 +152,7 @@ async fn relay(
             },
         }
     }
-    let (sandbox_id, session_id) = connection.session_ids();
-    service.close(sandbox_id, session_id).await;
+    service.close_connection(&mut connection).await;
     let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Close(None))).await;
 }
 
@@ -160,6 +164,10 @@ fn problem(error: DesktopError) -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
             "desktop_runtime_unavailable",
         ),
+        DesktopError::AuthorityUnavailable => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "desktop_authority_unavailable",
+        ),
     };
     let body = super::problem_document(status, code, &error.to_string(), code);
     super::problem_response(status, body)
@@ -168,6 +176,15 @@ fn problem(error: DesktopError) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_authority_failure_is_retryable_service_unavailability() {
+        assert_eq!(
+            problem(DesktopError::AuthorityUnavailable).status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(problem(DesktopError::Busy).status(), StatusCode::CONFLICT);
+    }
+
     #[test]
     fn desktop_cookie_stream_requires_one_exact_origin() {
         let origins = vec![
