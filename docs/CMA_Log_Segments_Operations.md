@@ -75,6 +75,15 @@ with the switch still on. Once those preparations have drained, roll out
 request-path operation count. Durable closure alone, while dispatch stays on,
 still performs discovery; it must not be reported as zero-overhead rollback.
 
+Capacity recovery retries an uncertain Mongo commit on the same session and
+transaction, up to five commit attempts. It never repeats the mutation or native
+input as part of that retry. A later transient or unclassified failure cannot
+erase an earlier uncertain result. If the bound expires, retain the original
+operation and reconcile its exact durable receipt; an absent receipt remains
+unknown, including after restart. A gate-admission receipt alone does not prove
+that storage recovery published. No status or kill-switch operation promotes
+that absence to a known abort.
+
 Close new durable writer/recovery admission first when a stage fails. Preserve
 original receipts, carrier result witnesses, metadata, log rows and native homes.
 Accepted uncertainty resolution and settlement use their original operation and

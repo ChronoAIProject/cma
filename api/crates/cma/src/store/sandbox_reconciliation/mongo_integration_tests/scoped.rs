@@ -160,112 +160,118 @@ async fn unchanged(
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn root_recovers_adopted_agent_and_preserves_legacy_sibling_format() {
-    let (client, name, store) = database().await;
-    let (sandbox, agent) = adopted(&store, "sbx_mixed").await;
-    let sibling = ready_agent(&sandbox, "agt_legacy_sibling");
-    insert_agent(&store, &sibling, BEFORE).await;
-    let old_logs = store.agent_log(&agent.id, 0, 100).await.unwrap();
-    assert_eq!(
-        store.recover_runtime_loss(loss(&sandbox)).await.unwrap(),
-        SandboxRuntimeLossOutcome::RecoveryScheduled
-    );
-    let next = store.get_agent(&agent.id).await.unwrap().unwrap();
-    assert_eq!(next.status, AgentStatus::Paused);
-    assert_eq!(next.revision, agent.revision + 1);
-    assert_eq!(
-        store.get_agent(&sibling.id).await.unwrap().unwrap().status,
-        AgentStatus::Stopped
-    );
-    let logs = store.agent_log(&agent.id, 0, 100).await.unwrap();
-    assert_eq!(&logs[..old_logs.len()], old_logs);
-    assert_eq!(
-        row(&store, &agent)
-            .await
-            .get_i64("document_schema_version")
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        row(&store, &sibling)
-            .await
-            .get_i64("document_schema_version")
-            .unwrap(),
-        1
-    );
-    assert_eq!(publication_count(&store).await, 2);
-    assert_eq!(
-        store.recover_runtime_loss(loss(&sandbox)).await.unwrap(),
-        SandboxRuntimeLossOutcome::Superseded
-    );
-    assert_eq!(store.agent_log(&agent.id, 0, 100).await.unwrap(), logs);
-    assert_eq!(publication_count(&store).await, 2);
-    client.database(&name).drop().await.unwrap();
+    for enabled in [false, true] {
+        let (client, name, store) = database().await;
+        let store = store.with_runtime_loss_bounded_proof(enabled);
+        let (sandbox, agent) = adopted(&store, "sbx_mixed").await;
+        let sibling = ready_agent(&sandbox, "agt_legacy_sibling");
+        insert_agent(&store, &sibling, BEFORE).await;
+        let old_logs = store.agent_log(&agent.id, 0, 100).await.unwrap();
+        assert_eq!(
+            store.recover_runtime_loss(loss(&sandbox)).await.unwrap(),
+            SandboxRuntimeLossOutcome::RecoveryScheduled
+        );
+        let next = store.get_agent(&agent.id).await.unwrap().unwrap();
+        assert_eq!(next.status, AgentStatus::Paused);
+        assert_eq!(next.revision, agent.revision + 1);
+        assert_eq!(
+            store.get_agent(&sibling.id).await.unwrap().unwrap().status,
+            AgentStatus::Stopped
+        );
+        let logs = store.agent_log(&agent.id, 0, 100).await.unwrap();
+        assert_eq!(&logs[..old_logs.len()], old_logs);
+        assert_eq!(
+            row(&store, &agent)
+                .await
+                .get_i64("document_schema_version")
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            row(&store, &sibling)
+                .await
+                .get_i64("document_schema_version")
+                .unwrap(),
+            1
+        );
+        assert_eq!(publication_count(&store).await, 2);
+        assert_eq!(
+            store.recover_runtime_loss(loss(&sandbox)).await.unwrap(),
+            SandboxRuntimeLossOutcome::Superseded
+        );
+        assert_eq!(store.agent_log(&agent.id, 0, 100).await.unwrap(), logs);
+        assert_eq!(publication_count(&store).await, 2);
+        client.database(&name).drop().await.unwrap();
+    }
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn root_refuses_corrupt_segmented_evidence_and_rolls_back_late_domain_failure() {
-    for corruption in ["incarnation", "late_event", "legacy_sibling"] {
-        let (client, name, store) = database().await;
-        let (sandbox, agent) = adopted(&store, &format!("sbx_{corruption}")).await;
-        match corruption {
-            "incarnation" => {
-                store
-                    .agents
-                    .update_one(
-                        doc! {"_id":agent.id.as_str()},
-                        doc! {"$set":{"agent_log_incarnation":"foreign"}},
-                    )
-                    .await
-                    .unwrap();
+    for enabled in [false, true] {
+        for corruption in ["incarnation", "late_event", "legacy_sibling"] {
+            let (client, name, store) = database().await;
+            let store = store.with_runtime_loss_bounded_proof(enabled);
+            let (sandbox, agent) = adopted(&store, &format!("sbx_{corruption}")).await;
+            match corruption {
+                "incarnation" => {
+                    store
+                        .agents
+                        .update_one(
+                            doc! {"_id":agent.id.as_str()},
+                            doc! {"$set":{"agent_log_incarnation":"foreign"}},
+                        )
+                        .await
+                        .unwrap();
+                }
+                "late_event" => {
+                    store
+                        .sandboxes
+                        .update_one(
+                            doc! {"_id":sandbox.id.as_str()},
+                            doc! {"$set":{"last_seq":1_i64}},
+                        )
+                        .await
+                        .unwrap();
+                }
+                "legacy_sibling" => {
+                    let sibling = ready_agent(&sandbox, "agt_invalid_legacy");
+                    insert_agent(&store, &sibling, BEFORE).await;
+                    store
+                        .agent_log
+                        .delete_many(doc! {"agent_id":sibling.id.as_str()})
+                        .await
+                        .unwrap();
+                }
+                _ => unreachable!(),
             }
-            "late_event" => {
-                store
-                    .sandboxes
-                    .update_one(
-                        doc! {"_id":sandbox.id.as_str()},
-                        doc! {"$set":{"last_seq":1_i64}},
-                    )
+            let original = row(&store, &agent).await;
+            let head = collection(&store, segments::HEADS)
+                .find_one(doc! {})
+                .await
+                .unwrap();
+            let projection = collection(&store, segments::PROJECTIONS)
+                .find_one(doc! {})
+                .await
+                .unwrap();
+            assert!(store.recover_runtime_loss(loss(&sandbox)).await.is_err());
+            unchanged(&store, &sandbox, &agent, &original).await;
+            assert_eq!(
+                collection(&store, segments::HEADS)
+                    .find_one(doc! {})
                     .await
-                    .unwrap();
-            }
-            "legacy_sibling" => {
-                let sibling = ready_agent(&sandbox, "agt_invalid_legacy");
-                insert_agent(&store, &sibling, BEFORE).await;
-                store
-                    .agent_log
-                    .delete_many(doc! {"agent_id":sibling.id.as_str()})
+                    .unwrap(),
+                head
+            );
+            assert_eq!(
+                collection(&store, segments::PROJECTIONS)
+                    .find_one(doc! {})
                     .await
-                    .unwrap();
-            }
-            _ => unreachable!(),
+                    .unwrap(),
+                projection
+            );
+            client.database(&name).drop().await.unwrap();
         }
-        let original = row(&store, &agent).await;
-        let head = collection(&store, segments::HEADS)
-            .find_one(doc! {})
-            .await
-            .unwrap();
-        let projection = collection(&store, segments::PROJECTIONS)
-            .find_one(doc! {})
-            .await
-            .unwrap();
-        assert!(store.recover_runtime_loss(loss(&sandbox)).await.is_err());
-        unchanged(&store, &sandbox, &agent, &original).await;
-        assert_eq!(
-            collection(&store, segments::HEADS)
-                .find_one(doc! {})
-                .await
-                .unwrap(),
-            head
-        );
-        assert_eq!(
-            collection(&store, segments::PROJECTIONS)
-                .find_one(doc! {})
-                .await
-                .unwrap(),
-            projection
-        );
-        client.database(&name).drop().await.unwrap();
     }
 }
 

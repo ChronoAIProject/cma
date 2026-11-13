@@ -24,6 +24,7 @@ const BEFORE: &str = "2026-09-05T00:00:00Z";
 const OBSERVED: &str = "2026-09-05T00:30:00Z";
 
 mod authority;
+mod bounded;
 mod channel_home_retention;
 mod commit;
 mod recovery;
