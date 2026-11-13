@@ -19,10 +19,14 @@ impl DesktopService {
         if !self.replicas_enabled {
             return self.open(caller, id).await;
         }
-        tokio::time::timeout(Duration::from_secs(5), authority.current(caller))
-            .await
-            .map_err(|_| DesktopError::AuthorityUnavailable)??;
-        let (sandbox_id, runtime) = self.authorize(caller, id).await?;
+        timing::observe("pre_open_credential", async {
+            tokio::time::timeout(Duration::from_secs(5), authority.current(caller))
+                .await
+                .map_err(|_| DesktopError::AuthorityUnavailable)?
+        })
+        .await?;
+        let (sandbox_id, runtime) =
+            timing::observe("pre_open_lineage", self.authorize(caller, id)).await?;
         self.open_owned(caller, id, sandbox_id, runtime, authority)
             .await
     }
