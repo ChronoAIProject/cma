@@ -6436,6 +6436,7 @@ the Browser is unsupported. Use the existing status text, Button, and desktop
 feedback components without introducing new visual tokens.
 
 | 2026-11-13 | Add retry countdowns and disabled retry during server backoff, preserve published Agent content during ancillary revalidation, and automatically recover desktop streams with lease-aware discovery, hidden-view disposal and unchanged freshness/input authority (#1948). |
+
 | 2026-11-13 | Define retained Operations usage reports: exact-key stale-while-revalidate, server-generated As-of and refresh-deferred states, stable child reads during refresh, default/tab prefetch, hidden-tab pause, and Retry-After jitter (#1947). |
 
 | 2026-11-14 | Preserve opaque usage principals, invalidate every mounted report after authority refusal, bound abandoned pending descriptors, and resume pending refreshes with their original retry deadlines (#1947, #1979). |
