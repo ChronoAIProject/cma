@@ -34,6 +34,7 @@ pub(super) mod live;
 
 #[path = "conversation_live_budget.rs"]
 mod live_budget;
+pub use live::AgentHeadSubscription;
 pub use live::{AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription};
 pub use live_budget::AgentLiveDelivery;
 
@@ -55,6 +56,9 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
     }
     fn subscribe_live(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
         Some(self.live.subscribe(id))
+    }
+    fn subscribe_head(&self, id: &AgentId) -> Option<AgentHeadSubscription> {
+        Some(self.live.subscribe_head(id))
     }
 
     async fn restore_assembly(

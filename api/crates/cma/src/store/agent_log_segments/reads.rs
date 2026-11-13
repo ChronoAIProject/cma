@@ -228,11 +228,15 @@ where
         return Err(SandboxStoreError::SequenceConflict.into());
     }
     let end = after + (through - after).min(i64::from(range.limit));
-    // Every page, including an empty one, rejects an uncommitted tail in this
-    // same captured snapshot. Later committed appends cannot race this check.
+    // Every page, including an empty one, rejects rows outside the captured
+    // global sequence bounds. Probe both ends through the sequence index:
+    // a restored/corrupt prefix must not disappear from a sealed-page read.
+    // Later committed appends cannot race this snapshot's check.
     let find = store
         .agent_log
-        .find_one(doc! {"agent_id":&head.agent_id,"seq":{"$gt":head.last_seq}})
+        .find_one(doc! {"agent_id":&head.agent_id,"$or":[
+            {"seq":{"$lt":1_i64}},{"seq":{"$gt":head.last_seq}},
+        ]})
         .projection(doc! {"_id":1});
     let find = if snapshot {
         find.read_concern(ReadConcern::snapshot())
