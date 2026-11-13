@@ -1,5 +1,38 @@
 import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
 import { CredentialAccountError, credentialSetupMessage } from '../auth/credentialSetup';
+import { DocumentError } from '../api/documents';
+import { documentBytes, documentQuantity } from './documentUsage';
+
+const documentRefusals = {
+  document_limit_reached:
+    'Your document count limit has been reached. Delete old documents to free capacity after cleanup finishes.',
+  document_bytes_limit_reached:
+    'Your retained document storage limit has been reached. Delete old documents to free capacity after cleanup finishes.',
+  document_objects_limit_reached:
+    'Your stored document object limit has been reached. Delete old documents to free capacity after cleanup finishes.',
+  document_write_busy: 'Document writing is busy. Your draft is retained. Try again in a moment.',
+  document_deletion_unavailable: 'Document deletion is unavailable. Try again later.',
+} as const;
+
+function documentRefusal(error: DocumentError): string | undefined {
+  if (!error.code || !Object.hasOwn(documentRefusals, error.code)) return undefined;
+  const sentence = documentRefusals[error.code as keyof typeof documentRefusals];
+  if (
+    !error.code.endsWith('_limit_reached') ||
+    error.limit === undefined ||
+    error.live === undefined ||
+    !Number.isSafeInteger(error.limit) ||
+    !Number.isSafeInteger(error.live) ||
+    error.limit < 0 ||
+    error.live < 0
+  )
+    return sentence;
+  const available = Math.max(0, error.limit - error.live);
+  const bytes = error.code === 'document_bytes_limit_reached';
+  const format = bytes ? documentBytes : documentQuantity;
+  const unit = bytes ? '' : error.code === 'document_limit_reached' ? ' documents' : ' objects';
+  return `${sentence} ${format(available)}${unit} available (${format(error.live)} / ${format(error.limit)} used).`;
+}
 
 export const refusalSentences = {
   sandbox_credential_setup_required: credentialSetupMessage,
@@ -79,6 +112,10 @@ function statusSentence(status: number): string | undefined {
  * lost connection becomes a plain sentence that says what to do next.
  */
 export function readableError(error: unknown, fallback: string): string {
+  if (error instanceof DocumentError) {
+    const sentence = documentRefusal(error);
+    if (sentence) return sentence;
+  }
   if (
     error instanceof TransportError ||
     (error instanceof TypeError && /fetch|network|load failed/i.test(error.message))

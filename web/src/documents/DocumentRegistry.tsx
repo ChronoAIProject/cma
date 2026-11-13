@@ -7,6 +7,8 @@ import { Input } from '../ui/Input';
 import { Modal } from '../ui/Modal';
 import { SkeletonRows } from '../ui/Skeleton';
 import { IconPlusOutline16, IconListPenOutline16 } from '../ui/icons';
+import { readableError } from '../vocabulary/errors';
+import { DocumentUsage } from './DocumentUsage';
 
 export function DocumentRegistry({
   client,
@@ -97,9 +99,7 @@ export function DocumentRegistry({
         if (cause instanceof DocumentError && cause.status >= 400 && cause.status < 500)
           setIntent(undefined);
         setCreateError(
-          cause instanceof Error
-            ? cause.message
-            : 'Creation could not be confirmed. Retry this request.',
+          readableError(cause, 'Creation could not be confirmed. Retry this request.'),
         );
       }
     } finally {
@@ -113,6 +113,7 @@ export function DocumentRegistry({
         <div>
           <h1>Artifacts</h1>
           <p>Your ideas, brought together.</p>
+          {canCreate ? <DocumentUsage client={client} refresh={reload} /> : null}
         </div>
         {canCreate ? (
           <Button variant="primary" icon={<IconPlusOutline16 />} onClick={() => setCreate(true)}>

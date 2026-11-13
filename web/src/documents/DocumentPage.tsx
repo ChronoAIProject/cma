@@ -10,8 +10,15 @@ import { usePresence } from '../ui/Presence';
 import { IconChevronLeftOutline14, IconShareOutline16, IconDownloadOutline16 } from '../ui/icons';
 import { DocumentComments } from './DocumentComments';
 import { DocumentSharing } from './DocumentSharing';
-import { documentDraft, retainDocumentDraft, type DocumentSaveIntent } from './drafts';
+import {
+  documentDraft,
+  retainDocumentDraft,
+  documentDeletionIntent,
+  type DocumentSaveIntent,
+} from './drafts';
 import { readDocumentShareToken, retainDocumentShareToken } from './shareToken';
+import { DocumentDeletion } from './DocumentDeletion';
+import { readableError } from '../vocabulary/errors';
 const RichDocumentEditor = lazy(() => import('./RichDocumentEditor'));
 interface Loaded {
   readonly document: DocumentView;
@@ -43,6 +50,10 @@ export function DocumentPage({
   const [discardOpen, setDiscardOpen] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deletionPending, setDeletionPending] = useState(
+    () => documentDeletionIntent(viewer, id) !== undefined,
+  );
   const [intent, setIntent] = useState<DocumentSaveIntent>();
   const mutation = useRef<AbortController | undefined>(undefined);
   const owner = loaded?.document.access === 'owner';
@@ -94,17 +105,18 @@ export function DocumentPage({
     );
   }, [viewer, id, loaded, owner, dirty, title, markdown, intent]);
   useEffect(() => {
-    if (!dirty) return;
+    if (!dirty && !deletionPending) return;
     const warn = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
     };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
+  }, [dirty, deletionPending]);
   const save = async () => {
     if (
       mutation.current ||
+      deletionPending ||
       !loaded ||
       !owner ||
       conflict ||
@@ -144,11 +156,7 @@ export function DocumentPage({
           setIntent(undefined);
           if (cause.status === 409) setConflict(true);
         }
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'Save could not be confirmed. Retry the same save.',
-        );
+        setError(readableError(cause, 'Save could not be confirmed. Retry the same save.'));
       }
     } finally {
       mutation.current = undefined;
@@ -166,6 +174,7 @@ export function DocumentPage({
     setLoaded((current) => (current ? { ...current, document } : current));
   };
   const reloadLatest = () => {
+    if (deletionPending) return;
     setLoaded(undefined);
     setRevision((value) => value + 1);
   };
@@ -191,6 +200,7 @@ export function DocumentPage({
           variant="ghost"
           icon={<IconChevronLeftOutline14 />}
           aria-label="Back to artifacts"
+          disabled={deletionPending}
           onClick={() => onNavigate({ kind: 'artifacts' })}
         />
         {loaded ? (
@@ -199,7 +209,7 @@ export function DocumentPage({
             aria-label="Document title"
             value={title}
             maxLength={240}
-            readOnly={!owner || busy || intent !== undefined}
+            readOnly={!owner || busy || deletionPending || intent !== undefined}
             onChange={(event) => setTitle(event.target.value)}
           />
         ) : (
@@ -210,15 +220,19 @@ export function DocumentPage({
           role="status"
           data-dirty={dirty || undefined}
         >
-          {busy
-            ? 'Saving…'
-            : conflict
-              ? 'Version changed'
-              : dirty
-                ? 'Unsaved changes'
-                : loaded
-                  ? 'Saved'
-                  : ''}
+          {deleting
+            ? 'Deleting…'
+            : deletionPending
+              ? 'Deletion not confirmed'
+              : busy
+                ? 'Saving…'
+                : conflict
+                  ? 'Version changed'
+                  : dirty
+                    ? 'Unsaved changes'
+                    : loaded
+                      ? 'Saved'
+                      : ''}
         </span>
         {owner ? (
           <div className="document-workspace__mode" role="group" aria-label="Document mode">
@@ -242,7 +256,7 @@ export function DocumentPage({
           <Button
             size="sm"
             icon={<IconShareOutline16 />}
-            disabled={busy || intent !== undefined}
+            disabled={busy || deletionPending || intent !== undefined}
             onClick={() => setShareOpen(true)}
           >
             Share
@@ -254,6 +268,7 @@ export function DocumentPage({
             variant="primary"
             disabled={
               busy ||
+              deletionPending ||
               (!dirty && !intent) ||
               conflict ||
               !title.trim() ||
@@ -266,6 +281,26 @@ export function DocumentPage({
             {intent && !busy ? 'Retry save' : 'Save'}
           </Button>
         ) : null}
+        {owner || deletionPending ? (
+          <DocumentDeletion
+            client={client}
+            id={id}
+            viewer={viewer}
+            document={loaded?.document}
+            mutationRef={mutation}
+            disabled={busy || intent !== undefined || conflict || shareOpen || discardOpen}
+            onPending={setDeletionPending}
+            onDeleting={setDeleting}
+            onConflict={(message) => {
+              setConflict(true);
+              setError(message);
+            }}
+            onDeleted={() => {
+              retainDocumentDraft(viewer, id);
+              onNavigate({ kind: 'artifacts' });
+            }}
+          />
+        ) : null}
       </header>
       {owner && new TextEncoder().encode(title.trim()).length > 240 ? (
         <Alert tone="warning">Keep the document title within 240 bytes.</Alert>
@@ -277,7 +312,12 @@ export function DocumentPage({
             <>
               <Button
                 size="sm"
-                onClick={() => (loaded && dirty ? setDiscardOpen(true) : reloadLatest())}
+                disabled={deletionPending}
+                onClick={() => {
+                  if (deletionPending) return;
+                  if (loaded && dirty) setDiscardOpen(true);
+                  else reloadLatest();
+                }}
               >
                 Reload latest
               </Button>
@@ -296,7 +336,13 @@ export function DocumentPage({
         <Alert
           tone="warning"
           actions={
-            <Button size="sm" onClick={() => setDiscardOpen(true)}>
+            <Button
+              size="sm"
+              disabled={deletionPending}
+              onClick={() => {
+                if (!deletionPending) setDiscardOpen(true);
+              }}
+            >
               Reload latest
             </Button>
           }
@@ -318,7 +364,14 @@ export function DocumentPage({
               <RichDocumentEditor
                 key={`${id}:${revision}`}
                 source={markdown}
-                editable={owner && !preview && !busy && intent === undefined && !conflict}
+                editable={
+                  owner &&
+                  !preview &&
+                  !busy &&
+                  !deletionPending &&
+                  intent === undefined &&
+                  !conflict
+                }
                 onChange={setMarkdown}
                 onSave={() => void save()}
               />
@@ -359,7 +412,9 @@ export function DocumentPage({
             <Button onClick={download}>Download draft</Button>
             <Button
               variant="danger"
+              disabled={deletionPending}
               onClick={() => {
+                if (deletionPending) return;
                 retainDocumentDraft(viewer, id);
                 setDiscardOpen(false);
                 setIntent(undefined);
