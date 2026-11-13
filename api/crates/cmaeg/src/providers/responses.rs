@@ -11,6 +11,8 @@ pub type ResponseObject = Value;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResponsesEvent {
+    /// Negotiated diagnostics were consumed separately from model output.
+    NyxidTrace,
     Created {
         response_id: String,
         thread_reply: bool,
@@ -106,6 +108,13 @@ impl std::error::Error for ResponsesEventError {}
 
 /// Parse one SSE frame. Unknown event types are deliberately preserved.
 pub fn parse_event(frame: &SseFrame) -> Result<ResponsesEvent, ResponsesEventError> {
+    parse_event_with_trace(frame, None)
+}
+
+pub(crate) fn parse_event_with_trace(
+    frame: &SseFrame,
+    trace: Option<&mut crate::telemetry::turn_trace::ProviderReader>,
+) -> Result<ResponsesEvent, ResponsesEventError> {
     let value = serde_json::from_str::<Value>(&frame.data)
         .map_err(|error| ResponsesEventError::InvalidJson(error.to_string()))?;
     let object = value
@@ -116,6 +125,14 @@ pub fn parse_event(frame: &SseFrame) -> Result<ResponsesEvent, ResponsesEventErr
         .and_then(Value::as_str)
         .or(frame.event.as_deref())
         .ok_or(ResponsesEventError::MissingType)?;
+    if let Some(trace) = trace {
+        // The reader owns immutable diagnostic association. Malformed/conflicting
+        // annotations cannot reject an otherwise valid provider event.
+        trace.event(&value);
+        if kind == "response.nyxid_trace" {
+            return Ok(ResponsesEvent::NyxidTrace);
+        }
+    }
     match kind {
         "response.created" => Ok(ResponsesEvent::Created {
             response_id: response_id(object)?,
@@ -317,6 +334,10 @@ fn string_in(object: &serde_json::Map<String, Value>, field: &str) -> String {
         .unwrap_or_default()
         .to_owned()
 }
+
+#[cfg(test)]
+#[path = "responses/trace_tests.rs"]
+mod trace_tests;
 
 #[cfg(test)]
 mod tests {

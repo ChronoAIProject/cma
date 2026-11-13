@@ -83,6 +83,8 @@ impl TurnLauncher for Recorder {
 }
 #[derive(Clone)]
 pub struct Backend {
+    pub interaction_write_status: Arc<AtomicUsize>,
+    pub interaction_lose_response: Arc<AtomicBool>,
     pub jwks: Arc<Mutex<Value>>,
     pub gets: Arc<AtomicUsize>,
     pub records: Arc<AtomicUsize>,
@@ -159,6 +161,8 @@ impl Fixture {
     ) -> Self {
         let signer = Signer::shared();
         let backend = Backend {
+            interaction_write_status: Arc::new(200.into()),
+            interaction_lose_response: Arc::new(false.into()),
             jwks: Arc::new(Mutex::new(signer.jwks())),
             gets: Arc::new(0.into()),
             records: Arc::new(0.into()),
@@ -173,7 +177,10 @@ impl Fixture {
                 .route("/trap", get(jwks))
                 .route("/api/v1/gateway/channel-records/{id}", get(record))
                 .with_state(backend.clone())
-                .merge(activity_records::router()),
+                .merge(activity_records::router(
+                    backend.interaction_write_status.clone(),
+                    backend.interaction_lose_response.clone(),
+                )),
         )
         .await;
         let keys =

@@ -27,6 +27,7 @@ pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFenc
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
+mod admission;
 mod admission_checkpoint;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
@@ -225,11 +226,11 @@ pub use agent_read_types::{
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_reads::{
-    AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
-    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentHistoryReading, AgentOutputObservation,
-    AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
-    AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail,
-    SharedAgentOrigin,
+    AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
+    AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
+    AgentHistoryReading, AgentOutputObservation, AgentReadService, AgentReplayEntry,
+    AgentReplayWindow, AgentResponseBinding, AgentSourceReadError, AgentSourceReading,
+    AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,

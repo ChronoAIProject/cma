@@ -41,6 +41,9 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .resolve_repository(&c.body()?)
                 .await,
         ),
+        "GET /api/v1/admin/admission" => c.check(admin.read_admission().await),
+        "POST /api/v1/admin/admission/stop" => c.check(admin.stop_admission(&c.body()?).await),
+        "POST /api/v1/admin/admission/resume" => c.check(admin.resume_admission(&c.body()?).await),
         "GET /api/v1/admin/settings" => c.check(admin.read_settings().await),
         "PUT /api/v1/admin/settings" => c.check(admin.replace_settings(&c.body()?).await),
         "PATCH /api/v1/admin/settings" => c.check(admin.patch_settings(&c.body()?).await),

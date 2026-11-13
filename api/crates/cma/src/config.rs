@@ -33,6 +33,7 @@ mod task_experience;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
+mod browser_session;
 mod documents;
 mod sandbox_billing;
 pub(crate) mod sandbox_metrics;
@@ -217,6 +218,7 @@ pub struct Config {
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
     pub auth_mode: AuthMode,
+    pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -459,6 +461,7 @@ impl Config {
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
                 .filter(|value| !value.is_empty()),
             auth_mode,
+            browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
