@@ -141,6 +141,7 @@ data:
   CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
   CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED: "false"
   CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED: "false"
+  CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED: "false"
   CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
   # deployed and its latency and authorization evidence is reviewed.
