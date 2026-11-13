@@ -21,6 +21,8 @@ mod browser_session;
 mod cookie_authorization;
 pub mod deferred_commands;
 mod desktop;
+#[cfg(test)]
+pub(crate) mod desktop_test_support;
 pub mod entitlements;
 pub mod flow;
 mod identity;
