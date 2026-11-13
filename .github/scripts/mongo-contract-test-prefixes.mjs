@@ -16,6 +16,7 @@ export const requiredPrefixes = [
   'store::native_warm_pools::retirement::tests::',
   'store::native_prepared::tests::',
   'store::sandbox_admission_mongo_integration_tests::warmup::',
+  'store::sandbox_admission_mongo_integration_tests::visitor_limit::',
   'store::auth::api_bearer_tests::',
   'store::agent_conversation_store::checkpoint_tests::',
   'store::agent_conversation_store::admission_tests::',
