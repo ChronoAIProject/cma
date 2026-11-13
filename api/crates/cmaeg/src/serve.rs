@@ -368,7 +368,16 @@ pub(crate) async fn serve(
         ),
     };
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
-    let _connection_worker = connections.start_completion_worker(runner);
+    let completion_launcher = if replicas.enabled {
+        routed
+            .as_ref()
+            .ok_or("replica completion requires durable routed admission")?
+            .ingress
+            .replica_completion_launcher(observers.activity.clone())
+    } else {
+        runner
+    };
+    let _connection_worker = connections.start_completion_worker(completion_launcher);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let github_initialization = config
         .github_enabled
