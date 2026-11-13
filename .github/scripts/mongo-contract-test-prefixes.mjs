@@ -61,6 +61,7 @@ export const requiredPrefixes = [
   'store::mongo_latency::tests::',
   'store::mongo_diagnostics::mongo_tests::',
   'store::worker_observations::tests::',
+  'store::worker_observations::parked::tests::',
   'store::agent_log_telemetry::tests::',
   'store::agent_log_integrity::quarantine_tests::',
   'store::agent_log::receipt_tests::',

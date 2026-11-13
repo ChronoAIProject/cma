@@ -142,7 +142,15 @@ impl Store {
         }
         let Some(ledger) = &self.ledger else {
             cursor.done = true;
+            let began = std::time::Instant::now();
             return v1::started(&self.config).map(|rows| {
+                if self.config.legacy_journal_recovery_enabled {
+                    tracing::info!(
+                        pending_operations = rows.len(),
+                        elapsed_ms = began.elapsed().as_millis() as u64,
+                        "runtime legacy ledger recovery scan completed"
+                    );
+                }
                 rows.into_iter()
                     .map(|p| Pending {
                         operation: p.operation,

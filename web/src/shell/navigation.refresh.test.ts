@@ -66,7 +66,7 @@ function hierarchyClient(read: () => readonly NavigationSandbox[]): CmaWebClient
   });
 }
 
-it('keeps full-tree revival polling at fifteen seconds without loading deleted subtrees, including minute boundaries', async () => {
+it('backs off unchanged full-tree reads without loading deleted subtrees, including minute boundaries', async () => {
   vi.useFakeTimers();
   const inventory = hierarchy();
   const client = hierarchyClient(() => inventory);
@@ -90,9 +90,9 @@ it('keeps full-tree revival polling at fifteen seconds without loading deleted s
       vi.mocked(client.readSandbox).mock.calls.filter(([id]) => id === item.sandbox.id),
     ).toHaveLength(0);
   }
-  expect(client.listSandboxes).toHaveBeenCalledTimes(5);
-  expect(client.readSandbox).toHaveBeenCalledTimes(5);
-  expect(client.readWorkspace).toHaveBeenCalledTimes(5);
+  expect(client.listSandboxes).toHaveBeenCalledTimes(3);
+  expect(client.readSandbox).toHaveBeenCalledTimes(3);
+  expect(client.readWorkspace).toHaveBeenCalledTimes(3);
 });
 
 it('rereads mutable descendants when summary counts stay unchanged and discovers new Workspaces and Agents', async () => {
