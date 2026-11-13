@@ -8,10 +8,16 @@ impl MetricsWorkers {
     pub(super) async fn reports(&self, slot: u8) {
         let holder = format!("report-{}-{slot}", uuid::Uuid::new_v4().simple());
         let slot = format!("report:{slot}");
+        let mut work = self.store.report_work();
         let mut interval = tokio::time::interval(Duration::from_secs(2));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {},
+                // The sender belongs to the store held by this worker. Changes
+                // during generation remain visible on the next iteration.
+                _ = work.changed() => {},
+            }
             match self.store.claim_report(&slot, &holder).await {
                 Ok(Some(lease)) => {
                     let start = std::time::Instant::now();
@@ -30,10 +36,14 @@ impl MetricsWorkers {
                         tracing::warn!(error=%error,"sandbox report finalization failed");
                     }
                     tracing::info!(
+                        report_id = %lease.report.report_id,
                         success,
                         elapsed_ms = start.elapsed().as_millis() as u64,
                         "sandbox usage report generated"
                     );
+                    // Several admissions can coalesce into one wake while this
+                    // worker is busy. Drain the queue before waiting again.
+                    work.mark_changed();
                 }
                 Ok(None) => {}
                 Err(error) => {

@@ -27,6 +27,11 @@ impl ReportingStore {
             return Ok(None);
         };
         let mut report: Report = decode(&d)?;
+        tracing::debug!(
+            report_id = %report.report_id,
+            queue_delay_seconds = at.saturating_sub(report.as_of),
+            "sandbox report claimed"
+        );
         report.as_of = at;
         report.measurement_cutoff =
             at.saturating_sub(layer2_core::sandbox_metrics::FINALIZATION_DELAY_SECONDS);
@@ -176,6 +181,7 @@ impl ReportingStore {
         if result.matched_count != 1 {
             return Err(MetricsError::Unavailable);
         }
+        self.notifications.finished(&report.report_id);
         Ok(())
     }
 }
