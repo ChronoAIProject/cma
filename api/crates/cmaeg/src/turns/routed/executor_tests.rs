@@ -342,6 +342,8 @@ async fn persisted_pending_terminal_effect_and_settled_receipt_survive_crashes()
         .unwrap();
     let raw = frames().pop().unwrap();
     let frame = crate::providers::RecoveryEvent {
+        trace_contract: false,
+        trace: None,
         response_id: "resp_accepted".into(),
         sequence_number: 3,
         event: crate::providers::parse_event(&crate::providers::SseFrame {

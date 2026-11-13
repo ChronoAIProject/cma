@@ -22,6 +22,8 @@ mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+#[cfg(any(test, feature = "test-support"))]
+pub mod agent_log_contract;
 mod agent_response_log;
 pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
