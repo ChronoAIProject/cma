@@ -29,6 +29,8 @@ mod home_capacity;
 mod initiation;
 #[path = "launch_observation_mongo_tests.rs"]
 mod observation_tests;
+#[path = "launch_mongo_integration_tests/pending_home_reconciliation_tests.rs"]
+mod pending_home_reconciliation;
 mod platform_spend;
 mod visitor_quota;
 
