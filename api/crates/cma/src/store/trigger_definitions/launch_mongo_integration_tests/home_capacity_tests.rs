@@ -8,7 +8,7 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::{Sandbox, SandboxOrigin};
 use layer2_core::trigger_domain::ResolvedResource;
 
-async fn configure(seed: &Seeded, ceilings: AdmissionCeilings) {
+pub(super) async fn configure(seed: &Seeded, ceilings: AdmissionCeilings) {
     crate::store::MongoRegistrationCapacityStore::open(&seed.client, &seed.database, true)
         .await
         .unwrap();
@@ -32,13 +32,13 @@ async fn configure(seed: &Seeded, ceilings: AdmissionCeilings) {
         .unwrap();
 }
 
-async fn resources(seed: &Seeded) -> MongoSandboxStore {
+pub(super) async fn resources(seed: &Seeded) -> MongoSandboxStore {
     MongoSandboxStore::open(&seed.client, &seed.database)
         .await
         .unwrap()
 }
 
-fn request(trigger: &PublicTrigger, index: usize) -> LaunchAdmission {
+pub(super) fn request(trigger: &PublicTrigger, index: usize) -> LaunchAdmission {
     let mut candidate = launch(trigger, 'a', 'b');
     candidate.owner = SubjectId::new(format!("launch-capacity-{index}"));
     LaunchAdmission {
@@ -48,7 +48,7 @@ fn request(trigger: &PublicTrigger, index: usize) -> LaunchAdmission {
     }
 }
 
-async fn pending(seed: &Seeded) -> u64 {
+pub(super) async fn pending(seed: &Seeded) -> u64 {
     let row = seed
         .client
         .database(&seed.database)
@@ -59,7 +59,7 @@ async fn pending(seed: &Seeded) -> u64 {
     crate::store::launch_home_capacity::pending_homes(row.as_ref()).unwrap()
 }
 
-async fn receipt(seed: &Seeded, launch: &Launch) -> Document {
+pub(super) async fn receipt(seed: &Seeded, launch: &Launch) -> Document {
     seed.client
         .database(&seed.database)
         .collection::<Document>("sandbox_admissions")
@@ -71,7 +71,7 @@ async fn receipt(seed: &Seeded, launch: &Launch) -> Document {
         .unwrap()
 }
 
-fn home(seed: &Seeded, launch: &Launch, id: &str, fresh: bool) -> SandboxAdmission {
+pub(super) fn home(seed: &Seeded, launch: &Launch, id: &str, fresh: bool) -> SandboxAdmission {
     let mut sandbox: Sandbox =
         crate::store::sandbox_admission_mongo_integration_tests::sandbox(id, launch.id.as_str());
     sandbox.owner = launch.owner.clone();

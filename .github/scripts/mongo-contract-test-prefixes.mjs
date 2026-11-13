@@ -82,6 +82,7 @@ export const requiredPrefixes = [
   'store::retained_reopen::',
   'store::sandbox_unpublished_recovery::mongo_integration_tests::retained::',
   'sandbox::agent_worker_tests::connection_failure_tests::capacity_cleanup_tests::',
+  'store::trigger_definitions::launch_mongo_integration_tests::pending_home_reconciliation::',
   'store::admission_ceilings::mongo_tests::',
   'store::registration_capacity::mongo_tests::',
   'auth::registration::mongo_tests::',
