@@ -274,9 +274,16 @@ pub(super) fn ensure_append_batch_size(pending: usize) -> Result<(), SandboxStor
 /// metadata and the reopen/publication suffix need ordinary log capacity; the
 /// stop/delete reserves are never borrowed to make a failed Agent usable.
 pub(super) fn ensure_reopen_capacity(summary: &LogSummary) -> Result<(), SandboxStoreError> {
+    ensure_reopen_capacity_for(summary.entry_count, summary.encoded_bytes)
+}
+
+pub(in crate::store) fn ensure_reopen_capacity_for(
+    entry_count: u64,
+    encoded_bytes: usize,
+) -> Result<(), SandboxStoreError> {
     capacity_allows(
-        summary.entry_count,
-        summary.encoded_bytes,
+        entry_count,
+        encoded_bytes,
         64,
         512 * 1024,
         AppendCapacity::Normal,

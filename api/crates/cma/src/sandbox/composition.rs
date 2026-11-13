@@ -49,7 +49,10 @@ pub(crate) struct SandboxLifecycleConfig {
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
+    pub native_create_retry_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub bounded_live_fragments: bool,
+    pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
@@ -130,12 +133,13 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
-        let updates = DurableAgentUpdateRecorder::with_ingress_budget(
+        let updates = DurableAgentUpdateRecorder::with_output_policy(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
             Some(dependencies.store.clone()),
             config.bounded_live_fragments,
             config.coordinated_ingress,
+            config.quiet_output,
         );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(
@@ -185,6 +189,7 @@ impl SandboxLifecycleComposition {
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
+            .with_cleanup_continuation(config.cleanup_continuation_enabled)
             .with_retry_single_marker(config.retry_single_marker_enabled)
             .with_work_retry_policy(config.work_retry_policy_enabled)
             .with_managed_documents(config.managed_documents_enabled)
@@ -216,6 +221,7 @@ impl SandboxLifecycleComposition {
             )
             .with_execution(config.execution)
             .with_work_retry_policy(config.work_retry_policy_enabled)
+            .with_native_create_retry(config.native_create_retry_enabled)
             .with_home_policy(config.home_policy),
             dependencies.funding,
         );

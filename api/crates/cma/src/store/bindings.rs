@@ -272,6 +272,17 @@ impl BindingStore for MongoSandboxStore {
              "record.previous": null, "record.existing_agent": null,
              "record.profile.environment": {"$ne": null}},
         ]};
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Bindings,
+                &self.bindings.records,
+                query.clone(),
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
         if let Some(after) = after {
             query.insert("_id", doc! {"$gt": after});
         }
@@ -286,7 +297,13 @@ impl BindingStore for MongoSandboxStore {
             .try_collect()
             .await
             .map_err(driver)?;
-        docs.into_iter().map(read_binding).collect()
+        let items: Vec<_> = docs
+            .into_iter()
+            .map(read_binding)
+            .collect::<Result<_, _>>()?;
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Bindings, items.is_empty());
+        Ok(items)
     }
 
     async fn binding_conversation(
@@ -347,6 +364,17 @@ impl BindingStore for MongoSandboxStore {
     ) -> Result<Vec<BindingConversation>, SandboxStoreError> {
         validate_page_limit(limit)?;
         let mut query = doc! {"pending":true};
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Conversations,
+                &self.bindings.conversations,
+                query.clone(),
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
         if let Some(after) = after {
             query.insert("_id", doc! {"$gt":after});
         }
@@ -361,7 +389,15 @@ impl BindingStore for MongoSandboxStore {
             .try_collect()
             .await
             .map_err(driver)?;
-        docs.into_iter().map(read_conversation).collect()
+        let items: Vec<_> = docs
+            .into_iter()
+            .map(read_conversation)
+            .collect::<Result<_, _>>()?;
+        self.empty_discovery.observed(
+            super::empty_discovery::Kind::Conversations,
+            items.is_empty(),
+        );
+        Ok(items)
     }
 }
 
