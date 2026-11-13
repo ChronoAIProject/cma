@@ -109,17 +109,19 @@ async fn apply(
     if previous.is_none() {
         increments.insert("desktop_session_epoch", 1_i64);
     }
+    let mut filter = doc! {
+        "_id": request.sandbox_id.as_str(), "status": "active",
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION, "record.runtime": runtime,
+    };
+    if let Some(previous) = previous {
+        // Check the renewal fence in the maintenance-serializing write itself.
+        filter.insert("desktop_session_epoch", previous.epoch as i64);
+    }
     // Both session admission and maintenance write this document in their
     // snapshot transaction. A phantom session cannot slip between proof and pause.
     let row = store
         .sandboxes
-        .find_one_and_update(
-            doc! {
-                "_id": request.sandbox_id.as_str(), "status": "active",
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION, "record.runtime": runtime,
-            },
-            doc! { "$inc": increments },
-        )
+        .find_one_and_update(filter, doc! { "$inc": increments })
         .projection(doc! { "desktop_session_epoch": 1, "authority_now": "$$NOW" })
         .return_document(ReturnDocument::After)
         .session(&mut *session)
@@ -151,9 +153,6 @@ async fn apply(
     let now = stamp(issued_at_ms);
     let expiry = stamp(expires_at_ms);
     if let Some(previous) = previous {
-        if epoch != previous.epoch {
-            return Err(Error::Domain(SandboxStoreError::Conflict));
-        }
         let mut filter = exact(previous);
         filter.insert("expires_at_ms", previous.expires_at_ms);
         filter.insert("lease_expires_at", doc! { "$gt": &now });
@@ -173,27 +172,43 @@ async fn apply(
             return Err(Error::Domain(SandboxStoreError::Conflict));
         }
     } else {
-        let live = store
+        // The expiry index supplies the latest lease, including legacy rows.
+        // Reuse this snapshot read to avoid a separate no-op delete on the
+        // normal empty/released path. The parent write still serializes claims
+        // and maintenance; no evidence is reused outside this transaction.
+        let latest = store
             .sandbox_sessions
-            .find_one(doc! {
-                "sandbox_id": &authority.sandbox_id, "lease_expires_at": { "$gt": &now },
-            })
+            .find_one(doc! { "sandbox_id": &authority.sandbox_id })
+            .sort(doc! { "lease_expires_at": -1 })
+            .projection(doc! { "_id": 0, "lease_expires_at": 1 })
             .session(&mut *session)
             .await
             .map_err(Error::Driver)?;
-        if live.is_some() {
-            return Err(Error::Domain(SandboxStoreError::Conflict));
+        if let Some(latest) = latest {
+            let latest_expiry = latest
+                .get_str("lease_expires_at")
+                .map_err(|_| Error::Domain(unavailable()))?;
+            if layer2_core::seconds_from_rfc3339(latest_expiry).is_none() {
+                return Err(Error::Domain(unavailable()));
+            }
+            if latest_expiry > now.as_str() {
+                return Err(Error::Domain(SandboxStoreError::Conflict));
+            }
+            // The permanent epoch is on the Sandbox. Reclaim expired evidence
+            // only when the read proved it exists, without resetting that epoch.
+            let reclaimed = store
+                .sandbox_sessions
+                .delete_many(doc! {
+                    "sandbox_id": &authority.sandbox_id, "lease_expires_at": { "$lte": &now },
+                })
+                .session(&mut *session)
+                .await
+                .map_err(Error::Driver)?;
+            tracing::debug!(
+                rows = reclaimed.deleted_count,
+                "desktop expired evidence reclaimed"
+            );
         }
-        // The permanent epoch is on the Sandbox; expired session rows are only
-        // disposable activity evidence and can be reclaimed without resetting it.
-        store
-            .sandbox_sessions
-            .delete_many(doc! {
-                "sandbox_id": &authority.sandbox_id, "lease_expires_at": { "$lte": &now },
-            })
-            .session(&mut *session)
-            .await
-            .map_err(Error::Driver)?;
         let mut document = exact(&authority);
         document.insert("issued_at_ms", issued_at_ms);
         document.insert("expires_at_ms", expires_at_ms);
