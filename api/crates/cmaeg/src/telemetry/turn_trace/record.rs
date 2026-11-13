@@ -72,9 +72,9 @@ impl Record {
             instance_id,
             timestamp: OffsetDateTime::from(self.timestamp).format(&Rfc3339).ok()?,
             turn_id: context.turn_id,
-            trace_id: context.turn_id.map(|id| id.simple().to_string()),
-            span_id: context.span_id.to_string(),
-            parent_span_id: context.parent_span_id.map(|span| span.to_string()),
+            trace_id: context.turn_id.map(|id| id.simple()),
+            span_id: context.span_id,
+            parent_span_id: context.parent_span_id,
             request_id: context.request_id,
             ingress_request_id: context.ingress_request_id,
             phase: self.phase,
@@ -87,7 +87,10 @@ impl Record {
             part_index: self.part_index,
             related_turn_id: self.related_turn_id,
         };
-        let mut bytes = serde_json::to_vec(&wire).ok()?;
+        // The fixed envelope normally fits in 1 KiB; reserve once instead of
+        // repeatedly growing serde_json's small default buffer for every record.
+        let mut bytes = Vec::with_capacity(1024);
+        serde_json::to_writer(&mut bytes, &wire).ok()?;
         bytes.push(b'\n');
         (bytes.len() <= MAX_RECORD_BYTES).then_some(bytes)
     }
@@ -103,10 +106,10 @@ struct Wire {
     #[serde(skip_serializing_if = "Option::is_none")]
     turn_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    trace_id: Option<String>,
-    span_id: String,
+    trace_id: Option<uuid::fmt::Simple>,
+    span_id: SpanId,
     #[serde(skip_serializing_if = "Option::is_none")]
-    parent_span_id: Option<String>,
+    parent_span_id: Option<SpanId>,
     request_id: Uuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     ingress_request_id: Option<Uuid>,
