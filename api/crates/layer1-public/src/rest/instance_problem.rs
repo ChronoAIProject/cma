@@ -58,6 +58,7 @@ impl InstanceProblem {
     pub(crate) fn from_create(error: AgentServiceError) -> Self {
         match error {
             AgentServiceError::Connection(error) => Self::Connection(error),
+            AgentServiceError::Budget(reason) => Self::Budget(reason),
             AgentServiceError::Forbidden => Self::Forbidden,
             AgentServiceError::ProfileNotFound => Self::AgentProfileNotFound,
             AgentServiceError::WorkspaceNotFound => Self::WorkspaceNotFound,
@@ -178,6 +179,8 @@ impl From<AgentOperationError> for InstanceProblem {
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code): (_, _, &str, _) = match &self {
+            // Every budget refusal, the platform's included, is a final 402
+            // without Retry-After: clients treat >= 500 as retryable.
             Self::Budget(reason) => (StatusCode::PAYMENT_REQUIRED, "model-budget-refused", reason.guidance(), reason.code()),
             Self::ResourceAccess(error) => return super::resource_access_problem::ResourceProblem(error.clone()).into_response(),
             Self::Connection(error) => return super::instances_problem::HierarchyProblem::connection(error.clone()).into_response(),

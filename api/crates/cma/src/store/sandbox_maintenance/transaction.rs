@@ -18,7 +18,7 @@ use super::super::sandbox_events::{
 use super::super::sandbox_mongo::{signed, unsigned, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::evidence::{
-    fence_live_agents, live_activities_with_sources, scoped::CapturedActivities,
+    fence_live_agents, live_activities_with_sources, open_session, scoped::CapturedActivities,
 };
 
 mod scoped;
@@ -106,7 +106,14 @@ async fn apply_with_sources(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&document).map_err(ApplyError::Domain)?;
+    // A platform stop overrides every keep-alive preference without reading
+    // or changing it (decision 26); an inactivity pause honours them.
+    let platform_stop = matches!(
+        request,
+        MaintenanceRequest::Inactivity(request) if !request.cause.honours_keep_alive()
+    );
     if matches!(request, MaintenanceRequest::Inactivity(_))
+        && !platform_stop
         && keep_alive_and_fence_policy(
             store,
             &current,
@@ -151,6 +158,16 @@ async fn apply_with_sources(
                 sources,
             )
             .await?;
+            if platform_stop
+                && activities.is_empty()
+                && open_session(store, &current, &request.requested_at, session).await?
+            {
+                return Ok(MaintenanceReceipt {
+                    sandbox: current,
+                    event: None,
+                    outcome: SandboxMaintenanceOutcome::NotEligible,
+                });
+            }
             apply_inactivity_pause(&current, &activities, request)
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
@@ -181,6 +198,26 @@ async fn apply_with_sources(
             outcome: SandboxMaintenanceOutcome::NotEligible,
         });
     }
+    // The sweep's cached answer only proposes a pause. A lift or policy
+    // change must conflict with the durable pause admission itself.
+    if platform_stop
+        && !super::super::budget::fence_stop(store, session)
+            .await
+            .map_err(|error| match error {
+                super::super::agent_conversation_store::ApplyError::Domain(error) => {
+                    ApplyError::Domain(error)
+                }
+                super::super::agent_conversation_store::ApplyError::Driver(error) => {
+                    ApplyError::Driver(error)
+                }
+            })?
+    {
+        return Ok(MaintenanceReceipt {
+            sandbox: current,
+            event: None,
+            outcome: SandboxMaintenanceOutcome::NotEligible,
+        });
+    }
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.
@@ -194,6 +231,17 @@ async fn apply_with_sources(
         }
         super::evidence::fence_agents(store, &agents, session).await?;
     } else {
+        // Pending or leased Workspace work is never interrupted by a platform
+        // stop, with or without live Agents.
+        if platform_stop
+            && !super::evidence::fence_idle_workspaces(store, &current, session).await?
+        {
+            return Ok(MaintenanceReceipt {
+                sandbox: current,
+                event: None,
+                outcome: SandboxMaintenanceOutcome::NotEligible,
+            });
+        }
         fence_live_agents(store, &agents, session).await?;
     }
     let mut revision_filter = doc! {
