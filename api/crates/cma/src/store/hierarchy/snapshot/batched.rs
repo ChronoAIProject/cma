@@ -1,15 +1,15 @@
 //! Stream individually validated children, never one joined hierarchy BSON row.
+use super::agent_projection::AgentReader;
 use super::*;
-use layer2_core::sandbox::{Agent, Workspace, Worktree};
+use layer2_core::sandbox::{Workspace, Worktree};
 
 // Leave more than the fixed envelope overhead under Mongo's per-document limit.
 const ENVELOPE_SAFE_BYTES: i32 = 16 * 1024 * 1024 - 128;
 
-#[derive(Default)]
-pub(super) struct Children {
+pub(super) struct Children<A> {
     pub workspaces: Vec<Workspace>,
     pub worktrees: Vec<Worktree>,
-    pub agents: Vec<Agent>,
+    pub agents: Vec<A>,
 }
 
 fn branch(id: &SandboxId, kind: &str) -> Vec<Document> {
@@ -25,23 +25,32 @@ fn branch(id: &SandboxId, kind: &str) -> Vec<Document> {
 
 /// None requests the same-snapshot compatibility read for a near-limit record.
 /// No driver or decoder failure is converted into a fallback or partial result.
-pub(super) async fn read(
+pub(super) async fn read<R: AgentReader>(
     store: &MongoSandboxStore,
     id: &SandboxId,
     session: &mut ClientSession,
-) -> Result<Option<Children>, Error> {
+) -> Result<Option<Children<R::Record>>, Error> {
     let mut pipeline = branch(id, "workspace");
     pipeline.push(
         doc! {"$unionWith": {"coll": store.worktrees.name(), "pipeline": branch(id, "worktree")}},
     );
-    pipeline
-        .push(doc! {"$unionWith": {"coll": store.agents.name(), "pipeline": branch(id, "agent")}});
+    let mut agents = branch(id, "agent");
+    if let Some(projection) = R::projection() {
+        // Project before the envelope-size check: the large unused payload must
+        // neither cross the wire nor force a full-Agent fallback.
+        agents.insert(1, doc! {"$project": projection});
+    }
+    pipeline.push(doc! {"$unionWith": {"coll": store.agents.name(), "pipeline": agents}});
     let mut cursor = collection(&store.workspaces, true)
         .aggregate(pipeline)
         .max_time(std::time::Duration::from_secs(10))
         .session(&mut *session)
         .await?;
-    let mut children = Children::default();
+    let mut children = Children {
+        workspaces: Vec::new(),
+        worktrees: Vec::new(),
+        agents: Vec::new(),
+    };
     while cursor.advance(&mut *session).await? {
         let row = cursor.deserialize_current()?;
         let kind = row.get_str("kind").map_err(|_| invalid_row())?;
@@ -52,7 +61,7 @@ pub(super) async fn read(
         match kind {
             "workspace" => children.workspaces.push(read_workspace(value)?),
             "worktree" => children.worktrees.push(read_worktree(value)?),
-            "agent" => children.agents.push(read_agent(value)?),
+            "agent" => children.agents.push(R::read(value)?),
             _ => return Err(invalid_row().into()),
         }
     }
@@ -64,9 +73,7 @@ pub(super) async fn read(
     children
         .worktrees
         .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
-    children
-        .agents
-        .sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    children.agents.sort_by(|a, b| R::id(a).cmp(R::id(b)));
     Ok(Some(children))
 }
 
