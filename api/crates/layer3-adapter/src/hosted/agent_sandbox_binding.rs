@@ -1,6 +1,7 @@
 //! Reuse only an acknowledged assignment to the same runtime container incarnation.
 use super::*;
 use crate::agent_sandbox::PodBinding;
+use std::time::Duration;
 
 const MAX_ASSIGNMENTS: usize = 1024;
 
