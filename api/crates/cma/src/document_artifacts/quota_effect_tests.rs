@@ -107,7 +107,11 @@ async fn document_quota_preserves_failed_upload_insert_and_ambiguous_edit_withou
     assert_eq!(usage(&quota, "owner").await, [1, 6, 1]);
     assert_eq!(
         service.create(&caller(), "new-identity", create()).await,
-        Err(DocumentError::Capacity)
+        Err(DocumentError::LimitReached {
+            dimension: DocumentLimit::Documents,
+            limit: 1,
+            live: 1
+        })
     );
     assert_eq!(blobs.rows.0.lock().await.len(), 1);
     blobs.fail.store(false, Ordering::SeqCst);
@@ -173,7 +177,11 @@ async fn document_quota_cancellation_after_object_write_never_releases_capacity(
     assert_eq!(usage(&quota, "owner").await, [1, 6, 1]);
     assert_eq!(
         service.create(&caller(), "another", create()).await,
-        Err(DocumentError::Capacity)
+        Err(DocumentError::LimitReached {
+            dimension: DocumentLimit::Documents,
+            limit: 1,
+            live: 1
+        })
     );
     blobs.hold.store(false, Ordering::SeqCst);
     service

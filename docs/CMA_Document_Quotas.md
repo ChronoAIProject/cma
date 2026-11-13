@@ -15,18 +15,69 @@ Document identity and content-addressed object identity are idempotent. Retrying
 an already reserved object consumes no additional count or bytes, including at
 capacity. Different content under an uncertain create key still consumes retained
 bytes. Failed upload replies, cancellation and metadata conflicts keep their
-reservations because an immutable object may already exist. Release requires proof that an object is unreferenced and its deletion has
-completed; an HTTP failure alone never refunds a reservation. There is no TTL or
-reset. Retirement of an Agent does not retire its documents.
-Existing over-limit data is retained; fresh growth is refused with the existing
-typed `document_capacity` response. Unknown baseline or unavailable accounting
-fails closed through the existing storage-unavailable response.
+reservations because an immutable object may already exist. Release requires proof
+that an object is unreferenced and its deletion has completed; an HTTP failure
+alone never refunds a reservation. There is no TTL or reset. Retirement of an
+Agent does not retire its documents. Existing over-limit data is retained; fresh
+growth is refused by a typed owner quota response naming the first exceeded
+dimension. Unknown baseline or unavailable accounting fails closed through the
+existing storage-unavailable response.
 
 Reads, history, title-only changes, sharing and owner grant/link revocation do not
 reserve source storage. Exact committed metadata retries precede quota admission.
 Runtime publication revalidates authority before reservation and after upload.
 Document deletion and the separate #1480 retained-data deletion acceptance remain
 separate work. The gated reclaim worker below handles ledgered orphan sources.
+
+## Quota refusals and owner usage
+
+Source reservations check document identities, retained bytes and source objects,
+in that order. The first exceeded dimension returns HTTP 429 with problem type
+`https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached` and one code:
+
+| Dimension | Code |
+| --- | --- |
+| Document identities | `document_limit_reached` |
+| Retained source bytes | `document_bytes_limit_reached` |
+| Source objects | `document_objects_limit_reached` |
+
+The problem includes `limit` and `live`; `live` is the charged usage **before** the
+refused reservation. It may exceed `limit` for a retained over-limit baseline.
+These responses have no `Retry-After`: waiting alone does not restore capacity.
+Receipt, revision, grant and link bounds continue to return `document_capacity`.
+The separate process write-permit refusal remains `document_write_busy` with
+`Retry-After: 1`. Preserve drafts and retry uncertain saves with their original
+idempotency key and body.
+
+`GET /api/v1/usage/documents` reads only the authenticated owner's quota ledger;
+access to a shared document does not count it against the recipient. The route
+requires document principal authority and uses `Cache-Control: private, no-store`.
+With the quota switch enabled and a ready activation marker, it returns:
+
+```json
+{
+  "enforcement": "enforced",
+  "documents": {"used": 12, "limit": 100},
+  "bytes": {"used": 4096, "limit": 1073741824},
+  "objects": {"used": 18, "limit": 32768}
+}
+```
+
+An owner with no ledger row has zero used counters. All charged reservations,
+including failed or uncertain uploads and older revisions, remain included.
+Clients can calculate remaining capacity as `max(0, limit - used)`; this read is
+an observation, and concurrent reservations may consume capacity before a save.
+TypeScript exposes `client.usage.documents(options?)`; Rust exposes
+`client.usage().documents().await`.
+
+When the switch is off, the marker is absent or the ledger is not ready, the
+response is `{"enforcement":"not_enforced","documents":null,"bytes":null,"objects":null}`.
+No usage or remaining capacity is inferred from document metadata or object
+listing. An unauthenticated request returns 401 `not_authenticated`; a principal
+without document authority returns 404 `document_not_found`. Failed reads or
+invalid owner counters return 503 `document_unavailable`. Marker and owner reads
+use majority concern, point lookups and a three-second total query budget.
+Reclaiming and pending-deletion counters are not exposed in this increment.
 
 ## Durable format and bounds
 

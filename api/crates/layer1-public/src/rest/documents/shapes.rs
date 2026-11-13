@@ -1,6 +1,28 @@
 //! Handler schema projections; requests are decoded into the core's bounded commands.
 #![allow(dead_code)]
 use utoipa::ToSchema;
+
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DocumentQuotaEnforcement {
+    Enforced,
+    NotEnforced,
+}
+
+#[derive(ToSchema)]
+pub(crate) struct DocumentUsageCounter {
+    used: u64,
+    limit: u64,
+}
+
+#[derive(ToSchema)]
+pub(crate) struct DocumentUsage {
+    enforcement: DocumentQuotaEnforcement,
+    documents: Option<DocumentUsageCounter>,
+    bytes: Option<DocumentUsageCounter>,
+    objects: Option<DocumentUsageCounter>,
+}
+
 #[derive(ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum DocumentPermission {

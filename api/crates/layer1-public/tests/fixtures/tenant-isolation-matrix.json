@@ -87,6 +87,7 @@
   {"operation":"GET /api/v1/sandboxes/{id}/events","positive":"sandbox-events","negative":"sandbox-events-denied","proof":"probe"},
   {"operation":"GET /api/v1/sandboxes/{id}/workspaces","positive":"workspace-list","negative":"shared-hierarchy-1-revoked","proof":"probe"},
   {"operation":"GET /api/v1/usage","positive":"usage-summary-success","negative":"usage-summary-forbidden","proof":"filtered-inventory"},
+  {"operation":"GET /api/v1/usage/documents","positive":"document-usage-usage-enforced","negative":"document-usage-usage-forbidden","proof":"filtered-inventory"},
   {"operation":"GET /api/v1/usage/metrics/reports/{report}","positive":"metrics-0--report-ready","negative":"metrics-0--report-forbidden","proof":"mongo-report"},
   {"operation":"GET /api/v1/usage/metrics/reports/{report}/sandboxes","positive":"metrics-0--report-sandboxes-ready","negative":"metrics-0--report-sandboxes-forbidden","proof":"mongo-report"},
   {"operation":"GET /api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}","positive":"metrics-0--report-sandboxes-sandbox-ready","negative":"metrics-0--report-sandboxes-sandbox-forbidden","proof":"mongo-report"},

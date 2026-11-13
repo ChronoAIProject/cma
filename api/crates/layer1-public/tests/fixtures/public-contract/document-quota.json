@@ -1,0 +1,443 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "document-usage-usage-enforced",
+      "operation": "GET /api/v1/usage/documents",
+      "scenario": "document_usage_enforced__usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "enforcement": "enforced",
+          "documents": {
+            "used": 1,
+            "limit": 100
+          },
+          "bytes": {
+            "used": 17,
+            "limit": 1073741824
+          },
+          "objects": {
+            "used": 1,
+            "limit": 32768
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-usage-usage-foreign",
+      "operation": "GET /api/v1/usage/documents",
+      "scenario": "document_usage_foreign__usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "enforcement": "enforced",
+          "documents": {
+            "used": 0,
+            "limit": 100
+          },
+          "bytes": {
+            "used": 0,
+            "limit": 1073741824
+          },
+          "objects": {
+            "used": 0,
+            "limit": 32768
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-usage-owner",
+      "operation": "GET /api/v1/usage/documents",
+      "scenario": "document_owner__usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "enforcement": "not_enforced",
+          "documents": null,
+          "bytes": null,
+          "objects": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-usage-usage-not-ready",
+      "operation": "GET /api/v1/usage/documents",
+      "scenario": "document_usage_not_ready__usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "enforcement": "not_enforced",
+          "documents": null,
+          "bytes": null,
+          "objects": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-usage-usage-anonymous",
+      "operation": "GET /api/v1/usage/documents",
+      "scenario": "document_usage_anonymous__usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-usage-usage-unavailable",
+      "operation": "GET /api/v1/usage/documents",
+      "scenario": "document_usage_unavailable__usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-usage-usage-forbidden",
+      "operation": "GET /api/v1/usage/documents",
+      "scenario": "document_usage_forbidden__usage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/usage/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-limit-documents",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_limit_documents__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "Owner document quota reached",
+          "code": "document_limit_reached",
+          "limit": 0,
+          "live": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-limit-bytes",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_limit_bytes__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "Owner document quota reached",
+          "code": "document_bytes_limit_reached",
+          "limit": 17,
+          "live": 17
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-limit-objects",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_limit_objects__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "Owner document quota reached",
+          "code": "document_objects_limit_reached",
+          "limit": 1,
+          "live": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-limit-documents",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_limit_documents__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "Owner document quota reached",
+          "code": "document_limit_reached",
+          "limit": 0,
+          "live": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-limit-bytes",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_limit_bytes__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "Owner document quota reached",
+          "code": "document_bytes_limit_reached",
+          "limit": 17,
+          "live": 17
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-limit-objects",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_limit_objects__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-limit-reached",
+          "title": "resource limit reached",
+          "status": 429,
+          "detail": "Owner document quota reached",
+          "code": "document_objects_limit_reached",
+          "limit": 1,
+          "live": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
