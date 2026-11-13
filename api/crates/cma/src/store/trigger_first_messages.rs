@@ -12,7 +12,7 @@ use super::sandbox_mongo::{
 mod admission;
 mod execution;
 mod projection;
-mod refusal;
+pub(in crate::store) mod refusal;
 mod replay;
 pub(in crate::store) use admission::attach;
 pub(in crate::store) use execution::{proof, proof_in_session, ready_for_claim, require_mutation};
