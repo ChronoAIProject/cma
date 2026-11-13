@@ -187,9 +187,11 @@ pub fn validate_conversation_write(
             if binding.state == BindingState::Ready
                 && next.generation == binding.generation
                 && next.revision == 1
-                && (next.state == BindingConversationState::Provisioning
-                    || (binding.existing_agent.is_some()
-                        && next.state == BindingConversationState::Ready)) =>
+                && (matches!(
+                    next.state,
+                    BindingConversationState::Provisioning | BindingConversationState::Retiring
+                ) || (binding.existing_agent.is_some()
+                    && next.state == BindingConversationState::Ready)) =>
         {
             Ok(())
         }

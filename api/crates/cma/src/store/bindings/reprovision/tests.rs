@@ -704,3 +704,6 @@ mod http_tests;
 
 #[path = "lifecycle_http_tests.rs"]
 mod lifecycle_http_tests;
+
+#[path = "operator_stop_tests.rs"]
+mod operator_stop_tests;
