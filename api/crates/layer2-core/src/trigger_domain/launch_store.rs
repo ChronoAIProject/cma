@@ -201,6 +201,8 @@ pub enum LaunchStoreError {
     Validation(#[from] TriggerError),
     #[error("model budget refused the Launch: {0}")]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
 }
 
 impl LaunchStoreError {
@@ -220,6 +222,7 @@ impl LaunchStoreError {
             Self::Corrupt(_) => "stored_launch_corrupt",
             Self::Validation(error) => error.code,
             Self::Budget(reason) => reason.code(),
+            Self::AdmissionPaused => "admission_paused",
         }
     }
 }

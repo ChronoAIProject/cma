@@ -24,6 +24,7 @@ impl ProviderClient {
         idempotency: &IdempotencyKey,
         metadata: &BTreeMap<String, String>,
         credential: &Secret,
+        nyxid_trace: bool,
     ) -> FrozenSubmission {
         if self.record_worker_key(credential).await.is_err() {
             return FrozenSubmission::NotAccepted;
@@ -47,14 +48,35 @@ impl ProviderClient {
         // response headers arrived. Cancellation drops this awaited future.
         let deadline = self.request_timeout.min(Duration::from_secs(20));
         tokio::time::timeout(deadline, async {
+            let mut trace = crate::telemetry::turn_trace::ProviderReader::new(
+                self.turn_trace_enabled,
+                provider.as_str() == "nyxbot" && nyxid_trace,
+                None,
+            );
+            if let Some(trace) = &mut trace {
+                trace.begin_source();
+            }
             let observed = match handle
                 .responses
-                .send(url, credential.as_str(), idempotency.as_str(), bytes, None)
+                .send_with_trace(
+                    url,
+                    credential.as_str(),
+                    idempotency.as_str(),
+                    bytes,
+                    None,
+                    self.turn_trace_enabled && provider.as_str() == "nyxbot" && nyxid_trace,
+                )
                 .await
             {
                 Ok(response) => response,
                 Err(_) => return FrozenSubmission::Unknown,
             };
+            if let Some(trace) = &mut trace {
+                trace.response(
+                    observed.response.headers(),
+                    observed.response.status().as_u16(),
+                );
+            }
             if observed.response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 return if conversation_not_ready(observed.response).await {
                     FrozenSubmission::NotAcceptedWithCode("conversation_not_ready".into())
@@ -130,6 +152,9 @@ impl ProviderClient {
                 || identity.snapshot(value["response"].clone()).is_err()
             {
                 return FrozenSubmission::Unknown;
+            }
+            if let Some(trace) = &mut trace {
+                trace.event(&value);
             }
             FrozenSubmission::Accepted(response_id)
         })

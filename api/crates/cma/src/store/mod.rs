@@ -1,7 +1,9 @@
 //! Durable adapters that do not depend on a resource aggregate.
+mod admission_checks;
 
 pub(crate) mod account_deletions;
 pub mod activity;
+pub(crate) mod admission_control;
 #[cfg(test)]
 mod admission_wake_test_support;
 pub(crate) mod agent_access_requests;
@@ -175,14 +177,15 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore,
-    DISCOVERY_BATCH, HEARTBEAT,
+    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
+    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

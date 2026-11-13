@@ -21,6 +21,8 @@ use super::{
     TriggerStore,
 };
 
+mod replay;
+
 pub(super) const MAX_EXISTING_MESSAGE_EXCERPT_SCALARS: usize = 140;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +119,8 @@ pub enum LaunchServiceError {
     Conflict,
     #[error("model budget refused the Launch: {0}")]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("launch dependency is unavailable: {0}")]
     Unavailable(String),
     #[error("launch data is not usable: {0}")]
@@ -144,6 +148,7 @@ impl LaunchServiceError {
             Self::InvalidCursor => "invalid_launch_cursor",
             Self::Conflict => "launch_changed",
             Self::Budget(reason) => reason.code(),
+            Self::AdmissionPaused => "admission_paused",
             Self::Unavailable(_) => "launch_service_unavailable",
             Self::Corrupt(_) => "stored_launch_corrupt",
         }
@@ -401,30 +406,6 @@ impl LaunchService {
                 Err(lookup) => Err(lookup),
             },
         }
-    }
-
-    async fn replayed_command(
-        &self,
-        owner: &SubjectId,
-        public_id: &PublicTriggerId,
-        command_key_hash: &str,
-        command_fingerprint: &str,
-    ) -> Result<Option<LaunchCreateResult>, LaunchServiceError> {
-        let Some(existing) = self
-            .launches
-            .launch_by_command(owner, public_id, command_key_hash)
-            .await
-            .map_err(store_error)?
-        else {
-            return Ok(None);
-        };
-        if existing.command_fingerprint != command_fingerprint {
-            return Err(LaunchServiceError::IdempotencyKeyReused);
-        }
-        Ok(Some(LaunchCreateResult {
-            launch: existing,
-            created: false,
-        }))
     }
 
     pub(super) async fn public_trigger(
