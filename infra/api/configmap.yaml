@@ -106,6 +106,8 @@ data:
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
   CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
+  # Bound fresh native readiness; preserves assigned Claim and home identity.
+  CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED: "false"
   CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.
   CHRONO_READ_FRAME_BUDGET_ENABLED: "false"

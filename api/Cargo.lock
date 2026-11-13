@@ -2130,6 +2130,8 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "libc",
+ "metrics",
+ "metrics-exporter-prometheus",
  "reqwest",
  "ring",
  "serde",
