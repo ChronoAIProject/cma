@@ -71,7 +71,7 @@ async fn retained(store: &Arc<ReportingStore>) -> Report {
 async fn retained_report_labels_follow_directory_changes_without_mutating_snapshot() {
     let (store, _) = observed().await;
     let state = state(0, now() - 3600);
-    seed(&store, &[state.clone()]).await;
+    seed(&store, std::slice::from_ref(&state)).await;
     name(&store, "owner-0", "  Ada Lovelace  ").await;
     let report = retained(&store).await;
     let root = format!("/api/v1/admin/usage/metrics/reports/{}", report.report_id);

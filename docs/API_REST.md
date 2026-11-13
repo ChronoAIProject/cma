@@ -2638,7 +2638,7 @@ The existing allocated usage ledger and billing quantities keep their meanings.
 
 Report Sandbox pages, individual Sandbox details and owner pages resolve current
 public owner display names after checking report authority and current membership.
-Each response uses one bounded directory lookup for only its returned owners
+Each response uses at most one bounded directory lookup for its returned owners
 (at most 200); names are not stored in the immutable usage snapshot. A directory
 rename or removal therefore applies when reading the same report ID again.
 Missing or unsafe names remain absent, while a directory dependency or schema
