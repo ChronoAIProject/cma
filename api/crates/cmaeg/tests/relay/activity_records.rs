@@ -11,10 +11,18 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{
     collections::BTreeMap,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 
-type Records = Arc<Mutex<BTreeMap<String, Stored>>>;
+#[derive(Clone)]
+struct Records {
+    rows: Arc<Mutex<BTreeMap<String, Stored>>>,
+    status: Arc<AtomicUsize>,
+    lose_response: Arc<AtomicBool>,
+}
 struct Stored {
     owner: String,
     blob: String,
@@ -29,13 +37,17 @@ struct Put {
     expires_at: i64,
 }
 
-pub fn router() -> Router {
+pub fn router(status: Arc<AtomicUsize>, lose_response: Arc<AtomicBool>) -> Router {
     Router::new()
         .route(
             "/api/v1/gateway/interaction-records/{id}",
             get(read).put(write),
         )
-        .with_state(Records::default())
+        .with_state(Records {
+            rows: Arc::default(),
+            status,
+            lose_response,
+        })
         .layer(axum::middleware::from_fn(
             |request: axum::extract::Request, next: axum::middleware::Next| async move {
                 if request
@@ -51,7 +63,7 @@ pub fn router() -> Router {
 }
 
 async fn read(State(records): State<Records>, Path(id): Path<String>) -> Response {
-    let records = records.lock().unwrap();
+    let records = records.rows.lock().unwrap();
     let Some(row) = records
         .get(&id)
         .filter(|row| row.expires_at > time::OffsetDateTime::now_utc().unix_timestamp())
@@ -70,6 +82,11 @@ async fn write(
     Path(id): Path<String>,
     Json(body): Json<Put>,
 ) -> Response {
+    let status = records.status.load(Ordering::SeqCst) as u16;
+    if status != 200 {
+        return StatusCode::from_u16(status).unwrap().into_response();
+    }
+    let lose_response = records.lose_response.load(Ordering::SeqCst);
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     if body.owner.is_empty()
         || body.expires_at <= now
@@ -80,7 +97,7 @@ async fn write(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let mut records = records.lock().unwrap();
+    let mut records = records.rows.lock().unwrap();
     let existing = records.get(&id).filter(|row| row.expires_at > now);
     if existing.map(|row| row.version) != body.expected_version
         || existing.is_some_and(|row| row.owner != body.owner)
@@ -101,5 +118,8 @@ async fn write(
             expires_at: body.expires_at,
         },
     );
+    if lose_response {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     Json(json!({"record_id": id, "version": version})).into_response()
 }

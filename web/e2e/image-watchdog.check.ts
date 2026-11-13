@@ -1,4 +1,4 @@
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, renameSync, writeFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
 
 function startup(event: string) {
@@ -22,16 +22,21 @@ test('worker exit cannot leave a detached browser behind', async ({ page }) => {
     startup('injected-pre-ready-stall');
     await page.waitForTimeout(60_000);
   }
+  if (process.env.CMA_WEB_WATCHDOG_MODE === 'slow-start') {
+    startup('injected-slow-start');
+    await page.waitForTimeout(27_000);
+  }
   startup('set-content-begin');
   await page.setContent('<button>Watchdog fixture ready</button>');
   startup('visible-assertion-begin');
   await expect(page.getByRole('button', { name: 'Watchdog fixture ready' })).toBeVisible();
   startup('fixture-ready');
-  writeFileSync(ready, JSON.stringify({ worker: process.pid }));
+  writeFileSync(`${ready}.tmp`, JSON.stringify({ worker: process.pid }));
+  renameSync(`${ready}.tmp`, ready);
   if (process.env.CMA_WEB_WATCHDOG_MODE === 'phase-pass') return;
   if (process.env.CMA_WEB_WATCHDOG_MODE === 'phase-fail')
     throw new Error('Injected trace probe failure');
-  // Stop only the worker; Chrome remains live in the separate group Playwright creates.
-  if (process.env.CMA_WEB_WATCHDOG_MODE === 'stopped') process.kill(process.pid, 'SIGSTOP');
+  // The observer injects worker failure only after the supervisor acknowledges
+  // readiness and arms its execution deadline. Chrome stays in its detached group.
   await page.waitForTimeout(60_000);
 });

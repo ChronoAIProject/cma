@@ -290,6 +290,7 @@ async fn native_buttons_deliver_and_consume_with_durable_original_actor_fences()
         .start_turn(
             &request.channel.definition.provider.slug,
             TurnRequest {
+                nyxid_trace: false,
                 timing: None,
                 conversation_id: request.conversation_id.clone(),
                 input: vec![],
