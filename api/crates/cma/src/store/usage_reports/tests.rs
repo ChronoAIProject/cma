@@ -398,8 +398,15 @@ mod options_context;
 mod options_pressure;
 mod owner_allocation;
 mod owner_allocation_boundaries;
+mod owner_names;
 mod pressure;
 mod read_models;
 mod scale;
 mod submission;
 mod tenant_isolation;
+
+mod retained_recovery;
+mod retained_restart;
+mod retained_views;
+
+mod retained_measurement;

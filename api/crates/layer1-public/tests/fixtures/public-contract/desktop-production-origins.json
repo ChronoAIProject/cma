@@ -80,6 +80,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -172,6 +173,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {

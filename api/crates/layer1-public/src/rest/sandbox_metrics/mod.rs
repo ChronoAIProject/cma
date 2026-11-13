@@ -5,6 +5,8 @@ mod options_tests;
 #[cfg(test)]
 mod owner_allocation_tests;
 mod schemas;
+mod view;
+mod view_openapi;
 mod wire;
 use crate::AuthenticatedCaller;
 use axum::{
@@ -30,6 +32,7 @@ struct Empty {}
 
 pub fn sandbox_metrics_router(service: Arc<MetricsService>) -> Router {
     let routes = Router::new()
+        .route("/view", get(view::latest))
         .route("/reports", post(create))
         .route("/reports/{report}", get(poll))
         .route("/reports/{report}/sandboxes", get(page))
@@ -192,6 +195,7 @@ fn invalid() -> Response {
 }
 fn problem(error: MetricsError) -> Response {
     let (status, code) = match &error {
+        MetricsError::ViewDisabled => (StatusCode::NOT_IMPLEMENTED, "report_view_disabled"),
         MetricsError::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_query"),
         MetricsError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
         MetricsError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
@@ -232,3 +236,6 @@ async fn private_headers(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod view_tests;
