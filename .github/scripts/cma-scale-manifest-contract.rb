@@ -21,8 +21,9 @@ module CmaScaleManifests
     raise "CMA scale: #{message}" unless condition
   end
 
-  def self.validate(role, deployment, hpa, pdb)
+  def self.validate(role, deployment, hpa, pdb, down_period: 120)
     contract = ROLES.fetch(role)
+    require_contract(down_period.is_a?(Integer) && down_period.between?(120, 1800), "supported downscale period")
     label = { "app.kubernetes.io/name" => contract.fetch(:name) }
     [deployment, hpa, pdb].zip(%w[Deployment HorizontalPodAutoscaler PodDisruptionBudget],
       %w[apps/v1 autoscaling/v2 policy/v1]).each do |object, kind, version|
@@ -79,20 +80,40 @@ module CmaScaleManifests
       "name" => "cpu", "target" => { "type" => "Utilization", "averageUtilization" => (role == "api" ? 60 : 200) }
     } }], "CPU target/request budget")
     expected_up = { "stabilizationWindowSeconds" => 0, "selectPolicy" => "Max", "policies" => [
-      { "type" => "Pods", "value" => 1, "periodSeconds" => 60 }
+      { "type" => "Pods", "value" => 2, "periodSeconds" => 60 },
+      { "type" => "Percent", "value" => 100, "periodSeconds" => 60 }
     ] }
-    expected_down = { "stabilizationWindowSeconds" => 600, "selectPolicy" => "Min", "policies" => [
-      { "type" => "Pods", "value" => 1, "periodSeconds" => 120 }
+    expected_down = { "stabilizationWindowSeconds" => 300, "selectPolicy" => "Min", "policies" => [
+      { "type" => "Pods", "value" => 1, "periodSeconds" => down_period }
     ] }
     require_contract(autoscale.dig("behavior", "scaleUp") == expected_up, "fast bounded scale-up")
     require_contract(autoscale.dig("behavior", "scaleDown") == expected_down, "slow stabilized scale-down")
     true
   end
 
+  # This calculation consumes an already-qualified measurement. It does not
+  # establish sample completeness, correctness, or production permission.
+  def self.downscale_period(p95_seconds)
+    require_contract(p95_seconds.is_a?(Numeric) && p95_seconds.finite? && p95_seconds.positive?,
+      "qualified positive finite p95 required; missing timing holds S3")
+    period = p95_seconds > 90 ? (p95_seconds + 30).ceil : 120
+    require_contract(period <= 1800, "required period exceeds Kubernetes range; HOLD, do not clamp")
+    period
+  end
+
+  def self.hpa_candidate(role, p95_seconds)
+    period = downscale_period(p95_seconds)
+    deployment, hpa, pdb = documents(role)
+    validate(role, deployment, hpa, pdb)
+    hpa.fetch("spec").fetch("behavior").fetch("scaleDown").fetch("policies")[0]["periodSeconds"] = period
+    validate(role, deployment, hpa, pdb, down_period: period)
+    hpa
+  end
+
   # Emit only this change's owned fields. A whole Deployment apply could restore
   # stale image pins or overwrite newer production configuration and annotations.
   def self.patch(role, replicas)
-    require_contract([1, 2].include?(replicas), "stage starts at one or two replicas")
+    require_contract([0, 1, 2].include?(replicas), "prepare at zero, activate two, compatible rollback one")
     deployment, hpa, pdb = documents(role)
     validate(role, deployment, hpa, pdb)
     spec = deployment.fetch("spec")
@@ -112,10 +133,12 @@ if $PROGRAM_NAME == __FILE__
     if ARGV.empty?
       CmaScaleManifests::ROLES.each_key { |role| CmaScaleManifests.validate(role, *CmaScaleManifests.documents(role)) }
       puts "CMA scale manifests: both roles pass"
+    elsif ARGV.length == 3 && ARGV[0] == "--hpa"
+      puts JSON.pretty_generate(CmaScaleManifests.hpa_candidate(ARGV[1], Float(ARGV[2])))
     elsif ARGV.length == 3 && ARGV[0] == "--patch"
       puts JSON.pretty_generate(CmaScaleManifests.patch(ARGV[1], Integer(ARGV[2], 10)))
     else
-      raise "Usage: cma-scale-manifest-contract.rb [--patch api|cmaeg 1|2]"
+      raise "Usage: cma-scale-manifest-contract.rb [--patch api|cmaeg 0|1|2 | --hpa api|cmaeg QUALIFIED_P95_SECONDS]"
     end
   rescue StandardError => error
     warn error.message

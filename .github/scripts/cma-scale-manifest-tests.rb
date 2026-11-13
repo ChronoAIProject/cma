@@ -89,6 +89,41 @@ class CmaScaleManifestTests < Minitest::Test
     rejects { |_, h, _| h["spec"]["behavior"]["scaleDown"]["policies"][0]["value"] = 2 }
   end
 
+  def test_rejects_obsolete_or_unbounded_up_down_cadence
+    rejects { |_, h, _| h["spec"]["behavior"]["scaleUp"]["policies"][0]["value"] = 1 }
+    rejects { |_, h, _| h["spec"]["behavior"]["scaleUp"]["policies"].pop }
+    rejects { |_, h, _| h["spec"]["behavior"]["scaleUp"]["policies"][1]["periodSeconds"] = 30 }
+    rejects { |_, h, _| h["spec"]["behavior"]["scaleDown"]["stabilizationWindowSeconds"] = 600 }
+    rejects { |_, h, _| h["spec"]["behavior"]["scaleDown"]["policies"][0]["periodSeconds"] = 60 }
+  end
+
+  def test_qualified_period_boundaries_and_fractional_round_up
+    { 0.1 => 120, 90 => 120, 90.1 => 121, 120.2 => 151, 1770 => 1800 }.each do |p95, period|
+      assert_equal period, CmaScaleManifests.downscale_period(p95)
+    end
+  end
+
+  def test_missing_invalid_or_unrepresentable_timing_cannot_generate_hpa
+    [nil, "90", 0, -1, Float::NAN, Float::INFINITY, 1770.1].each do |p95|
+      assert_raises(RuntimeError) { CmaScaleManifests.hpa_candidate("api", p95) }
+    end
+  end
+
+  def test_candidate_hpa_changes_only_the_measured_period
+    each_role do |role, deployment, hpa, pdb|
+      expected = Marshal.load(Marshal.dump(hpa))
+      expected["spec"]["behavior"]["scaleDown"]["policies"][0]["periodSeconds"] = 181
+      candidate = CmaScaleManifests.hpa_candidate(role, 150.2)
+      assert_equal expected, candidate
+      assert CmaScaleManifests.validate(role, deployment, candidate, pdb, down_period: 181)
+      assert_raises(RuntimeError) { CmaScaleManifests.validate(role, deployment, candidate, pdb) }
+      [119, 1801, 120.5].each do |period|
+        assert_raises(RuntimeError) { CmaScaleManifests.validate(role, deployment, candidate, pdb, down_period: period) }
+      end
+      assert_equal hpa, CmaScaleManifests.hpa_candidate(role, 90)
+    end
+  end
+
   def test_patch_cannot_roll_back_images_configuration_or_metadata
     each_role do |role, _, _, _|
       patch = CmaScaleManifests.patch(role, 1)
@@ -98,12 +133,13 @@ class CmaScaleManifestTests < Minitest::Test
       assert_equal ["spec"], patch["spec"]["template"].keys
       assert_equal %w[terminationGracePeriodSeconds topologySpreadConstraints containers].sort, pod(patch).keys.sort
       assert_equal %w[name resources readinessProbe lifecycle].sort, pod(patch)["containers"][0].keys.sort
+      assert_equal 0, CmaScaleManifests.patch(role, 0)["spec"]["replicas"]
       assert_equal 2, CmaScaleManifests.patch(role, 2)["spec"]["replicas"]
     end
   end
 
   def test_patch_refuses_unknown_role_and_unapproved_initial_scale
     assert_raises(KeyError) { CmaScaleManifests.patch("web", 2) }
-    [0, 3, 6, "2"].each { |replicas| assert_raises(RuntimeError) { CmaScaleManifests.patch("api", replicas) } }
+    [-1, 3, 6, "2"].each { |replicas| assert_raises(RuntimeError) { CmaScaleManifests.patch("api", replicas) } }
   end
 end
