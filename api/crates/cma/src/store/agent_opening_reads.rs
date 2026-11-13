@@ -166,7 +166,15 @@ async fn selected(
 }
 
 fn decision(outcome: &'static str) {
-    tracing::debug!(parent: None, outcome, "Agent opening legacy projection decision");
+    // JSON formatters can attach the current private scope to parentless
+    // events. Match the event's level/target and suppress it if filters reject
+    // this root, so entering a disabled span cannot expose the ambient parent.
+    let span = tracing::debug_span!(parent: None, "agent_opening_decision");
+    if span.is_disabled() {
+        return;
+    }
+    let _entered = span.enter();
+    tracing::debug!(parent: &span, outcome, "Agent opening legacy projection decision");
 }
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())
@@ -174,3 +182,6 @@ fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
 fn corrupt() -> SandboxStoreError {
     SandboxStoreError::Corrupt("Agent opening evidence does not match its captured source".into())
 }
+
+#[cfg(test)]
+mod privacy;
