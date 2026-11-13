@@ -23,6 +23,7 @@ async fn phase(
     db: &Database,
     id: &AgentId,
     enabled: bool,
+    raw_batches: bool,
     bytes: u64,
 ) -> serde_json::Value {
     let barrier = Arc::new(Barrier::new(WORKERS + 1));
@@ -46,7 +47,8 @@ async fn phase(
                     &id,
                     10_001,
                     &mut session,
-                    ScanOptions::<MonotonicClock>::new(false, Policy::enabled(enabled)),
+                    ScanOptions::<MonotonicClock>::new(false, Policy::enabled(enabled))
+                        .with_raw_batches(raw_batches),
                     |_| Ok(()),
                 )))
                 .await;
@@ -103,7 +105,7 @@ async fn phase(
         .iter()
         .map(|(stats, _)| stats.longest_poll)
         .collect::<Vec<_>>();
-    serde_json::json!({"enabled": enabled, "scans": total.scans.len(),
+    serde_json::json!({"enabled": enabled, "raw_batches": raw_batches, "scans": total.scans.len(),
         "documents": total.scans.len() * 10_001, "bytes": total.scans.len() as u64 * bytes,
         "point_read_pairs": reads.len(), "scan_latency": distribution(&total.scans),
         "task_polls": distribution(&total.polls), "longest_sections": distribution(&sections),
@@ -114,6 +116,11 @@ async fn phase(
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn local_scan_scheduling_abba_reproduction() {
+    reproduction(false, "scan_scheduling_reproduction").await;
+    reproduction(true, "scan_cursor_delivery_reproduction").await;
+}
+
+async fn reproduction(cooperative_control: bool, label: &str) {
     let observation = Observation::default();
     let client = observation.client().await;
     let db = database(&client);
@@ -132,14 +139,24 @@ async fn local_scan_scheduling_abba_reproduction() {
         .insert_one(doc! {"_id": "point"})
         .await
         .unwrap();
-    // Prime both strategies, connections, code pages and the server's data cache.
-    for enabled in [false, true] {
-        phase(&client, &db, &id, enabled, bytes).await;
+    // The scheduling comparison is off/on; the delivery comparison keeps
+    // cooperation enabled in both arms and changes only cursor delivery.
+    for raw_batches in [false, true] {
+        phase(
+            &client,
+            &db,
+            &id,
+            cooperative_control || raw_batches,
+            raw_batches,
+            bytes,
+        )
+        .await;
     }
-    for (round, enabled) in [false, true, true, false].into_iter().enumerate() {
+    for (round, raw_batches) in [false, true, true, false].into_iter().enumerate() {
+        let enabled = cooperative_control || raw_batches;
         observation.begin();
         let start = Instant::now();
-        let mut result = phase(&client, &db, &id, enabled, bytes).await;
+        let mut result = phase(&client, &db, &id, enabled, raw_batches, bytes).await;
         let sample = observation.finish();
         result["round"] = round.into();
         result["elapsed_seconds"] = start.elapsed().as_secs_f64().into();
@@ -157,7 +174,7 @@ async fn local_scan_scheduling_abba_reproduction() {
             sample.commands.get("getMore"),
             Some(&((WORKERS * SCANS_PER_WORKER) as u64))
         );
-        println!("scan_scheduling_reproduction {result}");
+        println!("{label} {result}");
     }
     db.drop().await.unwrap();
 }

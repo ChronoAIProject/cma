@@ -46,6 +46,13 @@ impl AgentConversationStore for MongoSandboxStore {
         pending_approvals(self, id).await
     }
 
+    async fn agent_message_snapshot(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<layer2_core::sandbox::store::AgentMessageSnapshot>, SandboxStoreError> {
+        checkpoint::load_snapshot(self, id).await
+    }
+
     async fn agent_message_checkpoint(
         &self,
         id: &AgentId,
