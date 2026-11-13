@@ -56,6 +56,7 @@ pub(crate) struct FeatureFlags {
     pub bounded_close_retries: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
@@ -120,6 +121,10 @@ impl FeatureFlags {
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retry_single_marker_enabled: flag(lookup, "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED")?,
             work_retry_policy_enabled: flag(lookup, "CHRONO_WORK_RETRY_POLICY_ENABLED")?,
+            cleanup_continuation_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
+            )?,
             agent_log_scan_cooperative_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
