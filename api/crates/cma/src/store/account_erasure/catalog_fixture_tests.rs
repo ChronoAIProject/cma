@@ -3,20 +3,6 @@ use super::{tests::*, *};
 use mongodb::bson::{doc, Bson, Document};
 use sha2::{Digest, Sha256};
 
-fn publisher_fixture(collection: &str) -> bool {
-    matches!(
-        collection,
-        "agent_profiles"
-            | "agent_profile_revisions"
-            | "workspace_profiles"
-            | "workspace_profile_revisions"
-            | "sandbox_profiles"
-            | "sandbox_profile_revisions"
-            | "trigger_definitions"
-            | "trigger_definition_revisions"
-    )
-}
-
 fn fixtures(subject: &str, suffix: &str) -> Vec<(&'static str, Document)> {
     let id = format!("row_{suffix}");
     let sandbox = format!("sbx_{suffix}");
@@ -212,10 +198,7 @@ async fn audited_owner_and_linked_fixtures_are_erased_without_touching_other_own
     let db = database().await;
     sandbox(&db, "acct:a", "sbx_a").await;
     sandbox(&db, "acct:b", "sbx_b").await;
-    let owned = fixtures("acct:a", "a")
-        .into_iter()
-        .filter(|(collection, _)| !publisher_fixture(collection))
-        .collect::<Vec<_>>();
+    let owned = fixtures("acct:a", "a");
     let other = fixtures("acct:b", "b");
     let mut expected = BTreeMap::<String, u64>::new();
     expected.insert("sandboxes".into(), 1);
@@ -639,90 +622,4 @@ async fn settled_billing_current_receipt_does_not_block_erasure() {
     assert_eq!(counts.get("sandboxes"), Some(&1));
     assert_eq!(count(&db, "sandbox_billing_state").await, 0);
     db.drop().await.unwrap();
-}
-
-// Every deferred writer-shaped fixture is tested separately, so its permanent
-// refusal cannot hide another collection or consume supported fixture coverage.
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn publisher_fixture_rows_permanently_refuse_without_mutating_any_source() {
-    for (collection, original) in fixtures("acct:a", "a")
-        .into_iter()
-        .filter(|(collection, _)| publisher_fixture(collection))
-    {
-        let db = database().await;
-        sandbox(&db, "acct:a", "sbx_a").await;
-        put(&db, "users", doc! {"_id":"acct:a","canary":"preserve"}).await;
-        put(&db, collection, original.clone()).await;
-        let expected = match collection {
-            "agent_profile_revisions" => "agent_profiles",
-            "workspace_profile_revisions" => "workspace_profiles",
-            "sandbox_profile_revisions" => "sandbox_profiles",
-            other => other,
-        };
-        if expected != collection {
-            // Revision writers project the immutable parent id rather than owner.
-            put(
-                &db,
-                expected,
-                doc! {
-                    "_id":original.get_str("profile_id").unwrap(),"owner":"acct:a"
-                },
-            )
-            .await;
-        }
-        let owner = SubjectId::new("acct:a");
-        let error = erase_records(
-            &db,
-            &[Target {
-                subject: &owner,
-                inventory: &ErasureInventory::default(),
-            }],
-            &mut Cursor::default(),
-            NOW,
-        )
-        .await
-        .unwrap_err();
-        let Error::Blocked(AttributedBlock {
-            subject_hash,
-            reason,
-        }) = error
-        else {
-            panic!("expected attributed permanent publisher refusal: {error:?}");
-        };
-        assert_eq!(
-            subject_hash,
-            layer2_core::account_deletion::subject_hash(&owner)
-        );
-        assert_eq!(
-            reason,
-            ErasureBlock::RetainedReferencePending {
-                collection: expected.into()
-            }
-        );
-        let stored = db
-            .collection::<Document>(collection)
-            .find_one(doc! {"_id":original.get("_id").unwrap().clone()})
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(stored, original, "pending source changed in {collection}");
-        assert_eq!(count(&db, "sandboxes").await, 1);
-        assert_eq!(count(&db, "users").await, 1);
-        if expected != collection {
-            let parent = db
-                .collection::<Document>(expected)
-                .find_one(doc! {"_id":original.get_str("profile_id").unwrap()})
-                .await
-                .unwrap()
-                .unwrap();
-            assert_eq!(
-                parent,
-                doc! {
-                    "_id":original.get_str("profile_id").unwrap(),"owner":"acct:a"
-                }
-            );
-        }
-        db.drop().await.unwrap();
-    }
 }

@@ -1,6 +1,90 @@
 //! Real persistence regressions for the second erasure review.
 use super::{tests::*, *};
+use layer2_core::profiles::AgentProfileStore;
 use mongodb::bson::{doc, Document};
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn retained_profile_is_private_retired_and_contains_no_authoring_data() {
+    let seed =
+        crate::store::trigger_definitions::integration_tests::seeded("erasure_retired_profile")
+            .await;
+    let db = seed.client.database(&seed.database);
+    let id = seed.target.agent_profile.id.as_str();
+    let revision = seed
+        .profiles
+        .agent_profile_revision(&seed.target.agent_profile.id, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    db.collection::<Document>("agent_profiles").update_one(doc! {"_id":id}, doc! {"$set":{
+        "name":"Private authoring name","record.name":"Private authoring name",
+        "description":"Private authoring description","record.description":"Private authoring description",
+        "record.draft.system_prompt":"Unpublished private prompt"
+    }}).await.unwrap();
+    let mut unused = db
+        .collection::<Document>("agent_profile_revisions")
+        .find_one(doc! {"profile_id":id})
+        .await
+        .unwrap()
+        .unwrap();
+    unused.insert("_id", format!("{id}:0000000002"));
+    unused.insert("revision", 2_i64);
+    unused
+        .get_document_mut("record")
+        .unwrap()
+        .insert("revision", 2_i64);
+    db.collection::<Document>("agent_profile_revisions")
+        .insert_one(unused)
+        .await
+        .unwrap();
+    put(&db,"agents",doc! {"_id":"foreign-reference","owner":"visitor","record":{"profile":{"id":id,"revision":1_i64}}}).await;
+    drain(&db, seed.owner.as_str(), &mut ErasureInventory::default()).await;
+    let retained = db
+        .collection::<Document>("agent_profiles")
+        .find_one(doc! {"_id":id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.get_str("visibility").unwrap(), "private");
+    assert!(retained.get_str("retired_at").is_ok());
+    assert_eq!(retained.get_str("name").unwrap(), "");
+    assert_eq!(retained.get_str("description").unwrap(), "");
+    assert!(!retained
+        .get_document("record")
+        .unwrap()
+        .contains_key("draft"));
+    let parsed = seed
+        .profiles
+        .agent_profile(&seed.target.agent_profile.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(parsed.owner.as_str(), layer2_core::DELETED_ACCOUNT_SUBJECT);
+    assert_eq!(
+        seed.profiles
+            .agent_profile_revision(&seed.target.agent_profile.id, 1)
+            .await
+            .unwrap(),
+        Some(revision)
+    );
+    assert!(seed
+        .profiles
+        .agent_profile_revision(&seed.target.agent_profile.id, 2)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(seed
+        .profiles
+        .publish_agent_profile(
+            &seed.target.agent_profile.id,
+            parsed.draft_version,
+            NOW.into()
+        )
+        .await
+        .is_err());
+    db.drop().await.unwrap();
+}
 
 #[test]
 fn capacity_is_attributed_per_person_and_does_not_count_organization_children() {
@@ -62,6 +146,110 @@ async fn damaged_owned_root_is_typed_and_identifies_its_subject() {
     .unwrap_err();
     assert!(format!("{error:?}").contains("CorruptRecord"));
     assert!(format!("{error:?}").contains(&layer2_core::document_artifacts::digest(b"a")));
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn erasure_installs_majority_fences_before_any_reference_discovery() {
+    let seed =
+        crate::store::trigger_definitions::integration_tests::seeded("erasure_drain_barrier").await;
+    let db = seed.client.database(&seed.database);
+    let subject = seed.owner.clone();
+    let batch = erase_records_with_options(
+        &db,
+        &[Target {
+            subject: &subject,
+            inventory: &ErasureInventory::default(),
+        }],
+        &mut Cursor::default(),
+        NOW,
+        Options {
+            billing_enabled: false,
+            transaction_drain_fallback_secs: 120,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(batch.waiting && batch.has_more);
+    assert!(batch.deleted.is_empty() && batch.redacted.is_empty());
+    for (name, id) in [
+        ("sandbox_profiles", seed.target.sandbox_profile.id.as_str()),
+        (
+            "workspace_profiles",
+            seed.target.workspace_profile.id.as_str(),
+        ),
+        ("agent_profiles", seed.target.agent_profile.id.as_str()),
+    ] {
+        let row = db
+            .collection::<Document>(name)
+            .find_one(doc! {"_id":id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.get_bool("account_erasure_fenced").ok(), Some(true));
+        assert!(row.get_datetime("account_erasure_fenced_at").is_ok());
+    }
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn profile_reference_sources_are_scanned_once_for_all_revision_rows() {
+    use mongodb::{
+        event::{command::CommandEvent, EventHandler},
+        options::ClientOptions,
+        Client,
+    };
+    use std::sync::{Arc, Mutex};
+    let seed =
+        crate::store::trigger_definitions::integration_tests::seeded("erasure_reference_scan_once")
+            .await;
+    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let reads = Arc::new(Mutex::new(0usize));
+    let observed = reads.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            if event.command.get_str("find").ok() == Some("agents")
+                && event
+                    .command
+                    .get_document("projection")
+                    .ok()
+                    .is_some_and(|projection| projection.contains_key("record.profile"))
+            {
+                *observed.lock().unwrap() += 1;
+            }
+        }
+    }));
+    let db = Client::with_options(options)
+        .unwrap()
+        .database(&seed.database);
+    let template = db
+        .collection::<Document>("agent_profile_revisions")
+        .find_one(doc! {})
+        .await
+        .unwrap()
+        .unwrap();
+    let id = seed.target.agent_profile.id.as_str();
+    for n in 2..12 {
+        let mut row = template.clone();
+        row.insert("_id", format!("{id}:{n:010}"));
+        row.insert("revision", n as i64);
+        row.get_document_mut("record")
+            .unwrap()
+            .insert("revision", n as i64);
+        put(&db, "agent_profile_revisions", row).await;
+    }
+    drain(&db, seed.owner.as_str(), &mut ErasureInventory::default()).await;
+    assert_eq!(
+        *reads.lock().unwrap(),
+        1,
+        "each source must serve the entire cohort once, observed {} reads",
+        *reads.lock().unwrap()
+    );
+    assert_eq!(count(&db, "agent_profile_revisions").await, 0);
     db.drop().await.unwrap();
 }
 

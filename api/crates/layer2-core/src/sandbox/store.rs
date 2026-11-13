@@ -284,6 +284,14 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
 
+    /// Snapshot-only callers keep the ordinary admission contract.
+    async fn admit_catalogue_workspace(
+        &self,
+        admission: WorkspaceAdmission,
+    ) -> Result<WorkspaceAdmissionResult, SandboxStoreError> {
+        self.admit_workspace(admission).await
+    }
+
     /// Explicitly recover only an original never-ready Workspace; all guards are atomic.
     async fn begin_workspace_prepare_recovery(
         &self,

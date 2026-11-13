@@ -561,3 +561,26 @@ fn metrics_listener_is_private_and_has_a_distinct_valid_address() {
         "127.0.0.1:9191"
     );
 }
+
+#[test]
+fn account_erasure_transaction_drain_is_conservative_and_billing_mode_is_explicit() {
+    let config = configured(&[]).unwrap();
+    assert_eq!(config.account_erasure_transaction_drain_seconds, 120);
+    for enabled in [false, true] {
+        let options = crate::store::account_erasure::Options::from_config(&config, enabled);
+        assert_eq!(options.billing_enabled, enabled);
+        assert_eq!(options.transaction_drain_fallback_secs, 120);
+    }
+    assert_eq!(
+        configured(&[("CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS", "240")])
+            .unwrap()
+            .account_erasure_transaction_drain_seconds,
+        240
+    );
+    for invalid in ["0", "60", "119", "86401", "-1", "abc", " 120", "0120"] {
+        assert!(
+            configured(&[("CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS", invalid)]).is_err(),
+            "{invalid}"
+        );
+    }
+}

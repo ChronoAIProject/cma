@@ -81,10 +81,6 @@ pub enum ErasureBlock {
     CorruptRecord {
         collection: String,
     },
-    /// The publisher protection slice must settle these retained references.
-    RetainedReferencePending {
-        collection: String,
-    },
     /// The identity redaction slice must preserve and anonymize this record.
     IdentityRedactionPending {
         collection: String,

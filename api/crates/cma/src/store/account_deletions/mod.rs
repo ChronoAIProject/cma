@@ -15,6 +15,7 @@ mod requests;
 mod snapshot_tests;
 #[cfg(test)]
 mod tests;
+pub(in crate::store) mod trigger_erasure;
 mod writes;
 
 pub(crate) const RECORDS: &str = "account_deletions";

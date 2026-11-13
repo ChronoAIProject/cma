@@ -98,6 +98,17 @@ pub enum LaunchResolutionError {
 
 #[async_trait]
 pub trait LaunchContextReader: Send + Sync {
+    /// Return only an Agent with the exact durable admission key or reuse
+    /// receipt for this Launch. This never selects another matching Agent.
+    async fn admitted_trigger_agent(
+        &self,
+        _launch: &super::Launch,
+    ) -> Result<Option<Agent>, LaunchResolutionError> {
+        Err(LaunchResolutionError::Unavailable(
+            "committed Launch Agent discovery is unavailable".into(),
+        ))
+    }
+
     async fn owned_sandbox(
         &self,
         _owner: &SubjectId,
