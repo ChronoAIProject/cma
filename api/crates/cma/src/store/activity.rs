@@ -3,7 +3,9 @@
 use std::time::Duration;
 
 use futures_util::TryStreamExt as _;
-use layer2_core::{ActivityAction, ActivityQuery, ActivityRecord, ActivityStore, Page, StoreError};
+use layer2_core::{
+    ActivityAction, ActivityQuery, ActivityRecord, ActivityStore, ActivitySummary, Page, StoreError,
+};
 use mongodb::{
     bson::{doc, Bson, DateTime, Document},
     options::IndexOptions,
@@ -20,12 +22,12 @@ pub(super) const ACTIVITY: &str = "activity";
 const EXPIRY_INDEX: &str = "activity_expiry";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct ActivityDoc {
+pub(super) struct ActivityDoc<T = ActivityRecord> {
     #[serde(rename = "_id")]
     id: String,
     document_schema_version: i64,
     recorded_at: DateTime,
-    record: ActivityRecord,
+    record: T,
 }
 
 impl ActivityDoc {
@@ -37,7 +39,9 @@ impl ActivityDoc {
             record: record.clone(),
         }
     }
+}
 
+impl<T> ActivityDoc<T> {
     fn cursor(&self) -> String {
         format!("{}:{}", self.recorded_at.timestamp_millis(), self.id)
     }
@@ -122,6 +126,47 @@ impl ActivityStore for MongoActivityStore {
     }
 
     async fn list(&self, query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
+        self.read_page(query, None).await
+    }
+
+    async fn list_summaries(
+        &self,
+        query: &ActivityQuery,
+    ) -> Result<Page<ActivitySummary>, StoreError> {
+        self.read_page(query, Some(summary_projection())).await
+    }
+}
+
+fn summary_projection() -> Document {
+    doc! {"_id":1,"document_schema_version":1,"recorded_at":1,
+    "record.id":1,"record.at":1,"record.actor":1,"record.action":1,
+    "record.target":1,"record.outcome":1}
+}
+
+impl MongoActivityStore {
+    async fn read_page<T: serde::de::DeserializeOwned + Send + Sync + Unpin>(
+        &self,
+        query: &ActivityQuery,
+        projection: Option<Document>,
+    ) -> Result<Page<T>, StoreError> {
+        let started = std::time::Instant::now();
+        let view = if projection.is_some() {
+            "summary"
+        } else {
+            "full"
+        };
+        let result = self.read_page_inner(query, projection).await;
+        metrics::histogram!("cma_activity_read_seconds", "view" => view,
+            "outcome" => if result.is_ok() { "completed" } else { "error" })
+        .record(started.elapsed().as_secs_f64());
+        result
+    }
+
+    async fn read_page_inner<T: serde::de::DeserializeOwned + Send + Sync + Unpin>(
+        &self,
+        query: &ActivityQuery,
+        projection: Option<Document>,
+    ) -> Result<Page<T>, StoreError> {
         query
             .validate()
             .map_err(|error| StoreError::Malformed(error.to_string()))?;
@@ -149,7 +194,15 @@ impl ActivityStore for MongoActivityStore {
         let fetch = i64::from(query.limit.saturating_add(1));
         let mut cursor = self
             .entries
+            .clone_with_type::<ActivityDoc<T>>()
             .find(filter)
+            .with_options(
+                mongodb::options::FindOptions::builder()
+                    .projection(projection)
+                    .batch_size(query.limit + 1)
+                    .max_time(Duration::from_secs(5))
+                    .build(),
+            )
             .sort(doc! { "recorded_at": -1, "_id": -1 })
             .limit(fetch)
             .await
