@@ -16,7 +16,7 @@ async fn observed() -> (Arc<ReportingStore>, NameQueries) {
     super::super::budget::observe(&mut options, fixture.circuit.clone());
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
-            if event.command_name == "find" && event.command.get_str("find") == Ok("users") {
+            if event.command_name == "find" && event.command.get_str("find").ok() == Some("users") {
                 captured.lock().unwrap().push(event.command);
             }
         }
