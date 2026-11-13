@@ -4,6 +4,12 @@ use super::*;
 #[cfg(test)]
 use crate::sandbox::{AgentOperationDelivery, AgentOperationKind};
 
+/// A certified completed-turn answer, bound to its original durable message.
+pub struct AgentLogFinalAnswer {
+    pub turn_sequence: u64,
+    pub message: crate::sandbox::AgentTranscriptMessage,
+}
+
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
     /// Publish one exact durable operation. Implementations without keyed
@@ -252,6 +258,17 @@ pub trait AgentLogStore: Send + Sync {
         _agent: &Agent,
         _request: &crate::sandbox::AgentTranscriptPageRequest,
     ) -> Result<Option<crate::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// Resolve one final answer from certified message/turn evidence. `None`
+    /// selects legacy compatibility; a certified non-answer returns NotFound.
+    /// A missing or stale proof must fail, never select a lifetime fallback.
+    async fn agent_log_final_answer(
+        &self,
+        _agent: &Agent,
+        _sequence: u64,
+    ) -> Result<Option<AgentLogFinalAnswer>, SandboxStoreError> {
         Ok(None)
     }
 

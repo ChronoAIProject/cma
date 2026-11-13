@@ -89,23 +89,6 @@ impl AgentReadService {
         Ok(self.owned_lineage(caller, id).await?.agent)
     }
 
-    pub(super) async fn require_owned_final_answer(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        sequence: u64,
-    ) -> Result<(), AgentReadError> {
-        let transcript = self.transcript(caller, id).await?;
-        if transcript.turns.iter().any(|turn| {
-            turn.final_answer()
-                .is_some_and(|answer| answer.sequence == sequence)
-        }) {
-            Ok(())
-        } else {
-            Err(AgentReadError::NotFound)
-        }
-    }
-
     pub async fn lineage(
         &self,
         caller: &Caller,
