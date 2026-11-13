@@ -1,4 +1,4 @@
-//! Existing gateway capability and ownership checks.
+//! Existing tool authority checks precede diagnostic header interpretation.
 use super::*;
 
 impl ToolsState {
@@ -23,6 +23,9 @@ impl ToolsState {
         let matched = owner(caller, &channel, event.consumer.as_ref(), tool)?;
         if event.record_id != channel.pointer.record_id {
             return Err(invalid("event channel does not match its record"));
+        }
+        if tool == "replyToEvent" {
+            crate::telemetry::turn_trace::ingress::authorized();
         }
         Ok((channel, event, matched))
     }
@@ -55,6 +58,9 @@ impl ToolsState {
         }
         .map_err(|error| error.problem())?;
         let matched = owner(caller, &channel, message.consumer.as_ref(), tool)?;
+        if tool == "updateMessage" {
+            crate::telemetry::turn_trace::ingress::authorized();
+        }
         Ok((channel, message, matched))
     }
 }

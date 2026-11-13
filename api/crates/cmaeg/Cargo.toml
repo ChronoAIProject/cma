@@ -43,6 +43,7 @@ tokio = { workspace = true }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
 tower-http = { workspace = true, features = ["catch-panic"] }
 tracing = { workspace = true }
+tracing-appender = "=0.2.5"
 tracing-subscriber = { workspace = true }
 utoipa = { workspace = true }
 url = { workspace = true }

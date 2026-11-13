@@ -2718,6 +2718,32 @@ advertisement, not proof of unimplemented behavior. Providers MUST only advertis
 capabilities verified against their implementation. The binding response records
 its own level and field refusals for that channel.
 
+### Authenticated delivery traces
+
+`CMAEG_NYXID_TURN_TRACE_ENABLED` defaults to `false`. The enabled gateway
+interprets bounded, single-value W3C `traceparent` headers only after the
+existing reply or edit authority checks. Context follows the existing queued
+operation; it confers no execution authority and changes no idempotency key,
+request body, send decision or retry policy.
+
+The dedicated stdout NDJSON writer uses `target: "nyxid::turn_trace"`,
+`schema_version: 1` and `service: "cma"`. Records contain validated UUID/span
+identifiers, fixed stage/outcome labels, monotonic durations and bounded status
+or part indices. They never inherit surrounding log fields or include content,
+URLs, capabilities, credentials, platform identifiers or raw error strings.
+Each operation captures one span/request pair for its start and end. Successful
+HTTP transport is `completed`; only existing native receipts prove `confirmed`.
+Ambiguous writes, including 502 responses after possible partial delivery, stay
+`unknown`; tracing never retries them. Upload completion is separate from
+recipient delivery, and mixed confirmed/uncertain parts report `partial`.
+
+Two lossy queues hold at most 4,096 records in total; trace lines are limited to
+2 KiB; oversized ordinary log lines sharing that queue are dropped and counted
+as well. Serialization and output run on background workers, with no stdout lock
+held while waiting for work. Overflow or sink failure increments the dropped
+counter and emits a throttled fixed health warning. With the switch off, no
+trace queue, record, diagnostic ID or outbound trace header is constructed.
+
 ### Optional provider capabilities
 
 A stored `ProviderBinding` may include a `capabilities` array of strings
