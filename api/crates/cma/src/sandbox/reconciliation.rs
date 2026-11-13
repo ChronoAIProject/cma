@@ -36,6 +36,8 @@ mod authority;
 mod binding_holds;
 #[path = "reconciliation_diagnostics.rs"]
 mod diagnostics;
+#[path = "reconciliation_loss_observation.rs"]
+mod loss_observation;
 #[path = "reconciliation_platform.rs"]
 pub(crate) mod platform;
 #[path = "reconciliation_sweep.rs"]
@@ -66,6 +68,7 @@ pub(crate) struct SandboxReconciler {
     binding_holds: binding_holds::BindingHolds,
     platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
     platform_schedule: platform::PlatformSpendSchedule,
+    runtime_loss_bounded_proof_enabled: bool,
 }
 
 impl SandboxReconciler {
@@ -93,6 +96,7 @@ impl SandboxReconciler {
             binding_holds: Default::default(),
             platform_spend: None,
             platform_schedule: Default::default(),
+            runtime_loss_bounded_proof_enabled: false,
         }
     }
 
@@ -408,40 +412,6 @@ impl SandboxReconciler {
             .await?;
         }
         Ok(true)
-    }
-
-    async fn recover_missing(
-        &self,
-        sandbox: &Sandbox,
-        observed_at: SystemTime,
-    ) -> Result<bool, SandboxStoreError> {
-        // The caller captured this boundary before its final absence proof.
-        // Never advance it after provider I/O: doing so would let an older
-        // Pending/absent observation authorize recovery over newer Agent work.
-        let interruption_cause =
-            interruption::observe(self.adapter.as_ref(), sandbox, observed_at).await;
-        let outcome = measure(
-            Stage::Transaction,
-            self.store.recover_runtime_loss(SandboxRuntimeLossRequest {
-                sandbox_id: sandbox.id.clone(),
-                expected_revision: sandbox.revision,
-                expected_runtime: sandbox.runtime.clone(),
-                retain_runtime: sandbox.lifecycle.home.is_some()
-                    && sandbox
-                        .runtime
-                        .as_ref()
-                        .is_some_and(|binding| binding.runtime_id.starts_with("agent-sandbox:")),
-                interruption_cause,
-                observed_at: rfc3339_at(observed_at),
-            }),
-            diagnostics::loss_outcome,
-        )
-        .await?;
-        tracing::info!(outcome = ?outcome, "runtime loss reconciliation outcome");
-        Ok(matches!(
-            outcome,
-            SandboxRuntimeLossOutcome::RecoveryScheduled | SandboxRuntimeLossOutcome::Failed
-        ))
     }
 }
 

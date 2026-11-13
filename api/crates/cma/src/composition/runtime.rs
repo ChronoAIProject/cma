@@ -80,7 +80,9 @@ pub(super) fn lifecycle_config(
     holder: String,
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
+        runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
         access_transport_migration: config.agent_access_transport_migration.clone(),
