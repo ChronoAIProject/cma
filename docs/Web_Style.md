@@ -1426,8 +1426,15 @@ verification and reconnection, without inventing downloads or file percentages.
 
 The Agent conversation independently reads its exact public Sandbox while open,
 using the settled five-second and saving 1.5-second refresh cadence from §16.
-Returning from a hidden tab requires a new foreground observation; an otherwise
-allowed observation expires after ten seconds without a successful refresh.
+Each successful observation remains valid for the next refresh delay plus the
+ten-second request timeout (15 seconds when settled, at most 15.5 seconds during
+readiness backoff). A slow refresh keeps input available within that deadline;
+one transient failure retains the valid observation, while two consecutive
+failures, a timeout beyond the deadline, or an authorization denial hold input.
+Returning from a hidden tab immediately refreshes: a still-valid observation
+remains usable, while an expired observation shows **Checking Sandbox status.**
+until a foreground read succeeds. Revalidation uses **Checking Sandbox resources.**
+for resources; confirmed observation unavailability retains the reconnecting copy.
 Actual saving phases and their recorded start time use the existing composer
 notice. While saving is known, or lifecycle information is missing or stale,
 hold Send and approval decisions without disabling draft editing or hiding
@@ -6320,3 +6327,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-12 | Specify capability-gated self-service account deletion, acknowledged CMA-only loss, immediate access revocation and the seven-day live-data deadline, published retention-policy guidance, recorded cleanup progress and same-key recovery, and the restricted Deletion in progress page using existing components. |
 
 | 2026-11-13 | Bound Agent access-request observation by request state, turn activity, durable event hints and visibility. Suspend hidden personal-tree badge reads, share immutable creation-origin categories within a mounted account, and back off unchanged sidebar hierarchy reads from fifteen to sixty seconds while preserving explicit refresh, denial clearing and lifecycle observation. |
+
+| 2026-11-13 | Keep valid composer observations through slow refreshes and short tab switches; bound freshness by poll delay plus request timeout, distinguish revalidation from unavailability, and retain checkpoint, lifecycle and denial fences (#1801). |
