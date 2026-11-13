@@ -64,7 +64,7 @@ pub(super) async fn monitored(seed: &Seeded) -> (MongoTriggerDefinitionStore, Ar
     let database = seed.database.clone();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
-            if event.database_name == database {
+            if event.db == database {
                 observed
                     .commands
                     .lock()

@@ -75,7 +75,7 @@ async fn fresh_launch_fences_only_the_visitor_and_reads_publisher_authority() {
                         == Some(publisher_hash.as_str())
             })
             .expect("publisher standing is read from the transaction authority");
-        assert_eq!(publisher_read.get_bool("autocommit"), Ok(false));
+        assert!(!publisher_read.get_bool("autocommit").unwrap());
         assert!(publisher_read.contains_key("txnNumber"));
         assert_eq!(
             publisher_read.get_document("projection").unwrap(),
