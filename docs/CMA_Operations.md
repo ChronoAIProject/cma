@@ -2454,9 +2454,14 @@ proposal. Production flag changes remain part of the approved release process.
 
 ### Cooperative full-scan activation and rollback
 
-`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves scheduling behavior
-while retaining the execution measurements. The budget is fixed at 2 ms; it is
-not a deployment parameter. Every eighth completed row checks elapsed time,
+`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves the ordinary owned-row
+cursor and scheduling behavior while retaining execution measurements. With `true`,
+the complete integrity scanner borrows rows from MongoDB raw batches, avoiding
+the driver's uninterrupted batch-wide row copying before the first row is returned.
+The same flag also enables cooperative checkpoints between fully processed rows.
+The query, server batch sizing, session, snapshot/transaction scope, validation and
+accounting are unchanged; this adds no getMore commands or connection checkouts.
+The budget is fixed at 2 ms; it is not a deployment parameter. Every eighth completed row checks elapsed time,
 and a yield occurs only after validation, the visitor, hashing and row accounting
 finish. Individual driver polls, rows and visitors cannot be preempted, so 2 ms
 is a checkpoint budget rather than a hard upper bound on every poll.
@@ -2464,8 +2469,9 @@ is a checkpoint budget rather than a hard upper bound on every poll.
 The release owner first records at least 30 minutes under natural load with the
 switch off. If longest sections for scans of at least 1,000 rows have p95 at least
 10 ms (case A), enable the switch in the same image and observe at least 60
-minutes. A driver-poll p95 of at least 5 ms (case B) separately justifies a batch
-limit investigation and its extra getMore/checkout cost. If every caller has
+minutes. The enabled behavior includes borrowed raw-batch delivery after #1320;
+bind comparisons to the exact image as well as the flag value. A driver-poll p95
+of at least 5 ms (case B) separately justifies a batch limit investigation and its extra getMore/checkout cost. If every caller has
 section p99 below 2 ms (case C), leave cooperation off and retain measurements.
 Local reproduction guides implementation; it does not replace production
 attribution or authorize activation.
@@ -2716,6 +2722,24 @@ silently allocates a second home. In particular, a controller-assigned unready
 member is already beyond the release boundary. Safe fresh-Claim replacement
 requires a separate fenced allocation-retirement transition or controller
 selection support; the external controller patch is tracked in #1887.
+
+During native preparation, guard failures in `Preparing` or `Installing`
+preserve the entire original reservation and workspace completion proof and use
+the existing five-second retry delay. They cannot schedule home retirement.
+The existing `Ready` maintenance policy for unhealthy unclaimed spares remains
+separate. Ordinary SandboxWorker retries default to 30 seconds; a two-second
+guard yield can therefore delay a normally starting cold runtime until a later
+attempt. Assignment observation still allows five seconds. Initial-create
+recovery with an already persisted runtime and no completed-installation proof
+can reach `bind_adopted`, whose readiness wait remains 180 seconds. That path
+requires a separate explicit create-context policy; retained/resume waits must
+not be shortened globally.
+
+The guard polls every 100 ms, up to roughly 20 observations per attempt. Each
+home observation uses three Kubernetes reads and each bind observation uses
+two. Activation evidence must include API read load, plain and desktop recovery
+to the next worker attempt, and cold-start completion time as well as guard
+duration. The stage deadline is not an end-to-end create deadline.
 
 `cma_native_claim_guard_total` and `cma_native_claim_guard_seconds` use only
 `stage` (`home`, `home_authority`, `bind`) and `outcome` (`ready`, `timeout`, `crash_loop`,
