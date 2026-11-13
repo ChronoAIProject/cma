@@ -16,6 +16,24 @@ const counts = { requests: 0, joined: 0, handoffs: 0 };
 /** Diagnostics contain counts only, never account identifiers or credentials. */
 export const identityGateDiagnostics = () => ({ ...counts });
 
+// Owner activation is separate from deployment. Reverting this constant keeps
+// fresh request batching but restores every adjacent authorization round trip.
+export const IDENTITY_HANDOFF_ENABLED = false;
+const handoffLifetimeMs = 250;
+
+/** A single adjacent continuation, never a reusable session cache. */
+export function createIdentityHandoff(enabled = IDENTITY_HANDOFF_ENABLED) {
+  const provedAt = performance.now();
+  let available = true;
+  return () => {
+    const elapsed = performance.now() - provedAt;
+    const valid = available && enabled && elapsed >= 0 && elapsed <= handoffLifetimeMs;
+    available = false;
+    if (valid) counts.handoffs += 1;
+    return valid;
+  };
+}
+
 /** One in-flight read and one queued batch; completed authority is never cached. */
 export function createIdentityGate(currentUser: CurrentUser) {
   let running: Batch | undefined;

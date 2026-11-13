@@ -1,5 +1,11 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import { createIdentityGate, identityGateDiagnostics, type CurrentUser } from './identityGate';
+import {
+  createIdentityGate,
+  createIdentityHandoff,
+  IDENTITY_HANDOFF_ENABLED,
+  identityGateDiagnostics,
+  type CurrentUser,
+} from './identityGate';
 import { harness } from './controller.fixture';
 import { IdentityChangedError } from './identity';
 
@@ -14,6 +20,11 @@ function deferred() {
 }
 
 beforeEach(() => sessionStorage.clear());
+
+it('ships adjacent proof reuse disabled until the owner activates it', () => {
+  expect(IDENTITY_HANDOFF_ENABLED).toBe(false);
+  expect(createIdentityHandoff()()).toBe(false);
+});
 
 it('batches synchronous callers into a request started after every call', async () => {
   const current = vi.fn<CurrentUser>().mockResolvedValue('alice');
