@@ -8,27 +8,43 @@ impl MongoSandboxStore {
         mut self,
         ids: &[AgentId],
     ) -> Result<Self, String> {
-        if ids.len() > 16 {
-            return Err("Agent log admission cohort exceeds preparation budget".into());
-        }
-        // No tasks are detached and no user request performs cohort preparation.
-        // A timed-out session is dropped/aborted by the driver. An ambiguous
-        // metadata-only commit can be verified safely on the next startup.
-        let result = tokio::time::timeout(Duration::from_secs(60), async {
-            for id in ids {
-                tokio::time::timeout(Duration::from_secs(10), prepare(&self, id))
-                    .await
-                    .map_err(|_| "Agent log preparation timed out")??;
-                self.bounded_admission_agents.insert(id.clone());
-            }
-            Ok::<_, String>(())
-        })
-        .await
-        .map_err(|_| "Agent log cohort preparation exceeded 60 seconds")?;
-        result?;
+        let prepared = prepare_cohort(ids, |id| prepare(&self, id)).await?;
+        self.bounded_admission_agents.extend(prepared);
         Ok(self)
     }
 }
+
+// Keep the serial startup budget independent of Mongo proof details. A failed
+// cohort never returns a store to composition, even after partial preparation.
+async fn prepare_cohort<'a, F, Fut>(
+    ids: &'a [AgentId],
+    mut operation: F,
+) -> Result<Vec<AgentId>, String>
+where
+    F: FnMut(&'a AgentId) -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+{
+    if ids.len() > 16 {
+        return Err("Agent log admission cohort exceeds preparation budget".into());
+    }
+    // No tasks are detached. Ambiguous metadata-only commits can be verified
+    // safely on the next startup; no unconfirmed cohort becomes ready.
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let mut prepared = Vec::new();
+        for id in ids {
+            tokio::time::timeout(Duration::from_secs(10), operation(id))
+                .await
+                .map_err(|_| "Agent log preparation timed out")??;
+            prepared.push(id.clone());
+        }
+        Ok(prepared)
+    })
+    .await
+    .map_err(|_| "Agent log cohort preparation exceeded 60 seconds")?
+}
+
+#[cfg(test)]
+mod tests;
 
 pub(super) async fn prepare(store: &MongoSandboxStore, id: &AgentId) -> Result<(), String> {
     let mut session = store
