@@ -256,6 +256,7 @@ impl Sender {
             }
             // The routed gate rechecks source/credential revision before each HTTP
             // write, including the gap between upload and recipient send.
+            let upload = matches!(&operation, NativePart::Upload(_));
             let send = async {
                 match operation {
                     NativePart::Structured(structured) => self
@@ -317,9 +318,17 @@ impl Sender {
                         .map(Some),
                 }
             };
-            let sent = timeout_at(deadline, send)
-                .await
-                .unwrap_or(Err(Error::Unconfirmed));
+            let sent = super::trace::native::part(
+                confirmed,
+                upload,
+                async {
+                    timeout_at(deadline, send)
+                        .await
+                        .unwrap_or(Err(Error::Unconfirmed))
+                },
+                super::trace::native::whatsapp,
+            )
+            .await;
             drop(permit);
             ctx.gate.progress();
             match sent {

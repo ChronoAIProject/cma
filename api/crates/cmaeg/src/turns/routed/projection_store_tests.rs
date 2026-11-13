@@ -16,6 +16,8 @@ pub(super) fn frame(mut raw: Value) -> RecoveryEvent {
     }
     raw["response_id"] = json!("resp_1");
     RecoveryEvent {
+        trace_contract: false,
+        trace: None,
         response_id: "resp_1".into(),
         sequence_number: raw["sequence_number"].as_u64().unwrap(),
         event: parse_event(&SseFrame {
