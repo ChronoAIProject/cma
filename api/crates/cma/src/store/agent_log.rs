@@ -381,6 +381,15 @@ impl AgentLogStore for MongoSandboxStore {
         super::agent_log_store::visit_page(self, agent_id, after, through, limit, true, visit).await
     }
 
+    async fn agent_log_prefix_with_tail(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        super::agent_log_reads::read_prefix_with_tail(self, agent)
+            .await
+            .map(Some)
+    }
+
     async fn agent_log_prefix(
         &self,
         agent_id: &AgentId,

@@ -159,15 +159,25 @@ impl NativeStatusInspection<'_> {
         let (backend, handle, request, home) = (self.backend, self.handle, self.request, self.home);
         // The captured reply must still belong to the exact graph and process
         // that authorized dispatch. These reads cannot bootstrap or rebind it.
-        let current = timed(
-            Stage::NativeIdentity,
-            backend.client.native_runtime_proof(handle, request, home),
+        let current = inspection_timing::measure(
+            &home.request.sandbox_id,
+            "post_status_graph",
+            timed(
+                Stage::NativeIdentity,
+                backend.client.native_runtime_proof(handle, request, home),
+            ),
         )
         .await?;
-        backend
-            .client
-            .verify_explicit_runtime_policy(current.member())
-            .await?;
+        // This fresh policy read follows graph completion. An earlier policy
+        // success cannot authorize a later graph after the definition changes.
+        inspection_timing::measure(
+            &home.request.sandbox_id,
+            "post_status_policy",
+            backend
+                .client
+                .verify_explicit_runtime_policy(current.member()),
+        )
+        .await?;
         if !current.matches(request, home)?
             || current.pod() != proof.pod()
             || observation(current.member())? != proof.observation

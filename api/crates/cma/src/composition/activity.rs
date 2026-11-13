@@ -17,11 +17,22 @@ pub(super) fn compose(
     if config.activity_async_enabled {
         let (sink, worker) = ActivityQueue::new(stores.activity.clone());
         (
-            ActivityRecorder::with_sink(service.clone(), sink),
+            ActivityRecorder::configured(
+                service.clone(),
+                Some(sink),
+                config.activity_operational_read_sampling_enabled,
+            ),
             Some(worker),
         )
     } else {
-        (ActivityRecorder::new(service.clone()), None)
+        (
+            ActivityRecorder::configured(
+                service.clone(),
+                None,
+                config.activity_operational_read_sampling_enabled,
+            ),
+            None,
+        )
     }
 }
 
