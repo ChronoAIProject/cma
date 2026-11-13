@@ -138,6 +138,14 @@ data:
   CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
   CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED: "false"
   CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED: "false"
+  # Retained usage writers and warming require separate staged owner approval.
+  CHRONO_USAGE_REPORT_VIEWS_ENABLED: "false"
+  CHRONO_USAGE_REPORT_VIEW_SCOPES: "[]"
+  CHRONO_USAGE_REPORT_FRESH_SECONDS: "300"
+  CHRONO_USAGE_REPORT_RETAIN_SECONDS: "86400"
+  CHRONO_USAGE_REPORT_WARMER_ENABLED: "false"
+  CHRONO_USAGE_REPORT_WARM_SCOPES: "[]"
+  CHRONO_USAGE_REPORT_WARM_SECONDS: "300"
   CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
   # deployed and its latency and authorization evidence is reviewed.
