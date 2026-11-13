@@ -212,5 +212,10 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
       return undefined;
     }
   };
-  return { open, legacySession, ...createTransportPreparation(select, open) };
+  return {
+    open,
+    legacySession,
+    identityFence: () => guardAgentTransportIdentity(options.storage),
+    ...createTransportPreparation(select, open),
+  };
 }
