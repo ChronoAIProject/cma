@@ -6294,6 +6294,13 @@
           "binding_id": {
             "$ref": "#/components/schemas/BindingId"
           },
+          "capabilities": {
+            "description": "Server-negotiated capabilities retained with the existing binding write.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "level": {
             "$ref": "#/components/schemas/ConformanceLevel"
           },
