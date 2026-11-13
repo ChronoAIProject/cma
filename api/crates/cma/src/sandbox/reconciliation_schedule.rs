@@ -7,6 +7,7 @@ impl SandboxReconciler {
         // Independent of sweep progress: a failing earlier phase must not hold
         // back platform spend transitions (contract §5.3).
         self.platform_spend_stop(now).await;
+        self.reconcile_pending_homes(now).await;
         // The progress lock serializes both lanes, including outer cancellation.
         if self.failed_runtime_recovery.is_some() {
             let mut recovery = self.recovery_schedule.lock().await;

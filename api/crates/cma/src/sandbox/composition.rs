@@ -30,6 +30,7 @@ use crate::{shutdown::ShutdownCoordinator, store::MongoSandboxStore};
 
 pub(crate) struct SandboxLifecycleDependencies {
     pub store: Arc<MongoSandboxStore>,
+    pub pending_homes: Arc<crate::store::pending_launch_homes::PendingLaunchHomes>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
     pub registry: Arc<LiveAgentRegistry>,
@@ -92,6 +93,7 @@ impl SandboxLifecycleComposition {
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
         .with_platform_spend(dependencies.store.clone())
+        .with_pending_homes(dependencies.pending_homes.clone())
         .with_failed_runtime_recovery(Arc::new(
             layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                 dependencies.store.clone(),

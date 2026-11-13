@@ -247,6 +247,7 @@ impl ControlPlaneComposition {
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
+                pending_homes: Arc::new(stores.admission_ceilings.pending_homes.clone()),
                 title_budget: stores.request_limits.clone(),
                 title_runtime: Arc::new(PlatformTitleEndpoint {
                     platform_base_url: config.runtime.platform_base_url.clone(),
