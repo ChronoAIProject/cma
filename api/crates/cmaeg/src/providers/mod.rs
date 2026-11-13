@@ -26,6 +26,8 @@ mod worker_classifier;
 pub(crate) use worker_classifier::WorkerClassifierClient;
 
 #[cfg(test)]
+mod trace_throughput;
+#[cfg(test)]
 mod worker_tracking_tests;
 
 pub use client::ProviderClient;
