@@ -29,20 +29,26 @@ pub(crate) struct ProviderReader {
 
 impl ProviderReader {
     /// Check both gates before allocating or inspecting diagnostic input.
-    pub(crate) fn new(enabled: bool, negotiated: bool, response_id: Option<&str>) -> Option<Self> {
+    pub(crate) fn new(
+        enabled: bool,
+        negotiated: bool,
+        response_id: Option<&str>,
+    ) -> Option<Box<Self>> {
         if !enabled || !negotiated {
             return None;
         }
         if response_id.is_some_and(|id| !valid_response_id(id)) {
             return None;
         }
-        Some(Self {
+        // Keep default-path request and stream futures pointer-sized at this
+        // boundary. The larger diagnostic state is allocated only after both gates.
+        Some(Box::new(Self {
             response_id: response_id.map(str::to_owned),
             association: AssociationSlot::default(),
             header_turn: None,
             request_id: None,
             source: None,
-        })
+        }))
     }
 
     /// Only admission requests need a pre-admission source span. Recovery

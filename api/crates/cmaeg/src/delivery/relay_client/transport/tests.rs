@@ -63,7 +63,13 @@ async fn relay_http_trace_keeps_request_bytes_and_502_is_unknown_without_resend(
         let trace = Operation::start(writer.clone(), Stage::ChannelPart, Some(parent), None);
         let context = trace.context();
         let reply = transport
-            .exchange(url.clone(), headers, body.clone(), timeout, Some(trace))
+            .exchange(
+                url.clone(),
+                headers,
+                body.clone(),
+                timeout,
+                Some(Box::new(trace)),
+            )
             .await
             .unwrap();
         assert_eq!(

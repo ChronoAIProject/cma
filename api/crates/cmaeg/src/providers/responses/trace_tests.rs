@@ -38,7 +38,10 @@ fn negotiated_parser_consumes_event_without_exposing_metadata_as_model_output() 
         })
     );
     assert_eq!(
-        parse_event_with_trace(&event, ProviderReader::new(false, true, None).as_mut()),
+        parse_event_with_trace(
+            &event,
+            ProviderReader::new(false, true, None).as_deref_mut()
+        ),
         parse_event(&event)
     );
 }
