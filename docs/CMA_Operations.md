@@ -2378,6 +2378,21 @@ on the same image. Local measurements do not complete production verification.
 
 ## Sandbox detail read rollout
 
+`CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. It selects lineage-only Agent documents for the Sandbox
+detail store port, independently of authorization sessions, enrichment and the
+existing hierarchy switches. The projected fields retain both indexed and
+aggregate copies of identity, ownership, ancestry and revision; every existing
+hierarchy edge/count check still runs. The complete hierarchy port used by
+lifecycle/recovery, Workspace views and Agent-target authorization stays full.
+The enabled detail path does not decode or validate omitted Agent payload,
+including conversation and work/recovery state. Segmented envelope discriminators,
+head-revision shape and incarnation identity remain checked without reading logs.
+Omitted-payload checks remain with complete Agent consumers. This validation-boundary change
+requires its own review. Activation waits for the production phase baseline
+and #1743 attribution. Set this flag back to `false` and roll the same
+API image to restore full detail records; no data migration or repair is needed.
+
 `CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED` defaults to `false` and accepts only
 exact `true` or `false`. When enabled, each individual resource authorization
 snapshot uses a Mongo snapshot session for its lineage aggregation and bounded
