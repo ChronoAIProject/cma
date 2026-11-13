@@ -169,7 +169,9 @@ impl ReportingStore {
             .session(&mut session)
             .await
             .map_err(unavailable)?;
-        self.collection(CONTROL).update_one(doc! {"_id":key},doc! {"$set":{"kind":VIEW_KIND,
+        self.collection(CONTROL).update_one(doc! {"_id":key},doc! {
+            "$setOnInsert":{"document_schema_version":super::super::schema::DOCUMENT_SCHEMA_VERSION},
+            "$set":{"kind":VIEW_KIND,
             "principal":&scope.principal,"admin":scope.admin,"revision":revision,"active_id":&id,
             "expires_at":expires(retain_until+86_400)}}).upsert(true).session(&mut session).await.map_err(unavailable)?;
         session.commit_transaction().await.map_err(unavailable)?;
