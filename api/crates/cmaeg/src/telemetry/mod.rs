@@ -4,6 +4,7 @@ pub mod http;
 pub mod names;
 pub mod operations;
 pub mod timing;
+pub(crate) mod turn_trace;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use std::sync::OnceLock;
 static REGISTRY: OnceLock<Result<PrometheusHandle, String>> = OnceLock::new();
