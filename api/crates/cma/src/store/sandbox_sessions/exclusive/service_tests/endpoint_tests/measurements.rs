@@ -79,15 +79,17 @@ fn provider_delta(before: ProviderSnapshot, after: ProviderSnapshot) -> Value {
 async fn attempt(f: &Fixture, ingress: usize, diagnostics: Option<&Diagnostics>) -> Value {
     let provider_before = f.auth.provider_snapshot();
     let original_before = diagnostics.map(Diagnostics::resolution).unwrap_or_default();
-    let mut after_discovery = original_before;
-    let mut after_upgrade = original_before;
+    let mut after_discovery = None;
+    let mut after_upgrade = None;
+    let mut websocket_status = None;
     let mut socket = None;
     let started = std::time::Instant::now();
-    let result: Result<(), &'static str> = async {
+    let result = tokio::time::timeout(Duration::from_secs(15), async {
         let response = f.ingresses[ingress]
             .discovery_result(&f.resources.agents[ingress], &f.auth.headers)
-            .await
-            .map_err(|_| "discovery_transport")?;
+            .await;
+        after_discovery = diagnostics.map(Diagnostics::resolution);
+        let response = response.map_err(|_| "discovery_transport")?;
         if response.status() != 200 {
             return Err("discovery_refusal");
         }
@@ -97,13 +99,17 @@ async fn attempt(f: &Fixture, ingress: usize, diagnostics: Option<&Diagnostics>)
         {
             return Err("descriptor_shape");
         }
-        after_discovery = diagnostics.map(Diagnostics::resolution).unwrap_or_default();
-        socket = Some(
-            f.connect(ingress)
-                .await
-                .map_err(|_| "websocket_refusal_or_transport")?,
-        );
-        after_upgrade = diagnostics.map(Diagnostics::resolution).unwrap_or_default();
+        let connected = f.connect(ingress).await;
+        after_upgrade = diagnostics.map(Diagnostics::resolution);
+        socket = Some(match connected {
+            Ok(socket) => socket,
+            Err(error) => {
+                if let Error::Http(response) = error {
+                    websocket_status = Some(response.status().as_u16());
+                }
+                return Err("websocket_refusal_or_transport");
+            }
+        });
         let connection = socket.as_mut().unwrap();
         tokio::time::timeout(Duration::from_secs(3), async {
             connection
@@ -117,8 +123,9 @@ async fn attempt(f: &Fixture, ingress: usize, diagnostics: Option<&Diagnostics>)
         })
         .await
         .map_err(|_| "frame_deadline")?
-    }
-    .await;
+    })
+    .await
+    .unwrap_or(Err("attempt_deadline"));
     let milliseconds = started.elapsed().as_secs_f64() * 1000.0;
     let provider_after = f.auth.provider_snapshot();
     if let Some(mut socket) = socket {
@@ -128,10 +135,16 @@ async fn attempt(f: &Fixture, ingress: usize, diagnostics: Option<&Diagnostics>)
         "milliseconds": milliseconds,
         "outcome": result.err().unwrap_or("ok"),
         "ingress": ingress,
+        "websocket_refusal_status": websocket_status,
     });
     if diagnostics.is_some() {
-        sample["discovery_original_resolver"] = resolver_delta(original_before, after_discovery);
-        sample["websocket_original_resolver"] = resolver_delta(after_discovery, after_upgrade);
+        sample["discovery_original_resolver"] = after_discovery
+            .map(|after| resolver_delta(original_before, after))
+            .unwrap_or(Value::Null);
+        sample["websocket_original_resolver"] = after_discovery
+            .zip(after_upgrade)
+            .map(|(before, after)| resolver_delta(before, after))
+            .unwrap_or(Value::Null);
         sample["provider"] = provider_delta(provider_before, provider_after);
     }
     sample
