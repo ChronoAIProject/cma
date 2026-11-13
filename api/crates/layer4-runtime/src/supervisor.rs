@@ -69,6 +69,7 @@ pub(crate) struct HeldCheckpoint {
 }
 
 pub(crate) struct Supervisor {
+    pub(crate) manager_ownership: crate::manager_ownership::ManagerOwnership,
     config: RuntimeConfig,
     mutations: crate::mutation_store::Store,
     boot_id: String,

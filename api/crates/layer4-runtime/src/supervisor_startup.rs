@@ -138,6 +138,9 @@ impl Supervisor {
             None
         };
         Ok(Arc::new(Self {
+            manager_ownership: crate::manager_ownership::ManagerOwnership::new(
+                config.state_root.join("agent-manager-owners"),
+            ),
             mutations: crate::mutation_store::Store::new(config.clone(), ledger)
                 .with_retirement(retirement),
             config,

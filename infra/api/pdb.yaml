@@ -1,0 +1,15 @@
+# Apply only after multi-instance enablement and at least two Ready replicas.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cma-agent-manager
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-agent-manager
+    app.kubernetes.io/part-of: cma
+spec:
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cma-agent-manager
