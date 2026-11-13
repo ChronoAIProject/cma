@@ -196,7 +196,7 @@ impl DesktopService {
             validity,
         ));
         Ok(DesktopConnection {
-            connection,
+            connection: Some(connection),
             sandbox_id: request.sandbox_id,
             session_id: request.session_id,
             runtime_id: request.runtime.runtime_id,

@@ -6347,3 +6347,27 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-13 | Keep valid composer observations through slow refreshes and short tab switches; bound freshness by poll delay plus request timeout, distinguish revalidation from unavailability, and retain checkpoint, lifecycle and denial fences (#1801). |
 
 | 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
+
+### 2026-11-13 — Retryable Agent reads and desktop recovery
+
+Agent observation failures caused by temporary capacity show an inline busy state
+with a retry countdown. Keep already published conversation and detail visible
+while ancillary preparation reads revalidate. Disable explicit retry while a
+server Retry-After deadline is pending; focus and manual refresh must not bypass
+that deadline. Use exponential backoff with positive jitter, a single request in
+flight per observer, and pause observation while the document is hidden. Preserve
+the existing authority expiry, lifecycle/checkpoint and composer freshness floors;
+retained content is never renewed permission to send or take control.
+
+A dropped or early desktop stream reconnects automatically with bounded backoff.
+An existing healthy viewer survives ordinary metadata refreshes. Reconnection
+checks current desktop access and waits while another connection still holds the
+Sandbox lease. Hiding the document disposes the viewer and releases manual input;
+returning resumes observation after any pending retry deadline. Reconnection never
+restores manual control without another explicit action. A denied identity or
+changed owner clears the old view. While desktop identity is unknown, show an
+explicit desktop loading state; failed environment discovery must not assert that
+the Browser is unsupported. Use the existing status text, Button, and desktop
+feedback components without introducing new visual tokens.
+
+| 2026-11-13 | Add retry countdowns and disabled retry during server backoff, preserve published Agent content during ancillary revalidation, and automatically recover desktop streams with lease-aware discovery, hidden-view disposal and unchanged freshness/input authority (#1948). |

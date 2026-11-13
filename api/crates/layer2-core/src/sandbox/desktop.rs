@@ -35,12 +35,28 @@ pub enum DesktopError {
 pub struct DesktopService {
     reads: Arc<AgentReadService>,
     adapter: Arc<dyn SandboxAdapter>,
-    leases: Arc<Mutex<BTreeMap<String, Weak<Mutex<()>>>>>,
+    leases: DesktopLeases,
     replicas_enabled: bool,
 }
 
+#[derive(Clone, Default)]
+struct DesktopLeases(Arc<Mutex<BTreeMap<String, Weak<Mutex<()>>>>>);
+
+impl DesktopLeases {
+    async fn acquire(&self, sandbox_id: &str) -> Result<OwnedMutexGuard<()>, DesktopError> {
+        let mut leases = self.0.lock().await;
+        leases.retain(|_, value| value.strong_count() > 0);
+        let lease = leases
+            .get(sandbox_id)
+            .and_then(Weak::upgrade)
+            .unwrap_or_default();
+        leases.insert(sandbox_id.to_owned(), Arc::downgrade(&lease));
+        lease.try_lock_owned().map_err(|_| DesktopError::Busy)
+    }
+}
+
 pub struct DesktopConnection {
-    connection: DesktopConnectionHandle,
+    connection: Option<DesktopConnectionHandle>,
     sandbox_id: SandboxId,
     session_id: String,
     runtime_id: String,
@@ -50,7 +66,7 @@ pub struct DesktopConnection {
 
 impl Drop for DesktopConnection {
     fn drop(&mut self) {
-        if self.owned.is_none() {
+        if self._lease.is_some() {
             unregister_open_desktop_session(&self.sandbox_id);
         }
     }
@@ -58,20 +74,22 @@ impl Drop for DesktopConnection {
 
 impl DesktopConnection {
     pub async fn send(&mut self, frame: DesktopFrame) -> Result<(), DesktopError> {
+        let connection = self.connection.as_mut().ok_or(DesktopError::Unavailable)?;
         if let Some(owned) = &mut self.owned {
-            return owned.send(&mut self.connection, frame).await;
+            return owned.send(connection, frame).await;
         }
-        self.connection
+        connection
             .send(frame)
             .await
             .map_err(|_| DesktopError::RuntimeUnavailable)
     }
 
     pub async fn recv(&mut self) -> Result<Option<DesktopFrame>, DesktopError> {
+        let connection = self.connection.as_mut().ok_or(DesktopError::Unavailable)?;
         if let Some(owned) = &mut self.owned {
-            return owned.recv(&mut self.connection).await;
+            return owned.recv(connection).await;
         }
-        self.connection
+        connection
             .recv()
             .await
             .map_err(|_| DesktopError::RuntimeUnavailable)
@@ -83,7 +101,7 @@ impl DesktopService {
         Self {
             reads,
             adapter,
-            leases: Arc::new(Mutex::new(BTreeMap::new())),
+            leases: DesktopLeases::default(),
             replicas_enabled: false,
         }
     }
@@ -134,7 +152,20 @@ impl DesktopService {
     }
 
     pub async fn available(&self, caller: &Caller, id: &AgentId) -> Result<(), DesktopError> {
-        self.authorize(caller, id).await.map(|_| ())
+        let (sandbox_id, _) = self.authorize(caller, id).await?;
+        // Discovery makes the old viewer's outstanding lease observable before
+        // a new WebSocket hides its refusal headers. Opening still checks atomically.
+        if self.replicas_enabled {
+            let store = self.reads.session_store().map_err(|_| DesktopError::AuthorityUnavailable)?;
+            let occupied = tokio::time::timeout(Duration::from_secs(3),
+                store.has_open_sandbox_session(&sandbox_id, &crate::now_rfc3339()))
+                .await.map_err(|_| DesktopError::AuthorityUnavailable)?
+                .map_err(|_| DesktopError::AuthorityUnavailable)?;
+            if occupied { return Err(DesktopError::Busy); }
+        } else {
+            let _lease = self.leases.acquire(sandbox_id.as_str()).await?;
+        }
+        Ok(())
     }
 
     pub async fn still_authorized(
@@ -162,14 +193,33 @@ impl DesktopService {
 
     pub async fn close_connection(&self, connection: &mut DesktopConnection) {
         if let Some(owned) = &mut connection.owned {
+            // Receiver acknowledgement drains old input before shared release.
+            // Uncertainty retains the durable claim while dropping our socket.
             owned.close(&self.reads).await;
-        } else if self
-            .reads
-            .close_sandbox_session(&connection.sandbox_id, &connection.session_id)
-            .await
-            .is_err()
+            connection.connection.take();
+        } else {
+            // Preserve the legacy handoff: slow persistence cannot retain the
+            // old runtime socket or the local exclusive viewer lease.
+            connection.connection.take();
+            if connection._lease.take().is_some() {
+                unregister_open_desktop_session(&connection.sandbox_id);
+            }
+            self.close(connection.sandbox_id.clone(), connection.session_id.clone()).await;
+        }
+    }
+
+    pub async fn close(&self, sandbox_id: SandboxId, session_id: String) {
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            self.reads.close_sandbox_session(&sandbox_id, &session_id),
+        )
+        .await
         {
-            tracing::warn!("desktop session cleanup failed; expiry retains recovery");
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => tracing::warn!(
+                "desktop session close could not be recorded; awaiting session expiry"
+            ),
+            Err(_) => tracing::warn!("desktop session close timed out; awaiting session expiry"),
         }
     }
 
@@ -185,16 +235,7 @@ impl DesktopService {
         let (sandbox_id, runtime) = self.authorize(caller, id).await?;
         let sandbox_id = sandbox_id.to_string();
         let runtime_id = runtime.runtime_id;
-        let lease = {
-            let mut leases = self.leases.lock().await;
-            leases.retain(|_, value| value.strong_count() > 0);
-            let lease = leases
-                .get(&sandbox_id)
-                .and_then(Weak::upgrade)
-                .unwrap_or_default();
-            leases.insert(sandbox_id.clone(), Arc::downgrade(&lease));
-            lease.try_lock_owned().map_err(|_| DesktopError::Busy)?
-        };
+        let lease = self.leases.acquire(&sandbox_id).await?;
         let connection = tokio::time::timeout(
             Duration::from_secs(10),
             self.adapter
@@ -211,7 +252,7 @@ impl DesktopService {
             .map_err(|_| DesktopError::Unavailable)?;
         register_open_desktop_session(&sandbox_id);
         Ok(DesktopConnection {
-            connection,
+            connection: Some(connection),
             sandbox_id,
             session_id,
             runtime_id,
@@ -224,3 +265,7 @@ impl DesktopService {
 fn session_expiry() -> String {
     rfc3339_at(SystemTime::now() + Duration::from_secs(90))
 }
+
+#[cfg(test)]
+#[path = "desktop_lease_tests.rs"]
+mod lease_tests;
