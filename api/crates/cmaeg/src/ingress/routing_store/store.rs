@@ -118,6 +118,9 @@ impl PlanStore {
         {
             return Err(AdmissionError::Conflict);
         }
+        if let Some(plan) = &restored {
+            plan.check_compatibility_replay(request, &event)?;
+        }
         match restored {
             Some(plan) => self.queue_committed(plan).await.map(Some),
             None => Ok(None),
@@ -384,6 +387,21 @@ impl PlanStore {
 }
 
 fn same_request(candidate: &Candidate, plan: AdmittedPlan) -> Result<AdmittedPlan, AdmissionError> {
+    if plan.is_compatibility() {
+        let incoming: AdmittedPlan = codec::decode(&candidate.bytes)?;
+        let [target] = incoming.targets.as_slice() else {
+            return Err(AdmissionError::Conflict);
+        };
+        let retained = &plan.targets[0].launch;
+        if retained.idempotency_key != target.launch.idempotency_key
+            || retained.event.consumer != target.launch.event.consumer
+            || retained.event.conversation_id != target.launch.event.conversation_id
+            || retained.event.partition_key != target.launch.event.partition_key
+            || retained.event.lineage != target.launch.event.lineage
+        {
+            return Err(AdmissionError::Conflict);
+        }
+    }
     if plan.request_hash != candidate.request_hash() {
         Err(AdmissionError::Conflict)
     } else {
