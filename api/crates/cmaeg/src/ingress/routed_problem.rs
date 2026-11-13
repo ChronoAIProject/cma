@@ -2,6 +2,7 @@
 use super::{AdmissionError, Problem, ProblemCode};
 
 pub(super) fn admission_problem(error: AdmissionError) -> Problem {
+    let class = crate::ingress::admission_trace::admission_class(&error);
     let (code, status, detail) = match error {
         AdmissionError::Conflict => (ProblemCode::Conflict, 409, "routed_event_conflict"),
         AdmissionError::GuardConflict => (
@@ -18,5 +19,12 @@ pub(super) fn admission_problem(error: AdmissionError) -> Problem {
             "routed_admission_unavailable",
         ),
     };
+    tracing::info!(
+        event = "eg_admission_public_mapping",
+        class,
+        public_status = status,
+        public_detail = detail,
+        "Admission error mapped to public refusal"
+    );
     Problem::new(code, status, detail)
 }

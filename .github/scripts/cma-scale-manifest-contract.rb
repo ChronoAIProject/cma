@@ -52,10 +52,10 @@ module CmaScaleManifests
       { "exec" => { "command" => ["/bin/sh", "-c",
         "/usr/local/bin/cma --agent-manager-drain; status=$?; /bin/sleep 30; exit $status"] } }
     else
-      { "exec" => { "command" => ["/bin/sh", "-c",
-        "/usr/local/bin/cmaeg --replica-drain; status=$?; /bin/sleep 30; exit $status"] } }
+      # Same-uid media jobs must not observe a credential-bearing exec process.
+      { "sleep" => { "seconds" => 30 } }
     end
-    require_contract(hook == expected_hook, "preStop must drain and preserve failure status")
+    require_contract(hook == expected_hook, "preStop must preserve the role's drain and credential isolation contract")
     resources = if role == "api"
       { "requests" => { "cpu" => "4", "memory" => "256Mi" }, "limits" => { "cpu" => "8", "memory" => "8Gi" } }
     else

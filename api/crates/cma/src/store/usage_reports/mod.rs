@@ -7,13 +7,20 @@ mod diagnostics;
 pub(crate) mod inventory;
 mod options;
 mod owner_allocation;
+mod owner_names;
 mod owners;
 mod progress;
 pub(crate) use progress::Progress;
 mod reads;
 mod schema;
+mod submission;
+mod view_admission;
+mod view_authority;
+mod view_finish;
+mod views;
 mod work;
 pub(crate) use charts::chart_documents;
+pub(crate) use views::ViewLease;
 pub(crate) use work::ReportLease;
 
 use layer2_core::sandbox_metrics::{MetricsError, Result};
@@ -38,6 +45,8 @@ pub(crate) struct ReportingStore {
     pub(super) db: Database,
     pub(super) signer: Arc<layer2_core::sandbox_metrics::cursor::CursorSigner>,
     pub(super) circuit: Arc<std::sync::atomic::AtomicU64>,
+    notifications: Arc<submission::ReportNotifications>,
+    pub(crate) view_policy: Arc<crate::config::report_views::ViewPolicy>,
 }
 impl ReportingStore {
     pub(crate) async fn snapshot(&self) -> Result<mongodb::ClientSession> {
@@ -106,11 +115,13 @@ impl ReportingStore {
             client,
             signer: Arc::new(layer2_core::sandbox_metrics::cursor::CursorSigner::new(key)),
             circuit,
+            notifications: Arc::default(),
+            view_policy: Arc::default(),
         });
         store.initialize().await?;
         Ok(store)
     }
-    pub(super) fn collection(&self, name: &str) -> Collection<Document> {
+    pub(crate) fn collection(&self, name: &str) -> Collection<Document> {
         self.db.collection(name)
     }
     pub(crate) fn check_circuit(&self, now: u64) -> Result<()> {
@@ -125,7 +136,7 @@ fn configure_pool(options: &mut ClientOptions, pool_size: u32) {
     options.connect_timeout = Some(DB_DEADLINE);
     options.server_selection_timeout = Some(DB_DEADLINE);
 }
-pub(super) fn unavailable(error: impl std::fmt::Display) -> MetricsError {
+pub(crate) fn unavailable(error: impl std::fmt::Display) -> MetricsError {
     tracing::warn!(error=%error,"reporting store unavailable");
     MetricsError::Unavailable
 }
