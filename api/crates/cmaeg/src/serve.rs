@@ -34,6 +34,7 @@ pub(crate) async fn serve(
     telegram_effects: bool,
     telegram_media_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let replicas = crate::replicas::config::Config::from_env()?;
     let discord_media_edits = config.native_discord_media_card_edits_enabled && discord_card_edits;
     let discord_media_replacements =
         config.native_discord_media_card_replacements_enabled && discord_media_edits;
@@ -90,6 +91,22 @@ pub(crate) async fn serve(
     ));
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
+    let drain_control = crate::replicas::drain::Control::new(
+        state.master_keys.clone(),
+        tracker.clone(),
+        config.listen.port(),
+        &config.management.public_url,
+    );
+    let replica_runtime = if replicas.enabled {
+        Some(
+            crate::replicas::runtime::Runtime::start(&config, &state, drain_control.clone())
+                .await?,
+        )
+    } else {
+        crate::replicas::runtime::Runtime::verify_legacy(&state, &config.management.public_url)
+            .await?;
+        None
+    };
     let (scheduler, outcomes) = delivery::router::ShardedScheduler::channel(256);
     let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> = Arc::new(scheduler);
     let waiters = Arc::new(delivery::sync::SyncRegistry::default());
@@ -201,6 +218,9 @@ pub(crate) async fn serve(
             delivery: delivery.clone(),
             tracker: tracker.clone(),
             custom: custom_delivery,
+            partitions: replica_runtime
+                .as_ref()
+                .map(|runtime| runtime.partitions.clone()),
         },
     )
     .await?;
@@ -382,6 +402,7 @@ pub(crate) async fn serve(
 
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let mut router = router_with_state(state)
+        .merge(drain_control.router(replicas.enabled))
         .merge(http::events::router(http::events::CustomIngressState {
             ingress: ingress.clone(),
             waiters,
@@ -411,7 +432,10 @@ pub(crate) async fn serve(
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
-        shutdown::wait_for_shutdown_signal().await;
+        tokio::select! {
+            _ = shutdown::wait_for_shutdown_signal() => drain_control.start(),
+            _ = drain_control.requested() => {}
+        }
         let deadline = shutdown::Drain {
             tracker,
             drain_timeout: config.turns.drain,

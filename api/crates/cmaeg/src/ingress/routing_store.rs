@@ -13,6 +13,7 @@ mod codec;
 mod preparation_source;
 mod queue;
 mod recovery;
+mod root;
 mod store;
 mod types;
 

@@ -28,7 +28,7 @@ impl PlanStore {
         if owner.is_empty() || owner.len() > 512 {
             return Err(AdmissionError::Invalid);
         }
-        self.scan_page(Some(owner), after, limit).await
+        self.scan_page(Some(owner), after, limit, true).await
     }
 
     /// Service-owned recovery across tenants. Each opened manifest must match
@@ -38,7 +38,18 @@ impl PlanStore {
         after: Option<&str>,
         limit: usize,
     ) -> Result<RecoveryPage, AdmissionError> {
-        self.scan_page(None, after, limit).await
+        self.scan_page(None, after, limit, true).await
+    }
+
+    /// Compatibility backfill for roots written before the replica index existed.
+    /// This bounded scan must be completed during the coordinated cutover; the
+    /// normal participating sweeper uses only indexed pending admissions.
+    pub async fn recover_legacy_page(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<RecoveryPage, AdmissionError> {
+        self.scan_page(None, after, limit, false).await
     }
 
     async fn scan_page(
@@ -46,15 +57,27 @@ impl PlanStore {
         owner: Option<&str>,
         after: Option<&str>,
         limit: usize,
+        indexed: bool,
     ) -> Result<RecoveryPage, AdmissionError> {
         if !(1..=32).contains(&limit) {
             return Err(AdmissionError::Invalid);
         }
-        let heads = self
-            .records
-            .list(owner, after, limit)
-            .await
-            .map_err(|_| AdmissionError::Unavailable)?;
+        let deployment = indexed
+            .then(|| {
+                self.admission_queue
+                    .as_ref()
+                    .and_then(|queue| queue.index_deployment())
+            })
+            .flatten();
+        let heads = match deployment {
+            Some(deployment) => {
+                self.records
+                    .list_admission_roots(deployment, owner, after, limit)
+                    .await
+            }
+            None => self.records.list(owner, after, limit).await,
+        }
+        .map_err(|_| AdmissionError::Unavailable)?;
         if heads.len() > limit
             || heads.iter().any(|head| {
                 head.owner.is_empty()
