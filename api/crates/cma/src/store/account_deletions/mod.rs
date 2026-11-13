@@ -181,7 +181,8 @@ impl AccountDeletionStore for MongoAccountDeletionStore {
         .await
     }
 }
-/// Must execute after an owner fence write in the same transaction.
+/// Read standing from the transaction snapshot. Fence the subject first only
+/// when the caller requires serialization with account deletion.
 pub(crate) async fn erasing_in_session(
     database: &Database,
     subject: &SubjectId,
