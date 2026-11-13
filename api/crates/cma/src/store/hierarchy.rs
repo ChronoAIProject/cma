@@ -182,6 +182,23 @@ impl HierarchyReadStore for MongoSandboxStore {
         }
     }
 
+    async fn read_sandbox_detail(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<layer2_core::sandbox::SandboxDetailRecord>, SandboxStoreError> {
+        if !self.sandbox_agent_projection {
+            return self
+                .read_sandbox_hierarchy(id)
+                .await
+                .map(|record| record.map(layer2_core::sandbox::SandboxDetailRecord::Complete));
+        }
+        tracing::debug!(parent: None, "reading projected Sandbox Agent lineage");
+        match snapshot::read(self, snapshot::Target::Detail(id)).await? {
+            snapshot::Reading::Detail(value) => Ok(value.map(|value| *value)),
+            _ => unreachable!("requested Sandbox detail"),
+        }
+    }
+
     async fn read_workspace_hierarchy(
         &self,
         id: &WorkspaceId,

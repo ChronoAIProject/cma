@@ -13,6 +13,9 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
             }
             failure
         }
+        AdapterError::NativeClaimNotReady(reason) => {
+            WorkerFailure::retryable("agent_runtime_not_ready", reason.to_string())
+        }
         AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,

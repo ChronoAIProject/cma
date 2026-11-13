@@ -106,6 +106,8 @@ data:
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
   CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
+  # Bound fresh native readiness; preserves assigned Claim and home identity.
+  CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED: "false"
   CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.
   CHRONO_READ_FRAME_BUDGET_ENABLED: "false"
@@ -117,6 +119,8 @@ data:
   CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED: "false"
   CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED: "false"
+  # Separate lineage-only detail projection; production evidence gates activation.
+  CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"

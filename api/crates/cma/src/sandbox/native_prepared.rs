@@ -7,10 +7,12 @@ use layer3_adapter::{
     RuntimeProvisionRequest, RuntimeStatusRequest, SandboxAdapter, SandboxSpec,
 };
 
+mod completion;
 mod hierarchy;
 mod refill;
 mod worker;
 use crate::store::native_prepared::NativePreparedWorkspaceProof;
+pub(super) use completion::complete_step;
 pub(crate) use worker::NativePreparedWorker;
 
 /// The durable caller owns target bounds, leases, retries, and publication.
