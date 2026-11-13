@@ -37,15 +37,23 @@ pub(crate) struct QuietOutputBuffer {
     pub deadline: Instant,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OutputState {
+    buffer: Option<QuietOutputBuffer>,
+    committed_at: Option<Instant>,
+}
+
 impl AgentMessageAssembly {
     pub fn output_flush_deadline(&self) -> Option<Instant> {
-        self.quiet_output.as_ref().map(|buffer| buffer.deadline)
+        self.output_state
+            .as_ref()?
+            .buffer
+            .as_ref()
+            .map(|buffer| buffer.deadline)
     }
 
     pub fn buffered_output(&self) -> Option<&RuntimeOutputSource> {
-        self.quiet_output
-            .as_ref()
-            .and_then(|buffer| buffer.sources.last())
+        self.output_state.as_ref()?.buffer.as_ref()?.sources.last()
     }
 
     pub(super) fn retain_quiet(
@@ -56,28 +64,34 @@ impl AgentMessageAssembly {
         policy: AgentOutputCoalescePolicy,
     ) -> bool {
         let now = Instant::now();
+        let committed_at = previous
+            .output_state
+            .as_ref()
+            .and_then(|state| state.committed_at);
         let mut buffer = previous
-            .quiet_output
-            .clone()
+            .output_state
+            .as_ref()
+            .and_then(|state| state.buffer.clone())
             .unwrap_or_else(|| QuietOutputBuffer {
                 sources: Vec::new(),
                 generation,
                 // An idle gap does not reset the time since the last durable cursor.
-                deadline: previous.output_committed_at.unwrap_or(now) + policy.max_age,
+                deadline: committed_at.unwrap_or(now) + policy.max_age,
             });
         buffer.sources.push(source.clone());
         if buffer.sources.len() >= policy.max_frames || now >= buffer.deadline {
             return false;
         }
-        self.quiet_output = Some(buffer);
-        self.output_committed_at = previous.output_committed_at;
+        self.output_state = Some(Box::new(OutputState {
+            buffer: Some(buffer),
+            committed_at,
+        }));
         true
     }
 
     pub(super) fn durable_copy(&self) -> Self {
         let mut durable = self.clone();
-        durable.quiet_output = None;
-        durable.output_committed_at = None;
+        durable.output_state = None;
         durable.pending_update = None;
         durable
     }
@@ -122,7 +136,11 @@ pub(super) fn replay_state(
                 && Some(checkpoint.runtime_generation) == current.conversation.runtime_generation
         })
         .and_then(|checkpoint| checkpoint.output.as_ref());
-    let Some(buffer) = &assembly.quiet_output else {
+    let Some(buffer) = assembly
+        .output_state
+        .as_ref()
+        .and_then(|state| state.buffer.as_ref())
+    else {
         return super::output::output_replayed(source, current, previous)
             .map(|replay| (replay, false));
     };
@@ -164,8 +182,14 @@ pub(super) fn accepted(
             position.stream_id == last.stream_id && position.cursor < last.cursor
         })
     }) {
-        recovered.quiet_output = previous.quiet_output.clone();
+        recovered.output_state = previous.output_state.clone();
+    } else {
+        recovered.output_state = enabled.then(|| {
+            Box::new(OutputState {
+                buffer: None,
+                committed_at: Some(Instant::now()),
+            })
+        });
     }
-    recovered.output_committed_at = enabled.then(Instant::now);
     recovered
 }

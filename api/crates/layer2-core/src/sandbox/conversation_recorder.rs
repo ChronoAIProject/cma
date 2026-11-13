@@ -69,7 +69,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         runtime_generation: u64,
         assembly: &mut AgentMessageAssembly,
     ) -> Result<(), AgentConversationError> {
-        if assembly.pending_update.is_some() || assembly.quiet_output.is_some() {
+        if assembly.pending_update.is_some() || assembly.buffered_output().is_some() {
             return Err(AgentConversationError::InvalidState(
                 "an uncertain update must be retried before restoring its assembly",
             ));
@@ -183,7 +183,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         appended_at: String,
     ) -> Result<AgentOutputCommit, AgentConversationError> {
         if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
-            && assembly.quiet_output.is_some()
+            && assembly.buffered_output().is_some()
         {
             return Err(AgentConversationError::InvalidState(
                 "flush quiet receipts before a legacy update",
