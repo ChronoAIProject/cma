@@ -287,11 +287,20 @@ impl AgentReadService {
         if through_seq == 0 {
             return Err(corrupt("agent log has no creation record"));
         }
-        let entries = self
+        let proven = self
             .store
-            .agent_log_prefix(&agent.id, through_seq)
+            .agent_log_prefix_with_tail(agent)
             .await
             .map_err(log_store_error)?;
+        let tail_proven = proven.is_some();
+        let entries = match proven {
+            Some(entries) => entries,
+            None => self
+                .store
+                .agent_log_prefix(&agent.id, through_seq)
+                .await
+                .map_err(log_store_error)?,
+        };
         if u64::try_from(entries.len()).ok() != Some(through_seq) {
             return Err(corrupt("agent log ended before its high-water mark"));
         }
@@ -304,7 +313,9 @@ impl AgentReadService {
                 return Err(corrupt("agent log identity or sequence is invalid"));
             }
         }
-        self.reject_uncommitted_tail(agent, through_seq).await?;
+        if !tail_proven {
+            self.reject_uncommitted_tail(agent, through_seq).await?;
+        }
         Ok(entries)
     }
 
