@@ -21,6 +21,23 @@ pub(crate) struct DocumentUsage {
     documents: Option<DocumentUsageCounter>,
     bytes: Option<DocumentUsageCounter>,
     objects: Option<DocumentUsageCounter>,
+    pending_deletions: Option<u64>,
+}
+
+#[derive(ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DocumentPurgeState {
+    Pending,
+    Complete,
+    Blocked,
+}
+
+#[derive(ToSchema)]
+pub(crate) struct DocumentDeletion {
+    id: String,
+    revision: u64,
+    deleted_at: String,
+    purge: DocumentPurgeState,
 }
 
 #[derive(ToSchema)]

@@ -41,7 +41,8 @@ pub(super) fn selected(case: &Case) -> bool {
             | "agent_customization_owner"
             | "agent_customization_admission"
             | "usage_owner"
-    ) || case.scenario.starts_with("document_owner__");
+    ) || case.scenario.starts_with("document_owner__")
+        || case.scenario.starts_with("document_delete_owner__");
     private && (200..300).contains(&case.response.status) && case.operation.contains("/{")
 }
 
