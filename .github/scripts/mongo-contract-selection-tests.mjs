@@ -7,15 +7,15 @@ export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnos
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
-  import json, runpy, sys
-  parse = runpy.run_path(sys.argv[1])["mongo_filters"]
-  source = sys.argv[2]
-  before = "\\n".join(line for line in source.splitlines()
-      if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test="))
-      and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)")))
-  before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test))', 'not test(=$scale_test)')
-  print(json.dumps({"before": parse(before), "after": parse(source)}))
-  `, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines()
+    if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test="))
+    and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)")))
+before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test))', 'not test(=$scale_test)')
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
     });
     const {before, after} = JSON.parse(result);
@@ -32,15 +32,15 @@ export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnos
   test('selection proof preserves the corpus while moving diagnostics out of ordinary partitions', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
-  import json, runpy, sys
-  parse = runpy.run_path(sys.argv[1])["mongo_filters"]
-  source = sys.argv[2]
-  before = "\\n".join(line for line in source.splitlines()
-      if not line.startswith("readonly diagnostics_test=")
-      and not line.strip().startswith("diagnostics)"))
-  before = before.replace(' or test(=$diagnostics_test)', '')
-  print(json.dumps({"before": parse(before), "after": parse(source)}))
-  `, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines()
+    if not line.startswith("readonly diagnostics_test=")
+    and not line.strip().startswith("diagnostics)"))
+before = before.replace(' or test(=$diagnostics_test)', '')
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
     });
     const {before, after} = JSON.parse(result);
@@ -53,15 +53,15 @@ export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnos
   test('selection proof preserves the corpus while moving scan cooperation out of ordinary partitions', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
-  import json, runpy, sys
-  parse = runpy.run_path(sys.argv[1])["mongo_filters"]
-  source = sys.argv[2]
-  before = "\\n".join(line for line in source.splitlines()
-      if not line.startswith("readonly scan_cooperation_test=")
-      and not line.strip().startswith("scan-cooperation)"))
-  before = before.replace(' or test(=$scan_cooperation_test)', '')
-  print(json.dumps({"before": parse(before), "after": parse(source)}))
-  `, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines()
+    if not line.startswith("readonly scan_cooperation_test=")
+    and not line.strip().startswith("scan-cooperation)"))
+before = before.replace(' or test(=$scan_cooperation_test)', '')
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, new URL('backend-selection-proof.py', import.meta.url).pathname, source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
     });
     const {before, after} = JSON.parse(result);
