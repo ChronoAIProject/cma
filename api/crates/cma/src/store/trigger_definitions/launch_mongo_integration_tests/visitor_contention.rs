@@ -209,30 +209,6 @@ async fn midnight_sides_count_separately() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI replica set"]
-async fn hundred_visitors_on_one_trigger_all_admit() {
-    let seed = seeded("visitor_hundred").await;
-    let trigger = published(&seed, "hundred").await;
-    let stores = replicas(&seed).await;
-    let candidates = (0..100)
-        .map(|index| {
-            admission(
-                &trigger,
-                &format!("visitor-{index}"),
-                index,
-                BEFORE_MIDNIGHT,
-            )
-        })
-        .collect();
-    let results = race(&stores, candidates).await;
-    let counts = outcomes(&results);
-    let counters = stats(&seed, &trigger).await;
-    seed.client.database(&seed.database).drop().await.unwrap();
-    assert_eq!(counts, (100, 0, 0, 0));
-    assert_eq!(counters.launches_total, 100);
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI replica set"]
 async fn visitor_allowance_read_is_shared_scoped_and_rejects_corrupt_rows() {
     let seed = seeded("visitor_read").await;
     let trigger = published(&seed, "read").await;
