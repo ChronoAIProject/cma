@@ -39,7 +39,7 @@ fn metric(handle: &PrometheusHandle, outcome: &str, minimum: Duration) {
     assert!(!rendered.contains("warm-member"));
 }
 
-fn published(fixture: &Fixture, claim: &NativePoolClaim) -> Value {
+pub(super) fn published(fixture: &Fixture, claim: &NativePoolClaim) -> Value {
     let state = fixture.state.lock().unwrap();
     let claim_path = format!("{}/sandboxclaims/{}", prefix(), claim.name);
     let claim_row = &state.rows[&claim_path];
@@ -73,7 +73,7 @@ fn acknowledge(fixture: &Fixture) {
         member["metadata"]["generation"].clone();
 }
 
-async fn retry(fixture: &Fixture, claim: &NativePoolClaim, authority: &Value) {
+pub(super) async fn retry(fixture: &Fixture, claim: &NativePoolClaim, authority: &Value) {
     acknowledge(fixture);
     let before = fixture.state.lock().unwrap().rows.clone();
     fixture.state.lock().unwrap().calls.clear();
@@ -189,10 +189,10 @@ async fn initial_read_and_pending_polls_share_one_deadline_and_metric() {
         } else {
             assert_eq!(
                 result.unwrap_err(),
-                AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut)
+                AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Pending)
             );
             assert!(started.elapsed() < Duration::from_millis(2700));
-            metric(&handle, "timeout", Duration::from_millis(1800));
+            metric(&handle, "pending", Duration::from_millis(1800));
         }
         let authority = published(&fixture, &claim);
         retry(&fixture, &claim, &authority).await;
@@ -281,7 +281,10 @@ async fn disabled_policy_keeps_initial_read_and_five_second_pending_wait() {
         );
         let result = result.unwrap();
         if pending {
-            assert!(matches!(result, Err(AdapterError::Unavailable(_))));
+            assert_eq!(
+                result.unwrap_err(),
+                AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Pending)
+            );
             assert!(started.elapsed() >= delay + Duration::from_secs(5));
         } else {
             assert_eq!(result.unwrap().receipt.storage_generation, "pvc-uid");
