@@ -24,12 +24,14 @@ async fn metrics_options_honor_circuit_without_commands_and_recover_with_polling
         .await
         .unwrap();
     config.max_pool_size = Some(4);
+    // Production diagnostics deliberately clear full command observers. Install
+    // this test-only counter afterward so circuit recovery is actually observed.
+    super::super::budget::observe(&mut config, fixture.circuit.clone());
     config.command_event_handler = Some(EventHandler::callback(move |event| {
         if matches!(event, CommandEvent::Started(_)) {
             observed.fetch_add(1, Ordering::SeqCst);
         }
     }));
-    super::super::budget::observe(&mut config, fixture.circuit.clone());
     let client = Client::with_options(config).unwrap();
     let store = Arc::new(ReportingStore {
         db: client.database(fixture.db.name()),
