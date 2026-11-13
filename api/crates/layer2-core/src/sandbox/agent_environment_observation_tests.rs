@@ -35,7 +35,10 @@ async fn observed(
     let probe = Arc::new(Probe::default());
     probe.delay_ms.store(1000, Ordering::SeqCst);
     (
-        AgentFileService::new(access, probe.clone()).with_background_environment(enabled),
+        AgentFileService::new(access, probe.clone())
+            .with_background_environment(enabled)
+            .with_task_experience(Default::default())
+            .with_read_timings(true),
         store,
         probe,
         context("owner"),
