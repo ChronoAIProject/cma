@@ -4,12 +4,14 @@ use layer2_core::sandbox::agent_io::{
 };
 
 use super::super::sandbox_mongo::{
-    commit_transaction, is_transient, start_transaction, CommitOutcome, MongoSandboxStore,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, is_transient, CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 use super::ApplyError;
+use crate::store::agent_log_segments::{
+    command_worker, terminal, transaction_scope::TransactionScope,
+};
 
-pub(super) enum Change {
+pub(in crate::store) enum Change {
     Reconcile(layer2_core::ids::AgentCommandId),
     Claim {
         request: CommandClaimRequest,
@@ -231,7 +233,7 @@ async fn transaction(
         .map(|(command, _)| command)
 }
 
-pub(super) type TransactionResult = (
+pub(in crate::store) type TransactionResult = (
     Option<AdmittedAgentCommand>,
     Option<crate::telemetry::command_reconcile::Outcome>,
 );
@@ -246,10 +248,12 @@ async fn transaction_observed(
             .start_session()
             .await
             .map_err(|_| CommandLedgerError::Unavailable)?;
-        start_transaction(&mut session)
+        let mut scope = TransactionScope::start(&mut session)
             .await
             .map_err(|_| CommandLedgerError::Unavailable)?;
-        let result = match super::worker_apply::apply(store, &change, &mut session).await {
+        let applied = Box::pin(command_worker::worker(store, &change, &mut scope)).await;
+        let session = scope.release();
+        let (result, receipt) = match applied {
             Ok(result) => result,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -264,12 +268,16 @@ async fn transaction_observed(
                 return Err(CommandLedgerError::Unavailable);
             }
         };
-        match commit_transaction(&mut session).await {
+        match commit_transaction(session).await {
             CommitOutcome::Committed => return Ok(result),
             CommitOutcome::Retry(_) => continue,
-            CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                return Err(CommandLedgerError::Unavailable)
+            CommitOutcome::Unknown(_) => {
+                if terminal::reconcile(store, receipt.as_ref(), session.operation_time()).await? {
+                    return Ok(result);
+                }
+                return Err(CommandLedgerError::Unavailable);
             }
+            CommitOutcome::Failed(_) => return Err(CommandLedgerError::Unavailable),
         }
     }
     Err(CommandLedgerError::Conflict)
