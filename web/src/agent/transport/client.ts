@@ -31,6 +31,7 @@ export class AgentV2Session {
     readonly journal: AgentTransportJournal,
     private readonly user: string,
     private readonly options: AgentTransportOptions,
+    private readonly cancelUser: CurrentUser = options.currentUser,
   ) {
     this.events = sdk.agentEventsV2;
     this.responses = sdk.responsesV2;
@@ -42,14 +43,23 @@ export class AgentV2Session {
 
   /** A fresh replay handle keeps the tab's selection and pending-input journal. */
   forSnapshotRefresh(): AgentV2Session {
-    return new AgentV2Session(this.sdk, this.journal, this.user, this.options);
+    return new AgentV2Session(this.sdk, this.journal, this.user, this.options, this.cancelUser);
   }
 
   async authorize(signal?: AbortSignal): Promise<void> {
+    return this.checkIdentity(this.options.currentUser, signal);
+  }
+
+  /** Cancel must not wait for an unrelated projection's identity request. */
+  async authorizeCancel(signal?: AbortSignal): Promise<void> {
+    return this.checkIdentity(this.cancelUser, signal);
+  }
+
+  private async checkIdentity(currentUser: CurrentUser, signal?: AbortSignal): Promise<void> {
     this.discardEntryHandoff();
     signal?.throwIfAborted();
     this.journal.read();
-    const current = await this.options.currentUser(signal);
+    const current = await currentUser(signal);
     signal?.throwIfAborted();
     this.journal.read();
     if (current !== this.user) {
@@ -134,6 +144,9 @@ export class AgentV2Session {
 /** The authenticated server flag selects a new tab; retained v2 work keeps its transport. */
 export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
   const gate = createIdentityGate(options.currentUser);
+  // Shared across every Agent: at most one extra fresh identity read, even when
+  // many tabs cancel concurrently. Both gates retain the same journal authority.
+  const cancelGate = createIdentityGate(options.currentUser);
   const gatedOptions = { ...options, currentUser: gate.check };
   const sessions = new Map<string, AgentV2Session>();
   const select = async (
@@ -150,7 +163,7 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
     if (expectedOwner !== undefined && user !== expectedOwner) throw new IdentityChangedError();
     if (user === undefined) throw new Error('Sign in to open this Agent.');
     const journal = agentTransportJournal(options.storage, user, agent);
-    const session = new AgentV2Session(sdk, journal, user, gatedOptions);
+    const session = new AgentV2Session(sdk, journal, user, gatedOptions, cancelGate.check);
     let selected = journal.selected();
     let enabled = false;
     if (selected === undefined) {
