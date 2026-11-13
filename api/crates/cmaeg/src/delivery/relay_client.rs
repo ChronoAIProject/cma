@@ -8,6 +8,8 @@ mod initiated;
 mod media;
 pub use media::supported as native_media_supported;
 mod edit;
+mod transport;
+pub use transport::HttpTransport;
 mod lark;
 mod whatsapp;
 
@@ -15,7 +17,7 @@ use super::intents::DeliveryOutcome;
 use crate::net::exchange::{BodyError, HttpReply, TransportError};
 use cmaeg_core::{channel::Secret, seal::ReplyAddress};
 use futures_util::future::BoxFuture;
-use reqwest::{header::HeaderMap, Client, StatusCode, Url};
+use reqwest::{header::HeaderMap, StatusCode, Url};
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 
@@ -55,57 +57,6 @@ pub trait RelayTransport: Send + Sync {
         body: Vec<u8>,
         timeout: Duration,
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>>;
-}
-/// The production relay transport: one reqwest request per call.
-pub struct HttpTransport {
-    http: Client,
-}
-impl HttpTransport {
-    fn new(timeout: Duration) -> Result<Self, crate::ConfigError> {
-        let http = Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(timeout)
-            .build()
-            .map_err(|_| crate::ConfigError::InvalidManagement {
-                detail: "cannot build relay client".into(),
-            })?;
-        Ok(Self { http })
-    }
-}
-impl RelayTransport for HttpTransport {
-    fn post(
-        &self,
-        url: Url,
-        headers: HeaderMap,
-        body: Vec<u8>,
-        timeout: Duration,
-    ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
-        Box::pin(async move {
-            let response = self
-                .http
-                .post(url)
-                .headers(headers)
-                .body(body)
-                .timeout(timeout)
-                .send()
-                .await
-                .map_err(|_| TransportError::Unavailable)?;
-            let status = response.status();
-            let headers = response.headers().clone();
-            // Only a 200 answer carries a receipt. Every other answer is mapped
-            // from its status alone, so its body is never read.
-            let body = if status == StatusCode::OK {
-                crate::net::exchange::read_bounded(response, RECEIPT_MAX_BYTES).await
-            } else {
-                Ok(Vec::new())
-            };
-            Ok(HttpReply {
-                status,
-                headers,
-                body,
-            })
-        })
-    }
 }
 #[derive(Clone)]
 pub struct RelayClient {
