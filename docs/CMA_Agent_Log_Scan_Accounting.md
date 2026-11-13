@@ -93,7 +93,7 @@ An execution section closes only when an observed future actually returns
 `Pending` or the scan explicitly yields. Time spent waiting to be polled again
 is excluded. Initial-find suspension is observed too, so Mongo/network wait
 does not become a CPU section. Driver-poll duration measures the final `Ready`
-poll of cursor advancement, including driver batch copying; it does not include
+poll of cursor advancement, including batch copying on the owned-row path; it does not include
 I/O wait or the subsequent row decode, visitor and hash. Both histograms include
 submillisecond, 2 ms, 5 ms and 10 ms boundaries, supporting the issue's A/B/C
 decisions. These are wall-time observations, not CPU profiles or proof that
@@ -180,6 +180,77 @@ keeping the measurements and the default-off option; neither establishes a
 reliable 10 ms section bound or substitutes for the required production study.
 The full-contract repeat log SHA-256 is
 `9638f1a4e0fdc5b54aedfac01478fd8063d12db7fbbc816d753b8996ba4b3570`.
+
+### Borrowed cursor rows (#1320, 2026-11-13)
+
+With cooperation enabled, complete integrity scans now use the MongoDB 3.9.1
+`SessionRawBatchCursor` API. The ordinary cursor copies all documents in a ready
+batch before returning its first row, outside the application's row checkpoints.
+Borrowed batch iteration removes those copies and lets the existing checkpoints
+separate row processing. Both paths use one shared validator/visitor, preserving
+sequence checks, byte limits, hashing and accounting. The query/sort/limit,
+server batch sizing, session and read concern stay the same. Malformed wire
+items remain driver errors; corrupt stored rows keep the existing quarantine
+rules. Cancellation still drops the cursor and caller-owned transaction.
+
+The existing `CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED` flag gates both raw
+batch delivery and cooperative checkpoints and still defaults to `false`.
+No new switch, pool increase, session transfer or persistence change is added.
+The legacy capture reader retains its existing delivery and batch settings.
+
+The scheduling reproduction now also runs a second, same-binary ABBA comparison
+with cooperation enabled in both arms: owned/raw/raw/owned. The owned control is
+a test-only override. This isolates delivery from the existing checkpoint change.
+The fixture and command observer are the same as above. Every round again reads
+48 scans / 480,048 documents / 262,586,256 BSON bytes, plus 200 point-read pairs,
+with exactly 448 find + 48 getMore commands and at most 7/30 connections in use.
+All scans succeed. The six local Mongo tests also verify full row/summary parity,
+later-batch corruption, capacity errors and head-plus-one rejection, visitor
+refusal/quarantine, cancellation before and after getMore with killCursors,
+abortTransaction and exact consumed-byte accounting, and snapshot/transaction visibility while
+another session changes a later-batch row and appends a row.
+
+| Observation | Cooperative owned (rounds 0, 3) | Cooperative raw (rounds 1, 2) |
+| --- | --- | --- |
+| Longest driver poll p95, ms | 3.00; 3.47 | 0.046; 0.049 |
+| Longest execution section p99, ms | 4.53; 9.34 | 4.13; 6.05 |
+| Mean scan latency across both rounds, ms | 417.78 | 395.78 |
+| Point-read pair latency p95, ms | 7.53; 7.60 | 6.95; 7.81 |
+| Checkout wait p99, ms | 1.823; 1.825 | 2.128; 1.718 |
+
+The 5.27% lower mean scan time and removal of the batch-copy driver-poll cost
+support this narrow implementation on the local fixture. Checkout and point-read
+tails are mixed; this does not establish an incremental production checkout or
+route-latency improvement. Raw-row iteration/validation remains included in
+execution-section and task-poll timing, even though it no longer appears inside
+a driver advancement poll. Individual rows/visitors and OS preemption still
+permit sections beyond the 2 ms checkpoint budget. Each phase has 48 per-scan
+maxima, so its nearest-rank section p99 is also its maximum.
+
+The same run's disabled/raw-enabled comparison preserves the earlier cooperation
+benefit: section p99 328.01/322.19 ms versus 3.01/3.78 ms and checkout p99
+316.22/312.47 ms versus 1.764/1.913 ms. Do not attribute this whole effect to the
+new delivery change. All eight round summaries, source fingerprints, environment
+and command are retained in [the measurement artifact](evidence/agent-log-cursor-20261113.json).
+These shared-host debug measurements are not production acceptance. The release
+owner must bind natural-load before/after cohorts to image, flag, workload and
+observer, then verify whole-request Agent/tab/send/interrupt latency, scan failure
+and publication retry rates, pool/hold/runtime telemetry and probes. Activation
+and rollback remain governed by the operations procedure above.
+
+The integration repeat at `54c2a1594` passed 25 targeted unit tests and all six
+Mongo tests after strict Clippy and formatting. All work and query counts stayed
+equal. Paired cooperative-owned driver-poll p95 was 9.71/6.51 ms versus
+0.084/0.092 ms raw; mean scan time was 709.53 versus 559.42 ms (-21.16%).
+The host was noisier: section p99 was 48.87/36.72 ms owned and 30.11/14.91 ms
+raw. Checkout p99 was 1.848/2.492 ms owned and 1.427/1.416 ms raw. Both runs
+support removing the batch-copy cost, but the varying tails and effect size
+reinforce the production and hard-bound limitations. The same artifact retains
+all eight integration-repeat round summaries and their exact source commit.
+Subsequent contract expansion covers later-batch corruption, head-plus-one
+rejection and cancellation with an open cursor after getMore; it does not alter
+the scanner or benchmark implementation. Six scanning tasks do not constitute
+a 200-session workload or replace a realistic bounded-concurrency production study.
 
 Runtime-loss recovery (`CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED`, default
 `false`) rejects stale Sandbox/Agent observations before reading logs. Ineligible

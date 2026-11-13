@@ -187,6 +187,7 @@ pub(super) async fn scan_corruption(
 pub(in crate::store) struct ScanOptions<C = MonotonicClock> {
     snapshot: bool,
     cooperation: Policy,
+    raw_batches: bool,
     clock: C,
 }
 impl Default for ScanOptions {
@@ -199,6 +200,7 @@ impl ScanOptions {
         Self {
             snapshot,
             cooperation,
+            raw_batches: cooperation.enabled,
             clock: MonotonicClock,
         }
     }
@@ -207,8 +209,17 @@ impl ScanOptions {
         ScanOptions {
             snapshot: self.snapshot,
             cooperation: self.cooperation,
+            raw_batches: self.raw_batches,
             clock,
         }
+    }
+}
+impl<C> ScanOptions<C> {
+    // Retain the old cooperative delivery as a paired benchmark control.
+    #[cfg(test)]
+    pub(in crate::store) fn with_raw_batches(mut self, enabled: bool) -> Self {
+        self.raw_batches = enabled;
+        self
     }
 }
 struct ScanMode<C> {
@@ -259,25 +270,18 @@ where
     } else {
         find
     };
-    // Track suspension of the initial find too, so network wait never
-    // becomes an uninterrupted execution section. Driver-poll timing below
-    // is restricted to cursor advancement, where batch copying occurs.
-    let mut cursor = observation
-        .observe(find.session(&mut *session).into_future(), false)
-        .await
-        .map_err(TransactionLogError::Driver)?;
     let mut entry_count = 0_u64;
     let mut encoded_bytes = 0_usize;
     let mut head_hash = [0_u8; HASH_BYTES];
-    while let Some(raw) = observation
-        .observe(cursor.stream(session).try_next(), true)
-        .await
-        .map_err(TransactionLogError::Driver)?
-    {
+    // Keep row validation independent of cursor delivery so every path retains
+    // the same sequence, capacity, hash and visitor failure boundaries.
+    let mut consume = |raw: &mongodb::bson::RawDocument,
+                       observation: &mut crate::store::agent_log_telemetry::Scan<C>|
+     -> Result<(), TransactionLogError> {
         let document_bytes = raw.as_bytes().len();
         observation.document(document_bytes);
         read.document(document_bytes);
-        let document = Document::try_from(&raw).map_err(|error| {
+        let document = Document::try_from(raw).map_err(|error| {
             TransactionLogError::Domain(SandboxStoreError::Corrupt(error.to_string()))
         })?;
         let entry = read_entry(&document).map_err(TransactionLogError::Domain)?;
@@ -305,7 +309,41 @@ where
         visit(entry).map_err(TransactionLogError::Domain)?;
         head_hash = hash_raw(raw.as_bytes());
         entry_count = expected.unwrap_or_default();
-        observation.checkpoint().await;
+        Ok(())
+    };
+    // Both paths observe initial-find suspension, but only cursor advancement
+    // contributes to driver-poll timing. Keep the session and query unchanged.
+    if mode.options.raw_batches {
+        let mut cursor = observation
+            .observe(find.session(&mut *session).batch(), false)
+            .await
+            .map_err(TransactionLogError::Driver)?;
+        while let Some(batch) = observation
+            .observe(cursor.stream(session).try_next(), true)
+            .await
+            .map_err(TransactionLogError::Driver)?
+        {
+            // The ordinary cursor copies every document in a ready batch before
+            // returning a row. Borrowing lets checkpoints separate that work;
+            // it needs neither smaller server batches nor additional checkouts.
+            for item in batch.doc_slices().map_err(TransactionLogError::Driver)? {
+                consume(batch_document(item)?, &mut observation)?;
+                observation.checkpoint().await;
+            }
+        }
+    } else {
+        let mut cursor = observation
+            .observe(find.session(&mut *session).into_future(), false)
+            .await
+            .map_err(TransactionLogError::Driver)?;
+        while let Some(raw) = observation
+            .observe(cursor.stream(session).try_next(), true)
+            .await
+            .map_err(TransactionLogError::Driver)?
+        {
+            consume(raw.as_ref(), &mut observation)?;
+            observation.checkpoint().await;
+        }
     }
     if entry_count != last_seq {
         return Err(TransactionLogError::Domain(
@@ -324,4 +362,40 @@ where
         head_hash,
         semantic: None,
     })
+}
+
+fn batch_document(
+    item: Result<mongodb::bson::RawBsonRef<'_>, mongodb::bson::error::Error>,
+) -> Result<&mongodb::bson::RawDocument, TransactionLogError> {
+    let item = item
+        .map_err(mongodb::error::Error::from)
+        .map_err(TransactionLogError::Driver)?;
+    // A malformed wire batch is a driver failure, not stored-history corruption
+    // eligible for quarantine. Stored row validation still happens in consume.
+    item.as_document().ok_or_else(|| {
+        TransactionLogError::Driver(mongodb::error::Error::custom(
+            "invalid document in cursor batch",
+        ))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mongodb::bson::RawBsonRef;
+
+    #[test]
+    fn batch_documents_borrow_rows_and_classify_invalid_wire_items_as_driver_errors() {
+        let raw = RawDocumentBuf::from_bytes(doc! { "seq": 1 }.to_vec().unwrap()).unwrap();
+        let borrowed = batch_document(Ok(RawBsonRef::Document(&raw))).unwrap();
+        assert!(std::ptr::eq(borrowed, raw.as_ref()));
+        let decode_error =
+            <mongodb::bson::error::Error as serde::de::Error>::custom("malformed wire item");
+        for item in [Ok(RawBsonRef::Null), Err(decode_error)] {
+            assert!(matches!(
+                batch_document(item),
+                Err(TransactionLogError::Driver(_))
+            ));
+        }
+    }
 }
