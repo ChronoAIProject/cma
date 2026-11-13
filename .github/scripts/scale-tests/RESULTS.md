@@ -15,11 +15,11 @@ qualifies the ownership candidate. Developer-15 owns the investigation.
 
 | Gate | Result | Evidence and limits |
 |---|---|---|
-| New JavaScript harness | PASS | 26 tests; 99.65% lines, 97.84% branches, 98.54% functions for lib/scenarios; ESLint and syntax checks pass. |
+| New JavaScript harness | PASS | 28 tests; 99.66% lines, 97.85% branches, 97.84% functions for lib/scenarios; ESLint and syntax checks pass. |
 | N=1-only selection | PASS, implementation only | Three windows, no fault/scale/cross-replica calls; all 43 rows retained; missing/failed/unrendered cases and cleanup tested. Live driver still absent. |
-| Disposable Mongo runner | PASS | 14 current unit tests; Python trace reports 94% executable-line coverage. Cleanup, wrong ownership, timeout, endpoint and evidence-overwrite failure paths included. |
+| Disposable Mongo runner | PASS, implementation only | 24 tests; runner93.78% and custody helper87.74% executable-line coverage. Includes real local descendants and full runner with mocked Docker. Real invocation awaits exact-source review. |
 | Pinned Rust formatting and touched-crate lint | PASS | Rust 1.96.1 fmt; cmaeg all-target/all-feature Clippy with warnings denied. |
-| Original EG executable control | PASS | Same test-binary hash as replica case; signed ingress and complete streamed response; disposable Mongo cleanup confirmed. |
+| Original EG executable control | PASS | Same test-binary hash as replica case; signed ingress and complete streamed response; disposable Mongo removal reported; historical descendant exit was not independently observed. |
 | Imported delivery oracle | PASS | Three tests on this checkout; Unknown/Partial/no-effect/rejected/missing cannot qualify confirmed terminal delivery. Exact developer-08 source pins are in peer-provenance.json. |
 | Historical routed EG ingress, N=1/2/3, ownership off | PASS, scoped | Independent operating-system processes and Mongo clients, same routing selection in all cohorts, one signed event through every ingress, one provider POST, one independently read confirmed terminal receipt/cursor, and one sink observation. |
 | Integrated ownership N=1/2/3 OFF/ON | FAIL | Enabled N=2 concurrent ingress 503/202; receipt `evidence/mongo-ownership-aadd212-initial.json`. Original control PASS in `evidence/mongo-control-aadd212.json`. |
@@ -28,7 +28,7 @@ qualifies the ownership candidate. Developer-15 owns the investigation.
 The routed process run took 10.50 seconds, 2026-11-13T16:51:27Z through
 16:51:38Z. It used authenticated Mongo8.0.13, 1 CPU / 1 GiB container bounds,
 a 1 GiB temporary database filesystem and a 64 MiB oplog. The Mongo image digest,
-test-binary hash, output hash and successful cleanup are in
+test-binary hash, output hash and historical cleanup claim are in
 `evidence/mongo-routed.json`. No real provider, ownership-mode transition,
 load, crash, node loss or HPA was exercised by that test.
 
@@ -41,7 +41,8 @@ binary. See `evidence/mongo-routed-3415875.json` and
 The compiler-path mismatch and two cancelled queued checks are retained;
 no current control/oracle rerun is inferred from the earlier results.
 The aadd212 ownership run took 95.28 seconds, 2026-11-13T17:30:08Z through
-17:31:44Z, and confirmed cleanup. Its first rejection was retained as
+17:31:44Z, and reported cleanup=true. Its parent-exit check did not independently
+confirm descendant exit; no historical leak is asserted. Its first rejection was retained as
 `unclassified`; the updated test emits only allowlisted problem detail/code
 and after-response durable-plan/target-presence observations. Those observations
 cannot prove the rejected request committed its partition queue. Transaction
@@ -50,7 +51,7 @@ contention is the implementer's investigation hypothesis, not an established RCA
 ## Diagnostic retention correction
 
 The source-frozen `643461b` diagnostic run ended BLOCKED after 124.62 seconds
-with cleanup confirmed; `evidence/mongo-diagnostic-643461b.json` retains the
+with cleanup=true in its historical receipt; `evidence/mongo-diagnostic-643461b.json` retains the
 original receipt. Its broad exception handler lost the failure phase and partial
 observations. The elapsed time does not establish a specific exception or the
 application rejection reason. Debugger-02 tracked this as EG-002.
@@ -58,12 +59,40 @@ application rejection reason. Debugger-02 tracked this as EG-002.
 The corrected runner retains fixed failure phase/class, timeout and censoring
 flags, child exit/signal, output SHA-256 and allowlisted partial observations
 before cleanup. It emits markers during execution into its private capture and
-never saves raw stdout. Setup failures and test deadlines remain separate; an
-unconfirmed child exit cannot claim complete cleanup. All 14 runner tests pass
-with 94% executable-line coverage. This correction has not been exercised in a
-new real run; exact-source tooling review is requested before the next run.
+never saves raw stdout. Setup failures and test deadlines remain separate; the
+14-test retention gate did not cover a surviving descendant. Exact-source review
+of be5a8a46b found F1/EG-005: direct-parent exit incorrectly certified process
+cleanup. The real diagnostic remains blocked pending corrected-source review.
 The application N=2 rejection remains unresolved, with developer-15 testing
 transaction contention and concurrent retained-item handling.
+
+## Process custody and pod identity corrections
+
+Architect F1 / debugger EG-005 blocks the be5a8a46b Mongo runner. The correction
+uses a separate direct-child anchor to reserve the group ID until every other
+member is absent, on normal and exceptional outcomes. Parent exit and group
+exit are separate observations. TERM/KILL each have a ten-second bound; the
+120-second test threshold is unchanged. Unconfirmed cleanup retains the private
+fixture directory and Mongo container and cannot report PASS. This custody
+model requires the known non-daemonizing fixture executables and an exclusive
+single-threaded child reaper; it does not contain arbitrary escaping workloads.
+
+The first local regression gate found that macOS getpgid can return absent for
+an unreaped zombie. The corrected reservation relies on exclusive custody of
+that unreaped child, whose PID cannot be reused until wait. The initial failing
+gate remains in the workspace evidence; the passing rerun is separate. Native
+local tests cover a TERM-exited parent with a TERM-ignoring descendant writing
+to a file, early parent failure, normal/absent-group cleanup, observation errors
+and lost custody. An end-to-end runner regression mocks every Docker operation
+and uses real local processes to check removal ordering.
+
+Architect F2 corrects pod deletion to send DeleteOptions.preconditions.uid in
+the actual raw API request. The name-reuse regression returns conflict and
+preserves the replacement. This is a mocked API test; no cluster deletion or
+process-death observation is inferred. Both corrections await exact-source
+review. They do not resolve the original N2 503 or any acceptance matrix row.
+Developer-15's published ab546c contention fix is a separate tested dependency;
+no new process execution against it is claimed here.
 
 ## Required acceptance scenarios
 
@@ -98,8 +127,11 @@ snapshot/SSE fixture and does not reinterpret those failures as success.
 The final original executable control passed in 6.33 seconds, 2026-11-13T16:57:27Z
 through 16:57:34Z; see `evidence/mongo-control.json`.
 
-Every completed disposable-container run confirmed cleanup. Temporary test
-files were removed. Shared cluster lifecycle and checkout cleanup belong to
+Every completed disposable-container run reported container removal. Those
+historical receipts used the reviewed flawed parent-only process predicate and
+do not independently prove that every descendant had exited before disposal.
+No historical leak is asserted. New regression fixture cleanup is recorded
+separately. Shared cluster lifecycle and checkout cleanup belong to
 the environment manager and lead respectively. Task build outputs remain active
 for candidate integration; they are outside the repository and are not delivered.
 

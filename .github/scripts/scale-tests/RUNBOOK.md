@@ -93,8 +93,25 @@ cluster. Passing cohort markers and fixed rejection/after-response custody
 observations are retained even for incomplete/censored execution; raw response
 bodies and stdout are discarded after hashing and allowlist extraction. Inspect
 failure_phase/error_class, timed_out, exit_code/termination_signal,
-process_cleanup and container_cleanup before interpreting a receipt. An
-unconfirmed child exit never claims complete cleanup. Use `--test-name` for the original executable control; the default selects
+test_parent_cleanup, process_group_cleanup, process_cleanup and container_cleanup
+before interpreting a receipt. `owned_process.py` reserves the process-group ID
+with a separate direct-child anchor. The anchor is never polled/reaped until all
+other group members are observed absent. This includes killed/zombie anchors;
+parent exit and pipe EOF do not release group custody. Every normal/exception
+exit checks the group, then bounds TERM/KILL cleanup to ten seconds each. Only
+after that observation may the fixture directory and Mongo be removed. Failed
+confirmation retains both resources and reports BLOCKED/incomplete cleanup.
+The group helper assumes these known non-daemonizing executables; it is not a
+sandbox for arbitrary children that escape into a different group. It requires
+a single-threaded POSIX caller with the default SIGCHLD disposition and exclusive
+ownership of waiting for its anchor. Local regressions exercise a parent that
+exits while a descendant ignores TERM with file-backed output, including the
+complete runner with mocked Docker and real local processes.
+
+The previous `be5a8a46b` runner is NO-GO under architect F1 / debugger EG-005.
+The corrected source requires an exact-source verdict before another real
+disposable-Mongo run. Historical receipts are unchanged and do not establish
+independent descendant-exit proof. Use `--test-name` for the original executable control; the default selects
 the replica test. The fixed 1 GiB database filesystem matches the existing
 repository runner and the oplog is bounded to 64 MiB. A 512 MiB filesystem failed
 index creation with Mongo 14031 and was corrected; this was a runner sizing bug.
@@ -211,8 +228,11 @@ Do not tune block size, tolerance, sample window or exclusions after seeing N=2.
 
 Each fixture must prove its own cleanup; failed cleanup stops progression. Stress
 must stop on errors while canaries survive until measured downscale completes.
-`LocalCluster.removePod` only requests force deletion of a test-owned UID-bound
-pod in the verified namespace; it explicitly does not prove process death.
+`LocalCluster.removePod` submits raw DELETE with `DeleteOptions.preconditions.uid`
+and zero grace for the verified test-owned pod. A replaced name causes a server
+conflict, with no name-only fallback. The request explicitly does not prove
+process death. This correction to architect F2 also requires exact-source review
+before cluster use; the regression uses a mocked API, not a real Kubernetes fault.
 The driver must independently observe actual termination and exact accepted work.
 The environment manager owns shared cluster lifecycle. Never remove peer worktrees,
 shared build caches or infrastructure. The lead owns this checkout's final cleanup.

@@ -6,10 +6,12 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 import unittest
 from unittest.mock import Mock, patch
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 SPEC = importlib.util.spec_from_file_location(
     "mongo_local", Path(__file__).resolve().parents[1] / "mongo-local.py")
 RUNNER = importlib.util.module_from_spec(SPEC)
@@ -26,6 +28,9 @@ class FixtureRunnerTests(unittest.TestCase):
         self.calls = []
         self.process = Mock(returncode=0, pid=12345)
         self.process.communicate.return_value = (b"test result: ok. 1 passed; 0 failed;", None)
+        self.group = Mock()
+        self.group.spawn.return_value = self.process
+        self.group.cleanup.return_value = {"process_group_cleanup": True}
 
     def external(self, arguments, **_):
         self.calls.append(arguments)
@@ -38,7 +43,7 @@ class FixtureRunnerTests(unittest.TestCase):
 
     def execute(self, external=None):
         with patch.object(RUNNER.subprocess, "run", side_effect=external or self.external), \
-             patch.object(RUNNER.subprocess, "Popen", return_value=self.process), \
+             patch.object(RUNNER, "OwnedGroup", return_value=self.group), \
              patch.object(RUNNER.secrets, "token_hex", side_effect=lambda n: "a" * (2 * n)), \
              patch("sys.stdout", new_callable=io.StringIO):
             code = RUNNER.run(self.binary, self.root / "result", "runner_binary::test")
@@ -103,7 +108,7 @@ class FixtureRunnerTests(unittest.TestCase):
             return self.external(arguments, **options)
         _, result = self.execute(wrong_owner)
         self.assertFalse(result["cleanup"])
-        self.assertEqual(result["code"], "container_cleanup_unconfirmed")
+        self.assertEqual(result["code"], "fixture_cleanup_unconfirmed")
         self.assertFalse(any(args[:2] == ["docker", "rm"] for args in self.calls))
 
     def test_cleanup_distinguishes_absence_from_daemon_failure(self):
@@ -117,11 +122,9 @@ class FixtureRunnerTests(unittest.TestCase):
 
     def test_timeouts_terminate_owned_process_group_and_clean_container(self):
         self.process.returncode = -9
-        self.process.communicate.side_effect = [subprocess.TimeoutExpired("fixture", 120),
-                                               subprocess.TimeoutExpired("fixture", 10), (b"", None)]
-        with patch.object(RUNNER.os, "killpg") as kill:
-            _, result = self.execute()
-        self.assertEqual(kill.call_count, 2)
+        self.process.communicate.side_effect = [subprocess.TimeoutExpired("fixture", 120), (b"", None)]
+        _, result = self.execute()
+        self.group.cleanup.assert_called_once_with(self.process)
         self.assertTrue(result["cleanup"])
         self.assertEqual(result["status"], "BLOCKED")
         self.assertEqual(result["code"], "process_test_deadline")
@@ -137,8 +140,7 @@ class FixtureRunnerTests(unittest.TestCase):
         self.process.returncode = -15
         self.process.communicate.side_effect = [subprocess.TimeoutExpired("fixture", 120, output=partial),
                                                (b"", None)]
-        with patch.object(RUNNER.os, "killpg"):
-            _, result = self.execute()
+        _, result = self.execute()
         self.assertEqual(result["output_sha256"], hashlib.sha256(partial).hexdigest())
         self.assertEqual(result["completed_ownership_cohorts"], [{"replicas": 1, "enabled": True}])
         self.assertEqual(result["failed_cohort_observations"][0]["accepted_responses"], 1)
@@ -167,29 +169,47 @@ class FixtureRunnerTests(unittest.TestCase):
         self.process.returncode = None
         self.process.communicate.side_effect = [
             subprocess.TimeoutExpired("fixture", 120),
-            subprocess.TimeoutExpired("fixture", 10),
-            subprocess.TimeoutExpired("fixture", 10, output=partial)]
-        with patch.object(RUNNER.os, "killpg"):
-            _, result = self.execute()
+            subprocess.TimeoutExpired("fixture", 2, output=partial)]
+        self.group.cleanup.return_value = {"process_group_cleanup": False}
+        _, result = self.execute()
         self.assertEqual(result["output_sha256"], hashlib.sha256(partial).hexdigest())
         self.assertFalse(result["process_cleanup"])
-        self.assertTrue(result["container_cleanup"])
+        self.assertFalse(result["container_cleanup"])
+        self.assertTrue(result["fixture_directory_retained"])
         self.assertFalse(result["cleanup"])
+        self.assertFalse(any(args[:2] == ["docker", "rm"] for args in self.calls))
         self.assertEqual(result["cleanup_failure_phase"], "process_termination")
         self.assertEqual(result["code"], "process_test_deadline")
         self.assertEqual(result["status"], "BLOCKED")
 
     def test_spawn_error_has_no_false_test_outcome(self):
-        with patch.object(RUNNER.subprocess, "Popen", side_effect=OSError("private spawn detail")), \
-             patch.object(RUNNER.subprocess, "run", side_effect=self.external), \
-             patch.object(RUNNER.secrets, "token_hex", side_effect=lambda n: "a" * (2 * n)), \
-             patch("sys.stdout", new_callable=io.StringIO):
-            self.assertEqual(RUNNER.run(self.binary, self.root / "spawn", "runner_binary::test"), 2)
-        result = json.loads((self.root / "spawn/mongo-process-results.json").read_text())
+        self.group.spawn.side_effect = OSError("private spawn detail")
+        _, result = self.execute()
+        self.group.cleanup.assert_called_once_with(None)
         self.assertEqual(result["failure_phase"], "test_spawn")
         self.assertEqual(result["error_class"], "os_error")
         self.assertTrue(result["cleanup"])
         self.assertNotIn("private spawn detail", json.dumps(result))
+
+    def test_exited_parent_does_not_override_unconfirmed_group(self):
+        self.group.cleanup.return_value = {"process_group_cleanup": False}
+        _, result = self.execute()
+        self.assertTrue(result["test_parent_cleanup"])
+        self.assertFalse(result["process_group_cleanup"])
+        self.assertFalse(result["cleanup"])
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertTrue(result["fixture_directory_retained"])
+        self.assertTrue(list((self.root / "result").glob("process-fixture-*")))
+        self.assertFalse(any(args[:2] == ["docker", "rm"] for args in self.calls))
+
+    def test_unexpected_pipe_error_still_cleans_group_before_disposal(self):
+        self.process.communicate.side_effect = [ValueError("private pipe failure"), (b"", None)]
+        _, result = self.execute()
+        self.group.cleanup.assert_called_once_with(self.process)
+        self.assertTrue(result["cleanup"])
+        self.assertFalse(result["fixture_directory_retained"])
+        self.assertEqual(result["error_class"], "value_error")
+        self.assertNotIn("private pipe failure", json.dumps(result))
 
     def test_mongo_readiness_deadline_has_setup_phase_and_no_test_output(self):
         def unready(arguments, **options):
