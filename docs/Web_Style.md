@@ -1912,9 +1912,15 @@ Message-submission progress stays beside the composer; it does not replace the
 recorded Agent state in the header.
 Normal owner or operator stops and resource deletion use the recorded terminal
 state, not an Agent run failed notification. Genuine provider failures remain visible.
-Visible Sandbox and hierarchy reads refresh every five seconds while settled,
-and every 1.5 seconds while recorded lifecycle work is in progress; reads never
-overlap or admit work. Hidden pages defer refresh until visible again.
+Visible owner Sandbox and Workspace pages refresh every five seconds while
+settled. Recorded lifecycle work starts at 1.5 seconds; an unchanged observation
+backs off through three and five seconds with ten-percent jitter, then to fifteen
+seconds after two unchanged minutes and thirty seconds after ten. Observed state
+or phase changes, explicit revision/retry and becoming visible reset readiness.
+Failed reads retry after five seconds and preserve the last observation unless
+access is refused. Reads never overlap or admit work. Hidden pages defer refresh
+until visible again. The Agent composer retains its separate 5.5-second maximum
+and ten-second lifecycle freshness fence.
 Pause and Resume immediately show a polite submitting status in the existing
 action-status seat, followed by request acceptance and observed completion as
 separate facts. Accepted requests show a concise acknowledgement; the underlying
@@ -1928,7 +1934,15 @@ After command acceptance, the targeted Sandbox status and open deletion dialog
 may poll every 250ms for ten seconds, then return to 1.5-second progress reads.
 These reads never overlap; failed reads back off to five seconds and report
 uncertainty. Timers never imply completion, and retries retain the original key.
-Every poll refreshes the authorized inventory and mutable Sandbox subtrees.
+Owner Sandbox subtrees refresh when the parent revision or Workspace membership,
+status or counts change, on explicit retry, and at a bounded fifteen-second
+interval while visible. Unchanged child results extend that interval to thirty
+seconds after ten minutes. Agent status, titles and task progress do not appear
+in the parent summary, so stable parent revisions never eliminate child refresh.
+A retained owner view reuses children until their next bounded refresh while the
+parent and access checks revalidate; different accounts or underlying clients
+never share it. Independent inventory and access revalidation keep their own
+cadences.
 Deleted Sandboxes are omitted before fetching their details or descendants,
 including on initial load and explicit refresh. Their retained conversation
 history remains available through direct Agent reads, independently of navigation.
@@ -6302,3 +6316,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
 
 | 2026-11-12 | Specify capability-gated self-service account deletion, acknowledged CMA-only loss, immediate access revocation and the seven-day live-data deadline, published retention-policy guidance, recorded cleanup progress and same-key recovery, and the restricted Deletion in progress page using existing components. |
+
+| 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
