@@ -37,6 +37,8 @@ and `objects`. Each counter is a `DocumentUsageQuota` with nonnegative integer
 With enforcement disabled or its ledger not ready, all three counters are `null`;
 do not interpret them as zero or calculate a remaining allowance. The SDK validates numeric counters
 as safe JavaScript integers and accepts the usual operation options.
+The separate `pending_deletions: number | null` field counts deleting documents
+while deletion is enabled, independently of quota enforcement.
 
 `readConformance(options?)` performs `GET /api/v1/conformance` anonymously.
 `readOpenApi(options?)` reads the generated `/openapi.json` anonymously, preserving

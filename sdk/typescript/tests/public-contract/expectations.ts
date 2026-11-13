@@ -15,6 +15,7 @@ export const localCodes = new Map([
 
   ['preparation-reserve-missing-key', 'invalid_binding'],
   ['document-source-invalid', 'invalid_document_request'],
+  ['document-delete-invalid-revision', 'invalid_document_request'],
   ['filesystem-content-reject-invalid-max-bytes', 'invalid_file_request'],
   ['filesystem-write-reject-malformed-json', 'invalid_file_request'],
   ['admin-runtime-update-invalid-json', 'invalid_runtime_update'],
