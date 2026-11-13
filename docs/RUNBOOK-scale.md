@@ -231,6 +231,28 @@ run. No production credentials may be substituted.
 
 ## Baseline, replicas and autoscaling
 
+The architect's exact-control review of PR #1972 at `d7672560c343938ba633e153dbd4b24cd4e13e43` is NO-GO for the original controls. The corrected candidate is prepared for focused re-review only; it has not replaced the active workspace controls or run against the cluster. The full prior verdict is retained by local-verifier-02 as `evidence/requirements/review-local-controls-pr1972-d7672560.md`, SHA256 `9f62cd7bbf30a14ac3bb63e15ada3aaf5caf0db14fdc715883b8e4ded8bc9516`.
+
+The candidate wrapper permits only the short output/file/selector forms used by this bundle (`-o`, `-f`, `-l`, including `=value`) and the standalone stdin marker `-`. Other short or combined flags fail before kubectl starts, including `-nreview-other`, `-shttps://review.invalid:443`, `-A=true` and `-wnreview-other`. Long destination/namespace/authentication overrides remain rejected. This confines arguments; it does not authorize Secrets, logs, cluster-scoped objects, unrelated resources or arbitrary accepted commands. Requested execution scope remains owner-operated fixed-1/fixed-2 in the existing local namespace during an agreed stable window.
+
+Each corrected fixed-mode attempt creates a separate private directory under `evidence/mode-transitions/fixed-N-<unique suffix>/`. Its files are:
+
+- `intent.json`: UTC start, context, namespace, loopback endpoint, mode/command and exact control hashes.
+- `hpa-before.json` and `deployments-before.json`: scoped checkpoints written once before any mutation, including hashed resource UIDs and resource versions. HPA metadata annotations are omitted; this evidence is not a restore/apply manifest. Only HPAs targeting the two named Deployments are selected.
+- `events.jsonl`: append-only command start/outcome journal with exit codes and stdout/stderr hashes. Unrestricted output and error payloads are not retained.
+- `pods-after.json`: written only after exactly N nonterminating Ready pods are observed per service; retains hashed pod/node identities and runtime image IDs. This does not establish placement or user-journey correctness.
+- `result.json`: completion or failure phase and exit code. A killed process may leave an incomplete attempt without this file; that is never success.
+
+A failed initial snapshot aborts before mutation. HPA deletions and each Deployment scale run separately, stopping on the first failure while preserving earlier successful effects in the journal. No automatic rollback or HPA restoration occurs. A retry creates another directory and cannot replace a previous attempt or the legacy `evidence/hpa-before-fixed.json`. Keep all failed and incomplete attempts when handing off results.
+
+Offline validation from the repository checkout uses only a synthetic kubectl and synthetic kubeconfig in disposable directories under the bundle:
+
+```sh
+python3 .github/scripts/cma-scale-local/tests/test_controls.py -v
+```
+
+The tests cover override rejection, the pinned destination, checkpoint preservation, snapshot errors, both HPA deletion failures, either Deployment scale failure, rollout failure, retry preservation and termination exclusion. They make no real Kubernetes/network calls, install no tooling and clean their fixture directories. Their source-bound receipts support the focused review; they do not approve live control use. The `auto` branch, HPA installation, faults, native helper and production operations remain outside this control review.
+
 ```sh
 scripts/mode.sh fixed-1
 scripts/load.sh n1-health
