@@ -1,9 +1,10 @@
 mod conversation;
 mod desktop;
 mod ownership;
+mod upload;
 use conversation::conversation;
+use upload::TemporaryUpload;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -477,26 +478,6 @@ fn runtime_failure(error: RuntimeError) -> Response {
         StatusCode::BAD_REQUEST
     };
     protocol_failure(status, error.code, error.detail, error.retryable)
-}
-
-struct TemporaryUpload(Option<PathBuf>);
-
-impl TemporaryUpload {
-    fn new(path: PathBuf) -> Self {
-        Self(Some(path))
-    }
-
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for TemporaryUpload {
-    fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_file(path);
-        }
-    }
 }
 
 #[cfg(test)]
