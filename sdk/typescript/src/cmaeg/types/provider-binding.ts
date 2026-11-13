@@ -1,5 +1,5 @@
 import { BindingIdSchema, ConformanceLevelSchema, ProviderSlugSchema } from './primitives.js';
-import { enumeration, object, optional, tagged, text, type Output } from '../../schema.js';
+import { array, enumeration, object, optional, tagged, text, type Output } from '../../schema.js';
 
 export const ProviderTargetSchema = tagged(
   {
@@ -17,6 +17,7 @@ export const ProviderRequestSchema = object({
 export type ProviderRequest = Output<typeof ProviderRequestSchema>;
 
 export const ProviderBindingSchema = object({
+  capabilities: optional(array(text)),
   binding_id: BindingIdSchema,
   level: ConformanceLevelSchema,
   slug: ProviderSlugSchema,

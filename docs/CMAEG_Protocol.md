@@ -2718,6 +2718,14 @@ advertisement, not proof of unimplemented behavior. Providers MUST only advertis
 capabilities verified against their implementation. The binding response records
 its own level and field refusals for that channel.
 
+### Optional provider capabilities
+
+A stored `ProviderBinding` may include a `capabilities` array of strings
+acknowledged by the provider. An empty array is omitted, preserving the legacy
+wire shape. Both SDKs accept the optional array. Retaining a nonempty array
+requires compatible channel readers during rollback; the routing audit reports
+this extension and refuses to clear it as a routing-only migration.
+
 ### Attachment block in turn input
 
 This subsection is informative: it describes text the gateway writes into

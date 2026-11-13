@@ -1,4 +1,4 @@
-//! Provider selection and binding wire types.
+//! Provider selection and retained binding negotiation.
 use super::{BindingId, ConformanceLevel, ProviderSlug};
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,9 @@ pub enum ProviderTarget {
 /// CMAEG `ProviderBinding` wire shape.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderBinding {
+    /// Capabilities acknowledged by this binding's provider; absent on old peers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
     /// Omitted selects the legacy profile provisioning behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<ProviderTarget>,
