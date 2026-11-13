@@ -15,7 +15,7 @@ async fn cancellation_at_cooperative_yield_aborts_transaction_and_counts_consume
     let writes = db.collection::<Document>("pending_writes");
     writes.insert_one(doc! {"_id": "committed"}).await.unwrap();
     let id = AgentId("agt_cancel_fixture".into());
-    let entries = entries(&id, 16, 128);
+    let entries = entries(&id, 200, 128);
     insert(&collection, &entries).await;
     let consumed = entries[..8]
         .iter()
@@ -38,7 +38,7 @@ async fn cancellation_at_cooperative_yield_aborts_transaction_and_counts_consume
                 ScanCaller::Other,
                 &collection,
                 &id,
-                16,
+                200,
                 &mut session,
                 options(true),
                 |_| {
@@ -72,7 +72,9 @@ async fn cancellation_at_cooperative_yield_aborts_transaction_and_counts_consume
     assert_eq!(execution[0].1, 1);
     // A bounded wait observes protocol cleanup, with no latency assertion.
     tokio::time::timeout(Duration::from_secs(30), async {
-        while observation.commands("abortTransaction") == 0 {
+        while observation.commands("abortTransaction") == 0
+            || observation.commands("killCursors") == 0
+        {
             tokio::task::yield_now().await;
         }
     })

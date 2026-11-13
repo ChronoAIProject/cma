@@ -11,7 +11,7 @@ async fn full_scan_strategies_preserve_all_rows_summary_and_work_accounting() {
     let expected = entries(&id, 10_001, 256);
     let bytes = insert(&collection, &expected).await;
     let mut summaries = Vec::new();
-    for enabled in [false, true] {
+    for (enabled, raw_batches) in [(false, false), (true, false), (true, true)] {
         let mut session = client.start_session().await.unwrap();
         let mut visited = Vec::new();
         let (result, work) = isolated_test(recorded_execution(async {
@@ -21,7 +21,7 @@ async fn full_scan_strategies_preserve_all_rows_summary_and_work_accounting() {
                 &id,
                 10_001,
                 &mut session,
-                options(enabled),
+                options(enabled).with_raw_batches(raw_batches),
                 |entry| {
                     visited.push(entry);
                     Ok(())
@@ -38,13 +38,13 @@ async fn full_scan_strategies_preserve_all_rows_summary_and_work_accounting() {
         assert_eq!(work[0].1 > 0, enabled);
         summaries.push(summary);
     }
-    assert_eq!(summaries[0], summaries[1]);
+    assert!(summaries.iter().all(|summary| summary == &summaries[0]));
     // Physical insertion order does not override the required sequence sort.
     collection.delete_many(doc! {}).await.unwrap();
     let mut reversed = expected[..16].to_vec();
     reversed.reverse();
     insert(&collection, &reversed).await;
-    for enabled in [false, true] {
+    for (enabled, raw_batches) in [(false, false), (true, false), (true, true)] {
         let mut session = client.start_session().await.unwrap();
         let mut sequences = Vec::new();
         scan_collection(
@@ -53,7 +53,7 @@ async fn full_scan_strategies_preserve_all_rows_summary_and_work_accounting() {
             &id,
             16,
             &mut session,
-            options(enabled),
+            options(enabled).with_raw_batches(raw_batches),
             |entry| {
                 sequences.push(entry.seq);
                 Ok(())
@@ -119,7 +119,7 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
             _ => unreachable!(),
         }
         let mut errors = Vec::new();
-        for enabled in [false, true] {
+        for (enabled, raw_batches) in [(false, false), (true, false), (true, true)] {
             let mut session = client.start_session().await.unwrap();
             let error = scan_collection(
                 ScanCaller::Other,
@@ -127,7 +127,7 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
                 &id,
                 16,
                 &mut session,
-                options(enabled),
+                options(enabled).with_raw_batches(raw_batches),
                 |_| Ok(()),
             )
             .await
@@ -145,9 +145,9 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
             }
             errors.push(format!("{error:?}"));
         }
-        assert_eq!(errors[0], errors[1]);
+        assert!(errors.iter().all(|error| error == &errors[0]));
     }
-    for enabled in [false, true] {
+    for (enabled, raw_batches) in [(false, false), (true, false), (true, true)] {
         let mut session = client.start_session().await.unwrap();
         let error = scan_collection(
             ScanCaller::Other,
@@ -155,7 +155,7 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
             &id,
             10_129,
             &mut session,
-            options(enabled),
+            options(enabled).with_raw_batches(raw_batches),
             |_| Ok(()),
         )
         .await
