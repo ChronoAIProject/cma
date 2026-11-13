@@ -114,10 +114,10 @@ async fn apply(
     let row = store
         .sandboxes
         .find_one_and_update(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": request.sandbox_id.as_str(), "status": "active",
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION, "record.runtime": runtime,
-            },
+            }),
             doc! { "$inc": increments },
         )
         .projection(doc! { "desktop_session_epoch": 1, "authority_now": "$$NOW" })

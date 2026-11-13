@@ -1,6 +1,9 @@
 use super::*;
 use std::time::{Duration, SystemTime};
 
+mod credential_tests;
+mod floor_tests;
+mod publication_tests;
 mod renewal_tests;
 mod snapshot_tests;
 mod snapshot_unknown_tests;

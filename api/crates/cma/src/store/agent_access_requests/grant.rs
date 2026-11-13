@@ -88,12 +88,12 @@ async fn apply(
         current
             .validate_service_access_transaction(&sandbox, &event, &at)
             .map_err(|_| AgentAccessError::Conflict)?;
-        let result = store.sandboxes.update_one(doc! {
+        let result = store.sandboxes.update_one(crate::store::work_schema::query(doc! {
             "_id":current.id.as_str(),"document_schema_version":DOCUMENT_SCHEMA_VERSION,
             "channel_reuse_cleanup_execution":{"$exists":false},
             "revision":signed(current.revision,"access grant revision").map_err(|_| AgentAccessError::Unavailable)?,
             "last_seq":signed(last_seq,"access grant event sequence").map_err(|_| AgentAccessError::Unavailable)?,
-        },crate::store::work_lease_update::replacement(sandbox_replacement_fields(&sandbox).map_err(|_| AgentAccessError::Unavailable)?))
+        }),crate::store::work_lease_update::replacement(sandbox_replacement_fields(&sandbox).map_err(|_| AgentAccessError::Unavailable)?))
             .session(&mut *session).await?;
         if result.matched_count != 1 {
             return Err(AgentAccessError::Conflict.into());

@@ -47,7 +47,7 @@ pub(super) fn sandbox_claim(
         .lease
         .as_ref()
         .ok_or(SandboxStoreError::Conflict)?;
-    let mut filter = held(
+    let filter = held(
         claimed.id.as_str(),
         claimed.owner.as_str(),
         mongodb::bson::serialize_to_bson(&claimed.work.step)
@@ -55,16 +55,17 @@ pub(super) fn sandbox_claim(
         &lease.holder,
         lease.fence,
     )?;
-    filter.insert(
-        "record.lifecycle.operation.authority.operation_id",
-        claimed
-            .lifecycle
-            .operation
-            .as_ref()
-            .map(|operation| Bson::String(operation.authority().operation_id.clone()))
-            .unwrap_or(Bson::Null),
-    );
-    Ok(filter)
+    let operation = claimed
+        .lifecycle
+        .operation
+        .as_ref()
+        .map(|operation| Bson::String(operation.authority().operation_id.clone()))
+        .unwrap_or(Bson::Null);
+    Ok(doc! {"$and":[filter,{
+        "record.lifecycle.operation.authority.operation_id":operation.clone(),
+        "$expr":{"$eq":[{"$ifNull":["$record.lifecycle.operation.authority.operation_id",Bson::Null]},
+            {"$literal":operation}]},
+    }]})
 }
 
 pub(super) fn workspace_claim(
@@ -75,7 +76,7 @@ pub(super) fn workspace_claim(
         .lease
         .as_ref()
         .ok_or(SandboxStoreError::Conflict)?;
-    let mut filter = held(
+    let filter = held(
         claimed.id.as_str(),
         claimed.owner.as_str(),
         mongodb::bson::serialize_to_bson(&claimed.work.step)
@@ -83,9 +84,14 @@ pub(super) fn workspace_claim(
         &lease.holder,
         lease.fence,
     )?;
-    filter.insert("sandbox_id", claimed.sandbox_id.as_str());
-    filter.insert("record.sandbox_id", claimed.sandbox_id.as_str());
-    Ok(filter)
+    Ok(doc! {"$and":[filter,{
+        "sandbox_id":claimed.sandbox_id.as_str(),
+        "record.sandbox_id":claimed.sandbox_id.as_str(),
+        "$expr":{"$and":[
+            {"$eq":["$sandbox_id",{"$literal":claimed.sandbox_id.as_str()}]},
+            {"$eq":["$record.sandbox_id",{"$literal":claimed.sandbox_id.as_str()}]},
+        ]},
+    }]})
 }
 
 fn held(
@@ -103,7 +109,7 @@ fn held(
     "onError":Bson::Null,"onNull":Bson::Null}};
     Ok(doc! {
         "_id":id,"owner":owner,"record.owner":owner,"work_pending":true,
-        "record.work.step":step,"record.work.lease.holder":holder,
+        "record.work.step":step.clone(),"record.work.lease.holder":holder,
         "record.work.lease.fence":fence,
         "record.lifecycle.checkpoint_capture":Bson::Null,
         "$nor":[{"record.lifecycle.retirement_archive.verified":{"$type":"null"}}],
@@ -111,6 +117,14 @@ fn held(
         "owned_workspace_cleanup_admission_v1":{"$exists":false},
         "work_lease_expires_at":{"$regex":CANONICAL_TIME},
         "$expr":{"$and":[
+            // Match-query equality can select array elements. Authority must
+            // retain the exact scalar holder/fence and original work value.
+            {"$eq":["$record.work.lease.holder",{"$literal":holder}]},
+            {"$eq":["$record.work.lease.fence",fence]},
+            {"$in":[{"$type":"$record.work.lease.fence"},["int","long"]]},
+            {"$eq":["$record.work.step",{"$literal":step}]},
+            {"$eq":["$owner",{"$literal":owner}]},
+            {"$eq":["$record.owner",{"$literal":owner}]},
             {"$eq":["$work_lease_expires_at","$record.work.lease.expires_at"]},
             {"$ne":[current.clone(),Bson::Null]}, {"$gt":[current,"$$NOW"]},
         ]},

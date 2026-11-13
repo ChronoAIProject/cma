@@ -53,6 +53,14 @@ async fn apply(
     acquisition: Option<&Document>,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
+    crate::store::work_publication::fence(store, session)
+        .await
+        .map_err(Domain)?;
+    if acquisition.is_some() && sandbox.work.authority_protocol.is_some() {
+        crate::store::work_schema::floor::retain(store, session)
+            .await
+            .map_err(Driver)?;
+    }
     let current = store
         .sandboxes
         .find_one(doc! { "_id": sandbox.id.as_str() })
@@ -64,6 +72,16 @@ async fn apply(
         .map_err(Domain)?
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| Domain(SandboxStoreError::Conflict))?;
+    if acquisition.is_some() {
+        crate::store::sandbox_credentials::issuance::legacy::preserve(
+            store,
+            &crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?,
+            sandbox,
+            session,
+        )
+        .await
+        .map_err(Driver)?;
+    }
     let previous_revision = expected;
     let expected = signed(expected, "sandbox revision")
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;
@@ -89,13 +107,21 @@ async fn apply(
         // transaction. A pre-read cannot authorize delayed claim delivery.
         filter = doc! {"$and":[filter, acquisition.clone()]};
     }
+    let filter =
+        crate::store::work_publication::sandbox(filter, sandbox.id.as_str()).map_err(Domain)?;
     let updated = store
         .sandboxes
         .update_one(
-            filter,
-            crate::store::work_lease_update::replacement(
-                crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
-            ),
+            crate::store::work_schema::query(filter),
+            if acquisition.is_some() {
+                crate::store::work_lease_update::acquisition(
+                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
+                )
+            } else {
+                crate::store::work_lease_update::replacement(
+                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
+                )
+            },
         )
         .session(&mut *session)
         .await

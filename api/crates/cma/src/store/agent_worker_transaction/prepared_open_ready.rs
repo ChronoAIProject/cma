@@ -51,7 +51,12 @@ pub(super) async fn fence(
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    if sandbox != observed.sandbox || workspace != observed.workspace || tree != &observed.worktree
+    if !layer2_core::sandbox::store::sandbox_content_matches(Some(&sandbox), &observed.sandbox)
+        || !layer2_core::sandbox::store::workspace_content_matches(
+            Some(&workspace),
+            &observed.workspace,
+        )
+        || tree != &observed.worktree
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
@@ -63,12 +68,12 @@ pub(super) async fn fence(
         (&store.worktrees, tree.id.as_str(), tree.revision),
         (&store.native_prepared, sandbox.id.as_str(), revision),
     ] {
-        let written = collection.update_one(doc! {
+        let written = collection.update_one(crate::store::work_schema::for_collection(collection, doc! {
             "_id": id, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "revision": signed(revision, "prepared Open parent revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
             "owned_workspace_cleanup_admission_v1": {"$exists": false},
             "channel_reuse_cleanup_execution": {"$exists": false},
-        }, doc! {"$inc": {"agent_prepared_open_ready_fence": 1_i64}})
+        }), doc! {"$inc": {"agent_prepared_open_ready_fence": 1_i64}})
             .session(&mut *session).await.map_err(ApplyError::Driver)?;
         if written.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));

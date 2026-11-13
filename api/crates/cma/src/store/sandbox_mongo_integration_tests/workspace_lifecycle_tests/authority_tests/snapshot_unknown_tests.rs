@@ -38,7 +38,7 @@ async fn renewed_snapshot_reconciles_lost_commit_acknowledgement_after_expiry() 
         .run_command(doc! {
             "configureFailPoint":"failCommand","mode":{"times":5_i32},
             "data":{"failCommands":["commitTransaction"],"appName":&app,
-                "blockConnection":true,"blockTimeMS":900_i32,
+                "blockConnection":true,"blockTimeMS":1500_i32,
                 "writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired",
                     "errmsg":"injected lost work publication acknowledgement"}}
         })

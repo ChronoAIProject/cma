@@ -87,22 +87,11 @@ async fn independent_renewals_preserve_identity_revision_and_monotonic_expiry() 
         assert_eq!(lease, longer);
         assert!(original.renew(&first, &at(-1)).await.is_none());
         assert_eq!(kind.row(&first).await, renewed);
-        let before = server_seconds(&client).await;
-        let until = original.renew(&first, &at(3600)).await.unwrap();
-        let after = server_seconds(&client).await;
-        let until = layer2_core::seconds_from_rfc3339(&until).unwrap();
-        assert!(until >= before + 14 && until <= after + 15);
+        // Never-activated work retains the existing expiry-only renewal API.
+        let requested = at(3600);
+        assert_eq!(original.renew(&first, &requested).await, Some(requested));
     }
     client.database(&name).drop().await.unwrap();
-}
-
-async fn server_seconds(client: &Client) -> u64 {
-    let hello = client
-        .database("admin")
-        .run_command(doc! {"hello":1_i32})
-        .await
-        .unwrap();
-    hello.get_datetime("localTime").unwrap().timestamp_millis() as u64 / 1000
 }
 
 #[tokio::test]
@@ -211,4 +200,60 @@ async fn delayed_renewal_cannot_extend_past_its_requested_deadline() {
         assert!(original.renew(&store, &at(15)).await.is_some());
     }
     admin.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn store_clock_receipt_bounds_local_authority_for_both_worker_kinds() {
+    let (client, name) = database("work_renewal_receipt").await;
+    let first = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let second = peer(&name).await;
+    seed(&first).await;
+    for kind in [Kind::Sandbox, Kind::Workspace] {
+        kind.claim(&first, "original", at(0), at(10))
+            .await
+            .unwrap()
+            .unwrap();
+        let claim = Claim::read(&first, kind).await;
+        let started = std::time::Instant::now();
+        let grant = match &claim {
+            Claim::Sandbox(row) => {
+                second
+                    .renew_sandbox_authority(row, &at(3600), &at(3600))
+                    .await
+            }
+            Claim::Workspace(row) => {
+                second
+                    .renew_workspace_authority(row, &at(3600), &at(3600))
+                    .await
+            }
+        }
+        .unwrap()
+        .unwrap();
+        assert!(grant.valid_for > Duration::from_secs(13));
+        assert!(grant.valid_for <= Duration::from_secs(15));
+        assert!(started.elapsed() < grant.valid_for);
+        assert_eq!(
+            kind.row(&first)
+                .await
+                .get_str("work_lease_expires_at")
+                .unwrap(),
+            grant.expires_at
+        );
+        let refused = match claim.wrong_holder() {
+            Claim::Sandbox(row) => {
+                second
+                    .renew_sandbox_authority(&row, &at(-3600), &at(15))
+                    .await
+            }
+            Claim::Workspace(row) => {
+                second
+                    .renew_workspace_authority(&row, &at(-3600), &at(15))
+                    .await
+            }
+        }
+        .unwrap();
+        assert!(refused.is_none());
+    }
+    client.database(&name).drop().await.unwrap();
 }

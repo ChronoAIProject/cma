@@ -217,6 +217,17 @@ pub(super) fn runtime(sandbox: &Sandbox) -> Option<RuntimeHandle> {
 }
 
 pub(super) fn operation_id(sandbox: &Sandbox) -> String {
+    if sandbox.work.authority_protocol.is_some() {
+        // A new claimant continues the same effect. Runtime and credential
+        // generations distinguish later obligations without using lease fences.
+        return format!(
+            "sandbox-work-v1:{}:{:?}:{}:{}",
+            sandbox.id,
+            sandbox.work.step,
+            sandbox.lifecycle.runtime_generation_high_water,
+            sandbox.credential.key_generation
+        );
+    }
     let fence = sandbox.work.lease.as_ref().map_or(0, |lease| lease.fence);
     format!("{}:{:?}:{fence}", sandbox.id, sandbox.work.step)
 }
@@ -411,6 +422,9 @@ pub(super) fn install_failure(error: AdapterError) -> WorkerFailure {
 
 pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
     match error {
+        CredentialError::Uncertain => {
+            WorkerFailure::waiting("credential issuance is uncertain; reconciliation will retry")
+        }
         CredentialError::ServiceNotGranted(service) => {
             WorkerFailure::service_not_granted(service.as_str())
         }

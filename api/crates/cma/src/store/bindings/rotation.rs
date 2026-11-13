@@ -29,8 +29,8 @@ impl MongoBindingCredentials {
             let updated = next.admit_credential_delivery(&sandbox, material.authority.clone())?;
             let database = self.store.bindings.records.namespace().db;
             self.custody.retain_binding_material(&database, &material, &mut session).await?;
-            let result = self.store.sandboxes.update_one(doc! {"_id": sandbox.id.as_str(), "revision": integer(sandbox.revision).map_err(unavailable)?,
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION}, crate::store::work_lease_update::replacement(sandbox_replacement_fields(&updated).map_err(unavailable)?))
+            let result = self.store.sandboxes.update_one(crate::store::work_schema::query(doc! {"_id": sandbox.id.as_str(), "revision": integer(sandbox.revision).map_err(unavailable)?,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION}), crate::store::work_lease_update::replacement(sandbox_replacement_fields(&updated).map_err(unavailable)?))
                 .session(&mut session).await.map_err(unavailable)?;
             if result.matched_count != 1 { return Err(conflict()); }
             crate::store::sandbox_usage::save::record_saved(&self.store, &mut session, &updated, sandbox.revision).await

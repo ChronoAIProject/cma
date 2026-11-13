@@ -2,57 +2,9 @@
 
 use mongodb::bson::{doc, Bson, Document};
 
-/// Read-only reconciliation accepts the exact committed content after renewal
-/// or expiry. It never authorizes another mutation or another effect dispatch.
-pub(super) fn sandbox_matches(
-    actual: Option<&layer2_core::sandbox::Sandbox>,
-    expected: &layer2_core::sandbox::Sandbox,
-) -> bool {
-    let Some(actual) = actual else {
-        return false;
-    };
-    if actual
-        .work
-        .lease
-        .iter()
-        .chain(expected.work.lease.iter())
-        .any(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at).is_none())
-    {
-        return false;
-    }
-    let mut expected = expected.clone();
-    if let (Some(old), Some(now)) = (&mut expected.work.lease, &actual.work.lease) {
-        if old.holder == now.holder && old.fence == now.fence && old.expires_at <= now.expires_at {
-            old.expires_at.clone_from(&now.expires_at);
-        }
-    }
-    actual == &expected
-}
-
-pub(super) fn workspace_matches(
-    actual: Option<&layer2_core::sandbox::Workspace>,
-    expected: &layer2_core::sandbox::Workspace,
-) -> bool {
-    let Some(actual) = actual else {
-        return false;
-    };
-    if actual
-        .work
-        .lease
-        .iter()
-        .chain(expected.work.lease.iter())
-        .any(|lease| layer2_core::seconds_from_rfc3339(&lease.expires_at).is_none())
-    {
-        return false;
-    }
-    let mut expected = expected.clone();
-    if let (Some(old), Some(now)) = (&mut expected.work.lease, &actual.work.lease) {
-        if old.holder == now.holder && old.fence == now.fence && old.expires_at <= now.expires_at {
-            old.expires_at.clone_from(&now.expires_at);
-        }
-    }
-    actual == &expected
-}
+pub(super) use layer2_core::sandbox::store::{
+    sandbox_content_matches as sandbox_matches, workspace_content_matches as workspace_matches,
+};
 
 /// Keep the driver's existing increment validation and overflow behavior.
 /// Both writes belong to the caller's transaction; no intermediate state is
@@ -64,6 +16,8 @@ pub(super) async fn with_fence(
     counter: &str,
     session: &mut mongodb::ClientSession,
 ) -> Result<mongodb::results::UpdateResult, mongodb::error::Error> {
+    let filter = super::work_publication::for_collection(rows, filter)
+        .map_err(mongodb::error::Error::custom)?;
     let result = rows
         .update_one(filter.clone(), doc! {"$inc":{counter:1_i64}})
         .session(&mut *session)
@@ -113,5 +67,43 @@ pub(super) fn replacement(fields: Document) -> Vec<Document> {
         update.insert("work_lease_expires_at",doc! {"$cond":[same,
             "$work_lease_expires_at",{"$literal":fields.get("work_lease_expires_at").cloned().unwrap_or(Bson::Null)}]});
     }
+    if fields
+        .get_document("record")
+        .ok()
+        .is_some_and(|record| record.contains_key("work"))
+    {
+        let record = update
+            .remove("record")
+            .expect("work aggregate has a record update");
+        update.insert("record", doc! {"$let":{"vars":{"next":record},"in":{
+            "$cond":[{"$eq":["$document_schema_version",3_i64]},
+                {"$mergeObjects":["$$next",{"work":{"$mergeObjects":["$$next.work",{"authority_protocol":"renewed_v1"}]}}]},
+                "$$next"]
+        }}});
+        update.insert(
+            "document_schema_version",
+            doc! {"$cond":[
+            {"$eq":["$document_schema_version",3_i64]},3_i64,
+            {"$literal":fields.get("document_schema_version").cloned().unwrap_or(Bson::Null)}]},
+        );
+    }
     vec![doc! {"$set":update}]
+}
+
+/// Cap a newly acquired short claim using Mongo time, independently of caller
+/// clock skew. Existing long claims keep their original OFF-mode representation.
+pub(super) fn acquisition(fields: Document) -> Vec<Document> {
+    let short = fields
+        .get_document("record")
+        .ok()
+        .and_then(|record| record.get_document("work").ok())
+        .is_some_and(|work| work.get_str("authority_protocol").ok() == Some("renewed_v1"));
+    let mut update = replacement(fields);
+    if short {
+        let deadline = doc! {"$dateToString":{"format":"%Y-%m-%dT%H:%M:%SZ",
+        "date":{"$min":[{"$toDate":"$work_lease_expires_at"},
+            {"$dateAdd":{"startDate":"$$NOW","unit":"second","amount":15_i64}}]},"timezone":"UTC"}};
+        update.push(doc! {"$set":{"work_lease_expires_at":deadline.clone(),"record.work.lease.expires_at":deadline}});
+    }
+    update
 }

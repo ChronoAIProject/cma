@@ -16,6 +16,15 @@ use super::sandboxes::read_sandbox;
 
 #[async_trait::async_trait]
 impl SandboxWorkerStore for MongoSandboxStore {
+    async fn scope_sandbox_publication<'a>(
+        &'a self,
+        work: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, SandboxStoreError>> + Send + 'a>,
+        >,
+    ) -> Result<bool, SandboxStoreError> {
+        super::work_publication::scope(self, work).await
+    }
+
     async fn completed_installation_digest(
         &self,
         sandbox: &layer2_core::sandbox::Sandbox,
@@ -44,7 +53,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
         }
         let mut cursor = self
             .sandboxes
-            .find(doc! {
+            .find(crate::store::work_schema::query(doc! {
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "work_pending": true,
                 "$nor": [{"record.lifecycle.retirement_archive.verified": {"$type":"null"}}],
@@ -53,7 +62,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
                     { "work_lease_expires_at": Bson::Null },
                     { "work_lease_expires_at": { "$lte": now } },
                 ],
-            })
+            }))
             .projection(doc! { "_id": 1 })
             .sort(doc! { "work_ready_at": 1, "_id": 1 })
             .limit(i64::from(limit))
@@ -95,6 +104,10 @@ impl SandboxWorkerStore for MongoSandboxStore {
             {
                 return Ok(None);
             }
+            if self.renewable_work {
+                sandbox.work.authority_protocol =
+                    Some(layer2_core::sandbox::store::WorkAuthorityProtocol::RenewedV1);
+            }
             let expected = sandbox.revision;
             sandbox
                 .work
@@ -106,7 +119,31 @@ impl SandboxWorkerStore for MongoSandboxStore {
                 .save_sandbox_validated(expected, sandbox.clone(), Some(&acquisition))
                 .await
             {
-                Ok(()) => return Ok(Some(sandbox)),
+                Ok(()) => {
+                    if sandbox.work.authority_protocol.is_none() {
+                        return Ok(Some(sandbox));
+                    }
+                    let stored = self
+                        .get_sandbox(id)
+                        .await?
+                        .ok_or(SandboxStoreError::Conflict)?;
+                    if stored
+                        .work
+                        .lease
+                        .as_ref()
+                        .map(|lease| (&lease.holder, lease.fence))
+                        != sandbox
+                            .work
+                            .lease
+                            .as_ref()
+                            .map(|lease| (&lease.holder, lease.fence))
+                        || stored.work.step != sandbox.work.step
+                        || stored.owner != sandbox.owner
+                    {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    return Ok(Some(stored));
+                }
                 Err(SandboxStoreError::Conflict) => tokio::task::yield_now().await,
                 Err(error) => return Err(error),
             }
@@ -121,6 +158,21 @@ impl SandboxWorkerStore for MongoSandboxStore {
         requested_until: &str,
     ) -> Result<Option<String>, SandboxStoreError> {
         super::work_lease_renewal::renew(
+            &self.sandboxes,
+            super::work_claim_authority::sandbox_claim(claimed)?,
+            requested_until,
+            None,
+        )
+        .await
+    }
+
+    async fn renew_sandbox_authority(
+        &self,
+        claimed: &layer2_core::sandbox::Sandbox,
+        _now: &str,
+        requested_until: &str,
+    ) -> Result<Option<layer2_core::sandbox::store::WorkLeaseGrant>, SandboxStoreError> {
+        super::work_lease_renewal::grant(
             &self.sandboxes,
             super::work_claim_authority::sandbox_claim(claimed)?,
             requested_until,
@@ -217,14 +269,17 @@ async fn purge_in_transaction(
     expected_revision: u64,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), PurgeError> {
+    super::work_publication::fence(store, session)
+        .await
+        .map_err(|_| PurgeError::Conflict)?;
     let aggregate = store
         .sandboxes
-        .find_one(doc! {
+        .find_one(crate::store::work_schema::query(doc! {
             "_id": id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "revision": signed(expected_revision, "sandbox purge revision")
                 .map_err(|_| PurgeError::Conflict)?,
-        })
+        }))
         .session(&mut *session)
         .await
         .map_err(PurgeError::Driver)?;
@@ -330,11 +385,17 @@ async fn purge_in_transaction(
     }
     let deleted = store
         .sandboxes
-        .delete_one(doc! {
-            "_id": id.as_str(),
-            "revision": signed(expected_revision, "sandbox purge revision")
-                .map_err(|_| PurgeError::Conflict)?,
-        })
+        .delete_one(crate::store::work_schema::query(
+            super::work_publication::sandbox(
+                doc! {
+                    "_id": id.as_str(),
+                    "revision": signed(expected_revision, "sandbox purge revision")
+                        .map_err(|_| PurgeError::Conflict)?,
+                },
+                id.as_str(),
+            )
+            .map_err(|_| PurgeError::Conflict)?,
+        ))
         .session(session)
         .await
         .map_err(PurgeError::Driver)?;

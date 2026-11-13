@@ -51,7 +51,10 @@ pub(super) async fn apply(
     "owned_workspace_cleanup_admission_v1":{"$exists":false}};
     let locked = store
         .workspaces
-        .update_one(filter.clone(), doc! {"$inc":{"removal_lock_fence":1_i64}})
+        .update_one(
+            crate::store::work_schema::query(filter.clone()),
+            doc! {"$inc":{"removal_lock_fence":1_i64}},
+        )
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -85,7 +88,7 @@ pub(super) async fn apply(
     let changed = store
         .workspaces
         .update_one(
-            filter,
+            crate::store::work_schema::query(filter),
             crate::store::work_lease_update::replacement(
                 workspace_replacement_fields(&workspace).map_err(ApplyError::Domain)?,
             ),

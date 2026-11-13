@@ -130,10 +130,10 @@ async fn apply_with_sources(
         .await?;
     }
     for workspace in &current.retained.workspaces {
-        let written = store.workspaces.update_one(doc! {
+        let written = store.workspaces.update_one(crate::store::work_schema::query(doc! {
             "_id": workspace.id.as_str(), "sandbox_id": expected.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": number(workspace.revision)?,
-        }, doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
+        }), doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
             .session(&mut *session).await.map_err(ApplyError::Driver)?;
         require_one(written.matched_count)?;
     }
@@ -167,13 +167,13 @@ async fn apply_with_sources(
         FIELD,
         record_bson(&receipt).map_err(|_| domain("recovery receipt cannot be encoded"))?,
     );
-    let written = store.sandboxes.update_one(doc! {
+    let written = store.sandboxes.update_one(crate::store::work_schema::query(doc! {
         "_id": expected.id.as_str(), "owner": expected.owner.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": number(expected.revision)?,
         "last_seq": number(last_seq)?, FIELD: { "$exists": false },
         "channel_reuse_cleanup_execution": { "$exists": false },
         "channel_retirement_finalization": { "$exists": false },
-    }, crate::store::work_lease_update::replacement(fields)).session(&mut *session).await.map_err(ApplyError::Driver)?;
+    }), crate::store::work_lease_update::replacement(fields)).session(&mut *session).await.map_err(ApplyError::Driver)?;
     require_one(written.matched_count)?;
     crate::store::sandbox_usage::save::record_saved(store, session, &next, expected.revision)
         .await?;

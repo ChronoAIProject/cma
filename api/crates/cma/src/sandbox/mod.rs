@@ -45,7 +45,8 @@ pub(crate) use composition::{
     SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
 };
 pub(crate) use credential::{
-    CredentialCustodyError, CredentialError, CredentialMaterial, CredentialRevocation,
+    CredentialCustodyError, CredentialError, CredentialIssuance, CredentialMaterial,
+    CredentialRevocation, IssuanceIdentity, IssuanceObservation, IssuanceState,
     ManagedSandboxCredentials, OwnerTokenSource, SandboxCredentialController,
     SandboxCredentialCustody,
 };
