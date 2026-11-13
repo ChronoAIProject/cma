@@ -142,7 +142,11 @@ impl AgentSandboxPools {
         } else {
             tokio::time::timeout(Duration::from_secs(5), observe)
                 .await
-                .map_err(|_| unavailable("native home initialization is still pending"))?
+                .map_err(|_| {
+                    crate::AdapterError::NativeClaimNotReady(
+                        super::super::NativeClaimGuardReason::TimedOut,
+                    )
+                })?
         }
     }
 

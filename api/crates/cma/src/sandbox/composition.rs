@@ -48,6 +48,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
+    pub native_create_retry_enabled: bool,
     pub bounded_live_fragments: bool,
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
@@ -214,6 +215,7 @@ impl SandboxLifecycleComposition {
             )
             .with_execution(config.execution)
             .with_work_retry_policy(config.work_retry_policy_enabled)
+            .with_native_create_retry(config.native_create_retry_enabled)
             .with_home_policy(config.home_policy),
             dependencies.funding,
         );

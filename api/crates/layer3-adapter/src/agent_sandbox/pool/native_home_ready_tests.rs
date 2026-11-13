@@ -55,6 +55,19 @@ fn writes_once(fixture: &Fixture, floor: usize, claim: &NativePoolClaim) {
 }
 
 #[tokio::test]
+async fn native_home_readiness_deadline_has_typed_timeout_without_replaying_effects() {
+    let (fixture, claim, floor) = pending_fixture().await;
+    let error = fixture.client.adopt_home(&claim).await.unwrap_err();
+    assert!(matches!(
+        error,
+        crate::AdapterError::NativeClaimNotReady(
+            crate::agent_sandbox::NativeClaimGuardReason::TimedOut
+        )
+    ));
+    writes_once(&fixture, floor, &claim);
+}
+
+#[tokio::test]
 async fn native_home_waits_for_annotation_generation_in_one_adoption_without_replaying_writes() {
     let (fixture, claim, floor) = pending_fixture().await;
     let client = fixture.client.clone();

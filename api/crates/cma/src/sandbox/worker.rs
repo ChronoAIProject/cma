@@ -88,6 +88,7 @@ pub(crate) struct SandboxWorkerDependencies {
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
     pub work_retry_policy_enabled: bool,
+    pub native_create_retry_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -118,6 +119,7 @@ impl SandboxWorkerConfig {
         Self {
             home_policy: None,
             work_retry_policy_enabled: false,
+            native_create_retry_enabled: false,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
@@ -141,6 +143,11 @@ impl SandboxWorkerConfig {
 
     pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
         self.home_policy = policy;
+        self
+    }
+
+    pub(crate) fn with_native_create_retry(mut self, enabled: bool) -> Self {
+        self.native_create_retry_enabled = enabled;
         self
     }
 
