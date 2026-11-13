@@ -99,7 +99,8 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   assert.equal(new Set(requiredPrefixes).size, 129);
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
   assert.ok(requiredPrefixes.includes('store::agent_ownership::mongo_tests::'));
-  assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes(taskHome));
+  assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
+  assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
 });

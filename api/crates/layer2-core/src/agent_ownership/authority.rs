@@ -1,5 +1,5 @@
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{atomic::AtomicBool, Arc};
 
 use tokio::sync::watch;
 use tokio::time::Instant;
@@ -24,6 +24,8 @@ pub fn execution_authority() -> Option<Arc<Authority>> {
 /// fences. A revoked/expired authority can never be revived by a late renewal.
 pub struct Authority {
     pub token: OwnershipToken,
+    pub(super) retiring: AtomicBool,
+    pub(super) handoff_complete: tokio::sync::Mutex<bool>,
     deadline: watch::Sender<Option<Instant>>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
     pub(super) receivers: std::sync::Mutex<
@@ -39,6 +41,8 @@ impl Authority {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
             token,
+            retiring: AtomicBool::new(false),
+            handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: None,
             receivers: Default::default(),
@@ -53,6 +57,8 @@ impl Authority {
         let (deadline, _) = watch::channel(Some(deadline));
         Arc::new(Self {
             token,
+            retiring: AtomicBool::new(false),
+            handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
             store: Some(store),
             receivers: Default::default(),

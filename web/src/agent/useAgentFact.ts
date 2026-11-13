@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule } from './transport/readRetry';
 import { useEffect, useMemo, useState } from 'react';
 import type { ReadOptions } from '../api/client';
 import { useCmaClient } from '../api/context';
@@ -23,34 +25,27 @@ export function useAgentFact<Value extends { readonly agent_id: string }>(
   }>();
   useEffect(() => {
     if (!request.enabled) return;
-    const lifetime = new AbortController();
-    let pending = false;
-    const load = async () => {
-      if (pending || lifetime.signal.aborted || document.visibilityState === 'hidden') return;
-      pending = true;
-      try {
-        const value = await request.read.call(request.client, request.agentId, {
-          signal: lifetime.signal,
-        });
-        if (value.agent_id !== request.agentId) throw new Error('Agent fact identity mismatch');
-        if (!lifetime.signal.aborted)
-          setState({ request, result: { status: 'ready', agentId: request.agentId, value } });
-      } catch {
-        if (!lifetime.signal.aborted)
-          setState({ request, result: { status: 'unavailable', agentId: request.agentId } });
-      } finally {
-        pending = false;
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), 60_000);
-    const foreground = () => void load();
-    document.addEventListener('visibilitychange', foreground);
-    return () => {
-      lifetime.abort();
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', foreground);
-    };
+    let failures = 0;
+    const observer = observeRead(
+      async (signal) => {
+        try {
+          const value = await request.read.call(request.client, request.agentId, {
+            signal: signal,
+          });
+          if (value.agent_id !== request.agentId) throw new Error('Agent fact identity mismatch');
+          if (!signal.aborted)
+            setState({ request, result: { status: 'ready', agentId: request.agentId, value } });
+          failures = 0;
+          return { next: 60_000, cooldown: 1000 };
+        } catch (error) {
+          if (!signal.aborted)
+            setState({ request, result: { status: 'unavailable', agentId: request.agentId } });
+          if (!signal.aborted) return retrySchedule(error, ++failures);
+        }
+      },
+      { immediateForeground: true },
+    );
+    return () => observer.dispose();
   }, [request]);
   return state?.request === request && enabled ? state.result : { status: 'loading', agentId };
 }

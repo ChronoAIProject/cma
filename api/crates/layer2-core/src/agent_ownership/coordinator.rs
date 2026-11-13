@@ -21,6 +21,7 @@ pub struct OwnershipCoordinator {
     pub instance_id: String,
     pub store: Arc<dyn OwnershipStore>,
     owned: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
+    acquisition: Mutex<()>,
     member_deadline: std::sync::Mutex<Instant>,
     draining: AtomicBool,
     failed: watch::Sender<bool>,
@@ -44,6 +45,7 @@ impl OwnershipCoordinator {
             instance_id,
             store,
             owned: Mutex::new(BTreeMap::new()),
+            acquisition: Mutex::new(()),
             member_deadline: std::sync::Mutex::new(deadline),
             draining: AtomicBool::new(false),
             failed: watch::channel(false).0,
@@ -68,13 +70,14 @@ impl OwnershipCoordinator {
         if !self.is_ready() {
             return Err(OwnershipError::Stale);
         }
-        // Serialize local acquisitions, including uncertain retries. Only the
-        // distributed store's CAS can grant authority between different processes.
-        let mut owned = self.owned.lock().await;
+        // Serialize local acquisitions, including uncertain retries, without
+        // holding the owned-map lock across IO needed by renewal and drain.
+        // Only the store CAS grants authority between processes.
+        let _acquisition = self.acquisition.lock().await;
         if !self.is_ready() {
             return Err(OwnershipError::Stale);
         }
-        if let Some(authority) = owned.get(id) {
+        if let Some(authority) = self.owned.lock().await.get(id) {
             return if authority.is_current() {
                 Ok(Some(authority.clone()))
             } else {
@@ -96,6 +99,7 @@ impl OwnershipCoordinator {
             deadline(started, membership.now_ms, lease.expires_at_ms)?,
             self.store.clone(),
         );
+        let mut owned = self.owned.lock().await;
         if !self.is_ready() {
             authority.revoke();
             return Err(OwnershipError::Stale);
@@ -151,15 +155,31 @@ impl OwnershipCoordinator {
         }
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
         stream::iter(owned.iter().cloned().map(|authority| async move {
-            let lease = bounded(self.store.renew(&authority.token)).await?;
-            require_same_token(&authority.token, &lease)?;
-            authority.renew_until(deadline(started, membership.now_ms, lease.expires_at_ms)?)
+            // A handoff can complete while a captured renewal is in flight.
+            // Its result cannot revive retired authority or fail healthy peers.
+            if authority.retiring.load(Ordering::Acquire) {
+                return Ok(());
+            }
+            let result = async {
+                let lease = bounded(self.store.renew(&authority.token)).await?;
+                require_same_token(&authority.token, &lease)?;
+                authority.renew_until(deadline(started, membership.now_ms, lease.expires_at_ms)?)
+            }
+            .await;
+            if authority.retiring.load(Ordering::Acquire) {
+                Ok(())
+            } else {
+                result
+            }
         }))
         .buffer_unordered(4)
         .try_collect::<Vec<_>>()
         .await?;
         let mut handoffs = Vec::new();
         for authority in owned {
+            if authority.retiring.load(Ordering::Acquire) {
+                continue;
+            }
             if candidates(
                 &authority.token.agent_id,
                 &membership,
@@ -177,8 +197,12 @@ impl OwnershipCoordinator {
         Ok(handoffs)
     }
 
-    pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
+    pub fn stop_admission(&self) {
         self.draining.store(true, Ordering::Release);
+    }
+
+    pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
+        self.stop_admission();
         let owned: Vec<_> = self.owned.lock().await.values().cloned().collect();
         for authority in &owned {
             authority.revoke();
@@ -197,6 +221,13 @@ impl OwnershipCoordinator {
     where
         F: std::future::Future<Output = Result<(), OwnershipError>>,
     {
+        // Serialize exact-token retirement through receiver confirmation and
+        // durable release. Cancellation leaves completion false for safe retry.
+        let mut complete = authority.handoff_complete.lock().await;
+        if *complete {
+            return Ok(());
+        }
+        authority.retiring.store(true, Ordering::Release);
         authority.revoke();
         // Do not shorten the lease if the receiving runtime has not acknowledged
         // revocation: delayed input/ACK packets could otherwise still be in flight.
@@ -209,6 +240,7 @@ impl OwnershipCoordinator {
         {
             owned.remove(&authority.token.agent_id);
         }
+        *complete = true;
         Ok(())
     }
 
