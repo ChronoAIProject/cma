@@ -223,3 +223,16 @@ async fn certified_answers_and_feedback_preserve_eligibility_and_owner_fences() 
         ));
     }
 }
+
+#[tokio::test]
+async fn personal_transcript_uses_certified_projection_and_requests_pagination() {
+    let (reads, agent) = fixture(false).await;
+    assert!(matches!(
+        reads.transcript(&caller("owner", true), &agent.id).await,
+        Err(AgentReadError::TranscriptPaginationRequired)
+    ));
+    assert!(matches!(
+        reads.transcript(&caller("other", true), &agent.id).await,
+        Err(AgentReadError::NotFound)
+    ));
+}
