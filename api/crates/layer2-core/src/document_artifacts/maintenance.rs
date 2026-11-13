@@ -40,6 +40,8 @@ pub enum Judgement {
     Committed,
     Condemned,
     Skipped,
+    /// A lifecycle tombstone owns object deletion and the eventual quota release.
+    OwnedByPurge,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReclaimBacklog {
@@ -72,6 +74,7 @@ pub trait DocumentReclaimStore: Send + Sync {
     /// Read references and conditionally change the object state in one transaction.
     async fn judge(&self, candidate: &ObjectCandidate) -> Result<Judgement, DocumentError>;
     /// Exclusively claim an unleased or strictly expired condemned reservation.
+    /// Refuse objects owned by a document purge, including previously condemned rows.
     async fn claim_delete(
         &self,
         candidate: &ObjectCandidate,
@@ -79,14 +82,17 @@ pub trait DocumentReclaimStore: Send + Sync {
         now: i64,
     ) -> Result<Option<DeleteClaim>, DocumentError>;
     /// Match holder, fence and incarnation before releasing counters atomically.
+    /// Recheck purge ownership so a concurrent document deletion retains its rows.
     async fn finalize(&self, claim: &DeleteClaim) -> Result<bool, DocumentError>;
     async fn backlog(&self, now: i64) -> Result<ReclaimBacklog, DocumentError>;
 }
 pub struct DocumentMaintenance {
     store: Arc<dyn DocumentReclaimStore>,
-    blobs: Arc<dyn DocumentBlobMaintenance>,
+    pub(super) blobs: Arc<dyn DocumentBlobMaintenance>,
     enabled: bool,
-    delete_holder: String,
+    pub(super) delete_holder: String,
+    pub(super) purge: Option<Arc<dyn super::DocumentPurgeStore>>,
+    pub(super) purge_enabled: bool,
 }
 impl DocumentMaintenance {
     pub fn new(
@@ -98,6 +104,8 @@ impl DocumentMaintenance {
             store,
             blobs,
             enabled,
+            purge: None,
+            purge_enabled: false,
             // Constructed once for each maintenance worker during process startup.
             delete_holder: uuid::Uuid::new_v4().to_string(),
         }
@@ -141,7 +149,7 @@ impl DocumentMaintenance {
                     outcome.condemned += 1;
                     condemned.push_back(candidate);
                 }
-                Judgement::Skipped => (),
+                Judgement::Skipped | Judgement::OwnedByPurge => (),
             }
         }
         self.delete_condemned(condemned, &mut outcome, clock)

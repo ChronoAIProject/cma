@@ -388,3 +388,56 @@ async fn runtime_publish_after_delete_reserves_nothing() {
     assert_eq!(quota.0.load(Ordering::SeqCst), 1);
     assert_eq!(blobs.0.lock().await.len(), 1);
 }
+
+#[tokio::test]
+async fn delete_races_runtime_publish_exactly_one_wins() {
+    for delete_first in [true, false] {
+        let auth = Authority(Mutex::new(Some(identity())));
+        let rows = Arc::new(super::deletion_race_tests::DeletionRaceStore::new(
+            delete_first,
+        ));
+        let service = DocumentService::with_deletion(
+            rows.clone(),
+            Arc::new(memory::MemoryDocumentBlobs::default()),
+            false,
+            None,
+            true,
+        );
+        let document = service
+            .create_for_agent(&auth, "fixture", "publish", create())
+            .await
+            .unwrap();
+        let owner = Caller::new(
+            identity().owner,
+            Authorization::new([Capability::UseOwnSandboxes]),
+        );
+        let delete = service.delete(
+            &owner,
+            &document.id,
+            "delete",
+            DeleteDocument {
+                expected_revision: 1,
+            },
+        );
+        let publish = service.update_for_agent(&auth, "fixture", &document.id, "update", update());
+        let (deleted, published) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(delete, publish)
+        })
+        .await
+        .unwrap();
+        rows.assert_both_loaded_revision_one();
+        assert_eq!(
+            usize::from(deleted.is_ok()) + usize::from(published.is_ok()),
+            1
+        );
+        if delete_first {
+            assert_eq!(deleted.unwrap().revision, 2);
+            assert_eq!(published, Err(DocumentError::NotFound));
+            assert!(rows.get(&document.id).await.unwrap().is_none());
+        } else {
+            assert_eq!(deleted, Err(DocumentError::Conflict));
+            assert_eq!(published.unwrap().revision, 2);
+            assert!(rows.tombstone(&document.id).await.unwrap().is_none());
+        }
+    }
+}

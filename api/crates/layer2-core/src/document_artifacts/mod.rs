@@ -5,6 +5,8 @@ mod blob_maintenance;
 mod deletion;
 mod maintenance;
 mod mutation;
+mod purge;
+mod purge_steps;
 mod quota;
 mod runtime;
 mod service;
@@ -16,6 +18,7 @@ pub use blob_maintenance::{
 };
 pub use deletion::*;
 pub use maintenance::*;
+pub use purge::*;
 pub use quota::*;
 pub use service::{DocumentService, DOCUMENT_SOURCE_WRITE_SLOTS};
 pub use types::*;
@@ -50,3 +53,12 @@ mod usage_tests;
 
 #[cfg(test)]
 mod deletion_tests;
+
+#[cfg(test)]
+mod deletion_race_tests;
+
+#[cfg(test)]
+mod purge_tests;
+
+#[cfg(test)]
+mod purge_page_tests;
