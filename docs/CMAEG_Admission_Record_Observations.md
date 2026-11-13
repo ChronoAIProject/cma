@@ -36,7 +36,7 @@ operations, replicas or clock origins.
 |---|---|
 | `record_operation` | `replica_write`, `admission_index` |
 | `record_operation_sequence` | Unsigned process-local ordinal |
-| `transaction_attempt` | 1 through 5 for a transaction; 0 for the index operation |
+| `transaction_attempt` | 0 before any transaction attempt or for the standalone index operation; 1 through 5 once a transaction attempt starts |
 | `phase` | `validate`, `session`, `transaction_start`, `channel_guard`, `partition_guard`, `record_update`, `record_insert`, `commit`, `backoff`, `index_update`, `index_legacy_read` |
 | `io_class` | `local`, `transaction_write`, `commit`, `write`, `read` |
 | `boundary` | `start`, `error`, `end`, `deadline`, `cancelled` |
