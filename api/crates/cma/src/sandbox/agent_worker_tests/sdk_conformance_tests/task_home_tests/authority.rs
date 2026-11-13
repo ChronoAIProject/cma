@@ -1,4 +1,16 @@
 use super::*;
+use layer2_core::sandbox::task_experience::TaskExperiencePolicy;
+
+// Mirror production injection while limiting rollout authority to this fixture's owner.
+pub(super) fn task_experience_policy() -> Arc<TaskExperiencePolicy> {
+    Arc::new(
+        serde_json::from_value(json!({
+            "mode": "accounts", "accounts": ["owner"],
+            "capabilities": ["task_home_admission", "desktop_enable"]
+        }))
+        .unwrap(),
+    )
+}
 
 pub(super) struct PersonalAuthority;
 
