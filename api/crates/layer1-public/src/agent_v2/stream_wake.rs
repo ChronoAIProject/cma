@@ -8,6 +8,7 @@ impl Following {
     pub(super) async fn wait_for_change(&mut self) -> Result<(), Error> {
         // Buffered live data resumes immediately after its durable predecessor.
         if !self.initial_gap
+            && self.discarded_fragments == 0
             && self.deferred_live.is_empty()
             && self
                 .held
