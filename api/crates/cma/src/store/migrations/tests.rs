@@ -5,6 +5,7 @@ use mongodb::bson::{DateTime, Document};
 mod collection;
 mod failpoints;
 mod key_order;
+mod opening;
 mod segments;
 mod segments_runtime;
 
