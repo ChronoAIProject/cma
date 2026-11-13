@@ -27,6 +27,13 @@ pub(super) async fn drain_while<T>(
     let now = layer2_core::seconds_from_rfc3339(&now_rfc3339())
         .expect("clock produces a valid timestamp");
     let remaining = expires.saturating_sub(now);
+    // Tokio polls an immediately ready future even when its timeout is zero.
+    // Refuse before polling so an expired claim cannot begin the operation.
+    if remaining == 0 {
+        return Err(AdapterError::Unavailable(
+            "reopen output lifecycle lease expired".into(),
+        ));
+    }
     tokio::time::timeout(
         Duration::from_secs(remaining),
         drain(operation, receiver, recorder, agent_id, guard),
