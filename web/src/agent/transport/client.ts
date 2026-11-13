@@ -8,16 +8,23 @@ import {
 import { IdentityChangedError } from './identity';
 import { recoverAgentInput, submitAgentInput } from './submit';
 import { createTransportPreparation } from './preparation';
+import {
+  createIdentityGate,
+  createIdentityHandoff,
+  IDENTITY_HANDOFF_ENABLED,
+  type CurrentUser,
+} from './identityGate';
 
 export interface AgentTransportOptions {
   readonly storage: Storage;
   /** Recheck the authenticated account before requests and before exposing reads. */
-  readonly currentUser: () => Promise<string | undefined>;
+  readonly currentUser: CurrentUser;
 }
 
 export class AgentV2Session {
   readonly events: Cma['agentEventsV2'];
   readonly responses: Cma['responsesV2'];
+  private entryHandoff?: () => boolean;
 
   constructor(
     private readonly sdk: Cma,
@@ -39,15 +46,34 @@ export class AgentV2Session {
   }
 
   async authorize(signal?: AbortSignal): Promise<void> {
+    this.discardEntryHandoff();
     signal?.throwIfAborted();
     this.journal.read();
-    const current = await this.options.currentUser();
+    const current = await this.options.currentUser(signal);
     signal?.throwIfAborted();
     this.journal.read();
     if (current !== this.user) {
       this.journal.invalidate();
       throw new IdentityChangedError();
     }
+  }
+
+  retainEntryHandoff(): void {
+    this.entryHandoff = createIdentityHandoff(IDENTITY_HANDOFF_ENABLED);
+  }
+
+  discardEntryHandoff(): void {
+    this.entryHandoff = undefined;
+  }
+
+  async authorizeLoad(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    this.journal.read();
+    const handoff = this.entryHandoff;
+    this.discardEntryHandoff();
+    if (!handoff?.()) await this.authorize(signal);
+    signal.throwIfAborted();
+    this.journal.read();
   }
 
   pending(): {
@@ -107,6 +133,8 @@ export class AgentV2Session {
 
 /** The authenticated server flag selects a new tab; retained v2 work keeps its transport. */
 export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
+  const gate = createIdentityGate(options.currentUser);
+  const gatedOptions = { ...options, currentUser: gate.check };
   const sessions = new Map<string, AgentV2Session>();
   const select = async (
     agent: string,
@@ -116,13 +144,13 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
     read.signal?.throwIfAborted();
     const checkIdentity =
       expectedOwner === undefined ? undefined : guardAgentTransportIdentity(options.storage);
-    const user = await options.currentUser();
+    const user = await gate.check(read.signal);
     read.signal?.throwIfAborted();
     checkIdentity?.();
     if (expectedOwner !== undefined && user !== expectedOwner) throw new IdentityChangedError();
     if (user === undefined) throw new Error('Sign in to open this Agent.');
     const journal = agentTransportJournal(options.storage, user, agent);
-    const session = new AgentV2Session(sdk, journal, user, options);
+    const session = new AgentV2Session(sdk, journal, user, gatedOptions);
     let selected = journal.selected();
     let enabled = false;
     if (selected === undefined) {
@@ -134,8 +162,12 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
         // Older or unavailable servers cannot select a new v2 tab.
       }
     }
-    await session.authorize(read.signal);
+    // Eligibility crosses an IO boundary, so only an existing v2 selection can
+    // reuse the immediately preceding account check. Legacy semantics stay intact.
+    if (!IDENTITY_HANDOFF_ENABLED || selected !== 'responses_v2')
+      await session.authorize(read.signal);
     selected ??= journal.select(enabled);
+    if (selected === 'responses_v2') session.retainEntryHandoff();
     sessions.set(agent, session);
     return selected === 'responses_v2' ? session : undefined;
   };
