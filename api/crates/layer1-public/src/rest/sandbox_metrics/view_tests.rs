@@ -2,6 +2,32 @@ use super::*;
 use axum::body::to_bytes;
 use layer2_core::Capability;
 #[tokio::test]
+async fn retained_admin_view_refuses_anonymous_and_owner_only_callers_before_store_work() {
+    let store = Arc::new(tests::Store::default());
+    for method in ["GET", "HEAD"] {
+        for (caller, status) in [
+            (None, StatusCode::UNAUTHORIZED),
+            (
+                Some(("owner-a", &[Capability::UseOwnSandboxes][..])),
+                StatusCode::FORBIDDEN,
+            ),
+        ] {
+            // Invalid input must not take precedence over current authority.
+            for query in ["", "?window=invalid"] {
+                let path = format!("/api/v1/admin/usage/metrics/view{query}");
+                let response = tests::call(&store, method, &path, caller, "").await;
+                assert_eq!(response.status(), status);
+                assert!(store.saved.lock().unwrap().is_none());
+                assert_eq!(
+                    store.view_reads.load(std::sync::atomic::Ordering::SeqCst),
+                    0
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn retained_summary_routes_preserve_scope_headers_and_head_semantics() {
     for (prefix, capability) in [
         ("/api/v1/admin/usage/metrics", Capability::ReadAllSandboxes),

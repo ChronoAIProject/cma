@@ -52,6 +52,19 @@ independent of current handler output. The same replay engine still serves the
 current shared corpus. Deliberate route, status, response-header and response-field
 mutations must fail the retained oracle.
 
+The #1963 desktop privacy policy adds exactly `Cache-Control: no-store, private`
+to six existing discovery 404 cases in each pinned release: other-owner,
+forbidden, headless, paused, isolated and missing Agent. After verifying the
+unchanged release hashes and case inventory, the retained harness adds that exact
+header only to those declared in-memory expectations. It binds the release and
+fixture identities, case ID, operation, request, scenario, 404 status and original
+problem body, and refuses an existing cache header instead of overwriting it.
+All twelve additions must be exercised. The anonymous 401 and two success cases
+remain unchanged. The complete response comparison still rejects missing, wrong,
+repeated or unrelated headers, cookies, Retry-After on these 404s and changed
+status/body/route. Neither frozen snapshots nor actual response headers are
+rewritten or filtered by this compatibility declaration.
+
 The current TypeScript SDK emits and decodes those 112 captured exchanges using
 an injected fetch function. Typed invalid-input cases must fail before fetching;
 raw malformed requests retain their documented server error shape without
