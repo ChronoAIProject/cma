@@ -4,6 +4,7 @@ import type { CreateAction } from './ResourceActions';
 
 export interface ConsoleProps {
   readonly user: User;
+  readonly authEpoch?: number;
   readonly sidebarCollapsed?: boolean;
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   readonly onServiceNavigate?: (route: AppRoute) => void;
