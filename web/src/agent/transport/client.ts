@@ -32,6 +32,7 @@ export class AgentV2Session {
     private readonly user: string,
     private readonly options: AgentTransportOptions,
     private readonly cancelUser: CurrentUser = options.currentUser,
+    private readonly inputUser: CurrentUser = options.currentUser,
   ) {
     this.events = sdk.agentEventsV2;
     this.responses = sdk.responsesV2;
@@ -43,7 +44,14 @@ export class AgentV2Session {
 
   /** A fresh replay handle keeps the tab's selection and pending-input journal. */
   forSnapshotRefresh(): AgentV2Session {
-    return new AgentV2Session(this.sdk, this.journal, this.user, this.options, this.cancelUser);
+    return new AgentV2Session(
+      this.sdk,
+      this.journal,
+      this.user,
+      this.options,
+      this.cancelUser,
+      this.inputUser,
+    );
   }
 
   async authorize(signal?: AbortSignal): Promise<void> {
@@ -121,22 +129,22 @@ export class AgentV2Session {
     onReceiptObserved?: (receipt: V2ResponseReceipt) => void,
     answerContext?: AnswerContext,
   ) {
-    await this.authorize(signal);
+    await this.checkIdentity(this.inputUser, signal);
     return submitAgentInput(this.sdk, this.journal, input, {
       onAccepted,
       onReceiptObserved,
       answerContext,
       signal,
-      authorize: () => this.authorize(signal),
+      authorize: () => this.checkIdentity(this.inputUser, signal),
     });
   }
 
   async recover(onAccepted: (receipt: V2ResponseReceipt) => void, signal?: AbortSignal) {
-    await this.authorize(signal);
+    await this.checkIdentity(this.inputUser, signal);
     return recoverAgentInput(this.sdk, this.journal, {
       onAccepted,
       signal,
-      authorize: () => this.authorize(signal),
+      authorize: () => this.checkIdentity(this.inputUser, signal),
     });
   }
 }
@@ -145,8 +153,11 @@ export class AgentV2Session {
 export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
   const gate = createIdentityGate(options.currentUser);
   // Shared across every Agent: at most one extra fresh identity read, even when
-  // many tabs cancel concurrently. Both gates retain the same journal authority.
+  // many tabs cancel concurrently. All gates retain the same journal authority.
   const cancelGate = createIdentityGate(options.currentUser);
+  // Send and receipt/recovery checks cannot wait for background observation.
+  // Keep Cancel independent too: three bounded gates, never one per Agent.
+  const inputGate = createIdentityGate(options.currentUser);
   const gatedOptions = { ...options, currentUser: gate.check };
   const sessions = new Map<string, AgentV2Session>();
   const select = async (
@@ -163,7 +174,14 @@ export function createAgentTransport(sdk: Cma, options: AgentTransportOptions) {
     if (expectedOwner !== undefined && user !== expectedOwner) throw new IdentityChangedError();
     if (user === undefined) throw new Error('Sign in to open this Agent.');
     const journal = agentTransportJournal(options.storage, user, agent);
-    const session = new AgentV2Session(sdk, journal, user, gatedOptions, cancelGate.check);
+    const session = new AgentV2Session(
+      sdk,
+      journal,
+      user,
+      gatedOptions,
+      cancelGate.check,
+      inputGate.check,
+    );
     let selected = journal.selected();
     let enabled = false;
     if (selected === undefined) {
