@@ -1,0 +1,15 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cma-agent-manager
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-agent-manager
+    app.kubernetes.io/part-of: cma
+spec:
+  minAvailable: 1
+  # An unhealthy pod must not indefinitely prevent a node drain.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cma-agent-manager

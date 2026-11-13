@@ -1,4 +1,5 @@
-//! Versioned immutable log readers. This module never admits segmented writes.
+//! Versioned segmented log readers and gated atomic publication.
+pub(in crate::store) mod admission;
 pub(in crate::store) mod audit;
 pub(in crate::store) mod audit_command;
 pub(in crate::store) mod capture;
@@ -11,7 +12,10 @@ pub(in crate::store) mod current_publication;
 pub(in crate::store) use collections::SegmentCollections;
 pub(in crate::store) mod command;
 pub(in crate::store) mod command_evidence;
+pub(in crate::store) mod command_worker;
 mod digest;
+mod telemetry;
+pub(in crate::store) mod terminal;
 pub(in crate::store) use digest::{incarnation, incarnation_fields};
 mod envelope;
 pub(in crate::store) mod ordinary;

@@ -81,13 +81,16 @@ async fn provenance_late_failure_and_aborted_creation_leave_no_facts() {
     );
     store.agent_log.delete_many(doc! {}).await.unwrap();
     let mut session = store.client.start_session().await.unwrap();
-    start_transaction(&mut session).await.unwrap();
+    let mut scope =
+        crate::store::agent_log_segments::transaction_scope::TransactionScope::start(&mut session)
+            .await
+            .unwrap();
     assert!(
-        super::super::apply_admission(&store, &request, false, None, &mut session)
+        super::super::apply_admission(&store, &request, false, None, &mut scope)
             .await
             .is_ok()
     );
-    session.abort_transaction().await.unwrap();
+    scope.release().abort_transaction().await.unwrap();
     assert_eq!(
         store
             .agent_creation_provenance
@@ -156,13 +159,16 @@ async fn provenance_retained_record_blocks_agent_id_recycling() {
 async fn provenance_commit_reconciliation_requires_exact_creation_facts() {
     let (client, database, store, _, _, request) = fixture("provenance_reconcile").await;
     let mut session = store.client.start_session().await.unwrap();
-    start_transaction(&mut session).await.unwrap();
+    let mut scope =
+        crate::store::agent_log_segments::transaction_scope::TransactionScope::start(&mut session)
+            .await
+            .unwrap();
     let receipt =
-        match super::super::apply_admission(&store, &request, false, None, &mut session).await {
+        match super::super::apply_admission(&store, &request, false, None, &mut scope).await {
             Ok(AdmissionReceipt::Created(receipt)) => receipt,
             _ => panic!("fresh creation expected"),
         };
-    session.commit_transaction().await.unwrap();
+    scope.release().commit_transaction().await.unwrap();
     assert!(
         reconcile_created(&store, &receipt, session.operation_time().unwrap())
             .await
