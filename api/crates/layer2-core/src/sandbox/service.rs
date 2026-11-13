@@ -125,6 +125,8 @@ pub enum SandboxServiceError {
     GlobalCapacityReached,
     #[error("model budget refused the commitment: {0}")]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("sandbox name is invalid")]
     InvalidName,
     #[error("sandbox name is already in use")]
@@ -158,6 +160,7 @@ impl SandboxServiceError {
             Self::SandboxLimitReached { .. } => "sandbox_limit_reached",
             Self::GlobalCapacityReached => "sandbox_capacity_unavailable",
             Self::Budget(reason) => reason.code(),
+            Self::AdmissionPaused => "admission_paused",
             Self::InvalidName => "invalid_sandbox_name",
             Self::NameConflict => "sandbox_name_conflict",
             Self::InvalidOrigin => "invalid_sandbox_origin",
@@ -246,13 +249,20 @@ impl SandboxService {
         let _ = self.platform_spend.set(spend);
     }
 
-    pub(super) async fn require_platform_open(&self) -> Result<(), crate::budget::BudgetError> {
+    pub(super) async fn require_platform_open(
+        &self,
+        cause: crate::admission::AdmissionCause,
+    ) -> Result<(), crate::admission::AdmissionRefusal> {
         let Some(spend) = self.platform_spend.get() else {
             return Ok(());
         };
         let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
             .ok_or(crate::budget::BudgetError::Unavailable)?;
-        match spend.admission_state(now).await?.commitment_refusal() {
+        match spend
+            .admission_state(now)
+            .await?
+            .commitment_refusal_for(cause)
+        {
             Some(reason) => Err(reason),
             None => Ok(()),
         }
@@ -432,6 +442,7 @@ pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
         }
         SandboxStoreError::GlobalCapacityReached => SandboxServiceError::GlobalCapacityReached,
         SandboxStoreError::Budget(reason) => SandboxServiceError::Budget(reason),
+        SandboxStoreError::AdmissionPaused => SandboxServiceError::AdmissionPaused,
         SandboxStoreError::SandboxOriginConflict => SandboxServiceError::SandboxOriginConflict,
         SandboxStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
         SandboxStoreError::InvalidPage => SandboxServiceError::InvalidState,

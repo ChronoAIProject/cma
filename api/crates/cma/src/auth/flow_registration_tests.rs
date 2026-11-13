@@ -479,6 +479,7 @@ mod platform_closure {
     fn closed(reason: ClosureReason) -> Arc<FixedSpend> {
         Arc::new(FixedSpend(Ok(PlatformAdmissionState {
             configured: true,
+            operator_control: layer2_core::budget::OperatorAdmissionState::Open,
             closures: vec![Closure {
                 reason,
                 since: 1,
@@ -486,6 +487,61 @@ mod platform_closure {
                 committed_at_entry: 0,
             }],
         })))
+    }
+
+    fn operator_stopped() -> Arc<FixedSpend> {
+        Arc::new(FixedSpend(Ok(PlatformAdmissionState {
+            operator_control: layer2_core::budget::OperatorAdmissionState::Stopped(
+                layer2_core::admission::OperatorStop {
+                    since: 1,
+                    revision: 1,
+                    actor: SubjectId::new("operator"),
+                    reason: "contain".into(),
+                },
+            ),
+            ..Default::default()
+        })))
+    }
+
+    #[tokio::test]
+    async fn operator_stop_with_metering_off_refuses_new_subjects_and_existing_owners_sign_in() {
+        let new = harness(operator_stopped(), vec![]).await;
+        let (_, refused) = sign_in(&new.app).await;
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json_body(refused).await["code"], "registration_closed");
+        assert!(new
+            .store
+            .subject(&SubjectId::new(SUBJECT))
+            .await
+            .unwrap()
+            .is_none());
+        let existing = harness(operator_stopped(), vec![SubjectId::new(SUBJECT)]).await;
+        let (_, accepted) = sign_in(&existing.app).await;
+        assert_eq!(accepted.status(), StatusCode::SEE_OTHER);
+        assert!(existing
+            .store
+            .subject(&SubjectId::new(SUBJECT))
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn unreadable_operator_control_refuses_new_subjects_but_existing_owners_sign_in() {
+        let unreadable = || {
+            Arc::new(FixedSpend(Ok(PlatformAdmissionState {
+                operator_control: layer2_core::budget::OperatorAdmissionState::Unreadable,
+                ..Default::default()
+            })))
+        };
+        let new = harness(unreadable(), vec![]).await;
+        let (_, refused) = sign_in(&new.app).await;
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(json_body(refused).await["code"], "registration_closed");
+        assert!(new.directory.observed.lock().await.is_empty());
+        let existing = harness(unreadable(), vec![SubjectId::new(SUBJECT)]).await;
+        let (_, accepted) = sign_in(&existing.app).await;
+        assert_eq!(accepted.status(), StatusCode::SEE_OTHER);
     }
 
     #[derive(Default)]
