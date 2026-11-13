@@ -19,6 +19,7 @@ mod anonymous_public;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
+#[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub use anonymous_public::RateLimitConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
