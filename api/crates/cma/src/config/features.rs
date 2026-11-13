@@ -8,6 +8,8 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub agent_event_stream_wake: bool,
+    pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub coordinated_ingress: bool,
@@ -31,6 +33,7 @@ pub(crate) struct FeatureFlags {
     pub access_snapshot_session: bool,
     pub single_fence_event_pages: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
+    pub sandbox_agent_projection: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
@@ -72,6 +75,8 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
+            agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(
                 lookup,
                 "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
@@ -97,6 +102,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
             )?,
+            sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
@@ -250,3 +256,7 @@ mod admission_control_tests;
 
 #[cfg(test)]
 mod runtime_loss_tests;
+
+#[cfg(test)]
+#[path = "sandbox_projection_tests.rs"]
+mod sandbox_projection_tests;
