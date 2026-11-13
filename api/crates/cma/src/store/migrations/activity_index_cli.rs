@@ -12,7 +12,9 @@ use mongodb::{
 };
 use serde_json::{json, Value};
 
-use super::{activity_page_index, authority, ledger, steps::Step, Result, IO};
+use super::{
+    activity_inventory, activity_page_index, activity_plan, ledger, steps::Step, Result, IO,
+};
 
 const COLLECTION: &str = "activity";
 const SIZE_DEADLINE: Duration = Duration::from_secs(30);
@@ -123,9 +125,11 @@ fn validate_database(name: &str) -> Result<()> {
 
 async fn size() -> Result<Value> {
     let (_client, database, mode) = open_database().await?;
-    // Reuse the normal runtime authority contract, including Activity metadata.
-    crate::store::isolation::verify_with_authority(&database, mode)
+    let status = database
+        .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
         .await
+        .map_err(|_| "database authority unavailable")?;
+    crate::store::isolation::verify_activity_index_authority(&status, database.name(), mode, false)
         .map_err(|_| "Activity sizing authority is insufficient")?;
     let stats = database
         .run_command(doc! {"collStats":COLLECTION,"maxTimeMS":5000_i32})
@@ -180,7 +184,7 @@ async fn explain_first_page(database: &Database) -> Result<Value> {
         .get_document("winningPlan")
         .map_err(|_| "Activity explain winning plan malformed")?;
     Ok(json!({
-        "winning_plan": serde_json::to_value(plan).map_err(|_| "Activity explain plan encoding")?,
+        "winning_plan": activity_plan::sanitize(plan),
         "execution_time_ms": number(stats, "executionTimeMillis")?,
         "returned": number(stats, "nReturned")?,
         "keys_examined": number(stats, "totalKeysExamined")?,
@@ -247,7 +251,8 @@ async fn build(checksum: &str, image: &str, timeout_seconds: u64) -> Result<Valu
         .run_command(doc! {"connectionStatus":1,"showPrivileges":true})
         .await
         .map_err(|_| "database authority unavailable")?;
-    authority::verify_for(&status, database.name(), mode, true, Step::ActivityPage)?;
+    crate::store::isolation::verify_activity_index_authority(&status, database.name(), mode, true)
+        .map_err(|_| "Activity index build authority is insufficient")?;
     crate::store::sandbox_mongo::require_transaction_topology(&database)
         .await
         .map_err(|_| "Activity index build requires a supported replica set or mongos")?;
@@ -255,7 +260,10 @@ async fn build(checksum: &str, image: &str, timeout_seconds: u64) -> Result<Valu
     ledger.preflight().await?;
     ledger.initialize().await?;
     if ledger.completed().await? {
-        if !strict_pending(&database).await?.is_empty() {
+        if !activity_inventory::strict_pending(&database)
+            .await?
+            .is_empty()
+        {
             return Err("completed Activity index manifest drifted");
         }
         return Ok(json!({
@@ -272,9 +280,18 @@ async fn build(checksum: &str, image: &str, timeout_seconds: u64) -> Result<Valu
         "Activity index build admitted"
     );
     let outcome = async {
-        let pending = strict_pending(&database).await?;
-        if pending.len() != 1 {
+        let pending = activity_inventory::strict_pending(&database).await?;
+        if pending.len() > 1 {
             return Err("Activity index manifest has no single pending index");
+        }
+        if pending.is_empty() {
+            tracing::info!(
+                migration = Step::ActivityPage.id(),
+                phase = "verified",
+                created = false,
+                "Activity index already exists; completing reconciled manifest"
+            );
+            return Ok(0);
         }
         ledger.renew(&lease).await?;
         let started = Instant::now();
@@ -293,7 +310,7 @@ async fn build(checksum: &str, image: &str, timeout_seconds: u64) -> Result<Valu
             started,
         )
         .await?;
-        let remaining = strict_pending(&database).await?;
+        let remaining = activity_inventory::strict_pending(&database).await?;
         if !remaining.is_empty() {
             return Err("Activity index postcondition unavailable");
         }
@@ -316,69 +333,6 @@ async fn build(checksum: &str, image: &str, timeout_seconds: u64) -> Result<Valu
         "timeout_seconds":timeout_seconds,
         "progress":"inventory,build_started,verified emitted as sanitized log phases",
     }))
-}
-
-async fn strict_pending(database: &Database) -> Result<Vec<Document>> {
-    let response = database
-        .run_command(doc! {
-            "listIndexes":COLLECTION,
-            "cursor":{"batchSize":64},
-            "maxTimeMS":5000_i32,
-        })
-        .await
-        .map_err(|_| "Activity index inventory unavailable")?;
-    let cursor = response
-        .get_document("cursor")
-        .map_err(|_| "Activity index cursor malformed")?;
-    if cursor_id(cursor)? != 0 {
-        return Err("Activity index inventory exceeds bound");
-    }
-    let existing = cursor
-        .get_array("firstBatch")
-        .map_err(|_| "Activity index batch malformed")?
-        .iter()
-        .map(|value| {
-            value
-                .as_document()
-                .cloned()
-                .ok_or("Activity index entry malformed")
-        })
-        .collect::<Result<Vec<_>>>()?;
-    strict_missing(&existing)
-}
-
-fn strict_missing(existing: &[Document]) -> Result<Vec<Document>> {
-    let desired = activity_page_index::indexes()[0].clone();
-    let mut matches = existing.iter().filter(|index| {
-        index.get("name") == desired.get("name")
-            || same_keys(
-                index.get_document("key").ok(),
-                desired.get_document("key").ok(),
-            )
-    });
-    let Some(index) = matches.next() else {
-        return Ok(vec![desired]);
-    };
-    if matches.next().is_some()
-        || index.get("name") != desired.get("name")
-        || !same_keys(
-            index.get_document("key").ok(),
-            desired.get_document("key").ok(),
-        )
-        || index
-            .keys()
-            .any(|key| !["v", "ns", "name", "key"].contains(&key.as_str()))
-    {
-        return Err("Activity index key or option drift");
-    }
-    Ok(Vec::new())
-}
-
-fn same_keys(left: Option<&Document>, right: Option<&Document>) -> bool {
-    match (left, right) {
-        (Some(left), Some(right)) => left.iter().eq(right.iter()),
-        _ => false,
-    }
 }
 
 async fn create_online(
@@ -480,20 +434,5 @@ mod tests {
         })
         .is_err());
         assert_eq!(cursor_id(&doc! {"id":0_i32}).unwrap(), 0);
-    }
-
-    #[test]
-    fn build_inventory_refuses_option_drift_even_when_the_legacy_manifest_reader_allows_it() {
-        let index = activity_page_index::indexes()[0].clone();
-        assert!(strict_missing(&[]).unwrap().len() == 1);
-        assert!(strict_missing(std::slice::from_ref(&index))
-            .unwrap()
-            .is_empty());
-        let mut drift = index;
-        drift.insert("background", false);
-        assert!(strict_missing(&[drift]).is_err());
-        let mut reordered = activity_page_index::indexes()[0].clone();
-        reordered.insert("key", doc! {"_id":-1,"recorded_at":-1});
-        assert!(strict_missing(&[reordered]).is_err());
     }
 }

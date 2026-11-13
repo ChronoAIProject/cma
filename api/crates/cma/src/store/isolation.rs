@@ -172,10 +172,26 @@ const ACTIONS: &[&str] = &[
     "listIndexes",
     "collMod",
 ];
-// The production sizing CLI needs collection metadata, but no other runtime
-// collection should expose that administrative read.
+// The Activity operation roles add metadata reads and, for build mode, ledger
+// writes. Ordinary startup keeps the original runtime role below.
 const ACTIVITY_INSPECTION_ACTIONS: &[&str] = &["collStats"];
 pub(crate) fn role(database: &str) -> Document {
+    role_with_activity_operation(database, false, false)
+}
+
+pub(crate) fn activity_index_inspection_role(database: &str) -> Document {
+    role_with_activity_operation(database, true, false)
+}
+
+pub(crate) fn activity_index_job_role(database: &str) -> Document {
+    role_with_activity_operation(database, true, true)
+}
+
+fn role_with_activity_operation(
+    database: &str,
+    activity_metadata: bool,
+    migration_ledger: bool,
+) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
         .map(|name| {
@@ -183,20 +199,44 @@ pub(crate) fn role(database: &str) -> Document {
             if *name == "binding_conversations" {
                 actions.push("dropIndex");
             }
-            if *name == "activity" {
+            if *name == "activity" && activity_metadata {
                 actions.extend_from_slice(ACTIVITY_INSPECTION_ACTIONS);
             }
             doc! {"resource":{"db":database,"collection":*name},"actions":actions}
         })
         .collect();
-    // The release's own credential may run the explicit, fenced Activity
-    // migration Job. This grant is limited to ledger rows and cannot create or
-    // drop indexes directly.
-    grants.push(doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS});
+    if migration_ledger {
+        grants.push(
+            doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS},
+        );
+    }
     grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
 }
 pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreError> {
+    validate_role(status, database, false, false)
+}
+
+pub(crate) fn validate_activity_index_inspection(
+    status: &Document,
+    database: &str,
+) -> Result<(), StoreError> {
+    validate_role(status, database, true, false)
+}
+
+pub(crate) fn validate_activity_index_job(
+    status: &Document,
+    database: &str,
+) -> Result<(), StoreError> {
+    validate_role(status, database, true, true)
+}
+
+fn validate_role(
+    status: &Document,
+    database: &str,
+    activity_metadata: bool,
+    migration_ledger: bool,
+) -> Result<(), StoreError> {
     let denied = || {
         StoreError::Unavailable(
             "Agent Manager database credential is not isolated to its schema".into(),
@@ -223,7 +263,7 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
             || resource.get_str("db").ok() != Some(database)
             || (!collection.is_empty()
                 && !COLLECTIONS.contains(&collection)
-                && collection != MIGRATION_COLLECTION
+                && (!migration_ledger || collection != MIGRATION_COLLECTION)
                 && collection != super::provenance_progress::COLLECTION)
         {
             return Err(denied());
@@ -234,10 +274,11 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
-            } else if collection == MIGRATION_COLLECTION {
+            } else if migration_ledger && collection == MIGRATION_COLLECTION {
                 MIGRATION_ACTIONS.contains(&action)
             } else if collection == "activity"
-                && (ACTIONS.contains(&action) || ACTIVITY_INSPECTION_ACTIONS.contains(&action))
+                && (ACTIONS.contains(&action)
+                    || (activity_metadata && ACTIVITY_INSPECTION_ACTIONS.contains(&action)))
             {
                 true
             } else {
@@ -266,17 +307,21 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
         ACTIONS
             .iter()
             .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
-    }) || !grants.get("activity").is_some_and(|actions| {
-        ACTIVITY_INSPECTION_ACTIONS
-            .iter()
-            .all(|action| actions.contains(*action))
-    }) || !grants.get(MIGRATION_COLLECTION).is_some_and(|actions| {
-        MIGRATION_ACTIONS
-            .iter()
-            .all(|action| actions.contains(*action))
-    }) || !grants
-        .get("binding_conversations")
-        .is_some_and(|actions| actions.contains("dropIndex"))
+    }) || (activity_metadata
+        && !grants.get("activity").is_some_and(|actions| {
+            ACTIVITY_INSPECTION_ACTIONS
+                .iter()
+                .all(|action| actions.contains(*action))
+        }))
+        || (migration_ledger
+            && !grants.get(MIGRATION_COLLECTION).is_some_and(|actions| {
+                MIGRATION_ACTIONS
+                    .iter()
+                    .all(|action| actions.contains(*action))
+            }))
+        || !grants
+            .get("binding_conversations")
+            .is_some_and(|actions| actions.contains("dropIndex"))
     {
         return Err(denied());
     }
@@ -314,6 +359,62 @@ pub(crate) async fn verify_with_authority(
             .map_err(|error| StoreError::Unavailable(error.into()))
         }
     }
+}
+
+pub(crate) fn verify_activity_index_authority(
+    status: &Document,
+    database: &str,
+    authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
+    build: bool,
+) -> Result<(), StoreError> {
+    let role = if build {
+        activity_index_job_role(database)
+    } else {
+        activity_index_inspection_role(database)
+    };
+    match authority {
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated => {
+            if build {
+                validate_activity_index_job(status, database)
+            } else {
+                validate_activity_index_inspection(status, database)
+            }
+        }
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema => {
+            cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
+                .map_err(|error| StoreError::Unavailable(error.into()))?;
+            if has_activity_drop_index(status, database) {
+                return Err(StoreError::Unavailable(
+                    "Activity index operation credential may not drop Activity indexes".into(),
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn has_activity_drop_index(status: &Document, database: &str) -> bool {
+    status
+        .get_document("authInfo")
+        .ok()
+        .and_then(|info| info.get_array("authenticatedUserPrivileges").ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|grant| grant.as_document())
+        .any(|grant| {
+            grant.get_document("resource").ok().is_some_and(|resource| {
+                resource.get_str("db").ok() == Some(database)
+                    && resource
+                        .get_str("collection")
+                        .ok()
+                        .is_some_and(|collection| collection.is_empty() || collection == "activity")
+                    && grant.get_array("actions").ok().is_some_and(|actions| {
+                        actions
+                            .iter()
+                            .any(|action| action.as_str() == Some("dropIndex"))
+                    })
+            })
+        })
 }
 #[cfg(test)]
 #[path = "agent_lifecycle_contract.rs"]

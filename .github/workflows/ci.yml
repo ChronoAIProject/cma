@@ -311,7 +311,9 @@ jobs:
           # its own by design: the sandbox provider schedules that image, so
           # this repository never declares a Deployment or Service for it.
           expected=$(printf '%s\n' \
-            infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
+            infra/api/Dockerfile infra/api/activity-index-build-job.yaml \
+            infra/api/activity-index-execution.md infra/api/activity-index-job.yaml \
+            infra/api/configmap.yaml infra/api/deployment.yaml \
             infra/api/secret.yaml infra/api/service.yaml \
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
