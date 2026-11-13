@@ -6,6 +6,7 @@ import { RiskConfirmation } from '../ui/RiskConfirmation';
 import { MetricsDashboard } from '../usage/metrics/MetricsDashboard';
 import { useMeasuredUsage } from '../usage/metrics/useMeasuredUsage';
 import { useUsageSelection } from '../usage/metrics/selection';
+import { type UsageReportOwner } from '../usage/metrics/reportOwner';
 import { SandboxDetail } from './SandboxDetail';
 import { operatorFailure, type OperatorFailure } from './failure';
 import type { OperatorClient } from './client';
@@ -17,7 +18,7 @@ export function Sandboxes({
 }: {
   readonly client: OperatorClient;
   readonly canControl: boolean;
-  readonly principal?: string;
+  readonly principal?: UsageReportOwner;
 }) {
   const measured = useMeasuredUsage(client.readMeasuredUsage);
   const [selection, onSelection] = useUsageSelection(true);

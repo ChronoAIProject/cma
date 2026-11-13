@@ -45,6 +45,7 @@ import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
 import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
+import { useReportOwner } from './usage/metrics/reportOwner';
 import { OperationsRoute } from './operator/OperationsRoute';
 
 export function Console(props: ConsoleProps) {
@@ -122,7 +123,7 @@ function ConsoleContent({
       : undefined;
   const operator = useOperatorClient(),
     publisher = usePublisherClient();
-  const usagePrincipal = `${user.id}:${user.capabilities.join(',')}:${authEpoch}`;
+  const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
   useEffect(() => {

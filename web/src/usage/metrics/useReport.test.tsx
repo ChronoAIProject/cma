@@ -169,14 +169,56 @@ it('does not publish a report across principals on a reused SDK client', async (
   });
   const { result, rerender } = renderHook(
     ({ owner }) => useUsageReport(api, defaultSelection, false, true, owner),
-    { initialProps: { owner: 'owner-a:capability-a' } },
+    { initialProps: { owner: { principal: 'owner-a', cacheKey: 'owner-a:capability-a' } } },
   );
   await waitFor(() => expect(result.current.report?.scope.principal).toBe('owner-a'));
   api.create.mockRejectedValueOnce(new ApiError(503, 'Unavailable'));
-  rerender({ owner: 'owner-b:capability-b' });
+  rerender({ owner: { principal: 'owner-b', cacheKey: 'owner-b:capability-b' } });
   expect(result.current.report).toBeUndefined();
   await waitFor(() => expect(result.current.error?.title).toBe('Usage reporting is unavailable'));
   expect(result.current.report).toBeUndefined();
+});
+
+it('keeps a punctuation-containing principal separate from its cache identity', async () => {
+  const api = metricsClient();
+  const latest = vi.fn().mockResolvedValue({
+    report: { ...reportFixture(), scope: { principal: 'realm:alice', admin: false } },
+    generated_at: asOf,
+    stale: false,
+    refresh: { state: 'idle' as const, report_id: null, retry_after_seconds: 0 },
+  });
+  (api as unknown as { latest: typeof latest }).latest = latest;
+  const owner = { principal: 'realm:alice', cacheKey: 'realm:alice|caps|epoch-1' };
+  const { result } = renderHook(() => useUsageReport(api, defaultSelection, false, true, owner));
+  await waitFor(() => expect(result.current.report?.scope.principal).toBe('realm:alice'));
+  expect(result.current.error).toBeUndefined();
+});
+
+it('clears all mounted entries after a retained report authority mismatch', async () => {
+  const api = metricsClient();
+  const owner = { principal: 'owner-a', cacheKey: 'owner-a|caps|epoch-1' };
+  const authorized = () => ({
+    ...reportFixture(false),
+    scope: { principal: 'owner-a', admin: false },
+  });
+  api.create.mockImplementation(async (query) => ({
+    ...authorized(),
+    report_id: query.filters.sandbox_id ? 'sandbox-report' : 'default-report',
+  }));
+  const first = renderHook(() => useUsageReport(api, defaultSelection, false, true, owner));
+  const second = renderHook(() =>
+    useUsageReport(api, { ...defaultSelection, sandbox: 'sbx-2' }, false, true, owner),
+  );
+  await waitFor(() => expect(first.result.current.report).toBeDefined());
+  await waitFor(() => expect(second.result.current.report).toBeDefined());
+  api.create.mockResolvedValueOnce({
+    ...authorized(),
+    scope: { principal: 'owner-b', admin: false },
+  });
+  act(() => first.result.current.refresh());
+  await waitFor(() => expect(first.result.current.error?.denied).toBe(true));
+  expect(first.result.current.report).toBeUndefined();
+  await waitFor(() => expect(second.result.current.report).toBeUndefined());
 });
 
 it('renders a committed latest view while its refresh continues', async () => {
@@ -207,11 +249,18 @@ it('renders a committed latest view while its refresh continues', async () => {
     );
   });
   (api as unknown as { latest: typeof latest }).latest = latest;
-  const { result } = renderHook(() => useUsageReport(api, defaultSelection, true));
+  const { result, rerender } = renderHook(
+    ({ active }) => useUsageReport(api, defaultSelection, true, active),
+    { initialProps: { active: true } },
+  );
   await act(async () => {});
   expect(result.current.report?.report_id).toBe('report-one');
   expect(result.current.busy).toBe(false);
   expect(result.current.refreshing).toBe(true);
+  rerender({ active: false });
+  await act(async () => vi.advanceTimersByTimeAsync(2000));
+  expect(latest).toHaveBeenCalledTimes(1);
+  rerender({ active: true });
   await act(async () => vi.advanceTimersByTimeAsync(2000));
   expect(result.current.report?.report_id).toBe('report-two');
   expect(result.current.generatedAt).toBe(asOf + 10);

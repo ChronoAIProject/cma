@@ -11,16 +11,29 @@ import { MetricSummary } from './MetricSummary';
 import { MetricTable } from './MetricTable';
 import { MetricsNotice } from './MetricsNotice';
 import { useUsageReport, useUsageVisible } from './useReport';
+import {
+  UsageReportOwnerContext,
+  anonymousReportOwner,
+  type UsageReportOwner,
+} from './reportOwner';
 import type { MetricsFailure } from './failure';
 import type { Group, Metric, MetricsClient, Selection } from './model';
 import { allocationSelection } from './selection';
 import './Metrics.css';
 
-export function MetricsDashboard({
+export function MetricsDashboard(props: Parameters<typeof MetricsDashboardContent>[0]) {
+  return (
+    <UsageReportOwnerContext value={props.principal ?? anonymousReportOwner}>
+      <MetricsDashboardContent {...props} />
+    </UsageReportOwnerContext>
+  );
+}
+
+function MetricsDashboardContent({
   api,
   history,
   admin,
-  principal,
+  principal = anonymousReportOwner,
   forceOnMount = false,
   selection,
   onSelection,
@@ -32,7 +45,7 @@ export function MetricsDashboard({
   readonly api: MetricsClient;
   readonly history: Pick<Cma['usage'], 'events'>;
   readonly admin: boolean;
-  readonly principal?: string;
+  readonly principal?: UsageReportOwner;
   readonly forceOnMount?: boolean;
   readonly selection: Selection;
   readonly onSelection: (value: Selection) => void;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, type RefObject } from 'react';
 import { useOperationsTab } from './useOperationsTab';
 import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
@@ -9,8 +9,9 @@ import { PlatformSettings } from './PlatformSettings';
 import { WarmPools } from './WarmPools';
 import { Activity } from './Activity';
 import { operatorViews } from './capabilities';
-import { defaultSelection } from '../usage/metrics/model';
+import { defaultSelection, type MetricsClient } from '../usage/metrics/model';
 import { prefetchUsageReport } from '../usage/metrics/useReport';
+import { anonymousReportOwner, type UsageReportOwner } from '../usage/metrics/reportOwner';
 import './Operations.css';
 
 export { canOpenOperations } from './capabilities';
@@ -18,40 +19,29 @@ export { canOpenOperations } from './capabilities';
 export function Operations({
   client,
   capabilities,
-  principal = 'anonymous',
+  principal = anonymousReportOwner,
 }: {
   readonly client: OperatorClient;
   readonly capabilities: readonly Capability[];
-  readonly principal?: string;
+  readonly principal?: UsageReportOwner;
 }) {
   const available = operatorViews.filter((view) => capabilities.includes(view.capability));
   const [selected, setSelected] = useOperationsTab();
   const selectedView = available.find((view) => view.id === selected) ?? available[0];
   const id = useId();
   const hasSandboxes = available.some((view) => view.id === 'sandboxes');
-  const prefetchReleases = useRef(new Set<() => void>());
-  const warmDefault = useCallback(() => {
-    const release = prefetchUsageReport(
-      client.adminUsageMetrics,
-      defaultSelection,
-      true,
-      principal,
-    );
-    prefetchReleases.current.add(release);
-    return release;
-  }, [client.adminUsageMetrics, principal]);
+  const prefetchRelease = useRef<(() => void) | undefined>(undefined);
+  const warmDefault = () => {
+    if (hasSandboxes) retainDefaultReport(prefetchRelease, client.adminUsageMetrics, principal);
+  };
   useDocumentTitle('Operations');
   useEffect(() => {
-    if (!hasSandboxes) return;
-    return warmDefault();
-  }, [hasSandboxes, warmDefault]);
-  useEffect(
-    () => () => {
-      for (const release of prefetchReleases.current) release();
-      prefetchReleases.current.clear();
-    },
-    [client.adminUsageMetrics, principal],
-  );
+    if (hasSandboxes) retainDefaultReport(prefetchRelease, client.adminUsageMetrics, principal);
+    return () => {
+      prefetchRelease.current?.();
+      prefetchRelease.current = undefined;
+    };
+  }, [client.adminUsageMetrics, hasSandboxes, principal]);
   if (selectedView === undefined) return null;
   const canControl = capabilities.includes('control_any_sandbox');
   return (
@@ -124,4 +114,15 @@ export function Operations({
       </div>
     </section>
   );
+}
+
+function retainDefaultReport(
+  owner: RefObject<(() => void) | undefined>,
+  api: MetricsClient,
+  principal: UsageReportOwner,
+) {
+  const release = prefetchUsageReport(api, defaultSelection, true, principal);
+  // Replace ownership without cancelling a request adopted by the dashboard.
+  owner.current?.();
+  owner.current = release;
 }

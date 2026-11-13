@@ -4,18 +4,19 @@ import { MetricsDashboard } from './metrics/MetricsDashboard';
 import { useMeasuredUsage } from './metrics/useMeasuredUsage';
 import { useUsageSelection } from './metrics/selection';
 import { UsageAgentPicker } from './UsageAgentPicker';
+import { anonymousReportOwner, type UsageReportOwner } from './metrics/reportOwner';
 
 export function UsageDialog({
   client,
   open,
   onClose,
-  principal = 'anonymous',
+  principal = anonymousReportOwner,
   appearanceNotice = false,
 }: {
   readonly client?: UsageClient;
   readonly open: boolean;
   readonly onClose: () => void;
-  readonly principal?: string;
+  readonly principal?: UsageReportOwner;
   readonly appearanceNotice?: boolean;
 }) {
   const measured = useMeasuredUsage(client?.readMeasuredUsage, open);
