@@ -204,6 +204,19 @@ impl AgentReadService {
         after: u64,
         limit: u16,
     ) -> Result<Vec<AgentVisibleLogEntry>, AgentReadError> {
+        self.log_page_authorized(context, credential, id, after, limit)
+            .await
+            .map(|(entries, _)| entries)
+    }
+
+    pub async fn log_page_authorized(
+        &self,
+        context: &CallerContext,
+        credential: Option<&str>,
+        id: &AgentId,
+        after: u64,
+        limit: u16,
+    ) -> Result<(Vec<AgentVisibleLogEntry>, Option<u64>), AgentReadError> {
         let authorized = self
             .authorized(context, credential, id, ResourceCapability::ViewHistory)
             .await?;
@@ -214,18 +227,16 @@ impl AgentReadService {
             .agent
             .as_ref()
             .ok_or_else(|| corrupt("authorized Agent snapshot has no Agent"))?;
-        let entries = self.complete_log(agent).await?;
-        fold_agent_log(agent, &entries).map_err(AgentReadError::Corrupt)?;
+        let entries = self.read_log_page(agent, after, limit).await?;
+        let next = super::log_pages::next_cursor(&entries, agent.conversation.last_seq, limit);
         let personal = is_personal(&authorized, context);
         let page = entries
             .into_iter()
-            .filter(|entry| entry.seq > after)
-            .take(usize::from(limit))
             .map(|entry| AgentVisibleLogEntry::from_entry(entry, personal))
             .collect();
         self.finish_read(&authorized, id, ResourceCapability::ViewHistory)
             .await?;
-        Ok(page)
+        Ok((page, next))
     }
 
     pub async fn resources_authorized(

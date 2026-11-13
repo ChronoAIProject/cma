@@ -297,3 +297,6 @@ async fn feedback_preserves_legacy_votes_but_rejects_unfinished_failed_and_unaut
         assert_eq!(reads.transcript(&owner, &agent.id).await.unwrap(), before);
     }
 }
+
+#[path = "bounded_consumers.rs"]
+mod bounded_consumers;

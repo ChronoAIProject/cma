@@ -63,13 +63,16 @@ async fn generation_trace_records_completion_failure_and_cancelled_stage_without
         let line = lines[0];
         let event: serde_json::Value = serde_json::from_str(line).unwrap();
         let fields = &event["fields"];
-        assert_eq!(fields["report_hash"],report_hash("private-report-id"));
-        assert_eq!(fields["inventory_calls"],1);
-        assert_eq!(fields["allocation_calls"],1);
-        assert_eq!(fields["outcome"],["complete","failed","cancelled"][mode]);
-        assert_eq!(fields["active_stage"],if mode==2 {"allocation"} else {"none"});
-        assert_eq!(event["span"]["name"],"usage_report_diagnostic");
-        assert_eq!(event["spans"].as_array().unwrap().len(),1);
+        assert_eq!(fields["report_hash"], report_hash("private-report-id"));
+        assert_eq!(fields["inventory_calls"], 1);
+        assert_eq!(fields["allocation_calls"], 1);
+        assert_eq!(fields["outcome"], ["complete", "failed", "cancelled"][mode]);
+        assert_eq!(
+            fields["active_stage"],
+            if mode == 2 { "allocation" } else { "none" }
+        );
+        assert_eq!(event["span"]["name"], "usage_report_diagnostic");
+        assert_eq!(event["spans"].as_array().unwrap().len(), 1);
         for private in [
             "private-report-id",
             "private-span",
