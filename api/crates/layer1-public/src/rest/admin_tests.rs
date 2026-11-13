@@ -19,7 +19,7 @@ use layer2_core::sandbox::{
     StoredSandboxRetirement,
 };
 use layer2_core::{
-    ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, ActivityStore,
+    ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, ActivityStore, ActivityTarget,
     Authorization, Capability, Page, PlatformSettings, PlatformSettingsService,
     PlatformSettingsStore, ProviderInventory, RuntimeEntry, RuntimeInventory, RuntimeStatus,
     SandboxId, StoreError, StoredPlatformSettings, SubjectId,
