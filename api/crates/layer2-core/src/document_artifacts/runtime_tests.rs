@@ -327,3 +327,64 @@ async fn two_agents_can_publish_the_same_request_key_without_colliding() {
         Err(DocumentError::NotFound)
     );
 }
+
+#[tokio::test]
+async fn runtime_publish_after_delete_reserves_nothing() {
+    struct CountReservations(std::sync::atomic::AtomicUsize);
+    #[async_trait::async_trait]
+    impl DocumentQuotaStore for CountReservations {
+        async fn usage(&self, _: &str) -> Result<DocumentUsage, DocumentError> {
+            Ok(DocumentUsage::not_enforced())
+        }
+        async fn reserve(
+            &self,
+            _: &DocumentSourceReservation,
+        ) -> Result<SourceTicket, DocumentError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(SourceTicket::Ledgered)
+        }
+    }
+    let auth = Authority(Mutex::new(Some(identity())));
+    let quota = Arc::new(CountReservations(0.into()));
+    let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
+    let service = DocumentService::with_deletion(
+        Arc::new(memory::MemoryDocuments::default()),
+        blobs.clone(),
+        false,
+        Some(quota.clone()),
+        true,
+    );
+    let document = service
+        .create_for_agent(&auth, "fixture", "publish", create())
+        .await
+        .unwrap();
+    let owner = Caller::new(
+        identity().owner,
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    service
+        .delete(
+            &owner,
+            &document.id,
+            "delete",
+            DeleteDocument {
+                expected_revision: 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .update_for_agent(&auth, "fixture", &document.id, "update", update())
+            .await,
+        Err(DocumentError::NotFound)
+    );
+    assert_eq!(
+        service
+            .create_for_agent(&auth, "fixture", "publish", create())
+            .await,
+        Err(DocumentError::NotFound)
+    );
+    assert_eq!(quota.0.load(Ordering::SeqCst), 1);
+    assert_eq!(blobs.0.lock().await.len(), 1);
+}

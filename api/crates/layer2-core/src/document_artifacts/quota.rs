@@ -26,6 +26,7 @@ pub struct DocumentUsage {
     pub documents: Option<UsageCounter>,
     pub bytes: Option<UsageCounter>,
     pub objects: Option<UsageCounter>,
+    pub pending_deletions: Option<u64>,
 }
 
 impl DocumentUsage {
@@ -35,6 +36,7 @@ impl DocumentUsage {
             documents: None,
             bytes: None,
             objects: None,
+            pending_deletions: None,
         }
     }
 }
@@ -42,14 +44,22 @@ impl DocumentUsage {
 impl DocumentService {
     pub async fn usage(&self, caller: &crate::Caller) -> Result<DocumentUsage, DocumentError> {
         super::service::principal(caller)?;
-        match &self.quota {
+        let mut usage = match &self.quota {
             Some(quota) => {
                 quota
                     .usage(&digest(caller.subject.as_str().as_bytes()))
                     .await
             }
             None => Ok(DocumentUsage::not_enforced()),
+        }?;
+        if self.deletion_enabled {
+            usage.pending_deletions = Some(
+                self.store
+                    .pending_deletions(&digest(caller.subject.as_str().as_bytes()))
+                    .await?,
+            );
         }
+        Ok(usage)
     }
 }
 
