@@ -313,6 +313,8 @@ it('keeps stored settings visible and defers only models until ready, including 
   const view = render(draw(false));
   expect(await screen.findByRole('button', { name: /^Agent settings:/ })).toBeVisible();
   expect(readAgentModels).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: /^Agent settings:/ }));
+  expect(readAgentModels).not.toHaveBeenCalled();
   view.rerender(draw(true));
   await waitFor(() => expect(readAgentModels).toHaveBeenCalledTimes(1));
   view.rerender(draw(false));
