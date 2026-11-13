@@ -40,7 +40,10 @@ pub(in crate::store) async fn reconcile(
     result: &Binary,
     session: &mut ClientSession,
 ) -> Result<Outcome, SandboxStoreError> {
-    reconcile_mode(store, operation, expected, logs, result, session, true).await
+    Box::pin(reconcile_mode(
+        store, operation, expected, logs, result, session, true,
+    ))
+    .await
 }
 
 pub(in crate::store) async fn reconcile_transaction(
@@ -51,7 +54,10 @@ pub(in crate::store) async fn reconcile_transaction(
     result: &Binary,
     session: &mut ClientSession,
 ) -> Result<Outcome, SandboxStoreError> {
-    reconcile_mode(store, operation, expected, logs, result, session, false).await
+    Box::pin(reconcile_mode(
+        store, operation, expected, logs, result, session, false,
+    ))
+    .await
 }
 
 async fn reconcile_mode(

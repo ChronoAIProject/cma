@@ -78,7 +78,10 @@ pub(in crate::store) async fn prepare(
     admission: Option<&Admission>,
 ) -> Result<PreparedPublication, TransactionLogError> {
     captured.validate_transaction(store, scope)?;
-    planning::assemble(store, scope, captured, input, bootstrap, admission).await
+    Box::pin(planning::assemble(
+        store, scope, captured, input, bootstrap, admission,
+    ))
+    .await
 }
 
 /// Own the single Agent CAS and all log/projection/receipt writes in the caller's
@@ -89,5 +92,5 @@ pub(in crate::store) async fn persist(
     prepared: PreparedPublication,
     aggregate: AggregateUpdate,
 ) -> Result<Publication, TransactionLogError> {
-    persistence::persist(store, scope, prepared, aggregate).await
+    Box::pin(persistence::persist(store, scope, prepared, aggregate)).await
 }
