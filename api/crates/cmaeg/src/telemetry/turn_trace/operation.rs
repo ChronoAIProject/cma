@@ -25,25 +25,27 @@ impl Operation {
         parent: Option<Context>,
         part_index: Option<u32>,
     ) -> Self {
+        let request_id = Uuid::new_v4();
         let context = Context {
             turn_id: parent.and_then(|parent| parent.turn_id),
-            span_id: SpanId::fresh(),
+            span_id: SpanId::from_request(request_id),
             parent_span_id: parent.map(|parent| parent.span_id),
-            request_id: Uuid::new_v4(),
+            request_id,
             ingress_request_id: parent.and_then(|parent| parent.ingress_request_id),
         };
         Self::with_context(writer, stage, context, part_index)
     }
 
     pub(super) fn bound(writer: Writer, stage: Stage, association: super::Association) -> Self {
+        let request_id = Uuid::new_v4();
         Self::with_context(
             writer,
             stage,
             Context {
                 turn_id: Some(association.turn_id),
-                span_id: SpanId::fresh(),
+                span_id: SpanId::from_request(request_id),
                 parent_span_id: association.parent_span_id,
-                request_id: Uuid::new_v4(),
+                request_id,
                 ingress_request_id: Some(association.ingress_request_id),
             },
             None,

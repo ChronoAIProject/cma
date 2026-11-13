@@ -13,13 +13,12 @@ pub(crate) struct Association {
     pub ingress_request_id: Uuid,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Serialize)]
 struct Wire {
     version: u8,
     turn_id: String,
     trace_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     parent_span_id: Option<String>,
     ingress_request_id: String,
 }
@@ -33,42 +32,25 @@ impl Association {
     }
 
     fn retained(value: &Value) -> Option<Self> {
-        // Bound before cloning provider-controlled strings. A snapshot has its
-        // own transport bound; this annotation has a much smaller closed shape.
+        // Validate the closed borrowed shape without copying provider strings.
+        // UUID and span parsers enforce their canonical grammar and bounds.
         let object = value.as_object()?;
         let has_parent = object.contains_key("parent_span_id");
-        if object.len() != if has_parent { 5 } else { 4 }
-            || object.get("version")?.as_u64()? != 1
-            || ["turn_id", "trace_id", "ingress_request_id"]
-                .iter()
-                .any(|key| {
-                    object
-                        .get(*key)
-                        .and_then(Value::as_str)
-                        .is_none_or(|v| v.len() > 36)
-                })
-        {
+        if object.len() != if has_parent { 5 } else { 4 } || object.get("version")?.as_u64()? != 1 {
             return None;
         }
-        if has_parent
-            && object["parent_span_id"]
-                .as_str()
-                .is_none_or(|value| value.len() != 16)
-        {
-            return None;
-        }
-        let wire: Wire = serde_json::from_value(value.clone()).ok()?;
-        let turn_id = uuid_v4(&wire.turn_id)?;
-        if wire.trace_id != turn_id.simple().to_string() {
+        let turn_id = uuid_v4(object.get("turn_id")?.as_str()?)?;
+        if object.get("trace_id")?.as_str()? != turn_id.simple().encode_lower(&mut [0; 32]) {
             return None;
         }
         Some(Self {
             turn_id,
-            parent_span_id: match wire.parent_span_id {
-                Some(parent) => Some(SpanId::parse(&parent)?),
-                None => None,
+            parent_span_id: if has_parent {
+                Some(SpanId::parse(object["parent_span_id"].as_str()?)?)
+            } else {
+                None
             },
-            ingress_request_id: uuid_v4(&wire.ingress_request_id)?,
+            ingress_request_id: uuid_v4(object.get("ingress_request_id")?.as_str()?)?,
         })
     }
 
