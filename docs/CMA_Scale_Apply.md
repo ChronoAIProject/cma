@@ -40,7 +40,8 @@ start an operation whose bounded duration can cross a prohibited window.
 
 The lead supplies exact integrated source and manifest SHAs, architect PASS
 for every relevant head, locally built immutable AM/EG/runtime image digests,
-build provenance, additive schema/role receipts, retained-runtime protocol floor,
+build provenance, additive schema/role receipts, retained-runtime image/protocol
+and exact challenge/lease-duration compatibility floor,
 all local correctness/performance/fault evidence, approved max-owned-Agent value,
 capacity receipts, chosen HPA cadence and per-stage/per-step approvals. No moving
 tag or invented digest is acceptable. An unresolved item is HOLD.
@@ -130,7 +131,20 @@ Do not restore an old whole object from this capture.
 ## Common stage gates and verification
 
 Require integrated local fmt/clippy/tests and real Mongo independent-instance
-proof; every retained runtime that can receive AM traffic supports protocolv1;
+proof. **Before zeroing legacy AM**, inventory every retained traffic-capable
+native/hosted runtime and verify its exact image digest, protocol and ownership
+challenge/lease-duration compatibility with the final candidate. Protocolv1
+presence alone is insufficient: old #1370 receivers use20s while the integrated
+target is Mongo15s/renew3s and receiver10s; the receiver challenge `valid_for_ms`
+must exactly equal the manager's tested expected value (proposed10000ms).
+Pin the final durations and compatibility matrix in the release packet.
+Require positive same-floor evidence and negative tests rejecting an old20s
+receiver that still advertises v1, wrong challenge duration, stale/expired
+challenge and incompatible image/reader combinations. Those integration tests
+are mandatory evidence, **not executed by the manifest validator**. Any missing
+runtime, stale inventory or failed/missing challenge proof blocks S1 before
+the first scale-to-zero. Updating only the default runtime image does not qualify
+retained runtimes or replace their upgrade/continuity proof. Then require:
 shared auth/tickets/desktop/quota/cache and every background effect is safe at N;
 AM101 sudden-loss trials, EG10 process/node losses and two worker saturation/panic
 tests meet <=30s sustained service recovery. Required provider24h/1000-event gates
@@ -172,7 +186,9 @@ EG25+30+660+45=760; prove actual sequential/concurrent shutdown fits these sums.
 
 ## S1: AM no-overlap activation, then fixed two
 
-EG remains at its proven state; no AM HPA may exist. Initial switch-off/old
+EG remains at its proven state; no AM HPA may exist. Confirm the complete retained
+receiver image/challenge/duration matrix and its negative tests before the first
+write; a protocolv1-only inventory is a failed preflight. Initial switch-off/old
 managers must not overlap participating managers. Obtain the explicit outage
 window and all-writers/receiver proof; PDB does not preserve availability at zero.
 The following are individually approved payloads, not a batch to run unattended:
@@ -328,7 +344,8 @@ its own all-writer/retained-record proof. If unsafe, quiesce new admission under
 approved controls, preserve fenced custody and ask the lead for recovery.
 
 Receipt per stage: exact source/manifest SHAs, image digests, config/switch digest,
-approval IDs/route, time windows, schema/receiver floor, local test artifacts,
+approval IDs/route, time windows, schema/receiver image and exact-duration floor,
+retained-runtime inventory hash and positive/negative challenge test artifacts,
 all comparisons and failed/NOT_RUN/INCONCLUSIVE cells, resource/HPA/PDB snapshots,
 peak live clients/processes, hashes of operator-owned canary receipts, rollback
 outcome and remaining gates. Retain sanitized evidence under the engineer's owned
