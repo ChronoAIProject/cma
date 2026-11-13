@@ -32,7 +32,7 @@ import { ConsoleLanding } from './ConsoleLanding';
 import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
-import { useAgentAccess } from './resources/agentAccess';
+import { useConsoleAgentAccess } from './resources/consoleAgentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { AgentSharePage } from './resources/AgentSharePage';
 import { AgentInventory } from './resources/AgentInventory';
@@ -42,7 +42,7 @@ import { WorkspaceAccessPage } from './resources/WorkspaceAccessPage';
 import { scopeValue } from './resources/scope';
 import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
-import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
+import { OwnerViewsProvider } from './resources/retainedOwnerViews';
 import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
 
@@ -84,7 +84,6 @@ function ConsoleContent({
       ),
     [client, user.id, selectedAgent, setPanel],
   );
-  const ownerViews = useOwnerViews();
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
     value: navigationScope,
@@ -94,30 +93,11 @@ function ConsoleContent({
   const scopeChoices = useNavigationScope(scopeClient, navigationScope);
   const draft = useAgentDraft(client, user.id, route.kind === 'agent' ? route.agentId : undefined);
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
-  const agentAccess = useAgentAccess(
-    client.resourceViews,
-    route.kind === 'agent' ? route.agentId : undefined,
-    user.id,
+  const { agentAccess, accessUncertain, shared, personalAgentId } = useConsoleAgentAccess(
     client,
+    selectedAgent,
+    user.id,
   );
-  const accessUncertain = agentAccess.personalReadOnly;
-  useEffect(() => {
-    if (
-      route.kind === 'agent' &&
-      ((agentAccess.state.status === 'error' && !agentAccess.state.transient) ||
-        (agentAccess.state.status === 'ready' &&
-          agentAccess.state.value.detail.access === 'shared'))
-    )
-      ownerViews?.origins.delete(route.agentId);
-  }, [route, agentAccess.state, ownerViews]);
-  const shared =
-    agentAccess.state.status === 'ready' && agentAccess.state.value.detail.access === 'shared'
-      ? agentAccess.state.value.detail
-      : undefined;
-  const personalAgentId =
-    route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
-      ? route.agentId
-      : undefined;
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
   const navigation = useNavigation(client);
