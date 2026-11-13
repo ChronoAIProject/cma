@@ -25,7 +25,10 @@ pub mod flow;
 mod identity;
 mod identity_fallback;
 mod identity_http;
+mod identity_observations;
 mod identity_retry;
+mod identity_reuse;
+mod identity_throttle;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
 mod middleware;
@@ -136,6 +139,7 @@ pub struct AuthState {
     pub(super) http: reqwest::Client,
     pub(super) metadata: RwLock<Option<ProviderMetadata>>,
     identity_store: Arc<dyn identity_fallback::IdentityStore>,
+    identity_reuse_age: Duration,
     verification_slots: tokio::sync::Semaphore,
     fallback_policy: Arc<dyn identity_fallback::FallbackPolicy>,
     cookie_verifications: cookie_authorization::VerificationFlights,
@@ -219,6 +223,7 @@ impl AuthState {
                 .expect("the rustls HTTP client builds"),
             metadata: RwLock::new(None),
             identity_store: Arc::new(identity_fallback::MemoryIdentityStore::default()),
+            identity_reuse_age: Duration::ZERO,
             verification_slots: tokio::sync::Semaphore::new(64),
             fallback_policy: Arc::new(identity_fallback::SessionReadOnly),
             cookie_verifications: cookie_authorization::VerificationFlights::default(),
@@ -351,29 +356,28 @@ impl AuthState {
                         if had_tokens && state.tokens.is_none() {
                             return Ok(None);
                         }
-                        if allow_fallback {
-                            let resolved = cookie_authorization::request_for_session(
+                        let resolved = if allow_fallback {
+                            cookie_authorization::request_for_session(self, &login.subject, state)
+                                .await?
+                        } else {
+                            cookie_authorization::request_for_browser_cookie(
                                 self,
                                 &login.subject,
                                 state,
                             )
-                            .await?;
-                            // A logout may revoke the browser while verification
-                            // is pending, including on another CMA process.
-                            if !self.store.browser_login(&id).await?.is_some_and(|current| {
+                            .await?
+                        };
+                        // Cached authority and outage fallback both recheck logout
+                        // after IO, including logout committed by another replica.
+                        if (allow_fallback || identity_reuse::used())
+                            && !self.store.browser_login(&id).await?.is_some_and(|current| {
                                 current.subject == login.subject
                                     && current.expires_at > SystemTime::now()
-                            }) {
-                                return Ok(None);
-                            }
-                            return Ok(resolved);
+                            })
+                        {
+                            return Ok(None);
                         }
-                        return cookie_authorization::request_for_browser_cookie(
-                            self,
-                            &login.subject,
-                            state,
-                        )
-                        .await;
+                        return Ok(resolved);
                     }
                 }
                 let Some(token) = bearer::bearer_token(headers) else {
@@ -391,6 +395,7 @@ impl AuthState {
         authorization: Authorization,
         profile: Profile,
     ) -> Result<(), StoreError> {
+        self.identity_store.clear();
         for _ in 0..32 {
             let mut next = SubjectAuthState::new(
                 subject.clone(),

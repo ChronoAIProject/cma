@@ -48,7 +48,10 @@ pub(super) async fn request_for_bearer(
             tracing::debug!(error = %error, "bearer credential was not accepted");
             Ok(None)
         }
-        Err(error @ ProviderVerificationError::Transient(_)) => {
+        Err(
+            error @ (ProviderVerificationError::Transient(_)
+            | ProviderVerificationError::RateLimited(_)),
+        ) => {
             error.record_unavailable();
             Err(super::identity_retry::unavailable())
         }
@@ -157,7 +160,10 @@ async fn verify_subject_once(
             // Transient errors must wait for the other endpoint: an explicit
             // rejection there takes precedence over retry or fallback.
             match result {
-                Err(error @ ProviderVerificationError::Transient(_)) => Ok(Err(error)),
+                Err(
+                    error @ (ProviderVerificationError::Transient(_)
+                    | ProviderVerificationError::RateLimited(_)),
+                ) => Ok(Err(error)),
                 result => result.map(Ok),
             }
         },
@@ -179,11 +185,17 @@ async fn verify_subject_once(
                 "Identity provider verification phase completed"
             );
             match result {
-                Err(error @ ProviderVerificationError::Transient(_)) => Ok(Err(error)),
+                Err(
+                    error @ (ProviderVerificationError::Transient(_)
+                    | ProviderVerificationError::RateLimited(_)),
+                ) => Ok(Err(error)),
                 result => result.map(Ok),
             }
         }
     )?;
+    if let Some(error) = super::identity_throttle::select(&userinfo, &introspection) {
+        return Err(error);
+    }
     let (body, subject) = userinfo?;
     let (permissions, api_expires_at, token_expires_at) = match introspection?
         .map(|response| {

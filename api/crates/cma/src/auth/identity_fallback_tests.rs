@@ -273,3 +273,53 @@ fn identical_token_bytes_cannot_cross_credential_purpose_namespaces() {
         assert!(store.get(&key, &store.epoch()).is_none());
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn short_success_reuse_is_absolute_and_shortened_by_token_expiry() {
+    let store = MemoryIdentityStore::default();
+    let key = seed(&store, "short-lived-fixture");
+    let epoch = store.epoch();
+    for _ in 0..4 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert!(store
+            .get_recent(&key, &epoch, Duration::from_secs(5))
+            .is_some());
+    }
+    tokio::time::advance(Duration::from_secs(1)).await;
+    assert!(store
+        .get_recent(&key, &epoch, Duration::from_secs(5))
+        .is_none());
+    assert!(
+        store.get(&key, &epoch).is_some(),
+        "separate outage clock remains unchanged"
+    );
+    store.remember(
+        key,
+        &epoch,
+        evidence(),
+        SystemTime::now() + Duration::from_secs(2),
+    );
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(store
+        .get_recent(&key, &epoch, Duration::from_secs(5))
+        .is_none());
+}
+
+#[test]
+fn live_fences_are_token_specific_and_caller_timeout_is_not_revocation() {
+    let store = MemoryIdentityStore::default();
+    let first = store.key(CredentialPurpose::BrowserCookie, "first-fixture");
+    let second = store.key(CredentialPurpose::BrowserCookie, "second-fixture");
+    let first_epoch = store.token_epoch(&first);
+    let second_epoch = store.token_epoch(&second);
+    store.discard_token("first-fixture");
+    assert!(store.token_current(&first, &first_epoch));
+    store.invalidate_token("first-fixture");
+    assert!(!store.token_current(&first, &first_epoch));
+    assert!(store.token_current(&second, &second_epoch));
+    let replacement = store.token_epoch(&first);
+    assert!(!Arc::ptr_eq(&first_epoch, &replacement));
+    store.clear();
+    assert!(!store.token_current(&first, &replacement));
+    assert!(!store.token_current(&second, &second_epoch));
+}

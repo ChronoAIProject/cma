@@ -92,6 +92,13 @@ async fn http_status_diagnostics_preserve_refusal_and_retry_classification() {
                 ));
                 "rejected"
             }
+            429 => {
+                assert!(matches!(
+                    result,
+                    Err(ProviderVerificationError::RateLimited(_))
+                ));
+                "rate_limited"
+            }
             502 | 503 => {
                 assert!(matches!(
                     result,
@@ -291,6 +298,9 @@ async fn shared_flight_reports_one_provider_failure_for_two_callers() {
     let gate = Arc::new(Gate::default());
     let mut reply = f.control.introspection.write().await;
     reply.status = StatusCode::TOO_MANY_REQUESTS;
+    reply
+        .headers
+        .insert(header::RETRY_AFTER, "60".parse().unwrap());
     reply.gate = Some(gate.clone());
     drop(reply);
     let before = f.control.requests.load(Ordering::SeqCst);
@@ -309,7 +319,7 @@ async fn shared_flight_reports_one_provider_failure_for_two_callers() {
         "introspection",
         "status",
         "http_status",
-        "unavailable",
+        "rate_limited",
     );
     assert_eq!(events[0]["fields"]["status"], 429);
 }

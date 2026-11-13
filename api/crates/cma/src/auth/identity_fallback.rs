@@ -1,7 +1,7 @@
 //! Process-local successful evidence. No raw credentials or durable storage.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime};
 
 use axum::http::Method;
@@ -50,6 +50,8 @@ impl FallbackPolicy for SessionReadOnly {
 pub(super) trait IdentityStore: Send + Sync {
     fn key(&self, purpose: CredentialPurpose, token: &str) -> TokenHash;
     fn epoch(&self) -> Epoch;
+    fn token_epoch(&self, key: &TokenHash) -> Epoch;
+    fn token_current(&self, key: &TokenHash, epoch: &Epoch) -> bool;
     fn remember(
         &self,
         key: TokenHash,
@@ -57,8 +59,27 @@ pub(super) trait IdentityStore: Send + Sync {
         evidence: Arc<VerifiedSubject>,
         expiry: SystemTime,
     );
-    fn get(&self, key: &TokenHash, epoch: &Epoch) -> Option<Arc<VerifiedSubject>>;
+    fn get(&self, key: &TokenHash, epoch: &Epoch) -> Option<Arc<VerifiedSubject>> {
+        self.get_recent(key, epoch, MAX_AGE)
+    }
+    fn get_recent(
+        &self,
+        key: &TokenHash,
+        epoch: &Epoch,
+        max_age: Duration,
+    ) -> Option<Arc<VerifiedSubject>>;
     fn invalidate(&self, key: &TokenHash);
+    fn discard(&self, key: &TokenHash);
+    fn discard_token(&self, token: &str) {
+        for purpose in [
+            CredentialPurpose::BrowserCookie,
+            CredentialPurpose::IndependentBearer,
+            CredentialPurpose::AgentKey,
+            CredentialPurpose::ResourceRequest,
+        ] {
+            self.discard(&self.key(purpose, token));
+        }
+    }
     fn invalidate_token(&self, token: &str) {
         // Refusal of the same token invalidates all purpose-specific evidence;
         // successful verification can only populate its own namespace.
@@ -84,6 +105,7 @@ struct Record {
 struct Records {
     epoch: Epoch,
     entries: HashMap<TokenHash, Record>,
+    token_epochs: HashMap<TokenHash, Weak<()>>,
 }
 
 pub(super) struct MemoryIdentityStore {
@@ -107,6 +129,7 @@ impl MemoryIdentityStore {
             records: Mutex::new(Records {
                 epoch: Arc::new(()),
                 entries: HashMap::new(),
+                token_epochs: HashMap::new(),
             }),
         }
     }
@@ -128,6 +151,30 @@ impl IdentityStore for MemoryIdentityStore {
             .expect("identity store lock")
             .epoch
             .clone()
+    }
+
+    fn token_epoch(&self, key: &TokenHash) -> Epoch {
+        let mut records = self.records.lock().expect("identity store lock");
+        // Only admitted live verifications hold these references, bounded by the
+        // existing 64-slot semaphore. No completed per-token tombstone accumulates.
+        records
+            .token_epochs
+            .retain(|_, epoch| epoch.strong_count() > 0);
+        if let Some(epoch) = records.token_epochs.get(key).and_then(Weak::upgrade) {
+            return epoch;
+        }
+        let epoch = Arc::new(());
+        records.token_epochs.insert(*key, Arc::downgrade(&epoch));
+        epoch
+    }
+
+    fn token_current(&self, key: &TokenHash, epoch: &Epoch) -> bool {
+        self.records
+            .lock()
+            .expect("identity store lock")
+            .token_epochs
+            .get(key)
+            .is_some_and(|current| current.ptr_eq(&Arc::downgrade(epoch)))
     }
 
     fn remember(
@@ -173,7 +220,12 @@ impl IdentityStore for MemoryIdentityStore {
         );
     }
 
-    fn get(&self, key: &TokenHash, epoch: &Epoch) -> Option<Arc<VerifiedSubject>> {
+    fn get_recent(
+        &self,
+        key: &TokenHash,
+        epoch: &Epoch,
+        max_age: Duration,
+    ) -> Option<Arc<VerifiedSubject>> {
         let mut records = self.records.lock().expect("identity store lock");
         if !Arc::ptr_eq(epoch, &records.epoch) {
             return None;
@@ -182,10 +234,18 @@ impl IdentityStore for MemoryIdentityStore {
         records
             .entries
             .get(key)
+            .filter(|record| max_age >= MAX_AGE || record.verified_at.elapsed() < max_age)
             .map(|record| record.evidence.clone())
     }
 
     fn invalidate(&self, key: &TokenHash) {
+        let mut records = self.records.lock().expect("identity store lock");
+        records.entries.remove(key);
+        records.token_epochs.remove(key);
+        records.epoch = Arc::new(());
+    }
+
+    fn discard(&self, key: &TokenHash) {
         let mut records = self.records.lock().expect("identity store lock");
         records.entries.remove(key);
         records.epoch = Arc::new(());
@@ -194,6 +254,7 @@ impl IdentityStore for MemoryIdentityStore {
     fn clear(&self) {
         let mut records = self.records.lock().expect("identity store lock");
         records.entries.clear();
+        records.token_epochs.clear();
         records.epoch = Arc::new(());
     }
 }

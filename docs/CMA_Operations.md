@@ -2532,8 +2532,23 @@ custody check and the additional `/auth/session` logout check still run.
 
 Ordinary authenticated Cookie requests use two identity commands instead of
 three; `/auth/session` uses three instead of four, plus its settings read.
-No completed NyxID verification is reused on the normal path. The existing
-60-second outage fallback remains limited to `GET /auth/session`.
+Normal-path evidence reuse is separately controlled by
+`CHRONO_AUTH_VERIFIED_REUSE_SECONDS`, default `0`, with strict integer values
+0–5. Owner activation permits bounded success reuse only on selected ordinary
+list/detail reads and session inspection; commands and privileged operations
+remain live-only. See [identity policy](Identity_Outage_Policy.md) for exact
+revocation, TTL and route limits. Cached browser reads retain the post-IO token
+and login checks. The existing 60-second outage fallback remains limited to
+`GET /auth/session`; provider 429 never uses it. Roll reuse back to `0` and
+restart API processes without changing stored state.
+
+Provider 429 observes Retry-After within the 2,500 ms/three-attempt budget. When
+that delay cannot fit, the response is a retryable `identity_unavailable` 503
+with the remaining Retry-After. Compare per-minute
+`cma_identity_provider_calls_total` and `cma_identity_provider_results_total`
+(outcome `429`) across all replicas, stratified by route, endpoint, image and
+reuse setting. These are verification dispatch attempts and header outcomes;
+cache/caller counters are separate and must not inflate the upstream count.
 
 Rollback by setting the switch to `false` and restarting the API. No persisted
 format changes or data repair are required. Compare both paths using the

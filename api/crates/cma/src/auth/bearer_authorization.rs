@@ -77,11 +77,22 @@ async fn verify_optional_metadata(
     credential: &str,
     timeout: Duration,
 ) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
+    let purpose = if super::agent_keys::is_agent_key(credential) {
+        CredentialPurpose::AgentKey
+    } else {
+        CredentialPurpose::IndependentBearer
+    };
+    if let Some(cached) = super::identity_reuse::lookup(auth, purpose, credential) {
+        super::identity_observations::resolution("reused");
+        return Ok(cached);
+    }
     let key = SecretDigest::identify("independent-bearer-verification", credential);
     let flight = auth.bearer_verifications.acquire(&key).await;
+    let led = std::sync::atomic::AtomicBool::new(false);
     let verified = match tokio::time::timeout(
         timeout,
         flight.get_or_init(|| {
+            led.store(true, std::sync::atomic::Ordering::Relaxed);
             let purpose = if super::agent_keys::is_agent_key(credential) {
                 CredentialPurpose::AgentKey
             } else {
@@ -94,7 +105,7 @@ async fn verify_optional_metadata(
     {
         Ok(result) => result.clone(),
         Err(_) => {
-            auth.identity_store.invalidate_token(credential);
+            auth.identity_store.discard_token(credential);
             let error =
                 ProviderVerificationError::Unavailable("identity caller deadline elapsed".into());
             use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
@@ -108,6 +119,11 @@ async fn verify_optional_metadata(
             Err(error)
         }
     };
+    super::identity_observations::resolution(if led.load(std::sync::atomic::Ordering::Relaxed) {
+        "led"
+    } else {
+        "shared"
+    });
     if flight.initialized() {
         auth.bearer_verifications.release(&key, &flight).await;
     }

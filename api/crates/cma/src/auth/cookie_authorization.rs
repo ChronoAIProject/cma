@@ -133,6 +133,12 @@ async fn verify_with_timeout(
             delegated_credential: None,
         }));
     };
+    let cached = super::identity_reuse::lookup(
+        auth,
+        CredentialPurpose::BrowserCookie,
+        tokens.access_token.expose(),
+    );
+    let reused = cached.is_some();
     let key = VerificationKey::new(&state, tokens);
     let flight = auth.cookie_verifications.acquire(&key).await;
     let token_hash = auth.identity_store.key(
@@ -141,48 +147,56 @@ async fn verify_with_timeout(
     );
     let epoch = auth.identity_store.epoch();
     // The whole retry sequence and its deadline belong to the shared flight.
-    // Completed verification is never used to skip the next provider check.
+    // Only the scoped read policy can reuse completed evidence inside the flight.
     let led = std::sync::atomic::AtomicBool::new(false);
-    let verified = match tokio::time::timeout(
-        timeout,
-        flight.get_or_init(|| {
-            led.store(true, std::sync::atomic::Ordering::Relaxed);
-            super::identity_retry::verify(
-                auth,
-                None,
-                tokens.access_token.expose(),
-                CredentialPurpose::BrowserCookie,
-                Some(tokens.expires_at),
-                Some(owner.as_str()),
-                timeout,
-            )
-        }),
-    )
-    .await
-    {
-        Ok(result) => result.clone(),
-        Err(_) => {
-            auth.identity_store
-                .invalidate_token(tokens.access_token.expose());
-            let error =
-                ProviderVerificationError::Unavailable("identity caller deadline elapsed".into());
-            use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
-            record(
-                Endpoint::Verification,
-                Stage::Deadline,
-                Reason::CallerDeadline,
-                None,
-                &error,
-            );
-            Err(error)
+    let verified = if let Some(cached) = cached {
+        Ok(cached)
+    } else {
+        match tokio::time::timeout(
+            timeout,
+            flight.get_or_init(|| {
+                led.store(true, std::sync::atomic::Ordering::Relaxed);
+                super::identity_retry::verify(
+                    auth,
+                    None,
+                    tokens.access_token.expose(),
+                    CredentialPurpose::BrowserCookie,
+                    Some(tokens.expires_at),
+                    Some(owner.as_str()),
+                    timeout,
+                )
+            }),
+        )
+        .await
+        {
+            Ok(result) => result.clone(),
+            Err(_) => {
+                auth.identity_store
+                    .discard_token(tokens.access_token.expose());
+                let error = ProviderVerificationError::Unavailable(
+                    "identity caller deadline elapsed".into(),
+                );
+                use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
+                record(
+                    Endpoint::Verification,
+                    Stage::Deadline,
+                    Reason::CallerDeadline,
+                    None,
+                    &error,
+                );
+                Err(error)
+            }
         }
     };
-    let source = if led.load(std::sync::atomic::Ordering::Relaxed) {
+    let source = if reused {
+        "reused"
+    } else if led.load(std::sync::atomic::Ordering::Relaxed) {
         "led"
     } else {
         "shared"
     };
     metrics::counter!("cma_cookie_identity_resolutions_total", "source" => source).increment(1);
+    super::identity_observations::resolution(source);
     tracing::debug!(parent: None, event = "cookie_identity_resolution", source, count = 1u64,
         "Cookie identity verification resolved");
     if flight.initialized() {
@@ -196,6 +210,10 @@ async fn verify_with_timeout(
             // Keep races retryable and never remove shared durable credentials.
             require_current_custody(auth, &state).await?;
             return Ok(None);
+        }
+        Err(error @ ProviderVerificationError::RateLimited(_)) => {
+            error.record_unavailable();
+            return Err(super::identity_retry::unavailable());
         }
         Err(ProviderVerificationError::Transient(reason)) => {
             let cached = allow_fallback

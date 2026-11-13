@@ -1,8 +1,9 @@
 # NyxID interruption policy
 
-CMA verifies identity on every authenticated request. Completed evidence never
-skips a provider call. This policy addresses a temporary NyxID interruption at
-the browser session inspection boundary; it does not provide offline API access.
+CMA verifies durable identity and resource authority on every authenticated
+request. By default, completed evidence does not skip a provider call. The
+separately controlled normal-path reuse below bounds provider evidence age; the
+existing outage fallback remains limited to browser session inspection.
 
 ## Threat model and residual access
 
@@ -12,8 +13,9 @@ revocation. Only the exact same token, in a still-valid CMA browser login, may
 reuse successful evidence, only on `GET /auth/session`, and only on the process
 that observed it. During that window the caller can read the previously verified
 subject, profile and capability presentation and keep already rendered drafts
-and content on screen. Every API read, write, command and privileged action
-continues to require live authority. This does not extend an existing stream's
+and content on screen. Every write, command and privileged action continues to require live authority.
+API reads also require live provider evidence unless the bounded normal-path
+reuse policy below is explicitly enabled. This does not extend an existing stream's
 lifetime or change its separate authorization rules.
 
 The worst-case stale session inspection window is 60 seconds from the last
@@ -34,22 +36,57 @@ and cannot trigger retry or fallback. Only a timeout before response headers is
 fallback-eligible; outer caller/sequence cancellations fail closed because their
 response phase is unknown. Discovery uses the same bounded reader.
 
-Malformed evidence, 429, other HTTP errors and local overload also fail closed.
-They cannot trigger fallback. A 429 is neither retried nor accepted using stale
-evidence: CMA cannot safely infer whether it represents a user, client, quota or
-abuse limit, and must not bypass it or amplify the throttled request. The existing
-`store_failed` projection for this refusal is not automatically retried by the
-web; only typed identity outages and transport/gateway failures auto-retry.
+Malformed evidence, other nonretryable HTTP errors and local overload fail
+closed and cannot trigger fallback. Provider 429 is a separate throttling result:
+CMA honors numeric or HTTP-date Retry-After, combines simultaneous endpoint
+hints by their longer remaining delay, and never shortens a provider delay to
+fit its own budget. Missing/malformed hints use one second. A valid zero hint
+still receives the bounded jittered backoff. A delay plus a complete attempt that cannot fit the caller
+budget returns immediately with a retryable identity 503 and the remaining
+Retry-After rounded up; it does not issue an early retry. Provider 429 never
+uses outage fallback or counts as an inbound API 429.
+
+## Bounded normal-path success reuse
+
+`CHRONO_AUTH_VERIFIED_REUSE_SECONDS` accepts exactly integers 0–5 and defaults
+to `0` (off). An owner-authorized rollout can reuse complete successful
+userinfo/introspection evidence for that absolute age, shortened by the
+earliest verified or durable token expiry. This is distinct from the 60-second
+session outage fallback; hits never refresh either clock. Missing expiry
+evidence cannot seed reuse. The cache uses the existing process-keyed token
+digest, credential-purpose isolation, memory bounds and invalidation epoch.
+
+Only ambient browser-cookie or independent-bearer authentication on GET/HEAD
+Agent, Sandbox and Workspace list/detail routes, plus GET `/auth/session`, is
+eligible. Command execution, mutations, admin routes, credential/sharing reads,
+streams, Agent keys, proxy/resource/worker credentials, background authorization
+and future route families stay live-only. Authorization queries and required
+permissions at each resource remain current. Cached browser reads recheck both
+the exact durable token generation and browser login after authentication IO,
+including logout committed on another replica; evidence age and invalidation
+are rechecked after those reads.
+
+A received refusal, logout, refresh or login replacement invalidates affected
+local evidence and fences pending success publication. TTL bounds do not
+provide an upstream revocation notification channel: a provider revocation
+that CMA has not observed may remain visible only when the TTL expires. Local
+signals invalidate immediately. Independent AM replicas have independent
+caches and no cross-replica invalidation broadcast; durable browser changes
+are still checked on every request. Do not describe this as instantaneous
+provider revocation across the fleet. The setting is shipped off; this change
+does not activate reuse or alter an existing stream's authorization lifetime.
 
 ## Retry and store parameters
 
 - One verification sequence is shared by overlapping callers using the existing
-  cookie/bearer single-flight mechanism. Later requests always verify again.
+  cookie/bearer single-flight mechanism. Later eligible reads may use the
+  separately bounded success cache when configured; other requests verify again.
 - Up to three attempts; each attempt has a 750 ms deadline covering discovery
   if needed plus concurrent userinfo/introspection. Total sequence and caller
   wait are capped at 2,500 ms. Delays are 40 ms then 80 ms plus 0–30 ms jitter.
-- Retry only HTTP 502/503, connection/setup failures and pre-response timeouts.
-  A transient result waits for the other concurrent endpoint so its rejection
+- Retry HTTP 429 with the provider delay above, HTTP 502/503, connection/setup
+  failures and pre-response timeouts.
+  A transient or throttled result waits for the other concurrent endpoint so its rejection
   cannot be hidden. An explicit refusal cancels outstanding provider work.
 - At most 64 verification sequences per process, acquired without queuing.
   Capacity exhaustion is a local failure, never a fallback reason.
@@ -94,11 +131,13 @@ public contract inventory in addition to unknown routes and methods.
 
 ## Web and public error contract
 
-When session verification exhausts retry without eligible evidence,
+When session verification exhausts transient retry without eligible evidence,
 `GET /auth/session` returns HTTP 503, `application/problem+json`,
-`code: identity_unavailable`, `Retry-After: 3` and `Cache-Control: no-store`.
-Other authentication-store failures retain `store_failed`; other API routes
-retain their existing error projection. The shared public inventory and replay
+`code: identity_unavailable`, `retryable: true`, `Retry-After: 3` and
+`Cache-Control: no-store`. Exhausted provider throttling uses that typed response
+on all ambient API authentication routes, with the provider remaining delay
+rounded up to at least one second. Other authentication-store failures retain
+`store_failed` and `retryable: false`; other API failure projections are unchanged. The shared public inventory and replay
 corpus pin the session error response.
 
 The web distinguishes this error from a generic CMA connection failure and says
@@ -110,6 +149,26 @@ rejection clears authenticated presentation. UI continuity grants no backend
 authority and does not auto-submit drafts or replay mutations.
 
 ## Observation and rollback
+
+Provider verification dispatch attempts increment `cma_identity_provider_calls_total`
+by fixed endpoint and route category. `cma_identity_provider_results_total`
+records response-header status, transport failure or cancellation; HTTP 200 here
+is a header observation, not proof of validated authority.
+`cma_identity_cache_lookups_total` reports hit/miss, and
+`cma_identity_verifications_total` reports led/shared/reused caller resolutions.
+Never sum callers or results into provider dispatches. Calls cover the shared
+verification reader (discovery, userinfo, introspection and Agent-key verification),
+not token exchange, organization APIs or JWKS traffic.
+
+For each replica and fleet aggregate compare
+`sum by (endpoint, route) (increase(cma_identity_provider_calls_total[1m]))`
+and the same expression on results filtered by `outcome="429"`. Retain replica
+count, image, window, request volume and reuse setting. Fixed route categories
+cover session inspection and Agent/Sandbox/Workspace list/detail/create; other
+routes remain in `other`. A dispatch attempt is not a proven wire delivery.
+Production before/after claims require matched authorized windows; local
+loopback counts only demonstrate the mechanism. Additional replicas maintain
+separate warm-up/miss costs, so per-process reductions are not a fleet forecast.
 
 Each accepted fallback emits one WARN line with `event="identity_fallback"`,
 `count=1`, a 96-bit prefix of the process-keyed HMAC, and a fixed reason such as

@@ -51,14 +51,20 @@ async fn introspection(State(control): State<Arc<Control>>) -> Response {
         gate.release.acquire().await.unwrap().forget();
     }
     let status = StatusCode::from_u16(control.status.load(Ordering::SeqCst)).unwrap();
-    (
+    let mut response = (
         status,
         Json(
             json!({"sub":"fixture-owner", "active":control.active.load(Ordering::SeqCst),
             "permissions":["cma:sandbox:use"]}),
         ),
     )
-        .into_response()
+        .into_response();
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        response
+            .headers_mut()
+            .insert(axum::http::header::RETRY_AFTER, "60".parse().unwrap());
+    }
+    response
 }
 
 struct Fixture {
@@ -245,7 +251,7 @@ async fn overlapping_unavailability_is_shared_without_caching_provider_failure()
             } else {
                 assert!(matches!(
                     result,
-                    Err(ProviderVerificationError::Unavailable(_))
+                    Err(ProviderVerificationError::RateLimited(_))
                 ));
             }
         }
@@ -358,7 +364,7 @@ async fn every_single_flight_waiter_keeps_its_final_failure_reason() {
             failure,
             Some(Failure::new(
                 Dependency::IdentityProvider,
-                Reason::InvalidEvidence
+                Reason::RateLimited
             ))
         );
     }

@@ -313,3 +313,8 @@ mod provider_boundary_tests;
 
 #[path = "cookie_authorization_tests/joined_session_tests.rs"]
 mod joined_session_tests;
+
+#[path = "cookie_authorization_tests/reuse_tests.rs"]
+mod reuse_tests;
+#[path = "cookie_authorization_tests/throttle_tests.rs"]
+mod throttle_tests;
