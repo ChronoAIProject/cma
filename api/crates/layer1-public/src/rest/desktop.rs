@@ -175,7 +175,10 @@ fn problem(error: DesktopError) -> Response {
     response
         .headers_mut()
         .insert(header::CACHE_CONTROL, "no-store, private".parse().unwrap());
-    if matches!(error, DesktopError::Busy | DesktopError::RuntimeUnavailable | DesktopError::AuthorityUnavailable) {
+    if matches!(
+        error,
+        DesktopError::Busy | DesktopError::RuntimeUnavailable | DesktopError::AuthorityUnavailable
+    ) {
         response
             .headers_mut()
             .insert(header::RETRY_AFTER, "1".parse().unwrap());
