@@ -23,6 +23,7 @@ mod agents;
 #[cfg(test)]
 mod mongo_integration_tests;
 mod reconciliation;
+mod telemetry;
 mod transaction;
 
 #[async_trait::async_trait]
@@ -182,7 +183,13 @@ async fn recover(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
-        match commit_transaction(&mut session).await {
+        let commit = {
+            let mut phase = telemetry::Phase::new("commit");
+            let result = commit_transaction(&mut session).await;
+            phase.finish(matches!(&result, CommitOutcome::Committed));
+            result
+        };
+        match commit {
             CommitOutcome::Committed => return Ok(receipt.outcome),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
@@ -238,5 +245,12 @@ async fn apply_attempt(
             .await
             .map_err(ApplyError::Driver)?;
         apply(store, request, session).await
+    }
+}
+
+impl MongoSandboxStore {
+    pub(crate) fn with_runtime_loss_bounded_proof(mut self, enabled: bool) -> Self {
+        self.runtime_loss_bounded_proof_enabled = enabled;
+        self
     }
 }
