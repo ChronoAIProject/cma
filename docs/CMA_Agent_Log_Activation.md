@@ -28,7 +28,7 @@ The release owner must request approval for any such canary action separately.
 
 | Approval unit | What changes | Initial canary and prerequisites |
 | --- | --- | --- |
-| #1648 explicit Agent cohort | `CHRONO_AGENT_LOG_ADMISSION_AGENTS` selects bounded admission/public windows and lazy write preparation. Fleet percentage stays `0`. | Owner-approved test Agent IDs, at most 16; qualify retained history, exact command receipts, quarantine and read-only readers. Keep adoption/recovery false. |
+| #1648 explicit Agent cohort | `CHRONO_AGENT_LOG_ADMISSION_AGENTS` prepares the selected histories serially during store startup, then selects bounded admission/public windows. Fleet percentage stays `0`. | Owner-approved test Agent IDs, at most 16; qualify startup/readiness, retained history, exact command receipts, quarantine and read-only readers. Keep adoption/recovery false. |
 | #1648 fleet 10%, then 50%, then 100% | Apply the corresponding JSON merge patch to ConfigMap `chrono-bot/cma-agent-manager`, then a reviewed rollout of the same API image. Each stage is a separate approval. Patches change only the two legacy selector keys. Initial stages require unchanged adoption/recovery switches to be false; the release controller must refuse the stage if that readback precondition fails. | Explicit owner canary passes first. Percentage buckets are stable but are **not owner-scoped**; even 10% can include other users. Owner approval must explicitly cover fleet exposure before switching from the explicit canary. |
 | #1666 title reader | `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED=true` enables the proven first-turn prefix on the shared selected cohort. | After #1648 prerequisite 100% plus one stable hour, approve an owner-test cohort check and the actual consumer exposure separately. |
 | #1666 approval reader | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED=true` enables the proven pending-approval suffix on the shared selected cohort. | Approve independently from title reads; preserve the exact pending set, original locators and command authority. |
@@ -53,6 +53,29 @@ evidence. This packet supplies no workaround and makes no recovery-success claim
 
 ## Measurements and expansion criteria
 
+The owner's production deadline is **14 November 2026, 14:00 SGT**. The hard
+limits below measure from the initiating client send through completion of the
+whole operation. Record the exact client-visible completion condition and its
+durable evidence before each comparison; an early admission ACK, first byte or
+server span cannot substitute for completion.
+
+| Complete operation | Hard elapsed limit | Intended stage contribution |
+| --- | --- | --- |
+| New Agent plus Linux or desktop Sandbox ready | <=5 s, reported separately for each Sandbox type | Provisioning control for these stages; bounded logs alone do not establish this target. |
+| Agent tab open, including the required usable view | <=1 s | Explicit/fleet bounded reads, title/approval consumers and segmented readers target this path. |
+| Send operation complete | <=1 s | Bounded admission and segmented append/receipt paths target this operation. |
+| Interrupt operation complete | <=1 s | Bounded validation and original-command settlement target this operation. |
+| Admin Sandbox usage report complete | <=2 s | Separate reporting control; Agent usage reads do not prove this path. |
+
+For every measured operation retain sample, success, error and cancellation
+counts, elapsed distribution, maximum and **every limit exceedance**, including
+first-use samples. Timed-out, failed, cancelled and incomplete operations remain
+in the evidence; do not remove them from the denominator or report them as fast
+successes. A favorable p95 cannot pass a hard limit. Every exceedance fails that
+operation's acceptance and holds expansion; unmeasured paths remain **UNVERIFIED**.
+Recovery/release/DDL stages additionally retain their own continuity and safety
+criteria and cannot claim these ordinary-request limits from internal timings.
+
 Collect a matched off baseline of at least 30 minutes, preserving image, replicas,
 workers, Mongo pool and resource limits. Retain first failures and separate rollout
 and first-use preparation cost from steady-state results. Bind every observation
@@ -60,12 +83,23 @@ to source/image, process boot/generation, effective switches, approved cohort,
 start/end time and nonzero sample counts. Never compare cumulative counters across
 process restarts without accounting for resets.
 
+- Explicit cohort startup: measure rollout/process start through store composition
+  and readiness separately. `prepare_bounded_admission` awaits each selected Agent
+  serially, with a 10-second per-Agent timeout and 60-second overall bound. Missing,
+  invalid, failed, timed-out or unconfirmed preparation fails startup. Record
+  attempted/prepared counts, elapsed time, first failure, readiness failures and
+  restarts for each process generation. Percentage zero does not enter fleet lazy
+  preparation. A successful explicit canary does not qualify fleet first-use
+  failure isolation.
 - Fleet: preparation prepared/reused/failed/busy, fallback/quarantine mix,
   write/window scans avoided, full-scan rows/BSON bytes/duration, Mongo commands
   and checkout wait p50/p95, readiness/503s, route latency p50/p95/p99, memory and
   CPU. Require at least 100 successful natural ordinary-message samples on each
   side for an admission p95 claim; report history/open-Agent samples separately.
   Observe at least 60 steady minutes per approved stage before requesting expansion.
+  Separately retain the first eligible write's preparation latency/failure and the
+  complete client request that triggered it. This lazy fleet phase has its own
+  timeout/cooldown/fallback isolation; startup success is not evidence of it.
 - Title and approvals: nonzero representative successful bounded reads and
   fallbacks for each consumer; exact title input/pending-set parity, scanned
   rows/bytes, commands/checkouts and net latency. Fleet aggregates alone cannot
@@ -95,6 +129,8 @@ input or effect, history gap/hash error, read-side mutation, unexpected format
 conversion, quarantine growth, lost writer exclusion, unauthorized lifecycle or
 destructive effect, unsupported reader, or unexpected pending-approval change.
 Keep the release controller's existing stricter health/performance gates.
+Failure to meet any applicable complete-operation limit above holds acceptance
+and expansion, even when the relative regression guard below remains green.
 
 Proposed additional stage guardrails for owner approval: abort on a new
 candidate-attributed readiness/503 failure, or two consecutive five-minute
