@@ -26,10 +26,6 @@ pub(super) fn resolution(source: &'static str) {
     metrics::counter!("cma_identity_verifications_total", "route" => route().to_string(), "source" => source).increment(1);
 }
 
-pub(super) fn cache(outcome: &'static str) {
-    metrics::counter!("cma_identity_cache_lookups_total", "route" => route().to_string(), "outcome" => outcome).increment(1);
-}
-
 pub(super) struct Call {
     endpoint: Endpoint,
     route: Arc<str>,
@@ -98,9 +94,6 @@ mod tests {
                 drop(Call::start(Endpoint::AgentKey));
                 resolution("led");
                 resolution("shared");
-                resolution("reused");
-                cache("hit");
-                cache("miss");
             })
             .await;
         let mut context = layer2_core::diagnostic_context::DiagnosticContext::current();
@@ -119,13 +112,12 @@ mod tests {
                 "{output}"
             );
         }
-        for source in ["led", "shared", "reused"] {
+        for source in ["led", "shared"] {
             assert!(
                 output.contains(&format!("source=\"{source}\"}} 1")),
                 "{output}"
             );
         }
-        assert!(output.contains("cma_identity_cache_lookups_total"));
         for private in ["private", "owner", "token", "request_hash"] {
             assert!(!output.contains(private));
         }

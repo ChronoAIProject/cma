@@ -13,6 +13,7 @@ pub(super) struct VerifiedSubject {
     pub independent_commands: bool,
     pub api_expires_at: Option<std::time::SystemTime>,
     pub token_expires_at: Option<std::time::SystemTime>,
+    pub verification: Option<super::identity_lifetime::VerificationLifetime>,
 }
 
 pub(super) fn verification_failure(stage: &'static str, reason: &'static str, status: Option<u16>) {
@@ -158,7 +159,7 @@ async fn verify_subject_once(
                 "Identity provider verification phase completed"
             );
             // Transient errors must wait for the other endpoint: an explicit
-            // rejection there takes precedence over retry or fallback.
+            // rejection there takes precedence over retry.
             match result {
                 Err(
                     error @ (ProviderVerificationError::Transient(_)
@@ -222,6 +223,7 @@ async fn verify_subject_once(
         ),
     };
     Ok(VerifiedSubject {
+        verification: None,
         subject: layer2_core::SubjectId::new(subject),
         permissions,
         profile: Profile::from_userinfo(&body),

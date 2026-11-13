@@ -19,7 +19,7 @@ pub(super) async fn json(
     deadline: Instant,
     endpoint: Endpoint,
 ) -> Result<Value, Error> {
-    // Only a timeout before response headers is fallback-eligible. Once headers
+    // Only a timeout before response headers is retryable. Once headers
     // arrive, the body must complete and validate within the same attempt budget.
     let mut call = super::identity_observations::Call::start(endpoint);
     let response = timeout_at(deadline, request.send())

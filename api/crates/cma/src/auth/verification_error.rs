@@ -6,7 +6,7 @@ pub(super) enum ProviderVerificationError {
     Rejected(String),
     #[error("{0}")]
     Unavailable(String),
-    /// Only these classified transport / gateway failures permit retry and fallback.
+    /// Only these classified transport / gateway failures permit transient retry.
     #[error("identity provider unavailable: {0}")]
     Transient(&'static str),
     #[error("identity provider rate limited")]
@@ -24,7 +24,7 @@ impl ProviderVerificationError {
     }
 
     /// Preserve the final typed verification reason before the public projection.
-    /// This runs per caller, after single-flight fan-out and fallback decisions.
+    /// This runs per caller, after single-flight fan-out.
     pub(super) fn record_unavailable(&self) {
         use layer2_core::dependency_diagnostics::{Dependency, Failure, Reason};
         let reason = match self.reason() {

@@ -93,7 +93,6 @@ pub(super) fn authentication(
     .with_resource_request_enabled(config.features.nyxid_resource_request)
     .with_silent_sign_in(config.features.silent_sign_in)
     .with_browser_session_join(config.browser_session_join_enabled)
-    .with_identity_reuse(config.identity_reuse_seconds)
     .with_identity_proxy(
         config.features.nyxid_proxy,
         config.nyxid_proxy_issuer.clone(),

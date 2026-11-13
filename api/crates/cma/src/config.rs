@@ -38,7 +38,6 @@ pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
-mod identity_reuse;
 pub(crate) mod report_views;
 mod sandbox_billing;
 pub(crate) mod sandbox_metrics;
@@ -227,7 +226,6 @@ pub struct Config {
     pub desktop_verified_runtime_image: Option<String>,
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
-    pub identity_reuse_seconds: u64,
     pub features: FeatureFlags,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -435,7 +433,6 @@ impl Config {
                 .filter(|value| !value.is_empty()),
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
-            identity_reuse_seconds: identity_reuse::from_lookup(&mut lookup)?,
             features,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
