@@ -25,6 +25,9 @@ mod migration_tests;
 mod operations;
 mod origins;
 mod records;
+mod setup;
+#[cfg(test)]
+mod setup_tests;
 #[cfg(test)]
 pub(in crate::store) mod tests;
 mod transport;
@@ -75,8 +78,7 @@ impl MongoAgentAccessToolSource {
         if !records::valid_capability(capability) {
             return Err(refused());
         }
-        self.run(Operation::Setup(capability)).await?;
-        Ok(())
+        self.setup_snapshot(capability).await
     }
 
     async fn run(&self, operation: Operation<'_>) -> layer3_adapter::Result<Outcome> {
@@ -90,7 +92,9 @@ impl MongoAgentAccessToolSource {
             Operation::Confirm(binding, _) | Operation::Transport(binding, ..) => {
                 Some(AgentId(binding.scope().1 .0.clone()))
             }
-            Operation::Authenticate(_) | Operation::Setup(_) => None,
+            Operation::Authenticate(_) => None,
+            #[cfg(test)]
+            Operation::Setup(_) => None,
         };
         let _writer = match agent {
             Some(id) => Some(self.store.agent_writes.lock(&id).await),
@@ -131,8 +135,9 @@ impl MongoAgentAccessToolSource {
                     .transport_in(binding, origin, conversation, sequence, &mut session)
                     .await
                     .map(|binding| Outcome::Resolved(Some(binding))),
+                #[cfg(test)]
                 Operation::Setup(capability) => self
-                    .setup_in(capability, &mut session)
+                    .setup_in(capability, &mut session, false)
                     .await
                     .map(|()| Outcome::Confirmed),
             };
@@ -252,6 +257,7 @@ enum Operation<'a> {
     Confirm(&'a HostedAccessToolBinding, &'a str),
     Transport(&'a HostedAccessToolBinding, Option<&'a str>, &'a str, u64),
     Authenticate(&'a str),
+    #[cfg(test)]
     Setup(&'a str),
 }
 
@@ -262,6 +268,7 @@ impl Operation<'_> {
             Self::Confirm(binding, _) => ("confirm_open", Some(binding.scope().1.as_str())),
             Self::Transport(binding, _, _, _) => ("transport", Some(binding.scope().1.as_str())),
             Self::Authenticate(_) => ("authenticate", None),
+            #[cfg(test)]
             Self::Setup(_) => ("setup", None),
         };
         // Bearer-only operations have no safe Agent identity at this boundary.

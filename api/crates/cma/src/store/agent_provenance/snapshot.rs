@@ -1,4 +1,4 @@
-//! Fetch fresh provenance in one round trip under the caller's transaction.
+//! Fetch fresh provenance in one round trip under the caller's snapshot.
 
 use layer2_core::resource_access::{
     ResourceAccessSnapshot, ResourceAccessStoreError, ResourceLineage, ResourceTarget,
@@ -110,9 +110,10 @@ pub(super) async fn read(
     store: &MongoSandboxStore,
     id: &AgentId,
     session: &mut ClientSession,
+    snapshot_session: bool,
 ) -> Result<Option<AgentProvenanceSnapshot>, ReadError> {
-    let mut cursor = store
-        .agents
+    let collection = super::super::snapshot_collection::collection(&store.agents, snapshot_session);
+    let mut cursor = collection
         .aggregate(pipeline(id))
         .session(&mut *session)
         .await?;
