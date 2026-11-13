@@ -158,7 +158,20 @@ async fn load_replay_with_session(
         .session(&mut *session)
         .await
         .map_err(LoadError::Driver)?;
-    let initial_log = source::legacy_initial(store, &agent, session, read).await?;
+    let initial_log = match super::agent_log_segment_reads::range_with_snapshot(
+        store,
+        &agent,
+        session,
+        0,
+        1,
+        matches!(read, ReplayRead::Snapshot),
+    )
+    .await
+    .map_err(LoadError::Domain)?
+    {
+        Some(entries) => entries.into_iter().next(),
+        None => source::legacy_initial(store, &agent, session, read).await?,
+    };
     let creation =
         assemble_creation(agent, worktree_document, initial_log).map_err(LoadError::Domain)?;
     if binding.is_some() {
