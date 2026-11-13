@@ -1,4 +1,6 @@
 use super::*;
+
+mod tail;
 use crate::store::agent_log_integrity::{INTEGRITY_FIELD, QUARANTINE_FIELD};
 use crate::store::agent_log_reads::integrity::PreparedIntegrity;
 use crate::store::agents::agent_replacement_fields;
@@ -270,8 +272,10 @@ async fn public_window_metadata_fallback_and_refusal_never_write_or_repair() {
             .unwrap();
         fixture.reset_commands();
         let result = fixture.store.agent_log(&fixture.id, 195, 5).await;
+        let tail_result = tail::page(&fixture, 195, 200, 5).await;
         if matches!(case, "missing" | "stale" | "unsupported") {
             assert_eq!(result.unwrap().len(), 5, "{case}");
+            assert_eq!(tail_result.unwrap().len(), 6, "{case}");
         } else {
             assert!(
                 matches!(
@@ -279,6 +283,13 @@ async fn public_window_metadata_fallback_and_refusal_never_write_or_repair() {
                     Err(SandboxStoreError::Corrupt(_) | SandboxStoreError::SequenceConflict)
                 ),
                 "{case}: {result:?}"
+            );
+            assert!(
+                matches!(
+                    tail_result,
+                    Err(SandboxStoreError::Corrupt(_) | SandboxStoreError::SequenceConflict)
+                ),
+                "{case}: {tail_result:?}"
             );
         }
         fixture.assert_read_only();

@@ -1,5 +1,9 @@
 #[path = "delivery/boundaries.rs"]
 mod boundaries;
+#[path = "delivery/commonmark.rs"]
+mod commonmark;
+#[path = "delivery/commonmark_interactive.rs"]
+mod commonmark_interactive;
 #[path = "delivery/complete.rs"]
 mod complete;
 #[path = "delivery/complete_budget.rs"]
