@@ -461,9 +461,13 @@ export function useAgentActions({
     setPending('send');
     setActionError(undefined);
     try {
-      await v2.recover(() => {}, controller.signal);
-      await recoverV2Control(v2, controller.signal);
-      await recoverV2Interruption(v2, controller.signal);
+      // Empty recovery helpers still authorize. Avoid making a retained Cancel
+      // wait for unrelated input/interruption checks that have nothing to send.
+      if (v2.journal.read()?.state === 'pending') await v2.recover(() => {}, controller.signal);
+      if (v2.journal.readControl()?.commandId === null)
+        await recoverV2Control(v2, controller.signal);
+      if (v2.journal.interruption.read()?.receipt === null)
+        await recoverV2Interruption(v2, controller.signal);
     } catch (error) {
       if (!controller.signal.aborted && !onIdentityChange(error))
         setActionError(errorMessage(error));

@@ -370,6 +370,7 @@ async fn reqwest_body_timeout_is_invalid_evidence_not_retryable_transport() {
             .get(endpoint)
             .timeout(Duration::from_millis(100)),
         tokio::time::Instant::now() + Duration::from_secs(5),
+        crate::auth::verification_diagnostics::Endpoint::Userinfo,
     )
     .await;
     assert!(matches!(
