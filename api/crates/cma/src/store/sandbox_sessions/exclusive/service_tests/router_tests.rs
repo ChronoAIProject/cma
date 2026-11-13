@@ -71,10 +71,7 @@ async fn two_public_ingresses_handoff_one_sandbox_socket_and_revoke_on_remote_ch
     let (mut first, _) = tokio_tungstenite::connect_async(left.websocket(&f.agents[0], ORIGIN))
         .await
         .unwrap();
-    first
-        .send(Message::Binary(vec![1, 2]))
-        .await
-        .unwrap();
+    first.send(Message::Binary(vec![1, 2])).await.unwrap();
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), first.next())
             .await
