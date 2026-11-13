@@ -46,7 +46,8 @@ impl MetricsWorkers {
                     if let Err(error) = &finalized {
                         tracing::warn!(error=%error,"sandbox report finalization failed");
                     }
-                    let _root = tracing::info_span!(parent: None, "usage_report_diagnostic").entered();
+                    let _root =
+                        tracing::info_span!(parent: None, "usage_report_diagnostic").entered();
                     tracing::info!(
                         parent: None,
                         report_hash = %digest,

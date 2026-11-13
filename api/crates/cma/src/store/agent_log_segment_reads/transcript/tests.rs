@@ -1,8 +1,13 @@
 use super::*;
 use layer2_core::sandbox::{store::AgentLogStore, AgentTitleTranscript};
+mod admission;
+mod answers;
+mod byte_pages;
 mod parity;
 mod refusal;
+mod reopen;
 mod support;
+mod titles;
 use support::*;
 
 #[tokio::test]
