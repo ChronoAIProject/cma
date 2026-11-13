@@ -8,7 +8,7 @@ artifact verification and the production evidence record.
 
 ## First step and limits
 
-The only supported manifest is `am-activity-query-indexes-v1`. It has no
+The original default manifest is `am-activity-query-indexes-v1`. It has no
 prerequisites and adds the existing nonunique activity query indexes:
 
 - `record.actor: 1, recorded_at: -1, _id: -1`
@@ -23,8 +23,8 @@ to rerun if an equivalent index was concurrently created by existing startup.
 The checksum hashes the exact embedded source bytes of `activity_indexes.rs`.
 Once delivered, changing that step requires a new reviewed ID/checksum. The
 ledger refuses a different checksum, unknown schema/history, unsupported manifest
-or a missing completion receipt. This is a single-step implementation, not a
-generic manifest interpreter: future ordering and new manifests require code,
+or a missing completion receipt. This is an explicit manifest registry, not a
+generic manifest interpreter: ordering and new manifests require code,
 review and tests. Gateway runners are a separate later slice.
 
 ## Commands and authority
@@ -108,3 +108,59 @@ operator may first use read-only plan/status against the authorized target;
 execution remains an explicit production operation. Existing startup DDL remains
 until the separately reviewed #1329 cutover. Cross-service execution, arbitrary
 prerequisites and other backfill receipts remain open under #1328/#1331.
+
+
+## Trusted legacy Agent opening index
+
+`am-agent-opening-index-v1` adds one nonunique index on the existing `agent_log`
+collection: `agent_log_kind_sequence` with ordered keys
+`{agent_id: 1, record.kind.type: 1, seq: 1}`. It requires the collection to exist;
+plan/status never initialize it. This step shares the global migration lease and
+retains an independent manifest/attempt receipt. Its checksum covers the exact
+embedded `opening_index.rs` source. No request or service startup installs this
+index, and deployment alone does not authorize installing it.
+
+```sh
+cma --migration-plan am-agent-opening-index-v1
+cma --migration-status am-agent-opening-index-v1
+cma --print-migration-role am-agent-opening-index-v1
+cma --migration-apply am-agent-opening-index-v1 "$REVIEWED_STEP_CHECKSUM" "$VERIFIED_API_IMAGE_REFERENCE"
+```
+
+After separately authorized installation, the existing default-off
+`CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED` and
+`CHRONO_AGENT_USAGE_BOUNDED_READS_ENABLED` flags select the optional readers only
+for a currently proved prepared-cohort legacy history. Every request verifies the
+exact current Agent and trusted prefix in its own snapshot, plus the exact index
+shape. No authorization or semantic result is cached. Missing flags, cohort,
+proof or index preserve the existing compatibility reader; detected damaged
+proof or index drift is an error. Authorization at entry and release remains in
+core, and transcript and usage requests may run independently in parallel.
+
+Explicit transcript pages retain the earliest-turn cursor contract and complete
+turn header/outcome. Indexed lookups obtain start, queued/ordinary owner,
+metadata, terminal and at most 32 gap events; more gap evidence selects the
+compatibility path. The source range is 1..32 contiguous rows and response bytes
+are capped at 4 MiB. Header/proof rows are additional work and must be included
+in measurements. Oversized rows/responses are explicit failures, never partial
+success. The unpaged transcript still returns complete history; page consumers
+must follow `next` until absent before claiming complete history.
+
+The usage reader selects the last original `UsageUpdated` cumulative observation
+through the captured head, including context and current-turn fields. This is
+precomputed domain state already present in history. Later raw `Usage` events or
+generation boundaries do not replace that observation under the existing fold.
+When no cumulative observation exists, the exact selected/full fold remains.
+Segmented projections and their active-tail proof are unchanged.
+
+The index is additive: no event, identity, format, validator, TTL or writer
+changes, and no backfill/backup transform is needed. Old application readers can
+continue reading the unchanged rows. Once this manifest is recorded, older
+migration executables that do not recognize it correctly refuse the ledger;
+use a release containing this step for future migration operations. Rollback of
+the optional reads means disabling their existing flags and retaining the
+additive index/receipt. Do not delete history or run an older migrator to bypass
+that reader floor. The release operator must retain source/image binding,
+plan/checksum, original records, installed index and receipt checks, actual flag
+and cohort values, and end-to-end opening measurements. Local query bounds do
+not establish the one-second production criterion.

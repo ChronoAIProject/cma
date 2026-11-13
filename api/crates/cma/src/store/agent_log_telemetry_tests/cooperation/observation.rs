@@ -112,6 +112,7 @@ impl Tracer for Observation {
         let command = match name {
             Some("find") => Some("find"),
             Some("getMore") => Some("getMore"),
+            Some("killCursors") => Some("killCursors"),
             Some("abortTransaction") => Some("abortTransaction"),
             Some("commitTransaction") => Some("commitTransaction"),
             Some(_) => Some("other"),

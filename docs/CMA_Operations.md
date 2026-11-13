@@ -1023,6 +1023,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_MACHINE_SANDBOX_IMAGE` | Optional immutable OCI reference for the Agent Manager **Machine Included** choice. It must point to a runtime built with `RUNTIME_DESKTOP=1` (XFCE session, panel, desktop icons, Thunar, terminal and Chromium). Leaving it unset makes that choice fail closed. |
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |
+| `CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED` | Strict boolean, default `false`. Bounds native home pre-adoption and create-time binding readiness to two seconds per guard. The exact owned runtime Pod is checked for `CrashLoopBackOff` and increasing restart count within the observation window. Failure is retryable and preserves the Claim/member/home identities; it does not authorize replacement or prove runtime loss. Resume retains its existing readiness policy. |
+| `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED` | Strict boolean, default `false`. Initial native `ProvisionRuntime` deadlines after a validated Pending observation with an existing Claim may use a one-second retry for their first five attempts. The delay begins at completed observation, rounded up to the durable clock's whole-second precision. Crash/restart observations, transport failures, credentials, retained recovery and cleanup keep their existing policy. |
 | `CHRONO_AGENT_SANDBOX_ENABLED` | Optional boolean override for the direct agent-sandbox adapter; defaults to the provider selection |
 | `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free agent-only native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds preparing, ready and retiring reservations to two per image class across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed agent-only prepared capacity while preserving owned Sandboxes and machine spares. |
 | `CHRONO_NATIVE_MACHINE_PREPARED_TARGET` | Independent count of credential-free machine Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires a pinned machine image, native allocation and full native home. Starts the desktop and Agent before owner adoption. Its durable target and admission fence are independent from agent-only preparations. Keep the compatible preparation reader during rollback after enablement. |
@@ -1054,8 +1056,11 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
 | `CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED` | Strict boolean, default `false`. Shares immutable retained live fragments under one 32 MiB process budget; exhaustion uses the existing live-gap/catch-up path. Decoder, assembly, serialized replay and RSS qualification remain separate. See [Live fragment budget](CMA_Live_Fragment_Budget.md). |
+| `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_ENABLED` | Strict boolean, default `false`. Coalesces only receipts with no persistent effect. Reasoning may publish while buffered; text stays durable before display and ACK never precedes persistence. Enable only after the measured quiet-frame/backlog criteria and release approval. See [output recovery](CMA_Runtime_Output_Recovery.md#quiet-receipt-coalescing). |
+| `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_MS` / `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_FRAMES` | Strict unsigned integers; defaults `250` ms / `64` frames, bounds `1..=1000` / `1..=128`. Invalid values fail startup even when disabled. Idle timers, count bounds and semantic frames flush cumulatively. Roll back by setting the switch to `false` and rolling the API; retained runtimes replay unacknowledged frames. |
 | `CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED` | Strict boolean, default `false`. Before owned decoding, validates Ready and retained ACP JSON against 4 MiB, 8,192 nodes and 64 container levels. Requires retained-output capability; refused output is never ACKed. See [Hosted output JSON budget](CMA_Runtime_Output_JSON_Budget.md) for recovery and accounting limits. |
 | `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
+| `CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED` | Strict boolean, default `false`. Follows immediately due successful Agent stop/delete steps within the existing seven-attempt scheduled burst. Each step acquires a fresh durable claim; persisted retries, held claims, archive gates and terminal state yield normally. Does not shorten provider/funding/ledger failure backoff or change terminal proof. Disable and restart for rollback; no durable format change. |
 | `CHRONO_WORK_RETRY_POLICY_ENABLED` | Strict boolean, default `false` in code and infra. Applies durable step retry backoff and slow maintenance probes without changing work records, leases or terminal semantics. Interactive work never parks. Disable and restart to restore legacy delays for new failures; already published probes remain due within 30 minutes at the default base. See [Work-step retry policy](#work-step-retry-policy). |
 | `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` | Strict boolean, default `false`. Repeated failures of the same step/class retain one diagnostic row and update attempts/ready time under the existing lease and revision fences. First/class-changed failures and success still append. Capacity/ledger markers retain priority. Rollback resumes ordinary appends without data repair. |
 | `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication and zero-entry repeated failures within the shared cohort. Repeated retries fully audit on first use after restart and at least hourly; identical conflict snapshots can reuse history within one invocation. First markers, capacity state changes, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
@@ -2381,6 +2386,21 @@ on the same image. Local measurements do not complete production verification.
 
 ## Sandbox detail read rollout
 
+`CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. It selects lineage-only Agent documents for the Sandbox
+detail store port, independently of authorization sessions, enrichment and the
+existing hierarchy switches. The projected fields retain both indexed and
+aggregate copies of identity, ownership, ancestry and revision; every existing
+hierarchy edge/count check still runs. The complete hierarchy port used by
+lifecycle/recovery, Workspace views and Agent-target authorization stays full.
+The enabled detail path does not decode or validate omitted Agent payload,
+including conversation and work/recovery state. Segmented envelope discriminators,
+head-revision shape and incarnation identity remain checked without reading logs.
+Omitted-payload checks remain with complete Agent consumers. This validation-boundary change
+requires its own review. Activation waits for the production phase baseline
+and #1743 attribution. Set this flag back to `false` and roll the same
+API image to restore full detail records; no data migration or repair is needed.
+
 `CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED` defaults to `false` and accepts only
 exact `true` or `false`. When enabled, each individual resource authorization
 snapshot uses a Mongo snapshot session for its lineage aggregation and bounded
@@ -2431,15 +2451,41 @@ strings or inherited request spans. Keep it enabled for the diagnostic compariso
 Optional enrichment retains its existing fallback behavior. See
 [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
+`CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED` defaults to `false`. When enabled,
+successful model catalogues can be reused for up to 30 seconds and exact-runtime
+support observations for up to 3 seconds, with 256-entry bounds. Each request
+still validates current credential custody and runtime eligibility; the cache
+does not retain bearer material or replace current authorization checks.
+
+`CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED` defaults to `false`. When enabled,
+environment discovery returns current local capabilities with conservative
+pending optional browser/control observations. At most 16 background probes run,
+with a 2-second deadline bounded by held authority; observations expire after
+5 seconds. Pending responses request a bounded 2–4 second retry. Disable the
+switch to restore synchronous optional discovery. Both switches require separate
+owner activation and retain current permission and release-fence checks.
+
+`CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. It adds request-correlated file-content/download phase
+timings for authorization, runtime status, mounted-home verification, endpoint
+discovery, control transfer, receipt validation and the final fence. Nested
+phases overlap; see [Mongo diagnostics](CMA_Mongo_Diagnostics.md) before comparing
+phase totals. It changes no read, cache or authorization policy.
+
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.
 
 ### Cooperative full-scan activation and rollback
 
-`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves scheduling behavior
-while retaining the execution measurements. The budget is fixed at 2 ms; it is
-not a deployment parameter. Every eighth completed row checks elapsed time,
+`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves the ordinary owned-row
+cursor and scheduling behavior while retaining execution measurements. With `true`,
+the complete integrity scanner borrows rows from MongoDB raw batches, avoiding
+the driver's uninterrupted batch-wide row copying before the first row is returned.
+The same flag also enables cooperative checkpoints between fully processed rows.
+The query, server batch sizing, session, snapshot/transaction scope, validation and
+accounting are unchanged; this adds no getMore commands or connection checkouts.
+The budget is fixed at 2 ms; it is not a deployment parameter. Every eighth completed row checks elapsed time,
 and a yield occurs only after validation, the visitor, hashing and row accounting
 finish. Individual driver polls, rows and visitors cannot be preempted, so 2 ms
 is a checkpoint budget rather than a hard upper bound on every poll.
@@ -2447,8 +2493,9 @@ is a checkpoint budget rather than a hard upper bound on every poll.
 The release owner first records at least 30 minutes under natural load with the
 switch off. If longest sections for scans of at least 1,000 rows have p95 at least
 10 ms (case A), enable the switch in the same image and observe at least 60
-minutes. A driver-poll p95 of at least 5 ms (case B) separately justifies a batch
-limit investigation and its extra getMore/checkout cost. If every caller has
+minutes. The enabled behavior includes borrowed raw-batch delivery after #1320;
+bind comparisons to the exact image as well as the flag value. A driver-poll p95
+of at least 5 ms (case B) separately justifies a batch limit investigation and its extra getMore/checkout cost. If every caller has
 section p99 below 2 ms (case C), leave cooperation off and retain measurements.
 Local reproduction guides implementation; it does not replace production
 attribution or authorize activation.
@@ -2545,6 +2592,15 @@ remain release-owner work; see [the contract](CMA_Admission_Control.md).
 
 
 ### Work-step retry policy
+
+`Sandbox teardown phase observed` records a hashed Sandbox identity, persisted
+attempt count, fixed phase/outcome labels and elapsed wall milliseconds. It
+separates retained-home verification, retained runtime deletion, adoption,
+inventory, ordinary teardown, funding settlement and publication. An `ok` outcome
+means that phase returned successfully; it is not terminal deletion or CPU time.
+Use phase failures alongside the next persisted work deadline to distinguish
+execution from retry waiting. A worker's `published=true` can include a persisted
+failure and must not be counted as successful cleanup.
 
 `CHRONO_WORK_RETRY_POLICY_ENABLED` ships disabled. With it enabled, retry delays
 use the persisted attempt count before the failed attempt is published. Maintenance
@@ -2681,6 +2737,109 @@ Rollback sets `CHRONO_ACTIVITY_ASYNC_ENABLED=false` and restarts through the
 reviewed release route. Normal restart drains the old queue first; no data repair
 is needed. The stated deadline and crash loss boundary still apply if Mongo is
 unavailable during rollback.
+
+### Native claim readiness guard
+
+`CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED=false` preserves the existing readiness
+path. When enabled, readiness observations before home adoption and during create
+binding each have a two-second bound, including Kubernetes read time.
+CrashLoopBackOff exits on the first verified observation; a rising runtime restart count exits on the next
+observation of the same Pod UID. The subsequent read-only home-authority
+acknowledgement phase has one two-second bound beginning before its first
+Claim/member/PVC GET and shared with all subsequent polls. Authority publication
+writes precede this phase and are not cancelled by its deadline. With the guard
+OFF, the first acknowledgement observation retains its existing policy and a
+pending result starts the existing five-second polling wait. A replacement Pod
+starts a new observation baseline. A nonzero historical restart count alone is
+not a failure.
+
+The guard retains the exact Claim, assigned Sandbox and PVC authority. A missing
+local receipt does not prove that a preceding provider write had no effect. The
+retry continues the same durable operation; the guard never deletes a Claim or
+silently allocates a second home. In particular, a controller-assigned unready
+member is already beyond the release boundary. Safe fresh-Claim replacement
+requires a separate fenced allocation-retirement transition or controller
+selection support; the external controller patch is tracked in #1887.
+
+During native preparation, guard failures in `Preparing` or `Installing`
+preserve the entire original reservation and workspace completion proof and use
+the existing five-second retry delay. They cannot schedule home retirement.
+The existing `Ready` maintenance policy for unhealthy unclaimed spares remains
+separate. Ordinary SandboxWorker retries default to 30 seconds. The independent,
+default-off `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED` switch shortens only
+retry delays after validated Pending observation deadlines; without it, a two-second guard yield can
+delay a normally starting cold runtime until a later attempt. Assignment
+observation still allows five seconds. Initial-create
+recovery with an already persisted runtime and no completed-installation proof
+can reach `bind_adopted`, whose readiness wait remains 180 seconds. That path
+requires a separate explicit create-context policy; retained/resume waits must
+not be shortened globally.
+
+The guard polls every 100 ms, up to roughly 20 observations per attempt. Each
+home observation uses three Kubernetes reads and each bind observation uses
+two. The separate home-authority phase reads Claim/member/PVC immediately, then
+waits 250 ms between pending observations. Activation evidence must include API
+read load, plain and desktop recovery
+to the next worker attempt, and cold-start completion time as well as guard
+duration. The stage deadline is not an end-to-end create deadline.
+
+`cma_native_claim_guard_total` and `cma_native_claim_guard_seconds` use only
+`stage` (`home`, `home_authority`, `bind`) and `outcome` (`ready`, `pending`, `timeout`, `crash_loop`,
+`restarting`, `error`, `cancelled`). They measure guard attempts, including worker
+retries, not unique user creates. Kubernetes Ready is bootstrap readiness, not
+proof that an Agent or desktop is usable. No pool size, resources or concurrency
+change accompanies this switch. Activation and end-to-end production acceptance
+remain separate from merging the default-off implementation.
+
+### Native runtime inspection phase evidence
+
+The existing `Native runtime inspection phase ended` events now split
+post-response verification into `post_status_graph` and `post_status_policy`.
+The graph finishes before the policy read starts. A policy success obtained
+before a later graph observation cannot authorize a definition that changed in
+between; the final home check does not re-read Template/Pool policy.
+
+Both phases are inside `native_observation`; `post_status_home` follows it.
+Pre-response `native_authority_graph` and `native_runtime_policy` run concurrently.
+Do not add these nested or overlapping timers. Each phase records `elapsed_ms`,
+`completed` and `succeeded`; cancellation leaves `completed=false`. A policy
+phase skipped after graph refusal or cancellation emits no event. These timings
+preserve all authority checks, read order, retained-upgrade exemptions and
+existing deadlines. They establish no end-to-end improvement on their own.
+
+### Initial native readiness retry
+
+With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
+home readiness or create-bind deadline reached after validated Pending can use a
+one-second retry after observation completion. An outstanding read or returned
+dependency error clears that evidence and keeps the existing retry policy, even
+when an earlier read observed Pending. Durable due times have whole-second precision, so the observation
+time is rounded up; actual next execution also includes scheduler and lease delay.
+Each attempt still obtains a fresh store lease and validates the same Claim/home.
+No successful or uncertain provider write is cancelled by this scheduling policy.
+
+Eligibility requires `Provisioning` / `ProvisionRuntime`, a validated native home
+with a persisted Claim, no release/cleanup, no credential generation intent,
+pending/current credential or delivery, and no retained recovery or lifecycle
+operation. Only the first five durable failure attempts qualify. Restarting an
+API worker does not reset this budget. Ordinary transient failures also consume
+the existing attempt counter; they do not receive the shortened delay themselves.
+Observed CrashLoopBackOff/restarts retain ordinary retry policy. The claim guard
+and this switch remain independent; neither permits replacing an assigned Claim.
+
+`cma_native_create_readiness_retry_total{class="plain"|"machine"}` counts committed
+expedited retry schedules, not creates or pool hits. Failed/conflicting commits do
+not increment it. Disabling the switch restores the existing retry policy for new
+failures; a previously scheduled retry remains due. There is no capacity or pool
+template change. Native preparation keeps its existing five-second retry cadence.
+
+Production acceptance must measure cold initialization and recovery-to-next-attempt
+delay separately for plain/desktop, including Kubernetes API request load. The
+read-only 2026-11-13 sample of nine fresh warm-pool refill Pods had cached images
+and took 14–19 seconds to bootstrap readiness, mostly before containers started.
+That cohort is not a user-create denominator, and a socket-ready Pod is not a
+usable Agent or desktop. Shorter retries remove an additional CMA wait; they do
+not remove volume attachment/VM startup time or prove the five-second target.
 
 ### Agent Events v2 local wake rollout
 

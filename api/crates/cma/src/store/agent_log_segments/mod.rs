@@ -12,7 +12,7 @@ pub(in crate::store) use collections::SegmentCollections;
 pub(in crate::store) mod command;
 pub(in crate::store) mod command_evidence;
 mod digest;
-pub(in crate::store) use digest::incarnation;
+pub(in crate::store) use digest::{incarnation, incarnation_fields};
 mod envelope;
 pub(in crate::store) mod ordinary;
 pub(in crate::store) mod projection;

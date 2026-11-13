@@ -82,7 +82,7 @@ pub(super) async fn projected_usage(
     session: &mut ClientSession,
 ) -> Result<Option<AgentUsageReading>, SandboxStoreError> {
     let Some(_) = segmented_source(store, expected, session, true).await? else {
-        return Ok(None);
+        return super::agent_opening_reads::usage(store, expected, session).await;
     };
     let source = segments::capture::capture(
         store,
@@ -107,6 +107,8 @@ pub(super) async fn projected_transcript(
     transcript::complete(store, expected, session).await
 }
 
+pub(super) mod answer;
+pub(super) mod page;
 mod transcript;
 pub(super) use transcript::page as transcript_page;
 

@@ -57,6 +57,9 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new(rows: u64) -> Self {
+        Self::with_owner_kind(rows, false).await
+    }
+    pub async fn with_owner_kind(rows: u64, organization_owned: bool) -> Self {
         let meter = Arc::new(meter::Meter::default());
         let client = meter.client().await;
         let name = format!("cma_history_page_{}", uuid::Uuid::new_v4().simple());
@@ -64,6 +67,9 @@ impl Fixture {
         let original = store.resource_access_snapshot(&target).await.unwrap();
         let mut agent = original.lineage.agent.unwrap();
         let parent = original.lineage.sandbox;
+        if organization_owned {
+            install_organization_policy(&store, &parent).await;
+        }
         let mut commands = Vec::new();
         for (order, operation, command) in [
             (1, 3, AgentCommand::message("Fixture request")),
@@ -80,6 +86,18 @@ impl Fixture {
                 &parent,
                 &format!("history-{order}"),
             );
+            if organization_owned {
+                // Binding proof compares durable command ownership with the
+                // live scope; construct both under the same owner kind.
+                request.envelope.owner = AgentOwner::Organization {
+                    subject: parent.owner.clone(),
+                };
+                request.envelope.actor = AgentActor::Human {
+                    subject: SubjectId::new("fixture-admin"),
+                };
+                request.envelope.authorization.authority_id = "fixture-organization".into();
+                request.policy.policy_revision = 1;
+            }
             request.envelope.command = command;
             request.envelope.request_fingerprint = request.envelope.command.fingerprint().unwrap();
             if order == 2 {
@@ -165,15 +183,20 @@ impl Fixture {
         }
     }
     pub fn app(&self, access_session: bool, single_fence_pages: bool) -> Router {
+        self.app_with_authority(access_session, single_fence_pages, Arc::new(Authority))
+    }
+    pub fn app_with_authority(
+        &self,
+        access_session: bool,
+        single_fence_pages: bool,
+        authority: Arc<dyn OrganizationAuthority>,
+    ) -> Router {
         let store = Arc::new(
             self.store
                 .clone()
                 .with_access_snapshot_session(access_session),
         );
-        let access = Arc::new(ResourceAccessService::new(
-            store.clone(),
-            Arc::new(Authority),
-        ));
+        let access = Arc::new(ResourceAccessService::new(store.clone(), authority));
         router(
             AgentV2State::new(
                 AgentReadService::new(store.clone(), Arc::new(Resources))
@@ -184,6 +207,24 @@ impl Fixture {
         )
     }
     pub async fn request(&self, app: &Router, path: &str) -> Vec<u8> {
+        let (status, bytes) = self
+            .request_as(app, path, context(self.agent.owner.clone()), None)
+            .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&bytes)
+        );
+        bytes
+    }
+    pub async fn request_as(
+        &self,
+        app: &Router,
+        path: &str,
+        context: CallerContext,
+        credential: Option<&str>,
+    ) -> (StatusCode, Vec<u8>) {
         let mut request = Request::get(path)
             .header("prefer", "cma-message-bindings")
             .body(Body::empty())
@@ -191,39 +232,23 @@ impl Fixture {
         request
             .extensions_mut()
             .insert(layer1_public::AuthenticatedSubject(
-                self.agent.owner.clone(),
+                context.caller.subject.clone(),
             ));
         request
             .extensions_mut()
-            .insert(Authorization::new([Capability::UseOwnSandboxes]));
-        request.extensions_mut().insert(CallerContext {
-            credential_source: CredentialSource::Retained,
-            caller: Caller::new(
-                self.agent.owner.clone(),
-                Authorization::new([Capability::UseOwnSandboxes]),
-            ),
-            credential: CredentialContext {
-                issuer: "https://identity.example.test".into(),
-                subject: self.agent.owner.clone(),
-                credential_id: "history-fixture".into(),
-            },
-            actor: ResourceActor::Human {
-                subject: self.agent.owner.clone(),
-            },
-            memberships: Vec::new(),
-        });
+            .insert(context.caller.authorization.clone());
+        request.extensions_mut().insert(context);
+        if let Some(credential) = credential {
+            request
+                .extensions_mut()
+                .insert(layer1_public::DelegatedCredential::new(credential.into()));
+        }
         let response = app.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
             .await
             .unwrap();
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "{}",
-            String::from_utf8_lossy(&bytes)
-        );
-        bytes.to_vec()
+        (status, bytes.to_vec())
     }
     pub async fn idle(&self) {
         let mut agent = self.agent.clone();
@@ -242,5 +267,53 @@ impl Fixture {
     pub async fn close(self) {
         self.client.database(&self.name).drop().await.unwrap();
         self.client.shutdown().await;
+    }
+}
+
+async fn install_organization_policy(store: &MongoSandboxStore, root: &Sandbox) {
+    let policy = ResourcePolicyRecord {
+        sandbox_id: root.id.clone(),
+        sandbox_created_at: root.created_at.clone(),
+        owner: ResourceOwner::Organization {
+            subject: root.owner.clone(),
+        },
+        revision: 1,
+        organization_evidence: Some(OrganizationOwnershipEvidence {
+            issuer: "https://identity.example.test".into(),
+            organization: root.owner.clone(),
+            admitted_by: ResourceActor::Human {
+                subject: SubjectId::new("fixture-admin"),
+            },
+            verified_at: NOW.into(),
+        }),
+    };
+    store
+        .resource_policies
+        .insert_one(doc! {
+            "_id": root.id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "owner_kind": "organization",
+            "owner_subject": root.owner.as_str(),
+            "revision": 1_i64,
+            "record": crate::store::sandbox_mongo::record_bson(&policy).unwrap(),
+        })
+        .await
+        .unwrap();
+}
+
+pub(super) fn context(subject: SubjectId) -> CallerContext {
+    CallerContext {
+        credential_source: CredentialSource::Retained,
+        caller: Caller::new(
+            subject.clone(),
+            Authorization::new([Capability::UseOwnSandboxes]),
+        ),
+        credential: CredentialContext {
+            issuer: "https://identity.example.test".into(),
+            subject: subject.clone(),
+            credential_id: "history-fixture".into(),
+        },
+        actor: ResourceActor::Human { subject },
+        memberships: Vec::new(),
     }
 }
