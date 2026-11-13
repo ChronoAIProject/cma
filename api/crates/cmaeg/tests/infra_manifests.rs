@@ -263,17 +263,7 @@ fn transformer_rule(configmap: &str, deployment: &str) -> Result<(), String> {
     if configmap_value(configmap, "CMAEG_MEDIA_FFMPEG_DIR").is_none_or(str::is_empty) {
         return Ok(());
     }
-    let lines = lines(deployment);
-    let container = container(&lines, "cmaeg")?;
-    let pre_stop = child(&lines, container, "lifecycle")
-        .and_then(|lifecycle| child(&lines, lifecycle, "preStop"))
-        .ok_or("CMAEG_MEDIA_FFMPEG_DIR requires a sleep preStop hook on cmaeg")?;
-    if child(&lines, pre_stop, "exec").is_some() || child(&lines, pre_stop, "sleep").is_none() {
-        return Err(
-            "CMAEG_MEDIA_FFMPEG_DIR requires the cmaeg preStop hook to be a sleep action, not exec"
-                .into(),
-        );
-    }
+    lifecycle::native_sleep_seconds(deployment)?;
     let request = container_memory(deployment, "cmaeg", "requests")?;
     let limit = container_memory(deployment, "cmaeg", "limits")?;
     if request != limit {
