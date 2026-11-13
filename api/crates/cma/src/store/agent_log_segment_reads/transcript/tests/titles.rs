@@ -8,7 +8,8 @@ use layer2_core::sandbox::{
 #[ignore = "requires a disposable replica set"]
 async fn segmented_title_claim_and_publication_remain_bounded_and_fence_automatic_work() {
     for closed in [1, 10, 100, 1000] {
-        let (_, db, store, agent, _) = fixture(closed, false).await;
+        let (_, db, store, agent, entries) = fixture(closed, false).await;
+        segments::mongo_tests::fixtures::certify_output(&store, &agent, &entries).await;
         let request = AgentTitleClaimRequest::new(agent.id.clone(), "generator");
         let measured = crate::store::mongo_read_telemetry::isolated_test(async {
             let claim = store
@@ -88,7 +89,8 @@ async fn segmented_title_claim_and_publication_remain_bounded_and_fence_automati
 #[ignore = "requires a disposable replica set"]
 async fn segmented_automatic_title_completes_exact_claim_and_refuses_corrupt_source() {
     for corrupt in [false, true] {
-        let (_, db, store, agent, _) = fixture(3, false).await;
+        let (_, db, store, agent, entries) = fixture(3, false).await;
+        segments::mongo_tests::fixtures::certify_output(&store, &agent, &entries).await;
         let claim = store
             .acquire_agent_title_claim(
                 &AgentTitleClaimRequest::new(agent.id.clone(), "generator"),
