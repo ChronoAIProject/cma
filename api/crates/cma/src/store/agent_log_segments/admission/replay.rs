@@ -38,7 +38,9 @@ pub(in crate::store) async fn require(
                 crate::store::agent_admission_records::binding_id(admission)?
             ),
             fingerprint: publication::request_digest(&admission.fingerprint()?)?,
-            appended_at: admission.event_at.clone(),
+            // A service retry regenerates its time outside the admission
+            // fingerprint. Retained evidence proves the accepted original time.
+            appended_at: expected.appended_at.clone(),
         },
     )?;
     if expected.last_seq - expected.expected_seq > 1 {
