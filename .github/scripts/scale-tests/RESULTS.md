@@ -89,8 +89,8 @@ and uses real local processes to check removal ordering.
 Architect F2 corrects pod deletion to send DeleteOptions.preconditions.uid in
 the actual raw API request. The name-reuse regression returns conflict and
 preserves the replacement. This is a mocked API test; no cluster deletion or
-process-death observation is inferred. Both corrections await exact-source
-review. They do not resolve the original N2 503 or any acceptance matrix row.
+process-death observation is inferred. Both corrections received exact-source c08c55341 GO; the later phase
+instrumentation remains separately subject to review. They do not resolve the original N2 503 or any acceptance matrix row.
 Developer-15's published ab546c contention fix is a separate tested dependency;
 no new process execution against it is claimed here.
 
@@ -115,8 +115,13 @@ KILL was not. Post-run inventory found zero anchors, application processes,
 private fixture directories or labelled scale containers. See
 `evidence/mongo-diagnostic-c08.json`, `diagnostic-source-binding-c08.json`,
 `diagnostic-outcome-c08.json` and `cleanup-c08.json`. Earlier receipts remain
-unchanged. Stage instrumentation is required to locate the unfinished region
-without increasing the diagnostic deadline or interpreting missing telemetry.
+unchanged. The subsequent source-only instrumentation adds fixed stage start/end markers
+and per-replica HTTP header statuses. It preserves cohort-local monotonic times
+and marks completion after local teardown.27 Python tests, pinned fmt/strict
+cmaeg Clippy and the Rust diagnostic unit test pass; the new parser has100%
+executable-line coverage in its two focused tests. No new Mongo invocation has
+exercised these markers. Exact-source review and a separate authorized next
+candidate/window remain required; the deadline is unchanged.
 
 ## Required acceptance scenarios
 

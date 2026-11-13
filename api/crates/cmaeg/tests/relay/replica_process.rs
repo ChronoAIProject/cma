@@ -5,6 +5,8 @@ mod delivery;
 #[allow(dead_code)] // Reuse the existing full HTTP snapshot/SSE fixture in this integration binary.
 #[path = "../../src/turns/routed/adapter_test_server.rs"]
 mod replay_provider;
+#[path = "replica_trace.rs"]
+mod trace;
 
 use crate::{
     fake_nyxid_reply::FakeReply,
@@ -61,6 +63,16 @@ async fn independent_replicas_share_storage_and_preserve_one_provider_admission(
 }
 
 async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
+    let trace = trace::Trace::new(replicas, ownership_enabled);
+    trace.stage("cohort", "start", 0);
+    verify_cohort(replicas, ownership_enabled, &trace).await;
+    // The awaited future and all function-local fixtures have now been dropped.
+    trace.stage("teardown", "end", 0);
+    trace.stage("cohort", "end", 0);
+}
+
+async fn verify_cohort(replicas: usize, ownership_enabled: bool, trace: &trace::Trace) {
+    trace.stage("setup", "start", 0);
     let provider = replay_provider::HttpServer::start().await;
     {
         let mut memory = provider.memory.lock().unwrap();
@@ -99,7 +111,9 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect();
     let binary = Path::new(env!("CARGO_BIN_EXE_cmaeg"));
+    trace.stage("setup", "end", 0);
     // A protocol floor persists after activation, so disabled controls use fresh databases.
+    trace.stage("migration", "start", 0);
     let database = Arc::new(if ownership_enabled {
         DatabaseFixture::replicas(binary).await
     } else {
@@ -115,8 +129,10 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
         hello.get_str("setName").is_ok(),
         "a replica set is required"
     );
+    trace.stage("migration", "end", 0);
     let mut processes = Vec::new();
-    for _ in 0..replicas {
+    for ordinal in 1..=replicas {
+        trace.stage("ready", "start", ordinal);
         processes.push(
             Process::with_providers(
                 &mut fixture,
@@ -128,6 +144,7 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
             )
             .await,
         );
+        trace.stage("ready", "end", ordinal);
     }
     assert_eq!(
         processes
@@ -146,20 +163,39 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
         event_id: EventId::new(envelope.payload["message_id"].as_str().unwrap()).unwrap(),
     };
     let (body, token) = envelope.signed();
-    let requests = processes.iter().map(|process| {
+    let requests = processes.iter().enumerate().map(|(index, process)| {
         let mut request = fixture.request(body.clone(), &token).build().unwrap();
         *request.url_mut() = format!("{}/v1/callbacks/{}", process.base, fixture.id)
             .parse()
             .unwrap();
-        fixture.client.execute(request)
+        let client = &fixture.client;
+        async move {
+            trace.stage("ingress", "start", index + 1);
+            trace.stage("headers", "start", index + 1);
+            let result = client.execute(request).await;
+            if let Ok(response) = &result {
+                trace.headers(index + 1, response.status().as_u16());
+                trace.stage("headers", "end", index + 1);
+            }
+            result
+        }
     });
+    trace.stage("oracle_open", "start", 0);
     let oracle = DeliveryOracle::open(&database.uri, &database.name, runner_keys()).await;
+    trace.stage("oracle_open", "end", 0);
     let mut rejected = None;
     let mut accepted = 0;
-    for response in futures_util::future::join_all(requests).await {
+    for (index, response) in futures_util::future::join_all(requests)
+        .await
+        .into_iter()
+        .enumerate()
+    {
         let response = response.unwrap();
         let status = response.status();
+        trace.stage("body", "start", index + 1);
         let value: Value = response.json().await.unwrap();
+        trace.stage("body", "end", index + 1);
+        trace.stage("ingress", "end", index + 1);
         let reason = ingress_reason(&value);
         if status != 202 {
             rejected = Some(status);
@@ -171,6 +207,7 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
     }
     if let Some(status) = rejected {
         // This is an after-response observation, not proof of the failed request's queue commit.
+        trace.stage("rejected_oracle", "start", 0);
         let plan = oracle.plan(&identity).await;
         let target_present = if let Some(plan) = &plan {
             oracle
@@ -182,6 +219,7 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
         } else {
             0
         };
+        trace.stage("rejected_oracle", "end", 0);
         eprintln!("replica_failure replicas={replicas} ownership={ownership_enabled} accepted={accepted} durable_plan={} target_present={target_present}", plan.is_some());
         assert_eq!(
                 status,
@@ -189,6 +227,7 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
             "the same admitted event must remain accepted through every ingress; replicas={replicas}"
             );
     }
+    trace.stage("oracle", "start", 0);
     let plan = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             if let Some(plan) = oracle.plan(&identity).await {
@@ -209,7 +248,9 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
     .await
     .expect("durable confirmed delivery deadline");
     assert_eq!(plan.targets.len(), 1);
-    for process in &mut processes {
+    trace.stage("oracle", "end", 0);
+    for (index, process) in processes.iter_mut().enumerate() {
+        trace.stage("exit", "start", index + 1);
         process.terminate().await;
         assert!(
             tokio::time::timeout(Duration::from_secs(20), process.child.wait())
@@ -218,8 +259,10 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
                 .unwrap()
                 .success()
         );
+        trace.stage("exit", "end", index + 1);
         process.assert_safe_logs();
     }
+    trace.stage("reconcile", "start", 0);
     assert_eq!(
         provider
             .seen()
@@ -246,6 +289,8 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
             .unwrap(),
         1
     );
+    trace.stage("reconcile", "end", 0);
+    trace.stage("database_cleanup", "start", 0);
     drop(processes);
     database
         .admin
@@ -253,5 +298,7 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
         .drop()
         .await
         .unwrap();
+    trace.stage("database_cleanup", "end", 0);
     eprintln!("replica_fixture replicas={replicas} status=PASS ownership={ownership_enabled}");
+    trace.stage("teardown", "start", 0);
 }
