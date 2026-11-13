@@ -175,7 +175,12 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         if status_request {
             Self::test_status_boundary(false);
         }
-        let endpoint = self.endpoint(handle).await?;
+        let endpoint = crate::file_read_diagnostics::transport(
+            request.operation(),
+            crate::file_read_diagnostics::TransportPhase::Endpoint,
+            self.endpoint(handle),
+        )
+        .await?;
         let response = self.exchange_at(handle, &endpoint, request).await;
         #[cfg(test)]
         if status_request && response.is_ok() {
