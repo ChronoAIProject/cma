@@ -125,6 +125,28 @@ impl AgentLogStore for Probe {
             },
         }))
     }
+    async fn agent_log_page_projection(
+        &self,
+        agent: &Agent,
+        after: u64,
+        _: u16,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        if self.fail {
+            return Err(SandboxStoreError::Corrupt("missing projection".into()));
+        }
+        Ok(Some(if after >= 6 {
+            vec![]
+        } else {
+            vec![AgentLogEntry {
+                agent_id: agent.id.clone(),
+                seq: after + 1,
+                appended_at: NOW.into(),
+                kind: AgentLogKind::ModeChanged {
+                    mode: "bounded".into(),
+                },
+            }]
+        }))
+    }
 }
 
 async fn fixture(fail: bool) -> (Arc<AgentReadService>, Agent) {
@@ -235,4 +257,38 @@ async fn personal_transcript_uses_certified_projection_and_requests_pagination()
         reads.transcript(&caller("other", true), &agent.id).await,
         Err(AgentReadError::NotFound)
     ));
+}
+
+#[tokio::test]
+async fn certified_log_pages_preserve_short_continuations_and_refuse_bad_proof() {
+    for fail in [false, true] {
+        let (reads, agent) = fixture(fail).await;
+        let owner = caller("owner", true);
+        if fail {
+            assert!(matches!(
+                reads.log_page(&owner, &agent.id, 0, 200).await,
+                Err(AgentReadError::Corrupt(_))
+            ));
+        } else {
+            let (page, next) = reads.log_page(&owner, &agent.id, 0, 200).await.unwrap();
+            assert_eq!(page.len(), 1);
+            assert_eq!(next, Some(1));
+            assert_eq!(
+                reads.log_page(&owner, &agent.id, 5, 200).await.unwrap().1,
+                None
+            );
+            assert!(reads
+                .log_page(&owner, &agent.id, 6, 200)
+                .await
+                .unwrap()
+                .0
+                .is_empty());
+        }
+        assert!(matches!(
+            reads
+                .log_page(&caller("other", true), &agent.id, 0, 200)
+                .await,
+            Err(AgentReadError::NotFound)
+        ));
+    }
 }

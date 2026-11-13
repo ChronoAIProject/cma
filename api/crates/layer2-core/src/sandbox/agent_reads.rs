@@ -62,6 +62,8 @@ pub use window::{
 
 #[path = "agent_reads/answer.rs"]
 mod answer;
+#[path = "agent_reads/log_pages.rs"]
+mod log_pages;
 pub use answer::AgentFinalAnswer;
 #[path = "agent_reads/usage.rs"]
 mod usage;
@@ -96,25 +98,6 @@ impl AgentReadService {
     ) -> Result<AgentLineage, AgentReadError> {
         require(caller)?;
         self.owned_lineage(caller, id).await
-    }
-
-    pub async fn log(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<AgentLogEntry>, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        validate_limit(limit)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)?;
-        Ok(entries
-            .into_iter()
-            .filter(|entry| entry.seq > after)
-            .take(usize::from(limit))
-            .collect())
     }
 
     /// Read a validated log through the exact aggregate captured for this read.

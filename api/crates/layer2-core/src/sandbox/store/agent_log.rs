@@ -272,6 +272,18 @@ pub trait AgentLogStore: Send + Sync {
         Ok(None)
     }
 
+    /// A certified public log page, bounded by rows and serialized bytes.
+    /// Nonempty short pages may have a continuation. Only legacy stores return
+    /// `None`; invalid segmented proofs are errors, never full-log fallbacks.
+    async fn agent_log_page_projection(
+        &self,
+        _agent: &Agent,
+        _after: u64,
+        _limit: u16,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Read a trusted transcript projection while visiting source pages. The
     /// returned transcript owns only public output; stores that cannot prove a
     /// bounded projection return `None` and retain the compatibility path.

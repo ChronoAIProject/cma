@@ -108,6 +108,7 @@ pub(super) async fn projected_transcript(
 }
 
 pub(super) mod answer;
+pub(super) mod page;
 mod transcript;
 pub(super) use transcript::page as transcript_page;
 

@@ -431,6 +431,15 @@ impl AgentLogStore for MongoSandboxStore {
         super::agent_log_segment_reads::answer::read(self, expected, sequence, &mut session).await
     }
 
+    async fn agent_log_page_projection(
+        &self,
+        expected: &layer2_core::sandbox::Agent,
+        after: u64,
+        limit: u16,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        super::agent_log_segment_reads::page::read(self, expected, after, limit).await
+    }
+
     async fn agent_log_transcript_projection(
         &self,
         expected: &layer2_core::sandbox::Agent,
