@@ -59,6 +59,7 @@ it('reads typed document quotas for the authenticated owner and forwards operati
     documents: quota,
     bytes: { used: 1024, limit: 1073741824 },
     objects: { used: 3, limit: 32768 },
+    pending_deletions: null,
   };
   const fetch = vi.fn<typeof globalThis.fetch>(() => Promise.resolve(Response.json(usage)));
   const client = createClient({
@@ -82,6 +83,7 @@ it('preserves null document quota counters while enforcement is disabled', async
     documents: null,
     bytes: null,
     objects: null,
+    pending_deletions: null,
   };
   test.answer(usage);
   expect(await test.client.usage.documents()).toEqual(usage);
@@ -94,6 +96,7 @@ it('rejects malformed document quota counters and unknown enforcement states', a
     documents: { used: 2, limit: 100 },
     bytes: { used: 1024, limit: 1073741824 },
     objects: { used: 3, limit: 32768 },
+    pending_deletions: null,
   };
   for (const invalid of [
     { ...usage, enforcement: 'unknown' },

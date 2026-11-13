@@ -10,6 +10,11 @@ export const documentDispatch: Record<string, Dispatch> = {
   'GET /api/v1/documents/{id}': (c) => c.client.documents.read(c.param('id'), access(c)),
   'PATCH /api/v1/documents/{id}': (c) =>
     c.client.documents.update(c.param('id'), c.body, c.command),
+  'DELETE /api/v1/documents/{id}': (c) =>
+    c.client.documents.delete(c.param('id'), {
+      ...c.command,
+      expectedRevision: (c.body as { expected_revision: number }).expected_revision,
+    }),
   'GET /api/v1/documents/{id}/source': (c) =>
     c.client.documents.source(
       c.param('id'),

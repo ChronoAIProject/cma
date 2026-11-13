@@ -691,7 +691,7 @@ continuation is accepted only by CMA APIs, never gateway reply tools.
 
 ## Persistent documents
 
-`client.documents` exposes `list`, `create`, `read`, `update`, `source`,
+`client.documents` exposes `list`, `create`, `read`, `update`, `delete`, `source`,
 `revisions`, `shares`, `grant`, `revoke`, `links`, `createLink`, `revokeLink`,
 `comments`, `comment`, and `removeComment`. Documents remain available after
 an originating Agent or Sandbox is removed. Listing supports `q`, `scope`
@@ -706,6 +706,22 @@ never appended to a URL. The caller generates a random 256-bit token for
 `createLink` and keeps it in the application URL fragment. CMA returns link
 metadata without the token. Revocation is effective on subsequent source reads,
 including downloads that were in progress when authority was revoked.
+
+### Terminal document deletion
+
+Owner deletion requires an observed aggregate revision and the original
+idempotency key. A successful `DocumentDeletion` contains the document ID,
+deletion revision/time and `purge` (`pending`, `complete` or `blocked`). All access
+ends immediately and the ID is never reused. Exact retries preserve the deletion
+receipt while reflecting current cleanup progress. Quota remains charged until
+purge releases it; `DocumentUsage.pending_deletions` is a nullable count that is
+null while deletion is disabled and is independent of quota enforcement.
+A closed deletion switch returns 503 `document_deletion_unavailable`; unsupported
+physical cleanup returns a successful logical deletion with `purge: blocked`.
+
+Use `client.documents.delete(id, { expectedRevision: 3, idempotencyKey: key })`.
+The SDK validates positive revision/key input before transport and decodes the
+closed purge-state union. It sends `expected_revision` in the DELETE JSON body.
 
 ## Gateway native cards and relay authoring
 

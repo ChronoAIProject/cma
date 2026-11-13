@@ -53,6 +53,12 @@ const update = object({
   markdown: optional(nullable(text)),
 });
 const expected = object({ expected_revision: positiveInteger });
+const deletion = object({
+  id: text,
+  revision: positiveInteger,
+  deleted_at: text,
+  purge: enumeration('pending', 'complete', 'blocked'),
+});
 const grant = object({ expected_revision: positiveInteger, permission });
 const createLink = object({ expected_revision: positiveInteger, permission, token: text });
 const createComment = object({
@@ -81,6 +87,11 @@ export type GrantDocument = Output<typeof grant>;
 export type CreateDocumentLink = Output<typeof createLink>;
 export type CreateDocumentComment = Output<typeof createComment>;
 export type DocumentRevisionRequest = Output<typeof expected>;
+/** Terminal deletion receipt; cleanup may still be pending or blocked. */
+export type DocumentDeletion = Output<typeof deletion>;
+export interface DeleteDocumentOptions extends CommandOptions {
+  readonly expectedRevision: number;
+}
 export interface DocumentAccessOptions extends OperationOptions {
   readonly shareToken?: string;
 }
@@ -144,6 +155,17 @@ export class Documents {
   }
   update(id: string, body: UpdateDocument, options: CommandOptions) {
     return this.write(id, '', 'PATCH', input(update, body), metadata, options);
+  }
+  /** Delete an owned document permanently under its observed revision. */
+  delete(id: string, options: DeleteDocumentOptions): Promise<DocumentDeletion> {
+    return this.write(
+      id,
+      '',
+      'DELETE',
+      input(expected, { expected_revision: options.expectedRevision }),
+      deletion,
+      options,
+    );
   }
   grant(id: string, subject: string, body: GrantDocument, options: CommandOptions) {
     return this.write(

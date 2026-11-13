@@ -74,6 +74,7 @@ const documentUsage = object({
   documents: nullable(documentQuota),
   bytes: nullable(documentQuota),
   objects: nullable(documentQuota),
+  pending_deletions: nullable(integer),
 });
 export type DocumentUsageQuota = Output<typeof documentQuota>;
 export type DocumentUsage = Output<typeof documentUsage>;
