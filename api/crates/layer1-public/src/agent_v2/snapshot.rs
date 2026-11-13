@@ -66,6 +66,9 @@ async fn page(
     message_bindings: bool,
     tool_output: bool,
 ) -> Result<EventPage, Error> {
+    if state.single_fence_pages {
+        return super::buffered::page(state, auth, id, raw, message_bindings, tool_output).await;
+    }
     let (limit, page_cursor) = parse::snapshot(raw)?;
     let authorization = authorize(state, auth, &id).await?;
     let header = state.reads.event_stream_header(&authorization).await?;
