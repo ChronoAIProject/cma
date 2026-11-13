@@ -60,9 +60,24 @@ impl MongoSandboxStore {
         claim: &NativePreparedClaim,
         until: &str,
     ) -> Result<(), SandboxStoreError> {
+        if layer2_core::seconds_from_rfc3339(until).is_none() {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let server_now = doc! {"$dateToString":{
+        "date":"$$NOW","format":"%Y-%m-%dT%H:%M:%SZ","timezone":"UTC"}};
+        let mut fence = filter(claim)?;
+        // An exact token is necessary but insufficient: a paused worker must
+        // not revive an expired claim before the next worker has taken over.
+        fence.insert(
+            "$expr",
+            doc! {"$and":[
+                {"$gt":["$lease_until",server_now.clone()]},
+                {"$gt":[{"$literal":until},server_now]},
+            ]},
+        );
         let result = self
             .native_prepared
-            .update_one(filter(claim)?, doc! {"$set":{"lease_until":until}})
+            .update_one(fence, doc! {"$max":{"lease_until":until}})
             .await
             .map_err(unavailable)?;
         if result.matched_count != 1 {

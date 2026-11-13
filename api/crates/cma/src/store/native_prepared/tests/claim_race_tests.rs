@@ -7,6 +7,7 @@ use std::time::Duration;
 
 const AFTER_PROBE: &str = "2026-09-05T00:00:01Z";
 
+mod lease_tests;
 mod refill_tests;
 
 async fn health_lease(store: &MongoSandboxStore, record: &Record) -> NativePreparedClaim {
