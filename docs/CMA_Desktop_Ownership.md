@@ -60,3 +60,28 @@ This document does not qualify the ordinary Sandbox/Workspace work lease or its
 external effects. Desktop epochs cannot fence provisioning, credential issuance,
 installation or Workspace work. Their short-authority recovery contract remains
 separate.
+
+## Adapter and public composition
+
+Replicas-enabled public composition selects the existing authorized desktop
+service path. Its fresh browser/bearer proof, resource policy and post-open checks
+remain in place. Disabled composition uses the existing legacy service path;
+the receiver still enforces any retained floor from previous activation.
+
+Codex, hosted backend and runtime-provider routing forward an optional owned
+desktop port. Missing ports refuse; there is no fallback to legacy after an owned
+request. Before a challenge, the concrete transport captures its retained logical
+Sandbox binding, external handle, assignment revision and endpoint. Native paths
+also capture and freshly compare the complete Pod/container incarnation. Direct,
+Kubernetes exec and port-forward modes keep that capture through confirmation,
+the WebSocket handshake, renewal and revocation. Provider endpoint discovery is
+not repeated during that sequence. Native pool assignment is not performed by
+desktop negotiation.
+
+The independent control handle uses its original monotonic lifetime and consumes
+each retained challenge once. Late acknowledgements cannot revive expired local
+authority. HTTP mutation retries and redirects are disabled on the dedicated
+direct control client; Kubernetes control preserves its existing no-replay
+transport contract. Ambiguous open or revoke leaves durable claim release to
+expiry. Local transport fixtures and a synthetic display do not qualify retained
+production images, real Kubernetes/provider behavior or the desktop latency gate.
