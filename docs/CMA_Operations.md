@@ -1056,6 +1056,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_PLATFORM_BASE_URL` | Required canonical HTTPS platform proxy origin; also the upstream for the runtime's explicitly granted GitHub API proxy |
 | `CHRONO_DOCUMENT_BUCKET` | Existing S3-backed bucket used for durable Markdown artifacts. Empty disables document source storage and runtime publication tools; writes fail explicitly instead of storing ephemeral documents. Production uses `chrono-platform-bot`. |
 | `CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED` | Strict boolean, default `false`. Shares immutable retained live fragments under one 32 MiB process budget; exhaustion uses the existing live-gap/catch-up path. Decoder, assembly, serialized replay and RSS qualification remain separate. See [Live fragment budget](CMA_Live_Fragment_Budget.md). |
+| `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_ENABLED` | Strict boolean, default `false`. Coalesces only receipts with no persistent effect. Reasoning may publish while buffered; text stays durable before display and ACK never precedes persistence. Enable only after the measured quiet-frame/backlog criteria and release approval. See [output recovery](CMA_Runtime_Output_Recovery.md#quiet-receipt-coalescing). |
+| `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_MS` / `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_FRAMES` | Strict unsigned integers; defaults `250` ms / `64` frames, bounds `1..=1000` / `1..=128`. Invalid values fail startup even when disabled. Idle timers, count bounds and semantic frames flush cumulatively. Roll back by setting the switch to `false` and rolling the API; retained runtimes replay unacknowledged frames. |
 | `CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED` | Strict boolean, default `false`. Before owned decoding, validates Ready and retained ACP JSON against 4 MiB, 8,192 nodes and 64 container levels. Requires retained-output capability; refused output is never ACKed. See [Hosted output JSON budget](CMA_Runtime_Output_JSON_Budget.md) for recovery and accounting limits. |
 | `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
 | `CHRONO_WORK_RETRY_POLICY_ENABLED` | Strict boolean, default `false` in code and infra. Applies durable step retry backoff and slow maintenance probes without changing work records, leases or terminal semantics. Interactive work never parks. Disable and restart to restore legacy delays for new failures; already published probes remain due within 30 minutes at the default base. See [Work-step retry policy](#work-step-retry-policy). |
@@ -2454,9 +2456,14 @@ proposal. Production flag changes remain part of the approved release process.
 
 ### Cooperative full-scan activation and rollback
 
-`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves scheduling behavior
-while retaining the execution measurements. The budget is fixed at 2 ms; it is
-not a deployment parameter. Every eighth completed row checks elapsed time,
+`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves the ordinary owned-row
+cursor and scheduling behavior while retaining execution measurements. With `true`,
+the complete integrity scanner borrows rows from MongoDB raw batches, avoiding
+the driver's uninterrupted batch-wide row copying before the first row is returned.
+The same flag also enables cooperative checkpoints between fully processed rows.
+The query, server batch sizing, session, snapshot/transaction scope, validation and
+accounting are unchanged; this adds no getMore commands or connection checkouts.
+The budget is fixed at 2 ms; it is not a deployment parameter. Every eighth completed row checks elapsed time,
 and a yield occurs only after validation, the visitor, hashing and row accounting
 finish. Individual driver polls, rows and visitors cannot be preempted, so 2 ms
 is a checkpoint budget rather than a hard upper bound on every poll.
@@ -2464,8 +2471,9 @@ is a checkpoint budget rather than a hard upper bound on every poll.
 The release owner first records at least 30 minutes under natural load with the
 switch off. If longest sections for scans of at least 1,000 rows have p95 at least
 10 ms (case A), enable the switch in the same image and observe at least 60
-minutes. A driver-poll p95 of at least 5 ms (case B) separately justifies a batch
-limit investigation and its extra getMore/checkout cost. If every caller has
+minutes. The enabled behavior includes borrowed raw-batch delivery after #1320;
+bind comparisons to the exact image as well as the flag value. A driver-poll p95
+of at least 5 ms (case B) separately justifies a batch limit investigation and its extra getMore/checkout cost. If every caller has
 section p99 below 2 ms (case C), leave cooperation off and retain measurements.
 Local reproduction guides implementation; it does not replace production
 attribution or authorize activation.

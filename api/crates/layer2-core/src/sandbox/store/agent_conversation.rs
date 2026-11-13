@@ -208,6 +208,12 @@ pub trait AgentConversationStore: Send + Sync {
         ))
     }
 
+    /// Read the aggregate and private checkpoint atomically from one row/lock.
+    async fn agent_message_snapshot(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<super::AgentMessageSnapshot>, SandboxStoreError>;
+
     async fn agent_message_checkpoint(
         &self,
         id: &AgentId,
