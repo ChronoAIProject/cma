@@ -3,6 +3,33 @@ use crate::providers::ProviderError;
 use cmaeg_core::problem::ProblemCode;
 use std::sync::{Arc, Mutex};
 
+#[test]
+fn upstream_schema_matches_the_safe_producer_contract() {
+    use cmaeg_core::problem::UpstreamRefusal;
+    use utoipa::PartialSchema;
+    let schema = serde_json::to_value(UpstreamRefusal::schema()).unwrap();
+    let properties = &schema["properties"];
+    assert_eq!(
+        properties["operation"]["enum"],
+        serde_json::json!(["responses", "conversation"])
+    );
+    assert_eq!(properties["status"]["minimum"], 100);
+    assert_eq!(properties["status"]["maximum"], 599);
+    let codes = properties["code"]["enum"].as_array().unwrap();
+    assert_eq!(codes.len(), 12);
+    for code in codes {
+        let code = code.as_str().unwrap();
+        let failure = classify_start_failure(
+            "nyxbot",
+            ProviderCall::Responses.failed(ProviderError::Rejected {
+                status: 403,
+                code: code.into(),
+            }),
+        );
+        assert_eq!(failure.upstream.unwrap().code, code);
+    }
+}
+
 #[derive(Clone, Default)]
 struct Logs(Arc<Mutex<Vec<u8>>>);
 impl std::io::Write for Logs {

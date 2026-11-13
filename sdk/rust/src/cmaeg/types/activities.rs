@@ -2,7 +2,7 @@
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, AttachmentSource, BindingId, ChannelId, ConsumerId,
     ConsumerName, ConversationId, ConversationKind, EventId, EventRef, MessageRef, ProblemCode,
-    QuotedMessage, ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
+    QuotedMessage, ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts, UpstreamRefusal,
 };
 use serde::{Deserialize, Serialize};
 
@@ -463,17 +463,6 @@ pub struct Problem {
     /// Safe provider startup refusal metadata; absent on older gateways.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<UpstreamRefusal>,
-}
-
-/// CMAEG's bounded provider refusal extension, with a gateway-normalized code.
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct UpstreamRefusal {
-    /// Provider operation that refused startup: `responses` or `conversation`.
-    pub operation: String,
-    /// Actual provider HTTP status, independently of the outer gateway status.
-    pub status: u16,
-    /// Gateway allowlisted code, or `unrecognized` for any unknown provider code.
-    pub code: String,
 }
 
 /// CMAEG `PublicActivity` wire shape.

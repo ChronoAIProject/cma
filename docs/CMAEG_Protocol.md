@@ -513,6 +513,10 @@ absent for non-provider failures and older responses. It does not establish
 that a notification was delivered or that a provider turn succeeded. Relay
 consumers may read these fields for owner diagnostics after independently
 validating this closed contract; they must retain the outer error outcome.
+The repository SDK readers reject unknown operations, unknown codes and status
+values outside the integer range 100–599 before exposing the extension. They
+continue to accept older problems that omit it and the generic `unrecognized`
+code produced by the gateway.
 
 A persisted channel whose original creation has not completed returns 409
 `conflict` with detail beginning `channel_creation_pending`. The owner must
