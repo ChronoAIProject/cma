@@ -9,6 +9,7 @@ impl AgentFileService {
             adapter: self.adapter.clone(),
             task_experience: self.task_experience.clone(),
             read_timings: enabled,
+            environment_cache: self.environment_cache.clone(),
         })
     }
 

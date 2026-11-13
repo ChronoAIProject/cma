@@ -164,9 +164,17 @@ async fn verify_with_timeout(
         Err(_) => {
             auth.identity_store
                 .invalidate_token(tokens.access_token.expose());
-            Err(ProviderVerificationError::Unavailable(
-                "identity caller deadline elapsed".into(),
-            ))
+            let error =
+                ProviderVerificationError::Unavailable("identity caller deadline elapsed".into());
+            use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
+            record(
+                Endpoint::Verification,
+                Stage::Deadline,
+                Reason::CallerDeadline,
+                None,
+                &error,
+            );
+            Err(error)
         }
     };
     let source = if led.load(std::sync::atomic::Ordering::Relaxed) {

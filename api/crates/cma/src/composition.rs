@@ -379,8 +379,7 @@ impl ControlPlaneComposition {
                 stores.sandbox_model.clone(),
                 resource_access.clone(),
                 adapter.clone(),
-                config.task_experience.clone(),
-                config.features.agent_file_read_timings,
+                config,
             ))
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
