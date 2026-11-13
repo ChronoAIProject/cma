@@ -101,6 +101,7 @@ pub(super) fn store_error(error: SandboxStoreError) -> WorkspaceServiceError {
         SandboxStoreError::WorkspaceHasLiveAgents => WorkspaceServiceError::HasLiveAgents,
         SandboxStoreError::WorkspaceOriginConflict => WorkspaceServiceError::OriginConflict,
         SandboxStoreError::WorkspaceRecoveryConflict => WorkspaceServiceError::RecoveryConflict,
+        SandboxStoreError::Budget(reason) => WorkspaceServiceError::Budget(reason),
         SandboxStoreError::Corrupt(detail) => WorkspaceServiceError::Corrupt(detail),
         other => WorkspaceServiceError::Unavailable(other.to_string()),
     }
