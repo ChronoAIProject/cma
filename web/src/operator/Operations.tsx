@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useCallback, useEffect, useId, useRef } from 'react';
 import { useOperationsTab } from './useOperationsTab';
 import { PageHeader } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
@@ -9,6 +9,8 @@ import { PlatformSettings } from './PlatformSettings';
 import { WarmPools } from './WarmPools';
 import { Activity } from './Activity';
 import { operatorViews } from './capabilities';
+import { defaultSelection } from '../usage/metrics/model';
+import { prefetchUsageReport } from '../usage/metrics/useReport';
 import './Operations.css';
 
 export { canOpenOperations } from './capabilities';
@@ -16,15 +18,40 @@ export { canOpenOperations } from './capabilities';
 export function Operations({
   client,
   capabilities,
+  principal = 'anonymous',
 }: {
   readonly client: OperatorClient;
   readonly capabilities: readonly Capability[];
+  readonly principal?: string;
 }) {
   const available = operatorViews.filter((view) => capabilities.includes(view.capability));
   const [selected, setSelected] = useOperationsTab();
   const selectedView = available.find((view) => view.id === selected) ?? available[0];
   const id = useId();
+  const hasSandboxes = available.some((view) => view.id === 'sandboxes');
+  const prefetchReleases = useRef(new Set<() => void>());
+  const warmDefault = useCallback(() => {
+    const release = prefetchUsageReport(
+      client.adminUsageMetrics,
+      defaultSelection,
+      true,
+      principal,
+    );
+    prefetchReleases.current.add(release);
+    return release;
+  }, [client.adminUsageMetrics, principal]);
   useDocumentTitle('Operations');
+  useEffect(() => {
+    if (!hasSandboxes) return;
+    return warmDefault();
+  }, [hasSandboxes, warmDefault]);
+  useEffect(
+    () => () => {
+      for (const release of prefetchReleases.current) release();
+      prefetchReleases.current.clear();
+    },
+    [client.adminUsageMetrics, principal],
+  );
   if (selectedView === undefined) return null;
   const canControl = capabilities.includes('control_any_sandbox');
   return (
@@ -47,6 +74,12 @@ export function Operations({
             aria-controls={`${id}-panel`}
             tabIndex={selectedView.id === view.id ? 0 : -1}
             onClick={() => setSelected(view.id)}
+            onMouseEnter={() => {
+              if (view.id === 'sandboxes') warmDefault();
+            }}
+            onFocus={() => {
+              if (view.id === 'sandboxes') warmDefault();
+            }}
             onKeyDown={(event) => {
               const next =
                 event.key === 'ArrowRight'
@@ -78,7 +111,7 @@ export function Operations({
         aria-labelledby={`${id}-${selectedView.id}`}
       >
         {selectedView.id === 'sandboxes' ? (
-          <Sandboxes client={client} canControl={canControl} />
+          <Sandboxes client={client} canControl={canControl} principal={principal} />
         ) : null}
         {selectedView.id === 'settings' ? (
           <PlatformSettings

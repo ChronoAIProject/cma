@@ -889,6 +889,24 @@ label stay plain.
 The time-range picker retains Custom with local date/time fields. Apply filters
 commits the draft atomically; Clear filters restores Last 24 hours and all choices.
 
+#### 12.3.1 Retained Operations usage
+
+Operations → Sandboxes & usage keeps the last committed report for the exact
+filter key, including the selected window and membership filters. It draws that
+report immediately while the same key revalidates in the background; a report
+from another key is never a placeholder. The report heading says **As of
+HH:MM** using the server's generated time (or the snapshot time when that field
+is unavailable). A stale report says **refreshing…** while a refresh is pending
+and **refresh deferred** when the service defers it. Summary, first-page and
+chart reads continue against the displayed immutable report while the refresh
+runs, so retained data does not become a global loading state or change the
+layout. Skeletons appear only when the exact key has never produced a committed
+report. Opening Operations warms the default key; hovering or focusing its
+Sandboxes & usage tab may warm the same key when no recent entry exists. Hidden
+tabs stop report polling and resume from the retained pending state when shown.
+429 responses and server Retry-After hints use bounded jitter without retrying
+before the server deadline.
+
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
 radius wins for both appearances; geometry never flips with theme. Hover is the neutral hover
@@ -6347,3 +6365,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-13 | Keep valid composer observations through slow refreshes and short tab switches; bound freshness by poll delay plus request timeout, distinguish revalidation from unavailability, and retain checkpoint, lifecycle and denial fences (#1801). |
 
 | 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
+
+| 2026-11-13 | Define retained Operations usage reports: exact-key stale-while-revalidate, server-generated As-of and refresh-deferred states, stable child reads during refresh, default/tab prefetch, hidden-tab pause, and Retry-After jitter (#1947). |
