@@ -24,7 +24,7 @@ pub(super) async fn validate_summary(
             &agent.id,
             agent.conversation.last_seq,
             session,
-            snapshot,
+            crate::store::agent_log_integrity::ScanOptions::new(snapshot, store.scan_cooperation),
         )
         .await;
     }

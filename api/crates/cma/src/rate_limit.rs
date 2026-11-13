@@ -44,6 +44,7 @@ use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
 mod anonymous;
+mod lease;
 mod shared;
 mod tiers;
 mod visitor;
@@ -98,6 +99,7 @@ pub(crate) struct RateLimiters {
     response_input_tier_enabled: bool,
     control_tier_enabled: bool,
     anonymous_public: AnonymousPublicBudget,
+    default_leases: lease::LeaseTable,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
@@ -150,6 +152,7 @@ impl RateLimiters {
             response_input_tier_enabled: false,
             control_tier_enabled: false,
             anonymous_public: AnonymousPublicBudget::default(),
+            default_leases: lease::LeaseTable::default(),
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),

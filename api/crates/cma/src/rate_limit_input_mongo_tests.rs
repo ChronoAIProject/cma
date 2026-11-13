@@ -15,6 +15,7 @@ async fn database() -> Database {
 async fn replica(database: &Database, enabled: bool) -> Router {
     let n = |value| NonZeroU32::new(value).unwrap();
     let config = RateLimitConfig {
+        default_lease_enabled: false,
         admission_per_minute: n(1000),
         health_per_minute: n(120),
         default_per_minute: n(600),
