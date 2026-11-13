@@ -16,7 +16,16 @@ pub(super) enum EffectOutcome {
 }
 
 impl LaunchWorker {
-    pub(super) async fn apply_effect(
+    pub(super) fn apply_effect(
+        &self,
+        launch: Launch,
+        request: LaunchResourceEffect,
+        now: SystemTime,
+    ) -> impl std::future::Future<Output = Result<EffectOutcome, LaunchWorkerError>> + '_ {
+        Box::pin(self.apply_effect_inner(launch, request, now))
+    }
+
+    async fn apply_effect_inner(
         &self,
         mut launch: Launch,
         request: LaunchResourceEffect,

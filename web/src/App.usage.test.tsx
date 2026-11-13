@@ -6,7 +6,7 @@ import { CmaClientProvider } from './api/context';
 import { AuthContextProvider } from './auth/context';
 import { createMockAuthProvider } from './auth/mock';
 import { agentClient } from './test/agent';
-import { metricsClient } from './usage/metrics/testFixtures';
+import { metricsClient, reportFixture } from './usage/metrics/testFixtures';
 import './test/connectedAccounts';
 
 vi.mock('./usage/metrics/MetricChart', () => ({ MetricChart: () => <p>Measured chart</p> }));
@@ -17,6 +17,10 @@ it.each([false, true])(
     window.history.replaceState(null, '', '/agents/agt_1');
     const actor = userEvent.setup();
     const metrics = metricsClient(false);
+    metrics.create.mockResolvedValue({
+      ...reportFixture(false),
+      scope: { principal: 'mock-subject', admin: false },
+    });
     const replay = vi
       .fn<NonNullable<ReturnType<typeof agentClient>['replayAgent']>>()
       .mockImplementation(

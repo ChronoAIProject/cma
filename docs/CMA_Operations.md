@@ -18,8 +18,10 @@ inventory, application cutover gates and rollback, see
 CMAEG (CMA Event Gateway) is a separate stateless service that receives
 external event channels and call agent providers. Its management service
 listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
-`cma-cmaeg`; `infra/cmaeg/` declares one replica in `chrono-bot`, with credentials
-injected from Kubernetes Secrets as environment variables.
+`cma-cmaeg`; `infra/cmaeg/` declares the conditional two-replica target in
+`chrono-bot`, with credentials injected from Kubernetes Secrets as environment
+variables. Apply that target only after the compatible binary and
+[staged scale gates](CMA_Scale_Apply.md) qualify.
 
 The gateway loads its outbound provider policy once at startup. `CMAEG_PROVIDERS`
 is a JSON array; an empty array is the default and means that no provider calls
@@ -744,6 +746,18 @@ contain bounded Agent identity, work step, fence and timings only. A false
 not prove that a transaction failed to commit. Use the durable reconciliation
 result for that distinction. Timing instrumentation grants no authority and does
 not change startup checks, retries or readiness criteria.
+
+The pinned runtime defers the advisory command catalogue and goal snapshot on
+ACP session load until required preparation and complete history delivery have
+finished. Authentication, forced skill refresh, model/tool readiness and prepared
+close-before-load still gate completion. Metadata may arrive after the load
+response; first-turn skill and goal execution use their native paths. Deferred
+publication checks the exact session, generation and close state. At most 32
+session jobs run, with one latest replacement coalesced per session; overflow
+skips advisory publication and reports a fixed diagnostic. An in-flight read can
+finish after close, but cannot publish into a closed or replaced session. This
+behavior requires the updated runtime image; an API-only rollout does not change
+an existing Sandbox's provider bundle.
 
 Native inspection timings separate exclusive HTTP checkout, the authority graph,
 runtime policy, the process-status exchange and the fresh post-status home read.
@@ -2232,18 +2246,21 @@ readers and all three reachable bases for links and webhooks already issued.
 Replica mode uses the existing Mongo replica set, runtime control authentication
 and deployment encryption secret. It adds no broker or cache service. Every
 process registers a random incarnation in `cma_agent_manager_members`; its
-30-second expiry is renewed every five seconds. TTL removes old membership
+15-second expiry is nominally renewed every three seconds. TTL removes old membership
 records but never decides whether a member is live. `/ready` requires a healthy
 cached store probe, current membership and completed startup, and becomes false
 as soon as draining or ownership renewal fails. `/livez` remains a process probe.
 A failed incarnation exits; it cannot renew itself back into authority.
 
-`cma_agent_manager_owners` stores each Agent's permanent epoch, owner and 30-second lease.
+`cma_agent_manager_owners` stores each Agent's permanent epoch, owner and 15-second lease.
 Never delete these rows or install a TTL index: that would reset fencing history.
 Majority writes and transaction fences protect transport-dependent publication;
 receiving runtimes also enforce the epoch for input, control effects and output
-ACKs. Their challenge/confirm lease expires before the corresponding Mongo lease
-without depending on synchronized wall clocks. A stale provider response cannot
+ACKs. Their challenge/confirm lease lasts at most 10 seconds from the original
+challenge and expires before the corresponding Mongo lease without depending on
+synchronized wall clocks. These constants do not establish a 30-second recovery
+bound: loaded renewal scheduling, receiver expiry, takeover and client recovery
+must be qualified together. A stale provider response cannot
 publish a conversation mutation or checkpoint. Missing a local connection does
 not permit taking another live instance's ownership.
 
@@ -2251,12 +2268,16 @@ Rendezvous order over discovered compatible members assigns new/expired claims,
 subject to the configured capacity. Scale-up rebalances existing owners through
 at most four cooperative handoffs per maintenance pass; busy Agents may defer a
 handoff for at most 60 seconds. Completed terminal work releases its ownership.
-Scale-down and SIGTERM cancel local authority, revoke contacted runtime receivers,
-and release durable claims. The preStop command invokes an authenticated loopback
-drain before the existing 30-second endpoint propagation delay. Drain work has a
-20-second bound; a receiver that cannot confirm revocation retains its durable
-lease until expiry, so a network failure cannot authorize overlapping readers.
-The termination grace is 760 seconds, including drain, HTTP and worker budgets.
+Scale-down and SIGTERM close local task admission and cancel authority, then
+require lifecycle task joins and confirmed runtime receiver revocation before
+releasing durable claims. The preStop command invokes an authenticated loopback
+drain before the existing 30-second endpoint propagation delay. The server gives
+serialization, membership IO, lifecycle joins and receiver work one 23-second
+budget; its client has a 25-second timeout. An incomplete lifecycle or receiver
+drain returns failure and retains unconfirmed durable leases until expiry. A retry
+must still prove completion. Those code budgets do not establish a measured
+process-exit or successor-service bound. The manifest termination grace remains
+760 seconds, including preStop, propagation, HTTP and worker budgets.
 
 Accepted commands retain the durable command ledger and caller/resource authority.
 Only the transport owner executes them. Direct Agent runtime requests relay once
@@ -2293,114 +2314,96 @@ slot until completion and have a total 60-second deadline.
 Desktop WebSockets already use a durable Sandbox route and the runtime's desktop
 connection lease; they do not use the conversation fragment hub.
 
-Replica mode shares one Mongo client between application stores and runtime
-routing and explicitly caps its application pool at **10 per server per process**.
-For primary-directed traffic, N managers therefore permit N × 10 application
-connections to the primary. With the observed three-member Atlas set, reserve up
-to N × 6 monitoring connections as well. At N=2/3/5 this is respectively 20/30/50
-primary application connections and approximately 32/48/80 connections across the
-set including monitors. Budget surge and terminating processes separately:
-`N + 1 + terminating`, plus Event Gateway, Image Manager and other consumers.
-Failover/secondary reads can retain application pools on additional servers;
-the conservative full-set maximum is N × (3 × 10 + 6), before other consumers.
-Server headroom and historical outage cause have not been established by the
-available Mongo diagnostics. Do not increase the pool to compensate for scaling.
+Application stores and runtime routing use independent Mongo clients in both
+replica modes. Both preserve the URI's explicit pool options, or the driver's
+defaults when omitted. Reporting uses a third, separately bounded client (default
+maximum 4). Enabling replicas does not impose a new 10-connection cap or share
+these pools. Budget the effective limits of every client, including monitoring
+sockets, using the deployed URI and reporting configuration.
 
-The PDB uses `maxUnavailable: 1` and `unhealthyPodEvictionPolicy: AlwaysAllow` so
-an already-unready manager cannot block node drain. Hostname spread is required
-with zone spread preferred. The checked-in Deployment stays at one replica and
-the ConfigMap keeps the switch off. Apply the PDB only after at least two replicas are Ready. HPA is
-not enabled: operators may vary N without rebuilding, but must first validate
-Mongo, node and owned-Agent capacity. Membership `owned_agents` and
-`max_owned_agents`, readiness, request latency and existing Mongo checkout/hold
-instrumentation are the capacity inputs for a later HPA policy.
+For main/routing/reporting maxima M/R/P, N live manager processes permit up to
+`N × (M + R + P)` application connections to one server. With explicit limits
+30/30/4, N=2/3/5 gives 128/192/320 application connections to the primary. For a
+three-member set, conservatively reserve up to 18 monitoring connections per
+process across the three clients as well. The corresponding totals across the
+set for primary-only application pools are 164/246/410. Failover or secondary
+reads can retain application pools on other servers; a conservative full-set
+bound is `N × (3 × (M + R + P) + 18)`, or 420/630/1050 with those example limits.
+These are budget bounds, not observed connection counts or capacity approval.
+
+Count surge and terminating processes in N while their clients remain alive,
+then add Event Gateway, Image Manager, migration and other consumers. Preserve
+at least 30% Mongo headroom under the qualified failure/load scenario. Explicit
+pool changes require a separate measured capacity decision; server headroom and
+historical outage cause are not established by these formulas.
+
+The reviewed PDB uses `minAvailable: 1` and
+`unhealthyPodEvictionPolicy: AlwaysAllow`. Hostname spread is required, zone spread
+is preferred, and both constraints count each `pod-template-hash` separately.
+The checked-in Deployment specifies the conditional two-replica target; the
+ConfigMap keeps ownership disabled until the qualified cutover. Merging these
+manifests does not activate that target. Apply the PDB only after both participating
+replicas and their canonical backends are qualified.
+
+The HPA manifests are delivered for stage S3: minimum two, maximum five; scale-up
+has zero stabilization and selects the maximum of +2 pods or +100% per 60 seconds.
+Scale-down uses 300 seconds of stabilization and one pod per 120 seconds. If the
+qualified p95 from drain initiation through owner handoff and successor service
+exceeds 90 seconds, increase the down period to ceil(p95 + 30 seconds). Missing
+qualifying timing holds S3. Hard process/socket lifetime and Mongo capacity need
+separate bounds that include terminating processes; a p95 is not that bound.
+See [scale capacity](CMA_Scale_Capacity.md) for the complete client inventory and
+[staged apply and rollback](CMA_Scale_Apply.md) for the executable release packet.
 
 ### Production rollout (lead only)
 
-This procedure changes production only after the reviewed PR and all local/CI
-gates pass. It does not authorize this agent to deploy. Record the reviewed
-manager/runtime image digests and source identity using the OCI evidence procedure
-above. Verify **every retained runtime that can receive Agent traffic** advertises
-ownership protocol v1, including native and hosted paths. Updating only the default
-runtime image leaves retained runtimes incompatible. Upgrade those through their
-existing reviewed lifecycle; do not replace retained resources automatically.
+Use the exact reviewed stage packet in [staged apply and rollback](CMA_Scale_Apply.md).
+The packet binds final source, immutable AM/runtime images and build provenance,
+additive ownership collection/index/role changes, local correctness and real-Mongo
+results, matched complete-journey performance, process/fault/scale evidence and
+per-step production authorization. This section grants no deployment permission.
 
-All serving managers must use protocol v1, the same deployment/database identity
-and existing deployment secret. Check Mongo roles for the two new collections and
-indexes. For isolated credentials, generate the expanded role with
-`CHRONO_AGENT_MANAGER_REPLICAS_ENABLED=true CHRONO_MONGODB_DATABASE=<database> cma --print-runtime-role`
-and review/install only its additive ownership collection grants before enablement.
-The switch-off verifier accepts those grants but does not require them; the
-switch-on verifier requires both collections before initializing stores.
-Confirm server/node headroom for N, surge and terminating processes,
-current topology constraints, initial per-pod load and public readiness/5xx/Mongo
-baselines. Keep the compatible image as the rollback floor. Run owned disposable
-canaries through different ingress pods, including live output and takeover.
+Before stopping the old manager, inventory every traffic-capable retained native
+and hosted runtime. Require the exact image and ownership challenge-duration floor,
+including refusal of old 20-second v1 challenges, wrong durations and stale
+challenges. Protocol v1 presence or an updated default runtime image alone does
+not establish compatibility. Preserve retained resources through their reviewed
+lifecycle. All participating managers share the deployment/database identity and
+signing authority. The switch-on role verifier requires both ownership collections;
+the switch-off verifier accepts their additive grants without requiring them.
 
-The first switch-on is an explicit **no-overlap** transition: older or switch-off
-managers never coexist with participating managers. Schedule the short service
-window with the lead. PDBs do not prevent Deployment scaling to zero. Capture the
-existing narrow Deployment fields and whether a PDB exists; do not export Secrets
-or whole configuration objects into an issue or terminal. Set `am_image` to the
-reviewed manager digest, then execute these narrow operations in order:
+S1 uses the owner-approved no-overlap sequence old 1→0, then new 0→2. Prepare and
+review the controller/template, image cache, nodes, routes and compatible recovery
+branch before the outage. A zero-sized template is not a running warm application.
+Prove every old effect-capable process/socket is stopped or safely revoked/expired
+before starting participating writers. No intermediate ON-one promotion gate is
+required. Each new replica must independently serve, with distinct hosts, current
+membership, qualified receivers, healthy endpoints and canonical backends.
 
-```sh
-am_context=gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke
-am_namespace=chrono-bot
-# Assign the reviewed immutable image reference before continuing.
-: "${am_image:?set the reviewed cma-api image digest}"
-kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"replicas":0}}'
-kubectl --context "$am_context" -n "$am_namespace" wait --for=delete pod -l app.kubernetes.io/name=cma-agent-manager --timeout=20m
-kubectl --context "$am_context" -n "$am_namespace" set image deployment/cma-agent-manager "api=$am_image"
-kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=strategic -p '{"spec":{"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":1,"maxUnavailable":0}},"template":{"spec":{"terminationGracePeriodSeconds":760,"containers":[{"name":"api","env":[{"name":"POD_IP","valueFrom":{"fieldRef":{"fieldPath":"status.podIP"}}},{"name":"CHRONO_AGENT_MANAGER_RELAY_ADDRESS","value":"http://$(POD_IP):8080"},{"name":"CHRONO_AGENT_MANAGER_REPLICAS_ENABLED","value":"true"},{"name":"CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS","value":"256"}],"lifecycle":{"preStop":{"exec":{"command":["/bin/sh","-c","/usr/local/bin/cma --agent-manager-drain; exec /bin/sleep 30"]}}}}]}}}}'
-```
+Measure from loss of the last healthy old backend to restored successful user
+service, and record both-ready time separately. The approved cutover targets less
+than 120 seconds; at 120 seconds without restored service, abort promotion through
+the preapproved compatible recovery branch. The outage target never shortens leases
+or permits force deletion or writer overlap. After both replicas qualify, apply
+and verify the PDB and complete the 30-minute stable S1 soak and matched performance
+comparison. S2 separately qualifies EG at fixed two; S3 activates the HPAs only
+after both fixed-two stages and their capacity/timing gates pass. A manual scale
+change is not evidence of automatic HPA behavior.
 
-If no topology constraints exist, add the following exact array. If constraints
-already exist, preserve them and merge these reviewed entries before patching.
-
-```sh
-kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"template":{"spec":{"topologySpreadConstraints":[{"maxSkew":1,"topologyKey":"kubernetes.io/hostname","whenUnsatisfiable":"DoNotSchedule","nodeTaintsPolicy":"Honor","labelSelector":{"matchLabels":{"app.kubernetes.io/name":"cma-agent-manager"}}},{"maxSkew":1,"topologyKey":"topology.kubernetes.io/zone","whenUnsatisfiable":"ScheduleAnyway","nodeTaintsPolicy":"Honor","labelSelector":{"matchLabels":{"app.kubernetes.io/name":"cma-agent-manager"}}}]}}}}'
-kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"replicas":1}}'
-kubectl --context "$am_context" -n "$am_namespace" rollout status deployment/cma-agent-manager --timeout=35m
-```
-
-Verify protocol negotiation and owned canaries at one participating replica before
-scaling. Set `am_replicas=2` initially; later stages can use 3, 5 or another capacity
-validated N without a code change. Wait for each stage before increasing N.
-
-```sh
-am_replicas=2
-kubectl --context "$am_context" -n "$am_namespace" scale deployment/cma-agent-manager --replicas="$am_replicas"
-kubectl --context "$am_context" -n "$am_namespace" rollout status deployment/cma-agent-manager --timeout=35m
-kubectl --context "$am_context" -n "$am_namespace" get pods -l app.kubernetes.io/name=cma-agent-manager -o wide
-kubectl --context "$am_context" -n "$am_namespace" get endpointslice -l kubernetes.io/service-name=cma-agent-manager
-# Create only if the named PDB was absent; otherwise inspect and narrowly patch it.
-kubectl --context "$am_context" -n "$am_namespace" create -f infra/api/pdb.yaml
-kubectl --context "$am_context" -n "$am_namespace" get pdb cma-agent-manager
-```
-
-Require N Ready/Available pods, ready endpoints and healthy NEG backends; verify
-requests reach every pod with content-free telemetry. In disposable canaries,
-admit on one manager, observe fragments on another, drain the owner, and verify
-one committed terminal result per operation, increasing ownership epoch, preserved
-cursor/ACK semantics and resumed live output. Exercise a 2→3→2 stage and a compatible
-rolling update. Observe at least two five-minute background/metering cycles and
-the tested takeover horizon; compare readiness, 5xx, background completion/lag,
-Mongo checkout/hold/occupancy and live-gap counts with baseline. Use approved
-VictoriaMetrics/VictoriaLogs read-only kube API proxy GETs, not Cloud Logging or
-ordinary users' records. Stop promotion for duplicates, lost terminal evidence,
-unsafe overlap, sustained routing/readiness errors or Mongo regression.
+Preserve failed, timed-out and incomplete journeys in the comparison. Include at
+least two five-minute background/metering cycles, real owner loss and successor
+service, no lost accepted custody or duplicate external effects, and per-route
+confidence bounds using preregistered baseline noise. Use the exact abort and
+rollback conditions in the stage packet. Missing evidence holds promotion.
 
 ### Rollback and version compatibility
 
-The first rollback keeps ownership enabled and scales to one compatible manager:
-
-```sh
-kubectl --context "$am_context" -n "$am_namespace" patch deployment cma-agent-manager --type=merge -p '{"spec":{"replicas":1}}'
-kubectl --context "$am_context" -n "$am_namespace" rollout status deployment/cma-agent-manager --timeout=35m
-# At one replica prohibit voluntary eviction while investigating.
-kubectl --context "$am_context" -n "$am_namespace" patch pdb cma-agent-manager --type=merge -p '{"spec":{"maxUnavailable":0}}'
-```
+The normal S1 rollback keeps ownership enabled and the compatible image, drains
+2→1 under the reviewed narrow operation, and preserves PDB `minAvailable: 1`.
+Require actual departing-process and receiver completion plus survivor service.
+When S3 HPAs are present, first use the reviewed freeze/removal procedure and
+one-at-a-time return to the last qualified fixed count. Never let HPA and rollout
+operations overlap or assume a desired replica count proves process exit.
 
 Wait for extra processes and their receivers to drain; verify the survivor's
 canary before any image change. Compatible binaries with protocol v1 may roll

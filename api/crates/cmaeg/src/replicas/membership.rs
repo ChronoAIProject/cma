@@ -204,18 +204,20 @@ impl Membership {
     /// Estimate UTC from the last server sample plus monotonic elapsed time;
     /// this never grants authority and may continue through a graceful drain.
     pub fn now_seconds(&self) -> i64 {
+        self.now_millis().div_euclid(1000)
+    }
+
+    pub fn now_millis(&self) -> i64 {
         let Ok(view) = self.view.read() else {
             return i64::MAX;
         };
-        view.server_millis
-            .saturating_add(
-                view.sampled_at
-                    .elapsed()
-                    .as_millis()
-                    .try_into()
-                    .unwrap_or(i64::MAX),
-            )
-            .div_euclid(1000)
+        view.server_millis.saturating_add(
+            view.sampled_at
+                .elapsed()
+                .as_millis()
+                .try_into()
+                .unwrap_or(i64::MAX),
+        )
     }
 
     pub fn origin(&self, instance: &str) -> Result<String, Error> {
