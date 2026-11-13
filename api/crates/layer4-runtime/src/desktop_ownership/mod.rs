@@ -103,6 +103,9 @@ impl DesktopReceiver {
     }
 
     fn persist(&self, state: &mut State, record: Record) -> Result<()> {
+        // The supervisor is the sole writer under this state lock. Every
+        // transition compares the retained floor; never repair custody loss.
+        self.verify(state)?;
         if persistence::save(&self.root, &record).is_err() {
             self.poison(state);
             return Err(unavailable());

@@ -110,6 +110,7 @@ impl DesktopReceiver {
             while tasks.join_next().await.is_some() {}
         }
         let mut state = self.state.lock().unwrap();
+        self.verify(&mut state)?;
         if deadline <= Instant::now() || (renewal && !self.live(&state, &owner)) {
             return Err(refused());
         }
@@ -133,6 +134,13 @@ impl DesktopReceiver {
         if !renewal {
             state.reserved = false;
         }
+        self.verify(&mut state)?;
+        if deadline <= Instant::now()
+            || (renewal && old_deadline.is_none_or(|until| until <= Instant::now()))
+        {
+            self.retire(&mut state)?;
+            return Err(refused());
+        }
         self.changed.send_replace(());
         Ok(DesktopAcknowledgement { ownership: owner })
     }
@@ -151,6 +159,16 @@ impl DesktopReceiver {
             self.retire(&mut state)?;
         }
         while tasks.join_next().await.is_some() {}
+        let mut state = self.state.lock().unwrap();
+        self.verify(&mut state)?;
+        if state
+            .record
+            .as_ref()
+            .is_none_or(|record| !record.retired || !same_session(&record.owner, &owner))
+        {
+            self.poison(&mut state);
+            return Err(unavailable());
+        }
         Ok(DesktopAcknowledgement { ownership: owner })
     }
 

@@ -3,6 +3,9 @@ use layer3_adapter::desktop_ownership::wire::DesktopConfirmation;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+#[path = "persistence_tests.rs"]
+mod custody;
+
 struct Fixture {
     directory: PathBuf,
     receiver: Arc<DesktopReceiver>,
