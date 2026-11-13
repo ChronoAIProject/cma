@@ -15,6 +15,9 @@ const NOW: &str = "2026-09-05T00:30:00Z";
 #[path = "retained_mongo_tests.rs"]
 mod retained;
 
+#[path = "platform_stop_mongo_tests.rs"]
+mod platform_stop;
+
 pub(in crate::store) async fn fixture(
     store: &MongoSandboxStore,
     id: &str,

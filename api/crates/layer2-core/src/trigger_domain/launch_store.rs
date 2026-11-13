@@ -199,6 +199,8 @@ pub enum LaunchStoreError {
     Corrupt(String),
     #[error(transparent)]
     Validation(#[from] TriggerError),
+    #[error("model budget refused the Launch: {0}")]
+    Budget(crate::budget::BudgetError),
 }
 
 impl LaunchStoreError {
@@ -217,6 +219,7 @@ impl LaunchStoreError {
             Self::Unavailable(_) => "launch_store_unavailable",
             Self::Corrupt(_) => "stored_launch_corrupt",
             Self::Validation(error) => error.code,
+            Self::Budget(reason) => reason.code(),
         }
     }
 }

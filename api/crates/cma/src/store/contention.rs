@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use layer2_core::sandbox::store::SandboxStoreError;
 
-pub(super) async fn backoff(attempt: usize) {
+pub(in crate::store) async fn backoff(attempt: usize) {
     if attempt > 0 {
         // Give the competing writer time to commit instead of exhausting all
         // five attempts in one burst. Each retry opens a new snapshot/session.
@@ -12,7 +12,7 @@ pub(super) async fn backoff(attempt: usize) {
     }
 }
 
-pub(super) fn exhausted(last_transient: Option<String>) -> SandboxStoreError {
+pub(in crate::store) fn exhausted(last_transient: Option<String>) -> SandboxStoreError {
     // Reaching this branch means every attempt failed before any possible commit
     // or Mongo explicitly labelled the transaction aborted. Unknown commit
     // results return through their separate reconciliation path, never here.

@@ -126,7 +126,10 @@ Agent/Workspace operations are handled by later inventory and erasure work;
 the inventory must be recomputed from current resource lineage.
 
 The ordinary exceptions are `GET /auth/session`, `/auth/logout`, and
-`GET /api/v1/account/deletion`. A personal `POST /api/v1/account/deletion` also
+`GET /api/v1/account/deletion`. Session inspection reports `api_commands: false`
+for an erasing account, including an otherwise eligible scoped OAuth credential;
+standing uncertainty returns service unavailability instead of command readiness.
+A personal `POST /api/v1/account/deletion` also
 reaches the authoritative request service for bounded active deduplication and
 unknown-result recovery. The original accepted key remains replayable after
 writer shutdown; an unaccepted key requires the writer to be enabled. These

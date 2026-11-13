@@ -2,6 +2,8 @@
 mod inventory;
 #[path = "cmaeg_schema/legacy.rs"]
 mod legacy;
+#[path = "cmaeg_schema/upstream.rs"]
+mod upstream;
 
 use cma_sdk::cmaeg::types::*;
 use serde::{Serialize, de::DeserializeOwned};
