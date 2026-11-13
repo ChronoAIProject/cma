@@ -7,6 +7,9 @@ use super::{
 use crate::ingress::routing_store::AdmittedPlan;
 use std::time::{Duration, Instant};
 
+#[path = "mongo_admission_tests.rs"]
+mod admission;
+
 async fn plan() -> AdmittedPlan {
     let (_server, mut plan) = super::partition_tests::plan().await;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
@@ -57,7 +60,10 @@ async fn independent_mongo_queue_replay_takeover_and_stale_mutation_fences() {
         nodes[0].partitions.enqueue(&plan),
         nodes[1].partitions.enqueue(&plan)
     );
-    assert!(a.is_ok() || b.is_ok());
+    assert!(
+        a.is_ok() && b.is_ok(),
+        "both duplicate admissions require custody: {a:?}, {b:?}"
+    );
     nodes[2].partitions.enqueue(&plan).await.unwrap();
     nodes[2].partitions.enqueue(&later).await.unwrap();
     let id = partition_id(
