@@ -282,6 +282,7 @@ impl MongoSandboxStore {
         };
         super::budget::initialize_settings(&store).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::pending_launch_homes::ensure_index(&store.sandbox_admissions).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
         super::sandbox_billing::ensure_indexes(&store.sandbox_billing).await?;
