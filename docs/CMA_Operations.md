@@ -993,6 +993,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_MODEL_BUDGET_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. Refuses saving any nonempty model budget policy, including disabled drafts, until compatible serving readers and the verified rollback image are established. The release operator enables it in a later fenced rollout; it does not activate budget enforcement or supply policy values. Disabling it retains readable settings and liabilities; it does not restore pre-budget reader compatibility. See CMA_Model_Budget_Controls.md |
 | `CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. A separate reader-before-write gate for nonempty request model policies, including disabled drafts; foundation writes must also be enabled. Enable only after the request settings/reservation reader is the verified serving and rollback baseline. Exposed as read-only admin save availability; does not activate enforcement. See CMA_Model_Request_Reservations.md |
+| `CHRONO_PLATFORM_SPEND_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. Reader-before-write gate for the `cloud` platform policy fields and `POST /api/v1/admin/spend/observations`; the foundation model budget write gate must also be enabled. Exposed as read-only `platform_spend_writes_available`; does not activate enforcement or supply values. See CMA_Platform_Spend_Metering.md |
+| `CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED` | Strict boolean, false by default in code and ConfigMap. Enables atomic conversion of active platform period model balances to sixteen counters and allows independent settlements to bypass the local period queue. Admissions retain the existing settings fence and use the exact sum. Enable only after all serving, rollback and retirement-census readers support the counter layout and reservation bindings. OFF prevents new conversions but retains accounting and settlement for converted periods; it does not restore old-reader compatibility. See CMA_Platform_Spend_Metering.md section 4.1. |
+| `CHRONO_ADMISSION_CONTROL_WRITES_ENABLED` | Exact `true`/`false`, default `false` in code and ConfigMap. Independent gate for operator admission stop/resume writes; closed returns 503 `admission_control_writes_unavailable`. Reads and enforcement always run, including with spend metering off. Open only after every replica runs the compatible image. Never deploy or roll back while stopped; first resume the exact current stop. See [Operator admission stop](#operator-admission-stop). |
 | `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; checked-in manifests disable it; live cohort selection must be observed at delivery. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
@@ -1053,7 +1056,10 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED` | Strict boolean, default `false`. Shares immutable retained live fragments under one 32 MiB process budget; exhaustion uses the existing live-gap/catch-up path. Decoder, assembly, serialized replay and RSS qualification remain separate. See [Live fragment budget](CMA_Live_Fragment_Budget.md). |
 | `CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED` | Strict boolean, default `false`. Before owned decoding, validates Ready and retained ACP JSON against 4 MiB, 8,192 nodes and 64 container levels. Requires retained-output capability; refused output is never ACKed. See [Hosted output JSON budget](CMA_Runtime_Output_JSON_Budget.md) for recovery and accounting limits. |
 | `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
-| `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication within the shared cohort. Capacity settlement, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` | Strict boolean, default `false`. Repeated failures of the same step/class retain one diagnostic row and update attempts/ready time under the existing lease and revision fences. First/class-changed failures and success still append. Capacity/ledger markers retain priority. Rollback resumes ordinary appends without data repair. |
+| `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication and zero-entry repeated failures within the shared cohort. Repeated retries fully audit on first use after restart and at least hourly; identical conflict snapshots can reuse history within one invocation. First markers, capacity state changes, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
+| `CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED` | Strict boolean, default `false`. Enables row prechecks and exact terminal-Agent head proofs for runtime-loss recovery; live Agents use trusted summaries only inside the existing bounded-log cohort. Reserved retries receive at most 25 s and include CAS races. Roll back by setting `false` and restarting; no data migration. |
+| `CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED` | Strict boolean, default `false`. Adds cooperative checkpoints to complete Agent-log scans with a fixed 2 ms budget, checked every eight completed rows. Enable only after at least 30 minutes with the switch off establishes #1787 case A (at least 1,000 rows and longest-section p95 at least 10 ms), using #1805 runtime/checkout observations. Roll back by setting `false` and rolling the same API image; no data migration, Sandbox restart, identifier change or history rewrite. |
 | `CHRONO_AGENT_SKILL_UPGRADE_ENABLED` | Strict boolean, default `false`. Gates new installed-skill version replacements for owner-authorized idle Agents on capable runtimes. Keep closed until migration `2026-11-11-am-agent-skill-upgrade` reader/drain and recovery evidence is approved. Closing admission preserves reads, global exact-key replay, and already-admitted worker/recovery settlement. It does not remove the reader floor. See [skill upgrade migration record](CMA_Agent_Skills_Runtime.md#reader-floor-and-rollback-record-2026-11-11-am-agent-skill-upgrade). |
 | `CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED` | Strict boolean, default `false`. Enables the CMAEG retained-context API path that carries one buffered command through current authorization and the final release fence, with phase timing and no second command lookup. Keep disabled until the compatible API image is deployed and matched success/failure, binding-rotation and latency evidence is reviewed; disable and restart to roll back. The CMAEG three-second client deadline is unchanged. |
 | `CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED` | `false` | Require retained runtime output and bound compact pending/replay permission state across attachments. See [permission state bounds](CMA_Permission_State_Bounds.md). |
@@ -1084,6 +1090,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS` | Per-command bound 1-600; default 600 |
 | `CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS` | Total ordered-command bound, at least command bound and at most 1800; default 1800 |
 | `CHRONO_CLONE_DEPTH` | Git clone depth 1-1000; default 50 |
+| `CHRONO_ACTIVITY_ASYNC_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Enables bounded asynchronous request telemetry only. Explicit authorization and operations audits still synchronously await majority persistence. See request activity buffering below. |
 | `CHRONO_ACTIVITY_RETENTION_DAYS` | Activity TTL, 1-3650 days; default 90 |
 | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` | Pre-auth network budget/burst; default 6000 |
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
@@ -1092,6 +1099,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED` | Strict boolean, default `false`. Opts exact registered existing-Agent input submissions into the existing Input budget, including Responses v2 and its Agent alias; preserves local and Mongo enforcement. See [Response input rate policy](CMA_Response_Input_Rate_Policy.md) for the route inventory and separate activation/rollback. |
 | `CHRONO_SERVER_RATE_INPUT_PER_MINUTE` | Agent input request budget/burst; default 120 |
 | `CHRONO_SERVER_RATE_CONTROL_ENABLED` | Strict boolean, default `false`. Separately activates the independent recovery/control policy; while false, prior Create/Input classification and shared keys are preserved. |
+| `CHRONO_SERVER_RATE_DEFAULT_LEASE_ENABLED` | Strict boolean, default `false`. Separately opts Default requests into prepaid Mongo credits: 10-second leases, at most `max(1, per_minute / 20)` credits, and 16,384 tracked keys per process. Create, Input, Control, admission, and health policies are unchanged. See [prepaid Default budgets](CMA_Response_Input_Rate_Policy.md#prepaid-default-budgets) for guarantees, metrics, and rollback. |
 | `CHRONO_SERVER_RATE_CONTROL_PER_MINUTE` | Independent per-subject Control budget/burst; default 120, positive integer. Protects recovery and controls of admitted work after the Create allowance is exhausted. |
 | `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
 | `CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED` | Strict default-off hosted output backpressure; requires retained ACK support. See [hosted update backpressure](CMA_Hosted_Update_Backpressure.md). |
@@ -2344,6 +2352,28 @@ web assets needed by open tabs and the batch's compatible reader floor through
 normal deployment procedures. Verify an existing tab continues working and names
 its original bundle. This UI change does not authorize deployment or asset removal.
 
+## Buffered Agent history rollout
+
+`CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED` independently defaults to `false`
+and accepts only exact `true` or `false`. It changes the buffered Agent v2
+snapshot and head routes to entry authorization, one current Agent capture and
+one final authorization fence. Cursor validation uses that current header. Page,
+predecessor and tail proof share a log snapshot; command and message bindings
+remain inside the bounded private read. Success, dependency errors, cursor errors
+and timeout all pass the final fence. SSE polling and frame release retain their
+existing checks. There is no persisted-format or public response change.
+
+Keep this switch off for initial deployment. Enable in staging only after the
+authorization/revocation review, run the race and integrity contracts, and rehearse
+returning to `false` with an API rollout. Production activation is release-owner
+controlled: compare the same image in natural-traffic windows of at least 30
+minutes off/on. Hold the independent authorization-session setting fixed, and
+separate #1648 bounded-history activation from this comparison. Follow the exact
+metrics, coverage caveats and pass criteria in
+[the measurement protocol](operations/perf-measurement/history-auth.md).
+Any authorization or content inconsistency requires immediate rollback to false
+on the same image. Local measurements do not complete production verification.
+
 ## Sandbox detail read rollout
 
 `CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED` defaults to `false` and accepts only
@@ -2399,3 +2429,179 @@ Optional enrichment retains its existing fallback behavior. See
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.
+
+### Cooperative full-scan activation and rollback
+
+`CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED=false` preserves scheduling behavior
+while retaining the execution measurements. The budget is fixed at 2 ms; it is
+not a deployment parameter. Every eighth completed row checks elapsed time,
+and a yield occurs only after validation, the visitor, hashing and row accounting
+finish. Individual driver polls, rows and visitors cannot be preempted, so 2 ms
+is a checkpoint budget rather than a hard upper bound on every poll.
+
+The release owner first records at least 30 minutes under natural load with the
+switch off. If longest sections for scans of at least 1,000 rows have p95 at least
+10 ms (case A), enable the switch in the same image and observe at least 60
+minutes. A driver-poll p95 of at least 5 ms (case B) separately justifies a batch
+limit investigation and its extra getMore/checkout cost. If every caller has
+section p99 below 2 ms (case C), leave cooperation off and retain measurements.
+Local reproduction guides implementation; it does not replace production
+attribution or authorize activation.
+
+Immediately roll back to `false` if scan failures/quarantine rise, publication
+retries rise above baseline, the reporting circuit opens, or new route 5xx
+appear. Roll only API replicas with the same image. Existing Sandboxes,
+Workspaces, Agents, identifiers and history stay intact. Offline retirement
+archive census explicitly uses the disabled strategy. No persistence format
+changes, migration, row omission or weaker validation accompanies this switch.
+
+## Browser identity reads
+
+`CHRONO_AUTH_BROWSER_SESSION_JOIN_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. With `true`, Cookie authentication joins the browser
+handle and its subject by their indexed keys in one Mongo aggregate. Both
+records retain their existing schema, revocation and token validation. Expired
+logins are rejected before interpreting subject authority. The post-verification
+custody check and the additional `/auth/session` logout check still run.
+
+Ordinary authenticated Cookie requests use two identity commands instead of
+three; `/auth/session` uses three instead of four, plus its settings read.
+No completed NyxID verification is reused on the normal path. The existing
+60-second outage fallback remains limited to `GET /auth/session`.
+
+Rollback by setting the switch to `false` and restarting the API. No persisted
+format changes or data repair are required. Compare both paths using the
+`identity` diagnostic phase described in [Mongo diagnostics](CMA_Mongo_Diagnostics.md);
+handler reads remain outside this phase.
+
+## Operator admission stop
+
+Use the global switch to contain **new** work without interrupting accepted
+work. It covers new subjects, messages, Launches, resource creation and explicit
+revival. Accepted operation steps, queued turns, running work, settlement,
+approvals and cancellation continue. Streams are outside this switch. Existing
+owners can sign in. SpendStop keeps its existing independent effect.
+
+Before opening `CHRONO_ADMISSION_CONTROL_WRITES_ENABLED=true`, verify that
+**every** serving and recovery replica runs the compatible admission image;
+retain the source SHA, immutable image digests, time window and replica receipts.
+Use a later rollout to open the gate only after that reader floor is established.
+Both code and the checked-in ConfigMap default to false. Turning the gate off
+blocks stop **and resume** but continues enforcement of a persisted stop.
+**Never deploy or roll back while stopped**, including a configuration rollout:
+resume with the currently running compatible image first. If a stopped system
+has lost its write gate, retain that image and follow the incident owner's
+compatible recovery procedure; do not restore an older reader that ignores it.
+
+These local commands assume an authorized `ConfigurePlatform` credential in
+`CMA_OPERATOR_TOKEN` and the service origin in `CMA_ORIGIN`. They do not change
+spend policy. Capture request/result timestamps and responses in the incident
+record, without saving credentials.
+
+```sh
+curl --fail-with-body -sS -H "Authorization: Bearer $CMA_OPERATOR_TOKEN" \
+  "$CMA_ORIGIN/api/v1/admin/admission"
+
+# Use the revision from GET; replace the incident reason with the real context.
+curl --fail-with-body -sS -X POST \
+  -H "Authorization: Bearer $CMA_OPERATOR_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"reason":"Contain new work during incident review","expected_revision":0}' \
+  "$CMA_ORIGIN/api/v1/admin/admission/stop"
+
+# Use the revision of the CURRENT stop, rather than a cached earlier incident.
+curl --fail-with-body -sS -X POST \
+  -H "Authorization: Bearer $CMA_OPERATOR_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"reason":"Incident resolved; reopen admission","expected_revision":1}' \
+  "$CMA_ORIGIN/api/v1/admin/admission/resume"
+```
+
+A repeated stop returns the first writer's stop and does not add an audit row.
+A stale resume returns 409 `admission_control_conflict`; reread and verify the
+incident before issuing a new resume. On an uncertain transport result, read
+state, `last_change` and `history` before choosing the next CAS; do not assume
+it failed. Each transition commits control, one activity row and one immutable
+change record together. GET returns the latest 20 changes, newest first, with
+operator, time, reason and old/new stop state. The durable records remain in
+`platform_settings` under `admission_control_change:<revision padded to 20 digits>`
+after later transitions. No-op requests add neither activity nor history.
+Activity retains its existing actor/time/revision/status vocabulary; immutable
+change records supply the full historical audit details.
+
+Verify new admissions receive 503 `admission_paused` and `Retry-After: 60`, new
+subjects receive `registration_closed`, signup options close, existing-owner
+sign-in succeeds, and admitted work and controls continue. The switch has no
+cache TTL: requests use the next existing admission snapshot. Pre-stop
+zero-liability snapshots are read-only and may commit after acknowledgement.
+Current transaction IO has no explicit total deadline; local checks do not
+establish a hard ≤60-second late-commit bound. Record N, flags, source/image,
+environment, exact time window and raw results for the M-OPS-03/M-SCALE-04/TC-100
+drill. Production qualification and the request-arrival/commit-time definition
+remain release-owner work; see [the contract](CMA_Admission_Control.md).
+
+
+### Request activity buffering
+
+`CHRONO_ACTIVITY_ASYNC_ENABLED=false` preserves the existing awaited request
+activity write and its warn-and-return failure behavior. With `true`, admitted
+non-health requests synchronously try to enqueue telemetry after the handler
+finishes and return without awaiting Mongo. The queue accepts at most 10,000
+records and 16 MiB of estimated JSON-serialized record bytes per process. Both
+limits include the batch in flight and retained retries; these are payload
+budgets, not a bound on allocator, channel or Mongo driver overhead.
+
+A single worker writes unordered batches of at most 256 records, flushing within
+250 ms of the oldest queued record when storage is available. Writes retain
+majority write concern and record IDs as Mongo `_id`. Duplicate-key-only batch
+results count as success; mixed errors and write-concern failures retry the
+retained batch with exponential backoff from 100 ms to 5 s. Requests never wait
+for retries. A storage outage can therefore exhaust either queue budget. Overflow
+drops the arriving record, preserving accepted records, with fixed reasons
+`queue_full`, `byte_budget`, or `shutdown`; warnings occur at power-of-two totals
+per reason. No request headers, credentials, bodies, or resource identifiers are
+included in these metrics or new worker logs.
+
+`ActivityRecord.at` remains the event time captured at request completion.
+Mongo `recorded_at` remains insertion time, used by cursor ordering and TTL.
+Normally these times can differ by one batch interval; outages and retries can
+increase that gap. Retention, public record fields, and read cursors are unchanged.
+
+After HTTP draining, the existing shutdown coordinator stops queue admission and
+gives background workers a shared 30-second drain deadline. A clean completed
+drain loses no accepted records. Deadline cancellation counts every remaining
+record (including the batch in flight) as a `shutdown` drop; an ambiguous Mongo
+outcome may already have persisted some of those records. New arrivals after
+closure also count as `shutdown`. A crash, SIGKILL, or forced termination can lose
+all outstanding in-memory records, bounded by 10,000 records / 16 MiB estimated
+payload, and cannot reliably emit final drop metrics. This is request telemetry,
+not desired state, accepted operations, or permission audits. Mongo remains the
+sole authority for those records; explicit audit callers still await
+`ActivityService::record` directly and retain their existing failure behavior.
+
+The private metrics endpoint exports:
+
+| Metric | Meaning |
+| --- | --- |
+| `cma_activity_queue_records` | Outstanding accepted records, including writes/retries in flight |
+| `cma_activity_queue_bytes` | Estimated serialized bytes for those records |
+| `cma_activity_queue_oldest_seconds` | Oldest outstanding age, refreshed every 250 ms even during blocked writes |
+| `cma_activity_batch_records` | Histogram of records per write attempt |
+| `cma_activity_batch_write_seconds` | Histogram of completed write attempt duration, including failures |
+| `cma_activity_dropped_total{reason}` | Dropped records by `queue_full`, `byte_budget`, or `shutdown` |
+
+The owner authorizes activation separately. Deployment engineers first capture a
+flag-off diagnostic baseline: activity insert command/checkout distributions,
+command rate, sample count and window; HTTP header latency p50/p95/p99 by route;
+and mean Mongo checkout wait. Then enable this switch alone and observe at least
+60 minutes, comparing `/api/v2/ui/task-experience` and `/auth/session`, verifying
+zero normal-load drops and reconciling persisted records against admitted
+non-health requests. Confirm no per-request synchronous activity insert, fewer
+batch writes than requests, added latency p99 <= 50 ms, and <= 100 ms with a
+30-second storage stall. Exercise successful drain and deadline cancellation.
+Record before/after evidence against #1543 and #1796. These production checks
+remain required after local tests; merging the default-off implementation does
+not constitute activation or production validation.
+
+Rollback sets `CHRONO_ACTIVITY_ASYNC_ENABLED=false` and restarts through the
+reviewed release route. Normal restart drains the old queue first; no data repair
+is needed. The stated deadline and crash loss boundary still apply if Mongo is
+unavailable during rollback.

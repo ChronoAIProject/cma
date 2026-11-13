@@ -489,6 +489,35 @@ Transient provider capacity and transport failures retain their 503 behavior.
 Provider response bodies are not forwarded; only recognized safe reason codes
 are retained in diagnostic detail.
 
+A provider refusal during turn startup may additionally carry `upstream`:
+
+```json
+{"type":"about:blank","title":"provider rejected","status":502,"code":"provider_rejected","detail":"provider_rejected","upstream":{"operation":"responses","status":403,"code":"media_source_refused"}}
+```
+
+`upstream.operation` is `responses` or `conversation`, identifying the failed
+provider operation. `upstream.status` is the actual HTTP status in 100–599.
+`upstream.code` uses a closed vocabulary: `media_source_refused`,
+`partition_agent_missing`, `partition_agent_unavailable`,
+`agent_command_admission_conflict`, `agent_command_key_conflict`,
+`binding_not_ready`, `binding_resources_unavailable`,
+`command_authority_required`, `response_forbidden`, `response_not_found`,
+`model_mismatch`, or the fallback `unrecognized`. Every other provider value,
+including a short identifier containing only letters and digits, becomes
+`unrecognized` in both this extension and the provider-start warning log.
+No provider body or arbitrary provider code is forwarded.
+
+The outer HTTP status, problem code, diagnostic detail, retry decisions and
+configured failure reply retain their existing semantics. The extension is
+absent for non-provider failures and older responses. It does not establish
+that a notification was delivered or that a provider turn succeeded. Relay
+consumers may read these fields for owner diagnostics after independently
+validating this closed contract; they must retain the outer error outcome.
+The repository SDK readers reject unknown operations, unknown codes and status
+values outside the integer range 100–599 before exposing the extension. They
+continue to accept older problems that omit it and the generic `unrecognized`
+code produced by the gateway.
+
 A persisted channel whose original creation has not completed returns 409
 `conflict` with detail beginning `channel_creation_pending`. The owner must
 complete the original creation request using its exact reserved `record_id`
@@ -1864,12 +1893,27 @@ channel without routing) and `Content-Type: application/json`:
 | `replyToTarget` | POST `/v1/reply-targets/{reply_target_ref}/messages`, required `Idempotency-Key` header, body `OutboundMessage` | The ordinary `{message_ref?,rendering,delivery}` receipt |
 
 The sealed `cmaeg1.rt` capability derives only from the original authenticated
-relay event with verified retained activity. The request cannot supply a route,
-sender, chat or replacement event. It is bounded to 4 KiB and carries no NyxID
-user credential or relay reply token. The gateway uses the current channel key
-to reply to the original relay message. Custom/synchronous destinations cannot
-issue this capability. Providers retain the opaque reference securely with their
+event with verified retained activity. Native Discord, native WhatsApp private,
+and native WhatsApp group destinations are supported alongside relay and
+Telegram destinations. The request cannot supply a route, sender, chat or
+replacement event. It is bounded to 4 KiB and carries no NyxID user credential
+or relay reply token. The gateway reads the current platform credentials from
+the encrypted channel record and uses the channel key for relay delivery.
+Custom/synchronous destinations cannot issue this capability. Providers retain the opaque reference securely with their
 own pending operation; it is not a login grant or a new incoming user event.
+
+| Native source | Retained destination |
+| --- | --- |
+| Discord channel | Original bot, channel and message. |
+| Discord thread | Original bot, thread channel and message; a thread never falls back to its parent channel. |
+| WhatsApp private | Original app, business account, phone number, recipient and message. |
+| WhatsApp group | Original app, business account, phone number, group, participant and message, plus the original source/credential revision. The group must remain admitted. |
+
+All of these variants use the same maximum 24-hour target lifetime and return
+the authoritative Unix `expires_at` at minting. A sealed target does not override
+platform permissions or WhatsApp's messaging window; a platform refusal remains
+a rejected receipt. Providers must deploy against a gateway version supporting
+the listed native variants; minting alone is not a successful send probe.
 
 Creation and every send, including receipt replay, read current channel authority
 without accepting a stale cache. The original route must still belong to the
@@ -1895,8 +1939,19 @@ An in-progress or abandoned claim returns `delivery.outcome: "unknown"` with
 reason `delivery_in_progress_or_uncertain`, without initiating another send. A
 later retry can read the finalized receipt if the original worker finishes.
 A lost external response also remains unknown; this API does not promise exactly
-once external delivery. Do not invent a new ID to retry an uncertain send. Multiple
-different IDs are independent messages, with no ordering guarantee across events.
+once external delivery. A second durable fence covers the original channel record,
+event ID and consumer, independently of the caller's key, message content or
+reminted capability. While a send is in progress, abandoned, unknown, or lacks a
+durable final receipt, another key returns `delivery.outcome: "unknown"` with
+reason `reply_target_delivery_uncertain` and performs no dispatch. That refusal is
+itself retained under the submitted key. Read the original occurrence's receipt
+by repeating its original key and body; neither reads nor replacement keys retry
+the external effect. The fence is released only after a definite result and its
+exact receipt have been saved. After that, a fresh key denotes a new
+result occurrence (including deliberately identical text), and can send once.
+Different events remain independent. Drain old reply-target writers before
+activating this behavior: writers predating the fence cannot honor it, and
+preexisting claims without a fence require reconciliation or expiry.
 Records persist through all capabilities that can be minted from the original
 event. Delivery records cannot authorize interaction callbacks. Native MCP keeps
 the four existing tools, plus `readEventAttachment` when media is enabled; delayed
@@ -2065,7 +2120,7 @@ context is unchanged. Both `readEventContext` and `verifyEventContext` report it
 
 | `inbound_media` field | True or value when |
 | --- | --- |
-| `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS`. Existing-agent bindings and other providers report `false`. |
+| `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS` (the CMAEG deployment enables `cma_codex` and `nyxbot`). Existing-agent bindings and other providers report `false`. |
 | `transcripts` | A transcriber is configured, so audio and video can be transcribed. |
 | `visuals` | `keyframes` while the operator's media transformer is configured, for every source (see [Event attachments](#event-attachments)); otherwise `platform_thumbnail` for natively received Telegram activities, whose videos can carry the platform's preview image; otherwise `none`. |
 | `downloads` | The binding may save originals with `readEventAttachment` view `download`: `read_tool` is true and the profile's `action_mode` is `autonomous` (see [Media downloads](#media-downloads)). Guarded and other bindings report `false`. |
@@ -2156,7 +2211,7 @@ The response is an `AttachmentView`:
 | `text?` | `{source,content,page,pages,truncated}`: one page of at most 16 KiB of a `transcript` or `document`. `page` is 1-based; `truncated` means the transcript or document text was itself cut at its cap (document text is read up to 1 MiB). |
 | `images[]` | Metadata of each delivered image, in order: `{origin,mime_type,width,height,bytes,at_ms?}`. `origin` is `normalized` (the attachment itself, re-encoded within 2048 px and 1 MiB), `platform_thumbnail` or `keyframe`, decided per image; `at_ms` is a keyframe's position in the video. |
 | `notice?` | Human-readable guidance; several notices are joined with `; `. |
-| `download?` | With view `download` and status `ready`: `{method,url,expires_at,curl}`, a single-use link to the original as one ready `curl` command. |
+| `download?` | With view `download` and status `ready`: `{method,url,expires_at,authorization,curl}`. `authorization` is `{scheme:"Bearer",token}` for clients that cannot execute shell text; it is scoped to this event attachment, expires shortly, and is accepted once. `curl` carries the same credential for compatibility. |
 
 A page past the last returns `unavailable` with `not_found`, and `text.pages`
 still says how many pages exist. The reasons are:
@@ -2228,10 +2283,10 @@ attachment bytes and text are not stored by CMA.
 An autonomous agent can save an attachment's original, such as a PDF, an
 archive, a large video or a full-resolution image, into its own workspace and
 open it with its own tools. It calls `readEventAttachment` with view
-`download` and runs the returned `curl` command once; that command fetches
-`GET /v1/media/content` with a single-use media link. The operation is not an
-agent tool: it never accepts the agent key, and the SDKs have no method for
-it, because the link is meant for `curl` in an agent's sandbox. The route is
+`download` and either runs the returned `curl` command once or sends the
+structured `authorization` object to its own HTTP client; both use the same
+single-use media link. The operation is not an agent tool: it never accepts the
+agent key. The route is
 always mounted; while `CMAEG_MEDIA_ENABLED` is `false` it answers
 `503 media_unavailable` with detail `media_disabled`.
 
@@ -2254,15 +2309,27 @@ event's reply token. A link that would not fit the 4096-character token
 limit, such as one for an event with a very large partition key, is never
 truncated: the view is `unavailable` with `link_unavailable`.
 
+The deployment includes `nyxbot` alongside `cma_codex` in the provider setting.
+NyxBot's autonomous profile bindings can download native Discord and WhatsApp
+originals through this same authority path; `existing_agent` bindings do not gain
+download permission.
+
 A minted view is `ready`, with the notice `the command works once and expires
 at expires_at; run it in your workspace` and `download`:
 
 | Field | Meaning |
 | --- | --- |
 | `method` | Always `GET`. |
-| `url` | `<CMAEG_PUBLIC_URL>/v1/media/content`; it never carries the link. |
+| `url` | The advertised public API base followed by `/v1/media/content`; it never carries the link. |
 | `expires_at` | Unix seconds after which the link is refused. |
-| `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, the only place the link appears; `<name>` is the safe file name described below. |
+| `authorization` | `{scheme:"Bearer",token:"<link>"}` for clients that cannot execute shell text. The token is scoped to this event attachment and is accepted once. |
+| `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, a compatibility command carrying the same link; `<name>` is the safe file name described below. |
+
+With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`;
+otherwise it is `CMAEG_PUBLIC_URL`. The checked-in deployment advertises
+`https://cma.nyxid.ai/event-gateway/v1/media/content`. Clients pin the base from
+operator configuration and compare it with the returned URL before sending the
+capability. This configuration is not evidence that a particular image is live.
 
 The REST twin returns the same view. When the media response budget defers an
 MCP result, the deferred `pending` view carries no `download`, so a link never
@@ -2277,24 +2344,29 @@ path, the query and every other header are never read, because they reach
 load-balancer and access logs, so a link in a query string is ignored and the
 request is refused like one without a link. The request body must be empty.
 
-**Single use.** A link is redeemed on the replica that serves it before any
-other check, so a refused request spends it too. A second request with the
-same link on that replica is refused. The redemption set is per replica and is
-kept for the link's whole life, but it is not shared: during a rollout surge,
-or after a restart, a link can be redeemed once more on another replica within
-its short lifetime. Single use is therefore exact per replica and best effort
-across replicas.
+**Single use.** Before authority checks or source fetch, the gateway atomically
+creates an encrypted redemption record in the shared record store. Its identity
+is derived from the sealed link's random ID and it is retained through that
+link's expiry. Exactly one replica can establish the claim. A refused request
+spends the link too; later requests return `410 media_link_used`, including after
+replica changes and restarts. An unavailable store or an uncertain write
+acknowledgement returns `503 media_redemption_unavailable` without fetching or
+releasing bytes. A local cache only accelerates refusals; it cannot authorize a
+fetch. Rollout must drain readers that only enforce process-local redemption
+before enabling native downloads; a mixed fleet cannot enforce this contract.
 
 **Re-validation.** Every request checks, in this order, that the link is
-authentic and unexpired; that the channel still exists with the same record;
+authentic and unexpired; that its shared redemption claim succeeds; that a fresh
+authority read establishes that the channel still exists with the same record;
 that its binding, provider and agent key are the ones the link was minted for
 (rotating the agent key revokes every outstanding link); that the binding may
 still download (it is autonomous, and its provider is still in
 `CMAEG_MEDIA_TOOL_PROVIDERS`); that the provider's persisted activity still
 verifies against the sealed activity digest; that the attachment exists; and
 that its source is still configured: the relay source of the platform still
-routes the activity's route, the native Telegram bot is still configured with
-its token, or a custom URL's origin is still in the source's allowlist. Relay
+routes the activity's route, the native Telegram/Discord bot or WhatsApp
+app/account/phone is still configured with its credentials, or a custom URL's
+origin is still in the source's allowlist. Relay
 originals are fetched with the channel key, never the event's reply token,
 which a link does not carry.
 
@@ -2337,7 +2409,8 @@ Refusals are problems, sent before any body byte:
 | 503 | `media_unavailable` | `media_disabled` | Inbound media is disabled. |
 | 400 | `invalid_request` | `media_link_invalid` | Not exactly one `Authorization: Bearer` header, or a malformed, tampered or foreign link. |
 | 410 | `media_unavailable` | `media_link_expired` | The link's lifetime has passed. |
-| 410 | `media_unavailable` | `media_link_used` | The link was already redeemed on this replica. |
+| 410 | `media_unavailable` | `media_link_used` | The link was already redeemed in the shared store (or refused locally). |
+| 503 | `media_unavailable` | `media_redemption_unavailable` | The shared claim could not be established; no source fetch or bytes are released. |
 | 403 | `forbidden` | `media_link_revoked` | The channel was deleted, or its record, binding, agent key, download permission or attachment source changed. |
 | 503 | `media_unavailable` | `event_context_unverified` | The provider's activity cannot be read or no longer matches the sealed digest. |
 | 404 | `attachment_not_found` | `attachment_not_found` | The event has no attachment at the link's index, or the source no longer has it. |
@@ -2718,6 +2791,123 @@ advertisement, not proof of unimplemented behavior. Providers MUST only advertis
 capabilities verified against their implementation. The binding response records
 its own level and field refusals for that channel.
 
+### Authenticated delivery traces
+
+`CMAEG_NYXID_TURN_TRACE_ENABLED` defaults to `false`. The enabled gateway
+interprets bounded, single-value W3C `traceparent` headers only after the
+existing reply or edit authority checks. Context follows the existing queued
+operation; it confers no execution authority and changes no idempotency key,
+request body, send decision or retry policy.
+
+The dedicated stdout NDJSON writer uses `target: "nyxid::turn_trace"`,
+`schema_version: 1` and `service: "cma"`. Records contain validated UUID/span
+identifiers, fixed stage/outcome labels, monotonic durations and bounded status
+or part indices. They never inherit surrounding log fields or include content,
+URLs, capabilities, credentials, platform identifiers or raw error strings.
+Each operation captures one span/request pair for its start and end. Successful
+HTTP transport is `completed`; only existing native receipts prove `confirmed`.
+Ambiguous writes, including 502 responses after possible partial delivery, stay
+`unknown`; tracing never retries them. Upload completion is separate from
+recipient delivery, and mixed confirmed/uncertain parts report `partial`.
+
+Two lossy queues hold at most 4,096 records in total; trace lines are limited to
+2 KiB; oversized ordinary log lines sharing that queue are dropped and counted
+as well. Serialization and output run on background workers, with no stdout lock
+held while waiting for work. Overflow or sink failure increments the dropped
+counter and emits a throttled fixed health warning. With the switch off, no
+trace queue, record, diagnostic ID or outbound trace header is constructed.
+
+### Optional provider capabilities
+
+A stored `ProviderBinding` may include a `capabilities` array of strings
+acknowledged by the provider. An empty array is omitted, preserving the legacy
+wire shape. Both SDKs accept the optional array. Retaining a nonempty array
+requires compatible channel readers during rollback; the routing audit reports
+this extension and refuses to clear it as a routing-only migration.
+
+### Optional NyxID turn correlation
+
+`CMAEG_NYXID_TURN_TRACE_ENABLED` defaults to `false`. When enabled, the existing
+authenticated `GET /v1/channel-capabilities` includes `nyxid_turn_trace_v1` in
+`source_features`, advertising the installed response reader. The NyxBot binding
+PUT requests `capabilities: ["nyxid_turn_trace_v1"]`. Only an
+authenticated response for that binding with the exact supported capability
+array enables the contract. Missing, null, unknown or malformed echoes leave
+the binding unnegotiated. A rejected PUT remains a rejected PUT; the gateway
+does not retry it with a different body to infer support.
+
+The normalized acknowledgement is retained in the optional
+`ProviderBinding.capabilities` array through the existing channel write. Empty
+capabilities are omitted. Both the process switch and this binding's retained
+acknowledgement are required before native response, snapshot or replay requests
+send `X-NyxID-Turn-Trace-Contract: 1`. Request bodies and execution idempotency
+keys do not contain diagnostic IDs. With the switch disabled, capability
+requests and trace headers are absent and existing wire bodies are unchanged.
+Readers must support the optional provider capability field before writers are
+enabled; routing audit refuses to clear that reader floor while it is retained.
+
+The negotiated reader accepts the version-1 `nyxid_trace` annotation on a
+response snapshot and the ordered metadata event `response.nyxid_trace` for
+that same authenticated response. The annotation has exactly five fields:
+`version: 1`, canonical UUID-v4 `turn_id`, the matching lowercase 32-hex
+`trace_id`, a nonzero lowercase 16-hex `parent_span_id`, and canonical UUID-v4
+`ingress_request_id`. Invalid or conflicting diagnostic data cannot retarget
+execution, replace the first valid association, corrupt a retained execution
+digest, or initiate another send. The event never becomes model output.
+
+For a negotiated binding, different valid UUID-v4 values in response
+`X-NyxID-Trace-Id` and `X-Request-Id` establish the admitted turn and the server
+ingress request respectively. Equal values are a request-scoped fallback and
+establish no turn. Missing, duplicate or malformed values are coverage gaps.
+Headers carry no NyxID parent span: delivery preserves the canonical turn but
+does not invent a remote parent. A later valid full annotation supplies its
+own canonical parent when delivery has not already adopted the header context.
+Admission attempts record their own paired ingress span and, when a turn binds,
+a link to the server-issued request. They never delay headers or the first event
+to obtain a turn.
+
+Live delivery retains the association in its existing per-turn context. Routed
+recovery retains it in the existing encrypted projection, under the existing
+writer fence and expiry. It adds no correlation collection or trace-only
+database operation. Old projections omit the field; malformed optional trace
+metadata is a coverage gap. Only negotiated top-level `nyxid_trace` and
+`response.nyxid_trace` annotation fields are excluded from execution frame
+digests. Output, identity, cursor and all other metadata integrity checks remain
+unchanged, and a stored diagnostic digest mode remains readable after disabling
+the writer.
+
+Enabling the writer raises the rollback reader floor for retained encrypted
+projections as well as channel bindings. Every serving and rollback binary must
+accept the optional projection association and diagnostic digest mode. Clearing
+a binding capability or disabling new tracing does not remove metadata from
+already admitted responses; those responses retain their original source turn
+through the existing recovery, expiry and purge paths. An older binary that
+rejects these projection fields is not a supported rollback target while such
+responses remain retained.
+
+NyxID companion activation is an owner prerequisite. Read-only inspection of
+NyxID at `da70dddc9ad9a8de7026b4319909a6927cd2d3e1` confirms that binding PUT
+accepts generic JSON and ignores additional top-level capabilities; it neither
+persists nor echoes them. This applies to the
+[custom binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/handlers/nyxbot.rs#L4416),
+[ordinary binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/handlers/nyxbot.rs#L4476),
+and [shared-entry binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/services/platform_entry_gateway_service.rs#L412).
+That version therefore remains unnegotiated even if the gateway switch is
+enabled. The CMA reader can ship before the companion; the owner must confirm
+the companion's persisted binding negotiation and response contract before
+activation. This contract does not establish deployed end-to-end coverage.
+
+Local throughput acceptance uses 16 concurrent turns and 2,048 turns per sample,
+with six alternating pairs through real local provider SSE and relay HTTP.
+The default OFF path must regress by less than 1% against `develop` with a
+zero-delay provider. Negotiated ON must regress by less than 1% against OFF
+with a 100 ms synthetic provider delay. Report the ON 10 ms result as well as
+zero-delay added p50/p99 latency and process CPU per turn, dropped records and
+external call counts. Synthetic delays are local acceptance fixtures; activation
+also requires the owner to re-measure against production provider latency when
+those metrics become available. That activation check does not block shipping
+the default-off CMA reader.
+
 ### Attachment block in turn input
 
 This subsection is informative: it describes text the gateway writes into
@@ -2766,7 +2956,7 @@ week 41: 1,204 orders
 and its provider is listed in the operator's `CMAEG_MEDIA_TOOL_PROVIDERS`
 (default `cma_codex`). Neither the conformance level nor the binding request
 proves that a provider installed the gateway MCP server, so the set is
-configured. Existing-agent bindings and other providers, such as `nyxbot`, are
+configured. Existing-agent bindings and providers omitted from that setting are
 never tool-bearing. Downloads additionally require the profile's `action_mode`
 to be `autonomous`. The first matching rule wins:
 
@@ -2857,7 +3047,33 @@ route. The first send may consume an unexpired single-use reply token; subsequen
 intentional sends use the channel key. Token selection happens after pacing; a
 claimed token is never replayed, including after event state cleanup.
 
-`CMAEG_NYXID_COMPLETE_REPLIES` selects a coordinated deployment mode:
+Telegram `nyxid_relay` also has the independent default-off switch
+`CMAEG_NYXID_COMMONMARK_RELAY_ENABLED`. When true, original CommonMark text is
+sent once to `/api/v1/channel-relay/reply/commonmark` or, for an explicitly
+requested and authorized thread target, `/thread-reply/commonmark`. The gateway
+does not escape Markdown or split it into platform parts. This applies to
+ordinary text, interactive keyboards and media captions, preserving the sealed
+target, attachment data and `reply.metadata.reply_markup`. NyxID converts and
+splits; multipart keyboard/media shapes may be refused by NyxID before sending.
+Native Telegram, other relay platforms and initiated messages keep their
+existing contracts. This switch takes precedence over the legacy/complete
+ordinary Telegram rendering choices below.
+
+Ordinary and keyboard updates use `/api/v1/channel-relay/reply/update/commonmark`
+with the retained exact outbound/platform identifiers. CommonMark source length
+is bounded by the request budget, while NyxID validates converted platform
+length and the single-message edit constraint. A 200 alone does not confirm an
+edit: its `upstream_message_id` must match and `edited_at` must be RFC 3339.
+The gateway retains durable send and interaction barriers. Failed, malformed or
+lost replies remain unknown, without a new reference, automatic replay or
+fallback to another endpoint. A possibly accepted prefix cannot be classified
+as total rejection. The existing receipt does not expose per-part completion;
+provider stream completion does not supply that missing platform evidence.
+No public receipt fields or enums change. Activation requires the
+[deployed counterpart checks](CMAEG_Operations.md#commonmark-relay-rollout).
+
+With CommonMark disabled, `CMAEG_NYXID_COMPLETE_REPLIES` selects the ordinary
+relay deployment mode:
 
 - **`false` (default, legacy compatibility).** CMAEG escapes and chunks ordinary
   relay text at 4000 UTF-16 units and sends each part independently. A bare 429

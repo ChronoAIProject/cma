@@ -143,3 +143,59 @@ fn native_target_preserves_original_chat_without_platform_credentials() {
             .is_err());
     }
 }
+
+#[test]
+fn every_advertised_native_target_round_trips_through_the_seal() {
+    let ring = keys(1);
+    let variants = [
+        ReplyAddress::Discord {
+            bot_id: "123".into(),
+            channel_id: "456".into(),
+            message_id: "789".into(),
+            thread_id: None,
+        },
+        ReplyAddress::Discord {
+            bot_id: "123".into(),
+            channel_id: "456".into(),
+            message_id: "789".into(),
+            thread_id: Some("456".into()),
+        },
+        ReplyAddress::Whatsapp {
+            app_id: "12345".into(),
+            waba_id: "23456".into(),
+            phone_number_id: "34567".into(),
+            recipient_id: "447700900123".into(),
+            message_id: "wamid.original".into(),
+        },
+        ReplyAddress::WhatsappGroup(cmaeg_core::channel::whatsapp::WhatsappGroupReply {
+            revision: "ab".repeat(32),
+            app_id: "12345".into(),
+            waba_id: "23456".into(),
+            phone_number_id: "34567".into(),
+            group_id: "opaque+/==".into(),
+            participant_id: "447700900123".into(),
+            message_id: "wamid.original".into(),
+        }),
+    ];
+    for reply in variants {
+        let mut value = payload(&ring);
+        value.event.reply = reply.clone();
+        let target = ReplyTargetRef::seal(&value, &ring).unwrap();
+        assert_eq!(target.open(&ring, 300).unwrap().payload.event.reply, reply);
+        assert!(matches!(target.open(&ring, 86500), Err(OpenError::Expired)));
+        match &mut value.event.reply {
+            ReplyAddress::Discord { bot_id, .. } => *bot_id = "invalid".into(),
+            ReplyAddress::Whatsapp {
+                phone_number_id, ..
+            } => *phone_number_id = "invalid".into(),
+            ReplyAddress::WhatsappGroup(group) => group.revision = "invalid".into(),
+            _ => unreachable!(),
+        }
+        assert!(matches!(
+            ReplyTargetRef::seal(&value, &ring)
+                .unwrap()
+                .open(&ring, 300),
+            Err(OpenError::Format)
+        ));
+    }
+}

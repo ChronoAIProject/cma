@@ -44,7 +44,9 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub runtime_loss_bounded_proof_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub retry_single_marker_enabled: bool,
     pub bounded_live_fragments: bool,
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
@@ -89,8 +91,10 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
         )
+        .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
+        .with_platform_spend(dependencies.store.clone())
         .with_failed_runtime_recovery(Arc::new(
             layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                 dependencies.store.clone(),
@@ -158,6 +162,7 @@ impl SandboxLifecycleComposition {
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
+            .with_retry_single_marker(config.retry_single_marker_enabled)
             .with_managed_documents(config.managed_documents_enabled)
             .with_access_transport_migration(config.access_transport_migration),
         );

@@ -40,6 +40,32 @@ full writer fallbacks. Keep every marker, event and receipt. Never remove a mark
 to authorize an old image. An older-image rollback needs its own compatibility
 qualification; percentage 0 is not evidence that the old binary is safe.
 
+### Checked-in stage controls
+
+`infra/api/agent-log-stages/{off,10,50,100}.json` are explicit ConfigMap merge
+patches for the release controller. They are not included by the base deployment;
+the base ConfigMap remains at 0. Each patch clears the old explicit ID cohort,
+sets the fleet percentage, and closes the independent process switches for
+segment adoption and capacity-recovery admission. Runtime recovery observation,
+durable gates and optional response/transcript/usage readers are separate controls.
+The application configuration tests parse every patch through the actual parsers.
+
+After the release owner approves the image and stage, the controller can patch
+`chrono-bot/cma-agent-manager` with the selected file (`kubectl patch configmap
+cma-agent-manager -n chrono-bot --type merge --patch-file <stage-file>`), then
+perform its reviewed same-image API rollout. These files are patch payloads, not
+standalone resources for `kubectl apply`. Check explicit Deployment environment
+overrides before rollout and verify effective values on every serving process.
+Applying a ConfigMap patch alone does not change an existing process.
+
+Use `off.json` for the fleet kill switch. If segmented adoption or recovery was
+separately enabled, close its durable admission gate and drain accepted
+preparations according to [segmentation operations](CMA_Log_Segments_Operations.md)
+before applying these process controls. Already committed recovery work, exact
+receipt reconciliation, compatible reads and cleanup remain available. Keep the
+qualified reader configuration and original history; an off patch does not lower
+the compatible-image floor or prove that an uncertain operation aborted.
+
 ## Lazy preparation and failure isolation
 
 Before a selected ordinary message reservation, conversation commit or

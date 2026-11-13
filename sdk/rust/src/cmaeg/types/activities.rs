@@ -2,7 +2,7 @@
 use super::{
     AcceptedStatus, ActorKind, AttachmentKind, AttachmentSource, BindingId, ChannelId, ConsumerId,
     ConsumerName, ConversationId, ConversationKind, EventId, EventRef, MessageRef, ProblemCode,
-    QuotedMessage, ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts,
+    QuotedMessage, ReplyChoice, RuleId, SourceId, SourceKind, ThreadFacts, UpstreamRefusal,
 };
 use serde::{Deserialize, Serialize};
 
@@ -460,6 +460,9 @@ pub struct Problem {
     /// Wire field `type`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
+    /// Safe provider startup refusal metadata; absent on older gateways.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<UpstreamRefusal>,
 }
 
 /// CMAEG `PublicActivity` wire shape.

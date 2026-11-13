@@ -1,4 +1,6 @@
 //! Typed management, event and tool protocol documents.
+mod provider_binding;
+pub use provider_binding::*;
 mod channels;
 pub use channels::*;
 mod partitions;
@@ -20,6 +22,8 @@ pub use primitives::*;
 mod attachment_source;
 pub use attachment_source::*;
 mod activities;
+mod upstream_refusal;
+pub use upstream_refusal::*;
 mod quoted_message;
 pub use activities::*;
 pub use quoted_message::*;
