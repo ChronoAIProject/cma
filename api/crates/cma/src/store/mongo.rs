@@ -53,20 +53,21 @@ impl MongoStores {
         deployment_limit: u16,
         writes_enabled: bool,
     ) -> Result<Self, StoreError> {
-        self.admission_ceilings = Arc::new(
-            super::MongoAdmissionCeilingsStore::open(
-                &self.client,
-                &self.database,
-                deployment_limit,
-            )
-            .await?,
-        );
         if writes_enabled {
             self.registration_capacity = Arc::new(
                 super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
                     .await?,
             );
         }
+        self.admission_ceilings = Arc::new(
+            super::MongoAdmissionCeilingsStore::open(
+                &self.client,
+                &self.database,
+                deployment_limit,
+            )
+            .await?
+            .with_activation(self.registration_capacity.activation_observation()),
+        );
         Ok(self)
     }
 
@@ -170,10 +171,13 @@ impl MongoStores {
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let admission_control =
             Arc::new(MongoAdmissionControlStore::open(&client, database).await?);
-        let admission_ceilings =
-            Arc::new(super::MongoAdmissionCeilingsStore::open(&client, database, 0).await?);
         let registration_capacity =
             Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
+        let admission_ceilings = Arc::new(
+            super::MongoAdmissionCeilingsStore::open(&client, database, 0)
+                .await?
+                .with_activation(registration_capacity.activation_observation()),
+        );
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);

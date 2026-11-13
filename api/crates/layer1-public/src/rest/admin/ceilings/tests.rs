@@ -9,6 +9,18 @@ struct PendingHomes(MemoryAdmissionCeilingsStore);
 
 #[async_trait]
 impl AdmissionCeilingsStore for PendingHomes {
+    async fn reconcile_pending_homes(
+        &self,
+        observed: u64,
+        actor: &SubjectId,
+        reason: &str,
+        dry_run: bool,
+        now: u64,
+    ) -> Result<layer2_core::admission::PendingHomesReconciliation, StoreError> {
+        self.0
+            .reconcile_pending_homes(observed, actor, reason, dry_run, now)
+            .await
+    }
     async fn read(&self) -> Result<AdmissionCeilingsState, StoreError> {
         self.0.read().await
     }

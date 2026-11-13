@@ -62,7 +62,16 @@ impl MongoAdmissionCeilingsStore {
             let result = self.read_history_in(&mut session).await;
             match result {
                 Ok(read) => match commit_transaction(&mut session).await {
-                    CommitOutcome::Committed => return Ok(read),
+                    CommitOutcome::Committed => {
+                        super::super::pending_launch_homes::report_drift(
+                            &super::super::pending_launch_homes::Observation {
+                                pending: read.counts.pending_launch_homes,
+                                expected: read.counts.expected_pending_launch_homes,
+                                drift: read.counts.pending_launch_homes_drift,
+                            },
+                        );
+                        return Ok(read);
+                    }
                     CommitOutcome::Retry(_) => continue,
                     CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => {
                         return Err(unavailable(&format!(

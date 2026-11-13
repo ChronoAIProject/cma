@@ -78,3 +78,30 @@ fn store_failed(error: StoreError) -> CoreError {
         error => CoreError::RuntimeUnavailable(error.to_string()),
     }
 }
+
+impl AdmissionCeilingsService {
+    pub async fn reconcile_pending_homes(
+        &self,
+        caller: &Caller,
+        observed_pending: u64,
+        reason: &str,
+        dry_run: bool,
+    ) -> Result<crate::admission::PendingHomesReconciliation, CoreError> {
+        caller.require(Capability::ConfigurePlatform)?;
+        if !self.writes_enabled {
+            return Err(CoreError::AdmissionCeilingsWritesUnavailable);
+        }
+        if !crate::admission::valid_reason(reason) || observed_pending > i64::MAX as u64 {
+            return Err(CoreError::InvalidRequest(
+                "invalid pending home correction".into(),
+            ));
+        }
+        let now = crate::seconds_from_rfc3339(&crate::now_rfc3339()).ok_or_else(|| {
+            CoreError::RuntimeUnavailable("admission clock is unavailable".into())
+        })?;
+        self.store
+            .reconcile_pending_homes(observed_pending, &caller.subject, reason, dry_run, now)
+            .await
+            .map_err(store_failed)
+    }
+}

@@ -8,7 +8,7 @@ pub(crate) enum Error {
 }
 
 impl Error {
-    pub(super) fn into_store_error(self) -> layer2_core::StoreError {
+    pub(in crate::store) fn into_store_error(self) -> layer2_core::StoreError {
         match self {
             Self::Driver(error) => {
                 super::unavailable(&format!("read capacity activation: {error}"))

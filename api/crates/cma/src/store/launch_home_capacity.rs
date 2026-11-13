@@ -180,7 +180,7 @@ pub(in crate::store) async fn release(
     Ok(())
 }
 
-async fn fence(
+pub(in crate::store) async fn fence(
     admissions: &Collection<Document>,
     session: &mut ClientSession,
 ) -> Result<(), Error> {
