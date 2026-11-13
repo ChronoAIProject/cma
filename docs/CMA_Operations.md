@@ -745,6 +745,18 @@ not prove that a transaction failed to commit. Use the durable reconciliation
 result for that distinction. Timing instrumentation grants no authority and does
 not change startup checks, retries or readiness criteria.
 
+The pinned runtime defers the advisory command catalogue and goal snapshot on
+ACP session load until required preparation and complete history delivery have
+finished. Authentication, forced skill refresh, model/tool readiness and prepared
+close-before-load still gate completion. Metadata may arrive after the load
+response; first-turn skill and goal execution use their native paths. Deferred
+publication checks the exact session, generation and close state. At most 32
+session jobs run, with one latest replacement coalesced per session; overflow
+skips advisory publication and reports a fixed diagnostic. An in-flight read can
+finish after close, but cannot publish into a closed or replaced session. This
+behavior requires the updated runtime image; an API-only rollout does not change
+an existing Sandbox's provider bundle.
+
 Native inspection timings separate exclusive HTTP checkout, the authority graph,
 runtime policy, the process-status exchange and the fresh post-status home read.
 The graph and policy reads overlap. They and the status exchange are nested
@@ -2831,6 +2843,14 @@ existing deadlines. They establish no end-to-end improvement on their own.
 
 ### Initial native readiness retry
 
+Claim-assignment observation has one five-second deadline. Pending reads start
+at least 250 ms apart, with response time counting toward that interval. Reads
+never overlap or catch up after a slow response, and no new read starts at the
+deadline. This allows up to 20 reads per window; delayed responses can use more
+of that budget than a full 250 ms sleep after each response. Include Kubernetes
+request load when measuring this observation change. It neither changes the
+retry switch nor shortens volume attachment or runtime boot.
+
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
 home readiness or create-bind deadline reached after validated Pending can use a
 one-second retry after observation completion. An outstanding read or returned
@@ -2897,3 +2917,17 @@ Existing streams reconnect with their last durable cursor under the unchanged
 SSE contract. Sandbox state and ongoing turns do not change. Reordered live
 fragments, live delivery preceding durable catch-up, or delayed revocation
 closure are rollback signals.
+
+### Retained usage view controls
+
+The activation and rollback packet is [CMA Usage Report Views](CMA_Usage_Report_Views.md).
+
+| Configuration | Default and behavior |
+| --- | --- |
+| `CHRONO_USAGE_REPORT_VIEWS_ENABLED` | `false`. Allows the new immutable retained-report writer only after the complete compatible reader/worker deployment and individual owner approval. Existing report endpoints remain available. |
+| `CHRONO_USAGE_REPORT_WARMER_ENABLED` | `false`. Separately approved background materialization; requires enabled views and explicit scheduling scopes. Uses existing leased workers and admission budgets. |
+| `CHRONO_USAGE_REPORT_FRESH_SECONDS` | `300`, bounded 60–3600 seconds. A committed snapshot older than this is returned as stale and may enqueue one replacement. |
+| `CHRONO_USAGE_REPORT_RETAIN_SECONDS` | `86400`, bounded 3600–86400 seconds. Fixed before children are written; Ready expiry is never extended in place. Must exceed freshness. |
+| `CHRONO_USAGE_REPORT_WARM_SECONDS` | `300`, bounded 60–3600 seconds. Scheduling cadence, with missed ticks skipped and one refresh coalesced per semantic key. |
+| `CHRONO_USAGE_REPORT_WARM_SCOPES` | `[]`. Strict JSON array of at most eight operator-approved `{principal, admin, sandbox_id}` scheduling scopes, at most 8192 bytes. No credentials. A canary Sandbox must currently belong to the named principal. Unfiltered Everyone requires explicit expansion approval. |
+| `CHRONO_USAGE_REPORT_VIEW_SCOPES` | `[]`. Required explicit writer canary cohort when retained views are enabled; at most eight strict `{principal, admin, sandbox_id}` scopes and 8192 bytes. A named Sandbox restricts new retained admission to that exact selected Sandbox. Unlisted callers/selections receive `report_view_disabled` and retain the old workflow. Removing a cohort stops new latest-view work but preserves compatible explicit report reads and accepted-job draining. Warm scopes must be contained in this cohort. |

@@ -181,7 +181,7 @@ among series present in both scrapes. New series without a baseline are excluded
 from that share. This is residual work after batch 2, not an activation result
 for bounded settlement or a CPU-share attribution.
 
-The [machine-readable local receipt](evidence/capacity-settlement-20261113.json)
+The [machine-readable local receipt](../.github/evidence/capacity-settlement-20261113.json)
 records the paired Mongo 8.0.13 measurements. Capacity-marker fixtures contain exactly 10,001 retained
 rows, confirmed by a separate collection count. One first full audit remains;
 subsequent zero-entry retries produce identical Agent and integrity documents:
