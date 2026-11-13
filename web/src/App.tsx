@@ -12,7 +12,7 @@ import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
-import { lazy, Suspense, useLayoutEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Presence } from './ui/Presence';
 import { IdentityNotice, IdentityError } from './auth/IdentityNotice';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
@@ -41,6 +41,17 @@ const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
 export function App() {
   const browserRouter = useAppRouter();
   const { state: identity } = useAuth();
+  const identityScope =
+    identity.status === 'authenticated'
+      ? `${identity.user.id}:${identity.user.capabilities.join(',')}`
+      : identity.status;
+  const lastIdentityScope = useRef(identityScope);
+  const [authEpoch, setAuthEpoch] = useState(0);
+  useEffect(() => {
+    if (lastIdentityScope.current === identityScope) return;
+    lastIdentityScope.current = identityScope;
+    setAuthEpoch((value) => value + 1);
+  }, [identityScope]);
   const { navigate } = browserRouter;
   const client = useCmaClient();
   const usageOpen = browserRouter.route.kind === 'usage';
@@ -52,6 +63,7 @@ export function App() {
         <UsageDialog
           key={identity.user.id}
           client={client.usageViews}
+          principal={`${identity.user.id}:${identity.user.capabilities.join(',')}:${authEpoch}`}
           open={usageOpen}
           appearanceNotice={browserRouter.usageAppearanceNotice}
           onClose={() => browserRouter.closeUsage?.()}
@@ -101,7 +113,7 @@ export function App() {
     return (
       <div className="service-shell">
         <IdentityNotice />
-        <AgentApp router={router} />
+        <AgentApp router={router} authEpoch={authEpoch} />
         {usageDialog}
       </div>
     );
@@ -122,6 +134,7 @@ export function App() {
         <ServiceBody visible={agentVisible}>
           <AgentApp
             router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
+            authEpoch={authEpoch}
             onServiceNavigate={navigateService}
             {...sidebar}
           />
@@ -156,11 +169,13 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
 }
 function AgentApp({
   router,
+  authEpoch,
   sidebarCollapsed,
   onSidebarCollapsedChange,
   onServiceNavigate,
 }: {
   readonly router: AppRouter;
+  readonly authEpoch: number;
   readonly sidebarCollapsed?: boolean;
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   readonly onServiceNavigate?: (route: AppRoute) => void;
@@ -230,6 +245,7 @@ function AgentApp({
       <Console
         key={state.user.id}
         user={state.user}
+        authEpoch={authEpoch}
         route={router.route}
         onNavigate={router.navigate}
         hierarchyRevision={hierarchyRevision}

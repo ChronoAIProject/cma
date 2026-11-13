@@ -13,9 +13,11 @@ import type { OperatorClient } from './client';
 export function Sandboxes({
   client,
   canControl,
+  principal,
 }: {
   readonly client: OperatorClient;
   readonly canControl: boolean;
+  readonly principal?: string;
 }) {
   const measured = useMeasuredUsage(client.readMeasuredUsage);
   const [selection, onSelection] = useUsageSelection(true);
@@ -60,6 +62,8 @@ export function Sandboxes({
         api={client.adminUsageMetrics}
         history={client.usage}
         admin
+        principal={principal}
+        forceOnMount={revision > 0}
         measured={measured}
         selection={selection}
         onSelection={onSelection}
