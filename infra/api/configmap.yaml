@@ -250,6 +250,8 @@ data:
   CHRONO_SERVER_RATE_CONTROL_PER_MINUTE: "120"
   # Activate only after the separate recovery/control policy review.
   CHRONO_SERVER_RATE_CONTROL_ENABLED: "false"
+  # Prepaid Default-tier leases require a separate owner activation decision.
+  CHRONO_SERVER_RATE_DEFAULT_LEASE_ENABLED: "false"
   # Separate policy activation after exact-route classification review.
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # Per-process public stream lifetimes; zero keeps admission disabled.
