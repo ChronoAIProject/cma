@@ -249,11 +249,17 @@ async fn reconcile_claim(
     {
         return Ok(false);
     }
-    Ok(
-        super::agent_titles::transcript_at_snapshot(store, &agent, &mut session)
-            .await?
-            .is_some(),
+    let segmented = super::agent_log_segments::read_format(&document)
+        .map_err(map_store_error)?
+        .is_some();
+    Ok(super::agent_titles::transcript_at_snapshot_with_format(
+        store,
+        &agent,
+        &mut session,
+        segmented,
     )
+    .await?
+    .is_some())
 }
 
 pub(super) fn current_agent_filter(agent: &Agent) -> Document {
