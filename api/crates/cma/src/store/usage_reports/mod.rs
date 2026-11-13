@@ -2,6 +2,7 @@
 mod admission;
 mod budget;
 mod charts;
+mod control;
 mod diagnostics;
 pub(crate) mod inventory;
 mod options;
@@ -114,29 +115,6 @@ impl ReportingStore {
     }
     pub(crate) fn check_circuit(&self, now: u64) -> Result<()> {
         budget::check(&self.circuit, now)
-    }
-    pub(crate) async fn lease(&self, key: &str, holder: &str, seconds: u64) -> Result<bool> {
-        let now = now();
-        let result = self
-            .collection(CONTROL)
-            .find_one_and_update(
-                doc! {"_id":key,"$or":[{"lease_until":{"$lte":now as i64}},{"holder":holder}]},
-                doc! {"$set":{"holder":holder,"lease_until":(now+seconds) as i64}},
-            )
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?;
-        Ok(result.is_some())
-    }
-    pub(crate) async fn release(&self, key: &str, holder: &str) -> Result<()> {
-        self.collection(CONTROL)
-            .update_one(
-                doc! {"_id":key,"holder":holder},
-                doc! {"$set":{"lease_until":0_i64}},
-            )
-            .await
-            .map_err(unavailable)?;
-        Ok(())
     }
 }
 

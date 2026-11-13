@@ -8,6 +8,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
 };
+mod replicas;
 
 fn event() -> UsageEvent {
     let allocation = Allocation {
@@ -119,26 +120,42 @@ async fn delivery_retries_a_frozen_provider_request_after_ambiguous_acceptance_a
         "billing_delivered": false, "billing_retry_at": 0_i64, "billing_lease_until": 0_i64,
     }).await.unwrap();
     let exporter = Exporter::new(store.clone(), config(&api_url)).unwrap();
-    let first = store.claim_usage_delivery(100).await.unwrap().unwrap();
-    assert!(store.claim_usage_delivery(100).await.unwrap().is_none());
+    let first = store.claim_usage_delivery(now()).await.unwrap().unwrap();
+    assert!(store.claim_usage_delivery(now()).await.unwrap().is_none());
     assert_eq!(
         exporter.deliver(&first).await,
-        Err("provider_rejected_events")
+        Err("provider_outcome_unknown")
     );
     // Crash after the provider may have accepted, before any local acknowledgement.
-    let restarted = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
-    let second = restarted.claim_usage_delivery(221).await.unwrap().unwrap();
+    let other_client =
+        mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    let restarted = Arc::new(MongoSandboxStore::open(&other_client, &name).await.unwrap());
+    database
+        .collection::<Document>("sandbox_usage_events")
+        .update_one(
+            doc! {"_id":event.transaction_id()},
+            doc! {"$set":{"billing_lease_until":0_i64}},
+        )
+        .await
+        .unwrap();
+    let second = restarted
+        .claim_usage_delivery(now())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(second.payload.is_some());
     let mut changed = config(&api_url);
     changed.plan_code = "changed-default".into();
     let exporter = Exporter::new(restarted.clone(), changed).unwrap();
     exporter.deliver(&second).await.unwrap();
     restarted
-        .finish_usage_delivery(&second, 222, None)
+        .finish_usage_delivery(&second, now(), None)
         .await
         .unwrap();
     assert!(restarted
-        .claim_usage_delivery(1000)
+        .claim_usage_delivery(now() + 1000)
         .await
         .unwrap()
         .is_none());
