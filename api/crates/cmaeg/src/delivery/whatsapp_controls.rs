@@ -158,11 +158,15 @@ impl Sender {
                 Ok(permit) => permit,
                 Err(error) => return (refused(rendering, error.outcome()), effects),
             };
-            let uploaded = self
-                .relay
-                .whatsapp
-                .upload_media(credentials, phone_number_id, upload)
-                .await;
+            let uploaded = super::trace::native::part(
+                0,
+                true,
+                self.relay
+                    .whatsapp
+                    .upload_media(credentials, phone_number_id, upload),
+                super::trace::native::whatsapp_write,
+            )
+            .await;
             drop(permit);
             ctx.gate.progress();
             match uploaded {
@@ -198,18 +202,20 @@ impl Sender {
             Ok(permit) => permit,
             Err(error) => return (refused(rendering, error.outcome()), effects),
         };
-        let sent = self
-            .relay
-            .whatsapp
-            .send_interactive(
+        let sent = super::trace::native::part(
+            0,
+            false,
+            self.relay.whatsapp.send_interactive(
                 credentials,
                 phone_number_id,
                 recipient_id,
                 message_id,
                 &prepared,
                 uploaded,
-            )
-            .await;
+            ),
+            super::trace::native::whatsapp_write,
+        )
+        .await;
         drop(permit);
         ctx.gate.progress();
         let platform_id = match sent {
