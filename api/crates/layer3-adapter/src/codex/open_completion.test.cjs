@@ -63,7 +63,8 @@ function fixture() {
 }
 
 test("open completion patch is pinned, reversible, and wired after full outer setup", () => {
-  const installed = readFileSync(process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath, "utf8");
+  const installed = require("./deferred_session_metadata.cjs").withoutDeferredSessionMetadata(
+    readFileSync(process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath, "utf8"));
   const base = withoutOpenCompletion(installed);
   assert.equal(createHash("sha256").update(base).digest("hex"), sourceSha256);
   assert.equal(openCompletion(base), installed);

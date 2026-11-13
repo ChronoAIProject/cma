@@ -745,6 +745,18 @@ not prove that a transaction failed to commit. Use the durable reconciliation
 result for that distinction. Timing instrumentation grants no authority and does
 not change startup checks, retries or readiness criteria.
 
+The pinned runtime defers the advisory command catalogue and goal snapshot on
+ACP session load until required preparation and complete history delivery have
+finished. Authentication, forced skill refresh, model/tool readiness and prepared
+close-before-load still gate completion. Metadata may arrive after the load
+response; first-turn skill and goal execution use their native paths. Deferred
+publication checks the exact session, generation and close state. At most 32
+session jobs run, with one latest replacement coalesced per session; overflow
+skips advisory publication and reports a fixed diagnostic. An in-flight read can
+finish after close, but cannot publish into a closed or replaced session. This
+behavior requires the updated runtime image; an API-only rollout does not change
+an existing Sandbox's provider bundle.
+
 Native inspection timings separate exclusive HTTP checkout, the authority graph,
 runtime policy, the process-status exchange and the fresh post-status home read.
 The graph and policy reads overlap. They and the status exchange are nested
