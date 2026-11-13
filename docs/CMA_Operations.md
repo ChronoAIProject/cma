@@ -2528,7 +2528,7 @@ exact `true` or `false`. With `true`, Cookie authentication joins the browser
 handle and its subject by their indexed keys in one Mongo aggregate. Both
 records retain their existing schema, revocation and token validation. Expired
 logins are rejected before interpreting subject authority. The post-verification
-custody check and the additional `/auth/session` logout check still run.
+custody check and final durable logout check still run on every browser request.
 
 With the final logout recheck, authenticated Cookie requests use three identity
 commands with the join and four without it; `/auth/session` adds its settings
