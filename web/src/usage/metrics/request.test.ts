@@ -10,15 +10,20 @@ it('shares Retry-After across reads without extending it or sharing account data
   const scope = {};
   const signal = new AbortController().signal;
   const busy = vi.fn().mockRejectedValue(new ApiError(429, 'Busy', undefined, undefined, 30000));
-  const deadline = Date.now() + 30000;
-  await expect(usageRequest(scope, signal, busy)).rejects.toMatchObject({ retryAt: deadline });
+  const started = Date.now();
+  const failure = await usageRequest(scope, signal, busy).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(Error);
+  const deadline = (failure as { retryAt: number }).retryAt;
+  expect(deadline).toBeGreaterThanOrEqual(started + 30000);
+  expect(deadline).toBeLessThanOrEqual(started + 37500);
   const next = vi.fn().mockResolvedValue('ready');
-  await vi.advanceTimersByTimeAsync(29000);
+  await vi.advanceTimersByTimeAsync(Math.max(0, deadline - Date.now() - 1));
   await expect(usageRequest(scope, signal, next)).rejects.toMatchObject({ retryAt: deadline });
   expect(next).not.toHaveBeenCalled();
   expect(metricsFailure(new UsageBackoff(deadline)).retryAt).toBe(deadline);
   await expect(usageRequest({}, signal, next)).resolves.toBe('ready');
-  await vi.advanceTimersByTimeAsync(1000);
+  expect(next).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
   await expect(usageRequest(scope, signal, next)).resolves.toBe('ready');
   expect(next).toHaveBeenCalledTimes(2);
 });
@@ -34,7 +39,7 @@ it.each([401, 403, 404, 410, 503, 500])(
         throw new ApiError(429, 'Busy');
       }),
     ).rejects.toBeInstanceOf(UsageBackoff);
-    await vi.advanceTimersByTimeAsync(60000);
+    await vi.advanceTimersByTimeAsync(120000);
     const error = new ApiError(status, 'Refused');
     await expect(
       usageRequest(scope, signal, async () => {

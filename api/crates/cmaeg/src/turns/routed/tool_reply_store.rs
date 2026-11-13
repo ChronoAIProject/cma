@@ -234,6 +234,9 @@ impl ReplyStore {
                 Admission::Unknown
             });
         }
+        if let Some(receipt) = self.exact_confirmation(&record, &operation, true).await? {
+            return Ok(Admission::Replay(receipt));
+        }
         if let Some(status) = self.unsettled(&record) {
             return Ok(if status == ToolReplyStatus::Pending {
                 Admission::Pending

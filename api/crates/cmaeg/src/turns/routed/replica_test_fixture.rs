@@ -38,16 +38,43 @@ pub(super) struct Harness {
 }
 impl Harness {
     pub async fn new() -> Self {
-        let database = Fixture::new().await;
-        let keys = database.keys();
-        let now = time::OffsetDateTime::now_utc().unix_timestamp();
-        let mut request = fixture::request(
+        let request = fixture::request(
             |v| {
                 v["routing"]["default_targets"] = serde_json::json!(["default"]);
                 v["secrets"]["telegram_bot_token"] = serde_json::json!("77:fixture-only");
             },
             fixture::message("replica tool fixture"),
         );
+        Self::with_request(request, false).await
+    }
+    pub async fn media() -> Self {
+        let mut activity = fixture::message("replica media fixture");
+        let cmaeg_core::activity::ActivityKind::Message { attachments, .. } = &mut activity.kind
+        else {
+            unreachable!()
+        };
+        attachments.push(serde_json::from_value(serde_json::json!({
+            "reference":"file","kind":"file","filename":"file.txt",
+            "source":{"type":"telegram","file_id":"fixture_file","file_unique_id":"fixture_unique"}
+        })).unwrap());
+        let request = fixture::request(
+            |v| {
+                v["routing"]["default_targets"] = serde_json::json!(["default"]);
+                v["provider"]["target"] =
+                    serde_json::json!({"type":"existing_agent","agent_id":"agt_existing"});
+                v["secrets"]["telegram_bot_token"] = serde_json::json!("77:fixture-only");
+            },
+            activity,
+        );
+        Self::with_request(request, true).await
+    }
+    async fn with_request(mut request: crate::ingress::launch::LaunchRequest, media: bool) -> Self {
+        let database = Fixture::new().await;
+        if media {
+            database.enable_media().await;
+        }
+        let keys = database.keys();
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let mut event = request
             .event_ref
             .open(&fixture::keys(), fixture::NOW)
@@ -152,10 +179,28 @@ impl Harness {
         let mut body = test_support::frozen(&self.plan, self.target(), &channel, 32);
         body.event_context.event_ref =
             FrozenTurn::event_ref(&self.plan, self.target(), &self.database.keys()).unwrap();
+        if !crate::turns::render_media::attachments(&self.plan.activity).is_empty() {
+            body.metadata.insert(
+                super::media_schedule::KEY.into(),
+                super::media_schedule::MediaSchedule::capture(
+                    &self.plan.activity,
+                    &Default::default(),
+                )
+                .unwrap()
+                .encode()
+                .unwrap(),
+            );
+        }
         journal
             .freeze(&mut lease, &self.plan, self.target(), &body)
             .await
             .unwrap();
+        if !crate::turns::render_media::attachments(&self.plan.activity).is_empty() {
+            MediaWorkIndex::new(journal.clone(), self.nodes[owner].plans())
+                .prepare(&self.plan, self.target(), &body)
+                .await
+                .unwrap();
+        }
         journal
             .transition(
                 &mut lease,

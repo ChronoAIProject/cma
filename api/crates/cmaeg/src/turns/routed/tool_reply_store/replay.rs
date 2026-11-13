@@ -32,20 +32,12 @@ impl ReplyStore {
                     Admission::Unknown
                 }));
             }
-        } else if let Some(attempt) = &record.tool {
-            if attempt.operation == operation {
-                if let Some(receipt) = &attempt.receipt {
-                    if matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }) {
-                        return self
-                            .0
-                            .receipts(operation, &record.owner, record.retained_until)
-                            .load(receipt)
-                            .await
-                            .map(|receipt| Some(Admission::Replay(receipt)))
-                            .map_err(|_| ExecutionError::Unavailable);
-                    }
-                }
-            }
+        }
+        if let Some(receipt) = self
+            .exact_confirmation(&record, operation, content_hash.is_some())
+            .await?
+        {
+            return Ok(Some(Admission::Replay(receipt)));
         }
         if let Some(status) = self.unsettled(&record) {
             return Ok(Some(if status == ToolReplyStatus::Pending {
@@ -55,5 +47,33 @@ impl ReplyStore {
             }));
         }
         Ok(record.closed.then_some(Admission::Closed))
+    }
+    // The OFF unkeyed writer stores the exact operation receipt only in tool.
+    // Enabling keyed custody cannot make that retained confirmation disappear.
+    // A matching operation is essential: confirmed_tool alone proves no intent.
+    pub(super) async fn exact_confirmation(
+        &self,
+        record: &Record,
+        operation: &str,
+        legacy_only: bool,
+    ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        let Some(attempt) = record.tool.as_ref().filter(|attempt| {
+            attempt.operation == operation && (!legacy_only || attempt.content_hash.is_none())
+        }) else {
+            return Ok(None);
+        };
+        let Some(receipt) = attempt
+            .receipt
+            .as_ref()
+            .filter(|receipt| matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }))
+        else {
+            return Ok(None);
+        };
+        self.0
+            .receipts(operation, &record.owner, record.retained_until)
+            .load(receipt)
+            .await
+            .map(Some)
+            .map_err(|_| ExecutionError::Unavailable)
     }
 }
