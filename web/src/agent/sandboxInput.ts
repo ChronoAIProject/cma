@@ -4,7 +4,7 @@ import type { CmaWebClient } from '../api/client';
 import type { AgentDetail, SandboxDetail } from '../api/types';
 import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
 import { bootstrapInputAllowed, revivalInputAllowed } from './bootstrap';
-import { readinessDelay } from './readinessWait';
+import { createPollDelay, sandboxPollKey } from '../sandbox/pollDelay';
 
 export interface SandboxInputAvailability {
   readonly allowed: boolean;
@@ -81,8 +81,7 @@ export function useSandboxInput(
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let visibilityEpoch = 0;
     let pollInterval = 5000;
-    let readinessAttempt = 0;
-    let readinessKey: string | undefined;
+    const readiness = createPollDelay();
     const markStale = () => {
       if (controller.signal.aborted) return;
       setObservation((current) => ({
@@ -158,14 +157,9 @@ export function useSandboxInput(
           });
           clearTimeout(expiry);
           expiry = setTimeout(markStale, 10000);
-          pollInterval = sandboxRefreshDelay(sandbox);
-          const key = JSON.stringify([sandbox.status, sandbox.lifecycle, sandbox.runtimeUpdate]);
-          readinessAttempt = key === readinessKey ? readinessAttempt + 1 : 0;
-          readinessKey = key;
           // The readiness cadence ends on a settled state. Keep the separate
           // five-second lifecycle check: Agent SSE has no full lifecycle fence.
-          if (pollInterval === 1500 && readinessAttempt > 0)
-            pollInterval = readinessDelay(readinessAttempt, 1500);
+          pollInterval = readiness.next(sandboxPollKey(sandbox), sandboxRefreshDelay(sandbox));
           timer = setTimeout(poll, pollInterval);
         })
         .catch((error: unknown) => {
