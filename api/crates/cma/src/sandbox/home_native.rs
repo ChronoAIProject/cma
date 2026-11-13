@@ -84,7 +84,11 @@ async fn observe_assignment(
         }
     })
     .await
-    .map_err(|_| AdapterError::Unavailable("native claim assignment remains pending".into()))?
+    .map_err(|_| {
+        AdapterError::NativeClaimNotReady(
+            layer3_adapter::agent_sandbox::NativeClaimGuardReason::TimedOut,
+        )
+    })?
 }
 
 pub(super) async fn next_cleanup(
