@@ -1417,18 +1417,29 @@ chunk. They are expected, not a fault, and need no repair.
 
 #### Media download links
 
-A media link is redeemed in a per-replica set before the download is checked
-any further. The set keeps a redeemed link's jti for ten minutes, the longest
-a link can live, and holds up to 16,384 entries (about 2 MiB). A replica
-mints at most 600 links per minute, so at most 6,000 of its links are live at
-once and the set never evicts one that is still live: a second use on the same
-replica is always refused with `410 media_link_used`. The set is not shared and does not survive a
-restart, so during a rollout surge, or after a restart, a link can be redeemed
-once more on another replica before it expires. That is the accepted bound:
-links expire within minutes and every request re-validates the channel, the
-binding, the agent key and the source, so rotating the agent key, switching
-the binding to guarded, or removing the source revokes every outstanding link
-at once on every replica.
+A media link is consumed by an atomic create in shared encrypted interaction
+storage before authority checks or source fetch. The record survives gateway
+restart and replica replacement and expires at the sealed link's deadline.
+Conflicts return `410 media_link_used`; storage failures or lost acknowledgements
+return `503 media_redemption_unavailable` without fetching or releasing bytes.
+The existing record transport uses create-only CAS; Gateway Mongo uses its
+unique record ID and majority write concern. No additional collection or index
+is required. A local cache retains up to 16,384 refusals (about 2 MiB) for ten
+minutes, but an empty or evicted cache never authorizes consumption.
+
+Each fresh attempt adds one indexed record create, retained for at most ten
+minutes, and one uncached channel authority read. At the existing maximum mint
+rate, each replica contributes at most 6,000 live redemption rows. Refused
+authority checks also consume their links. Changing the binding, agent key or
+source is checked from the backing channel record even when the serving
+replica's channel cache remains warm. An unreadable authority fails closed.
+No token, filename, source locator or bytes enter diagnostics.
+
+Before enabling native download issuance, drain serving binaries that only keep
+process-local redemption state and let their outstanding links expire (at most
+600 seconds). Keep the existing issuance switches off until the entire serving
+and rollback set understands the shared claim. Older binaries can ignore these
+rows, so a mixed fleet cannot provide the shared single-use guarantee.
 
 ### Media turn preparation
 
