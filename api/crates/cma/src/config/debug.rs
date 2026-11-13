@@ -27,6 +27,10 @@ impl std::fmt::Debug for Config {
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
             .field("activity_async_enabled", &self.activity_async_enabled)
+            .field(
+                "activity_operational_read_sampling_enabled",
+                &self.activity_operational_read_sampling_enabled,
+            )
             .field("default_profiles", &self.default_profiles)
             .field(
                 "agent_manager_sandbox_capacity",
