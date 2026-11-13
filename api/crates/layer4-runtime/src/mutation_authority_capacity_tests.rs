@@ -191,3 +191,120 @@ fn failure_to_sync_a_survivor_never_deletes_a_predecessor() {
 
 #[path = "mutation_authority_durability_tests.rs"]
 mod durability_tests;
+
+#[test]
+fn recovery_over_limit_authority_folds_without_losing_unsigned_fences_or_first_absent() {
+    let mut config = config("recovery-over-limit");
+    for fence in 1..=4097 {
+        seed(&config, fence, &add());
+    }
+    assert_eq!(
+        admit(&config, 4098, &add()).unwrap_err().code,
+        "mutation_ledger_capacity"
+    );
+    config.legacy_journal_recovery_enabled = true;
+    assert_eq!(recovery_fence(&config, &add()).unwrap(), Some(4097));
+    admit(&config, u64::MAX - 1, &add()).unwrap();
+    assert_eq!(records(&config).unwrap().len(), 1);
+    admit(&config, u64::MAX - 1, &remove()).unwrap();
+    admit(&config, u64::MAX, &remove()).unwrap();
+    let rows = records(&config).unwrap();
+    assert_eq!(rows.len(), 3);
+    assert!(rows
+        .iter()
+        .any(|r| r.disposition == Disposition::Absent && r.authority_fence == u64::MAX - 1));
+    assert_eq!(
+        admit(&config, u64::MAX - 1, &remove()).unwrap_err().code,
+        "mutation_authority_stale"
+    );
+    assert_eq!(
+        admit(&config, u64::MAX, &add()).unwrap_err().code,
+        "mutation_authority_retired"
+    );
+    // Original-format readers still understand the durable compacted fences.
+    assert_eq!(
+        crate::mutation_authority_v1::recovery_fence(&config, &remove()).unwrap(),
+        Some(u64::MAX)
+    );
+    std::fs::remove_dir_all(config.state_root).unwrap();
+}
+
+#[test]
+fn recovery_unpublished_authority_is_preserved_on_invalid_inventory_then_cleared_before_append() {
+    let mut config = config("recovery-temporary");
+    config.legacy_journal_recovery_enabled = true;
+    seed(&config, 1, &add());
+    let temporary = config
+        .state_root
+        .join("mutation-authority/.authority-crash.tmp");
+    std::fs::write(&temporary, b"{").unwrap();
+    crate::mutation_journal::capacity_tests::fill(&config, 1025);
+    let journal = config
+        .state_root
+        .join("runtime-mutations/.mutation-journal-partial.tmp");
+    std::fs::write(&journal, b"{").unwrap();
+    assert_eq!(
+        admit(&config, 2, &add()).unwrap_err().code,
+        "mutation_journal_corrupt"
+    );
+    assert!(temporary.exists());
+    assert_eq!(recovery_fence(&config, &add()).unwrap(), Some(1));
+    std::fs::remove_file(journal).unwrap();
+    admit(&config, 2, &add()).unwrap();
+    assert!(!temporary.exists());
+    assert_eq!(recovery_fence(&config, &add()).unwrap(), Some(2));
+    std::fs::remove_dir_all(config.state_root).unwrap();
+}
+
+#[test]
+fn recovery_over_limit_prune_failure_keeps_maximum_and_blocks_new_fence_until_sync() {
+    let mut config = config("recovery-fold-crash");
+    config.legacy_journal_recovery_enabled = true;
+    for fence in 1..=4097 {
+        seed(&config, fence, &add());
+    }
+    let next = Record::new(&config, u64::MAX, &add()).inventory_name(&config);
+    {
+        let _fault = fold::fault::arm(
+            Some((config.state_root.join("mutation-authority"), 1)),
+            next.clone(),
+        );
+        assert_eq!(
+            admit(&config, u64::MAX, &add()).unwrap_err().code,
+            "mutation_authority_unavailable"
+        );
+        assert!(!next.exists());
+        assert_eq!(recovery_fence(&config, &add()).unwrap(), Some(4097));
+    }
+    admit(&config, u64::MAX, &add()).unwrap();
+    assert_eq!(recovery_fence(&config, &add()).unwrap(), Some(u64::MAX));
+    assert_eq!(records(&config).unwrap().len(), 1);
+    std::fs::remove_dir_all(config.state_root).unwrap();
+}
+
+#[test]
+fn recovery_over_limit_hidden_identity_conflict_is_not_folded_away() {
+    let mut config = config("recovery-fold-conflict");
+    config.legacy_journal_recovery_enabled = true;
+    for fence in 1..=4097 {
+        seed(&config, fence, &add());
+    }
+    let changed = Operation::add_worktree(&WorktreeRequest::new(
+        "worktree:project:agent:add:v1",
+        "project",
+        "agent",
+        "b".repeat(40),
+    ));
+    seed(&config, 100, &changed);
+    assert_eq!(
+        admit(&config, u64::MAX, &remove()).unwrap_err().code,
+        "mutation_authority_corrupt"
+    );
+    assert_eq!(
+        std::fs::read_dir(config.state_root.join("mutation-authority"))
+            .unwrap()
+            .count(),
+        4097
+    );
+    std::fs::remove_dir_all(config.state_root).unwrap();
+}

@@ -1,40 +1,42 @@
 //! Shared admission for optional Mongo work. Foreground work never waits here.
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
 
 use axum::{extract::Request, middleware::Next, response::Response};
-use layer2_core::sandbox::store::SandboxStoreError;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 mod work;
 pub(crate) use work::BackgroundWork;
+mod reservation;
+use reservation::Reservation;
 
 const BACKGROUND_CONCURRENCY: usize = 2;
 static SHARED: LazyLock<Arc<BackgroundBudget>> = LazyLock::new(BackgroundBudget::new);
-static SANDBOX_RECONCILIATION: LazyLock<BackgroundWork> = LazyLock::new(|| {
-    BackgroundWork::new(
-        shared(),
-        "sandbox_reconciliation",
-        Duration::from_secs(30),
-        Duration::from_secs(15),
-    )
-});
 
 #[derive(Default)]
 struct Priority {
     foreground: usize,
+    reserved: usize,
 }
 
 pub(crate) struct BackgroundBudget {
     slots: Arc<Semaphore>,
     priority: Mutex<Priority>,
+    capacity: usize,
+    _reservation: Option<Reservation>,
 }
 
 impl BackgroundBudget {
     pub(crate) fn new() -> Arc<Self> {
+        Self::with_concurrency(BACKGROUND_CONCURRENCY)
+    }
+
+    pub(crate) fn with_concurrency(capacity: usize) -> Arc<Self> {
+        assert!(capacity > 0, "background work needs progress capacity");
         Arc::new(Self {
-            slots: Arc::new(Semaphore::new(BACKGROUND_CONCURRENCY)),
+            slots: Arc::new(Semaphore::new(capacity)),
             priority: Mutex::new(Priority::default()),
+            capacity,
+            _reservation: None,
         })
     }
 
@@ -42,8 +44,10 @@ impl BackgroundBudget {
         let priority = self.priority.lock().unwrap();
         // While foreground work runs, admit at most one new background chain.
         // Existing work is not preempted: its durable effect may be uncertain.
-        // Retaining one slot for background progress avoids starving recovery.
-        if priority.foreground > 0 && self.slots.available_permits() <= 1 {
+        // A reserved lane owns its capacity separately; count only unreserved
+        // slots here so foreground traffic still permits one shared chain.
+        let available_capacity = self.capacity - priority.reserved;
+        if priority.foreground > 0 && self.slots.available_permits() < available_capacity {
             return None;
         }
         self.slots.clone().try_acquire_owned().ok()
@@ -72,17 +76,7 @@ pub(crate) async fn interactive_request(request: Request, next: Next) -> Respons
     next.run(request).await
 }
 
-pub(crate) async fn sandbox_reconciliation<F>(
-    operation: impl FnOnce() -> F,
-) -> Result<(), SandboxStoreError>
-where
-    F: std::future::Future<Output = Result<bool, SandboxStoreError>>,
-{
-    SANDBOX_RECONCILIATION
-        .run_resumable(operation)
-        .await
-        .map(|_| ())
-}
-
+#[cfg(test)]
+mod reservation_tests;
 #[cfg(test)]
 mod tests;

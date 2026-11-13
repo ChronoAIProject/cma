@@ -5,9 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use super::{
-    corrupt, io_error, Disposition, Record, ResourceKey, MAX_AUTHORITY_BYTES, MAX_AUTHORITY_RECORDS,
-};
+use super::{corrupt, io_error, Disposition, Record, ResourceKey, MAX_AUTHORITY_BYTES};
 use crate::failure::{Result, RuntimeError};
 
 const DIRECTORY: &str = "mutation-authority";
@@ -20,7 +18,11 @@ pub(super) struct AuthorityFile {
     pub record: Record,
 }
 
-pub(super) fn scan(state_root: &Path) -> Result<Vec<AuthorityFile>> {
+pub(super) fn scan(
+    state_root: &Path,
+    budget: &mut crate::mutation_recovery::ScanBudget,
+    preserve_temporary: bool,
+) -> Result<Vec<AuthorityFile>> {
     let directory = state_root.join(DIRECTORY);
     match std::fs::symlink_metadata(&directory) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -38,7 +40,15 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<AuthorityFile>> {
             .into_string()
             .map_err(|_| corrupt("mutation authority filename is not UTF-8"))?;
         let path = entry.path();
+        if preserve_temporary {
+            budget.entry()?;
+        }
         if temporary_name(&name) {
+            // Unpublished authority is never evidence. Recovery inspection keeps
+            // it intact, including when a later record proves ambiguous.
+            if preserve_temporary {
+                continue;
+            }
             crate::fs_durability::remove_file(&path)
                 .map_err(|error| io_error("remove incomplete mutation authority record", error))?;
             continue;
@@ -48,16 +58,46 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<AuthorityFile>> {
                 "mutation authority directory contains an unknown file",
             ));
         }
-        if files.len() == MAX_AUTHORITY_RECORDS {
-            return Err(crate::mutation_capacity::exhausted());
+        if !preserve_temporary {
+            budget.entry()?;
         }
         files.push(AuthorityFile {
             path: path.clone(),
-            record: read_record(&path)?,
+            record: read_record(&path, budget)?,
         });
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(files)
+}
+
+/// Run only after the entire authority/journal inventory and admission validate.
+/// These names were never published as authority; remove them before consuming
+/// append space so crash leftovers cannot exhaust the physical recovery bound.
+pub(super) fn clear_unpublished(config: &crate::config::RuntimeConfig) -> Result<()> {
+    let mut budget = crate::mutation_recovery::ScanBudget::new(
+        config,
+        crate::mutation_recovery::authority_limit(config),
+    );
+    let mut paths = Vec::new();
+    for root in crate::mutation_scope::roots(config)? {
+        let entries = match std::fs::read_dir(root.join(DIRECTORY)) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(io_error("list mutation authority directory", error)),
+        };
+        for entry in entries {
+            budget.entry()?;
+            let entry = entry.map_err(|error| io_error("read mutation authority entry", error))?;
+            if entry.file_name().to_str().is_some_and(temporary_name) {
+                paths.push(entry.path());
+            }
+        }
+    }
+    for path in paths {
+        crate::fs_durability::remove_file(&path)
+            .map_err(|error| io_error("remove unpublished mutation authority", error))?;
+    }
+    Ok(())
 }
 
 pub(super) fn persist_new(state_root: &Path, record: &Record) -> Result<()> {
@@ -111,7 +151,7 @@ pub(super) fn sync_record(path: &Path) -> Result<()> {
         .map_err(|error| io_error("sync retained mutation authority directory", error))
 }
 
-fn read_record(path: &Path) -> Result<Record> {
+fn read_record(path: &Path, budget: &mut crate::mutation_recovery::ScanBudget) -> Result<Record> {
     let mut file =
         open_no_follow(path).map_err(|error| io_error("open mutation authority record", error))?;
     let metadata = file
@@ -120,6 +160,7 @@ fn read_record(path: &Path) -> Result<Record> {
     if !metadata.is_file() || metadata.len() > MAX_AUTHORITY_BYTES {
         return Err(corrupt("mutation authority record is unsafe or oversized"));
     }
+    budget.bytes(metadata.len())?;
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
     (&mut file)
         .take(MAX_AUTHORITY_BYTES + 1)
