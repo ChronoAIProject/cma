@@ -37,6 +37,7 @@ pub(super) const MUTATION_ATTEMPTS: usize = 8;
 
 #[derive(Clone)]
 pub struct MongoTriggerDefinitionStore {
+    pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) client: Client,
     pub(super) definitions: Collection<Document>,
     pub(super) revisions: Collection<Document>,
@@ -65,6 +66,7 @@ impl MongoTriggerDefinitionStore {
         .await?;
         let launch_data = launches::LaunchCollections::open(&database).await?;
         let store = Self {
+            empty_discovery: Default::default(),
             client: client.clone(),
             definitions: majority_collection(&database, TRIGGER_DEFINITIONS),
             revisions: majority_collection(&database, TRIGGER_DEFINITION_REVISIONS),

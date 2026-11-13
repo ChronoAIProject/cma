@@ -321,7 +321,7 @@ async fn captured_point_byte_limit_refuses_oversize_without_invalidating_capture
         points(&store, &captured, &[2], &mut session, CaptureMode::Snapshot).await,
         Err(
             crate::store::agent_log_integrity::TransactionLogError::Domain(
-                SandboxStoreError::Unavailable(_)
+                SandboxStoreError::AgentLogCapacityExceeded
             )
         )
     ));
