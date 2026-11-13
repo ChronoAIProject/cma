@@ -113,3 +113,95 @@ async fn retained_or_unknown_runtime_keeps_catalogue_visible_without_advertising
     );
     assert_eq!(support.calls.load(Ordering::SeqCst), 1);
 }
+
+struct DelayedDiscovery;
+#[async_trait]
+impl AgentModelCatalog for DelayedDiscovery {
+    async fn models(&self, _: &Sandbox) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        Ok(vec![AgentModelView {
+            id: "fixture".into(),
+            label: "Fixture".into(),
+            available: false,
+        }])
+    }
+}
+#[async_trait]
+impl AgentModelRuntimeSupport for DelayedDiscovery {
+    async fn supported(&self, _: &Sandbox) -> bool {
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        true
+    }
+}
+#[tokio::test(start_paused = true)]
+async fn independent_catalogue_and_runtime_discovery_overlap() {
+    let fixture = fixture().await;
+    let agent = seeded_agent("agt_parallel_models", AgentStatus::Ready, 0, None);
+    fixture
+        .store
+        .create_worktree(seeded_worktree(&agent))
+        .await
+        .unwrap();
+    fixture.store.create_agent(agent).await.unwrap();
+    let router = agent_models_router(
+        fixture.state.reads.clone(),
+        Arc::new(DelayedDiscovery),
+        Arc::new(DelayedDiscovery),
+    );
+    let started = tokio::time::Instant::now();
+    let (status, value) = json_response(
+        &router,
+        request(
+            Method::GET,
+            "/api/v1/agents/agt_parallel_models/models",
+            OWNER,
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["models"][0]["available"], true);
+    assert_eq!(started.elapsed(), std::time::Duration::from_millis(800));
+    eprintln!("models fixture: independent 800ms catalogue + 800ms runtime; concurrent response=800ms; sequential source accounting=1600ms");
+}
+
+struct FailedCatalog;
+#[async_trait]
+impl AgentModelCatalog for FailedCatalog {
+    async fn models(&self, _: &Sandbox) -> Result<Vec<AgentModelView>, AgentModelCatalogError> {
+        tokio::task::yield_now().await;
+        Err(AgentModelCatalogError::Unavailable)
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn catalogue_failure_cancels_unneeded_runtime_observation() {
+    let fixture = fixture().await;
+    let agent = seeded_agent("agt_failed_models", AgentStatus::Ready, 0, None);
+    fixture
+        .store
+        .create_worktree(seeded_worktree(&agent))
+        .await
+        .unwrap();
+    fixture.store.create_agent(agent).await.unwrap();
+    let router = agent_models_router(
+        fixture.state.reads.clone(),
+        Arc::new(FailedCatalog),
+        Arc::new(DelayedDiscovery),
+    );
+    let started = tokio::time::Instant::now();
+    let (status, _) = json_response(
+        &router,
+        request(
+            Method::GET,
+            "/api/v1/agents/agt_failed_models/models",
+            OWNER,
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(started.elapsed(), std::time::Duration::ZERO);
+}
