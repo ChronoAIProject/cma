@@ -255,6 +255,9 @@ data:
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # Per-process public stream lifetimes; zero keeps admission disabled.
   CHRONO_PUBLIC_STREAM_LIMIT: "0"
+  # Local event wakes require a separate activation; other writers use fallback.
+  CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED: "false"
+  CHRONO_AGENT_EVENT_STREAM_FALLBACK_POLL_MS: "1000"
   CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED: "false"
   # GFE appends upstream then forwarding-rule addresses. Trust the chain only
   # from an official GFE TCP peer and skip its rightmost load-balancer token.

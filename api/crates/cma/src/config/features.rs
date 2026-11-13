@@ -8,6 +8,8 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub agent_event_stream_wake: bool,
+    pub agent_event_stream_fallback: std::time::Duration,
     pub command_reconcile_pacing: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
@@ -69,6 +71,8 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
+            agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
