@@ -133,10 +133,16 @@ impl MongoSandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let mut fields = doc! { "billing_delivered": error.is_none(), "billing_lease_until": 0_i64,
         "billing_retry_at": {"$add":[server_seconds(),300_i64]}, "billing_last_result_at": server_seconds() };
-        fields.insert(
-            "billing_error",
-            doc! {"$literal":error.map_or(mongodb::bson::Bson::Null, Into::into)},
-        );
+        // A later verification error or duplicate rejection cannot disprove an
+        // earlier possible acceptance. Retain custody until a positive receipt.
+        let outcome = match error {
+            Some(error) => doc! {"$cond":[
+                {"$eq":["$billing_error","provider_outcome_unknown"]},
+                "provider_outcome_unknown", {"$literal":error},
+            ]},
+            None => doc! {"$literal":mongodb::bson::Bson::Null},
+        };
+        fields.insert("billing_error", outcome);
         let updated = self
             .sandbox_usage_events
             .update_one(
