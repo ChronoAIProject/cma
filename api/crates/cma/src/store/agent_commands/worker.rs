@@ -94,6 +94,20 @@ impl AgentCommandWorkerStore for MongoSandboxStore {
         layer2_core::sandbox::store::PageRequest::new(page.limit, page.cursor.clone())
             .map_err(|_| CommandLedgerError::Invalid)?;
         let mut filter = doc! { "status": { "$in": ["queued", "in_progress", "waiting_action"] } };
+        if self
+            .empty_discovery
+            .empty(
+                super::super::empty_discovery::Kind::Commands,
+                &self.agent_commands,
+                filter.clone(),
+            )
+            .await
+        {
+            return Ok(layer2_core::sandbox::store::Page {
+                items: Vec::new(),
+                next: None,
+            });
+        }
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }
@@ -116,6 +130,10 @@ impl AgentCommandWorkerStore for MongoSandboxStore {
         {
             items.push(super::records::read(&document)?);
         }
+        self.empty_discovery.observed(
+            super::super::empty_discovery::Kind::Commands,
+            items.is_empty(),
+        );
         layer2_core::sandbox::agent_io::finish_command_work_page(items, page)
     }
 
