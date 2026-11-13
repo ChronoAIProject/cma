@@ -2450,6 +2450,13 @@ strings or inherited request spans. Keep it enabled for the diagnostic compariso
 Optional enrichment retains its existing fallback behavior. See
 [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
+`CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. It adds request-correlated file-content/download phase
+timings for authorization, runtime status, mounted-home verification, endpoint
+discovery, control transfer, receipt validation and the final fence. Nested
+phases overlap; see [Mongo diagnostics](CMA_Mongo_Diagnostics.md) before comparing
+phase totals. It changes no read, cache or authorization policy.
+
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.
@@ -2714,8 +2721,13 @@ path. When enabled, readiness observations before home adoption and during creat
 binding each have a two-second bound, including Kubernetes read time.
 CrashLoopBackOff exits on the first verified observation; a rising runtime restart count exits on the next
 observation of the same Pod UID. The subsequent read-only home-authority
-acknowledgement wait has its own two-second bound. A replacement Pod starts a new
-observation baseline. A nonzero historical restart count alone is not a failure.
+acknowledgement phase has one two-second bound beginning before its first
+Claim/member/PVC GET and shared with all subsequent polls. Authority publication
+writes precede this phase and are not cancelled by its deadline. With the guard
+OFF, the first acknowledgement observation retains its existing policy and a
+pending result starts the existing five-second polling wait. A replacement Pod
+starts a new observation baseline. A nonzero historical restart count alone is
+not a failure.
 
 The guard retains the exact Claim, assigned Sandbox and PVC authority. A missing
 local receipt does not prove that a preceding provider write had no effect. The
@@ -2739,7 +2751,9 @@ not be shortened globally.
 
 The guard polls every 100 ms, up to roughly 20 observations per attempt. Each
 home observation uses three Kubernetes reads and each bind observation uses
-two. Activation evidence must include API read load, plain and desktop recovery
+two. The separate home-authority phase reads Claim/member/PVC immediately, then
+waits 250 ms between pending observations. Activation evidence must include API
+read load, plain and desktop recovery
 to the next worker attempt, and cold-start completion time as well as guard
 duration. The stage deadline is not an end-to-end create deadline.
 
