@@ -52,6 +52,7 @@ mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
     AgentWorktreeRecoveryMutation,
@@ -260,8 +261,8 @@ pub use conversation::{
     AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
-    AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
+    AgentLiveSubscription, AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -284,13 +285,13 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxDetailPhase, SandboxDetailTimer,
-    SandboxHierarchyReading, SandboxHierarchyRecord, SandboxHierarchySummary, SandboxHierarchyView,
-    SandboxInventoryReading, SandboxInventoryRecord, SandboxSnapshotDownload, SharedHierarchyAgent,
-    SharedSandboxHierarchy, SharedSandboxSummary, SharedWorkspaceHierarchy, SharedWorkspaceSummary,
-    SharedWorktreeSummary, WorkspaceHierarchyReading, WorkspaceHierarchyRecord,
-    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchyReading,
-    WorktreeHierarchySummary,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxAgentLineage, SandboxDetailPhase,
+    SandboxDetailRecord, SandboxDetailTimer, SandboxHierarchyReading, SandboxHierarchyRecord,
+    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
+    SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
+    SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
+    WorkspaceHierarchyReading, WorkspaceHierarchyRecord, WorkspaceHierarchySummary,
+    WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
 pub use inactivity::{

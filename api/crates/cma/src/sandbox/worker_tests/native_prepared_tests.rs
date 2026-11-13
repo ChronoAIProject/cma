@@ -10,6 +10,8 @@ mod installation_transfer_tests;
 #[path = "workspace_transfer_tests.rs"]
 mod workspace_transfer_tests;
 
+#[path = "native_prepared_guard_tests.rs"]
+mod native_prepared_guard_tests;
 #[path = "native_prepared_guidance_tests.rs"]
 mod native_prepared_guidance_tests;
 #[path = "native_prepared_health_tests.rs"]

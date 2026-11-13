@@ -60,6 +60,7 @@ export function createTransportPreparation(
         const session = await value.result;
         read.signal?.throwIfAborted();
         value.request.signal.throwIfAborted();
+        session?.discardEntryHandoff();
         // v2 loading always starts with a fresh authorization. AG-UI has no
         // such entry check, so it keeps the ordinary freshly authorized open.
         return session ?? (await open(agent, read));
