@@ -218,6 +218,12 @@ impl AgentWorkerStore for MongoSandboxStore {
         {
             return Ok(Vec::new());
         }
+        if self.agent_ownership.is_some() {
+            let ids = self.due_owned_agent_work(now, limit).await?;
+            self.empty_discovery
+                .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
+            return Ok(ids);
+        }
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
@@ -262,6 +268,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                 return Ok(None);
             };
             let mut agent = super::agents::read_agent(&row)?;
+            self.recover_agent_work_owner(&mut agent).await?;
             if agent
                 .work
                 .lease

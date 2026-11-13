@@ -27,7 +27,7 @@ impl ReportingStore {
         let changed = self
             .collection(CONTROL)
             .update_one(
-                doc! {"_id":key,"holder":holder,"lease_until":{"$gt":now() as i64}},
+                super::control::fence(key, holder),
                 doc! {"$set":{"record":encode(value)?}},
             )
             .await

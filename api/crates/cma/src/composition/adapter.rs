@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 pub(super) struct ProductionAdapters {
     pub owned: Arc<dyn layer3_adapter::SandboxAdapter>,
+    pub owner_controls: layer3_adapter::owner_control::ControlRoutes,
     pub preparation: crate::sandbox::native_prepared::NativePreparedWorker,
 }
 
@@ -31,6 +32,7 @@ pub(super) async fn production_adapter(
     };
     use layer3_adapter::provider::{BatchSandboxReclaimer, SandboxClient};
 
+    let mut owner_controls = Vec::new();
     let subscriptions = crate::connections::RuntimeSubscriptions::new(store.clone(), subscriptions);
 
     let mut routing_options = mongodb::options::ClientOptions::parse(&config.mongodb_uri)
@@ -83,8 +85,9 @@ pub(super) async fn production_adapter(
             .with_bounded_update_relay(config.features.bounded_update_relay)
             .with_output_json_budget(config.features.output_json_budget)
             .with_shared_runtime_output(config.features.shared_runtime_output);
+        let transport = register_owner_control(config, "hosted", transport, &mut owner_controls);
         backends.opensandbox = Some(Arc::new(
-            ProviderHostedBackend::new(client, Arc::new(transport), &config.deployment_id)
+            ProviderHostedBackend::new(client, transport, &config.deployment_id)
                 .map_err(|e| e.to_string())?,
         ));
     }
@@ -142,7 +145,8 @@ pub(super) async fn production_adapter(
             settings.clone(),
             &connection.authority,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .with_monotonic_funding_deadlines(config.agent_manager_replicas.is_some());
         client
             .inventory()
             .await
@@ -160,9 +164,9 @@ pub(super) async fn production_adapter(
         .with_bounded_update_relay(config.features.bounded_update_relay)
         .with_output_json_budget(config.features.output_json_budget)
         .with_shared_runtime_output(config.features.shared_runtime_output);
+        let transport = register_owner_control(config, "native", transport, &mut owner_controls);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
-            client,
-            Arc::new(transport),
+            client, transport,
         )));
     }
     let mut home_store: Option<Arc<dyn layer3_adapter::HomeVolumeStore>> = None;
@@ -224,6 +228,7 @@ pub(super) async fn production_adapter(
         adapter = adapter.with_home_volumes(homes);
     }
     Ok(ProductionAdapters {
+        owner_controls,
         owned: Arc::new(adapter),
         preparation: crate::sandbox::native_prepared::NativePreparedWorker::new(
             store,
@@ -231,4 +236,20 @@ pub(super) async fn production_adapter(
             config,
         )?,
     })
+}
+
+fn register_owner_control(
+    config: &Config,
+    name: &str,
+    transport: layer3_adapter::hosted::ProviderHostedControlTransport,
+    routes: &mut layer3_adapter::owner_control::ControlRoutes,
+) -> Arc<dyn layer3_adapter::hosted::HostedControlTransport> {
+    if config.agent_manager_replicas.is_none() {
+        return Arc::new(transport);
+    }
+    let route = layer3_adapter::owner_control::OwnerControlRoute::new(name);
+    let transport: Arc<dyn layer3_adapter::hosted::HostedControlTransport> =
+        Arc::new(transport.with_owner_router(route.clone()));
+    routes.push((route, transport.clone()));
+    transport
 }

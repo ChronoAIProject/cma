@@ -44,6 +44,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
@@ -66,6 +67,7 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    pub(crate) reopen_worker: Arc<SandboxWorker>,
     warmup: super::warmup::LegacyWarmSandboxCleanup,
     reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
@@ -75,7 +77,7 @@ pub(crate) struct SandboxLifecycleComposition {
     capacity_recovery: Option<SandboxScheduler>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
-    updates: Arc<dyn AgentUpdateRecorder>,
+    updates: Arc<DurableAgentUpdateRecorder>,
     funding_renewal: FundingRenewalWorker,
 }
 
@@ -186,6 +188,7 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_ownership(config.ownership)
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
             .with_cleanup_continuation(config.cleanup_continuation_enabled)
             .with_retry_single_marker(config.retry_single_marker_enabled)
@@ -225,6 +228,7 @@ impl SandboxLifecycleComposition {
         );
 
         Ok(Self {
+            reopen_worker: sandbox_worker.clone(),
             warmup,
             updates,
             reconciliation,
@@ -243,8 +247,12 @@ impl SandboxLifecycleComposition {
         })
     }
 
+    pub(crate) fn live_updates(&self) -> Arc<DurableAgentUpdateRecorder> {
+        self.updates.clone()
+    }
+
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
-        Arc::clone(&self.updates)
+        self.updates.clone()
     }
 
     pub(crate) fn capacity_recovery_commands(
