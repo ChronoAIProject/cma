@@ -53,6 +53,7 @@ pub(crate) struct AgentWorkerDependencies {
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
     pub parent_not_ready_pacing_enabled: bool,
+    pub retry_single_marker_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
@@ -68,6 +69,7 @@ impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
             parent_not_ready_pacing_enabled: false,
+            retry_single_marker_enabled: false,
             managed_documents_enabled: false,
             access_transport_migration: None,
             holder: holder.into(),
@@ -90,6 +92,11 @@ impl AgentWorkerConfig {
 
     pub(crate) fn with_managed_documents(mut self, enabled: bool) -> Self {
         self.managed_documents_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_retry_single_marker(mut self, enabled: bool) -> Self {
+        self.retry_single_marker_enabled = enabled;
         self
     }
 

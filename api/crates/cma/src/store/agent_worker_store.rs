@@ -44,6 +44,24 @@ impl AgentWorkerStore for MongoSandboxStore {
         super::agent_failure_pacing::record(self, &mutation, &observed).await
     }
 
+    async fn commit_agent_work_repeated_failure(
+        &self,
+        retry: layer2_core::sandbox::store::AgentRepeatedFailure,
+        observed: Option<layer2_core::sandbox::store::AgentRetryObservation>,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_worker_transaction::commit_repeated_failure(self, &retry).await?;
+        if let Some(observed) = observed {
+            super::agent_failure_pacing::record_with_marker(
+                self,
+                &retry.mutation,
+                &observed,
+                Some(&retry.marker.kind),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn prepared_agent_replay_matches(
         &self,
         agent: &layer2_core::sandbox::Agent,
