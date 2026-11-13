@@ -9,6 +9,9 @@ use support::{candidate, recovery_setup, Verify};
 #[path = "reconciliation_recovery_opportunity_tests.rs"]
 mod opportunity_tests;
 
+#[path = "reconciliation_recovery_platform_tests.rs"]
+mod platform_tests;
+
 // Preserve PR1's absent/held/attempted accounting regression on the separate lane.
 #[tokio::test(start_paused = true)]
 async fn recovery_progress_counts_attempted_candidates_only() {
