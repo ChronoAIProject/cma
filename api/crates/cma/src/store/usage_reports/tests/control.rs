@@ -1,6 +1,6 @@
 use super::*;
 
-async fn stores() -> (Arc<ReportingStore>, Arc<ReportingStore>) {
+pub(super) async fn stores() -> (Arc<ReportingStore>, Arc<ReportingStore>) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let name = format!("report_control_{}", uuid::Uuid::new_v4().simple());
     // Independent client pools and circuits; only the durable control rows are shared.

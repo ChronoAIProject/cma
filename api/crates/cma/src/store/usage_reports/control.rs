@@ -39,6 +39,37 @@ impl ReportingStore {
         }
         Ok(())
     }
+
+    /// A real write in the mapping transaction makes takeover conflict with
+    /// every earlier observation, including an unchanged assignment. Keep this
+    /// internal counter separate from the public mapping revision.
+    pub(crate) async fn fence_control_transaction(
+        &self,
+        key: &str,
+        holder: &str,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<()> {
+        let mut filter = fence(key, holder);
+        filter.insert(
+            "$or",
+            mongodb::bson::serialize_to_bson(&[
+                doc! {"control_write_fence":{"$exists":false}},
+                doc! {"control_write_fence":{"$type":"long","$gte":0_i64,"$lt":i64::MAX}},
+            ])
+            .map_err(unavailable)?,
+        );
+        let changed = self
+            .collection(CONTROL)
+            .update_one(filter, doc! {"$inc":{"control_write_fence":1_i64}})
+            .session(session)
+            .await
+            .map_err(unavailable)?
+            .matched_count;
+        if changed != 1 {
+            return Err(MetricsError::Unavailable);
+        }
+        Ok(())
+    }
 }
 
 pub(super) fn fence(key: &str, holder: &str) -> Document {
