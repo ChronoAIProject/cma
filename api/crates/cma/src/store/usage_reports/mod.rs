@@ -6,6 +6,7 @@ mod diagnostics;
 pub(crate) mod inventory;
 mod options;
 mod owner_allocation;
+mod owner_names;
 mod owners;
 mod progress;
 pub(crate) use progress::Progress;

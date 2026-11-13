@@ -2636,6 +2636,15 @@ owner/admin report APIs, CPU/working-set/PVC semantics, coverage, retention,
 read-model migration, monitoring permissions and production verification.
 The existing allocated usage ledger and billing quantities keep their meanings.
 
+Report Sandbox pages, individual Sandbox details and owner pages resolve current
+public owner display names after checking report authority and current membership.
+Each response uses at most one bounded directory lookup for its returned owners
+(at most 200); names are not stored in the immutable usage snapshot. A directory
+rename or removal therefore applies when reading the same report ID again.
+Missing or unsafe names remain absent, while a directory dependency or schema
+failure returns 503. Labels grant no directory or Sandbox access; identifiers,
+numeric measurements, ordering and cursors retain their existing meanings.
+
 ### Owner allocation rankings
 
 `GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations` reads the
