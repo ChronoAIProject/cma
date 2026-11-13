@@ -60,6 +60,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -85,6 +86,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -110,6 +112,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -135,6 +138,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -160,6 +164,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -185,6 +190,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -293,6 +299,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -324,6 +331,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -355,6 +363,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -386,6 +395,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -417,6 +427,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
@@ -448,7 +459,9 @@
       "response": {
         "status": 409,
         "headers": {
-          "content-type": "application/problem+json"
+          "cache-control": "no-store, private",
+          "content-type": "application/problem+json",
+          "retry-after": "1"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_busy",
@@ -479,7 +492,9 @@
       "response": {
         "status": 503,
         "headers": {
-          "content-type": "application/problem+json"
+          "cache-control": "no-store, private",
+          "content-type": "application/problem+json",
+          "retry-after": "1"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_runtime_unavailable",
@@ -510,6 +525,7 @@
       "response": {
         "status": 404,
         "headers": {
+          "cache-control": "no-store, private",
           "content-type": "application/problem+json"
         },
         "body": {
