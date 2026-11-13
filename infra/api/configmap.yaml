@@ -151,7 +151,6 @@ data:
   CHRONO_USAGE_REPORT_WARMER_ENABLED: "false"
   CHRONO_USAGE_REPORT_WARM_SCOPES: "[]"
   CHRONO_USAGE_REPORT_WARM_SECONDS: "300"
-  CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED: "false"
   CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
   # deployed and its latency and authorization evidence is reviewed.
