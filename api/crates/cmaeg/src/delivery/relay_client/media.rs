@@ -31,10 +31,11 @@ impl RelayClient {
         address: &ReplyAddress,
         text: &str,
         attachments: &[NativeAttachment],
+        commonmark: bool,
     ) -> Result<PreparedReply, DeliveryOutcome> {
         // Preserve the complete legacy request bytes when native media is absent.
         if attachments.is_empty() {
-            return Self::prepare(address, text, None);
+            return Self::prepare(address, text, None, commonmark);
         }
         let rejected = |reason: &str| DeliveryOutcome::Rejected {
             reason: reason.into(),
@@ -93,6 +94,7 @@ impl RelayClient {
             thread_reply: *thread_reply,
             native_media: true,
             complete_text: false,
+            commonmark,
         })
     }
 }
