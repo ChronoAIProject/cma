@@ -18,6 +18,23 @@ impl Sender {
         destination: &DefaultDestination,
         operation: &str,
     ) -> IntentReceipt {
+        super::trace::observe(
+            context.trace,
+            !matches!(destination, DefaultDestination::Webhooks { .. }),
+            self.default_reply_inner(context, event, message, destination, operation),
+            super::trace::receipt,
+        )
+        .await
+    }
+
+    async fn default_reply_inner(
+        &self,
+        context: &SendContext<'_>,
+        event: &EventRefPayload,
+        message: &OutboundMessage,
+        destination: &DefaultDestination,
+        operation: &str,
+    ) -> IntentReceipt {
         if !destination.authorized(context.channel) {
             let mut result = unsupported();
             result.delivery = DeliveryOutcome::Rejected {

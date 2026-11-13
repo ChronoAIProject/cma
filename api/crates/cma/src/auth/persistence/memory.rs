@@ -355,6 +355,20 @@ impl AuthStore for MemoryAuthStore {
             .get(id)
             .map(|(login, _)| login.clone()))
     }
+    async fn browser_session(
+        &self,
+        id: &SecretDigest,
+    ) -> Result<Option<(BrowserLogin, Option<SubjectAuthState>)>, StoreError> {
+        let Some(login) = self.browser_login(id).await? else {
+            return Ok(None);
+        };
+        let state = if login.expires_at > SystemTime::now() {
+            self.subject(&login.subject).await?
+        } else {
+            None
+        };
+        Ok(Some((login, state)))
+    }
     async fn delete_browser_login(&self, id: &SecretDigest) -> Result<(), StoreError> {
         self.revoke_custody(id, false, true).await
     }

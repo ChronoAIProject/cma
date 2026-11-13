@@ -17,7 +17,7 @@ use crate::{
         intents::{DeliveryOutcome, IntentReceipt},
     },
     ingress::routing_store::{AdmittedPlan, EventIdentity, PlanStore, StoredTarget},
-    providers::{parse_event, RecoveryEvent, ResponsesEvent, SseFrame},
+    providers::{RecoveryEvent, ResponsesEvent},
 };
 use cmaeg_core::{channel::ReplyChoice, message::OutboundMessage, seal::ReplyAddress};
 use serde::{Deserialize, Serialize};
@@ -119,17 +119,12 @@ impl RoutedDelivery {
         // The SSE decoder bounds raw frames. Persist only their digest, using
         // the same encoding as ReplayProjection, so every accepted frame can
         // be acknowledged even when its snapshot exceeds the effect budget.
-        let frame_hash = storage::hash(&storage::bytes(&frame.raw)?);
-        if parse_event(&SseFrame {
-            event: None,
-            id: Some(frame.sequence_number.to_string()),
-            data: frame.raw.to_string(),
-            retry: None,
-        })
-        .ok()
-        .as_ref()
-            != Some(&frame.event)
-        {
+        let trace_contract = frame.trace_contract
+            || lease.state.delivery.as_ref().is_some_and(|previous| {
+                previous.cursor == frame.sequence_number && previous.trace_contract
+            });
+        let frame_hash = super::replay_frame::hash(frame, trace_contract)?;
+        if !super::replay_frame::shape_matches(frame) {
             return Err(ExecutionError::Invalid);
         }
         let effect_hash = bounded_effect_hash(&effect)?;
@@ -180,6 +175,7 @@ impl RoutedDelivery {
             return Err(ExecutionError::Unsupported);
         }
         let checkpoint = DeliveryCheckpoint {
+            trace_contract,
             response_id: response_id.clone(),
             cursor: frame.sequence_number,
             frame_hash,
