@@ -372,3 +372,7 @@ mod observation_retention_tests;
 #[cfg(test)]
 #[path = "acp_session_identity_startup_tests.rs"]
 mod session_identity_startup_tests;
+
+#[cfg(test)]
+#[path = "acp_correlation_flow_tests.rs"]
+mod correlation_flow_tests;
