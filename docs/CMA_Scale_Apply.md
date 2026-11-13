@@ -129,14 +129,15 @@ for role, image in [('am', sys.argv[2]), ('eg', sys.argv[3])]:
     else:
         c['env'] = [
             {'name': 'POD_IP', 'valueFrom': {'fieldRef': {'fieldPath': 'status.podIP'}}},
-            {'name': 'CMAEG_REPLICA_ADDRESS', 'value': 'http://$(POD_IP):8080'},
+            {'name': 'CMAEG_REPLICA_ADDRESS', 'value': 'http://$(POD_IP):8090'},
             {'name': 'CMAEG_REPLICAS_ENABLED', 'value': 'true'}]
     path.write_text(json.dumps(patch, indent=2) + '\n')
 PY
 ```
 
 EG address and switch names are developer-15's source contract pending exact
-integrated-SHA review. Confirm the existing listen port8080, direct Mongo mode,
+integrated-SHA review. Confirm the existing EG listen port8090 (`CMAEG_LISTEN` and named `http`
+container port), direct Mongo mode,
 additive `--migrate-replicas` marker/index and durable routed admission/recovery
 before S2. The advertised address must be a literal Pod IP/direct origin, never
 a Service address. Neither this patch nor drain204 proves sockets/leases handed
