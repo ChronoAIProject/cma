@@ -388,7 +388,9 @@ impl ControlPlaneComposition {
                 &mut sandbox_lifecycle,
                 config.features.capacity_recovery_enabled,
             ))
-            .merge(layer1_public::rest::resource_access_router(resource_access))
+            .merge(layer1_public::rest::resource_access_router(
+                resource_access.clone(),
+            ))
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
@@ -407,7 +409,6 @@ impl ControlPlaneComposition {
             .merge(trigger_routes)
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes = resource_routes.merge(bindings.router(config.gateway.as_ref())?);
-        // Apply before cloning for delegated dispatch: all entry points share slots.
         let resource_routes = routes::stream_budget(resource_routes, config.public_stream_limit);
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
@@ -446,16 +447,19 @@ impl ControlPlaneComposition {
             &sandbox_lifecycle,
             stores.sandbox_model.clone(),
             adapters.owner_controls,
+            (
+                auth.clone(),
+                projections.reads(),
+                resource_access,
+                adapter.clone(),
+            ),
         )?;
         let router = routes::compose(
             resource_routes,
             browser_connections,
             auth.clone(),
             recorder,
-            (
-                limits,
-                crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
-            ),
+            (limits, config),
             (
                 health,
                 tool_routes.merge(service_portal::router(

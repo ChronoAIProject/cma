@@ -73,6 +73,22 @@ impl Drop for DesktopConnection {
 }
 
 impl DesktopConnection {
+    /// Do not keep publishing buffered frames after the connection loses its
+    /// authority while the client transport is blocked by backpressure.
+    pub async fn while_authorized<T>(
+        &mut self,
+        operation: impl std::future::Future<Output = T>,
+    ) -> Result<T, DesktopError> {
+        if self.connection.is_none() {
+            return Err(DesktopError::Unavailable);
+        }
+        if let Some(owned) = &mut self.owned {
+            owned.while_authorized(operation).await
+        } else {
+            Ok(operation.await)
+        }
+    }
+
     pub async fn send(&mut self, frame: DesktopFrame) -> Result<(), DesktopError> {
         let connection = self.connection.as_mut().ok_or(DesktopError::Unavailable)?;
         if let Some(owned) = &mut self.owned {

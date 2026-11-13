@@ -126,6 +126,13 @@ async fn a_forwarded_request_charges_the_operation_budget_only_at_the_owner() {
             },
             None,
         );
+        let fixture = crate::agent_manager::relay::public_access::fixture::fixture(
+            auth.clone(),
+            "agt-budget",
+            "synthetic-caller",
+        )
+        .await;
+        relay.install_public_access(fixture.policy).unwrap();
         let routes = Router::new()
             .route(
                 "/api/v1/agents/{agent}/environment",

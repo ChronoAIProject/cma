@@ -2,7 +2,7 @@
 use layer3_adapter::*;
 use mongodb::{bson::doc, Database};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
         Arc,
@@ -27,6 +27,8 @@ struct State {
     block_renew: AtomicBool,
     renewing: Notify,
     resume: Semaphore,
+    uncertain_revoke: AtomicBool,
+    echo: AtomicBool,
 }
 
 impl Receiver {
@@ -40,6 +42,8 @@ impl Receiver {
                 block_renew: AtomicBool::new(false),
                 renewing: Notify::new(),
                 resume: Semaphore::new(0),
+                uncertain_revoke: AtomicBool::new(false),
+                echo: AtomicBool::new(false),
             }),
             fail_open: AtomicU8::new(0),
             legacy_opens: AtomicUsize::new(0),
@@ -47,6 +51,12 @@ impl Receiver {
     }
     pub(super) fn block_renew(&self) {
         self.state.block_renew.store(true, Ordering::SeqCst);
+    }
+    pub(super) fn refuse_revoke(&self) {
+        self.state.uncertain_revoke.store(true, Ordering::SeqCst);
+    }
+    pub(super) fn echo_frames(&self) {
+        self.state.echo.store(true, Ordering::SeqCst);
     }
     pub(super) async fn renewing(&self) {
         self.state.renewing.notified().await;
@@ -132,6 +142,11 @@ impl DesktopOwnershipControl for Control {
         self.receiver.state.install(claim, challenge).await
     }
     async fn revoke_ownership(&self, claim: &DesktopOwnership) -> Result<()> {
+        if self.receiver.state.uncertain_revoke.load(Ordering::SeqCst) {
+            return Err(AdapterError::Rejected(
+                "fixture revoke unacknowledged".into(),
+            ));
+        }
         let mut active = self.receiver.state.active.lock().await;
         if active.as_ref().is_some_and(|(current, _)| {
             current.epoch == claim.epoch && current.session_id == claim.session_id
@@ -145,13 +160,17 @@ struct Socket {
     state: Arc<State>,
     control: Option<Arc<dyn DesktopOwnershipControl>>,
     epoch: Option<u64>,
+    outgoing: VecDeque<DesktopFrame>,
 }
 #[async_trait::async_trait]
 impl DesktopConnection for Socket {
     async fn recv(&mut self) -> Result<Option<DesktopFrame>> {
+        if let Some(frame) = self.outgoing.pop_front() {
+            return Ok(Some(frame));
+        }
         std::future::pending().await
     }
-    async fn send(&mut self, _: DesktopFrame) -> Result<()> {
+    async fn send(&mut self, frame: DesktopFrame) -> Result<()> {
         if let Some(epoch) = self.epoch {
             if !self
                 .state
@@ -165,6 +184,9 @@ impl DesktopConnection for Socket {
             }
         }
         self.state.frames.fetch_add(1, Ordering::SeqCst);
+        if self.state.echo.load(Ordering::SeqCst) {
+            self.outgoing.push_back(frame);
+        }
         Ok(())
     }
     fn ownership_control(&self) -> Option<Arc<dyn DesktopOwnershipControl>> {
@@ -200,6 +222,7 @@ impl SandboxAdapter for Receiver {
         Ok(Box::new(Socket {
             state: self.state.clone(),
             epoch: Some(claim.epoch),
+            outgoing: VecDeque::new(),
             control: Some(Arc::new(Control {
                 receiver: Arc::new(Receiver {
                     db: self.db.clone(),
@@ -216,6 +239,7 @@ impl SandboxAdapter for Receiver {
             state: self.state.clone(),
             control: None,
             epoch: None,
+            outgoing: VecDeque::new(),
         }))
     }
     fn capabilities(&self) -> AdapterCapabilities {

@@ -368,13 +368,26 @@ pub(crate) async fn serve(
         ),
     };
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
-    let _connection_worker = connections.start_completion_worker(runner);
+    let completion_launcher = if replicas.enabled {
+        routed
+            .as_ref()
+            .ok_or("replica completion requires durable routed admission")?
+            .ingress
+            .replica_completion_launcher(observers.activity.clone())
+    } else {
+        runner
+    };
+    let _connection_worker = connections.start_completion_worker(completion_launcher);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let github_initialization = config
         .github_enabled
         .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
+    let replica_routes = routed
+        .as_ref()
+        .map(|composition| composition.replica_routes.clone())
+        .unwrap_or_default();
     let routed_workers = crate::serve_routed::start_workers(routed, state.readiness.clone());
     // Readers and recovery remain active when controls/forms issuance is disabled.
     let native_lark_controls = crate::native_lark::control_recovery::Worker::start(
@@ -406,6 +419,7 @@ pub(crate) async fn serve(
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let mut router = router_with_state(state)
         .merge(drain_control.router(replicas.enabled))
+        .merge(replica_routes)
         .merge(http::events::router(http::events::CustomIngressState {
             ingress: ingress.clone(),
             waiters,
