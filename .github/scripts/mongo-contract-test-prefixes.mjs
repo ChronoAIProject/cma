@@ -4,6 +4,7 @@ export const requiredPrefixes = [
   'store::sandbox_unpublished_recovery::mongo_integration_tests::platform_stop::',
   'store::admission_control::mongo_tests::',
   'store::agent_lifecycle_operations::operator_stop_tests::',
+  'store::agent_lifecycle_operations::lease_tests::',
   'store::sandbox_mongo_integration_tests::command_ledger_tests::operator_stop_tests::',
   'store::usage_reports::tests::',
   'sandbox::funding::tests::mongo::',
