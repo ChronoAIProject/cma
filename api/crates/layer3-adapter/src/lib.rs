@@ -15,6 +15,7 @@ pub mod archive_source;
 pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
+pub mod file_read_diagnostics;
 pub mod permanent_custody;
 pub use browser::{
     BrowserAdapter, BrowserFrame, BrowserObservation, BrowserOperation, BrowserReceipt,

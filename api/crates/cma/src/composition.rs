@@ -380,6 +380,7 @@ impl ControlPlaneComposition {
                 resource_access.clone(),
                 adapter.clone(),
                 config.task_experience.clone(),
+                config.features.agent_file_read_timings,
             ))
             .merge(layer1_public::rest::sandbox_commands_router(
                 sandbox_control_service,
