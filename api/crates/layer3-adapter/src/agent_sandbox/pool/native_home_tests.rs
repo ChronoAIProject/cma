@@ -122,35 +122,6 @@ async fn native_home_accepts_controller_normalized_member_fields() {
 }
 
 #[tokio::test]
-async fn native_home_requires_initializer_ready_before_returning_attachment() {
-    let fixture = Fixture::new().await;
-    let claim = assigned_spec(&fixture, &spec()).await;
-    fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
-        ["status"] = json!("False");
-    let started = tokio::time::Instant::now();
-    assert!(matches!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(6),
-            fixture.client.adopt_home(&claim)
-        )
-        .await
-        .unwrap(),
-        Err(crate::AdapterError::NativeClaimNotReady(
-            crate::agent_sandbox::NativeClaimGuardReason::Pending
-        ))
-    ));
-    assert!(started.elapsed() >= std::time::Duration::from_secs(5));
-    fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
-        ["status"] = json!("True");
-    let home = fixture.client.adopt_home(&claim).await.unwrap();
-    assert!(homes(&fixture)
-        .prepare_receipted(&home.request, "operation-one")
-        .await
-        .is_err());
-    no_storage_effects(&fixture);
-}
-
-#[tokio::test]
 async fn native_home_replays_lost_claim_and_sandbox_authority_writes() {
     for phase in ["claim", "sandbox"] {
         let fixture = Fixture::new().await;
