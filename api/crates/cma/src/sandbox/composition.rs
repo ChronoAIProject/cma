@@ -87,6 +87,10 @@ impl SandboxLifecycleComposition {
         } else {
             shared
         };
+        tracing::info!(
+            reserved_lane = config.sandbox_reconciliation_reserved_lane,
+            "sandbox reconciliation background scheduling configured"
+        );
         let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
         let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
         let warmup = super::warmup::LegacyWarmSandboxCleanup {
@@ -105,6 +109,7 @@ impl SandboxLifecycleComposition {
             Duration::from_secs(30),
             Duration::from_secs(15),
         ))
+        .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
         .with_platform_spend(dependencies.store.clone())

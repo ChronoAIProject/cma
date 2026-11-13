@@ -67,6 +67,7 @@ pub(crate) struct SandboxReconciler {
     platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
     platform_schedule: platform::PlatformSpendSchedule,
     background_work: crate::background::BackgroundWork,
+    resume_background: bool,
 }
 
 impl SandboxReconciler {
@@ -100,11 +101,17 @@ impl SandboxReconciler {
                 Duration::from_secs(30),
                 Duration::from_secs(15),
             ),
+            resume_background: false,
         }
     }
 
     pub(crate) fn with_background_work(mut self, work: crate::background::BackgroundWork) -> Self {
         self.background_work = work;
+        self
+    }
+
+    pub(crate) fn with_background_resumption(mut self, enabled: bool) -> Self {
+        self.resume_background = enabled;
         self
     }
 
