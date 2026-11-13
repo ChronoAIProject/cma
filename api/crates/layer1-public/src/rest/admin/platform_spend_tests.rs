@@ -1,144 +1,7 @@
 //! Operator platform spend routes behind the third write gate.
-use std::collections::BTreeMap;
 
 use super::*;
-use layer2_core::budget::{
-    BudgetError, CloudObservation, CloudObservationInput, ObservationError, PlatformAdmissionState,
-    PlatformBudgetPolicy, PlatformPeriodLedger, PlatformSpendLedger, PlatformSpendService,
-    PlatformSpendState,
-};
-
-const SPEND: &str = "/api/v1/admin/spend";
-const OBSERVATIONS: &str = "/api/v1/admin/spend/observations";
-const START: u64 = 1_793_491_200; // 2026-11-01T00:00:00Z
-const THROUGH: &str = "2026-11-02T00:00:00Z";
-
-fn platform() -> PlatformBudgetPolicy {
-    PlatformBudgetPolicy {
-        period_cap: 1_000_000,
-        period_start: "2026-11-01T00:00:00Z".into(),
-        period_end: "2026-12-01T00:00:00Z".into(),
-        warning_percent: 80,
-        stop_percent: 100,
-        protected_reserve: 50_000,
-        lag_allowance: 50_000,
-        cloud: None,
-    }
-}
-
-/// In-memory stand-in for the Mongo ledger's period and idempotency rules.
-#[derive(Default)]
-struct Ledger {
-    observations: Mutex<BTreeMap<u64, u64>>,
-    /// No cloud source: platform spend metering is not enabled.
-    unmetered: bool,
-}
-
-impl Ledger {
-    fn state(&self) -> PlatformSpendState {
-        if self.unmetered {
-            return PlatformSpendState {
-                metering_enabled: false,
-                settings_revision: 3,
-                levels: None,
-                committed: None,
-                ledger: None,
-            };
-        }
-        let mut ledger = PlatformPeriodLedger::open(&platform(), 3).unwrap();
-        if let Some((through, units)) = self.observations.lock().unwrap().iter().next_back() {
-            ledger.cloud = Some(CloudObservation {
-                observed_through: *through,
-                units: *units,
-                recorded_at: *through,
-                settings_revision: 3,
-            });
-        }
-        PlatformSpendState {
-            metering_enabled: true,
-            settings_revision: 3,
-            levels: platform().levels().ok(),
-            committed: None,
-            ledger: Some(ledger),
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl PlatformSpendLedger for Ledger {
-    async fn admission_state(&self, _: u64) -> Result<PlatformAdmissionState, BudgetError> {
-        Ok(PlatformAdmissionState::default())
-    }
-
-    async fn spend_state(&self, _: u64) -> Result<PlatformSpendState, BudgetError> {
-        Ok(self.state())
-    }
-
-    async fn record_cloud_observation(
-        &self,
-        input: CloudObservationInput,
-        _: u64,
-    ) -> Result<PlatformSpendState, ObservationError> {
-        if input.observed_through < START {
-            return Err(ObservationError::Invalid);
-        }
-        match self
-            .observations
-            .lock()
-            .unwrap()
-            .entry(input.observed_through)
-        {
-            std::collections::btree_map::Entry::Occupied(entry) if *entry.get() != input.units => {
-                return Err(ObservationError::Conflict)
-            }
-            std::collections::btree_map::Entry::Occupied(_) => {}
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(input.units);
-            }
-        }
-        Ok(self.state())
-    }
-}
-
-struct SpendFixture {
-    app: Router,
-    ledger: Arc<Ledger>,
-}
-
-fn spend_fixture(platform_writes: bool) -> SpendFixture {
-    spend_fixture_with(platform_writes, Ledger::default())
-}
-
-fn spend_fixture_with(platform_writes: bool, ledger: Ledger) -> SpendFixture {
-    let activity_service = ActivityService::new(Arc::new(MemoryActivity::default()));
-    let settings = Arc::new(
-        PlatformSettingsService::new(
-            Arc::new(MemorySettings::default()),
-            activity_service.clone(),
-        )
-        .with_model_budget_writes_enabled(true)
-        .with_platform_spend_writes_enabled(platform_writes),
-    );
-    let sandboxes = Arc::new(InMemorySandboxStore::default());
-    let profiles = Arc::new(InMemoryProfileStore::default());
-    let retirement = Arc::new(StoredSandboxRetirement::new(sandboxes.clone()));
-    let operators = Arc::new(layer2_core::sandbox::SandboxOperatorService::new(
-        sandboxes,
-        profiles,
-        retirement,
-        activity_service.clone(),
-    ));
-    let ledger = Arc::new(ledger);
-    let spend = PlatformSpendService::new(ledger.clone(), activity_service.clone())
-        .with_writes_enabled(settings.platform_spend_writes_enabled());
-    SpendFixture {
-        app: router(
-            AdminState::new(settings, operators, activity_service)
-                .with_platform_spend(Arc::new(spend)),
-        ),
-        ledger,
-    }
-}
+use crate::rest::admin::tests::spend_test_support::*;
 
 fn observation(units: Value, observed_through: &str) -> Value {
     json!({"source": "cloud", "observed_through": observed_through, "units": units})
@@ -314,5 +177,76 @@ async fn get_spend_reports_metering_off_without_a_cloud_source() {
     assert_eq!(body["settings_revision"], 3);
     for absent in ["levels", "committed", "ledger"] {
         assert!(body.get(absent).is_none(), "{absent}");
+    }
+}
+
+#[tokio::test]
+async fn spend_ledger_refuses_observations_while_metering_is_off() {
+    use layer2_core::budget::{CloudObservationInput, ObservationError, PlatformSpendLedger};
+    let ledger = Ledger {
+        unmetered: true,
+        ..Ledger::default()
+    };
+    let input = CloudObservationInput {
+        observed_through: START + 86_400,
+        units: 1234,
+    };
+    assert_eq!(
+        ledger
+            .record_cloud_observation(input, input.observed_through)
+            .await,
+        Err(ObservationError::Invalid)
+    );
+    assert!(ledger.observations.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn spend_ledger_observation_period_bounds_are_inclusive() {
+    use layer2_core::budget::{CloudObservationInput, ObservationError, PlatformSpendLedger};
+    let ledger = Ledger::default();
+    let end = layer2_core::seconds_from_rfc3339("2026-12-01T00:00:00Z").unwrap();
+    for observed_through in [START - 1, end + 1] {
+        assert_eq!(
+            ledger
+                .record_cloud_observation(
+                    CloudObservationInput {
+                        observed_through,
+                        units: 1234
+                    },
+                    end + 1
+                )
+                .await,
+            Err(ObservationError::Invalid)
+        );
+    }
+    assert!(ledger.observations.lock().unwrap().is_empty());
+    for observed_through in [START, end] {
+        assert!(ledger
+            .record_cloud_observation(
+                CloudObservationInput {
+                    observed_through,
+                    units: 1234
+                },
+                end + 1
+            )
+            .await
+            .is_ok());
+    }
+    assert_eq!(ledger.observations.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn spend_closure_reason_projection_preserves_core_wire_bytes() {
+    use crate::rest::admin::spend::SpendClosureReason;
+    use layer2_core::budget::ClosureReason;
+    for reason in [
+        ClosureReason::SpendWarning,
+        ClosureReason::SpendStop,
+        ClosureReason::MeteringUnavailable,
+    ] {
+        assert_eq!(
+            serde_json::to_vec(&SpendClosureReason::from(reason)).unwrap(),
+            serde_json::to_vec(&reason).unwrap()
+        );
     }
 }
