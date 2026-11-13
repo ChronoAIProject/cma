@@ -38,6 +38,7 @@ pub(super) fn config() -> AgentSandboxConfig {
         image_pull_secrets: vec!["registry-pull".into()],
         template_network_policy: None,
         template_fs_group_change_policy: None,
+        native_claim_guard_enabled: false,
         control_key: "fixture".repeat(8),
     }
 }

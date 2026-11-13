@@ -27,7 +27,7 @@ async function submitV2ControlAttempt(
   signal: AbortSignal,
   allowRevisionRetry: boolean,
 ): Promise<V2ResponseControl> {
-  await session.authorize(signal);
+  await authorize(session, command, signal);
   if (target === undefined) throw new Error('This turn does not support response controls.');
   const retained = session.journal.readControl();
   let intent: ControlRecord;
@@ -81,7 +81,8 @@ export async function recoverV2Control(
   session: AgentV2Session,
   signal: AbortSignal,
 ): Promise<void> {
-  await session.authorize(signal);
+  signal.throwIfAborted();
+  await authorize(session, session.journal.readControl()?.body.command, signal);
   const intent = session.journal.readControl();
   if (intent !== null && intent.commandId === null) await send(session, intent, signal);
 }
@@ -90,6 +91,14 @@ function retryKey(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `control-retry-${String(Date.now())}-${String(Math.random()).slice(2)}`;
+}
+
+function authorize(
+  session: AgentV2Session,
+  command: V2ResponseControlCommand | undefined,
+  signal: AbortSignal,
+) {
+  return command?.type === 'cancel' ? session.authorizeCancel(signal) : session.authorize(signal);
 }
 
 function isDefinitiveRefusal(error: unknown): error is ApiError {
@@ -106,7 +115,7 @@ async function send(
   signal: AbortSignal,
   clearDefinitiveRefusal = true,
 ) {
-  await session.authorize(signal);
+  await authorize(session, intent.body.command, signal);
   let accepted;
   try {
     accepted = await session.responses.submitControl(
@@ -123,7 +132,7 @@ async function send(
       session.journal.refusedControl(intent.key);
     throw error;
   }
-  await session.authorize(signal);
+  await authorize(session, intent.body.command, signal);
   session.journal.acceptedControl(intent.key, accepted.control.receipt.command_id);
   // Admission or delivery does not end the displayed turn. Only durable replay does.
   return accepted;

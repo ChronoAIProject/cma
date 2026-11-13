@@ -78,33 +78,74 @@ impl LogReadIntegrity for PreparedIntegrity {
         agent_id: &AgentId,
         session: &mut ClientSession,
     ) -> Result<Option<ReadHead>, SandboxStoreError> {
-        use mongodb::{bson::doc, options::ReadConcern};
-        let row = store
-            .agents
-            .find_one(doc! {"_id":agent_id.as_str()})
-            .read_concern(ReadConcern::snapshot())
-            .session(&mut *session)
-            .await
-            .map_err(super::unavailable)?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let agent = crate::store::agents::read_agent(&row)?;
-        if crate::store::agent_log_segments::read_format(&row)?.is_some() {
-            let segmented = crate::store::agent_log_segments::read_head(store, &row, session, true)
-                .await
-                .map_err(super::transaction_error)?;
-            let mut head = ReadHead::from_agent(&agent, false);
-            head.segmented = Some(segmented);
-            return Ok(Some(head));
-        }
-        // Keep the current trusted legacy proof authoritative. Its queries use
-        // this same snapshot and cannot initiate preparation or quarantine writes.
-        let trusted =
-            super::super::agent_log_integrity::read::legacy_proof(store, &agent, &row, session)
-                .await?;
-        Ok(Some(ReadHead::from_agent(&agent, trusted)))
+        read_head(store, agent_id, session, None).await
     }
+}
+
+pub(in crate::store) struct CapturedIntegrity<'a>(pub &'a Agent);
+
+#[async_trait::async_trait]
+impl LogReadIntegrity for CapturedIntegrity<'_> {
+    async fn read_head(
+        &self,
+        store: &MongoSandboxStore,
+        agent_id: &AgentId,
+        session: &mut ClientSession,
+    ) -> Result<Option<ReadHead>, SandboxStoreError> {
+        read_head(store, agent_id, session, Some(self.0)).await
+    }
+}
+
+async fn read_head(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    session: &mut ClientSession,
+    expected: Option<&Agent>,
+) -> Result<Option<ReadHead>, SandboxStoreError> {
+    use mongodb::{bson::doc, options::ReadConcern};
+    let row = store
+        .agents
+        .find_one(doc! {"_id":agent_id.as_str()})
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut *session)
+        .await
+        .map_err(super::unavailable)?;
+    let Some(row) = row else {
+        return if expected.is_some() {
+            Err(SandboxStoreError::NotFound)
+        } else {
+            Ok(None)
+        };
+    };
+    let agent = crate::store::agents::read_agent(&row)?;
+    if let Some(expected) = expected {
+        // A later committed append is valid; a reused ID or moved lineage
+        // cannot supply proof for the previously authorized projection.
+        if agent.id != expected.id
+            || agent.owner != expected.owner
+            || agent.sandbox_id != expected.sandbox_id
+            || agent.workspace_id != expected.workspace_id
+            || agent.worktree_id != expected.worktree_id
+            || agent.created_at != expected.created_at
+            || agent.creation_worktree_id() != expected.creation_worktree_id()
+            || agent.conversation.last_seq < expected.conversation.last_seq
+        {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+    }
+    if crate::store::agent_log_segments::read_format(&row)?.is_some() {
+        let segmented = crate::store::agent_log_segments::read_head(store, &row, session, true)
+            .await
+            .map_err(super::transaction_error)?;
+        let mut head = ReadHead::from_agent(&agent, false);
+        head.segmented = Some(segmented);
+        return Ok(Some(head));
+    }
+    // Keep the current trusted legacy proof authoritative. Its queries use
+    // this same snapshot and cannot initiate preparation or quarantine writes.
+    let trusted =
+        super::super::agent_log_integrity::read::legacy_proof(store, &agent, &row, session).await?;
+    Ok(Some(ReadHead::from_agent(&agent, trusted)))
 }
 
 /// Baseline for paired fixtures; production always validates shared metadata.
