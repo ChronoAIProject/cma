@@ -74,7 +74,9 @@ The platform policy contains `period_cap`, inclusive `period_start`, exclusive
 required when the platform policy is supplied. Percentages must be ordered,
 and protected reserve plus lag allowance must fit below the stop threshold.
 Enabling requires a complete platform policy and at least one applicable owner
-policy. Platform metering/actions consume this contract through #1496; request
+policy. Platform period metering, closures and the spend stop are specified in
+[platform spend metering](CMA_Platform_Spend_Metering.md). Platform
+metering/actions consume this contract through #1496; request
 call-count enforcement belongs to the following broker/gateway integration.
 Persisted configuration alone is not evidence those integrations are active.
 

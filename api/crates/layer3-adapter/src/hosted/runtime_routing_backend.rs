@@ -53,6 +53,15 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    fn capacity_recovery_transport(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::hosted::CapacityRecoveryNativeTransport> {
+        self.for_handle(handle)
+            .ok()?
+            .capacity_recovery_transport(handle)
+    }
+
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         self.for_handle(handle)?.open_desktop(handle).await
     }

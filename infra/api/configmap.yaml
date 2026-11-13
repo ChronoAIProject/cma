@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/name: cma-agent-manager
     app.kubernetes.io/part-of: cma
 data:
+  CHRONO_COMMAND_RECONCILE_PACING_ENABLED: "false"
   # Private pod scrape listener; never routed by the public Service/Gateway.
   CHRONO_METRICS_BIND: "0.0.0.0:9091"
   CHRONO_INGRESS_COORDINATOR_ENABLED: "false"
@@ -106,6 +107,9 @@ data:
   CHRONO_AGENT_LOG_FLEET_PERCENT: "0"
   # Qualify title reads separately after the admission/public-window cohort.
   CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED: "false"
+  # Attribute authorization sessions and optional enrichment independently.
+  CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED: "false"
+  CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
@@ -133,6 +137,14 @@ data:
   CHRONO_MODEL_BUDGET_WRITES_ENABLED: "false"
   # Request model policies need a later reader baseline even if foundation writes are on.
   CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED: "false"
+  # Cloud spend policy fields and platform observations need a later reader baseline
+  # even if both model budget write gates are on.
+  CHRONO_PLATFORM_SPEND_WRITES_ENABLED: "false"
+  # Convert active period counters only after every reader supports the layout.
+  # OFF keeps existing distributed counters readable and settlement-capable.
+  CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED: "false"
+  # Open only after every replica understands the shared operator stop.
+  CHRONO_ADMISSION_CONTROL_WRITES_ENABLED: "false"
   # Bounded policy pinned before each Sandbox/Workspace provisioning effect.
   CHRONO_INSTALL_COMMAND_TIMEOUT_SECONDS: "600"
   CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS: "1800"
@@ -141,6 +153,9 @@ data:
   # Production must remain provider-authenticated. The trusted identity below
   # is read only in explicit local-development trusted mode.
   CHRONO_AUTH_MODE: "provider"
+  # Restricted user OAuth commands stay disabled until rollout verification.
+  # Set the canonical RFC 8707 audience only under the #1760 activation plan.
+  CHRONO_NYXID_OAUTH_API_RESOURCE: ""
   # Resource server audience for service-scoped NyxID agent key introspection.
   CHRONO_NYXID_SERVICE_ID: "b48c8aff-02a6-43b6-87b5-98d3e66c1a06"
   # Existing NyxID signed service identity; enable the CMA catalog connection's
@@ -224,6 +239,10 @@ data:
   CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE: "600"
   CHRONO_SERVER_RATE_CREATE_PER_MINUTE: "10"
   CHRONO_SERVER_RATE_INPUT_PER_MINUTE: "120"
+  # Independent allowance for recovery and controls of admitted work.
+  CHRONO_SERVER_RATE_CONTROL_PER_MINUTE: "120"
+  # Activate only after the separate recovery/control policy review.
+  CHRONO_SERVER_RATE_CONTROL_ENABLED: "false"
   # Separate policy activation after exact-route classification review.
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # Per-process public stream lifetimes; zero keeps admission disabled.
@@ -283,6 +302,8 @@ data:
   CHRONO_DOCUMENT_DELETION_ENABLED: "false"
   # Off until capacity-owner headroom and all admission writers are verified.
   CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
+  # Separately activate only after dependency qualification; preserve the online policy while off.
+  CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED: "false"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"
   CHRONO_STORAGE_CLIENT_ID: "sa_a91005afad2304c1b0023b21"
   # Agent model calls use the scoped AgentKey through this platform proxy.

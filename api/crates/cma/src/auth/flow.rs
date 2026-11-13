@@ -205,6 +205,9 @@ async fn begin_login_with_intent(
     else {
         return Redirect::to(return_to.as_deref().unwrap_or("/")).into_response();
     };
+    if matches!(screen, Some(LoginScreen::Register)) && !auth.registration_open().await {
+        return super::records::registration_closed(None);
+    }
     let metadata = match auth.metadata().await {
         Ok(metadata) => metadata,
         Err(error) => {

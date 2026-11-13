@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 288,
+  "openapi_operations": 291,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3956,6 +3956,39 @@
         "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated"
+      ]
+    },
+    "GET /api/v1/admin/admission": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects the shared control snapshot and its at most twenty newest immutable changes; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/admission/stop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
+      ]
+    },
+    "POST /api/v1/admin/admission/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
       ]
     }
   }

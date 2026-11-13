@@ -34,6 +34,7 @@ import {
   type Output,
 } from '../../schema.js';
 import { anything, extensible } from './helpers.js';
+import { ProtocolError } from '../../errors.js';
 import { InboundMediaCapabilitiesSchema } from './media.js';
 import {
   ConsumerIdSchema,
@@ -412,6 +413,31 @@ export const EventContextSnapshotSchema = object({
 });
 export type EventContextSnapshot = Output<typeof EventContextSnapshotSchema>;
 
+export const UpstreamRefusalSchema = object({
+  operation: enumeration('responses', 'conversation'),
+  status: (value: unknown): number => {
+    const status = integer(value);
+    if (status < 100 || status > 599)
+      throw new ProtocolError('upstream HTTP status must be an integer from 100 through 599');
+    return status;
+  },
+  code: enumeration(
+    'media_source_refused',
+    'partition_agent_missing',
+    'partition_agent_unavailable',
+    'agent_command_admission_conflict',
+    'agent_command_key_conflict',
+    'binding_not_ready',
+    'binding_resources_unavailable',
+    'command_authority_required',
+    'response_forbidden',
+    'response_not_found',
+    'model_mismatch',
+    'unrecognized',
+  ),
+});
+export type UpstreamRefusal = Output<typeof UpstreamRefusalSchema>;
+
 export const ProblemSchema = object({
   code: ProblemCodeSchema,
   detail: optional(nullable(text)),
@@ -419,5 +445,6 @@ export const ProblemSchema = object({
   status: integer,
   title: text,
   type: optional(text),
+  upstream: optional(nullable(UpstreamRefusalSchema)),
 });
 export type Problem = Output<typeof ProblemSchema>;

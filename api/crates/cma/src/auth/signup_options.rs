@@ -68,7 +68,7 @@ pub(super) struct SignupOptionsCache {
 }
 
 pub(super) async fn signup_options(State(auth): State<Arc<AuthState>>) -> impl IntoResponse {
-    let options = cached_signup_options(&auth).await;
+    let options = current_signup_options(&auth).await;
     (
         [(
             header::CACHE_CONTROL,
@@ -76,6 +76,18 @@ pub(super) async fn signup_options(State(auth): State<Arc<AuthState>>) -> impl I
         )],
         Json(options),
     )
+}
+
+/// The cached provider options with the platform's registration closure
+/// applied on every request. The closure never enters the long provider
+/// cache; the read is advisory, so an unreadable state keeps NyxID's value
+/// and the sign-in callback stays the authority.
+async fn current_signup_options(auth: &AuthState) -> SignupOptions {
+    let mut options = cached_signup_options(auth).await;
+    if options.register_available && !auth.registration_open().await {
+        options.register_available = false;
+    }
+    options
 }
 
 async fn cached_signup_options(auth: &AuthState) -> SignupOptions {
@@ -135,6 +147,10 @@ mod tests {
 
     use super::*;
     use crate::auth::{persistence::MemoryAuthStore, AuthMode};
+    use layer2_core::budget::{
+        BudgetError, Closure, ClosureReason, CloudObservationInput, ObservationError,
+        PlatformAdmissionState, PlatformSpendLedger, PlatformSpendState,
+    };
 
     async fn public_config(State(requests): State<Arc<AtomicUsize>>) -> Json<serde_json::Value> {
         requests.fetch_add(1, Ordering::SeqCst);
@@ -272,6 +288,111 @@ mod tests {
         assert_eq!(
             cached_signup_options(&auth).await,
             SignupOptions::unavailable()
+        );
+        server.abort();
+    }
+
+    struct Spend(std::sync::Mutex<Result<PlatformAdmissionState, BudgetError>>);
+
+    #[async_trait::async_trait]
+    impl PlatformSpendLedger for Spend {
+        async fn admission_state(&self, _: u64) -> Result<PlatformAdmissionState, BudgetError> {
+            self.0.lock().unwrap().clone()
+        }
+
+        async fn spend_state(&self, _: u64) -> Result<PlatformSpendState, BudgetError> {
+            Err(BudgetError::Unavailable)
+        }
+
+        async fn record_cloud_observation(
+            &self,
+            _: CloudObservationInput,
+            _: u64,
+        ) -> Result<PlatformSpendState, ObservationError> {
+            Err(ObservationError::Unavailable)
+        }
+    }
+
+    fn warning() -> PlatformAdmissionState {
+        PlatformAdmissionState {
+            configured: true,
+            operator_control: layer2_core::budget::OperatorAdmissionState::Open,
+            closures: vec![Closure {
+                reason: ClosureReason::SpendWarning,
+                since: 1,
+                settings_revision: 1,
+                committed_at_entry: 0,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn operator_stop_hides_registration_even_with_cached_provider_options_and_metering_off() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/api/v1/public/config", get(public_config))
+            .with_state(Arc::clone(&requests));
+        let (auth, server) = provider(app).await;
+        let stopped = PlatformAdmissionState {
+            operator_control: layer2_core::budget::OperatorAdmissionState::Stopped(
+                layer2_core::admission::OperatorStop {
+                    since: 1,
+                    revision: 1,
+                    actor: layer2_core::SubjectId::new("operator"),
+                    reason: "contain".into(),
+                },
+            ),
+            ..Default::default()
+        };
+        let spend = Arc::new(Spend(std::sync::Mutex::new(Ok(stopped))));
+        let auth = auth.with_platform_spend(spend.clone());
+        assert!(!current_signup_options(&auth).await.register_available);
+        *spend.0.lock().unwrap() = Ok(PlatformAdmissionState::default());
+        assert!(current_signup_options(&auth).await.register_available);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_registration_closure_hides_account_creation_on_every_read() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/api/v1/public/config", get(public_config))
+            .with_state(Arc::clone(&requests));
+        let (auth, server) = provider(app).await;
+        let spend = Arc::new(Spend(std::sync::Mutex::new(Ok(warning()))));
+        let auth = auth.with_platform_spend(spend.clone());
+
+        assert!(!current_signup_options(&auth).await.register_available);
+        for (state, expected) in [
+            (Ok(PlatformAdmissionState::default()), true),
+            (
+                Ok(PlatformAdmissionState {
+                    operator_control: layer2_core::budget::OperatorAdmissionState::Unreadable,
+                    ..Default::default()
+                }),
+                false,
+            ),
+            (Err(BudgetError::Unavailable), true),
+            (Ok(warning()), false),
+        ] {
+            *spend.0.lock().unwrap() = state;
+            let options = current_signup_options(&auth).await;
+            assert_eq!(options.register_available, expected);
+            assert_eq!(options.social_providers, ["github", "google"]);
+        }
+        // The platform state is read per request; the provider options stay
+        // cached and keep NyxID's own value.
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        assert!(
+            auth.signup_options_cache
+                .value
+                .lock()
+                .await
+                .as_ref()
+                .expect("cache entry")
+                .value
+                .register_available
         );
         server.abort();
     }

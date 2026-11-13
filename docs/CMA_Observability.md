@@ -36,6 +36,23 @@ configuration; adding metadata cannot prove that the target has been selected.
 Set a 15-second scrape interval and a bounded timeout. Scrape every pod rather
 than a load-balanced Service. Deduplicate overlapping discovery jobs, not pods.
 
+The collector is the existing vmagent, not new CMA or chrono-probe code. It
+issues read-only HTTP GET requests to each private metrics listener and writes
+samples directly to VictoriaMetrics. Probe exports its own independent
+NyxID-path observations; it does not relay CMA's raw metrics. Grafana queries
+the stored application and probe series when panels are configured. Deferring
+panels does not require deferring collection or dropping detailed CMA metrics.
+
+A read-only check on 2026-11-13 verified live probe series in the platform's
+VictoriaMetrics, with distinct scrape timestamps **20 seconds** apart. This
+confirms the existing collection/storage path for probe, matching chrono-cd's
+documented default, but does not establish CMA's requested 15-second cadence
+or all-replica coverage. Configure any required override in the existing
+collector's authoritative configuration. CMA's pod metadata alone cannot
+change the collector interval. Track the remaining collection checks under
+[CMA #1848](https://github.com/ChronoAIProject/cma/issues/1848); panels are
+currently deferred.
+
 Reuse the platform's cAdvisor/kube-state-metrics collection for CPU, resident
 memory, restarts and desired replicas. There is no second process-resource
 collector in CMA. Application counters add observations the infrastructure
@@ -64,11 +81,11 @@ Unknown routes use `unmatched`. Correlation IDs belong in restricted logs.
 | Before-header cancellation | `cma_http_before_headers_cancelled_total` and `cma_http_cancelled_before_headers_seconds`; a client disconnect or cancellation is an observation, not proof of platform task failure. |
 | SSE | `cma_sse_observation_closed_total{route,reason}` reports transport observation endings. It does not inspect protocol payloads or assert a terminal. `cma_public_streams_active{stream_kind}` and `cma_public_stream_polls_total{stream_kind,outcome}` export existing bounded stream diagnostics every 10 seconds. |
 | Authentication | `cma_auth_resolutions_total{path,outcome}` and `cma_auth_resolution_seconds` cover ambient, worker and exact resource-request verification, including early rejection and cancellation. Independent routes record `bypassed`. Resolution is distinct from later endpoint authorization. |
-| Readiness | `cma_readiness_check_success` is the last completed Mongo check's result. `cma_readiness_check_timestamp_seconds` supplies freshness; `cma_readiness_check_seconds{outcome}` reports check duration. A stale successful check is not ready. `/ready` retains its existing five-second freshness limit, `/livez` retains process liveness semantics. |
+| Readiness | `cma_readiness_check_success` is the last completed Mongo check's result. `cma_readiness_check_timestamp_seconds` supplies freshness; `cma_readiness_check_seconds{outcome}` reports check duration. A stale successful check is not ready. `/ready` retains its existing five-second Mongo freshness limit and also checks required local scheduling capability; `/livez` retains process liveness semantics. See [worker supervision](CMA_Worker_Supervision.md). |
 | Mongo pool | `cma_mongo_pool_events_total{pool,operation,outcome}`, `cma_mongo_pool_operation_seconds`, `cma_mongo_checkout_started_total`, `cma_mongo_connections_tracked`, `cma_mongo_pool_max_connections`, `cma_mongo_connection_tracking_overflow_total`. Fixed pool labels separate `application`, `reporting` and `routing` clients, each across its server pools; max connections is a per-server pool limit, not a fleet denominator. The reporting observer composes with its existing circuit callback. Tracking is bounded at 4096; overflow means tracked occupancy is incomplete. Checkout starts are events, not queue depth: the pinned driver may omit the end event on cancellation, so starts minus ends is invalid. Duration samples cover completed checkouts only. Command monitoring stays disabled. |
 | Mongo reads | Existing `cma_mongo_read_{operations,failures,documents,document_bytes}_total` snapshots, by bounded collection and `find`. They cover instrumented reads, not every database command or wire byte. |
 | Ledger reads | Existing `cma_agent_log_scan*` counters, by fixed caller/worker step/outcome, exported from periodic diagnostics. They measure read work, not accepted commands. |
-| Workers | `cma_worker_alive`, `cma_worker_heartbeat_timestamp_seconds`, `cma_worker_phase_success_timestamp_seconds{phase}`, `cma_worker_operations_total{phase,outcome}`, `cma_worker_local_queued`, `cma_worker_local_active`. Instrumented schedulers are Agent commands, Sandbox commands, Agent connection/lifecycle work, launches and native warm pools. A guard clears alive/queue gauges on return, abort or panic. Heartbeat proves scheduler-loop activity; successful discovery proves a scan completed; neither proves a turn completed. |
+| Workers | `cma_worker_alive`, `cma_worker_heartbeat_timestamp_seconds`, `cma_worker_phase_success_timestamp_seconds{phase}`, `cma_worker_operations_total{phase,outcome}`, `cma_worker_local_queued`, `cma_worker_local_active`. Instrumented schedulers are Agent commands, Sandbox commands, Agent connection/lifecycle work, Sandbox and Workspace lifecycle sweeps, runtime reconciliation/recovery admission, launches and native warm pools. A guard clears alive/queue gauges on return, abort or panic. Heartbeat proves scheduler-loop activity; successful discovery proves a scan completed; neither proves a turn completed. |
 | Optional background work | `cma_background_active`, `cma_background_deferred_total`, `cma_background_attempts_total{outcome}`, `cma_background_attempt_seconds`, `cma_background_pending_since_timestamp_seconds`, `cma_background_completion_timestamp_seconds`. Pending timestamps continue to age during a blocked operation. Zero means no observed pending sweep. These cover local resumable sweeps, not the oldest durable command in Mongo. |
 | Runtime ledger holds | `cma_runtime_ledger_holds_total`: observed runtime capacity holds. This does not invent an occupancy estimate for runtimes lacking that contract. |
 | Collector health | `cma_telemetry_sample_timestamp_seconds` is refreshed by the existing 10-second diagnostics worker. A fresh scrape with an old sample timestamp means that local worker is stalled. |
@@ -363,13 +380,18 @@ a logical group result, labelled `webhook_group`, not a per-recipient receipt.
 Existing delivery duration metrics remain in place. EG turn duration buckets
 now include 30s, 120s, 600s, 1800s and 3600s, without imposing a turn deadline.
 
-External journeys and production collection/notification acceptance are tracked
-in [chrono-probe #18](https://github.com/ChronoAIProject/chrono-probe/issues/18).
-It reuses the existing collector and probe checks, and coordinates versioned
-rules/dashboards in the platform repository. Creating it neither closes #1470
-nor implements #1486's complete durable request/terminal accounting.
+External journeys are tracked in
+[CMA #1847](https://github.com/ChronoAIProject/cma/issues/1847), collection and
+notification integration in
+[CMA #1848](https://github.com/ChronoAIProject/cma/issues/1848), and generic
+read-only probe observations in
+[chrono-probe #18](https://github.com/ChronoAIProject/chrono-probe/issues/18).
+They reuse the existing collector and coordinate platform configuration;
+business execution remains outside probe. These implementation items neither
+close #1470 nor implement #1486's complete durable request/terminal accounting.
 
 Worker supervision, progress-aware stall detection, safe recovery and readiness
 are tracked separately in [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740),
-a child of #1470. This metrics PR does not change worker restart or readiness
-policy; long inference and user waits must not become arbitrary failure deadlines.
+a child of #1470. See [worker supervision](CMA_Worker_Supervision.md) for its
+implementation and qualification boundaries. Long inference and user waits
+remain outside arbitrary scheduler failure deadlines.
