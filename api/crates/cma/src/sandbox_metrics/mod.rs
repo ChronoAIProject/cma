@@ -127,6 +127,19 @@ impl MetricsWorkers {
 }
 
 #[cfg(test)]
+pub(crate) async fn reports_fixture(store: Arc<ReportingStore>) {
+    MetricsWorkers {
+        store,
+        source: None,
+        native: None,
+        cluster: "fixture".into(),
+        enabled: false,
+    }
+    .reports(0)
+    .await;
+}
+
+#[cfg(test)]
 pub(crate) async fn generate_fixture(
     store: Arc<ReportingStore>,
     lease: &crate::store::usage_reports::ReportLease,
