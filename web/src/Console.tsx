@@ -30,7 +30,7 @@ import { ShellCommandMenu } from './shell/ShellCommandMenu';
 import { ConsoleActionError, NotFoundView, UnavailableView } from './ConsoleViews';
 import { ConsoleLanding } from './ConsoleLanding';
 import { consoleCreationAccess } from './ConsoleCreationAccess';
-import { useDocumentTitle } from './ui/useDocumentTitle';
+import { useConsoleDocumentTitle } from './ConsoleTitle';
 import './Console.css';
 import { useAgentAccess } from './resources/agentAccess';
 import { SharedAgent } from './resources/SharedAgent';
@@ -161,16 +161,7 @@ function ConsoleContent({
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
-  useDocumentTitle(
-    route.kind === 'home' || route.kind === 'agent_manager'
-      ? 'Agent Manager'
-      : route.kind === 'not_found'
-        ? 'Page not found'
-        : undefined,
-    route.kind === 'agent' && (personalAgentId !== undefined || shared !== undefined)
-      ? 'inherit'
-      : 'product',
-  );
+  useConsoleDocumentTitle(route, personalAgentId !== undefined || shared !== undefined);
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
   const content =
     route.kind === 'artifacts' || route.kind === 'document' ? (
