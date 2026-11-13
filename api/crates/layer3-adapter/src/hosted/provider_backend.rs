@@ -85,6 +85,23 @@ pub trait HostedControlTransport: Send + Sync {
         ))
     }
 
+    /// Attach an existing native conversation for capacity recovery. This is
+    /// separate from `open_agent` so a runtime cannot launch, replay input or
+    /// infer native state from a durable active-turn field.
+    async fn reattach_existing_capacity_recovery(
+        &self,
+        _request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        _updates: mpsc::Sender<ConversationUpdate>,
+    ) -> Result<
+        (
+            ConversationChannel,
+            crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+        ),
+        crate::agent_capacity_recovery::CapacityRecoveryError,
+    > {
+        Err(crate::agent_capacity_recovery::CapacityRecoveryError::Unsupported)
+    }
+
     async fn open_agent(
         &self,
         handle: &RuntimeHandle,
@@ -200,6 +217,13 @@ impl ProviderHostedBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for ProviderHostedBackend {
+    fn capacity_recovery_transport(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
+        Some(self)
+    }
+
     async fn open_desktop(
         &self,
         handle: &RuntimeHandle,
@@ -378,6 +402,22 @@ impl HostedBackend for ProviderHostedBackend {
             self.client.delete_captured(target).await?;
         }
         Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl super::CapacityRecoveryNativeTransport for ProviderHostedBackend {
+    async fn reattach_existing(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<(
+        ConversationChannel,
+        crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+    )> {
+        self.transport
+            .reattach_existing_capacity_recovery(request, updates)
+            .await
     }
 }
 

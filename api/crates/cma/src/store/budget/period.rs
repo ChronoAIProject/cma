@@ -1,16 +1,18 @@
-//! The platform period row: one document per period in the reservation
-//! collection, moved in the same transactions as the owner rows (contract §4).
+//! Exact period admission over its stored accounting layout. Owner and platform
+//! liability changes share the caller's transaction (contract section 4).
 
 use layer2_core::admission::{AdmissionCause, AdmissionCeilings};
 use layer2_core::budget::{
-    BudgetError, BudgetPolicy, Closure, ClosureReason, OperatorAdmissionState,
-    PlatformBudgetPolicy, PlatformPeriodLedger, Refusal,
+    BudgetError, BudgetPolicy, Closure, OperatorAdmissionState, PlatformBudgetPolicy,
+    PlatformPeriodLedger, Refusal,
 };
 use layer2_core::SubjectId;
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::{ClientSession, Collection};
 
-use super::{decode, domain, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+pub(super) use super::period_storage::read as read_period;
+use super::period_storage::PeriodState;
+use super::{domain, ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use crate::store::sandbox_mongo::is_duplicate_key;
 
 /// One settings read: the owner's policy, the platform policy when budgets are
@@ -30,20 +32,12 @@ pub(super) async fn fenced_snapshot(
     owner: &SubjectId,
     session: &mut ClientSession,
 ) -> Result<PolicySnapshot, ApplyError> {
-    // A real write also fences activation against previously disabled admissions.
-    // The additive fence is outside the strict settings record.
-    let result = store
-        .budget_settings
-        .update_one(
-            doc! {"_id": "platform", "document_schema_version": DOCUMENT_SCHEMA_VERSION},
-            doc! {"$inc": {"model_budget_admission_fence": 1_i64}},
-        )
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    if result.matched_count != 1 {
-        return Err(domain(BudgetError::Unavailable));
-    }
+    fence_settings(
+        &store.budget_settings,
+        "model_budget_admission_fence",
+        session,
+    )
+    .await?;
     let document = store
         .budget_settings
         .find_one(doc! {"_id": "platform"})
@@ -54,6 +48,29 @@ pub(super) async fn fenced_snapshot(
     let snapshot = snapshot(&document, Some(owner)).map_err(domain)?;
     store.note_platform_enabled(snapshot.platform.is_some());
     Ok(snapshot)
+}
+
+/// Every model liability increase shares this real write, including late usage
+/// and cloud corrections. Snapshot reads alone do not prevent cross-counter skew.
+pub(super) async fn fence_settings(
+    settings: &Collection<Document>,
+    counter: &str,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    // A real write also fences activation against previously disabled admissions.
+    // The additive fence is outside the strict settings record.
+    let result = settings
+        .update_one(
+            doc! {"_id": "platform", "document_schema_version": DOCUMENT_SCHEMA_VERSION},
+            doc! {"$inc": {counter: 1_i64}},
+        )
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if result.matched_count != 1 {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    Ok(())
 }
 
 /// Zero-liability commitments: a plain read inside the session snapshot, with
@@ -116,29 +133,6 @@ pub(in crate::store) fn period_key(period_start: u64) -> String {
     format!("platform:{}", layer2_core::rfc3339_at(start))
 }
 
-fn period_document(ledger: &PlatformPeriodLedger) -> Result<Document, BudgetError> {
-    let record = mongodb::bson::serialize_to_bson(ledger).map_err(|_| BudgetError::Unavailable)?;
-    Ok(doc! {
-        "_id": period_key(ledger.period_start),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "record": record,
-    })
-}
-
-async fn read_period(
-    rows: &Collection<Document>,
-    period_start: u64,
-    session: &mut ClientSession,
-) -> Result<Option<PlatformPeriodLedger>, ApplyError> {
-    rows.find_one(doc! {"_id": period_key(period_start)})
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .as_ref()
-        .map(decode)
-        .transpose()
-}
-
 /// The evaluator pre-creates the row (rule 6). An admission that still finds
 /// it missing inserts it; a concurrent insert surfaces as the callers' existing
 /// write-conflict or duplicate-key retry.
@@ -147,18 +141,25 @@ pub(super) async fn load_or_open(
     platform: &PlatformBudgetPolicy,
     revision: u64,
     session: &mut ClientSession,
-) -> Result<(PlatformPeriodLedger, bool), ApplyError> {
+) -> Result<(PeriodState, bool), ApplyError> {
     let (start, _) = platform
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
-    if let Some(ledger) = read_period(&store.model_budget, start, session).await? {
+    let read = if store.platform_counter_shards {
+        super::period_storage::read_batched(&store.model_budget, start, session).await?
+    } else {
+        read_period(&store.model_budget, start, session).await?
+    };
+    if let Some(ledger) = read {
         return Ok((ledger, false));
     }
-    let ledger = PlatformPeriodLedger::open(platform, revision)
-        .map_err(|_| domain(BudgetError::Unavailable))?;
+    let ledger = PeriodState::from(
+        PlatformPeriodLedger::open(platform, revision)
+            .map_err(|_| domain(BudgetError::Unavailable))?,
+    );
     store
         .model_budget
-        .insert_one(period_document(&ledger).map_err(domain)?)
+        .insert_one(ledger.document().map_err(domain)?)
         .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -170,11 +171,12 @@ pub(super) async fn load_or_open(
 /// conflict, so a miss here is an inconsistency and fails closed.
 pub(super) async fn save_period(
     store: &MongoSandboxStore,
-    ledger: &PlatformPeriodLedger,
+    state: &PeriodState,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    let mut next = ledger.clone();
-    next.revision = ledger
+    let ledger = &state.ledger;
+    let mut next = state.clone();
+    next.ledger.revision = ledger
         .revision
         .checked_add(1)
         .filter(|revision| *revision <= i64::MAX as u64)
@@ -183,7 +185,7 @@ pub(super) async fn save_period(
         .model_budget
         .replace_one(
             doc! {"_id": period_key(ledger.period_start), "record.revision": ledger.revision as i64},
-            period_document(&next).map_err(domain)?,
+            next.document().map_err(domain)?,
         )
         .session(&mut *session)
         .await
@@ -200,39 +202,55 @@ pub(super) async fn save_period(
 pub(super) async fn admit_liability(
     store: &MongoSandboxStore,
     snapshot: &PolicySnapshot,
+    owner: &SubjectId,
     liability: u64,
     now: u64,
     session: &mut ClientSession,
-) -> Result<Option<u64>, ApplyError> {
+) -> Result<Option<super::counter_accounting::Charge>, ApplyError> {
     let Some(platform) = &snapshot.platform else {
         return Ok(None);
     };
     let (mut ledger, inserted) = load_or_open(store, platform, snapshot.revision, session).await?;
-    match ledger.admit(platform, snapshot.revision, liability, now) {
+    let mut admitted = ledger.ledger.clone();
+    match admitted.admit(platform, snapshot.revision, liability, now) {
         Ok(entered) => {
-            save_period(store, &ledger, session).await?;
-            entered.iter().for_each(alert);
-            Ok(Some(ledger.period_start))
-        }
-        Err(refusal) => {
-            if inserted {
-                // Our uncommitted insert would block the guarded write below.
-                let _ = session.abort_transaction().await;
-            }
-            Err(refuse(
-                &store.model_budget,
-                platform,
-                snapshot.revision,
-                ledger.period_start,
-                refusal,
+            let metadata_changed = admitted.period_end != ledger.ledger.period_end
+                || admitted.settings_revision != ledger.ledger.settings_revision
+                || !entered.is_empty();
+            // Convert only a successful admission, using pre-admission balances.
+            // A refusal must retain the committed layout/revision as evidence
+            // for its independent closure write after the transaction aborts.
+            super::counter_accounting::activate(store, &mut ledger, session).await?;
+            admitted.revision = ledger.ledger.revision;
+            ledger.ledger = admitted;
+            let charge = super::counter_accounting::reserve(
+                store,
+                &ledger,
+                owner,
+                liability,
+                metadata_changed,
+                session,
             )
-            .await)
+            .await?;
+            entered.iter().for_each(alert);
+            Ok(Some(charge))
         }
+        Err(refusal) => Err(refuse(
+            &store.budget_settings,
+            &store.model_budget,
+            snapshot.revision,
+            (!inserted).then_some(ledger.ledger.revision),
+            ledger,
+            refusal,
+            session,
+        )
+        .await),
     }
 }
 
 /// Zero-liability commitments read the settings and the row in their snapshot
 /// and never write either (rule 2); a refusal's closures go outside.
+#[cfg(test)]
 pub(crate) async fn require_open_with(
     settings: &Collection<Document>,
     rows: &Collection<Document>,
@@ -240,36 +258,58 @@ pub(crate) async fn require_open_with(
     cause: AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
+    require_open_read(settings, rows, now, cause, false, session).await
+}
+
+async fn require_open_read(
+    settings: &Collection<Document>,
+    rows: &Collection<Document>,
+    now: u64,
+    cause: AdmissionCause,
+    batched: bool,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
     let Some(snapshot) = read_snapshot(settings, None, session).await? else {
         return Ok(());
     };
-    require_snapshot_open(rows, &snapshot, now, cause, session).await
+    require_snapshot_spend_open(settings, rows, &snapshot, now, batched, session).await?;
+    require_operator_open(&snapshot, cause)
 }
 
-/// Reuse the settings document already read by message admission. Operator
-/// control is independent of whether spend metering is configured.
-pub(super) async fn require_snapshot_open(
+/// Reuse the same settings snapshot while preserving spend refusal precedence.
+async fn require_snapshot_spend_open(
+    settings: &Collection<Document>,
     rows: &Collection<Document>,
     snapshot: &PolicySnapshot,
     now: u64,
-    cause: AdmissionCause,
+    batched: bool,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
     let Some(platform) = &snapshot.platform else {
-        return require_operator_open(snapshot, cause);
+        return Ok(());
     };
     let revision = snapshot.revision;
     let (start, _) = platform
         .period_bounds()
         .map_err(|_| domain(BudgetError::Unavailable))?;
-    let mut ledger = match read_period(rows, start, session).await? {
-        Some(ledger) => ledger,
-        None => PlatformPeriodLedger::open(platform, revision)
-            .map_err(|_| domain(BudgetError::Unavailable))?,
+    let read = if batched {
+        super::period_storage::read_batched(rows, start, session).await?
+    } else {
+        read_period(rows, start, session).await?
     };
-    match ledger.admit(platform, revision, 0, now) {
-        Ok(_) => require_operator_open(snapshot, cause),
-        Err(refusal) => Err(refuse(rows, platform, revision, start, refusal).await),
+    let expected = read.as_ref().map(|state| state.ledger.revision);
+    let mut ledger = match read {
+        Some(ledger) => ledger,
+        None => PeriodState::from(
+            PlatformPeriodLedger::open(platform, revision)
+                .map_err(|_| domain(BudgetError::Unavailable))?,
+        ),
+    };
+    match ledger.ledger.admit(platform, revision, 0, now) {
+        Ok(_) => Ok(()),
+        Err(refusal) => {
+            Err(refuse(settings, rows, revision, expected, ledger, refusal, session).await)
+        }
     }
 }
 
@@ -297,11 +337,12 @@ pub(in crate::store) async fn require_open(
     cause: AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    require_open_with(
+    require_open_read(
         &store.budget_settings,
         &store.model_budget,
         now,
         cause,
+        store.platform_counter_shards,
         session,
     )
     .await
@@ -315,11 +356,12 @@ pub(in crate::store) async fn require_open_with_ceilings(
     cause: AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
-    require_open_with_collections_and_ceilings(
+    require_open_read_with_ceilings(
         &store.budget_settings,
         &store.model_budget,
         now,
         cause,
+        store.platform_counter_shards,
         session,
     )
     .await
@@ -332,66 +374,84 @@ pub(in crate::store) async fn require_open_with_collections_and_ceilings(
     cause: AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
+    require_open_read_with_ceilings(settings, rows, now, cause, false, session).await
+}
+
+async fn require_open_read_with_ceilings(
+    settings: &Collection<Document>,
+    rows: &Collection<Document>,
+    now: u64,
+    cause: AdmissionCause,
+    batched: bool,
+    session: &mut ClientSession,
+) -> Result<Result<AdmissionCeilings, ()>, ApplyError> {
     let Some(snapshot) = read_snapshot(settings, None, session).await? else {
         return Ok(Ok(AdmissionCeilings::default()));
     };
-    require_snapshot_open(rows, &snapshot, now, cause, session).await?;
+    require_snapshot_spend_open(settings, rows, &snapshot, now, batched, session).await?;
+    require_operator_open(&snapshot, cause)?;
     Ok(snapshot.ceilings)
 }
 
-/// Enter a refusal's closures after (or regardless of) the abort, then return
-/// the refusal reason for the caller's loop to abort on (rule 1). Entering is
-/// best effort: the refusal stands and the evaluator re-derives the closure.
+/// The historical owner-policy bypass is only valid with global metering off.
+/// An active meter cannot value this commitment without an owner policy; do
+/// not grant a provider permit or a turn without its conservative reservation.
+pub(super) async fn require_unbudgeted(
+    store: &MongoSandboxStore,
+    snapshot: &PolicySnapshot,
+    now: u64,
+    cause: AdmissionCause,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    require_snapshot_spend_open(
+        &store.budget_settings,
+        &store.model_budget,
+        snapshot,
+        now,
+        store.platform_counter_shards,
+        session,
+    )
+    .await?;
+    if snapshot.platform.is_some() {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    require_operator_open(snapshot, cause)
+}
+
+/// Release admission locks before independently recording a refusal. The
+/// original refusal stands even when changed evidence defers its closure.
 async fn refuse(
+    settings: &Collection<Document>,
     rows: &Collection<Document>,
-    platform: &PlatformBudgetPolicy,
     revision: u64,
-    period_start: u64,
+    expected: Option<u64>,
+    mut ledger: PeriodState,
     refusal: Refusal,
+    session: &mut ClientSession,
 ) -> ApplyError {
+    if let Err(error) = session.abort_transaction().await {
+        tracing::warn!(event = "platform_spend_refusal_abort", error = %error,
+            "could not confirm admission abort; closure persistence deferred");
+        return domain(refusal.reason);
+    }
     if !refusal.closures.is_empty() {
-        let entered = match ensure_period_row(rows, platform, revision).await {
-            Ok(()) => enter_closures(rows, period_start, &refusal.closures).await,
-            Err(error) => Err(error),
-        };
-        if entered.is_err() {
-            tracing::warn!(
+        ledger
+            .ledger
+            .closures
+            .extend(refusal.closures.iter().cloned());
+        match super::transitions::persist(settings, rows, revision, expected, &ledger).await {
+            Ok(true) => refusal.closures.iter().for_each(alert),
+            Ok(false) => tracing::debug!(
+                event = "platform_spend_closure_stale",
+                "changed evidence deferred refusal closure persistence"
+            ),
+            Err(_) => tracing::warn!(
                 event = "platform_spend_closure_deferred",
                 "platform spend closure could not be recorded with its refusal"
-            );
+            ),
         }
     }
     domain(refusal.reason)
-}
-
-/// Guarded single-document writes outside any transaction: first writer wins
-/// and repeats are no-ops. Returns the reasons this caller actually inserted;
-/// only that caller emits the alert record.
-pub(super) async fn enter_closures(
-    rows: &Collection<Document>,
-    period_start: u64,
-    closures: &[Closure],
-) -> Result<Vec<ClosureReason>, BudgetError> {
-    let key = period_key(period_start);
-    let mut inserted = Vec::new();
-    for closure in closures {
-        let reason = mongodb::bson::serialize_to_bson(&closure.reason)
-            .map_err(|_| BudgetError::Unavailable)?;
-        let value =
-            mongodb::bson::serialize_to_bson(closure).map_err(|_| BudgetError::Unavailable)?;
-        let result = rows
-            .update_one(
-                doc! {"_id": &key, "record.closures.reason": {"$ne": reason}},
-                doc! {"$push": {"record.closures": value}, "$inc": {"record.revision": 1_i64}},
-            )
-            .await
-            .map_err(|_| BudgetError::Unavailable)?;
-        if result.modified_count == 1 {
-            alert(closure);
-            inserted.push(closure.reason);
-        }
-    }
-    Ok(inserted)
 }
 
 /// Pre-create the row outside any admission transaction (rule 6).
@@ -416,25 +476,6 @@ pub(super) async fn ensure_period_row(
         Err(error) if is_duplicate_key(&error) => Ok(()),
         Err(_) => Err(BudgetError::Unavailable),
     }
-}
-
-/// Apply a settlement, release or retention to the row a reservation was
-/// charged to, in the caller's transaction. A reservation made before the
-/// platform policy existed carries no period and never touches a row.
-pub(super) async fn mirror(
-    store: &MongoSandboxStore,
-    period_start: Option<u64>,
-    session: &mut ClientSession,
-    change: impl FnOnce(&mut PlatformPeriodLedger) -> Result<(), BudgetError>,
-) -> Result<(), ApplyError> {
-    let Some(start) = period_start else {
-        return Ok(());
-    };
-    let mut ledger = read_period(&store.model_budget, start, session)
-        .await?
-        .ok_or_else(|| domain(BudgetError::Unavailable))?;
-    change(&mut ledger).map_err(domain)?;
-    save_period(store, &ledger, session).await
 }
 
 /// The alert record: reason and settings revision, never amounts.

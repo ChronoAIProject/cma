@@ -23,7 +23,7 @@ left open and that the request-reservation slice asked for:
 | Question | Answer in one line |
 | --- | --- |
 | Freshness | The model ledger is exact at the transaction boundary; cloud spend is an operator observation plus a bounded projection; a source older than its bound closes new commitments but interrupts nothing. |
-| Outstanding liability | Every owner reservation and request hold is mirrored into one platform period row in the same transaction; it is released only by authoritative settlement or proven non-dispatch, never by time. |
+| Outstanding liability | Every owner reservation and request hold is mirrored into its platform period accounting in the same transaction; it is released only by authoritative settlement or proven non-dispatch, never by time. |
 | Revision fencing | The period row records the settings revision and period it was evaluated under; a closure can be lifted only by a strictly newer revision; period changes on a nonempty row fail closed. |
 | Platform stop state | One durable row per period carries a set of typed closures. Liability-bearing admissions read it inside their transaction; zero-liability admissions read it without the settings fence; revival reads it at the service entry; running turns receive it through `SpendSource` behind a short cache; the pause sweep acts on it. #1478 adds its reasons to the same set. |
 
@@ -149,7 +149,7 @@ disposable` (decision 29): the evaluator finds it, or an admission or
 zero-liability check that is refused at that point. A zero-liability commitment
 at exactly `disposable` is therefore refused, as the evaluator's stop already
 says. A refusal aborts the admitting transaction, so the refusing call enters
-any closure it found afterwards with a guarded single-document write (section
+any closure it found afterwards with a guarded transaction (section
 5.4); a successful admission that crosses the warning level enters
 `SpendWarning` inside its own transaction.
 
@@ -189,9 +189,9 @@ pub struct CloudObservation {
 
 ### 4.1 Where the foundation and this row meet
 
-Every existing ledger mutation gains one more write in the **same** transaction:
+Every existing ledger mutation gains a platform accounting write in the **same** transaction. The original layout updates the period; the optional distributed layout updates the bound counter:
 
-| Existing transaction | Owner row effect | Period row effect |
+| Existing transaction | Owner row effect | Period accounting effect |
 | --- | --- | --- |
 | `OwnerBudget::reserve_liability` (turn start, command reserve, first message) | `reserved += L` | `reserved += L`; check `committed + L ≤ disposable` first |
 | request `admission::reserve` | `reserved += L` | same |
@@ -209,19 +209,64 @@ the period row.
 Every write of the row filters on its `revision` and writes `revision + 1`; a
 miss aborts and reruns the whole transaction, never only the row write.
 
-**Contention.** Liability-bearing admissions and settlements write the period
-row, so they serialize on it across replicas, next to the settings fence they
-already increment. Zero-liability admissions (Sandbox, Workspace, Agent, Launch)
-only read it inside their snapshot and never write the fence, so they stay off
-both hot documents exactly as today. Within one process a `PlatformWrites`
-mutex (the shape of the existing `AgentWrites`) queues period-row writers so
-they do not abort each other; across replicas Mongo write conflicts remain the
-authority, and every budget transaction loop uses the conversation store's
-exponential `contention::backoff`. This is the price of an exact platform cap
-and is accepted: admission is human-paced and the API runs as one replica with
-rolling overlap. If measured contention still requires it, settlement can be
-split into per-replica shards that the evaluator folds, without changing the
-contract (admission still reads the folded total in-transaction).
+**Original layout.** With `CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED=false`,
+unconverted periods retain their single-row accounting and local writer queue.
+The new switch defaults to false in code and `infra/api/configmap.yaml`.
+
+**Distributed layout.** With the switch enabled, the first successful model
+admission converts its period in the same transaction as the owner reservation.
+The period retains cloud observations, adjustments and closures. Its strict
+`record` gains `counter_layout: 1`; root `spent` and `reserved` become zero.
+Sixteen `platform-counter:<period-start-seconds>:<partition>` records contain
+model balances and revisions. Partition zero receives all existing model
+balances; new reservations choose one of the other partitions by a stable hash
+of the owner and persist an optional `period_shard` beside `period_start`.
+No per-owner allowance, valuation, period boundary or closure threshold changes.
+
+Admissions read the period plus the bounded set of counter keys inside their
+snapshot transaction and apply the existing rule to the exact sum. The existing
+actual settings write serializes all new liabilities across replicas. A late
+usage adjustment or cloud correction that can increase committed spend also
+writes that settings document when the period is distributed. Thus concurrent
+increases cannot both use the same old capacity; ordinary settlement and release
+can only reduce or preserve the total and need no global write. They update the
+counter bound to the original reservation, even after the active period changes.
+Missing, malformed, duplicated or unsupported declared counters fail closed.
+
+Routine reserve and settlement write their selected counter. Successful
+admission writes the period only when warning or period metadata changes.
+Evaluation, observation and closure transitions still write the period. Every
+persisted evaluator/refusal decision fences the revisions of all counters that
+contributed to its sum, in addition to the policy and period guards in section
+5.4; a later release cannot make an old STOP decision valid again.
+
+The local admission queue remains because admissions still share the settings
+fence. With the switch ON, independent settlements skip that queue. This removes
+the added shared period write from routine accounting; it does not remove the
+foundation's admission serialization. With the switch ON, the Sandbox store batches the period and sixteen exact
+counter keys in one indexed query. OFF readers recover converted periods with
+a root read followed by a bounded counter read. Local measurements must report
+the additional counter bytes alongside command counts, settlement contention
+and latency.
+
+Closing the switch prevents conversion of additional periods and restores the
+historical local scheduling. Every process in this reader generation continues
+to read and update already converted periods, including new reservations and
+retained settlements. Legacy reservations with no partition use partition zero
+of a converted period. Conversion is atomic: an aborted admission leaves neither
+a layout marker nor partial counters. Old writers conflict with conversion or
+reject the new strict marker; they are not an eligible rollback image after the
+first conversion. Never remove the marker or partition bindings to fit an older
+reader. All serving and rollback readers, including the retirement census, must
+support these additional shapes before the switch is enabled.
+
+The census extension in this change classifies the sixteen canonical
+`platform-counter:<start-seconds>:<partition>` keys as independent accounting.
+It never selects these rows for one Sandbox, including when incidental record
+fields mention an Agent. Reservation `period_start`/`period_shard` fields remain
+byte-exact in archives. It composes with #1754's classification of period,
+observation and stop keys; the period's layout marker does not change ownership.
+The complete reader set must be deployed before activation.
 
 ### 4.2 Fail-closed conditions
 
@@ -262,6 +307,13 @@ These closures are the spend component of **platform admission state**.
 the same settings snapshot. Operator control is not a spend-period closure;
 see section 10 and [Admission control](CMA_Admission_Control.md).
 
+Admission reads also derive closures from the current policy, clock and period
+evidence. A missing period is an unobserved period, never an open meter. Missing
+or stale observations, finished periods and crossed spend thresholds therefore
+refuse admission even when the evaluator has not run or cannot persist its
+result. These reads perform no writes and never lift a persisted closure; only
+the evaluator can commit a lift under the revision rules in section 6.
+
 ### 5.1 What each closure refuses
 
 | Operation | Open | `SpendWarning` | `SpendStop` / `MeteringUnavailable` |
@@ -292,6 +344,12 @@ message's command, a Launch, an Agent creation that reuses a profile Agent
 (`POST /api/v1/sandboxes/{id}/commands`, also used by bot delegation); each
 reads the admission state before it schedules anything. `Pause` and `Retire` controls carry no new commitment and stay
 available.
+
+An exact-key Revive retry first rechecks current resource authorization and the
+request fingerprint, then returns the retained receipt even during STOP or
+metering failure. It creates no new commitment. A new key still meets the
+platform refusal, and a mismatched fingerprint remains an idempotency conflict.
+This receipt-recovery rule supersedes implementation NOTES round 3 (R7).
 
 Approval decisions remain allowed under `SpendStop` because the turn they
 continue has already reserved its full allowance; refusing them would not reduce
@@ -331,6 +389,16 @@ liability and would strand admitted work.
    because their rotation starts a runtime even on a paused Sandbox; they run
    again after the lift.
 
+The sweep's cached STOP answer only proposes a pause. Maintenance admission
+rechecks the enabled policy and persisted STOP, with actual writes that conflict
+with policy edits and closure lifts, before committing the pause.
+
+A failed pause can leave a retained home and runtime eligible for recovery.
+Recovery admission checks the platform state in its transaction before starting
+any replacement runtime. STOP or unavailable metering refuses that new
+commitment; after a lift the same retained home and queued work remain eligible
+for recovery. Existing pause completion can still proceed.
+
 `MeteringUnavailable` performs steps 1–2 **only if** `SpendStop` is also
 present. Staleness alone refuses new commitments and leaves running work alone.
 
@@ -344,9 +412,12 @@ present. Staleness alone refuses new commitments and leaves running work alone.
   by any replica is therefore honored by the next admission on every replica.
   Cached reads may refuse early, never admit.
 - **Running turns:** the `SpendSource` monitor polls each second per live Agent.
-  It reads the period row with a plain read — no transaction, no fence — behind
-  a 5-second process-local cache that can only report "closed". The cancel is
-  sent within the cache window plus one poll plus the runtime round-trip.
+  A 5-second process-local cache schedules a fresh check when it reports STOP.
+  A new exact-turn cancellation receipt commits only after checking and fencing
+  the current settings and period STOP in the same transaction. A lift or policy
+  change conflicts with that transaction. Previously committed receipts remain
+  valid for their original turn after a lift. A cached open answer may delay
+  STOP by the cache window plus one poll and the runtime round-trip.
 - **Time-driven transitions and the pause sweep** run as a phase of the existing
   15-second reconciliation sweep on every replica; there is no separate worker
   or lease. The phase pre-creates the row, recomputes `cloud(now)`, enters or
@@ -366,28 +437,26 @@ on-call is EXT-MONITORING (#1570); a dashboard banner is later UI work.
 
 ### 5.4 Writing closures
 
-Closures are entered in two ways, both monotonic:
+Closures are entered in two ways:
 
 - **Inside a successful admission:** `SpendWarning`, when the admitted liability
   crosses the warning level. It commits with the admission.
-- **Outside any transaction:** every closure entered on a refusal (an admission,
-  a zero-liability check) and every closure the evaluator enters. A refusal
-  enters `SpendStop` only when `committed` without its own `L` has reached
-  `disposable`, a missing `SpendWarning` when `committed ≥ warning_level`, and
-  `MeteringUnavailable` on a fail-closed condition (section 4.2); an allowance
-  that merely does not fit enters no `SpendStop`. The
-  foundation's transaction loops abort on any domain error, so a closure pushed
-  inside a refusing transaction would roll back with it. Instead the refusing
-  call, after the abort, issues one guarded single-document update:
+- **In a separate guarded transaction:** every closure derived by a refusing
+  admission or by the evaluator. A refusal enters `SpendStop` only when
+  `committed` without its own liability has reached `disposable`, a missing
+  `SpendWarning` when `committed ≥ warning_level`, and `MeteringUnavailable`
+  on a fail-closed condition. An allowance that merely does not fit enters no
+  `SpendStop`.
 
-  ```
-  update_one({_id: "platform:<period>", "record.closures.reason": {$ne: <reason>}},
-             {$push: {"record.closures": <closure>}, $inc: {"record.revision": 1}})
-  ```
-
-  First writer wins and repeats are no-ops. The caller whose update modified the
-  row is the only one that emits the alert. This is the pattern the foundation
-  already uses for `stop:` rows.
+A refusal first aborts the admission transaction, releasing all settings and
+period locks. Its closure transaction then conditionally writes the exact
+settings revision and the exact period revision that produced the decision.
+The evaluator uses the same guard for entries, lifts and periodic refreshes.
+A missing period uses an insert, so a concurrent creator also invalidates the
+decision. If either revision changed, the whole decision is discarded and a
+later evaluation derives a fresh one. Refusals never lift existing closures.
+Only a confirmed closure commit emits its entry alerts; an uncertain result is
+reported as unavailable and cannot authorize an action.
 
 Closures are removed only by the evaluator (section 6).
 
@@ -397,9 +466,9 @@ Closures are removed only by the evaluator (section 6).
   writer read, whose revision is recorded on the row and on each closure. A
   settings PATCH that changes the platform policy increments the revision as
   today (CAS, `ConfigurePlatform`, confidential audit).
-- **Lifting a closure** is a revision-CAS update of the period row (`$pull` of
-  the closure, `$set` of `settings_revision` and `evaluated_at`) made by the
-  evaluator after it re-evaluates under a settings revision strictly greater
+- **Lifting a closure** uses the guarded transaction in section 5.4, checking
+  both policy and accounting revisions. The evaluator re-evaluates under a
+  settings revision strictly greater
   than the closure's `settings_revision` and finds `committed < level`. A
   process that has not seen a newer settings revision cannot lift anything.
   `MeteringUnavailable` lifts when its cause clears (fresh observation, valid
@@ -598,8 +667,8 @@ Marked so they can be overturned without re-reading:
    deferred (decision 12).
 3. The period row lives in `model_budget_reservations`, not a new collection.
 4. The platform check runs inside every liability-bearing reservation
-   transaction; their serialization on one row is accepted, with local
-   scheduling (decision 16).
+   transaction. The optional distributed layout removes routine period writes
+   while retaining the foundation settings fence and local admission scheduling.
 5. `platform_budget_exhausted` is HTTP 402, consistent with the owner and turn
    budget refusals, so clients that retry every response of 500 or above treat
    it as final (user decision, 2026-11-12); `registration_closed` is HTTP 503;
@@ -615,14 +684,17 @@ Marked so they can be overturned without re-reading:
 11. Revival checks the admission state at the service entry, not in-transaction.
 12. Section 2.3 is deferred: `source` accepts `cloud` only, `adjustments` stays
     `0`, the row has no drift field.
-13. Closures entered on a refusal or by the evaluator are written outside any
-    transaction with a guarded update; first writer wins; precedent `stop:` rows.
+13. Closures derived by a refusal or evaluator commit in a separate transaction
+    guarded by both settings and period revisions; stale decisions are discarded.
 14. Zero-liability admissions read settings and the period row without the
     settings fence.
-15. Stop polling reads the period row without a transaction behind a 5-second
-    cache that may stop but never admit.
-16. A process-wide `PlatformWrites` mutex schedules local period-row writers,
-    and budget request transactions share `contention::backoff`.
+15. Stop polling uses a 5-second cache as a hint. Every new cancellation receipt
+    and platform pause requires current settings and period STOP authority
+    fenced inside its committing transaction. A cached positive cannot stop
+    newly admitted work after a lift.
+16. A process-wide `PlatformWrites` mutex schedules local admissions and, with
+    the counter switch OFF, settlements. Distributed settlements skip that
+    queue; every transaction retains the existing bounded contention retry.
 17. Registration is refused at the sign-in callback (authority, fail closed)
     and at `/auth/login?screen=register` (advisory, proceeds when the state is
     unreadable).
@@ -646,15 +718,18 @@ Recorded during implementation:
     update inserted the closure (refusals and the evaluator) and from a
     successful admission that enters `SpendWarning` in its transaction; a
     retried admission transaction can emit that warning event twice.
-23. A refusal that follows the same transaction's insert of a missing period
-    row aborts that transaction before the guarded closure write, and every
-    refusal pre-creates the row outside it, so the closure is not lost.
-24. Only owners with a model budget policy reserve liability. An owner
-    without one reserves nothing, but its messages, turn starts (queued or
-    not) and model requests still pass the zero-liability platform check, so
-    `SpendStop` refuses them with `platform_budget_exhausted` and
-    `MeteringUnavailable` with `budget_unavailable` (decision 19).
-    Zero-liability commitments read the state for every owner.
+23. Every refusal aborts its admission transaction before trying to persist
+    closures, releasing its settings and period locks. A missing period is
+    inserted only under the same policy guard; a concurrent insert invalidates
+    the decision. The evaluator can retry closure derivation later.
+24. An enabled platform meter requires an owner budget policy for every new
+    model commitment, including queued turn starts and auxiliary requests.
+    Missing valuation refuses with `budget_unavailable` before dispatch;
+    a persisted `SpendStop` still takes precedence as
+    `platform_budget_exhausted`. Only while platform metering is off does the
+    historical unbudgeted-owner bypass apply. Zero-liability commitments read
+    the state for every owner. This follows the accepted pre-request
+    reservation contract on #1496.
 25. Registration checks the user directory first: an existing subject signs
     in without reading the platform state, so an unreadable state never locks
     an owner out. Only a never-seen subject reads the state, and a failed read
@@ -726,11 +801,11 @@ change is no longer a valid rollback target.
 
 | Required field | Scoped disposition |
 | --- | --- |
-| Store and writers | Agent Manager owns `model_budget_reservations`, `platform_settings`, `agent_commands`, `agents` and `sandboxes`. Writers: command reservation and turn start (`store/budget/mod.rs`), auxiliary request holds and settlement (`store/budget/requests/*`), turn settlement, release and retain through the conversation and message-checkpoint commits (`period::mirror`), refusals (guarded `update_one` outside the aborted transaction plus `ensure_period_row` upsert), the evaluator on every reconciliation attempt (`evaluate_period`), the operator observation route (`POST /api/v1/admin/spend/observations`), the stop poll (`stop:` rows), command rejection (`model_budget_failure` sidecar), Launch first-message startup failure, and the maintenance pause (`paused_notice`). No index build, startup DDL, importer, runtime home, browser asset, key or external-effect writer is added. |
-| Durable formats | New: `platform:<period_start>` rows `{_id, document_schema_version: 1, record: PlatformPeriodLedger}` (strict; nested `Closure`, `CloudObservation` and the `ClosureReason` enum `spend_warning`, `spend_stop`, `metering_unavailable`), and immutable `observation:cloud:<period_start>:<observed_through>` rows with a strict `CloudObservation` record. Extended: `PlatformBudgetPolicy.cloud` in `platform_settings` (strict struct; omitted when absent, so #1621 settings bytes are unchanged); optional `period_start` on `TurnRecord` (`turn:`, `command:`) and `RequestRecord` (`request:`), both strict and omitted when absent; the `BudgetError` value `platform_exhausted` in `stop:` rows and in the `agent_commands` top-level `model_budget_failure` sidecar (the strict `record.work.failure.code` keeps the legacy `execution_failed`); the first-message failure code string `platform_budget_exhausted`. `sandboxes.lifecycle.paused_notice` gains a new fixed string with no format change. Not persisted: `InactivityPauseCause` (request only), registration decisions, `metering_enabled`, the stop cache and the alert log. Activity records reuse `Configure` with target `Resource("platform_spend")` and a revision detail. No validator, TTL or encryption change. |
-| Index / bounded work | No new or modified index. Every new read and write is an `_id` point operation on one period row, one observation row or one reservation row, inside the existing transactions or as one guarded single-document update. The evaluator reads and writes at most one period row per 15 seconds per replica. The period row is one hot document per period; `PlatformWrites` schedules local writers (concurrency rule 5). |
+| Store and writers | Agent Manager owns `model_budget_reservations`, `platform_settings`, `agent_commands`, `agents` and `sandboxes`. Writers: command reservation and turn start (`store/budget/mod.rs`), auxiliary request holds and settlement (`store/budget/requests/*`), turn settlement, release and retain through the conversation and message-checkpoint commits (`counter_accounting::mirror`), refusals (revision-guarded closure transaction outside the aborted admission plus `ensure_period_row` upsert), the evaluator on every reconciliation attempt (`evaluate_period`), the operator observation route (`POST /api/v1/admin/spend/observations`), the stop poll (`stop:` rows), command rejection (`model_budget_failure` sidecar), Launch first-message startup failure, and the maintenance pause (`paused_notice`). No index build, startup DDL, importer, runtime home, browser asset, key or external-effect writer is added. |
+| Durable formats | The distributed layout additionally has strict `platform-counter:<start-seconds>:<partition>` records (`period_start`, `shard`, `spent`, `reserved`, `revision`), a strict period `counter_layout: 1` marker, and optional `period_shard` on turn/command/request reservations. Other new formats: `platform:<period_start>` rows `{_id, document_schema_version: 1, record: PlatformPeriodLedger}` (strict; nested `Closure`, `CloudObservation` and the `ClosureReason` enum `spend_warning`, `spend_stop`, `metering_unavailable`), and immutable `observation:cloud:<period_start>:<observed_through>` rows with a strict `CloudObservation` record. Extended: `PlatformBudgetPolicy.cloud` in `platform_settings` (strict struct; omitted when absent, so #1621 settings bytes are unchanged); optional `period_start` on `TurnRecord` (`turn:`, `command:`) and `RequestRecord` (`request:`), both strict and omitted when absent; the `BudgetError` value `platform_exhausted` in `stop:` rows and in the `agent_commands` top-level `model_budget_failure` sidecar (the strict `record.work.failure.code` keeps the legacy `execution_failed`); the first-message failure code string `platform_budget_exhausted`. `sandboxes.lifecycle.paused_notice` gains a new fixed string with no format change. Not persisted: `InactivityPauseCause` (request only), registration decisions, `metering_enabled`, the stop cache and the alert log. Activity records reuse `Configure` with target `Resource("platform_spend")` and a revision detail. No validator, TTL or encryption change. |
+| Index / bounded work | No new or modified index. Reads and writes use `_id` point operations or a bounded set of sixteen exact counter keys. Closure transitions use a policy-and-accounting guarded transaction. The evaluator considers one active period per interval, including its bounded counters when converted. Unconverted periods retain one shared balance row. Distributed periods add a bounded indexed read of sixteen counters; routine model writes target their bound counter. Closure transitions additionally fence every counter revision. `PlatformWrites` still schedules admissions and schedules settlements only while the counter switch is OFF. |
 | Reader floor | The compatible floor for retained data written after metering is enabled is this change (the merged #1741 source). Earlier images reject `cloud` in the strict settings policy, `period_start` in strict reservation records, `platform_exhausted` in stop rows and command sidecars, and `platform_budget_exhausted` as a first-message startup code. They never read `platform:` or `observation:` rows, except the retirement-archive census below. Tests: Layer 2 period-row serialization and strictness tests, Mongo contracts on disposable `mongo:8.0.13` replica sets for every writer, and the restored #1621 budget tests passing unchanged with metering off. No predecessor executable has been run against new data; no prior image is certified. |
-| Writer gate | `CHRONO_PLATFORM_SPEND_WRITES_ENABLED` (default `false` in code and `infra/api/configmap.yaml`), effective only with `CHRONO_MODEL_BUDGET_WRITES_ENABLED`, gates saving `cloud` and recording observations. Metering then runs only while budgets are enabled and `cloud` is present. Closing the gate stops new `cloud` saves and observations but does not stop an already configured meter; turning metering off is a settings revision that removes `cloud` (allowed with the gate closed) or disables budgets. Finite recovery writes continue after that: settlement of retained reservations whose `period_start` is set still updates their period row through `mirror`; stop rows and sidecars already written remain. Reads, exact replays and admitted-operation settlement stay available throughout. One API replica; all serving processes must converge on the flag before `cloud` is saved. |
-| Backfill and recovery | No backfill or transformation. Period rows are created lazily (`$setOnInsert` upsert or in-transaction insert) and observations are operator posts. Reservations made before metering carry no `period_start` and never touch a period row. Partial failures: closure writes are guarded single-document updates (first writer wins, repeats are no-ops); period-row saves use a revision CAS inside the transaction; the evaluator re-derives transitions; an observation is one transaction with an idempotent identical repeat and a refused conflicting one. |
-| Backup / dry-run | No deletion, rewrite, index or validator contraction, so no destructive-step backup is required. The recovery unit is `model_budget_reservations`, `platform_settings`, `agent_commands`, `agents` and `sandboxes` together. Disposable local Mongo contracts are the dry run; no production backup, restore rehearsal or dry run is claimed. |
-| Rollback / completion | Before `cloud` is first saved, rollback to the predecessor image is unaffected by this change; the release owner confirms with read-only queries that no `platform:` or `observation:cloud:` row, no settings `cloud`, and no `platform_exhausted` stop row or sidecar exists. Saving `cloud` is the point of irreversibility for earlier images: afterwards recovery is a forward fix or this image, and removing `cloud` does not restore predecessor eligibility because retained fields stay; never delete or unset them to fit an older reader. Prerequisite before enabling metering: the retirement-archive census (`store/retirement_archive/census_budget.rs`, #1726/#1716) accepts only `owner:`, `command:`, `turn:`, `request:` and `request-turn:` keys and refuses capture when any other key exists, so `platform:` and `observation:cloud:` rows (and #1621's existing `stop:` rows) would refuse every capture until a reviewed census extension lands. That extension is [ChronoAIProject/cma#1754](https://github.com/ChronoAIProject/cma/pull/1754) (migration `2026-11-12-am-retirement-budget-shapes`); metering may be enabled only after it is merged and deployed, and its merge is the condition of record. Pending release-owner receipts: deployment digest, OFF rollout, the 11-14 drill, the 11-21 production check and sign-off. No production activation or migration is claimed by this PR. |
+| Writer gate | `CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED` (default false) gates first conversion and settlement scheduling. Closing it does not revert a converted layout; the new reader still accounts and settles it. `CHRONO_PLATFORM_SPEND_WRITES_ENABLED` (default `false` in code and `infra/api/configmap.yaml`), effective only with `CHRONO_MODEL_BUDGET_WRITES_ENABLED`, gates saving `cloud` and recording observations. Metering then runs only while budgets are enabled and `cloud` is present. Closing the gate stops new `cloud` saves and observations but does not stop an already configured meter; turning metering off is a settings revision that removes `cloud` (allowed with the gate closed) or disables budgets. Finite recovery writes continue after that: settlement of retained reservations whose `period_start` is set still updates their original period accounting through `counter_accounting::mirror`; stop rows and sidecars already written remain. Reads, exact replays and admitted-operation settlement stay available throughout. One API replica; all serving processes must converge on the flag before `cloud` is saved. |
+| Backfill and recovery | No reservation backfill. Optional conversion atomically moves the existing model balances into partition zero, creates the other empty partitions and installs the period marker, in the admitting transaction. Abort leaves the original layout intact. Legacy reservations settle against partition zero after conversion. Period rows are created lazily (`$setOnInsert` upsert or in-transaction insert) and observations are operator posts. Reservations made before metering carry no `period_start` and never touch a period row. Partial failures: closure writes validate policy, period and counter revisions in one transaction; period and counter saves use a revision CAS inside the accounting transaction; the evaluator re-derives transitions; an observation is one transaction with an idempotent identical repeat and a refused conflicting one. |
+| Backup / dry-run | Conversion redistributes balances atomically and retains every obligation; there is no deletion or validator/index contraction. Recovery requires a mutually consistent copy of the period, all counters and their reservations. The recovery unit is `model_budget_reservations`, `platform_settings`, `agent_commands`, `agents` and `sandboxes` together. Disposable local Mongo contracts are the dry run; no production backup, restore rehearsal or dry run is claimed. |
+| Rollback / completion | Before `cloud` is first saved, rollback to the predecessor image is unaffected by this change; the release owner confirms with read-only queries that no `platform:` or `observation:cloud:` row, no settings `cloud`, and no `platform_exhausted` stop row or sidecar exists. Saving `cloud` is the point of irreversibility for earlier images: afterwards recovery is a forward fix or this image, and removing `cloud` does not restore predecessor eligibility because retained fields stay; never delete or unset them to fit an older reader. Prerequisite before enabling metering: the retirement-archive census (`store/retirement_archive/census_budget.rs`, #1726/#1716) accepts only `owner:`, `command:`, `turn:`, `request:` and `request-turn:` keys and refuses capture when any other key exists, so `platform:` and `observation:cloud:` rows (and #1621's existing `stop:` rows) would refuse every capture until a reviewed census extension lands. That extension is [ChronoAIProject/cma#1754](https://github.com/ChronoAIProject/cma/pull/1754) (migration `2026-11-12-am-retirement-budget-shapes`); metering may be enabled only after it is merged and deployed, and its merge is the condition of record. The census must also recognize and exclude independent counter records while preserving reservation bindings and handling the period layout marker before counter conversion is enabled; the earlier extension alone is not proof of that compatibility. Pending release-owner receipts: deployment digest, OFF rollout, the 11-14 drill, the 11-21 production check and sign-off. No production activation or migration is claimed by this PR. |

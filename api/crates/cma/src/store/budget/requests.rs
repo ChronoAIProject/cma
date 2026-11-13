@@ -27,6 +27,8 @@ struct RequestRecord {
     settled: Option<RequestUsage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     period_start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    period_shard: Option<u16>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -68,7 +70,10 @@ impl MongoSandboxStore {
         &self,
         operation: Operation<'_>,
     ) -> Result<Option<RequestHold>, BudgetError> {
-        let _platform = self.platform_write_guard().await;
+        let _platform = match &operation {
+            Operation::Reserve(..) => self.platform_write_guard().await,
+            Operation::Settle(..) => self.platform_settlement_guard().await,
+        };
         for attempt in 0..TRANSACTION_ATTEMPTS {
             crate::store::contention::backoff(attempt).await;
             let mut session = self

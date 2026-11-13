@@ -295,49 +295,6 @@ fn every_owner_hierarchy_route_is_documented_and_authenticated() {
 }
 
 #[test]
-fn every_trigger_launch_and_connection_operation_is_documented() {
-    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
-    let expected = [
-        ("get", "/auth/signup-options"),
-        ("get", "/api/v1/triggers"),
-        ("post", "/api/v1/triggers"),
-        ("get", "/api/v1/triggers/{id}"),
-        ("put", "/api/v1/triggers/{id}"),
-        ("delete", "/api/v1/triggers/{id}"),
-        ("post", "/api/v1/triggers/{id}/publish"),
-        ("post", "/api/v1/triggers/{id}/retire"),
-        ("get", "/api/v1/triggers/{id}/revisions"),
-        ("get", "/api/v1/triggers/{id}/stats"),
-        ("get", "/api/v1/triggers/public/{public_id}"),
-        ("get", "/api/v1/triggers/public/{public_id}/badge.svg"),
-        ("get", "/api/v1/triggers/{id}/embed"),
-        ("get", "/api/v1/triggers/{id}/placements"),
-        ("post", "/api/v1/triggers/{id}/placements"),
-        (
-            "post",
-            "/api/v1/triggers/{id}/placements/{placement_id}/retire",
-        ),
-        ("post", "/api/v1/triggers/public/{public_id}/launches"),
-        ("get", "/api/v1/launches"),
-        ("get", "/api/v1/launches/{id}"),
-        ("get", "/api/v1/launches/{id}/events"),
-        ("get", "/api/v1/launches/{id}/requirements"),
-        ("post", "/api/v1/launches/{id}/start"),
-        ("post", "/api/v1/launches/{id}/cancel"),
-        ("post", "/api/v1/service-connections"),
-        ("get", "/api/v1/service-connections/{handoff_id}"),
-        ("get", "/api/v1/agui/launches/{id}/events"),
-    ];
-
-    for (method, path) in expected {
-        assert!(
-            !operation(&document, method, path).is_null(),
-            "missing {method} {path}"
-        );
-    }
-}
-
-#[test]
 fn only_public_discovery_previews_and_bounded_diagnostics_are_anonymous() {
     let document = serde_json::to_value(document()).expect("OpenAPI serializes");
     let authenticated = serde_json::json!([
@@ -383,137 +340,6 @@ fn only_public_discovery_previews_and_bounded_diagnostics_are_anonymous() {
             "/api/v1/triggers/public/{public_id}/launches",
         )["security"],
         authenticated
-    );
-}
-
-#[test]
-fn every_trigger_and_launch_wire_schema_is_registered() {
-    let document = document();
-    let schemas = &document.components.expect("components").schemas;
-    for name in [
-        "SignupOptions",
-        "EmbedDescriptor",
-        "EmbedSnippets",
-        "TriggerButtonLabelValue",
-        "TriggerThemeValue",
-        "SandboxReusePolicyValue",
-        "WorkspaceReusePolicyValue",
-        "AgentReusePolicyValue",
-        "TriggerPresentationBody",
-        "TriggerTargetBody",
-        "TriggerReuseBody",
-        "TriggerConsentBody",
-        "TriggerContentBody",
-        "CreateTriggerRequest",
-        "UpdateTriggerRequest",
-        "PublishTriggerRequest",
-        "CreatePlacementRequest",
-        "CreateLaunchRequest",
-        "StartLaunchRequest",
-        "CreateServiceConnectionRequest",
-        "TriggerAvailabilityValue",
-        "TriggerStatsView",
-        "PlacementView",
-        "TriggerRevisionView",
-        "PublishedTriggerRevisionView",
-        "TriggerView",
-        "TriggerPageView",
-        "TriggerPlacementStatsView",
-        "TriggerStatisticsView",
-        "TriggerTrustDisclosureView",
-        "TriggerTrustPreviewView",
-        "TriggerSizePreviewView",
-        "TriggerTechnicalPreviewView",
-        "TriggerPreviewView",
-        "ResolvedResourceView",
-        "LaunchResolutionView",
-        "ServiceRequirementView",
-        "RequirementsSnapshotView",
-        "ReviewNeedView",
-        "ReviewRequirementsView",
-        "LaunchTrustResourceValue",
-        "LaunchTrustDisclosureView",
-        "LaunchTrustManifestView",
-        "LaunchConsentSurfaceValue",
-        "LaunchConfirmationView",
-        "LaunchView",
-        "LaunchFirstMessageCommandView",
-        "LaunchPageView",
-        "LaunchEventPageView",
-        "ServiceConnectionStateValue",
-        "CreatedServiceConnectionView",
-        "ServiceConnectionStatusView",
-        "LaunchStateValue",
-        "LaunchStepKeyValue",
-        "LaunchStepStatusValue",
-        "RepeatChoiceValue",
-        "ServiceRequirementStateValue",
-        "FirstMessageStateValue",
-        "LaunchEffectKindValue",
-        "LaunchStepView",
-        "LaunchBlockedReasonView",
-        "LaunchFailureView",
-        "LaunchEventKindView",
-        "LaunchEventView",
-    ] {
-        assert!(schemas.contains_key(name), "missing schema {name}");
-    }
-    let schemas = serde_json::to_value(schemas).expect("schemas serialize");
-    let association = &schemas["LaunchFirstMessageCommandView"]["properties"];
-    assert_eq!(association.as_object().unwrap().len(), 3);
-    for field in ["agent_id", "command_id", "response_id"] {
-        assert_eq!(association[field]["type"], "string");
-    }
-    assert!(!schemas["LaunchView"]["required"]
-        .as_array()
-        .unwrap()
-        .contains(&serde_json::json!("first_message_command")));
-}
-
-#[test]
-fn inline_trigger_target_schema_exposes_image_agent_and_repository_contract() {
-    let document = serde_json::to_value(document()).expect("OpenAPI serializes");
-    let schemas = &document["components"]["schemas"];
-    for name in [
-        "TriggerImageBody",
-        "TriggerRepositoryBody",
-        "TriggerInlineWorkspaceBody",
-        "TriggerInlineAgentBody",
-        "TriggerInlineTargetBody",
-        "TriggerSkillBody",
-    ] {
-        assert!(
-            schemas[name].is_object(),
-            "missing inline trigger schema {name}"
-        );
-    }
-
-    assert_eq!(
-        schema_ref(&schemas["TriggerTargetBody"]["properties"]["inline"]),
-        "#/components/schemas/TriggerInlineTargetBody"
-    );
-    assert!(schemas["TriggerInlineTargetBody"]["required"]
-        .as_array()
-        .expect("inline target required fields")
-        .contains(&serde_json::json!("agent")));
-    assert_eq!(
-        schemas["TriggerInlineAgentBody"]["properties"]["reasoning_effort"]["$ref"],
-        "#/components/schemas/ThinkingEffortValue"
-    );
-    assert_eq!(
-        schemas["TriggerInlineAgentBody"]["properties"]["permission_mode"]["$ref"],
-        "#/components/schemas/PermissionLevelValue"
-    );
-    let repository_reference_type = &schemas["TriggerRepositoryBody"]["properties"]["ref"]["type"];
-    assert!(
-        repository_reference_type == "string"
-            || repository_reference_type
-                .as_array()
-                .is_some_and(|types| types.contains(&serde_json::json!("string")))
-    );
-    assert_eq!(
-        schema_ref(&schemas["TriggerInlineWorkspaceBody"]["properties"]["repository"]),
-        "#/components/schemas/TriggerRepositoryBody"
     );
 }
 
@@ -588,3 +414,9 @@ fn usage_presentation_settings_have_a_strict_boolean_admin_contract() {
         );
     }
 }
+
+#[path = "tests/trigger_routes.rs"]
+mod trigger_routes;
+
+#[path = "tests/trigger_schemas.rs"]
+mod trigger_schemas;

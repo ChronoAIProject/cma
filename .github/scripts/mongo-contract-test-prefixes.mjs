@@ -1,9 +1,15 @@
 // Expected Mongo contract suites, shared by source and archive fixtures.
 export const requiredPrefixes = [
+  'store::budget::',
+  'store::sandbox_unpublished_recovery::mongo_integration_tests::platform_stop::',
+  'store::admission_control::mongo_tests::',
+  'store::agent_lifecycle_operations::operator_stop_tests::',
+  'store::sandbox_mongo_integration_tests::command_ledger_tests::operator_stop_tests::',
   'store::usage_reports::tests::',
   'sandbox::funding::tests::mongo::',
   'usage_billing::tests::',
   'store::request_limits::tests::',
+  'rate_limit::control_tests::mongo::',
   'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',
   'document_artifacts::mongo_integration_tests::',
   'agent_access::tests::tenant_isolation::',
@@ -76,4 +82,10 @@ export const requiredPrefixes = [
   'store::retained_reopen::',
   'store::sandbox_unpublished_recovery::mongo_integration_tests::retained::',
   'sandbox::agent_worker_tests::connection_failure_tests::capacity_cleanup_tests::',
+  'store::admission_ceilings::mongo_tests::',
+  'store::registration_capacity::mongo_tests::',
+  'auth::registration::mongo_tests::',
+  'store::sandbox_admission_mongo_integration_tests::ceilings::',
+  'store::sandbox_admission_mongo_integration_tests::pending_home_ceilings::',
+  'store::sandbox_admission_mongo_integration_tests::global_admission::',
 ];

@@ -194,7 +194,10 @@ async fn review_round_one_unreadable_control_refuses_fresh_work_but_preserves_tu
                 .unwrap_err(),
             CommandLedgerError::AdmissionPaused
         );
-        let state = store.admission_state(100).await.unwrap();
+        let state = store
+            .admission_state(crate::store::budget::now_seconds())
+            .await
+            .unwrap();
         assert_eq!(state.commitment_refusal(), Some(AdmissionRefusal::Paused));
         assert_eq!(
             state.commitment_refusal_for(AdmissionCause::Continuation),

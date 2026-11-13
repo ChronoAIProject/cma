@@ -30,6 +30,9 @@ mod capacity_usage;
 #[path = "request_budget_tests.rs"]
 pub(in crate::store) mod request_budget;
 
+#[path = "reconcile_pacing_tests.rs"]
+mod reconcile_pacing_tests;
+
 mod bounded_admission_tests;
 mod bounded_audit_tests;
 mod bounded_compatibility_tests;
@@ -41,7 +44,9 @@ mod bounded_receipt_tests;
 mod fleet_activation_tests;
 mod legacy_session_ceilings_tests;
 mod operator_stop_execution_tests;
+mod ownership_tests;
 mod session_ceilings_tests;
+mod supervision_tests;
 
 struct Authority(Mutex<Result<Caller, CommandAuthorizationError>>);
 #[async_trait::async_trait]
@@ -87,62 +92,6 @@ impl AgentRuntimeRegistry for Runtime {
             input: self.0.clone(),
         })
     }
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn personal_command_binding_checks_explicit_owner_kind_in_the_transaction() {
-    let (client, name) = database("command_execution_owner_kind").await;
-    let (store, agent, parent, execution, authority, sends) = composed(&client, &name).await;
-    store
-        .reserve_command(live_request(&agent, &parent, "one"))
-        .await
-        .unwrap();
-    let claimed = store
-        .claim_next_command(claim_request(&agent, "worker", &layer2_core::now_rfc3339()))
-        .await
-        .unwrap()
-        .unwrap();
-    let policy = ResourcePolicyRecord {
-        sandbox_id: parent.id.clone(),
-        sandbox_created_at: parent.created_at.clone(),
-        owner: ResourceOwner::Organization {
-            subject: parent.owner.clone(),
-        },
-        revision: 1,
-        organization_evidence: Some(OrganizationOwnershipEvidence {
-            issuer: "https://identity.test".into(),
-            organization: parent.owner.clone(),
-            admitted_by: ResourceActor::Human {
-                subject: SubjectId::new("admin"),
-            },
-            verified_at: NOW.into(),
-        }),
-    };
-    store.resource_policies.insert_one(doc! { "_id": parent.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION, "owner_kind": "organization", "owner_subject": parent.owner.as_str(), "revision": 1_i64, "record": crate::store::sandbox_mongo::record_bson(&policy).unwrap() }).await.unwrap();
-    assert_eq!(
-        execution.check_queued(&claimed).await,
-        CommandReadiness::Reject(CommandFailureCode::AgentUnavailable)
-    );
-    // Bypass the adapter's earlier snapshot to prove the atomic store fence too.
-    let caller = authority.0.lock().unwrap().clone().unwrap();
-    assert_eq!(
-        execution
-            .operations
-            .execute_claimed_command(&caller, &claimed)
-            .await,
-        Err(AgentOperationError::Conflict)
-    );
-    assert_eq!(sends.load(Ordering::SeqCst), 0);
-    assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(agent));
-    assert_eq!(
-        store
-            .get_command(&claimed.receipt.envelope.command_id)
-            .await
-            .unwrap(),
-        Some(claimed)
-    );
-    client.database(&name).drop().await.unwrap();
 }
 
 async fn composed(
@@ -195,8 +144,53 @@ async fn composed_with_history(
     Arc<Authority>,
     Arc<AtomicUsize>,
 ) {
+    composed_with_input_history(client, name, credentials, parent, history, None).await
+}
+
+pub(in crate::store) async fn composed_with_input(
+    client: &Client,
+    name: &str,
+    input: ConversationInputSender,
+    conversation_id: String,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<AtomicUsize>,
+) {
+    let (store, agent, sandbox, execution, _, sends) = composed_with_input_history(
+        client,
+        name,
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        active_sandbox("sbx_commands"),
+        None,
+        Some((input, conversation_id)),
+    )
+    .await;
+    (store, agent, sandbox, execution, sends)
+}
+
+async fn composed_with_input_history(
+    client: &Client,
+    name: &str,
+    credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    parent: Sandbox,
+    history: Option<(u64, bool)>,
+    input: Option<(ConversationInputSender, String)>,
+) -> (
+    Arc<MongoSandboxStore>,
+    Agent,
+    Sandbox,
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<Authority>,
+    Arc<AtomicUsize>,
+) {
     let store = MongoSandboxStore::open(client, name).await.unwrap();
-    let agent = ready_agent(&parent, "agt_commands");
+    let mut agent = ready_agent(&parent, "agt_commands");
+    if let Some((_, conversation)) = &input {
+        agent.conversation.conversation_id = Some(conversation.clone());
+    }
     store.create_sandbox(parent.clone()).await.unwrap();
     insert_agent(&store, &agent, NOW).await;
     let workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
@@ -223,9 +217,16 @@ async fn composed_with_history(
     let authority = Arc::new(Authority(Mutex::new(Ok(caller))));
     let sends = Arc::new(AtomicUsize::new(0));
     let sent = sends.clone();
-    let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, move |_| {
+    let input = input.map(|(sender, _)| sender);
+    let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, move |message| {
         sent.fetch_add(1, Ordering::SeqCst);
-        async { Ok(()) }
+        let input = input.clone();
+        async move {
+            match input {
+                Some(input) => input.send(message).await,
+                None => Ok(()),
+            }
+        }
     })));
     let profiles = Arc::new(InMemoryProfileStore::default());
     let context = AgentContextService::new(
@@ -436,57 +437,7 @@ async fn replaced_control_turn_has_typed_refusal_before_runtime_or_lifecycle_wor
 #[path = "binding_execution_tests.rs"]
 mod binding_execution;
 
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn operation_command_lookup_is_exact_and_rejects_duplicate_bindings() {
-    let (client, name) = database("operation_command_lookup").await;
-    let (store, agent, parent, execution, _, _) = composed(&client, &name).await;
-    let admitted = record(
-        store
-            .reserve_command(live_request(&agent, &parent, "one"))
-            .await
-            .unwrap(),
-    );
-    let id = &admitted.receipt.envelope.command_id;
-    AgentCommandWorker::new(store.clone(), execution, "lookup-worker".into())
-        .unwrap()
-        .run_one(id)
-        .await
-        .unwrap();
-    let current = store.get_command(id).await.unwrap().unwrap();
-    let operation = current.work.dispatch.as_ref().unwrap().operation_sequence;
-    assert_eq!(
-        store
-            .get_operation_command(&agent.id, operation)
-            .await
-            .unwrap(),
-        Some(current.clone())
-    );
-    assert!(store
-        .get_operation_command(&AgentId("foreign-agent".into()), operation)
-        .await
-        .unwrap()
-        .is_none());
-    assert!(store
-        .get_operation_command(&agent.id, operation + 1)
-        .await
-        .unwrap()
-        .is_none());
-    let mut duplicate = current;
-    duplicate.receipt.envelope.command_id = AgentCommandId::generate();
-    duplicate.work.dispatch.as_mut().unwrap().claim.command_id =
-        duplicate.receipt.envelope.command_id.clone();
-    duplicate.receipt.response_id = Some(AgentResponseId::generate());
-    duplicate.receipt.agent_order += 1;
-    duplicate.key_sha256 = command_key_digest("duplicate-operation").unwrap();
-    let document = crate::store::agent_commands::command_document(&duplicate).unwrap();
-    store.agent_commands.insert_one(document).await.unwrap();
-    assert_eq!(
-        store.get_operation_command(&agent.id, operation).await,
-        Err(CommandLedgerError::Corrupt)
-    );
-    client.database(&name).drop().await.unwrap();
-}
+mod operation_lookup_tests;
 
 #[path = "budget_execution_tests.rs"]
 mod budget_execution;

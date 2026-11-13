@@ -283,6 +283,23 @@ async fn runtime_binding_selects_only_the_accepted_sandbox_store() {
     );
 }
 
+#[tokio::test]
+async fn hosted_capacity_recovery_maps_an_unadvertised_runtime_endpoint_to_unsupported() {
+    let response = http_response("404 Not Found", &[("Content-Length", "0".into())], &[]);
+    let (transport, provider, runtime) = transport_fixture(response).await;
+    let request = crate::agent_capacity_recovery::tests::request(None);
+    let (updates, _received) = tokio::sync::mpsc::channel(1);
+
+    assert!(matches!(
+        transport
+            .reattach_existing_capacity_recovery(&request, updates)
+            .await,
+        Err(crate::agent_capacity_recovery::CapacityRecoveryError::Unsupported)
+    ));
+    provider.await.expect("provider fixture completes");
+    runtime.await.expect("runtime fixture completes");
+}
+
 async fn receive_websocket_json(
     socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
 ) -> serde_json::Value {
@@ -311,3 +328,6 @@ mod status_compatibility;
 
 #[path = "provider_output_json_tests.rs"]
 mod output_json_policy;
+
+#[path = "provider_capacity_recovery_tests.rs"]
+mod capacity_recovery;

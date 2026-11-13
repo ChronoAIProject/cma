@@ -23,6 +23,21 @@ describe('public authentication helpers', () => {
     expect(t.client.triggers).toBe(t.client.triggerAuthoring);
   });
 
+  it('preserves exact bearer command readiness and accepts older servers without the field', async () => {
+    const t = transport();
+    const identity = { authenticated: true, subject: 'owner', visitor: false, capabilities: [] };
+    for (const api_commands of [true, false]) {
+      t.answer({ ...identity, api_commands });
+      const session = await t.client.auth.readSession();
+      expect(session.authenticated && session.api_commands).toBe(api_commands);
+    }
+    t.answer(identity);
+    const legacy = await t.client.auth.readSession();
+    expect(legacy.authenticated && legacy.api_commands).toBeUndefined();
+    t.answer({ ...identity, api_commands: 'true' });
+    await expect(t.client.auth.readSession()).rejects.toBeInstanceOf(ProtocolError);
+  });
+
   it('reads default-off and enabled usage presentation and rejects malformed values', async () => {
     const t = transport();
     const identity = { authenticated: true, subject: 'owner', visitor: false, capabilities: [] };
