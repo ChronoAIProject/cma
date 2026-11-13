@@ -239,6 +239,7 @@ jobs:
       - name: Web artifact identity contract
         run: |
           python3 .github/scripts/web-build-identity-tests.py
+          python3 .github/scripts/web-image-smoke-tests.py
           ruby .github/scripts/web-build-contract.rb
       - name: Final image metadata declarations
         run: bash .github/image-metadata-tests.sh
@@ -1183,13 +1184,15 @@ jobs:
       - uses: actions/setup-node@v6
         if: matrix.component == 'web'
         with:
-          node-version: 26
+          # Playwright 1.58.2 trace ZIP finalization stalls on Node 26.
+          node-version: 24.15.0
       - name: Install web image browser harness
         if: matrix.component == 'web'
         run: npm ci --prefix web
       - name: Render exact web image with stale retained assets
         if: matrix.component == 'web'
-        timeout-minutes: 5
+        # Includes image startup, the 240s suite and bounded evidence/cleanup time.
+        timeout-minutes: 6
         env:
           CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
           CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence

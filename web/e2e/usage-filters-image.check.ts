@@ -42,8 +42,12 @@ for (const theme of ['light', 'dark']) {
         page.getByRole('button', { name: 'Research Sandbox', exact: true }),
       ).toBeVisible();
       const id = metrics.creates.at(-1)!.id;
+      // The fixture advertises a 1s report retry. Default expect.poll backoff
+      // observes it at ~1.85s on every apply; sample the in-memory log promptly.
       await expect
-        .poll(() => metrics.reads.filter((url) => url.pathname.endsWith(`/reports/${id}`)).length)
+        .poll(() => metrics.reads.filter((url) => url.pathname.endsWith(`/reports/${id}`)).length, {
+          intervals: [100],
+        })
         .toBe(1);
       for (const created of metrics.creates)
         expect(
