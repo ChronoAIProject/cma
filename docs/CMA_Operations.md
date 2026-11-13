@@ -2810,6 +2810,14 @@ existing deadlines. They establish no end-to-end improvement on their own.
 
 ### Initial native readiness retry
 
+Claim-assignment observation has one five-second deadline. Pending reads start
+at least 250 ms apart, with response time counting toward that interval. Reads
+never overlap or catch up after a slow response, and no new read starts at the
+deadline. This allows up to 20 reads per window; delayed responses can use more
+of that budget than a full 250 ms sleep after each response. Include Kubernetes
+request load when measuring this observation change. It neither changes the
+retry switch nor shortens volume attachment or runtime boot.
+
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
 home readiness or create-bind deadline reached after validated Pending can use a
 one-second retry after observation completion. An outstanding read or returned
