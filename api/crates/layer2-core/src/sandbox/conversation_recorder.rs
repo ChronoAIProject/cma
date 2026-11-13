@@ -9,6 +9,12 @@ use super::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
 };
 
+#[path = "conversation_coalesce.rs"]
+pub(crate) mod coalesce;
+use super::AgentOutputCommit;
+pub use coalesce::AgentOutputCoalescePolicy;
+use coalesce::RecordInput;
+
 const MAX_CONVERSATION_COMMIT_RETRIES: usize = 8;
 
 #[path = "conversation_checkpoint.rs"]
@@ -37,6 +43,7 @@ pub struct DurableAgentUpdateRecorder {
     live: live::AgentLiveHub,
     writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
     spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
+    coalesce_policy: Option<AgentOutputCoalescePolicy>,
 }
 
 #[async_trait::async_trait]
@@ -58,7 +65,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         runtime_generation: u64,
         assembly: &mut AgentMessageAssembly,
     ) -> Result<(), AgentConversationError> {
-        if assembly.pending_update.is_some() {
+        if assembly.pending_update.is_some() || assembly.quiet_output.is_some() {
             return Err(AgentConversationError::InvalidState(
                 "an uncertain update must be retried before restoring its assembly",
             ));
@@ -136,11 +143,12 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
             id,
             guard.runtime_generation,
             assembly,
-            update,
+            RecordInput::Update(&update, false),
             appended_at,
             Some(guard),
         )
         .await
+        .map(|result| result.outcome)
     }
 
     async fn record_update(
@@ -151,7 +159,62 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         update: ConversationUpdate,
         appended_at: String,
     ) -> Result<AgentUpdateOutcome, AgentConversationError> {
-        self.record_with_reopen(id, runtime_generation, assembly, update, appended_at, None)
-            .await
+        self.record_with_reopen(
+            id,
+            runtime_generation,
+            assembly,
+            RecordInput::Update(&update, false),
+            appended_at,
+            None,
+        )
+        .await
+        .map(|result| result.outcome)
+    }
+    async fn record_output(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        assembly: &mut AgentMessageAssembly,
+        update: ConversationUpdate,
+        appended_at: String,
+    ) -> Result<AgentOutputCommit, AgentConversationError> {
+        if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
+            && assembly.quiet_output.is_some()
+        {
+            return Err(AgentConversationError::InvalidState(
+                "flush quiet receipts before a legacy update",
+            ));
+        }
+        self.record_with_reopen(
+            id,
+            runtime_generation,
+            assembly,
+            RecordInput::Update(&update, true),
+            appended_at,
+            None,
+        )
+        .await
+    }
+
+    async fn flush_output(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        assembly: &mut AgentMessageAssembly,
+        appended_at: String,
+    ) -> Result<Option<layer3_adapter::RuntimeOutputSource>, AgentConversationError> {
+        let Some(source) = assembly.buffered_output().cloned() else {
+            return Ok(None);
+        };
+        self.record_with_reopen(
+            id,
+            runtime_generation,
+            assembly,
+            RecordInput::Flush(&source),
+            appended_at,
+            None,
+        )
+        .await
+        .map(|result| result.committed)
     }
 }

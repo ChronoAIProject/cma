@@ -100,3 +100,40 @@ twice, cancels the real native turn, and verifies exactly one turn with interrup
 status. Adapter regression advances a live prompt by 90 minutes and verifies
 that it stays active and cancellable, including after an older runtime refuses
 steering. Existing live Sandboxes are not restarted to enable this extension.
+
+## Quiet receipt coalescing
+
+`CHRONO_AGENT_OUTPUT_QUIET_COALESCE_ENABLED` defaults to `false`. When enabled,
+only frames with no appended log, no change to durable message assembly, no
+recovered anchor and no identity-bearing terminal can wait in memory. Each
+receipt still validates native identity, generation, stream, contiguous cursor
+and the hash of any buffered duplicate. Pending state retains bounded receipt
+metadata, not frame payloads. The settings default to 250 ms and 64 frames, with
+hard limits of 1000 ms and 128 frames (less than 1 MiB of receipt metadata).
+
+The single ordered consumer flushes at its idle timer, at the frame limit, or
+with the next durable update. Time is measured from the last locally observed
+durable cursor; an idle gap does not restart that clock. Reasoning fragments may
+publish while their receipts wait. Assistant text is still checkpointed before
+publication. Only the exact source returned by a successful commit can be ACKed;
+its cumulative ACK releases earlier receipts. Unknown commits retain the same
+pending update identity and buffer, and the consumer retries before receiving
+another input. Legacy delivery flushes pending receipts first; reopen uses its
+existing immediate guarded commits.
+
+On disconnect or cancellation, buffered receipts are never ACKed. A replacement
+recorder restores the version-1 checkpoint, then replays the runtime's retained
+frames. Buffered duplicates have no durable authority. Older durable replays
+can be ACKed while preserving newer buffered receipts. The existing checkpoint
+schema is unchanged: clocks and pending buffers are excluded from both Mongo
+serialization and in-memory checkpoints. A disabled recorder can restore a
+checkpoint written by an enabled recorder. Rollback is an API configuration roll
+with the switch set to `false`; no runtime replacement or data conversion is
+required.
+
+Local mixed replay measurements alone do not authorize activation. Capture a
+natural turn, including exact adapter receive/ACK lag and complete relay depth,
+then apply #1807's decision rule. Layer-2-delivered cursors and the final channel
+length are only local observations, not complete adapter backlog. Production
+activation, rollback drills and natural-turn verification belong to release
+operators and remain separate from the default-off implementation.

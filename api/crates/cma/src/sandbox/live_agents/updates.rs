@@ -12,11 +12,14 @@ use super::{LiveAgentAttachmentIdentity, LiveAgentRegistry};
 const UPDATE_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[cfg(test)]
+#[path = "updates_coalesce_tests.rs"]
+mod coalesce_tests;
+#[cfg(test)]
 #[path = "updates_tests.rs"]
 mod tests;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn spawn_update_task(
+pub(crate) fn spawn_update_task(
     registry: Weak<LiveAgentRegistry>,
     activated: oneshot::Receiver<LiveAgentAttachmentIdentity>,
     mut updates: mpsc::Receiver<ConversationUpdate>,
@@ -43,13 +46,44 @@ pub(super) fn spawn_update_task(
         }
         let _budget_monitor =
             super::budget::monitor(registry.clone(), attachment.clone(), recorder.clone());
-        while let Some(update) = updates.recv().await {
-            if record_update(
+        let mut pending = None;
+        loop {
+            let update = match assembly.output_flush_deadline() {
+                Some(deadline) => tokio::select! {
+                    biased;
+                    _ = tokio::time::sleep_until(deadline) => {
+                        if flush_output(recorder.as_ref(), &attachment.agent_id, attachment.runtime_generation, &mut assembly, &mut pending).await.is_err() { break; }
+                        continue;
+                    }
+                    update = updates.recv() => update,
+                },
+                None => updates.recv().await,
+            };
+            let Some(update) = update else {
+                // Closing a connection leaves uncommitted receipts for replay; never ACK on drop.
+                break;
+            };
+            if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
+                && pending.is_some()
+                && flush_output(
+                    recorder.as_ref(),
+                    &attachment.agent_id,
+                    attachment.runtime_generation,
+                    &mut assembly,
+                    &mut pending,
+                )
+                .await
+                .is_err()
+            {
+                break;
+            }
+            if process_update(
                 recorder.as_ref(),
                 &attachment.agent_id,
                 attachment.runtime_generation,
                 &mut assembly,
                 update,
+                &mut pending,
             )
             .await
             .is_err()
@@ -88,19 +122,20 @@ async fn restore_assembly(
     }
 }
 
-pub(crate) async fn record_update(
+async fn process_update(
     recorder: &dyn AgentUpdateRecorder,
     agent_id: &AgentId,
     runtime_generation: u64,
     assembly: &mut AgentMessageAssembly,
     update: ConversationUpdate,
+    pending: &mut Option<layer3_adapter::RuntimeOutputReceipt>,
 ) -> Result<(), AgentConversationError> {
     let receipt = match &update {
         ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt),
         _ => None,
     };
     loop {
-        let attempt = recorder.record_update(
+        let attempt = recorder.record_output(
             agent_id,
             runtime_generation,
             assembly,
@@ -113,7 +148,8 @@ pub(crate) async fn record_update(
             attempt.await
         };
         match result {
-            Ok(outcome) => {
+            Ok(result) => {
+                let outcome = result.outcome;
                 if outcome.appended.iter().any(|entry| matches!(&entry.kind,
                     layer2_core::sandbox::AgentLogKind::TurnFailed { failure, .. }
                         if failure.class == layer2_core::sandbox::store::AGENT_LOG_CAPACITY_FAILURE
@@ -122,11 +158,19 @@ pub(crate) async fn record_update(
                     // been recorded. Leave the native journal receipt unacked.
                     return Err(AgentConversationError::CapacityExceeded);
                 }
-                if let Some(receipt) = receipt {
-                    receipt
-                        .acknowledge()
-                        .await
-                        .map_err(|error| AgentConversationError::Unavailable(error.to_string()))?;
+                if let Some(source) = result.committed {
+                    acknowledge(&source, receipt, pending).await?;
+                    metrics::counter!("cma_agent_output_receipts_total", "outcome" => "committed")
+                        .increment(1);
+                } else if let Some(receipt) = receipt {
+                    metrics::counter!("cma_agent_output_receipts_total", "outcome" => "buffered")
+                        .increment(1);
+                    if pending
+                        .as_ref()
+                        .is_none_or(|last| last.source.cursor < receipt.source.cursor)
+                    {
+                        *pending = Some(receipt.clone());
+                    }
                 }
                 return Ok(());
             }
@@ -140,4 +184,76 @@ pub(crate) async fn record_update(
             }
         }
     }
+}
+
+async fn acknowledge(
+    source: &layer3_adapter::RuntimeOutputSource,
+    current: Option<&layer3_adapter::RuntimeOutputReceipt>,
+    pending: &mut Option<layer3_adapter::RuntimeOutputReceipt>,
+) -> Result<(), AgentConversationError> {
+    let receipt = current
+        .filter(|receipt| &receipt.source == source)
+        .or_else(|| pending.as_ref().filter(|receipt| &receipt.source == source))
+        .ok_or(AgentConversationError::InvalidState(
+            "committed cursor has no matching delivery receipt",
+        ))?;
+    receipt
+        .acknowledge()
+        .await
+        .map_err(|error| AgentConversationError::Unavailable(error.to_string()))?;
+    if pending.as_ref().is_some_and(|receipt| {
+        receipt.source.stream_id == source.stream_id && receipt.source.cursor <= source.cursor
+    }) {
+        *pending = None;
+    }
+    Ok(())
+}
+
+async fn flush_output(
+    recorder: &dyn AgentUpdateRecorder,
+    agent_id: &AgentId,
+    runtime_generation: u64,
+    assembly: &mut AgentMessageAssembly,
+    pending: &mut Option<layer3_adapter::RuntimeOutputReceipt>,
+) -> Result<(), AgentConversationError> {
+    loop {
+        match crate::telemetry::agent_output::observe(recorder.flush_output(
+            agent_id,
+            runtime_generation,
+            assembly,
+            now_rfc3339(),
+        ))
+        .await
+        {
+            Ok(Some(source)) => return acknowledge(&source, None, pending).await,
+            Ok(None) => return Ok(()),
+            Err(AgentConversationError::Unavailable(_)) => {
+                tracing::warn!("quiet output checkpoint unavailable; retrying the same batch");
+                tokio::time::sleep(UPDATE_RETRY_DELAY).await;
+            }
+            Err(error) => {
+                tracing::error!("quiet output checkpoint refused; ending attachment");
+                return Err(error);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn record_update(
+    recorder: &dyn AgentUpdateRecorder,
+    agent_id: &AgentId,
+    runtime_generation: u64,
+    assembly: &mut AgentMessageAssembly,
+    update: ConversationUpdate,
+) -> Result<(), AgentConversationError> {
+    process_update(
+        recorder,
+        agent_id,
+        runtime_generation,
+        assembly,
+        update,
+        &mut None,
+    )
+    .await
 }

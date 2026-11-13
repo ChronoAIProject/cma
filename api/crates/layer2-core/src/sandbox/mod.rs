@@ -256,12 +256,12 @@ pub use checkpoint::{
 };
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
-    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
-    MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    AgentConversationError, AgentMessageAssembly, AgentOutputCommit, AgentUpdateOutcome,
+    AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
     AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
-    DurableAgentUpdateRecorder,
+    AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
