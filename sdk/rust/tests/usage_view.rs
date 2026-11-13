@@ -20,10 +20,20 @@ fn pending() -> serde_json::Value {
 }
 #[test]
 fn resource_extensions_prevent_route_absence_fallback() {
-    let error = Error::from_http_problem(404, None, None, br#"{"reason":"concealed"}"#);
+    let error = Error::from_http_problem(
+        404,
+        None,
+        None,
+        br#"{"status":404,"title":"Not Found","reason":"concealed"}"#,
+    );
+    assert!(matches!(&error, Error::Api { code: None, extensions, .. } if extensions.len() == 1));
     assert!(!view_unavailable(&error));
-    let absent = Error::from_http_problem(404, None, None, b"");
+    let absent =
+        Error::from_http_problem(404, None, None, br#"{"status":404,"title":"Not Found"}"#);
     assert!(view_unavailable(&absent));
+    let malformed = Error::from_http_problem(404, None, None, b"");
+    assert!(matches!(malformed, Error::Protocol { .. }));
+    assert!(!view_unavailable(&malformed));
 }
 #[tokio::test]
 async fn latest_usage_uses_dedicated_route_and_refuses_mixed_scope_without_polling() {
