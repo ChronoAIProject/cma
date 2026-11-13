@@ -98,6 +98,12 @@ it('narrows Sandbox discovery by the draft owner and applies one report while th
   );
   expect(api.report).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
-  await waitFor(() => expect(api.create).toHaveBeenCalledTimes(3));
-  expect(api.create.mock.calls[2]![0].filters).not.toHaveProperty('owner');
+  // The exact default key retained its pending admission while the owner and
+  // Sandbox selection was active, so clearing filters resumes that report
+  // instead of creating a duplicate admission.
+  await waitFor(() => expect(api.report).toHaveBeenCalledWith('report-one', expect.anything()), {
+    timeout: 2000,
+  });
+  expect(api.create).toHaveBeenCalledTimes(2);
+  expect(api.create.mock.calls[0]![0].filters).not.toHaveProperty('owner');
 });

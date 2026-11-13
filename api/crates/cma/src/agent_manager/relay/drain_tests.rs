@@ -3,7 +3,17 @@ use crate::{agent_manager::AgentManager, sandbox::LiveAgentRegistry};
 use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-struct Receiver(Arc<AtomicBool>);
+struct Receiver {
+    revoked: Arc<AtomicBool>,
+    lifecycle_exited: Arc<AtomicBool>,
+}
+
+struct LifecycleExit(Arc<AtomicBool>);
+impl Drop for LifecycleExit {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
 
 #[async_trait::async_trait]
 impl ReceiverRevocation for Receiver {
@@ -11,7 +21,11 @@ impl ReceiverRevocation for Receiver {
         "drain-test-runtime".into()
     }
     async fn revoke(&self) -> layer3_adapter::Result<()> {
-        self.0.store(true, Ordering::Release);
+        assert!(
+            self.lifecycle_exited.load(Ordering::Acquire),
+            "receiver revoked before lifecycle join"
+        );
+        self.revoked.store(true, Ordering::Release);
         Ok(())
     }
 }
@@ -29,6 +43,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
         let mut managers = Vec::new();
         let mut instances = Vec::new();
         let mut ports = Vec::new();
+        let mut lifecycle_exits = Vec::new();
         for index in 0..count {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             ports.push(listener.local_addr().unwrap().port());
@@ -55,6 +70,15 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
                 Router::new().route("/ready", get(|| async { StatusCode::OK })),
                 manager.clone(),
             );
+            let lifecycle = crate::agent_lifecycle::LifecycleDrain::fixture(1);
+            let exited = Arc::new(AtomicBool::new(false));
+            let exit = LifecycleExit(exited.clone());
+            assert!(lifecycle.spawn_fixture(async move {
+                let _exit = exit;
+                std::future::pending::<()>().await;
+            }));
+            manager.register_lifecycle(lifecycle).unwrap();
+            lifecycle_exits.push(exited);
             manager.activate().unwrap();
             let server = tokio::spawn(async move {
                 axum::serve(
@@ -90,7 +114,10 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
             .unwrap();
         let revoked = Arc::new(AtomicBool::new(false));
         authority
-            .register_receiver(Arc::new(Receiver(revoked.clone())))
+            .register_receiver(Arc::new(Receiver {
+                revoked: revoked.clone(),
+                lifecycle_exited: lifecycle_exits[owner].clone(),
+            }))
             .unwrap();
         let waiting = tokio::spawn({
             let authority = authority.clone();
@@ -145,12 +172,125 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
         }
         assert!(successor.unwrap().token.epoch > authority.token.epoch);
         // SIGTERM uses this same idempotent drain after preStop has finished.
-        managers[owner].drain().await;
+        managers[owner].drain().await.unwrap();
         for manager in &managers {
-            manager.drain().await;
+            manager.drain().await.unwrap();
         }
         drop(instances);
         drop(managers);
         mongo.database(&name).drop().await.unwrap();
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() {
+    use crate::store::sandbox_maintenance::mongo_integration_tests::database;
+    let (mongo, name, durable) = database().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let address = format!("http://127.0.0.1:{port}");
+    let manager = AgentManager::register(
+        Arc::new(
+            durable
+                .enable_agent_ownership("blocked-manager".into())
+                .await
+                .unwrap(),
+        ),
+        Arc::new(LiveAgentRegistry::default()),
+        address.clone(),
+        256,
+    )
+    .await
+    .unwrap();
+    let lifecycle = crate::agent_lifecycle::LifecycleDrain::fixture(1);
+    let exited = Arc::new(AtomicBool::new(false));
+    let exit = LifecycleExit(exited.clone());
+    let (unblock, blocked) = std::sync::mpsc::channel::<()>();
+    let (entered, ready) = tokio::sync::oneshot::channel();
+    assert!(lifecycle.spawn_fixture(async move {
+        let _exit = exit;
+        entered.send(()).unwrap();
+        // A bounded synchronous fixture makes cancellation incomplete until
+        // explicitly released. It cannot leave a hung test worker on failure.
+        let _ = blocked.recv_timeout(Duration::from_secs(12));
+    }));
+    ready.await.unwrap();
+    manager.register_lifecycle(lifecycle.clone()).unwrap();
+    manager.activate().unwrap();
+    let authority = manager
+        .coordinator
+        .acquire(&AgentId("blocked-agent".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let original = manager
+        .coordinator
+        .store
+        .owner(&authority.token.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let revoked = Arc::new(AtomicBool::new(false));
+    authority
+        .register_receiver(Arc::new(Receiver {
+            revoked: revoked.clone(),
+            lifecycle_exited: exited.clone(),
+        }))
+        .unwrap();
+    let updates = DurableAgentUpdateRecorder::new(Arc::new(InMemorySandboxStore::default()));
+    let relay = Relay::new(manager.coordinator.clone(), &updates, key()).unwrap();
+    let router = relay.router(Router::new(), manager.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let instance = Instance {
+        coordinator: manager.coordinator.clone(),
+        relay,
+        updates,
+        address,
+        server,
+    };
+    let result = control::drain_local(port, key()).await;
+    assert!(
+        result.is_err(),
+        "incomplete drain must not return HTTP success"
+    );
+    assert!(!manager.is_ready());
+    assert!(!authority.is_current());
+    assert!(!revoked.load(Ordering::Acquire));
+    assert!(!exited.load(Ordering::Acquire));
+    assert_eq!(
+        manager
+            .coordinator
+            .store
+            .owner(&authority.token.agent_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        original
+    );
+    unblock.send(()).unwrap();
+    let mut shutdown = crate::shutdown::ShutdownCoordinator::new();
+    shutdown.register_lifecycle(lifecycle);
+    shutdown.drain_agent_manager(Some(&manager)).await.unwrap();
+    assert!(exited.load(Ordering::Acquire));
+    assert!(revoked.load(Ordering::Acquire));
+    assert!(manager
+        .coordinator
+        .store
+        .owner(&authority.token.agent_id)
+        .await
+        .unwrap()
+        .is_none());
+    control::drain_local(port, key()).await.unwrap();
+    drop(instance);
+    drop(manager);
+    assert_eq!(shutdown.drain().await, 0);
+    mongo.database(&name).drop().await.unwrap();
 }
