@@ -142,6 +142,7 @@ pub struct AuthState {
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
+    spend: Option<Arc<dyn layer2_core::budget::PlatformSpendLedger>>,
 }
 
 pub(super) struct RequestAuth {
@@ -208,6 +209,7 @@ impl AuthState {
             nyxid_public_url,
             browser_origins,
             records,
+            spend: None,
             store,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))

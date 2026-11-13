@@ -83,6 +83,8 @@ pub enum AgentServiceError {
     WorktreeRecoveryConflict,
     #[error("agent log capacity exceeded")]
     LogCapacityExceeded,
+    #[error("model budget refused the commitment: {0}")]
+    Budget(crate::budget::BudgetError),
     #[error("invalid agent request: {0}")]
     InvalidRequest(String),
     #[error("agent data is not usable: {0}")]
@@ -95,6 +97,7 @@ impl AgentServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Connection(error) => error.code(),
+            Self::Budget(reason) => reason.code(),
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "agent_profile_not_found",
             Self::WorkspaceNotFound => "workspace_not_found",

@@ -44,6 +44,28 @@ make a populated database eligible for this archive command.
 
 ## Supported closure
 
+The optional platform accounting layout from #1496 uses sixteen canonical
+`platform-counter:<start-seconds>:<partition>` keys. The seconds are nonnegative
+BSON signed integers written as decimal without signs or leading zeroes; the
+partition is `0` through `15`. These rows are independent platform accounting
+and never enter a Sandbox archive, even if incidental record fields mention a
+source Agent. Unknown families, malformed/overflowed seconds, unsupported
+partitions and trailing content still refuse capture without releasing the hold.
+Reservation `period_start` and optional `period_shard` bindings are retained as
+opaque BSON bytes; the census does not redistribute or settle balances.
+
+This additive reader extension composes with #1754's period/observation/stop
+classification. The `counter_layout: 1` marker on a period does not change its
+independent ownership. Neither the census catalogue nor its hash changes.
+Closing `CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED` does not erase converted data
+or restore an earlier reader floor. Qualify and deploy the complete compatible
+reader set before the first conversion; merging alone authorizes no activation.
+
+Local proof covers every fixed partition, incidental ownership exclusion,
+byte-exact reservation binding restoration, and refused malformed keys with
+the archive hold retained. The correction evidence records commands and results;
+no production archive or predecessor executable is certified here.
+
 Hierarchy discovery reads the actual `sandbox_id` and `record.sandbox_id` fields,
 uses the production typed readers, and checks Workspace/Worktree parent membership.
 It scans each present Agent's whole log against the authoritative high-water mark

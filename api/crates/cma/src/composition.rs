@@ -69,7 +69,8 @@ impl ControlPlaneComposition {
                 .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
                 .with_model_request_budget_writes_enabled(
                     config.features.model_request_budget_writes_enabled,
-                ),
+                )
+                .with_platform_spend_writes_enabled(config.features.platform_spend_writes_enabled),
         );
         let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
             Arc::clone(&settings),
@@ -117,6 +118,7 @@ impl ControlPlaneComposition {
             sandbox_policy.clone(),
             connection_prerequisite.clone(),
         );
+        sandbox_service.attach_platform_spend(stores.sandbox_model.clone());
         let workspace_service = WorkspaceService::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
@@ -193,7 +195,8 @@ impl ControlPlaneComposition {
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(native_warm_pools.clone());
+        .with_warm_pools(native_warm_pools.clone())
+        .with_platform_spend(stores::platform_spend(&stores, &activity, &settings));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -303,6 +306,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
+            config.features.command_reconcile_pacing,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -317,6 +321,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
+        sandbox_control_service.attach_platform_spend(stores.sandbox_model.clone());
         let deliverables = access::deliverables(
             &stores,
             projections.reads(),

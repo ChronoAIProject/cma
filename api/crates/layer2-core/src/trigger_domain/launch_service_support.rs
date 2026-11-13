@@ -183,6 +183,7 @@ pub(super) fn store_error(error: LaunchStoreError) -> LaunchServiceError {
         LaunchStoreError::TriggerRetired => LaunchServiceError::TriggerRetired,
         LaunchStoreError::Unavailable(detail) => LaunchServiceError::Unavailable(detail),
         LaunchStoreError::Corrupt(detail) => LaunchServiceError::Corrupt(detail),
+        LaunchStoreError::Budget(reason) => LaunchServiceError::Budget(reason),
         other => LaunchServiceError::Corrupt(other.to_string()),
     }
 }

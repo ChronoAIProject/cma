@@ -113,6 +113,8 @@ pub enum LaunchServiceError {
     InvalidCursor,
     #[error("launch changed while the operation was committed")]
     Conflict,
+    #[error("model budget refused the Launch: {0}")]
+    Budget(crate::budget::BudgetError),
     #[error("launch dependency is unavailable: {0}")]
     Unavailable(String),
     #[error("launch data is not usable: {0}")]
@@ -138,6 +140,7 @@ impl LaunchServiceError {
             Self::IdempotencyKeyReused => "idempotency_key_reused",
             Self::InvalidCursor => "invalid_launch_cursor",
             Self::Conflict => "launch_changed",
+            Self::Budget(reason) => reason.code(),
             Self::Unavailable(_) => "launch_service_unavailable",
             Self::Corrupt(_) => "stored_launch_corrupt",
         }

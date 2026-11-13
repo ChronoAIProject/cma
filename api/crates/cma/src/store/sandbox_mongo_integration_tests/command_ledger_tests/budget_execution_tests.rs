@@ -1,6 +1,8 @@
-use super::super::budget_tests::configure;
+use super::super::budget_tests::{configure, configure_metered, open_platform};
 use super::*;
-use layer2_core::budget::{BudgetError, OwnerBudget, SpendSource};
+use layer2_core::budget::{
+    BudgetError, BudgetStop, Closure, ClosureReason, OwnerBudget, SpendSource,
+};
 use layer3_adapter::{ConversationUpdate, ConversationUsage, PromptResponse, TurnStopReason};
 
 async fn read_owner(store: &MongoSandboxStore, agent: &Agent) -> OwnerBudget {
@@ -326,5 +328,195 @@ async fn lower_usage_timeout_stops_an_already_running_turn() {
         AgentStatus::Working
     );
     assert!(read_owner(&store, &agent).await.reserved > 0);
+    client.database(&name).drop().await.unwrap();
+}
+
+async fn running_turn(client: &Client, name: &str) -> (Arc<MongoSandboxStore>, Agent, u64, u64) {
+    let (store, agent, parent, execution, _, _) = composed(client, name).await;
+    configure_metered(&store, &agent.owner).await;
+    let admitted = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "platform-running"))
+            .await
+            .unwrap(),
+    );
+    AgentCommandWorker::new(store.clone(), execution, "budget-worker".into())
+        .unwrap()
+        .run_one(&admitted.receipt.envelope.command_id)
+        .await
+        .unwrap();
+    let working = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let generation = working.conversation.runtime_generation.unwrap();
+    let turn = working.conversation.active_turn.unwrap();
+    (store, agent, generation, turn)
+}
+
+/// Enter a closure the way the guarded outside write does.
+async fn enter(store: &MongoSandboxStore, reason: ClosureReason) {
+    let (start, _) = open_platform().period_bounds().unwrap();
+    let closure = Closure {
+        reason,
+        since: start,
+        settings_revision: 1,
+        committed_at_entry: 0,
+    };
+    store
+        .model_budget
+        .update_one(
+            doc! {"_id": crate::store::budget::period_key(start)},
+            doc! {"$push": {"record.closures": mongodb::bson::serialize_to_bson(&closure).unwrap()},
+            "$inc": {"record.revision": 1_i64}},
+        )
+        .await
+        .unwrap();
+}
+
+fn wall_clock() -> u64 {
+    layer2_core::seconds_from_rfc3339(&layer2_core::now_rfc3339()).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn platform_stop_requests_a_guarded_cancel_for_every_active_turn() {
+    let (client, name) = database("budget_platform_stop").await;
+    let (store, agent, generation, turn) = running_turn(&client, &name).await;
+    enter(&store, ClosureReason::SpendStop).await;
+    let stop = store
+        .stop_requested(&agent.id, generation, wall_clock())
+        .await
+        .unwrap();
+    assert_eq!(
+        stop,
+        Some(BudgetStop {
+            agent_id: agent.id.clone(),
+            runtime_generation: generation,
+            turn_sequence: turn,
+            reason: BudgetError::PlatformExhausted,
+        })
+    );
+    let persisted = store
+        .model_budget
+        .find_one(doc! {"_id": format!("stop:{}:{turn}", agent.id.as_str())})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        crate::store::sandbox_mongo::read_record::<BudgetError>(&persisted).unwrap(),
+        BudgetError::PlatformExhausted
+    );
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened
+            .stop_requested(&agent.id, generation, wall_clock())
+            .await
+            .unwrap(),
+        stop
+    );
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap().unwrap().status,
+        AgentStatus::Working
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn staleness_alone_does_not_stop_a_running_turn() {
+    let (client, name) = database("budget_platform_stale").await;
+    let (store, agent, generation, _) = running_turn(&client, &name).await;
+    enter(&store, ClosureReason::MeteringUnavailable).await;
+    enter(&store, ClosureReason::SpendWarning).await;
+    assert_eq!(
+        store
+            .stop_requested(&agent.id, generation, wall_clock())
+            .await
+            .unwrap(),
+        None
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn stop_reads_are_served_from_the_cache_within_its_ttl() {
+    let (client, name) = database("budget_platform_cache").await;
+    let (store, agent, generation, _) = running_turn(&client, &name).await;
+    let fence = || async {
+        store
+            .budget_settings
+            .find_one(doc! {"_id": "platform"})
+            .await
+            .unwrap()
+            .unwrap()
+            .get_i64("model_budget_admission_fence")
+            .ok()
+    };
+    let before = fence().await;
+    assert_eq!(
+        store
+            .stop_requested(&agent.id, generation, wall_clock())
+            .await
+            .unwrap(),
+        None
+    );
+    enter(&store, ClosureReason::SpendStop).await;
+    assert_eq!(
+        store
+            .stop_requested(&agent.id, generation, wall_clock())
+            .await
+            .unwrap(),
+        None,
+        "a cached open read answers until its TTL passes"
+    );
+    store.age_platform_stop_cache(std::time::Duration::from_secs(5));
+    assert_eq!(
+        store
+            .stop_requested(&agent.id, generation, wall_clock())
+            .await
+            .unwrap()
+            .unwrap()
+            .reason,
+        BudgetError::PlatformExhausted
+    );
+    assert_eq!(fence().await, before);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_turn_end_through_the_message_checkpoint_waits_for_local_period_writers() {
+    let (client, name) = database("budget_platform_turn_end").await;
+    let (store, agent, generation, _) = running_turn(&client, &name).await;
+    let held = store.platform.writes.lock().await;
+    let recorder = DurableAgentUpdateRecorder::new(store.clone());
+    let agent_id = agent.id.clone();
+    let ending = tokio::spawn(async move {
+        recorder
+            .record_update(
+                &agent_id,
+                generation,
+                &mut AgentMessageAssembly::default(),
+                ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn)),
+                layer2_core::now_rfc3339(),
+            )
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert!(
+        !ending.is_finished(),
+        "a turn end writes the period row and is scheduled behind local period writers"
+    );
+    drop(held);
+    ending.await.unwrap().unwrap();
+    let (start, _) = open_platform().period_bounds().unwrap();
+    let row = store
+        .model_budget
+        .find_one(doc! {"_id": crate::store::budget::period_key(start)})
+        .await
+        .unwrap()
+        .unwrap();
+    let row: layer2_core::budget::PlatformPeriodLedger =
+        crate::store::sandbox_mongo::read_record(&row).unwrap();
+    assert_eq!(row.reserved, 0);
     client.database(&name).drop().await.unwrap();
 }

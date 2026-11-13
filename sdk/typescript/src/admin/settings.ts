@@ -83,6 +83,7 @@ export const storedPlatformSettings = object({
   settings: platformSettings,
   model_budget_writes_available: optional(boolean),
   model_request_budget_writes_available: optional(boolean),
+  platform_spend_writes_available: optional(boolean),
 });
 export type StoredPlatformSettings = Output<typeof storedPlatformSettings>;
 export const replaceSettingsRequest = object({

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::acp::{Blocked, Bridge};
+use super::acp_correlation::{valid_call, valid_call_with_policy};
 use super::update_relay::UpdateRelay;
 use crate::{
     ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind, SessionUpdate,
@@ -9,7 +10,6 @@ use crate::{
 
 const PERMISSION_LOCATOR_VERSION: u8 = 1;
 const PERMISSION_ID_DOMAIN: &[u8] = b"chrono-hosted-permission-v1\0";
-const MAX_PERMISSION_CALL_BYTES: usize = 256;
 
 impl Bridge {
     pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) -> crate::Result<()> {
@@ -148,7 +148,10 @@ impl Bridge {
     }
 
     async fn subscription_credential(&self, frame: &serde_json::Value) {
-        let Some(id) = frame.get("id").filter(|id| valid_call(id)) else {
+        let Some(id) = frame
+            .get("id")
+            .filter(|id| valid_call_with_policy(id, self.json_pools.is_some()))
+        else {
             return;
         };
         let answer = match (&self.subscription, frame.get("params")) {
@@ -431,13 +434,6 @@ fn prompt_outcome(frame: &serde_json::Value, bounded_json: bool) -> Option<super
             .and_then(serde_json::Value::as_object)
             .is_some_and(|result| result.contains_key("stopReason"));
     terminal.then(|| super::acp_turn::turn_outcome_with_policy(frame, bounded_json))
-}
-
-pub(super) fn valid_call(call: &serde_json::Value) -> bool {
-    matches!(
-        call,
-        serde_json::Value::String(_) | serde_json::Value::Number(_)
-    ) && call.to_string().len() <= MAX_PERMISSION_CALL_BYTES
 }
 
 fn hex(bytes: &[u8]) -> String {
