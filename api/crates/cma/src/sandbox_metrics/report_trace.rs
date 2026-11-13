@@ -31,6 +31,7 @@ pub(super) struct ReportTrace {
     hash: String,
     started: Instant,
     active: Option<(Stage, Instant)>,
+    failed_stage: Option<Stage>,
     elapsed_us: [u64; 6],
     calls: [u64; 6],
     outcome: &'static str,
@@ -41,6 +42,7 @@ impl ReportTrace {
             hash: report_hash(id),
             started: Instant::now(),
             active: None,
+            failed_stage: None,
             elapsed_us: [0; 6],
             calls: [0; 6],
             outcome: "cancelled",
@@ -58,6 +60,7 @@ impl ReportTrace {
         self.elapsed_us[stage as usize] += started.elapsed().as_micros() as u64;
         self.active = None;
         if result.is_err() {
+            self.failed_stage = Some(stage);
             self.outcome = "failed";
         }
         result
@@ -78,6 +81,7 @@ impl Drop for ReportTrace {
         tracing::info!(parent:None,event="usage_report_generation_stages",report_hash=%self.hash,
             elapsed_ms=total_us/1000,other_us=total_us.saturating_sub(self.elapsed_us.iter().sum()),outcome=self.outcome,
             active_stage=self.active.map_or("none",|(s,_)|s.label()),
+            failed_stage=self.failed_stage.map_or("none",Stage::label),
             inventory_us=self.elapsed_us[0],allocation_us=self.elapsed_us[1],measured_us=self.elapsed_us[2],
             source_us=self.elapsed_us[3],write_us=self.elapsed_us[4],authority_us=self.elapsed_us[5],
             inventory_calls=self.calls[0],allocation_calls=self.calls[1],measured_calls=self.calls[2],

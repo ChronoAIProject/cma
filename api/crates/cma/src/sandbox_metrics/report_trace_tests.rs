@@ -71,6 +71,10 @@ async fn generation_trace_records_completion_failure_and_cancelled_stage_without
             fields["active_stage"],
             if mode == 2 { "allocation" } else { "none" }
         );
+        assert_eq!(
+            fields["failed_stage"],
+            if mode == 1 { "allocation" } else { "none" }
+        );
         assert_eq!(event["span"]["name"], "usage_report_diagnostic");
         assert_eq!(event["spans"].as_array().unwrap().len(), 1);
         for private in [
