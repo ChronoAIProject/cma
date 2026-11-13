@@ -254,3 +254,29 @@ async fn opening_byte_budget_refuses_oversized_response_and_accepts_smaller_wind
     assert!(serde_json::to_vec(&small).unwrap().len() < 4 * 1024 * 1024);
     fixture.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn opening_excluded_cohort_adds_no_optional_log_or_index_reads() {
+    let mut fixture = Fixture::new(50, 1, true).await;
+    fixture.store.bounded_admission_agents.clear();
+    fixture.store = fixture.store.with_fleet_log_percentage(0);
+    assert!(fixture
+        .store
+        .agent_log_transcript_page(&fixture.agent, &first(32))
+        .await
+        .unwrap()
+        .is_none());
+    assert!(fixture
+        .store
+        .agent_log_usage_projection(&fixture.agent)
+        .await
+        .unwrap()
+        .is_none());
+    let commands = fixture.commands.lock().unwrap().clone();
+    assert_eq!(commands.len(), 2, "existing format dispatch only");
+    assert!(commands
+        .iter()
+        .all(|row| row.get_str("find").ok() == Some(AGENTS)));
+    fixture.cleanup().await;
+}
