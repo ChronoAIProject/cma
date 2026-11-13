@@ -51,6 +51,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
+    pub sandbox_reconciliation_reserved_lane: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -77,7 +78,15 @@ impl SandboxLifecycleComposition {
     pub(crate) fn new(
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        let shared = crate::background::shared();
+        let reconciliation_budget = if config.sandbox_reconciliation_reserved_lane {
+            shared
+                .reserve(1)
+                .ok_or("cannot reserve Sandbox reconciliation capacity before worker startup")?
+        } else {
+            shared
+        };
         let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
         let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
         let warmup = super::warmup::LegacyWarmSandboxCleanup {
@@ -91,7 +100,7 @@ impl SandboxLifecycleComposition {
             config.deployment_id.clone(),
         )
         .with_background_work(crate::background::BackgroundWork::new(
-            crate::background::shared(),
+            reconciliation_budget,
             "sandbox_reconciliation",
             Duration::from_secs(30),
             Duration::from_secs(15),
@@ -199,7 +208,7 @@ impl SandboxLifecycleComposition {
             dependencies.funding,
         );
 
-        Self {
+        Ok(Self {
             warmup,
             updates,
             reconciliation,
@@ -215,7 +224,7 @@ impl SandboxLifecycleComposition {
             titles,
             funding_renewal,
             suggestions,
-        }
+        })
     }
 
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
