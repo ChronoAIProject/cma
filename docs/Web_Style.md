@@ -1919,9 +1919,25 @@ Message-submission progress stays beside the composer; it does not replace the
 recorded Agent state in the header.
 Normal owner or operator stops and resource deletion use the recorded terminal
 state, not an Agent run failed notification. Genuine provider failures remain visible.
-Visible Sandbox and hierarchy reads refresh every five seconds while settled,
-and every 1.5 seconds while recorded lifecycle work is in progress; reads never
-overlap or admit work. Hidden pages defer refresh until visible again.
+Visible Sandbox detail reads refresh every five seconds while settled,
+and every 1.5 seconds while recorded lifecycle work is in progress. Sidebar
+hierarchy reads start at fifteen seconds and back off to thirty, then sixty
+seconds when the result is unchanged. Any observed change, explicit resource
+refresh or return to visibility restores the fifteen-second cadence; resource
+refresh and return to visibility read immediately. Reads never overlap or admit
+work. Hidden pages defer refresh until visible again. Only the visible personal
+navigation tree reads channel badges. Immutable public creation-origin categories
+are shared across the mounted account's trees; only unavailable categories retry.
+
+Agent service-access requests refresh every two seconds while pending,
+connecting or applying. With an active turn and unchanged results, reads back
+off from two to four, eight and fifteen seconds; durable conversation events
+hint a read at most once every two seconds. Idle Agents retain a thirty-second
+fallback because consent requests can be admitted outside an active turn.
+Turn changes, focus, visibility and explicit decisions refresh the list. Failures
+retain the displayed requests and error, retrying after two, four, eight and then
+ten seconds. Hidden pages make no periodic reads. These observations do not
+change the independent thirty-second access revalidation or its expiry rules.
 Pause and Resume immediately show a polite submitting status in the existing
 action-status seat, followed by request acceptance and observed completion as
 separate facts. Accepted requests show a concise acknowledgement; the underlying
@@ -6309,5 +6325,7 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-11 | Complete §20 silent sign-in for opening and eligible SPA navigation with default-off activation, same-origin logout suppression and durable explicit-sign-in recovery, a 4 KiB encoded login URL budget, oversized-draft retention, private draft clearing before Sign out, and bounded browser bindings with inline predecessor completion. |
 
 | 2026-11-12 | Specify capability-gated self-service account deletion, acknowledged CMA-only loss, immediate access revocation and the seven-day live-data deadline, published retention-policy guidance, recorded cleanup progress and same-key recovery, and the restricted Deletion in progress page using existing components. |
+
+| 2026-11-13 | Bound Agent access-request observation by request state, turn activity, durable event hints and visibility. Suspend hidden personal-tree badge reads, share immutable creation-origin categories within a mounted account, and back off unchanged sidebar hierarchy reads from fifteen to sixty seconds while preserving explicit refresh, denial clearing and lifecycle observation. |
 
 | 2026-11-13 | Keep valid composer observations through slow refreshes and short tab switches; bound freshness by poll delay plus request timeout, distinguish revalidation from unavailability, and retain checkpoint, lifecycle and denial fences (#1801). |

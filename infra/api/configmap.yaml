@@ -98,6 +98,7 @@ data:
   CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   # Enable only after runtime and scan measurements support cooperative decoding.
+  CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED: "false"
   CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED: "false"
   CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Expand-only skill upgrade readers; enable new writers only after migration qualification.
@@ -294,6 +295,7 @@ data:
   # explicit period, thresholds, reserve, lag, call limit and IANA day timezone.
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
+  CHRONO_ACTIVITY_ASYNC_ENABLED: "false"
   # Canonical platform origin for scoped runtime service proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Durable personal documents use the existing S3-backed storage service.

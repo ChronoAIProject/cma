@@ -8,6 +8,7 @@ use layer3_adapter::{
 };
 
 mod hierarchy;
+mod refill;
 mod worker;
 use crate::store::native_prepared::NativePreparedWorkspaceProof;
 pub(crate) use worker::NativePreparedWorker;

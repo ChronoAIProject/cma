@@ -1,11 +1,12 @@
 import type { AgentCreationCategory } from '@chronoai/cma-sdk';
 import { useEffect, useMemo, useState } from 'react';
-import { useCmaClient } from '../api/context';
 import { creationLabels } from '../agent/provenance';
 import type { NavigationSandbox } from './navigation';
+import { useTreeCreationScope } from './treeCreationScope';
 
 export type CreationFacts = ReadonlyMap<string, AgentCreationCategory | 'unavailable'>;
 const emptyFacts: CreationFacts = new Map();
+const retryDelay = 60_000;
 const shortLabels: Readonly<Record<AgentCreationCategory, string>> = {
   manual: 'Manual',
   trigger: 'Trigger',
@@ -37,12 +38,9 @@ export function useTreeCreation(
   items: readonly NavigationSandbox[],
   enabled: boolean,
 ): CreationFacts {
-  const client = useCmaClient();
+  const scope = useTreeCreationScope(viewerId);
   const identity = JSON.stringify(agentIds(items));
-  const request = useMemo(
-    () => ({ client, identity, viewerId, enabled }),
-    [client, identity, viewerId, enabled],
-  );
+  const request = useMemo(() => ({ scope, identity, enabled }), [scope, identity, enabled]);
   const [state, setState] = useState<{
     readonly request: typeof request;
     readonly facts: CreationFacts;
@@ -57,19 +55,30 @@ export function useTreeCreation(
       if (pending || lifetime.signal.aborted || document.hidden) return;
       pending = true;
       clearTimeout(timer);
+      const missing = ids.filter((id) => !scope.facts.has(id));
+      setState({
+        request,
+        facts: new Map(
+          ids.flatMap((id) => {
+            const category = scope.facts.get(id);
+            return category === undefined ? [] : [[id, category] as const];
+          }),
+        ),
+      });
       let next = 0;
       const worker = async () => {
-        while (next < ids.length && !lifetime.signal.aborted) {
-          const id = ids[next++];
+        while (next < missing.length && !lifetime.signal.aborted && !document.hidden) {
+          const id = missing[next++];
           if (id === undefined) return;
           let category: AgentCreationCategory | 'unavailable' = 'unavailable';
           try {
-            const value = await request.client.readAgentProvenance(id, { signal: lifetime.signal });
+            const value = await scope.client.readAgentProvenance(id, { signal: lifetime.signal });
             if (value.agent_id === id) category = value.creation_origin;
           } catch {
             /* A refused or missing fact never supplies a creation category. */
           }
-          if (!lifetime.signal.aborted)
+          if (!lifetime.signal.aborted) {
+            if (category !== 'unavailable') scope.facts.set(id, category);
             setState((previous) => ({
               request,
               facts: new Map(previous?.request === request ? previous.facts : emptyFacts).set(
@@ -77,13 +86,18 @@ export function useTreeCreation(
                 category,
               ),
             }));
+          }
         }
       };
-      await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
+      await Promise.all(Array.from({ length: Math.min(4, missing.length) }, worker));
       pending = false;
-      if (!lifetime.signal.aborted) timer = setTimeout(() => void poll(), 60_000);
+      if (!lifetime.signal.aborted && !document.hidden && ids.some((id) => !scope.facts.has(id)))
+        timer = setTimeout(() => void poll(), retryDelay);
     };
-    const foreground = () => void poll();
+    const foreground = () => {
+      clearTimeout(timer);
+      void poll();
+    };
     document.addEventListener('visibilitychange', foreground);
     void poll();
     return () => {
@@ -91,7 +105,7 @@ export function useTreeCreation(
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', foreground);
     };
-  }, [request]);
+  }, [request, scope]);
   return enabled && state?.request === request ? state.facts : emptyFacts;
 }
 

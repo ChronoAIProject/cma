@@ -103,20 +103,11 @@ impl MongoSandboxStore {
                 };
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => {
-                    let outcome = match &receipt {
-                        AdmissionReceipt::Created {
-                            prepared_outcome, ..
-                        } => *prepared_outcome,
-                        AdmissionReceipt::Existing(_) => "replay",
-                    };
-                    let sandbox_id = match &receipt {
-                        AdmissionReceipt::Created { sandbox, .. }
-                        | AdmissionReceipt::Existing(sandbox) => &sandbox.id,
-                    };
-                    tracing::info!(outcome, sandbox_id = %sandbox_id, prepared_lease_waits,
-                        admission_elapsed_ms = started.elapsed().as_millis(),
-                        "native prepared admission completed");
-                    self.warmup_changed.notify_one();
+                    self.observe_prepared_admission(
+                        &receipt,
+                        started.elapsed(),
+                        prepared_lease_waits,
+                    );
                     return Ok(receipt.into_result());
                 }
                 CommitOutcome::Retry(error) => {
@@ -125,16 +116,76 @@ impl MongoSandboxStore {
                     delay = admission_retry_delay(failures);
                 }
                 CommitOutcome::Unknown(error) => {
-                    return reconcile(self, &admission, &receipt).await?.ok_or_else(|| {
-                        SandboxStoreError::Unavailable(format!(
-                            "sandbox admission commit remained unknown: {error}",
-                        ))
-                    });
+                    let result = reconcile(self, &admission, &receipt)
+                        .await?
+                        .ok_or_else(|| {
+                            SandboxStoreError::Unavailable(format!(
+                                "sandbox admission commit remained unknown: {error}",
+                            ))
+                        })?;
+                    // Reconciliation can prove a different concurrent winner.
+                    // Only our positively reconciled creation consumed this receipt.
+                    match &result {
+                        SandboxAdmissionResult::Created(_) => self.observe_prepared_admission(
+                            &receipt,
+                            started.elapsed(),
+                            prepared_lease_waits,
+                        ),
+                        SandboxAdmissionResult::Existing(sandbox) => self
+                            .observe_prepared_admission(
+                                &AdmissionReceipt::Existing(sandbox.clone()),
+                                started.elapsed(),
+                                prepared_lease_waits,
+                            ),
+                    }
+                    return Ok(result);
                 }
                 CommitOutcome::Failed(error) => {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             }
         }
+    }
+
+    fn observe_prepared_admission(
+        &self,
+        receipt: &AdmissionReceipt,
+        elapsed: Duration,
+        prepared_lease_waits: u32,
+    ) {
+        let (sandbox, outcome) = match receipt {
+            AdmissionReceipt::Created {
+                sandbox,
+                prepared_outcome,
+                ..
+            } => (sandbox, *prepared_outcome),
+            AdmissionReceipt::Existing(sandbox) => (sandbox, "replay"),
+        };
+        let class = if sandbox
+            .profile
+            .content
+            .environment_variables
+            .iter()
+            .any(|entry| entry.name == "CMA_MACHINE_INCLUDED" && entry.value == "1")
+        {
+            "machine"
+        } else {
+            "plain"
+        };
+        let origin = match sandbox.origin {
+            SandboxOrigin::Lifecycle { .. } => "lifecycle",
+            SandboxOrigin::Trigger { .. } => "trigger",
+            SandboxOrigin::Manual => "manual",
+        };
+        metrics::counter!("cma_native_prepared_admissions_total", "outcome" => outcome, "class" => class, "origin" => origin).increment(1);
+        metrics::histogram!("cma_native_prepared_admission_seconds", "outcome" => outcome, "class" => class, "origin" => origin).record(elapsed.as_secs_f64());
+        tracing::info!(outcome, class, origin, sandbox_id = %sandbox.id, prepared_lease_waits,
+            admission_elapsed_ms = elapsed.as_millis(), "native prepared admission completed");
+        if outcome == "hit" {
+            // The native worker has its own permit: legacy cleanup must not
+            // consume the refill hint. No authority or target is carried here.
+            self.native_prepared_changed.notify_one();
+        }
+        self.warmup_changed.notify_one();
     }
 }
