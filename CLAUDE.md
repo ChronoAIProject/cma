@@ -15,7 +15,7 @@ their own Layer 3 directory and evidence against pinned versions.
 
 | Pod | Contains | Responsibility |
 |---|---|---|
-| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. One API replica with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. |
+| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. Staged, ownership-qualified two-replica floor with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. Activation follows `docs/CMA_Scale_Apply.md`. |
 | **Sandbox pod** | Layer 4 | One isolated CMA Sandbox containing Workspaces, Worktrees, and Agents. Many, provisioned by the sandbox provider. |
 
 The control plane never executes agent code. Sandbox pods never serve public
