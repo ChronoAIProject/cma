@@ -28,7 +28,7 @@ impl AgentAdmissionStore for MongoSandboxStore {
 
 /// Resolve the exact durable source again in the Agent creation transaction.
 /// Caller-supplied provenance or another launch's sidecar cannot supply attribution.
-pub(super) async fn fence_initiation(
+pub(in crate::store) async fn fence_initiation(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,
     expected: &layer2_core::trigger_domain::LaunchInitiation,
