@@ -36,6 +36,9 @@ impl SandboxService {
         require_launch_authority(caller)?;
         validate_launch_id(launch_id)?;
         self.require_connections(caller, id).await?;
+        self.require_platform_open()
+            .await
+            .map_err(SandboxServiceError::Budget)?;
         self.schedule_launch_command(SandboxLaunchCommand::revive(
             id.clone(),
             caller.subject.clone(),
