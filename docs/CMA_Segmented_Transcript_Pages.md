@@ -20,8 +20,11 @@ Segmented pages seek turns through the numeric evidence index and read at most
 32 requested originals plus four header points. Capture validates the active
 physical segment (at most 10,128 entries / 65 MiB) once per request. Closed
 history is never replayed to reach a cursor. Requested point sets have a 4 MiB
-source-byte cap, and each emitted turn page has a 4 MiB serialized cap. These
-bounds apply independently of the number of sealed segments and turn length.
+source-byte cap, and each emitted turn page has a 4 MiB serialized cap. A page
+can shorten below its requested event limit to honor either byte cap. Retries
+stay in the same captured snapshot, and `next.after` advances only over admitted
+originals. Serialized admission includes JSON escaping and both message fields.
+These bounds apply independently of the number of sealed segments and turn length.
 
 Omitting all query parameters preserves the existing complete response shape,
 without a `next` property. The segmented compatibility response has a fixed
@@ -36,6 +39,13 @@ Titles use the certified first task turn and four original points (start,
 owner, last assistant, terminal); the existing exact fold owns title truncation.
 Setup, queued input, steering, and terminal eligibility retain their prior
 semantics. Usage consumes the aggregate certified at the same captured source.
+Title claims use that bounded evidence inside their transaction. Title writes
+publish through the common segmented transaction and preserve the original
+claim/user-operation receipt for unknown-commit reconciliation.
+Final-answer and feedback checks use exact message/turn evidence and the original
+answer/start/terminal events, including for a turn longer than the old lookup
+window. Owner authority and Conversation capability are checked again before
+returning the answer.
 Missing, stale, foreign, unsupported, or corrupt segmented proof is a refusal,
 never an invitation to scan raw history or repair data during a read.
 
@@ -44,6 +54,18 @@ inside a transaction and even for an empty tail. Enqueue additionally validates
 the exact contiguous append batch and its already-published source entries in
 the same transaction. An unpublished append is refused; no pending-publication
 exception is granted by `snapshot=false`.
+
+The v1 event-page endpoint also uses certified captured reads, with at most 200
+events and 4 MiB serialized events per response. A short page caused by the byte
+budget carries its last original sequence as `next`; clients must follow `next`
+instead of assuming that fewer than `limit` events means completion. The cursor
+encoding is unchanged.
+
+Creation replay reads the original creation point. Retained reopen binds its
+consented source to the certified head/seal, active leaves and projection in
+the same transaction; it retains the original legacy digest on legacy Agents.
+It preserves the normal startup capacity allowance, existing command receipts
+and native identity. It neither admits rollover nor replays prior input.
 
 The TypeScript and Rust SDK `transcript` methods keep the old single request
 for within-budget histories and automatically follow pages only after that

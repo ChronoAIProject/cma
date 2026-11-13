@@ -386,3 +386,28 @@ nonzero dropped or overflow rows make collection-specific conclusions incomplete
 The histogram measures client-side command/checkout/hold durations. It does not
 identify majority acknowledgement as the sole cause of a write/read difference,
 and it does not enable Default-tier prepaid leases or change rate-limit behavior.
+
+### Agent file preview phases
+
+`CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED` is a strict boolean, default `false`.
+When enabled, authorized file-content/download reads emit `agent_file_read_phase`
+with fixed `phase`/`outcome` labels, registered route, opaque request hash and
+`elapsed_us`. No file path, content, runtime address or credential is recorded.
+
+The serial outer phases are `auth`, `runtime_status`, `runtime_read`,
+`receipt_validation`, and `final_fence`. Runtime status includes
+`home_before_status`/`home_after_status` verification; both runtime status and
+file transfer include nested `status_endpoint`/`status_control` and
+`read_endpoint`/`read_control` transport timings respectively. Native assignment,
+policy and Pod validation after status is `status_post_validation`.
+Nested phases overlap their parent: correlate by request and do not add all
+phase durations or percentiles. Setup, path validation and other unmeasured
+work can leave gaps; missing phase records do not establish zero work. Errors and cancelled futures retain their
+outcome. Timings are elapsed waits, not CPU attribution. Native assignment
+validation remains inside runtime status, outside its control exchange.
+
+The browser bounds an optional file preview (headers and body) to four seconds
+and offers an explicit retry. Navigation remains usable during the read.
+Downloads and writes retain their existing limits; no file or authority cache
+is introduced. Production attribution requires enabling the timing switch
+through the normal owner/release process and observing the resulting phases.

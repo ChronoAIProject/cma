@@ -6,7 +6,7 @@ use crate::resource_access::{
 };
 use crate::{Caller, Capability, SubjectId};
 
-use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
+use super::agent_reads_fold::fold_agent_log;
 use super::store::{AgentReadStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
 use super::{
     Agent, AgentLineage, AgentListQuery, AgentLogEntry, AgentReadError, AgentResourceReading,
@@ -62,6 +62,8 @@ pub use window::{
 
 #[path = "agent_reads/answer.rs"]
 mod answer;
+#[path = "agent_reads/log_pages.rs"]
+mod log_pages;
 pub use answer::AgentFinalAnswer;
 #[path = "agent_reads/usage.rs"]
 mod usage;
@@ -89,23 +91,6 @@ impl AgentReadService {
         Ok(self.owned_lineage(caller, id).await?.agent)
     }
 
-    pub(super) async fn require_owned_final_answer(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        sequence: u64,
-    ) -> Result<(), AgentReadError> {
-        let transcript = self.transcript(caller, id).await?;
-        if transcript.turns.iter().any(|turn| {
-            turn.final_answer()
-                .is_some_and(|answer| answer.sequence == sequence)
-        }) {
-            Ok(())
-        } else {
-            Err(AgentReadError::NotFound)
-        }
-    }
-
     pub async fn lineage(
         &self,
         caller: &Caller,
@@ -113,36 +98,6 @@ impl AgentReadService {
     ) -> Result<AgentLineage, AgentReadError> {
         require(caller)?;
         self.owned_lineage(caller, id).await
-    }
-
-    pub async fn log(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<AgentLogEntry>, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        validate_limit(limit)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)?;
-        Ok(entries
-            .into_iter()
-            .filter(|entry| entry.seq > after)
-            .take(usize::from(limit))
-            .collect())
-    }
-
-    pub async fn transcript(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-    ) -> Result<AgentTranscript, AgentReadError> {
-        let projection = self
-            .projection(caller, id, crate::RuntimeCapability::Conversation)
-            .await?;
-        Ok(projection.transcript)
     }
 
     /// Read a validated log through the exact aggregate captured for this read.
@@ -184,19 +139,6 @@ impl AgentReadService {
             sandbox_id: lineage.sandbox.id,
             reading,
         })
-    }
-
-    async fn projection(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        capability: crate::RuntimeCapability,
-    ) -> Result<AgentLogProjection, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        require_granted(&lineage.agent, capability)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)
     }
 
     async fn owned_lineage(
