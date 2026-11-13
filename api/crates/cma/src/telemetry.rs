@@ -1,5 +1,6 @@
 //! Bounded process observations. Durable admission/terminal accounting belongs
 //! to the Mongo ledger; these counters never assert exactly-once work effects.
+pub(crate) mod agent_output;
 pub(crate) mod browser;
 pub(crate) mod command_reconcile;
 pub(crate) mod http;
@@ -64,6 +65,12 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
 
 fn configure_histograms(builder: PrometheusBuilder) -> Result<PrometheusBuilder, String> {
     let mut builder = runtime::configure(builder)?;
+    builder = builder
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Full("cma_agent_output_mongo_commands".into()),
+            &[0., 1., 2., 4., 6., 8., 16., 32., 64., 128., 256.],
+        )
+        .map_err(|error| error.to_string())?;
     // These thresholds distinguish #1787's sub-2 ms, 5 ms driver and 10 ms
     // section cases; the general request histogram starts too coarsely.
     for name in [

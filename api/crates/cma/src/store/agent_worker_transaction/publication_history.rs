@@ -1,4 +1,5 @@
 //! Same-snapshot proofs, periodic audits, and invocation-local conflict reuse.
+use super::retry_audit::telemetry::SettlementRead;
 use super::retry_audit::telemetry::{self, Verification};
 use super::*;
 use crate::store::agent_log_integrity::{
@@ -73,6 +74,13 @@ pub(super) async fn read(
 ) -> Result<Arc<History>, ApplyError> {
     let needs_marker = agent_cleanup_capacity_retry(current, mutation) || selection.repeated;
     let repeat = needs_marker && mutation.agent_logs.is_empty();
+    let caller = if needs_marker && !selection.repeated
+        || crate::store::agent_worker_capacity::capacity_failure_evidence_matches(current, mutation)
+    {
+        ScanCaller::CapacitySettlement(current.work.step)
+    } else {
+        ScanCaller::WorkerPublication(current.work.step)
+    };
     let bounded =
         selection.ordinary && store.bounded_close_retries && store.bounded_log_enabled(&current.id);
     let key = bounded.then(|| snapshot_key(row)).transpose()?;
@@ -82,6 +90,7 @@ pub(super) async fn read(
                 if repeat {
                     telemetry::record(current.work.step, Verification::SkippedConflictReuse);
                 }
+                telemetry::settlement(caller, SettlementRead::ConflictReuse);
                 tracing::debug!(
                     step = current.work.step.operation_name(),
                     "Reused Agent history after aborted publication"
@@ -91,13 +100,6 @@ pub(super) async fn read(
         }
     }
     cache.validated = None;
-    let caller = if needs_marker && !selection.repeated
-        || crate::store::agent_worker_capacity::capacity_failure_evidence_matches(current, mutation)
-    {
-        ScanCaller::CapacitySettlement(current.work.step)
-    } else {
-        ScanCaller::WorkerPublication(current.work.step)
-    };
     let work = if matches!(caller, ScanCaller::CapacitySettlement(_)) {
         "capacity_settlement"
     } else {
@@ -111,9 +113,11 @@ pub(super) async fn read(
                 && ((!store.retry_single_marker_enabled && eligible(current, mutation))
                     || repeat && store.retry_audits.recent(current))
             {
-                if let Some(summary) =
-                    trusted_summary(store, current, row, caller, session, false).await?
-                {
+                let proof = trusted_summary(store, current, row, caller, session, false).await;
+                if proof.is_err() {
+                    telemetry::settlement(caller, SettlementRead::ProofError);
+                }
+                if let Some(summary) = proof? {
                     let last = if needs_marker {
                         last_entry(store, current, session).await?
                     } else {
@@ -122,6 +126,7 @@ pub(super) async fn read(
                     if repeat {
                         telemetry::record(current.work.step, Verification::SkippedProof);
                     }
+                    telemetry::settlement(caller, SettlementRead::Proof);
                     return Ok::<_, ApplyError>(History {
                         summary,
                         entries: vec![],
@@ -133,6 +138,20 @@ pub(super) async fn read(
                 if repeat {
                     telemetry::fallback(current, row).map_err(ApplyError::Domain)?;
                 }
+                telemetry::settlement(caller, SettlementRead::ProofFallback);
+            } else {
+                telemetry::settlement(
+                    caller,
+                    if !selection.ordinary || !repeat {
+                        SettlementRead::FullRequired
+                    } else if !store.bounded_close_retries {
+                        SettlementRead::FlagDisabled
+                    } else if !store.bounded_log_enabled(&current.id) {
+                        SettlementRead::CohortExcluded
+                    } else {
+                        SettlementRead::AuditDue
+                    },
+                );
             }
             // Audit age is process-local, so restart and eviction force a complete
             // verification. First failures, effects and untrusted proofs retain it.

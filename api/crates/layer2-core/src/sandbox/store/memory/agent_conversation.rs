@@ -7,6 +7,21 @@ use crate::seconds_from_rfc3339;
 
 #[async_trait]
 impl AgentConversationStore for InMemorySandboxStore {
+    async fn agent_message_snapshot(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<super::AgentMessageSnapshot>, SandboxStoreError> {
+        let state = self.lock();
+        let Some(agent) = state.agents.get(id).cloned() else {
+            return Ok(None);
+        };
+        let checkpoint = state.agent_message_checkpoints.get(id).cloned();
+        if let Some(checkpoint) = &checkpoint {
+            checkpoint.validate()?;
+        }
+        Ok(Some(super::AgentMessageSnapshot { agent, checkpoint }))
+    }
+
     async fn agent_message_checkpoint(
         &self,
         id: &AgentId,

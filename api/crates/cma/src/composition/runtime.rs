@@ -95,6 +95,7 @@ pub(super) fn lifecycle_config(
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
+        quiet_output: config.features.quiet_output,
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
