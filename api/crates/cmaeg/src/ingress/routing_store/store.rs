@@ -14,10 +14,12 @@ pub struct PlanStore {
     pub(super) records: RecordClient,
     pub(super) keys: Arc<MasterKeyRing>,
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    pub(super) admission_queue: Option<Arc<dyn super::AdmissionQueue>>,
 }
 impl PlanStore {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
+            admission_queue: None,
             records: records.interactions(),
             keys,
             clock: Arc::new(|| {
@@ -116,10 +118,14 @@ impl PlanStore {
         {
             return Err(AdmissionError::Conflict);
         }
-        Ok(restored)
+        match restored {
+            Some(plan) => self.queue_committed(plan).await.map(Some),
+            None => Ok(None),
+        }
     }
 
-    /// Returns only after the root is committed and the complete payload verifies.
+    /// Returns after the root and payload verify and any installed admission
+    /// queue acknowledges every target. Queue failure retains the original root.
     /// A duplicate logical request restores the original plan despite policy edits.
     pub async fn admit(&self, candidate: &Candidate) -> Result<AdmittedPlan, AdmissionError> {
         self.admit_inner(candidate, None).await
@@ -152,7 +158,7 @@ impl PlanStore {
     ) -> Result<AdmittedPlan, AdmissionError> {
         candidate.live((self.clock)())?;
         if let Some(plan) = self.load(candidate.identity()).await? {
-            return same_request(candidate, plan);
+            return self.queue_committed(same_request(candidate, plan)?).await;
         }
         for (index, chunk) in candidate.bytes.chunks(CHUNK_BYTES).enumerate() {
             candidate.live((self.clock)())?;
@@ -189,7 +195,7 @@ impl PlanStore {
                 // A lost response is resolved by reading the immutable root. A
                 // competing same-body candidate may have a different routing plan.
                 match self.load(&manifest.identity).await {
-                    Ok(Some(plan)) => same_request(candidate, plan),
+                    Ok(Some(plan)) => self.queue_committed(same_request(candidate, plan)?).await,
                     Ok(None) if matches!(result, Err(RecordError::Conflict { .. })) => {
                         Err(AdmissionError::ExpiredOrUnavailable)
                     }
