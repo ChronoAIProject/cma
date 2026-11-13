@@ -93,6 +93,41 @@ impl SandboxStore for MongoSandboxStore {
         expected_revision: u64,
         sandbox: Sandbox,
     ) -> Result<(), SandboxStoreError> {
+        self.save_sandbox_validated(expected_revision, sandbox)
+            .await
+    }
+
+    async fn list_sandboxes(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<Sandbox>, SandboxStoreError> {
+        self.sandbox_page(doc! { "owner": owner.as_str() }, page)
+            .await
+    }
+
+    async fn list_live_sandboxes(
+        &self,
+        owner: &SubjectId,
+        page: &PageRequest,
+    ) -> Result<Page<Sandbox>, SandboxStoreError> {
+        self.sandbox_page(
+            doc! {
+                "owner": owner.as_str(),
+                "status": { "$nin": ["retiring", "retired"] },
+            },
+            page,
+        )
+        .await
+    }
+}
+
+impl MongoSandboxStore {
+    pub(in crate::store) async fn save_sandbox_validated(
+        &self,
+        expected_revision: u64,
+        sandbox: Sandbox,
+    ) -> Result<(), SandboxStoreError> {
         let next = expected_revision
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
@@ -131,32 +166,6 @@ impl SandboxStore for MongoSandboxStore {
         super::super::sandbox_usage::save::save(self, expected_revision, &sandbox).await
     }
 
-    async fn list_sandboxes(
-        &self,
-        owner: &SubjectId,
-        page: &PageRequest,
-    ) -> Result<Page<Sandbox>, SandboxStoreError> {
-        self.sandbox_page(doc! { "owner": owner.as_str() }, page)
-            .await
-    }
-
-    async fn list_live_sandboxes(
-        &self,
-        owner: &SubjectId,
-        page: &PageRequest,
-    ) -> Result<Page<Sandbox>, SandboxStoreError> {
-        self.sandbox_page(
-            doc! {
-                "owner": owner.as_str(),
-                "status": { "$nin": ["retiring", "retired"] },
-            },
-            page,
-        )
-        .await
-    }
-}
-
-impl MongoSandboxStore {
     async fn sandbox_page(
         &self,
         mut filter: Document,
