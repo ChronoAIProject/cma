@@ -134,31 +134,42 @@ impl DesktopService {
         };
         let handle = RuntimeHandle::new(request.runtime.runtime_id.clone());
         let started = Instant::now();
-        let challenge = tokio::time::timeout(
-            Duration::from_secs(3),
-            self.adapter.desktop_ownership_challenge(&handle),
-        )
-        .await
-        .map_err(|_| DesktopError::RuntimeUnavailable)?
-        .map_err(|_| DesktopError::RuntimeUnavailable)?;
+        let challenge = timing::observe("receiver_challenge", async {
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                self.adapter.desktop_ownership_challenge(&handle),
+            )
+            .await
+            .map_err(|_| DesktopError::RuntimeUnavailable)?
+            .map_err(|_| DesktopError::RuntimeUnavailable)
+        })
+        .await?;
         let deadline = deadline(started, &challenge)?;
-        let authority =
+        let authority = timing::observe("durable_claim", async {
             tokio::time::timeout_at(deadline, store.acquire_exclusive_sandbox_session(&request))
                 .await
                 .map_err(|_| DesktopError::AuthorityUnavailable)?
                 .map_err(|error| match error {
                     SandboxStoreError::Conflict => DesktopError::Busy,
                     _ => DesktopError::AuthorityUnavailable,
-                })?;
-        let opened = tokio::time::timeout_at(
-            deadline,
-            self.adapter
-                .open_desktop_owned(&handle, &authority, &challenge),
-        )
+                })
+        })
+        .await?;
+        let opened = timing::observe("runtime_open", async {
+            tokio::time::timeout_at(
+                deadline,
+                self.adapter
+                    .open_desktop_owned(&handle, &authority, &challenge),
+            )
+            .await
+            .map_err(|_| {
+                layer3_adapter::AdapterError::Unavailable("desktop open deadline elapsed".into())
+            })?
+        })
         .await;
         let connection = match opened {
-            Ok(Ok(connection)) => connection,
-            Ok(Err(layer3_adapter::AdapterError::Unsupported(_))) => {
+            Ok(connection) => connection,
+            Err(layer3_adapter::AdapterError::Unsupported(_)) => {
                 // Unsupported is a definite no-effect outcome. A timeout or
                 // transport error may have installed authority at the receiver.
                 release(&store, &authority).await;
@@ -172,8 +183,8 @@ impl DesktopService {
         // An open may wait for provider I/O. Recheck the actual caller and exact
         // binding before exposing its socket; heartbeat revalidation follows.
         let current = tokio::time::timeout_at(deadline, async {
-            authorization.current(caller).await?;
-            self.authorize(caller, id).await
+            timing::observe("post_open_credential", authorization.current(caller)).await?;
+            timing::observe("post_open_lineage", self.authorize(caller, id)).await
         })
         .await;
         if !matches!(current, Ok(Ok((ref sandbox_id, ref runtime)))
