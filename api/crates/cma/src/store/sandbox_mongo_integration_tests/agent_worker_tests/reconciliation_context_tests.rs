@@ -19,6 +19,7 @@ mod eligibility_tests;
 #[path = "failure_pacing_tests/mod.rs"]
 mod failure_pacing_tests;
 mod transport_migration_tests;
+mod validation_reuse_tests;
 
 // These attached streams emit no updates. Keep their asynchronous checkpoint
 // restoration separate from the reconciliation reads measured by this test.
@@ -57,6 +58,16 @@ impl layer2_core::sandbox::AgentUpdateRecorder for IdleRecorder {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn context_discovery_defers_ineligible_reads_but_preserves_refresh_and_recovery() {
+    Box::pin(context_discovery_contract(false)).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn validation_reuse_preserves_context_refresh_and_runtime_readiness() {
+    Box::pin(context_discovery_contract(true)).await;
+}
+
+async fn context_discovery_contract(reuse: bool) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let name = format!("cma_reconcile_context_{}", uuid::Uuid::new_v4().simple());
     let reads = Arc::new(Mutex::new(BTreeMap::<String, usize>::new()));
@@ -79,7 +90,12 @@ async fn context_discovery_defers_ineligible_reads_but_preserves_refresh_and_rec
         }
     }));
     let client = Client::with_options(options).unwrap();
-    let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+    let store = Arc::new(
+        MongoSandboxStore::open(&client, &name)
+            .await
+            .unwrap()
+            .with_agent_connection_observations(reuse),
+    );
     let mut applied = idle_connection_fixture(&store, "applied_context", AgentStatus::Ready).await;
     applied.conversation.managed_guidance_revision = 2;
     applied.revision += 1;
