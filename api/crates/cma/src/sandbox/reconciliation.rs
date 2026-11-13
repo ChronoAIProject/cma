@@ -12,13 +12,11 @@ use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxSt
 use layer2_core::{rfc3339_at, seconds_from_rfc3339, SandboxId};
 use layer3_adapter::binding_diagnostics::{adapter_outcome, measure, Outcome, Stage};
 use layer3_adapter::{RuntimeAdoptionRequest, RuntimeObservation, SandboxAdapter};
-use tokio::sync::watch;
-use tokio::task::JoinHandle;
-use tokio::time::MissedTickBehavior;
 
 use super::runtime_mapping::sandbox_spec;
 
-const RECONCILIATION_INTERVAL: Duration = Duration::from_secs(15);
+#[path = "reconciliation_supervision.rs"]
+mod supervision;
 
 #[path = "reconciliation_interruption.rs"]
 mod interruption;
@@ -38,6 +36,8 @@ mod authority;
 mod binding_holds;
 #[path = "reconciliation_diagnostics.rs"]
 mod diagnostics;
+#[path = "reconciliation_platform.rs"]
+pub(crate) mod platform;
 #[path = "reconciliation_sweep.rs"]
 mod sweep;
 #[path = "reconciliation_telemetry.rs"]
@@ -64,6 +64,8 @@ pub(crate) struct SandboxReconciler {
     recovery_schedule: tokio::sync::Mutex<recovery::Schedule>,
     progress: tokio::sync::Mutex<Option<sweep::Progress>>,
     binding_holds: binding_holds::BindingHolds,
+    platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
+    platform_schedule: platform::PlatformSpendSchedule,
 }
 
 impl SandboxReconciler {
@@ -89,6 +91,8 @@ impl SandboxReconciler {
             recovery_schedule: tokio::sync::Mutex::new(recovery::Schedule::default()),
             progress: tokio::sync::Mutex::new(None),
             binding_holds: Default::default(),
+            platform_spend: None,
+            platform_schedule: Default::default(),
         }
     }
 
@@ -438,28 +442,6 @@ impl SandboxReconciler {
             outcome,
             SandboxRuntimeLossOutcome::RecoveryScheduled | SandboxRuntimeLossOutcome::Failed
         ))
-    }
-
-    pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(RECONCILIATION_INTERVAL);
-            ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-            loop {
-                if *shutdown.borrow() {
-                    break;
-                }
-                tokio::select! {
-                    changed = shutdown.changed() => {
-                        if changed.is_err() || *shutdown.borrow() { break; }
-                    }
-                    _ = ticker.tick() => {
-                        if let Err(error) = crate::background::sandbox_reconciliation(|| self.run_due(SystemTime::now())).await {
-                            tracing::error!(error = %error, "sandbox runtime reconciliation failed");
-                        }
-                    }
-                }
-            }
-        })
     }
 }
 

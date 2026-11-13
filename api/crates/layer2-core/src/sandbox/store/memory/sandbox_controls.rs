@@ -9,6 +9,7 @@ impl SandboxControlStore for InMemorySandboxStore {
         &self,
         record: SandboxControlRecord,
         authorization: Arc<SandboxControlAuthorization>,
+        new_commitment: Result<(), crate::budget::BudgetError>,
     ) -> Result<SandboxControlRecord, SandboxControlError> {
         record.validate()?;
         if !record.queued() || authorization.envelope() != &record.envelope {
@@ -35,6 +36,7 @@ impl SandboxControlStore for InMemorySandboxStore {
                 .ok_or(SandboxControlError::Corrupt)?;
             return record.replay(old.clone());
         }
+        new_commitment.map_err(SandboxControlError::Budget)?;
         if record.envelope.expected_revision != snapshot.lineage.sandbox.revision
             || record.expired(&crate::now_rfc3339())?
         {

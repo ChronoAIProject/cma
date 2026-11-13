@@ -62,6 +62,7 @@ mod checkpoint_storage;
 mod checkpoints;
 mod child_writer_claims;
 mod codex_subscriptions;
+mod contention;
 mod default_profiles;
 pub mod directory;
 mod durability;
@@ -100,12 +101,15 @@ mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_diagnostics;
+#[cfg(test)]
+pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
 mod operator_sandboxes;
+mod platform_write_coordination;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
@@ -130,6 +134,9 @@ mod sandbox_maintenance;
 mod sandbox_mongo;
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;
+mod snapshot_collection;
+#[cfg(test)]
+mod worker_runtime_supervision_tests;
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
 #[cfg(test)]

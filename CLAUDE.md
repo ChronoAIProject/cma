@@ -468,6 +468,10 @@ writer-fenced; an expired worker must not mutate a newer worker's resources.
 Quiet Sandboxes pause according to platform settings after every Agent is quiet,
 unless their Profile has Always keep alive enabled. Inactivity admission fences
 the mutable Profile policy in the same transaction as its Sandbox/Agent evidence.
+A platform spend stop (`SpendStop`) is the one exception: it also pauses
+Sandboxes kept alive and Active Sandboxes without live Agents, never busy work,
+does not change the preference, and defers managed runtime updates until it
+lifts.
 Any admitted message, creation or Launch that needs one revives it. The owner
 does not need to repair a deployment by clicking a revive control.
 
