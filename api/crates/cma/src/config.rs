@@ -14,8 +14,8 @@ mod access_migration;
 mod access_origins;
 mod access_snapshot;
 mod activity;
-mod debug;
 mod admission_log;
+mod debug;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
@@ -219,6 +219,7 @@ pub struct Config {
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
     pub activity_async_enabled: bool,
+    pub activity_operational_read_sampling_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
@@ -234,7 +235,6 @@ pub struct Config {
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
 }
-
 
 impl Config {
     /// Read and validate configuration exactly once at process startup.
@@ -425,6 +425,7 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             activity_async_enabled: activity::enabled(&mut lookup)?,
+            activity_operational_read_sampling_enabled: activity::sampling_enabled(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
