@@ -6,6 +6,7 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         // Re-read before any retirement side effect, including channel teardown.
         // Admission requires old-worker exclusion; an existing hold never expires.
         if sandbox.status == layer2_core::sandbox::SandboxStatus::Retiring
@@ -72,29 +73,14 @@ impl SandboxWorker {
                 .await;
         }
         let requires_adoption = match sandbox.work.step {
-            SandboxWorkStep::RunInstall
-            | SandboxWorkStep::DeliverInitialCredential
-            | SandboxWorkStep::DeliverRotatedCredential => true,
+            SandboxWorkStep::RunInstall => true,
             SandboxWorkStep::CreateProfileWorkspace(_) => {
                 self.dependencies.workspaces.requires_runtime_adoption()
             }
             _ => false,
         };
         if requires_adoption {
-            let inspection_started = std::time::Instant::now();
-            let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
-                self.dependencies.adapter.as_ref(),
-                &sandbox,
-                &self.config.deployment_id,
-            )
-            .await;
-            tracing::info!(
-                sandbox_id = %sandbox.id,
-                step = ?sandbox.work.step,
-                elapsed_ms = inspection_started.elapsed().as_millis() as u64,
-                succeeded = attached.is_ok(),
-                "Sandbox runtime inspection completed"
-            );
+            let attached = self.inspect_for_work(&sandbox).await;
             if let Err(error) = attached {
                 return self
                     .handle_failure(sandbox, support::adapter_failure(error), now)
@@ -108,7 +94,9 @@ impl SandboxWorker {
                 self.mint(sandbox, now).await
             }
             SandboxWorkStep::DeliverInitialCredential
-            | SandboxWorkStep::DeliverRotatedCredential => self.deliver(sandbox, now).await,
+            | SandboxWorkStep::DeliverRotatedCredential => {
+                self.deliver(sandbox, now + started.elapsed()).await
+            }
             SandboxWorkStep::CreateProfileWorkspace(index) => {
                 self.create_workspace(sandbox, index, now).await
             }
@@ -132,5 +120,24 @@ impl SandboxWorker {
             SandboxWorkStep::Purge => self.purge(sandbox, now).await,
             SandboxWorkStep::None => self.fail_corrupt_claim(sandbox, now).await,
         }
+    }
+
+    pub(super) async fn inspect_for_work(
+        &self,
+        sandbox: &Sandbox,
+    ) -> layer3_adapter::Result<RuntimeHandle> {
+        let started = tokio::time::Instant::now();
+        let attached = crate::sandbox::runtime_attachment::adopt_bound_runtime(
+            self.dependencies.adapter.as_ref(),
+            sandbox,
+            &self.config.deployment_id,
+        )
+        .await;
+        tracing::info!(
+            sandbox_id = %sandbox.id, step = ?sandbox.work.step,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            succeeded = attached.is_ok(), "Sandbox runtime inspection completed"
+        );
+        attached
     }
 }

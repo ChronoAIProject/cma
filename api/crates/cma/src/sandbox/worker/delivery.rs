@@ -4,7 +4,7 @@ use layer3_adapter::{CredentialFrame, RuntimeCredential};
 
 use super::support::{
     adapter_failure, credential_failure, credential_valid_for_delivery, material_matches,
-    operation_id, runtime, WorkerFailure,
+    operation_id, WorkerFailure,
 };
 
 impl SandboxWorker {
@@ -13,18 +13,36 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let Some(runtime) = runtime(&sandbox) else {
-            return self.fail_corrupt_claim(sandbox, now).await;
+        let started = tokio::time::Instant::now();
+        // Custody lookup is read-only and adds at most one request per already
+        // admitted worker. Keep it call-local: inspection refusal drops the
+        // lookup and any fetched bytes, while a lookup failure waits for the
+        // original inspection result. Nothing is delivered before both finish.
+        let lookup = async {
+            let material = match sandbox.credential.pending.as_ref() {
+                Some(pending) => {
+                    self.dependencies
+                        .credentials
+                        .material(&sandbox.id, pending.generation)
+                        .await
+                }
+                None => Ok(None),
+            };
+            Ok::<_, layer3_adapter::AdapterError>(material)
         };
+        let (runtime, material) = match tokio::try_join!(self.inspect_for_work(&sandbox), lookup) {
+            Ok(value) => value,
+            Err(error) => {
+                return self
+                    .handle_failure(sandbox, adapter_failure(error), now + started.elapsed())
+                    .await
+            }
+        };
+        let now = now + started.elapsed();
         let Some(pending) = sandbox.credential.pending.clone() else {
             return self.fail_corrupt_claim(sandbox, now).await;
         };
-        let material = match self
-            .dependencies
-            .credentials
-            .material(&sandbox.id, pending.generation)
-            .await
-        {
+        let material = match material {
             Ok(Some(material)) if material_matches(&sandbox, &pending, &material) => material,
             Ok(_) => {
                 return self
