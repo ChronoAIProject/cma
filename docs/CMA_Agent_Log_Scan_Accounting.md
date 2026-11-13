@@ -231,7 +231,7 @@ The same run's disabled/raw-enabled comparison preserves the earlier cooperation
 benefit: section p99 328.01/322.19 ms versus 3.01/3.78 ms and checkout p99
 316.22/312.47 ms versus 1.764/1.913 ms. Do not attribute this whole effect to the
 new delivery change. All eight round summaries, source fingerprints, environment
-and command are retained in [the measurement artifact](evidence/agent-log-cursor-20261113.json).
+and command are retained in [the measurement artifact](../.github/evidence/agent-log-cursor-20261113.json).
 These shared-host debug measurements are not production acceptance. The release
 owner must bind natural-load before/after cohorts to image, flag, workload and
 observer, then verify whole-request Agent/tab/send/interrupt latency, scan failure

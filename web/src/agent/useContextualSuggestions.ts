@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule } from './transport/readRetry';
 import { useEffect, useMemo, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { ConversationState } from './conversation';
@@ -39,11 +41,9 @@ export function useContextualSuggestions(
       !scope.turn
     )
       return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
     let reads = 0;
-    const deadline = setTimeout(() => request.abort(), 75_000);
-    const read = async () => {
+    const observer = observeRead(async (signal) => {
       try {
         reads += 1;
         const result = await client.readSuggestedReplies!(
@@ -52,20 +52,23 @@ export function useContextualSuggestions(
             turn_sequence: Number(scope.turn),
             answer_sequence: scope.sequence!,
           },
-          { signal: request.signal },
+          { signal: signal },
         );
-        if (request.signal.aborted) return;
+        if (signal.aborted) return;
         setSaved({ scope, set: result.status === 'ready' ? result.set : null });
+        failures = 0;
         if ((result.status === 'pending' || result.status === 'running') && reads < 50)
-          timer = setTimeout(() => void read(), 1500);
-      } catch {
-        if (!request.signal.aborted) setSaved({ scope, set: null });
+          return { next: 1500, cooldown: 1500 };
+      } catch (error) {
+        if (!signal.aborted) {
+          setSaved({ scope, set: null });
+          if (reads < 50) return retrySchedule(error, ++failures);
+        }
       }
-    };
-    void read();
+    });
+    const deadline = setTimeout(() => observer.dispose(), 75_000);
     return () => {
-      request.abort();
-      clearTimeout(timer);
+      observer.dispose();
       clearTimeout(deadline);
     };
   }, [scope, client, agentId, provided]);
