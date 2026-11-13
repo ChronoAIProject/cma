@@ -141,6 +141,12 @@ impl Fixture {
     }
     async fn cleanup(self) {
         self.client.database(&self.database).drop().await.unwrap();
+        // Dropped snapshot sessions enqueue driver cleanup. Drain both clients
+        // before the test runtime exits, including after cancellation probes.
+        let observed = self.source.store.client.clone();
+        drop(self.source);
+        observed.shutdown().await;
+        self.client.shutdown().await;
     }
 }
 
