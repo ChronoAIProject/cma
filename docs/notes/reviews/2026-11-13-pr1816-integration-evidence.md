@@ -1,5 +1,9 @@
 # #1816 integration and review fixes
 
+Final qualification and the integrated candidate verdict are recorded in
+[the final primary review](2026-11-13-pr1816-final-review.md). The preliminary
+checkpoint below is retained with its original source and log provenance.
+
 Scope: PR-A of #1478, tracked by sub-issue #1849. The parent stays open for
 the hard <=60-second commit-time containment bound, remaining capacity work,
 and release drills. The PR body is preserved without edits or comments; the
