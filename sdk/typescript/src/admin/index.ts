@@ -7,6 +7,12 @@ import {
 } from './warm-pools.js';
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
+import {
+  admissionControl,
+  admissionControlRead,
+  changeAdmissionRequest,
+  type ChangeAdmissionRequest,
+} from './admission.js';
 import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { sandboxEvent } from '../instances/events.js';
@@ -57,6 +63,7 @@ import {
 
 export type * from './types.js';
 export type * from './settings.js';
+export type * from './admission.js';
 
 export interface AdminSandboxListOptions extends PageOptions {
   readonly owner?: string;
@@ -251,6 +258,25 @@ export class Administration {
   }
   readSettings(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/settings', storedPlatformSettings, options);
+  }
+  readAdmission(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission', admissionControlRead, options);
+  }
+  /** Stop fresh work. A repeated stop returns the first operator's state. */
+  stopAdmission(body: ChangeAdmissionRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission/stop', admissionControl, {
+      ...options,
+      method: 'POST',
+      body: input(changeAdmissionRequest, body),
+    });
+  }
+  /** Resume only the observed stop revision; read again after an uncertain result. */
+  resumeAdmission(body: ChangeAdmissionRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission/resume', admissionControl, {
+      ...options,
+      method: 'POST',
+      body: input(changeAdmissionRequest, body),
+    });
   }
   replaceSettings(body: ReplaceSettingsRequest, options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/settings', storedPlatformSettings, {

@@ -20,11 +20,32 @@ pub(in crate::store) async fn apply(
     request: &CommandReservation,
     session: &mut ClientSession,
 ) -> Result<CommandReservationResult, ApplyError> {
+    apply_with_cause(
+        store,
+        request,
+        layer2_core::admission::AdmissionCause::Fresh,
+        session,
+    )
+    .await
+}
+
+pub(in crate::store) async fn apply_with_cause(
+    store: &MongoSandboxStore,
+    request: &CommandReservation,
+    cause: layer2_core::admission::AdmissionCause,
+    session: &mut ClientSession,
+) -> Result<CommandReservationResult, ApplyError> {
     store
         .bindings
         .conversation_authority(request.binding.as_ref(), session)
         .await?;
     super::super::media_uploads::require_continuation(store, &request.envelope, session).await?;
+    let cause = if request.envelope.continuation.is_some() {
+        // The store has proved the original accepted source and parent receipt.
+        layer2_core::admission::AdmissionCause::Continuation
+    } else {
+        cause
+    };
     if let Some(existing) = store
         .agent_commands
         .find_one(doc! { "scope": request.scope(), "key_sha256": &request.key_sha256 })
@@ -127,6 +148,7 @@ pub(in crate::store) async fn apply(
             &agent,
             request.envelope.command_id.as_str(),
             now,
+            cause,
             session,
         )
         .await
@@ -137,6 +159,9 @@ pub(in crate::store) async fn apply(
             super::super::agent_conversation_store::ApplyError::Domain(
                 layer2_core::sandbox::store::SandboxStoreError::Budget(reason),
             ) => ApplyError::Domain(CommandLedgerError::Budget(reason)),
+            super::super::agent_conversation_store::ApplyError::Domain(
+                layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused,
+            ) => ApplyError::Domain(CommandLedgerError::AdmissionPaused),
             _ => ApplyError::Domain(CommandLedgerError::Unavailable),
         })?;
     }

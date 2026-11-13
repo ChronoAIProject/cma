@@ -7,6 +7,7 @@ use layer2_core::sandbox::{
 use super::{problem_document, problem_response};
 
 pub(crate) enum HierarchyProblem {
+    AdmissionPaused,
     ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     CredentialSetupRequired,
     ConnectionsRequired(Vec<layer2_core::ServiceId>),
@@ -48,6 +49,7 @@ impl HierarchyProblem {
         match error {
             SandboxServiceError::GlobalCapacityReached => Self::GlobalCapacityReached,
             SandboxServiceError::Budget(reason) => Self::Budget(reason),
+            SandboxServiceError::AdmissionPaused => Self::AdmissionPaused,
             SandboxServiceError::CredentialSetupRequired => Self::CredentialSetupRequired,
             SandboxServiceError::ConnectionsRequired { services } => {
                 Self::ConnectionsRequired(services)
@@ -105,6 +107,7 @@ impl HierarchyProblem {
             }
             WorkspaceServiceError::InvalidOrigin => Self::Invalid("invalid_workspace_origin"),
             WorkspaceServiceError::Budget(reason) => Self::Budget(reason),
+            WorkspaceServiceError::AdmissionPaused => Self::AdmissionPaused,
             WorkspaceServiceError::Corrupt(_) | WorkspaceServiceError::Unavailable(_) => {
                 Self::Unavailable
             }
@@ -129,6 +132,7 @@ impl HierarchyProblem {
                 Self::SandboxLifecycleBusy(reason)
             }
             SandboxLifecycleCommandError::Budget(reason) => Self::Budget(reason),
+            SandboxLifecycleCommandError::AdmissionPaused => Self::AdmissionPaused,
             SandboxLifecycleCommandError::Corrupt(_) => {
                 Self::SandboxLifecycleUnavailable("stored_sandbox_corrupt")
             }
@@ -166,6 +170,7 @@ impl HierarchyProblem {
 impl IntoResponse for HierarchyProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code, fields) = match self {
+            Self::AdmissionPaused => return super::admission_problem::paused(),
             Self::ResourceAccess(error) => {
                 return super::resource_access_problem::ResourceProblem(error).into_response()
             }
