@@ -196,3 +196,6 @@ fn execution_policy_is_bounded_and_cannot_be_replaced_or_erased() {
         assert!(ProvisioningExecution::validate_successor(None, Some(invalid)).is_err());
     }
 }
+
+#[path = "delivery_overlap_tests.rs"]
+mod delivery_overlap_tests;
