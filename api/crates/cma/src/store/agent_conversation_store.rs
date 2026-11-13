@@ -15,6 +15,7 @@ use super::agent_log_integrity::{
     ensure_append_batch_size, prepare_append, trusted_summary, AppendCapacity, TransactionLogError,
 };
 use super::agents::{agent_replacement_fields, read_agent};
+use super::contention;
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
     CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
@@ -31,7 +32,6 @@ pub(in crate::store) mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 mod cleanup_admission;
-mod contention;
 mod implementation;
 pub(in crate::store) mod publication;
 use super::agent_log_segments::{conversation as scoped, transaction_scope::TransactionScope};
@@ -73,6 +73,7 @@ async fn commit_conversation(
     ensure_append_batch_size(mutation.agent_logs.len())?;
     store.prepare_fleet_log(&mutation.agent.id).await;
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
+    let _platform = store.conversation_platform_guard(&mutation).await;
     let adoption = scoped::adoption::prepare(store, &mutation, None).await?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
