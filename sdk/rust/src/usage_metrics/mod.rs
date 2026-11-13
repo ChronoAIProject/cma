@@ -3,6 +3,7 @@ mod model;
 mod numeric;
 mod options;
 mod owner_allocation;
+mod view;
 use crate::{Client, Error, Result, http::Request, resources::identity};
 pub use model::*;
 pub use numeric::Quantity;
@@ -10,6 +11,7 @@ pub use options::{FilterOption, FilterOptions, OptionKind, OptionQuery};
 pub use owner_allocation::{OwnerAllocation, OwnerAllocationQuery, OwnerAllocations};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
+pub use view::*;
 
 /// Optional UTC range, canonical step and metadata selection.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

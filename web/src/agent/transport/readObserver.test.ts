@@ -111,3 +111,18 @@ it('stops terminal reads and aborts late work on disposal', async () => {
   await advance(1000);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('does not let foreground hints bypass an initial retry deadline', async () => {
+  const read = vi.fn(async () => undefined);
+  const observer = observeRead(read, { initialDelay: 20_000, immediateForeground: true });
+  for (let i = 0; i < 10; i++) {
+    window.dispatchEvent(new Event('focus'));
+    observer.refresh();
+    observer.hint();
+    await advance(1000);
+  }
+  expect(read).not.toHaveBeenCalled();
+  await advance(10_000);
+  expect(read).toHaveBeenCalledTimes(1);
+  observer.dispose();
+});
