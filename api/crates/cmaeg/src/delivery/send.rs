@@ -266,7 +266,10 @@ impl Sender {
         if interactive && crate::interactions::has_controls(message) {
             return Box::pin(self.interactive_reply(ctx, event, message, None)).await;
         }
-        if self.relay.complete_replies() || !message.native_attachments.is_empty() {
+        if self.relay.complete_replies()
+            || self.relay.commonmark_for(&event.reply)
+            || !message.native_attachments.is_empty()
+        {
             return Box::pin(self.complete_reply(ctx, event, message, interactive)).await;
         }
         // The send's own view of the event's first-send flag, returned as its effect.
