@@ -3,6 +3,105 @@
 Tracks #1667 and #1802, part of #1543. Request reduction is a client behavior claim;
 compiled fixture results do not prove production capacity or database latency.
 
+## November 13 transport and idle-observation verification
+
+Issues #1799 and #1803 use the compiled public-boundary fixtures with a fixed
+100ms delay, one case per browser, Chromium 145, Firefox 146 and WebKit 26.0,
+and zero retries. The baseline is `112b09c6b`. New transport selections retain
+the post-eligibility identity check because eligibility crosses a network boundary.
+The independent application-startup identity read is unchanged.
+
+The affected local Vitest run passed 479 tests across 47 files. Coverage for the
+new identity gate, access observation/hook and creation-scope modules was 98.34%
+statements, 90.9% branches, 97.22% functions and 100% lines. Web lint, typecheck
+and E2E typecheck passed. These are the owner's fast local gates; they do not
+represent a full CI run or production acceptance.
+The whole-file Prettier check for `Web_Style.md` has existing upstream failures;
+the candidate introduces no additional formatting changes, and its changelog
+remains append-only.
+
+`IDENTITY_HANDOFF_ENABLED` ships **false** under the owner's default-off directive.
+Fresh-check batching is enabled independently. Switching that constant to true
+requires owner activation; deployment alone does not enable proof reuse. The
+unit suite exercises both states, one-use/250ms expiry, prepared-session
+invalidation, pagination, account switches and mutation barriers.
+
+| Retained Agent history | Baseline auth before data, excluding startup | Shipped-default auth before data | Baseline total auth through history/stream readiness | Shipped-default total auth |
+| ---------------------- | -------------------------------------------: | -------------------------------: | ---------------------------------------------------: | -------------------------: |
+| 1 page                 |                                            3 |                                3 |                                                   10 |                          9 |
+| 3 pages                |                                            3 |                                3 |                                                   14 |                         13 |
+| 10 pages               |                                            3 |                                3 |                                                   28 |                         27 |
+
+These counts were identical in all three browsers. Total counts include startup,
+publication, stream admission and initial queue checks. They are fixture request
+counts, not production latency savings. The remaining adjacent checks deliberately
+stay enabled in the shipped default.
+
+The separate compiled activation build (`IDENTITY_HANDOFF_ENABLED=true`, used
+only for local verification) passed twelve identity cases with zero retries:
+one-, three- and ten-page retained selections plus a first-time selection in
+each browser. Retained selections used **one** identity request before data,
+excluding application startup, and **7/9/16** total auth requests respectively.
+The ten-page case saves twelve requests versus the baseline, exceeding the
+required eleven. Each additional page adds one post-page identity request.
+First-time selection still uses **two** requests before data (eight total): its
+eligibility read requires the fresh post-IO barrier. The follow-up identity
+precondition review in #1876 tracks that remaining boundary separately;
+this change adds no public identity-precondition contract.
+
+Access-request idle observation uses the specification's thirty-second fallback.
+`agent_access_requests/lineage.rs` admits live runtime-owned consent without an
+`active_turn` condition, and owner service-access replacement can create a request
+outside a turn. Pending/connecting/applying requests stay at two seconds; active
+empty results back off at 2/4/8/15 seconds and receive durable-cursor hints.
+Failures retain the displayed requests and retry at 2/4/8/10 seconds.
+
+Creation categories are immutable in the provenance model and retained only
+inside the mounted account/client scope. Private provenance details continue
+their independent revalidation. The two personal navigation trees share public
+categories; hidden trees stop both badge observers, and unavailable categories
+retry at sixty seconds. Hierarchy results retain full descendant reads and use
+15/30/60-second backoff, resetting on changes, mutations and return to visibility.
+
+The twelve-Agent fixture has three Sandboxes and six Workspaces. Each idle
+window lasts 120 seconds, starting after initial loading and any navigation
+switch. The following route counts isolate the four changed observers by
+excluding the open Agent's Sandbox detail and private-provenance URLs, which
+also have independent observers that remain active.
+
+| Case                                         | Access requests | Channel badges | Other Agents' provenance | Isolated hierarchy routes | Targeted total |
+| -------------------------------------------- | --------------: | -------------: | -----------------------: | ------------------------: | -------------: |
+| Baseline, never visited environments         |           56–57 |             48 |                       22 |                        72 |        198–199 |
+| Baseline, visited environments then returned |              57 |             96 |                       44 |                        72 |            269 |
+| Candidate, either navigation history         |               4 |             48 |                        0 |                        27 |             79 |
+
+All three browsers produced the candidate counts above: **60.1–60.3% fewer**
+isolated requests before visiting environments, and **70.6% fewer** afterwards.
+The hierarchy list itself fell from eight to three reads per window. Known
+navigation creation categories were not reread; the open Agent's separate
+private-provenance projection still read twice. Same-URL requests starting within
+one second of a prior completion fell from 22–70 to zero after visiting
+environments. Aborted requests were zero in both fixture variants. All targeted
+routes recorded zero new requests during the final ten hidden seconds.
+
+For transparency, including the two independently observed URLs gives 227–229
+baseline requests before visiting environments and 299–301 afterwards, versus
+106–107 candidate requests. Those broader totals mix the changed navigation
+work with the unchanged composer lifecycle and private-provenance observations;
+their reductions are approximately 53% and 64%, respectively. The existing
+readiness/idle/visibility and slow shared-Sandbox cases also passed with no writes.
+
+The optional replacement of per-Agent channel reads with provenance inventory
+has not been selected: no matched real-Mongo endpoint-cost measurement was made
+in this web fast-lane change. Existing channel read concurrency, partial results,
+12-second batch budget and 30-second/55-second authority cadence remain intact.
+
+Production measurements are not available for this change. Deployment and the
+dedicated-account acceptance run belong to the release/deployment engineers and
+require the lead's exact artifact handoff. No production latency saving or
+production request-rate reduction is claimed here; savings are unknown until
+that acceptance is recorded. GitHub issue-comment evidence remains draft-only.
+
 ## Observation policy
 
 The mounted account view coalesces concurrent identical Sandbox, Workspace and
@@ -25,7 +124,12 @@ Unchanged Sandbox transitions back off from the initial 1.5-second readiness
 cadence to at most 5.5 seconds. State or phase progress resets that cadence.
 After readiness, the separate five-second lifecycle observation remains: the
 Agent stream does not expose the full checkpoint, operation, runtime and input
-eligibility contract. Its ten-second freshness expiry, denial handling and late
+eligibility contract. Each observation expires after its next poll delay plus
+the ten-second request timeout (15 seconds settled, at most 15.5 seconds during
+readiness). A successful slow refresh does not pause sending within this window.
+One transient failure retains still-valid evidence; repeated failures and expiry
+hold input. Foreground return retains valid evidence or shows checking until a
+new observation arrives. Immediate denial handling and late
 result fencing remain enforced. Removing this check needs a complete lifecycle
 subscription or a compatible bounded lifecycle endpoint; ordinary conversation
 traffic cannot prove lifecycle readiness.
@@ -77,8 +181,9 @@ completion gaps, same-URL overlaps and unexpected writes/errors. Component timer
 tests separately enforce the page poller's 14/5/3 request bounds for minute one,
 minute three onward and minute eleven onward, plus state/visibility/action resets.
 
-The full Console route also includes independent fifteen-second sidebar hierarchy
-reads (#1803) and thirty-second accessible-detail revalidation. Their requests hit
+The baseline Console route also includes independent fifteen-second sidebar
+hierarchy reads and thirty-second accessible-detail revalidation. Develop now
+backs off unchanged sidebar reads through 15/30/60 seconds (#1888 / #1803). Their requests hit
 the same URLs and must remain in full-route totals; the owner-page limits alone
 cannot establish those limits for the whole Console. Do not suppress authorization
 or remove sidebar traffic from the fixture to claim the full-route target.

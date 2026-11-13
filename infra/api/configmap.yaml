@@ -96,6 +96,7 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
+  CHRONO_WORK_RETRY_POLICY_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   # Enable only after runtime and scan measurements support cooperative decoding.
   CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED: "false"
@@ -105,6 +106,7 @@ data:
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
   CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
+  CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.
   CHRONO_READ_FRAME_BUDGET_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
