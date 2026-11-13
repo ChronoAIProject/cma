@@ -1,6 +1,10 @@
 use super::*;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{insert_agent, ready_agent};
 use layer2_core::profiles::{WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot};
+use layer2_core::resource_access::{
+    CallerContext, MembershipError, OrganizationAuthority, OrganizationChoice,
+    ResourceAccessService,
+};
 use layer2_core::sandbox::store::{AgentStore, WorkspaceStore, WorktreeStore};
 use layer2_core::sandbox::{
     Agent, AgentReadService, Sandbox, SandboxResourceReadError, SandboxResourceReader,
@@ -19,6 +23,28 @@ pub(super) struct Services {
 }
 
 struct Resources;
+
+struct NoOrganizations;
+#[async_trait::async_trait]
+impl OrganizationAuthority for NoOrganizations {
+    async fn organization_choices(
+        &self,
+        _: &Caller,
+        _: &str,
+    ) -> Result<Vec<OrganizationChoice>, MembershipError> {
+        Err(MembershipError::Unavailable)
+    }
+
+    async fn organization_context(
+        &self,
+        _: &Caller,
+        _: &str,
+        _: &layer2_core::SubjectId,
+    ) -> Result<CallerContext, MembershipError> {
+        Err(MembershipError::Unavailable)
+    }
+}
+
 #[async_trait::async_trait]
 impl SandboxResourceReader for Resources {
     async fn sandbox_resources(
@@ -126,7 +152,16 @@ fn service(
     replicas: bool,
 ) -> DesktopService {
     let store = Arc::new(store);
-    let reads = AgentReadService::new(store.clone(), Arc::new(Resources)).with_sessions(store);
+    // Match the production resource-authority path instead of measuring the
+    // fallback reader's separate ancestry requests. Personal owners need no
+    // organization authority, but every snapshot still validates current rows.
+    let access = Arc::new(ResourceAccessService::new(
+        store.clone(),
+        Arc::new(NoOrganizations),
+    ));
+    let reads = AgentReadService::new(store.clone(), Arc::new(Resources))
+        .with_sessions(store)
+        .with_resource_access(access);
     DesktopService::new(reads, receiver).with_replicas_enabled(replicas)
 }
 

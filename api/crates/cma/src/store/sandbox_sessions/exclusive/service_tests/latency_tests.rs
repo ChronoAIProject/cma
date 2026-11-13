@@ -58,6 +58,7 @@ async fn repeated_desktop_connect_windows() {
             "mongo": "real disposable replica set",
             "receiver": "in-process protocol fixture",
             "credential_proof": "trusted test proof, no provider IO",
+            "resource_authorization": "ResourceAccessService with real Mongo snapshots",
             "phase_diagnostics": _scope.is_some(),
             "samples": 300,
             "errors": 0,
