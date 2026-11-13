@@ -3,6 +3,8 @@ use crate::store::agent_log_telemetry::{snapshot, snapshot_all, ScanCaller};
 use mongodb::event::{command::CommandEvent, EventHandler};
 use mongodb::options::ClientOptions;
 
+const DISCOVERY_POLLS: u64 = 16;
+
 #[derive(Default, Debug)]
 struct Measurements {
     enabled: bool,
@@ -98,26 +100,6 @@ async fn working(
     (store, agent, command, execution)
 }
 
-async fn wait_terminal(store: &MongoSandboxStore, id: &AgentCommandId) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if store
-                .get_command(id)
-                .await
-                .unwrap()
-                .unwrap()
-                .status
-                .is_terminal()
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("terminal evidence must settle within the five-second budget");
-}
-
 async fn measure(count: u64, enabled: bool) -> (u64, u64) {
     let (client, values) = measured_client().await;
     let name = format!("cma_reconcile_profile_{}", uuid::Uuid::new_v4().simple());
@@ -138,14 +120,19 @@ async fn measure(count: u64, enabled: bool) -> (u64, u64) {
     let before = scans();
     let all_before = snapshot_all();
     let reconciliation_before = snapshot(ScanCaller::CommandReconciliation, true);
-    let (shutdown, signal) = tokio::sync::watch::channel(false);
     values.lock().unwrap().enabled = true;
     let started = std::time::Instant::now();
-    let scheduler = crate::commands::CommandScheduler::new(worker)
+    let mut scheduler = crate::commands::CommandScheduler::new(worker)
         .with_reconcile_pacing(enabled)
-        .spawn(signal);
-    tokio::time::sleep(Duration::from_secs(4)).await;
+        .driven();
+    // Sixteen completed polls cover at least the original four-second window.
+    // Counting opportunities, rather than scans that fit in a wall-clock sleep,
+    // keeps the OFF baseline independent of the runner's Mongo throughput.
+    for _ in 0..DISCOVERY_POLLS {
+        scheduler.poll().await;
+    }
     let elapsed = started.elapsed();
+    assert!(elapsed >= Duration::from_secs(4));
     values.lock().unwrap().enabled = false;
     let after = scans();
     let all_after = snapshot_all();
@@ -156,8 +143,9 @@ async fn measure(count: u64, enabled: bool) -> (u64, u64) {
     if enabled {
         assert_eq!(reconciliation, 1);
     } else {
-        assert!(reconciliation > 1);
+        assert_eq!(reconciliation, DISCOVERY_POLLS);
     }
+    assert_eq!(delta[1], count * reconciliation);
     assert_eq!(
         delta[0], reconciliation,
         "attribution must retain the combined caller total"
@@ -169,11 +157,11 @@ async fn measure(count: u64, enabled: bool) -> (u64, u64) {
     {
         let measured = values.lock().unwrap();
         let round_trips: u64 = measured.commands.values().sum();
-        println!("reconcile_profile rows={count} enabled={enabled} admission_percent=0 N=1 U=1 window_s={:.3} combined_scans={} reconciliation_scans={reconciliation} scans_per_s={:.3} documents={} bytes={} scan_us={} round_trips={round_trips} commands={:?} checkout_count={} checkout_us={}",
+        println!("reconcile_profile rows={count} enabled={enabled} admission_percent=0 N=1 U=1 discovery_polls={DISCOVERY_POLLS} window_s={:.3} combined_scans={} reconciliation_scans={reconciliation} scans_per_s={:.3} documents={} bytes={} scan_us={} round_trips={round_trips} commands={:?} checkout_count={} checkout_us={}",
             elapsed.as_secs_f64(), delta[0], delta[0] as f64 / elapsed.as_secs_f64(), delta[1], delta[2], delta[3], measured.commands, measured.checkouts, measured.checkout_us);
     }
     println!("reconcile_all_callers rows={count} enabled={enabled} scans={} documents={} bytes={} scan_us={}", all_delta[0], all_delta[1], all_delta[2], all_delta[3]);
-    // Terminal evidence must wake the same process that has already skipped
+    // Terminal evidence must wake the same scheduler that has already skipped
     // current heads, so a restart's mandatory fold cannot hide a broken hint.
     if enabled {
         assert!(
@@ -228,13 +216,27 @@ async fn measure(count: u64, enabled: bool) -> (u64, u64) {
         received.try_recv().is_err(),
         "the recorder does not ACK for its caller"
     );
-    wait_terminal(&store, &command.receipt.envelope.command_id).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            scheduler.poll().await;
+            if store
+                .get_command(&command.receipt.envelope.command_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .status
+                .is_terminal()
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("terminal evidence must settle within the five-second budget");
     println!(
         "reconcile_terminal rows={count} enabled={enabled} latency_us={}",
         terminal_started.elapsed().as_micros()
     );
-    shutdown.send(true).unwrap();
-    scheduler.await.unwrap();
     assert_eq!(
         store
             .get_command(&command.receipt.envelope.command_id)
