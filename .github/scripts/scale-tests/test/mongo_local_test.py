@@ -44,6 +44,9 @@ class FixtureRunnerTests(unittest.TestCase):
         return code, json.loads((self.root / "result/mongo-process-results.json").read_text())
 
     def test_success_has_owned_cleanup_exact_count_and_no_credential_argv(self):
+        self.process.communicate.return_value = (
+            b"replica_fixture replicas=2 status=PASS ownership=true\n"
+            b"test result: ok. 1 passed; 0 failed;", None)
         code, result = self.execute()
         self.assertEqual(code, 0)
         self.assertTrue(result["cleanup"])
@@ -51,6 +54,8 @@ class FixtureRunnerTests(unittest.TestCase):
         self.assertTrue(any(args[:2] == ["docker", "rm"] for args in self.calls))
         self.assertNotIn("a" * 48, json.dumps(self.calls))
         self.assertEqual(result["mongo_limits"]["db_tmpfs_mib"], 1024)
+        self.assertEqual(result["completed_ownership_cohorts"], [{"replicas": 2, "enabled": True}])
+        self.assertEqual(result["completed_replica_counts"], [2])
 
     def test_zero_or_multiple_selected_tests_cannot_pass(self):
         self.process.communicate.return_value = (b"test result: ok. 0 passed; 0 failed;", None)
@@ -63,11 +68,15 @@ class FixtureRunnerTests(unittest.TestCase):
         self.process.returncode = 101
         self.process.communicate.return_value = (
             b"private-payload same admitted event must remain accepted left: 409 right: 202 "
-            b"fixture_diagnostic stage=index code=14031 kind=disk_space", None)
+            b"fixture_diagnostic stage=index code=14031 kind=disk_space "
+            b"ingress_rejection=routed_admission_unavailable "
+            b"replica_failure replicas=2 ownership=true accepted=1 durable_plan=true target_present=1", None)
         _, result = self.execute()
         self.assertEqual(result["numeric_assertions"], [409, 202])
         self.assertEqual(result["migration_diagnostics"][0]["code"], 14031)
         self.assertEqual(result["failure_codes"], ["cross_ingress_not_accepted"])
+        self.assertEqual(result["ingress_rejections"], ["routed_admission_unavailable"])
+        self.assertTrue(result["failed_cohort_observations"][0]["durable_plan_after_responses"])
         self.assertNotIn("private-payload", json.dumps(result))
 
     def test_partial_container_creation_is_cleaned_after_run_fails(self):

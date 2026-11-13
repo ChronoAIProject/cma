@@ -109,6 +109,7 @@ impl Process {
             .env("RUST_LOG", "cmaeg=info")
             .env("CMAEG_LISTEN", address.to_string())
             .env("CMAEG_PUBLIC_URL", &base)
+            .env("CMAEG_REPLICA_ADDRESS", &base)
             .env("CMAEG_METRICS_LISTEN", metrics.to_string())
             .envs(env.iter().copied())
             .env("CMAEG_CMA_BASE_URL", cma)
