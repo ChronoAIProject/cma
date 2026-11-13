@@ -16,6 +16,7 @@ use super::super::agent_log_segments::capture::CapturedLog;
 use super::super::agents::agent_replacement_fields;
 use super::super::lifecycle_execution::load_sandbox_agents;
 use super::super::sandbox_mongo::{is_duplicate_key, signed, MongoSandboxStore};
+use super::telemetry::{self, measure};
 use super::transaction::ApplyError;
 
 pub(super) mod scoped;
@@ -23,11 +24,13 @@ pub(super) mod scoped;
 pub(super) enum Source {
     Legacy(Box<LogSummary>),
     Segmented(Box<CapturedLog>),
+    Head(u64),
 }
 
 impl Source {
     pub(super) fn through(&self) -> u64 {
         match self {
+            Self::Head(head) => *head,
             Self::Legacy(summary) => summary.entry_count(),
             Self::Segmented(captured) => captured.through(),
         }
@@ -39,7 +42,8 @@ pub(super) async fn load_agents(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<Vec<(Agent, Source)>, ApplyError> {
-    let agents = load_sandbox_agents(store, id, session).await?;
+    let agents = measure("agent_rows", load_sandbox_agents(store, id, session)).await?;
+    telemetry::agent_counts(&agents);
     validate_agents(store, agents, session).await
 }
 
@@ -58,26 +62,34 @@ pub(super) async fn validate_agents(
             rows.push((agent, Source::Segmented(Box::new(source))));
             continue;
         }
-        let mut entries = Vec::new();
-        let complete = scan_complete_log_with_session(
-            ScanCaller::RuntimeReconciliation,
-            store,
-            &agent.id,
-            agent.conversation.last_seq,
-            session,
-            |entry| {
-                entries.push(entry);
-                Ok(())
-            },
-        )
+        if store.runtime_loss_bounded_proof_enabled {
+            if let Some(source) = bounded_source(store, &agent, session).await? {
+                rows.push((agent, source));
+                continue;
+            }
+        }
+        let complete = measure("log_full", async {
+            let mut entries = Vec::new();
+            let complete = scan_complete_log_with_session(
+                ScanCaller::RuntimeReconciliation,
+                store,
+                &agent.id,
+                agent.conversation.last_seq,
+                session,
+                |entry| {
+                    entries.push(entry);
+                    Ok(())
+                },
+            )
+            .await?;
+            let semantic = crate::store::agent_log_integrity::audit_checkpoint(
+                store, &agent, &entries, session,
+            )
+            .await?;
+            Ok::<_, ApplyError>(complete.with_semantic(semantic))
+        })
         .await?;
-        let semantic =
-            crate::store::agent_log_integrity::audit_checkpoint(store, &agent, &entries, session)
-                .await?;
-        rows.push((
-            agent,
-            Source::Legacy(Box::new(complete.with_semantic(semantic))),
-        ));
+        rows.push((agent, Source::Legacy(Box::new(complete))));
     }
     Ok(rows)
 }
@@ -99,7 +111,8 @@ pub(super) async fn publish_agents(
     for (current, complete) in rows {
         let filter = fence_filter(store, &current, session).await?;
         let complete = match complete {
-            Source::Legacy(summary) => summary,
+            Source::Legacy(summary) => Some(summary),
+            Source::Head(_) => None,
             Source::Segmented(_) => {
                 // This legacy transaction entry cannot adopt a scope. The owning
                 // root must start/pass one before using scoped::publish_agent.
@@ -111,6 +124,11 @@ pub(super) async fn publish_agents(
         };
         let update = match changes.get(&current.id) {
             Some(change) => {
+                let complete = complete.ok_or_else(|| {
+                    ApplyError::Domain(SandboxStoreError::Corrupt(
+                        "head-only recovery evidence cannot authorize an append".into(),
+                    ))
+                })?;
                 let batch = materialize_logs(change, &request.observed_at)?;
 
                 let mut fields =
@@ -203,4 +221,39 @@ fn materialize_logs(
             })
         })
         .collect()
+}
+
+async fn bounded_source(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    session: &mut ClientSession,
+) -> Result<Option<Source>, ApplyError> {
+    use crate::store::agent_log_integrity::{exact_recovery_head, trusted_summary};
+    measure("log_bounded", async {
+        let row = store
+            .agents
+            .find_one(doc! { "_id": agent.id.as_str() })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        let result = if agent.status.is_live() {
+            trusted_summary(
+                store,
+                agent,
+                &row,
+                ScanCaller::RuntimeReconciliation,
+                session,
+                false,
+            )
+            .await?
+            .map(|summary| Source::Legacy(Box::new(summary)))
+        } else {
+            exact_recovery_head(store, agent, &row, session)
+                .await?
+                .then_some(Source::Head(agent.conversation.last_seq))
+        };
+        Ok(result)
+    })
+    .await
 }
