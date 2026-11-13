@@ -2,6 +2,7 @@
 """Mount a stale retained-assets volume and browser-test the exact web image."""
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -15,19 +16,31 @@ def output(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
-def run_browser(command, *, cwd, env, evidence, timeout, grace=30):
+def run_browser(command, *, cwd, env, evidence, timeout, grace=30,
+                ready_file=None, startup_timeout=None):
     """Use a dedicated subreaper so unrelated children of this caller stay unowned."""
     evidence = Path(evidence).resolve()
     result_path = evidence / "browser-process.json"
     result_path.unlink(missing_ok=True)  # Never interpret evidence from an earlier run.
+    startup = {}
+    if ready_file is not None:
+        ready_file = Path(ready_file).resolve()
+        if startup_timeout is None or not math.isfinite(startup_timeout) or startup_timeout <= 0:
+            raise ValueError("readiness requires a finite positive startup timeout")
+        ready_file.unlink(missing_ok=True)
+        ready_file.with_suffix(".armed.json").unlink(missing_ok=True)
+        startup = {"ready_file": str(ready_file), "startup_timeout": startup_timeout}
+    elif startup_timeout is not None:
+        raise ValueError("startup timeout requires a readiness file")
     helper = Path(__file__).with_name("web_image_supervisor.py")
     result = subprocess.run([sys.executable, str(helper), str(evidence), str(timeout),
-                             str(grace), *command], cwd=cwd, env=env)
+                             str(grace), json.dumps(startup), *command], cwd=cwd, env=env)
     if result.returncode:
         if result_path.exists():
             recorded = json.loads(result_path.read_text())
             if recorded["timed_out"]:
-                raise subprocess.TimeoutExpired(command, timeout)
+                raise subprocess.TimeoutExpired(command, recorded["startup_timeout_seconds"]
+                    if recorded["timeout_phase"] == "startup" else timeout)
             if recorded["returncode"]:
                 raise subprocess.CalledProcessError(recorded["returncode"], command)
         raise subprocess.CalledProcessError(result.returncode, command)
