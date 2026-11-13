@@ -48,6 +48,14 @@ of admitted work. It does not disable new admission. `triggers.enabled` is the
 separate admission setting; changing either control must preserve the other's
 recorded value and the authority of already admitted Launches.
 
+Operator admission uses `admin().read_admission()`, `stop_admission`,
+`resume_admission` and `replace_admission_ceilings`. Ceiling replacement has its
+own revision and write gate; use the observed ceiling revision rather than the
+stop revision. GET includes effective limits, bounded advisory counts, the exact
+pending Launch home counter and independent ceiling history. Mutations never
+retry implicitly. See [operator admission control](reference.md#operator-admission-control)
+for typed requests, unset/zero semantics, reserves and conflict recovery.
+
 `read_openapi` and `read_conformance` inspect anonymous deployment declarations.
 `unsupported().mcp()`, `a2a()`, and `agent_card()` expose named refusal evidence;
 they do not invent Agent tools, tasks, or an executable terminal plane.
