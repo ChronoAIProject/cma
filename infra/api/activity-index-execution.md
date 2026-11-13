@@ -88,6 +88,11 @@ successful invocation returns `already_completed`; a completed manifest with a
 missing or drifted index refuses. It never changes Activity documents or the TTL
 index.
 
+The build requires a supported replica set or mongos topology for the durable
+lease transaction. While MongoDB builds the index, the CLI renews that lease
+every five seconds so a second operator cannot claim the migration; progress
+heartbeats remain at 30-second intervals.
+
 Watch the sanitized log phases and the Job deadline. Do not sum heartbeat
 intervals into build duration. Do not blindly retry after a timeout, lease loss,
 write-concern error or client disconnect: the server command may still be
