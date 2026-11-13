@@ -2,6 +2,7 @@
 mod admission_checks;
 
 pub(crate) mod account_deletions;
+pub(crate) mod account_erasure;
 pub mod activity;
 pub(crate) mod admission_control;
 #[cfg(test)]
