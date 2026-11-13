@@ -1,4 +1,4 @@
-use super::{batch_fixture::*, *};
+use super::{access_measurement_trace as trace, batch_fixture::*, *};
 use layer2_core::sandbox::{
     colors::{SandboxColorService, SystemColorRandom},
     SandboxDetailPhase,
@@ -6,18 +6,18 @@ use layer2_core::sandbox::{
 use layer2_core::{PublicIdentity, UserDirectory, UserDirectoryStore};
 use std::time::Instant;
 
-#[path = "access_measurement_trace.rs"]
-mod trace;
 const SAMPLES: usize = 20;
-const MODES: usize = 6;
-// Baseline, access only, enrichment only, both, existing hierarchy flags, all.
-const SETTINGS: [(usize, bool, bool); MODES] = [
-    (0, false, false),
-    (0, true, false),
-    (0, false, true),
-    (0, true, true),
-    (2, false, false),
-    (2, true, true),
+const MODES: usize = 8;
+// Retain the six PR 1 modes; add projection alone and all switches together.
+const SETTINGS: [(usize, bool, bool, bool); MODES] = [
+    (0, false, false, false),
+    (0, true, false, false),
+    (0, false, true, false),
+    (0, true, true, false),
+    (2, false, false, false),
+    (2, true, true, false),
+    (0, false, false, true),
+    (2, true, true, true),
 ];
 async fn measure(label: &str, workspaces: u32, per_workspace: u32) {
     let (admin, name) = database("sandbox_batch_measure").await;
@@ -55,8 +55,12 @@ async fn measure(label: &str, workspaces: u32, per_workspace: u32) {
     };
     let services: Vec<_> = SETTINGS
         .iter()
-        .map(|&(hierarchy, access, _)| {
-            service(mode(&store, hierarchy).with_access_snapshot_session(access))
+        .map(|&(hierarchy, access, _, projection)| {
+            service(
+                mode(&store, hierarchy)
+                    .with_access_snapshot_session(access)
+                    .with_sandbox_agent_projection(projection),
+            )
         })
         .collect();
     let colors = SandboxColorService::new(
@@ -123,6 +127,7 @@ async fn measure(label: &str, workspaces: u32, per_workspace: u32) {
     let mut times: [Vec<u128>; MODES] = Default::default();
     let mut checkouts = [0_u64; MODES];
     let mut get_more = [0_usize; MODES];
+    let mut agent_bytes = [0_u64; MODES];
     for sample in 0..SAMPLES {
         // Rotate the order to avoid a fixed warm-cache / neighbor-load bias.
         for offset in 0..MODES {
@@ -141,7 +146,7 @@ async fn measure(label: &str, workspaces: u32, per_workspace: u32) {
                 _ => unreachable!(),
             };
             let expected = match m {
-                0 | 2 => base,
+                0 | 2 | 6 => base,
                 1 | 3 => base - 2,
                 4 => {
                     if workspaces == 4 {
@@ -150,7 +155,7 @@ async fn measure(label: &str, workspaces: u32, per_workspace: u32) {
                         11
                     }
                 }
-                5 => {
+                5 | 7 => {
                     if workspaces == 4 {
                         8
                     } else {
@@ -170,11 +175,15 @@ async fn measure(label: &str, workspaces: u32, per_workspace: u32) {
                 .map(|(_, count)| *count as usize)
                 .sum::<usize>();
             if sample == 0 {
+                agent_bytes[m] = stats.agent_bytes;
                 println!("ACCESS_COMMANDS volume={label} mode={m} commands={:?} returned_docs={} returned_bson_bytes={} hierarchy_agent_docs={} hierarchy_agent_bson_bytes={} agent_log_scans=0",
                     stats.commands, stats.docs, stats.bytes, stats.agent_docs, stats.agent_bytes);
             }
         }
     }
+    assert_eq!(agent_bytes[6], agent_bytes[7]);
+    assert!(agent_bytes[6] < agent_bytes[0]);
+    assert_eq!(agent_bytes[0], agent_bytes[5]);
     for m in 0..MODES {
         times[m].sort_unstable();
         println!("ACCESS_MEASURE volume={label} mode={m} workspaces={workspaces} worktrees={} agents={} unrelated_agents=1025 samples={SAMPLES} p50_us={} p95_us={} max_us={} checkouts={} get_more={}",

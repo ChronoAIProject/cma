@@ -17,10 +17,16 @@ async fn access_sessions_reject_one_thousand_owner_changes_before_release() {
         &admin.database(&name),
         SANDBOXES,
     );
-    for enabled in [false, true] {
-        let reader = service(store.clone().with_access_snapshot_session(enabled));
+    for (enabled, projected) in [(false, false), (true, false), (false, true), (true, true)] {
+        let reader = service(
+            store
+                .clone()
+                .with_access_snapshot_session(enabled)
+                .with_sandbox_agent_projection(projected),
+        );
         // Each iteration pauses after the hierarchy root has fixed its snapshot,
         // commits a loss of ownership, then lets the final authorization run.
+        // Keep 1,000 interleavings for each complete/projected reader.
         for _ in 0..500 {
             clear(&trace);
             *trace.resume.0.lock().unwrap() = false;
