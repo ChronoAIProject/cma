@@ -4,13 +4,11 @@ import argparse
 import json
 import os
 from pathlib import Path
-import signal
 import subprocess
 import sys
 import tempfile
 import time
 import urllib.request
-from web_image_processes import OwnedProcesses, child_subreaper
 
 
 def output(*args):
@@ -18,67 +16,21 @@ def output(*args):
 
 
 def run_browser(command, *, cwd, env, evidence, timeout, grace=30):
-    """Interrupt the runner first so Playwright can retain its trace and screenshot."""
-    with child_subreaper():
-        return supervise_browser(command, cwd=cwd, env=env, evidence=evidence,
-                                 timeout=timeout, grace=grace)
-
-
-def supervise_browser(command, *, cwd, env, evidence, timeout, grace):
-    started = time.monotonic()
-    process = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
-    owned = OwnedProcesses(process.pid)
-    timed_out = False
-    forced = False
-
-    def record():
-        evidence.mkdir(parents=True, exist_ok=True)
-        (evidence / "browser-process.json").write_text(json.dumps({
-            "timeout_seconds": timeout, "interrupt_grace_seconds": grace,
-            "elapsed_seconds": round(time.monotonic() - started, 3),
-            "timed_out": timed_out, "forced_kill": forced,
-            "returncode": process.returncode,
-            "process_cleanup": owned.evidence(),
-        }, indent=2) + "\n")
-
-    try:
-        try:
-            process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            # Capture detached Chrome groups BEFORE SIGINT can reparent them.
-            owned.capture()
-            # Save evidence before signalling, even if the runner cannot respond.
-            record()
-            print(f"Web browser watchdog expired after {timeout}s; "
-                  f"interrupting Playwright with {grace}s to retain evidence", flush=True)
-            process.send_signal(signal.SIGINT)
-            deadline = time.monotonic() + grace
-            while process.poll() is None:
-                owned.capture()
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    forced = True
-                    print("Playwright did not stop; terminating its owned descendants", flush=True)
-                    break
-                try:
-                    process.wait(timeout=min(.1, remaining))
-                except subprocess.TimeoutExpired:
-                    continue  # Keep tracking children throughout the bounded grace.
-            # A timeout remains a failure even if an interrupted runner exits zero.
-            raise subprocess.TimeoutExpired(command, timeout)
-        if process.returncode:
-            raise subprocess.CalledProcessError(process.returncode, command)
-    finally:
-        try:
-            owned.terminate()
-        finally:
-            process.kill()
-            process.wait()
-            try:
-                owned.reap()
-            finally:
-                record()
+    """Use a dedicated subreaper so unrelated children of this caller stay unowned."""
+    evidence = Path(evidence).resolve()
+    result_path = evidence / "browser-process.json"
+    result_path.unlink(missing_ok=True)  # Never interpret evidence from an earlier run.
+    helper = Path(__file__).with_name("web_image_supervisor.py")
+    result = subprocess.run([sys.executable, str(helper), str(evidence), str(timeout),
+                             str(grace), *command], cwd=cwd, env=env)
+    if result.returncode:
+        if result_path.exists():
+            recorded = json.loads(result_path.read_text())
+            if recorded["timed_out"]:
+                raise subprocess.TimeoutExpired(command, timeout)
+            if recorded["returncode"]:
+                raise subprocess.CalledProcessError(recorded["returncode"], command)
+        raise subprocess.CalledProcessError(result.returncode, command)
 
 
 def verify_image(reference):

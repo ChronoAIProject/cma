@@ -80,8 +80,35 @@ while True: time.sleep(.01)
         time.sleep(.2)
         self.assertEqual((self.root / "heartbeat").read_text(), before)
 
+    @unittest.skipUnless(sys.platform == "linux", "requires orphan adoption")
+    def test_exit_with_unsampled_detached_descendants_and_unrelated_child(self):
+        control = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                   start_new_session=True)
+        try:
+            for status in (0, 7):
+                source = """
+import subprocess, sys
+subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],
+                 start_new_session=True)
+raise SystemExit(STATUS)
+""".replace("STATUS", str(status))
+                if status:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        self.run_child(source)
+                else:
+                    self.run_child(source)
+                result = self.evidence()
+                self.assertEqual(result["returncode"], status)
+                self.assertFalse(result["timed_out"])
+                self.assertEqual(result["process_cleanup"]["remaining"], [])
+                self.assertGreaterEqual(len(result["process_cleanup"]["owned"]), 2)
+                self.assertIsNone(control.poll())
+        finally:
+            control.kill()
+            control.wait()
+
     def test_launch_error_is_not_reported_as_a_test_pass(self):
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaises(subprocess.CalledProcessError):
             smoke.run_browser([str(self.root / "missing-executable")], cwd=self.root,
                               env=os.environ.copy(), evidence=self.root, timeout=1)
         self.assertFalse((self.root / "browser-process.json").exists())
