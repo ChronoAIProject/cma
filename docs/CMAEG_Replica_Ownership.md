@@ -48,7 +48,11 @@ retains its original position; a completed item cannot be appended again.
 Unknown or Partial delivery does not authorize advancement or blind resend.
 
 Mongo transactions retry only an explicit `TransientTransactionError`, with
-at most five attempts inside the existing store deadline. An
+at most five attempts inside one shared two-second deadline, including backoff
+and Mongo I/O. This bound also applies to direct indexed admission-root writes;
+the partition store retains its separate outer two-second timeout. A deadline
+returns unavailable without retry and does not establish whether the transaction
+committed: callers must reconcile the same retained admission. An
 `UnknownTransactionCommitResult` takes precedence over that label and remains
 unavailable for reconciliation. The retries repeat only the same record writes
 and expected versions; they do not repeat an external provider operation.

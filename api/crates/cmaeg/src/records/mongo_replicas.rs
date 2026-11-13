@@ -1,6 +1,7 @@
 //! Exact version and server-time lease checks compose with existing sealed journals.
 use super::{
-    replica_retry::AttemptError, MongoRecords, Record, RecordError, CONNECTIONS, INTERACTIONS,
+    replica_retry::{self, AttemptError},
+    MongoRecords, Record, RecordError, CONNECTIONS, INTERACTIONS,
 };
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
@@ -66,25 +67,14 @@ impl MongoRecords {
                 "invalid replica transaction size".into(),
             ));
         }
-        for attempt in 0..5 {
-            match self.replica_attempt(writes).await {
-                Ok(versions) => return Ok(versions),
-                Err(AttemptError::Record(error)) => return Err(error),
-                Err(AttemptError::Aborted) => {
-                    if attempt == 4 {
-                        break;
-                    }
-                    metrics::counter!("cmaeg_replica_transaction_retries_total").increment(1);
-                    tokio::time::sleep(std::time::Duration::from_millis(5 << attempt)).await;
-                }
-            }
-        }
-        Err(RecordError::Unavailable(
-            "replica transaction contention budget exhausted".into(),
-        ))
+        replica_retry::run(|| self.replica_attempt(writes)).await
     }
 
     async fn replica_attempt(&self, writes: &[ReplicaWrite]) -> Result<Vec<u64>, AttemptError> {
+        #[cfg(test)]
+        if let Some(fixture) = &self.replica_attempt_fixture {
+            return fixture.attempt(writes).await;
+        }
         let mut session = self
             .db
             .client()

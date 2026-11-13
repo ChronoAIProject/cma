@@ -35,6 +35,8 @@ pub struct MongoRecords {
     records: Collection<Record>,
     kind: RecordKind,
     worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
+    #[cfg(test)]
+    replica_attempt_fixture: Option<std::sync::Arc<replica_retry::deadline_tests::AttemptFixture>>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,6 +87,8 @@ impl MongoRecords {
             records: db.collection_with_options(RECORDS, options),
             kind: RecordKind::Channel,
             db,
+            #[cfg(test)]
+            replica_attempt_fixture: None,
         })
     }
     pub async fn reachable(&self) -> bool {
@@ -102,6 +106,8 @@ impl MongoRecords {
             ),
             kind,
             worker_credentials: self.worker_credentials.clone(),
+            #[cfg(test)]
+            replica_attempt_fixture: self.replica_attempt_fixture.clone(),
         }
     }
     fn live(&self, mut filter: Document) -> Document {
