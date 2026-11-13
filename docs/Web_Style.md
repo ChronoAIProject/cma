@@ -1168,7 +1168,11 @@ independently with its own fresh authorization check.
 
 Intentional Agent navigation may start exact-owner transport selection while the
 access classification is pending. Protected Agent reads still wait for personal
-classification and the loader's fresh identity check. A matching creation
+classification and fresh read-admission authorization. The classified route may
+start detail, transcript and usage while eligibility finishes; its loader consumes
+that exact batch once and retains its own fresh load and publication checks. Keep
+one unconsumed batch per client, expire it after five seconds, and preserve exact
+Agent/owner/client/lineage and sign-in-epoch guards. A matching creation
 preparation transfers once; shared or refused access, route/client/account
 changes and unmount cancel unconsumed work, including a transferred selection.
 Hover and focus alone do not persist a transport choice. Opening the Agent does
@@ -1176,6 +1180,13 @@ not fetch the provider model catalog; saved settings remain visible and the
 catalog loads when the settings picker expands, with its existing loading,
 error and retry states. Sandbox readiness still fences sending independently of
 visible content and rich history.
+
+A throttled transport selection preserves its retry instruction instead of
+persisting a legacy fallback. Connection-read failures retain the server's
+Retry-After deadline across remounts and explicit retry clicks, including delays
+longer than the local backoff cap. Report busy service state in the existing error
+surface. Successful connection reports are not a reusable authorization cache;
+the existing creation handoff and Send fences remain unchanged.
 
 Completed initial projections may publish together after metadata resolves and
 a fresh identity check starts for that completed batch. Data arriving after the
@@ -6367,3 +6378,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
 
 | 2026-11-13 | Overlap intentional Agent navigation's transport selection with access classification while preserving fresh load and publication checks; cancel unconsumed route preparation, retain creation handoffs, batch completed early projections behind a fresh check, and defer model discovery until the settings picker opens (#1910). |
+
+| 2026-11-13 | Admit one bounded route projection batch after personal access while transport eligibility finishes, publish already completed transcript data with the metadata batch, and keep content independent of slow connection verification. Preserve fresh load/publication checks and server retry deadlines without caching successful connection authority (#1910). |

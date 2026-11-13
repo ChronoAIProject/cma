@@ -8,7 +8,15 @@ import {
 } from './agent-open-measurements';
 import { writeFile } from 'node:fs/promises';
 
-for (const mode of ['cold', 'list', 'hover', 'retained', 'slow-history', 'slow-sandbox'] as const) {
+for (const mode of [
+  'cold',
+  'list',
+  'hover',
+  'retained',
+  'slow-history',
+  'slow-sandbox',
+  'slow-connections',
+] as const) {
   test(`LOCAL Agent opening ${mode}`, async ({ page, baseURL }, info) => {
     const fixture = new LocalAgentV2();
     const observed = new PerformanceObserver(page);
@@ -60,7 +68,8 @@ for (const mode of ['cold', 'list', 'hover', 'retained', 'slow-history', 'slow-s
         const path = new URL(route.request().url()).pathname;
         const slow =
           (mode === 'slow-history' && /transcript|events\/snapshot/.test(path)) ||
-          (mode === 'slow-sandbox' && path === '/api/v1/sandboxes/sbx_route');
+          (mode === 'slow-sandbox' && path === '/api/v1/sandboxes/sbx_route') ||
+          (mode === 'slow-connections' && path === '/auth/connections/check');
         await new Promise((resolve) => setTimeout(resolve, slow ? 2000 : 100));
         await route.fallback();
       });
@@ -113,6 +122,12 @@ for (const mode of ['cold', 'list', 'hover', 'retained', 'slow-history', 'slow-s
       expect(fixture.errors).toEqual([]);
       expect(fixture.boundary.unexpected).toEqual([]);
       expect(observed.errors).toEqual([]);
+      const timings = await agentOpeningTimings(page);
+      if (mode === 'slow-connections') {
+        // Connection verification fences Send; it must not hold completed content.
+        expect(timings.content).toBeLessThan(timings.inputReady!);
+        expect(timings.historyComplete).toBeLessThan(timings.inputReady!);
+      }
       const openingPath = info.outputPath('opening.json');
       await writeFile(
         openingPath,
@@ -123,7 +138,7 @@ for (const mode of ['cold', 'list', 'hover', 'retained', 'slow-history', 'slow-s
             browser: await page.context().browser()?.version(),
             delayMs: 100,
             slowDelayMs: mode.startsWith('slow') ? 2000 : undefined,
-            browserTimings: await agentOpeningTimings(page),
+            browserTimings: timings,
             resources: await agentOpeningResources(page),
             assertionTimings: Object.fromEntries(
               Object.entries(observed.marks).map(([name, value]) => [
