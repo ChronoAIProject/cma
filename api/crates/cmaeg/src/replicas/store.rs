@@ -30,6 +30,7 @@ pub(crate) struct Write<'a> {
     pub retained_until: Option<i64>,
     pub condition: Option<LeaseCondition>,
     pub guard: Option<&'a ReplicaGuard>,
+    pub channel: Option<(String, u64)>,
     pub projection: Option<ReplicaProjection>,
 }
 
@@ -143,6 +144,7 @@ impl Store {
             expires_at: options.retained_until,
             condition: options.condition,
             guard: options.guard.cloned(),
+            channel: options.channel,
             projection: options.projection,
         })
     }
