@@ -6,6 +6,8 @@ import type {
   DocumentView,
   DocumentPage,
   DocumentMutation,
+  DocumentUsage,
+  DocumentUsageCounter,
 } from '../documents';
 import type { CommandOptions } from '../client';
 
@@ -40,19 +42,46 @@ async function request(
   });
   const value: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const problem = value as { detail?: unknown; code?: unknown } | null;
+    const problem = value as {
+      detail?: unknown;
+      code?: unknown;
+      limit?: unknown;
+      live?: unknown;
+    } | null;
     throw new DocumentError(
       typeof problem?.detail === 'string'
         ? problem.detail
         : 'This document could not be loaded. Try again.',
       response.status,
       typeof problem?.code === 'string' ? problem.code : undefined,
+      {
+        limit: counterValue(problem?.limit) ? problem.limit : undefined,
+        live: counterValue(problem?.live) ? problem.live : undefined,
+      },
     );
   }
   return value;
 }
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function counterValue(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+function counter(value: unknown): value is DocumentUsageCounter | null {
+  return value === null || (record(value) && counterValue(value.used) && counterValue(value.limit));
+}
+function usage(value: unknown): DocumentUsage {
+  if (
+    !record(value) ||
+    (value.enforcement !== 'enforced' && value.enforcement !== 'not_enforced') ||
+    !counter(value.documents) ||
+    !counter(value.bytes) ||
+    !counter(value.objects) ||
+    !(value.pending_deletions === null || counterValue(value.pending_deletions))
+  )
+    throw new ProtocolError('CMA returned invalid document usage.');
+  return value as unknown as DocumentUsage;
 }
 function view(value: unknown): DocumentView {
   if (
@@ -93,6 +122,26 @@ function mutation(value: unknown): DocumentMutation {
 }
 export function documentsClient(): DocumentsClient {
   return {
+    async documentUsage(options) {
+      return usage(await request('/api/v1/usage/documents', options));
+    },
+    async deleteDocument(id, options) {
+      const result = await request(path(id), options, 'DELETE', {
+        expected_revision: options.expectedRevision,
+      });
+      if (
+        !record(result) ||
+        result.id !== id ||
+        !Number.isSafeInteger(result.revision) ||
+        Number(result.revision) < 1 ||
+        result.revision !== options.expectedRevision + 1 ||
+        typeof result.deleted_at !== 'string' ||
+        !result.deleted_at ||
+        (result.purge !== 'pending' && result.purge !== 'complete' && result.purge !== 'blocked')
+      )
+        throw new ProtocolError('CMA did not confirm this document deletion.');
+      return result as unknown as import('../documents').DocumentDeletion;
+    },
     async list(options) {
       return page(
         await request(
