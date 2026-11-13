@@ -36,27 +36,32 @@ impl MetricsWorkers {
                     if let Err(error) = &result {
                         tracing::warn!(error=%error, "sandbox report generation failed");
                     }
-                    let generation_success = result.is_ok();
+                    let success = result.is_ok();
                     let report = result.unwrap_or_else(|_| lease.report.clone());
                     let finish_started = std::time::Instant::now();
-                    let finalized = self
-                        .store
-                        .finish_report(&lease, report, generation_success)
-                        .await;
+                    let finalized = self.store.finish_report(&lease, report, success).await;
                     if let Err(error) = &finalized {
                         tracing::warn!(error=%error,"sandbox report finalization failed");
                     }
-                    let _root =
-                        tracing::info_span!(parent: None, "usage_report_diagnostic").entered();
+                    {
+                        let _root =
+                            tracing::info_span!(parent: None, "usage_report_diagnostic").entered();
+                        tracing::info!(
+                            parent: None,
+                            event = "usage_report_worker_result",
+                            report_hash = %digest,
+                            success = success && finalized.is_ok(),
+                            generation_success = success,
+                            finalized = finalized.is_ok(),
+                            failure_class,
+                            generation_ms,
+                            finalization_ms = finish_started.elapsed().as_millis() as u64,
+                            elapsed_ms = start.elapsed().as_millis() as u64,
+                            "Sandbox report worker result"
+                        );
+                    }
                     tracing::info!(
-                        parent: None,
-                        report_hash = %digest,
-                        success = generation_success && finalized.is_ok(),
-                        generation_success,
-                        finalized = finalized.is_ok(),
-                        failure_class,
-                        generation_ms,
-                        finalization_ms = finish_started.elapsed().as_millis() as u64,
+                        success,
                         elapsed_ms = start.elapsed().as_millis() as u64,
                         "sandbox usage report generated"
                     );
