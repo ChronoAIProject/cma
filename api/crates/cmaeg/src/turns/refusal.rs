@@ -1,5 +1,5 @@
 use crate::providers::ProviderError;
-use cmaeg_core::problem::ProblemCode;
+use cmaeg_core::problem::{ProblemCode, UpstreamRefusal};
 
 /// The attempted step, including its local preparation and admission checks.
 #[derive(Clone, Copy)]
@@ -13,6 +13,25 @@ pub(super) struct StartFailure {
     call: ProviderCall,
 }
 
+/// Bounded classification that crosses the launch boundary. Provider detail
+/// stays separate from the stable gateway problem classification so retry and
+/// authorization behavior remain unchanged.
+pub(super) struct ClassifiedFailure {
+    pub code: ProblemCode,
+    pub detail: &'static str,
+    pub status: u16,
+    pub upstream: Option<UpstreamRefusal>,
+}
+
+pub(super) fn failure(code: ProblemCode, detail: &'static str, status: u16) -> ClassifiedFailure {
+    ClassifiedFailure {
+        code,
+        detail,
+        status,
+        upstream: None,
+    }
+}
+
 impl ProviderCall {
     pub fn failed(self, error: ProviderError) -> StartFailure {
         StartFailure { error, call: self }
@@ -21,15 +40,9 @@ impl ProviderCall {
 
 /// Classify a start failure and emit its single warn record using bounded codes
 /// and static labels, never a provider error's Display/Debug.
-pub(super) fn classify_start_failure(
-    provider: &str,
-    failure: StartFailure,
-) -> (ProblemCode, &'static str, u16) {
+pub(super) fn classify_start_failure(provider: &str, failure: StartFailure) -> ClassifiedFailure {
     let classification = classify(&failure.error);
-    let provider_call = match failure.call {
-        ProviderCall::Responses => "responses",
-        ProviderCall::Conversation => "conversation",
-    };
+    let provider_call = failure.call.name();
     let (provider_error, upstream_status, upstream_code) = match &failure.error {
         ProviderError::Rejected { status, code } => {
             ("rejected", Some(*status), Some(code_token(code)))
@@ -53,18 +66,49 @@ pub(super) fn classify_start_failure(
         upstream_code,
         "provider turn start failed"
     );
-    classification
+    let upstream = match &failure.error {
+        ProviderError::Rejected { status, code } if (100..=599).contains(status) => {
+            Some(UpstreamRefusal {
+                operation: provider_call.into(),
+                status: *status,
+                code: code_token(code).into(),
+            })
+        }
+        _ => None,
+    };
+    ClassifiedFailure {
+        code: classification.0,
+        detail: classification.1,
+        status: classification.2,
+        upstream,
+    }
 }
 
-fn code_token(code: &str) -> &str {
-    if (1..=64).contains(&code.len())
-        && code.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_-.:".contains(&byte)
-        })
-    {
-        code
-    } else {
-        "unrecognized"
+impl ProviderCall {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Responses => "responses",
+            Self::Conversation => "conversation",
+        }
+    }
+}
+
+fn code_token(code: &str) -> &'static str {
+    // Grammar and length cannot distinguish a reason from a private identifier.
+    // Both public metadata and logs use only this reviewed static vocabulary.
+    match code {
+        "media_source_refused" => "media_source_refused",
+        "partition_agent_missing" => "partition_agent_missing",
+        "partition_agent_unavailable" => "partition_agent_unavailable",
+        "agent_command_admission_conflict" => "agent_command_admission_conflict",
+        "agent_command_key_conflict" => "agent_command_key_conflict",
+        "binding_not_ready" => "binding_not_ready",
+        "binding_resources_unavailable" => "binding_resources_unavailable",
+        "command_authority_required" => "command_authority_required",
+        "response_forbidden" => "response_forbidden",
+        "response_not_found" => "response_not_found",
+        "model_mismatch" => "model_mismatch",
+        _ => "unrecognized",
     }
 }
 
