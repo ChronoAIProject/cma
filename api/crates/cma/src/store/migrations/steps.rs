@@ -1,17 +1,21 @@
 //! The explicit manifest registry is also the migrator's reader floor.
-use super::{activity_indexes, agent_log_segments, collection_indexes, Result};
+use super::{
+    activity_indexes, activity_page_index, agent_log_segments, collection_indexes, Result,
+};
 use mongodb::bson::{doc, Document};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {
     Activity,
+    ActivityPage,
     LedgerCollection,
     AgentLogSegments,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 3] = [
+    pub(super) const ALL: [Self; 4] = [
         Self::Activity,
+        Self::ActivityPage,
         Self::LedgerCollection,
         Self::AgentLogSegments,
     ];
@@ -24,6 +28,7 @@ impl Step {
     pub(super) fn id(self) -> &'static str {
         match self {
             Self::Activity => activity_indexes::ID,
+            Self::ActivityPage => activity_page_index::ID,
             Self::LedgerCollection => collection_indexes::ID,
             Self::AgentLogSegments => agent_log_segments::ID,
         }
@@ -31,6 +36,7 @@ impl Step {
     pub(super) fn checksum(self) -> String {
         match self {
             Self::Activity => activity_indexes::checksum(),
+            Self::ActivityPage => activity_page_index::checksum(),
             Self::LedgerCollection => collection_indexes::checksum(),
             Self::AgentLogSegments => agent_log_segments::checksum(),
         }
@@ -41,13 +47,14 @@ impl Step {
     pub(super) fn max_changes(self) -> i64 {
         match self {
             Self::Activity => 2,
+            Self::ActivityPage => 1,
             Self::LedgerCollection => 5,
             Self::AgentLogSegments => agent_log_segments::MAX_SCHEMA_STEPS,
         }
     }
     pub(super) fn collections(self) -> &'static [&'static str] {
         match self {
-            Self::Activity => &["activity"],
+            Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
         }
@@ -55,7 +62,7 @@ impl Step {
     pub(super) fn effect_field(self) -> &'static str {
         match self {
             Self::AgentLogSegments => "applied_schema_steps",
-            Self::Activity | Self::LedgerCollection => "created_indexes",
+            Self::Activity | Self::ActivityPage | Self::LedgerCollection => "created_indexes",
         }
     }
     pub(super) async fn inspect(
@@ -64,6 +71,11 @@ impl Step {
     ) -> Result<Vec<(&'static str, Document)>> {
         match self {
             Self::Activity => Ok(activity_indexes::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("activity", index))
+                .collect()),
+            Self::ActivityPage => Ok(activity_page_index::inspect(database)
                 .await?
                 .into_iter()
                 .map(|index| ("activity", index))
@@ -81,6 +93,9 @@ impl Step {
         match self {
             Self::Activity if collection == "activity" => {
                 activity_indexes::create(database, index).await
+            }
+            Self::ActivityPage if collection == "activity" => {
+                activity_page_index::create(database, index).await
             }
             Self::LedgerCollection => collection_indexes::create(database, collection, index).await,
             _ => Err("migration collection mismatch"),
