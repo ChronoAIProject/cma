@@ -559,3 +559,93 @@ journey qualification limits above remain open. The previously retained ordinary
 inspection service is historical eight-loop evidence; the nine-loop integration
 is exercised by the final full-service matrix, not claimed as a replacement
 ordinary service startup.
+
+## First-activity supervision and durable recovery timing (2026-11-13)
+
+Source `ef3d60abd8a46cdf484f463a59b51988f027d7ed`, based on
+`develop@e3de0c13173a1195758b59fb50c42a4840015b59`, closes a startup
+watchdog gap: a scheduling future suspended before its first `waiting` call
+previously had no deadline. A replacement also retained its recovery status until
+it registered activity. The supervisor now arms a fresh first-wake expectation
+before polling every attempt. This never refreshes real activity or makes the
+worker ready. The existing retained-child, lease and reconciliation contracts apply.
+
+The two new regressions failed against the original supervisor (10 passed,
+2 failed), then all 12 supervisor tests passed with the fix. They cover the
+5.999/6-second boundary, recovery with the original queue and child result,
+unavailable replacement startup, and a fresh deadline after a prior running loop.
+
+All checks used Rust 1.96.1 on macOS arm64 and a separately created local MongoDB
+8.0.13 replica set. The test configuration and provider API were loopback-only;
+no production Kubernetes context, database or workload was used.
+
+- CI-pinned nextest 0.9.151: **1,865 CMA binary tests passed**, 1,304 opt-in tests
+  skipped. An initial single-process libtest run had 1,864 passes and one
+  authentication diagnostic log assertion failure; that test passed alone and in
+  nextest's process-isolated full run. No authentication source was changed.
+- Focused groups: 235 distinct passing tests, including six real Mongo contracts
+  for durable scheduler recovery, unknown commit, stale owner, concurrent
+  admission and warm-pool fencing. The retained-command panic/stall cases
+  completed durable work 1.576/7.262 seconds after the fault and subsequent
+  commands 2.087/7.786 seconds after the fault, with two claims/effects/receipts.
+- Full `serve()` HTTP fault matrix: **12 cases passed**, preserving 790 external
+  HTTP samples and 51 metric scrapes. The ninth-worker matrix, command exit/stall
+  and new pre-activity replacement stall keep required readiness unavailable,
+  liveness available and unrelated workers running. The replacement spent about
+  6 seconds in startup before stall detection; the combined exit, startup stall
+  and existing escalating backoffs recovered in 12.903 seconds.
+- An ordinary production binary separately served `/ready`, `/livez`, the public
+  Sandbox list and all nine worker availability metric series. Failing only the
+  real Mongo ping changed readiness to `store` in 1.901 seconds. During a
+  seven-second dependency failure all nine loops stayed running, liveness stayed
+  available and no worker restarted. Readiness recovered 0.643 seconds after
+  disabling the failpoint. SIGTERM exited zero in 18.795 seconds.
+- Strict `cargo clippy --locked -p cma --all-targets --all-features -- -D warnings`,
+  format, file-size validation and nine documentation contract tests passed.
+
+Four fresh pinned Codex 0.147.0 / patched ACP 1.4.0 / actual Layer 4 continuity
+cases passed in 114.63 seconds. They use production HTTP/ACP transport, command
+execution, Mongo and the real update recorder with controlled loopback model
+responses. The first confirmed durable completion is timestamped immediately;
+continuation, replay verification and cleanup no longer inflate that timestamp.
+
+| Native case | Detection | Scheduling resumed | First durable completion after fault |
+| --- | ---: | ---: | ---: |
+| Panic, short turn | 0.140 s | 1.154 s | 1.417 s |
+| Stall, short turn | 5.867 s | 6.876 s | 7.131 s |
+| Panic, intentional 65-second model wait | 0.141 s | 1.143 s | 66.409 s |
+| Stall, intentional 10-second model wait | 5.835 s | 6.850 s | 17.111 s |
+
+Both short-turn cases assert fault-to-durable-completion below thirty seconds.
+All four preserve the same runtime boot, shell PID across the fault, home inode,
+config, dirty work, conversation and subsequent continuation; the shell effect
+occurs once and the two admitted commands dispatch once each. Long legitimate
+waiting does not trigger another recovery. The 65-second wait deliberately
+exceeds the work target and is evidence of valid waiting, not a thirty-second
+completion claim.
+
+Control-plane executable digest (SHA-256):
+`8161fe0e42963466f79147bbf1e154ebdb762f20166d27ca1c5ddc7b8dc4de14`.
+Focused/Mongo/full-service test executable SHA-256:
+`b12d62452eaaad234efc6513025158da69758bec6b9d6c5ecd33a66ae1397faa`.
+Nextest/native test executable SHA-256:
+`e0899b1a9926266f42a5e78f1ef7137d136392da873614e79d6ae1696415476b`.
+The focused phase started before the source commit was created; its working
+source is preserved by the patch and matches that commit's four Rust files.
+The subsequent Cargo rebuild used those same source files, with its separate
+executable identity retained above.
+Native runtime SHA-256:
+`8a92e2ba1e3ce9318285cc26abc1f6fe79a37dbe0a7965d4cf2e60bac3065c45`.
+Bridge SHA-256 remains
+`ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66`.
+
+Raw identity, source hashes/patch, nextest/focused logs, production HTTP/metrics
+and the full service fault matrix are retained locally under
+`/private/var/folders/gq/xbl9r0417sx7r9tm494fsw8m0000gn/T/cma-1740-startup-tuq8vbao/`.
+Fresh native tool identity, runtime logs, histories and four result files are under
+`/private/var/folders/gq/xbl9r0417sx7r9tm494fsw8m0000gn/T/cma-worker-runtime.1AUfQO/`.
+These are local native-binary results. Exact deployment image digests, real
+provider/PVC and remote-model qualification remain open. Execution-child/process
+loss with long claims, unavailable dependencies or unresolved external outcomes
+retains the safety and timing limits documented above; loop recovery does not
+authorize early lease theft or resending an uncertain effect.
