@@ -6,6 +6,7 @@ pub(crate) struct ControlPlaneComposition {
     pub document_blob_maintenance:
         Option<Arc<dyn layer2_core::document_artifacts::DocumentBlobMaintenance>>,
     pub router: Router,
+    pub activity_worker: Option<crate::activity::queue::ActivityWorker>,
     pub workers: crate::worker_supervision::Workers,
     pub worker_observations: crate::store::worker_observations::Observations,
     pub bindings: bindings::BindingComposition,

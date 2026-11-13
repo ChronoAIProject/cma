@@ -134,6 +134,7 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
     assert_eq!(config.mongodb_database, DEFAULT_DATABASE);
     assert_eq!(config.deployment_id, "cma-test");
     assert_eq!(config.activity_retention, Duration::from_secs(90 * 86_400));
+    assert!(!config.activity_async_enabled);
     assert_eq!(config.default_profiles.cpu_millis, 1_000);
     assert_eq!(config.default_profiles.memory_mib, 1_024);
     assert_eq!(config.agent_manager_sandbox_capacity.cpu_millis, 2_000);
