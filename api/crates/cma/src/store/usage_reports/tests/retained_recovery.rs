@@ -157,3 +157,111 @@ async fn retained_publication_requires_current_pointer_and_complete_replacement(
     assert_eq!(still_ready.report.report_id, original.report_id);
     store.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn stale_cleanup_candidate_cannot_retire_a_reclaimed_ordinary_report() {
+    let store = fixture().await;
+    let report = store
+        .submit(
+            scope("operator", true),
+            ReportInput::default().validate(now()).unwrap(),
+            now(),
+        )
+        .await
+        .unwrap();
+    let id = doc! {"_id":&report.report_id};
+    let original = store
+        .collection(JOBS)
+        .find_one(id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    // A delayed expiry scan can retain this document while a claimant advances
+    // the generation. The cleanup compare-and-set must reject that old scan.
+    store.collection(JOBS).update_one(id.clone(),doc! {"$set":{"logical_expires_at":0_i64,"state":"running"},"$inc":{"generation":1_i64}}).await.unwrap();
+    assert!(!store.retire_expired_report(&original).await.unwrap());
+    let expired = store
+        .collection(JOBS)
+        .find_one(id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .collection(JOBS)
+        .update_one(
+            id.clone(),
+            doc! {"$set":{"logical_expires_at":(now()+600) as i64}},
+        )
+        .await
+        .unwrap();
+    assert!(!store.retire_expired_report(&expired).await.unwrap());
+    let alive = store
+        .collection(JOBS)
+        .find_one(id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(alive.get_str("state").unwrap(), "running");
+    assert!(alive.get_bool("reserved").unwrap());
+    store
+        .collection(JOBS)
+        .update_one(id.clone(), doc! {"$set":{"logical_expires_at":0_i64}})
+        .await
+        .unwrap();
+    let expired = store
+        .collection(JOBS)
+        .find_one(id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(store.retire_expired_report(&expired).await.unwrap());
+    assert_eq!(
+        store
+            .collection(JOBS)
+            .find_one(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .get_str("state")
+            .unwrap(),
+        "retired"
+    );
+    store.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn report_chunk_budget_does_not_replace_server_time_expiry_fence() {
+    let store = enabled().await;
+    store
+        .latest(
+            &scope("operator", true),
+            &ViewInput::default().validate(now()).unwrap(),
+            now(),
+        )
+        .await
+        .unwrap();
+    let lease = store
+        .claim_report("report:0", "expired-chunk")
+        .await
+        .unwrap()
+        .unwrap();
+    let id = doc! {"_id":&lease.report.report_id};
+    store
+        .collection(JOBS)
+        .update_one(id.clone(), doc! {"$set":{"lease_until":0_i64}})
+        .await
+        .unwrap();
+    assert!(store.write_report_chunk(&lease, &[], vec![]).await.is_err());
+    assert!(store
+        .finish_report(&lease, lease.report.clone(), false)
+        .await
+        .is_err());
+    let job = store.collection(JOBS).find_one(id).await.unwrap().unwrap();
+    assert_eq!(job.get_str("state").unwrap(), "view_running");
+    assert_eq!(job.get_i64("bytes").unwrap(), 0);
+    assert_eq!(job.get_i64("row_count").unwrap(), 0);
+    assert_eq!(job.get_i64("chart_count").unwrap(), 0);
+    store.db.drop().await.unwrap();
+}

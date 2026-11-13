@@ -98,11 +98,8 @@ impl ReportingStore {
             .map_err(unavailable)?;
         while let Some(d) = cursor.try_next().await.map_err(unavailable)? {
             let id = d.get_str("_id").map_err(unavailable)?;
-            if d.get_str("kind").ok() == Some(views::VIEW_KIND) {
-                self.collection(JOBS)
-                    .update_one(doc! {"_id":id}, doc! {"$set":{"state":"view_retired"}})
-                    .await
-                    .map_err(unavailable)?;
+            if !self.retire_expired_report(&d).await? {
+                continue;
             }
             for collection in [ROWS, CHARTS] {
                 let result=self.db.run_command(doc! {"delete":collection,"deletes":[{"q":{"report_id":id},"limit":0}],"maxTimeMS":2000_i64})
@@ -122,11 +119,33 @@ impl ReportingStore {
                 released.insert("expires_at", expires(at + 60));
             }
             self.collection(JOBS)
-                .update_one(doc! {"_id":id}, doc! {"$set":released})
+                .update_one(
+                    doc! {"_id":id,"generation":d.get_i64("generation").map_err(unavailable)?,
+                    "state":retired_state(&d)},
+                    doc! {"$set":released},
+                )
                 .await
                 .map_err(unavailable)?;
         }
         Ok(())
+    }
+
+    pub(super) async fn retire_expired_report(&self, candidate: &Document) -> Result<bool> {
+        // A scan is only a candidate: claiming or completing can advance its
+        // generation/deadline before deletion. Retire the exact live record
+        // first, conflicting with chunk transactions and excluding new claims.
+        let filter = doc! {"_id":candidate.get_str("_id").map_err(unavailable)?,
+        "reserved":true,"generation":candidate.get_i64("generation").map_err(unavailable)?,
+        "state":candidate.get_str("state").map_err(unavailable)?,
+        "$expr":{"$or":[{"$lte":["$logical_expires_at",server_seconds()]},
+            {"$and":[{"$eq":["$kind",views::VIEW_KIND]},
+                {"$lte":[{"$ifNull":["$retire_after",i64::MAX]},server_seconds()]}]}]}};
+        let updated = self
+            .collection(JOBS)
+            .update_one(filter, doc! {"$set":{"state":retired_state(candidate)}})
+            .await
+            .map_err(unavailable)?;
+        Ok(updated.matched_count == 1)
     }
 
     pub(crate) async fn write_report_chunk(
@@ -151,12 +170,11 @@ impl ReportingStore {
         }
         let mut session = self.client.start_session().await.map_err(unavailable)?;
         session.start_transaction().await.map_err(unavailable)?;
-        let mut fence = lease.fence();
-        fence.insert("bytes", doc! {"$lte":self.budgets.report_bytes-bytes});
-        fence.insert(
-            "$expr",
-            doc! {"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]},
-        );
+        // Keep the server-time lease expression and byte expression together;
+        // inserting another $expr into the lease filter would discard expiry.
+        let fence = doc! {"$and":[lease.fence(), {
+        "bytes":{"$lte":self.budgets.report_bytes-bytes},
+        "$expr":{"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]}}]};
         let updated = self
             .collection(JOBS)
             .update_one(
@@ -224,7 +242,20 @@ impl ReportingStore {
 }
 impl ReportLease {
     pub(super) fn fence(&self) -> Document {
-        doc! {"_id":&self.report.report_id,"generation":self.generation,"lease_holder":&self.holder,"state":if self.view.is_some() {"view_running"} else {"running"},"lease_until":{"$gt":now() as i64}}
+        doc! {"_id":&self.report.report_id,"generation":self.generation,"lease_holder":&self.holder,
+        "state":if self.view.is_some() {"view_running"} else {"running"},
+        "$expr":{"$and":[{"$gt":["$lease_until",server_seconds()]},
+            {"$gt":["$logical_expires_at",server_seconds()]}]}}
+    }
+}
+fn server_seconds() -> Document {
+    doc! {"$toLong":{"$divide":[{"$toLong":"$$NOW"},1000_i64]}}
+}
+fn retired_state(job: &Document) -> &'static str {
+    if job.get_str("kind").ok() == Some(views::VIEW_KIND) {
+        "view_retired"
+    } else {
+        "retired"
     }
 }
 fn row_document(report: &Report, row: &Row) -> Result<Document> {
