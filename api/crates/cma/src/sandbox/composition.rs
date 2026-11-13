@@ -1,6 +1,6 @@
 //! Shared production assembly for Sandbox, Workspace, and Agent workers.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use layer2_core::sandbox::{
     AgentOperationService, AgentService, AgentTitleService, AgentUpdateRecorder,
@@ -52,6 +52,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub event_driven_reconciliation: bool,
+    pub sandbox_reconciliation_reserved_lane: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -78,7 +79,19 @@ impl SandboxLifecycleComposition {
     pub(crate) fn new(
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
-    ) -> Self {
+    ) -> Result<Self, String> {
+        let shared = crate::background::shared();
+        let reconciliation_budget = if config.sandbox_reconciliation_reserved_lane {
+            shared
+                .reserve(1)
+                .ok_or("cannot reserve Sandbox reconciliation capacity before worker startup")?
+        } else {
+            shared
+        };
+        tracing::info!(
+            reserved_lane = config.sandbox_reconciliation_reserved_lane,
+            "sandbox reconciliation background scheduling configured"
+        );
         let sandbox_admitted = Arc::clone(&dependencies.store.sandbox_admitted);
         let agent_admitted = Arc::clone(&dependencies.store.agent_admitted);
         let warmup = super::warmup::LegacyWarmSandboxCleanup {
@@ -91,6 +104,13 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
         )
+        .with_background_work(crate::background::BackgroundWork::new(
+            reconciliation_budget,
+            "sandbox_reconciliation",
+            Duration::from_secs(30),
+            Duration::from_secs(15),
+        ))
+        .with_background_resumption(config.sandbox_reconciliation_reserved_lane)
         .with_runtime_loss_bounded_proof(config.runtime_loss_bounded_proof_enabled)
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
@@ -195,7 +215,7 @@ impl SandboxLifecycleComposition {
             dependencies.funding,
         );
 
-        Self {
+        Ok(Self {
             warmup,
             updates,
             reconciliation,
@@ -211,7 +231,7 @@ impl SandboxLifecycleComposition {
             titles,
             funding_renewal,
             suggestions,
-        }
+        })
     }
 
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
