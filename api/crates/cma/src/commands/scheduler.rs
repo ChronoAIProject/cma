@@ -4,7 +4,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer2_core::ids::AgentCommandId;
-use layer2_core::sandbox::agent_io::{AgentCommandWorker, CommandLedgerError};
+use layer2_core::sandbox::agent_io::{
+    AgentCommandWorker, CommandLedgerError, ScheduledAgentCommand,
+};
 use layer2_core::sandbox::store::{Page, PageRequest};
 use tokio::sync::watch;
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
@@ -14,13 +16,14 @@ const PAGE_SIZE: u16 = 50;
 // At idle, at most four indexed discovery scans per second per replica. Existing
 // single-discovery, pagination and eight-command backpressure remain bounded.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
-const MAX_DEFERRED: usize = 4_096;
+pub(super) const MAX_DEFERRED: usize = 4_096;
 
 pub(crate) struct CommandScheduler {
     worker: Arc<dyn CommandScheduleWork>,
     interval: Duration,
     concurrency: usize,
     drain_timeout: Duration,
+    reconcile_pacing: bool,
 }
 
 #[async_trait::async_trait]
@@ -28,7 +31,7 @@ trait CommandScheduleWork: Send + Sync {
     async fn discover(
         &self,
         page: &PageRequest,
-    ) -> Result<Page<AgentCommandId>, CommandLedgerError>;
+    ) -> Result<Page<ScheduledAgentCommand>, CommandLedgerError>;
     async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError>;
 }
 
@@ -37,19 +40,15 @@ impl CommandScheduleWork for AgentCommandWorker {
     async fn discover(
         &self,
         page: &PageRequest,
-    ) -> Result<Page<AgentCommandId>, CommandLedgerError> {
-        let page = DiagnosticContext::background("command_scheduler")
+    ) -> Result<Page<ScheduledAgentCommand>, CommandLedgerError> {
+        let discovery = DiagnosticContext::background("command_scheduler")
             .with_phase("discovery")
-            .scope(self.discover(page))
+            .scope(self.discover_scheduled(page))
             .await?;
-        Ok(Page {
-            items: page
-                .items
-                .into_iter()
-                .map(|record| record.receipt.envelope.command_id)
-                .collect(),
-            next: page.next,
-        })
+        if discovery.heads_failed {
+            crate::telemetry::command_reconcile::heads_failed();
+        }
+        Ok(discovery.page)
     }
 
     async fn run_one(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
@@ -67,7 +66,13 @@ impl CommandScheduler {
             interval: POLL_INTERVAL,
             concurrency: 8,
             drain_timeout: Duration::from_secs(25),
+            reconcile_pacing: false,
         }
+    }
+
+    pub(crate) fn with_reconcile_pacing(mut self, enabled: bool) -> Self {
+        self.reconcile_pacing = enabled;
+        self
     }
 
     #[cfg(test)]
@@ -85,7 +90,7 @@ impl CommandScheduler {
     ) -> JoinHandle<()> {
         let interval = self.interval;
         let drain_timeout = self.drain_timeout;
-        let work = ScheduledWork::new(self.worker, self.concurrency);
+        let work = ScheduledWork::new(self.worker, self.concurrency, self.reconcile_pacing);
         crate::worker_supervision::spawn(
             work,
             activity,
@@ -152,10 +157,10 @@ impl CommandScheduler {
 
 enum TaskKind {
     Discover,
-    Command(AgentCommandId),
+    Command(ScheduledAgentCommand),
 }
 enum TaskOutput {
-    Discovered(Page<AgentCommandId>),
+    Discovered(Page<ScheduledAgentCommand>),
     Completed(Duration),
 }
 type TaskResult = Result<TaskOutput, CommandLedgerError>;
@@ -168,13 +173,18 @@ struct ScheduledWork {
     kinds: HashMap<Id, TaskKind>,
     in_flight: BTreeSet<AgentCommandId>,
     not_before: HashMap<AgentCommandId, Instant>,
-    queued: VecDeque<AgentCommandId>,
+    queued: VecDeque<ScheduledAgentCommand>,
+    reconciliation: super::reconcile_schedule::ReconcileSchedule,
     polling: bool,
     cursor: Option<String>,
 }
 
 impl ScheduledWork {
-    fn new(worker: Arc<dyn CommandScheduleWork>, concurrency: usize) -> Self {
+    fn new(
+        worker: Arc<dyn CommandScheduleWork>,
+        concurrency: usize,
+        reconcile_pacing: bool,
+    ) -> Self {
         Self {
             activity: None,
             worker,
@@ -184,6 +194,7 @@ impl ScheduledWork {
             in_flight: BTreeSet::new(),
             not_before: HashMap::new(),
             queued: VecDeque::new(),
+            reconciliation: super::reconcile_schedule::ReconcileSchedule::new(reconcile_pacing),
             polling: false,
             cursor: None,
         }
@@ -192,6 +203,7 @@ impl ScheduledWork {
     fn poll(&mut self) {
         let now = Instant::now();
         self.not_before.retain(|_, deadline| *deadline > now);
+        self.reconciliation.prune(now);
         if self.polling || !self.queued.is_empty() || self.in_flight.len() >= self.concurrency {
             return;
         }
@@ -216,12 +228,13 @@ impl ScheduledWork {
 
     fn fill_slots(&mut self) {
         while self.in_flight.len() < self.concurrency {
-            let Some(id) = self.queued.pop_front() else {
+            let Some(item) = self.queued.pop_front() else {
                 break;
             };
+            let id = &item.id;
             if self
                 .not_before
-                .get(&id)
+                .get(id)
                 .is_some_and(|deadline| *deadline > Instant::now())
                 || !self.in_flight.insert(id.clone())
             {
@@ -232,7 +245,7 @@ impl ScheduledWork {
             let task = self
                 .tasks
                 .spawn(async move { worker.run_one(&work_id).await.map(TaskOutput::Completed) });
-            self.kinds.insert(task.id(), TaskKind::Command(id));
+            self.kinds.insert(task.id(), TaskKind::Command(item));
         }
     }
 
@@ -254,14 +267,34 @@ impl ScheduledWork {
         crate::telemetry::worker::completed("agent_commands", phase, outcome);
         match self.kinds.remove(&id) {
             Some(TaskKind::Discover) => self.polling = false,
-            Some(TaskKind::Command(id)) => {
+            Some(TaskKind::Command(item)) => {
+                let id = item.id;
                 self.in_flight.remove(&id);
-                if let Ok((_, Ok(TaskOutput::Completed(delay)))) = &result {
-                    if !delay.is_zero() && self.not_before.len() < MAX_DEFERRED {
-                        // Backoff belongs to discovery, not a scarce execution slot.
-                        // Expired/retired entries leave on the next bounded poll.
-                        self.not_before.insert(id, Instant::now() + *delay);
+                let now = Instant::now();
+                let delay = match &result {
+                    Ok((_, Ok(TaskOutput::Completed(delay)))) => {
+                        if item.dispatched {
+                            self.reconciliation.succeeded(&id, now);
+                        }
+                        *delay
                     }
+                    _ if item.dispatched => {
+                        crate::telemetry::command_reconcile::Outcome::Error.record();
+                        let code = match &result {
+                            Ok((_, Err(error))) => error.code(),
+                            _ => "task_terminated",
+                        };
+                        tracing::warn!(
+                            code,
+                            "Dispatched command reconciliation failed; scheduling retry"
+                        );
+                        self.reconciliation.failed(&id, now)
+                    }
+                    _ => Duration::ZERO,
+                };
+                if !delay.is_zero() && self.not_before.len() < MAX_DEFERRED {
+                    // Backoff belongs to discovery, not a scarce execution slot.
+                    self.not_before.insert(id, now + delay);
                 }
             }
             None => {}
@@ -275,7 +308,19 @@ impl ScheduledWork {
                 self.queued = page
                     .items
                     .into_iter()
-                    .filter(|id| !self.in_flight.contains(id) && !self.not_before.contains_key(id))
+                    .filter(|item| {
+                        !self.in_flight.contains(&item.id)
+                            && !self.not_before.contains_key(&item.id)
+                    })
+                    .filter(|item| {
+                        let skip = item.dispatched
+                            && item.reconcile_current
+                            && self.reconciliation.current(&item.id, Instant::now());
+                        if skip {
+                            crate::telemetry::command_reconcile::Outcome::SkippedCurrent.record();
+                        }
+                        !skip
+                    })
                     .collect();
             }
             Ok((_, Ok(TaskOutput::Completed(_)))) => {}
@@ -288,7 +333,11 @@ impl ScheduledWork {
                 )
             }
             Err(error) => {
-                tracing::error!(error = %error, "Agent command task terminated unexpectedly")
+                tracing::error!(
+                    cancelled = error.is_cancelled(),
+                    panicked = error.is_panic(),
+                    "Agent command task terminated unexpectedly"
+                )
             }
         }
     }

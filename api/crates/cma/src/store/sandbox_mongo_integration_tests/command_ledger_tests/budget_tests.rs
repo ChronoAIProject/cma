@@ -1,7 +1,12 @@
 use super::*;
-use layer2_core::budget::{BudgetError, BudgetPolicy, BudgetSettings, OwnerBudgetPolicy};
+use layer2_core::budget::{
+    BudgetError, BudgetPolicy, BudgetSettings, CloudObservation, CloudSpendPolicy,
+    OwnerBudgetPolicy, PlatformBudgetPolicy, PlatformPeriodLedger,
+};
 
-fn budget_capabilities() -> layer2_core::RuntimeCapabilities {
+const OPEN_START: &str = "2026-01-01T00:00:00Z";
+
+pub(super) fn budget_capabilities() -> layer2_core::RuntimeCapabilities {
     layer2_core::RuntimeCapabilities::new([
         layer2_core::RuntimeCapability::Conversation,
         layer2_core::RuntimeCapability::Usage,
@@ -9,9 +14,88 @@ fn budget_capabilities() -> layer2_core::RuntimeCapabilities {
     ])
 }
 
+/// A long period with a configured cloud source whose cap never binds.
+pub(super) fn open_platform() -> PlatformBudgetPolicy {
+    PlatformBudgetPolicy {
+        period_cap: u64::from(u32::MAX),
+        period_start: OPEN_START.into(),
+        period_end: "2100-01-01T00:00:00Z".into(),
+        warning_percent: 80,
+        stop_percent: 100,
+        protected_reserve: 0,
+        lag_allowance: 0,
+        cloud: Some(CloudSpendPolicy {
+            run_rate_units_per_day: 1,
+            max_observation_age_seconds: (1 << 53) - 1,
+        }),
+    }
+}
+
+fn budget_policy() -> BudgetPolicy {
+    let unit = u64::from(u8::MAX);
+    BudgetPolicy {
+        owner_day_limit: unit,
+        turn_limit: unit,
+        max_calls_per_turn: unit,
+        day_timezone: "UTC".into(),
+        input_token_units: 1,
+        output_token_units: 1,
+        max_unobserved_units: 1,
+        usage_timeout_seconds: 60,
+    }
+}
+
+/// Owner budgets exactly as #1621 configures them: a platform policy with no
+/// cloud source, so platform spend metering is not enabled (decision 31).
 pub(super) async fn configure(
     store: &MongoSandboxStore,
     owner: &layer2_core::SubjectId,
+) -> BudgetPolicy {
+    let platform = PlatformBudgetPolicy {
+        period_cap: u64::from(u32::MAX),
+        period_start: "2026-11-01T00:00:00Z".into(),
+        period_end: "2026-12-01T00:00:00Z".into(),
+        warning_percent: 80,
+        stop_percent: 100,
+        protected_reserve: 0,
+        lag_allowance: 0,
+        cloud: None,
+    };
+    configure_with_platform(store, owner, platform, 1).await
+}
+
+/// Owner budgets under an open, observed, metered platform period.
+pub(super) async fn configure_metered(
+    store: &MongoSandboxStore,
+    owner: &layer2_core::SubjectId,
+) -> BudgetPolicy {
+    let policy = configure(store, owner).await;
+    meter(store).await;
+    policy
+}
+
+/// Enable platform metering on an existing configuration: the open period with
+/// a cloud source and a zero observation at its start.
+pub(super) async fn meter(store: &MongoSandboxStore) {
+    let platform = open_platform();
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {"settings.model_budget.platform":
+            mongodb::bson::serialize_to_bson(&platform).unwrap()}},
+        )
+        .await
+        .unwrap();
+    let start = layer2_core::seconds_from_rfc3339(OPEN_START).unwrap();
+    observe(store, &platform, 0, start).await;
+}
+
+pub(super) async fn configure_with_platform(
+    store: &MongoSandboxStore,
+    owner: &layer2_core::SubjectId,
+    platform: PlatformBudgetPolicy,
+    revision: u64,
 ) -> BudgetPolicy {
     let mut cursor = store
         .agents
@@ -30,29 +114,11 @@ pub(super) async fn configure(
             .await
             .unwrap();
     }
-    let unit = u64::from(u8::MAX);
-    let policy = BudgetPolicy {
-        owner_day_limit: unit,
-        turn_limit: unit,
-        max_calls_per_turn: unit,
-        day_timezone: "UTC".into(),
-        input_token_units: 1,
-        output_token_units: 1,
-        max_unobserved_units: 1,
-        usage_timeout_seconds: 60,
-    };
+    let policy = budget_policy();
     let settings = layer2_core::PlatformSettings {
         model_budget: BudgetSettings {
             enabled: true,
-            platform: Some(layer2_core::budget::PlatformBudgetPolicy {
-                period_cap: u64::from(u32::MAX),
-                period_start: "2026-11-01T00:00:00Z".into(),
-                period_end: "2026-12-01T00:00:00Z".into(),
-                warning_percent: 80,
-                stop_percent: 100,
-                protected_reserve: 0,
-                lag_allowance: 0,
-            }),
+            platform: Some(platform),
             default_policy: None,
             request_models: Vec::new(),
             owners: vec![OwnerBudgetPolicy {
@@ -66,7 +132,7 @@ pub(super) async fn configure(
         .budget_settings
         .replace_one(
             doc! {"_id": "platform"},
-            doc! {"_id": "platform", "revision": 1_i64,
+            doc! {"_id": "platform", "revision": revision as i64,
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "settings": mongodb::bson::serialize_to_bson(&settings).unwrap() },
         )
@@ -74,6 +140,84 @@ pub(super) async fn configure(
         .await
         .unwrap();
     policy
+}
+
+/// Fixture stand-in for the operator observation route: record the latest
+/// cloud observation directly on the period row.
+pub(super) async fn observe(
+    store: &MongoSandboxStore,
+    platform: &PlatformBudgetPolicy,
+    units: u64,
+    observed_through: u64,
+) {
+    let ledger = PlatformPeriodLedger::open(platform, 0).unwrap();
+    let key = crate::store::budget::period_key(ledger.period_start);
+    store
+        .model_budget
+        .update_one(
+            doc! {"_id": &key},
+            doc! {"$setOnInsert": {"document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "record": mongodb::bson::serialize_to_bson(&ledger).unwrap()}},
+        )
+        .upsert(true)
+        .await
+        .unwrap();
+    let observation = CloudObservation {
+        observed_through,
+        units,
+        recorded_at: observed_through,
+        settings_revision: 0,
+    };
+    store
+        .model_budget
+        .update_one(
+            doc! {"_id": &key},
+            doc! {"$set": {"record.cloud": mongodb::bson::serialize_to_bson(&observation).unwrap()},
+            "$inc": {"record.revision": 1_i64}},
+        )
+        .await
+        .unwrap();
+}
+
+pub(super) async fn period_row(
+    store: &MongoSandboxStore,
+    platform: &PlatformBudgetPolicy,
+) -> Option<PlatformPeriodLedger> {
+    let (start, _) = platform.period_bounds().unwrap();
+    store
+        .model_budget
+        .find_one(doc! {"_id": crate::store::budget::period_key(start)})
+        .await
+        .unwrap()
+        .map(|document| crate::store::sandbox_mongo::read_record(&document).unwrap())
+}
+
+pub(super) async fn add_owner(store: &MongoSandboxStore, owner: &layer2_core::SubjectId) {
+    let entry = OwnerBudgetPolicy {
+        owner: owner.clone(),
+        policy: budget_policy(),
+    };
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$push": {"settings.model_budget.owners":
+            mongodb::bson::serialize_to_bson(&entry).unwrap()}},
+        )
+        .await
+        .unwrap();
+}
+
+pub(super) async fn raise_owner_limit(store: &MongoSandboxStore, factor: u64) {
+    let limit = budget_policy().owner_day_limit * factor;
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {"settings.model_budget.owners.0.policy.owner_day_limit": limit as i64}},
+        )
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
