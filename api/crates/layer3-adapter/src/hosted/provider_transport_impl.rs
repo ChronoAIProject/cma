@@ -2,6 +2,9 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        Some(self)
+    }
     async fn reattach_existing_capacity_recovery(
         &self,
         request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
