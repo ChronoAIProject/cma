@@ -100,6 +100,7 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) agent_connection_observations:
         Option<std::sync::Arc<super::agent_connection_observations::Observations>>,
     pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
@@ -212,6 +213,7 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            empty_discovery: Default::default(),
             agent_connection_observations: None,
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
             global_sandbox_limit: 0,

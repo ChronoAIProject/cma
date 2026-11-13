@@ -70,6 +70,7 @@ mod cooperative_budget;
 mod default_profiles;
 pub mod directory;
 mod durability;
+mod empty_discovery;
 mod encryption;
 mod execution_sections;
 mod media_uploads;
