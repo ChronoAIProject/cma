@@ -4,6 +4,8 @@ use axum::{body::Bytes, routing::post, Router};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 
+mod commonmark;
+
 #[tokio::test]
 async fn relay_http_trace_keeps_request_bytes_and_502_is_unknown_without_resend() {
     let captured = Arc::new(Mutex::new(Vec::new()));
