@@ -1,5 +1,6 @@
 //! Stateless event verification, admission and launch handoff.
 pub mod admission;
+mod admission_trace;
 pub mod custom;
 pub mod launch;
 pub(crate) mod media_guard;
