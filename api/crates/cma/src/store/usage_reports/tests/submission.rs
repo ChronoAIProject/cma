@@ -115,7 +115,32 @@ async fn pending_submission_has_a_bounded_wait_and_keeps_its_job() {
             .await
             .unwrap();
     store.finish_report(&lease, generated, true).await.unwrap();
-    let (status, ready) = request(&store, "POST", BASE, "operator", true, input(from)).await;
+    // Legacy reuse is scoped to the admission minute. Pin that clock when
+    // checking the cache; a later public POST may legitimately cross a minute
+    // and admit a new job. Read the original durable identity through HTTP.
+    let admitted_at = pending["as_of"].as_u64().unwrap();
+    let query = ReportInput {
+        from: Some(from),
+        to: Some(from + 60),
+        ..Default::default()
+    }
+    .validate(admitted_at)
+    .unwrap();
+    let cached = store
+        .submit(scope("operator", true), query, admitted_at)
+        .await
+        .unwrap();
+    assert_eq!(cached.status, ReportStatus::Ready);
+    assert_eq!(cached.report_id, lease.report.report_id);
+    let (status, ready) = request(
+        &store,
+        "GET",
+        &format!("{BASE}/{}", lease.report.report_id),
+        "operator",
+        true,
+        serde_json::Value::Null,
+    )
+    .await;
     assert_eq!(status, 200);
     assert_eq!(ready["report_id"], pending["report_id"]);
     assert!(
