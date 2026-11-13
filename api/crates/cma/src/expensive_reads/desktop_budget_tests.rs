@@ -4,6 +4,11 @@ use super::*;
 async fn busy_read_capacity_is_distinct_from_a_caller_budget_and_does_not_block_desktop() {
     let budget = budget(2, 1024);
     let held = budget.slots.clone().try_acquire_many_owned(2).unwrap();
+    let observations = budget
+        .observations
+        .clone()
+        .try_acquire_many_owned(2)
+        .unwrap();
     let router = protected(
         Router::new()
             .route("/api/v1/agents/{id}/usage", get(|| async { "usage" }))
@@ -42,6 +47,7 @@ async fn busy_read_capacity_is_distinct_from_a_caller_budget_and_does_not_block_
         );
     }
     drop(held);
+    drop(observations);
     let response = request(&router, Method::GET, "/api/v1/agents/a/transcript").await;
     assert_eq!(response.status(), StatusCode::OK);
     drop(response);

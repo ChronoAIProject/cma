@@ -2,6 +2,8 @@ use super::*;
 
 fn frame_budget() -> Arc<ReadBudget> {
     Arc::new(ReadBudget {
+        observations: Arc::new(Semaphore::new(2)),
+        reports: Arc::new(Semaphore::new(2)),
         retain_frames: true,
         slots: Arc::new(Semaphore::new(1)),
         response_bytes: 8,
