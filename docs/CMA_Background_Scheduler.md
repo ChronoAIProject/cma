@@ -159,7 +159,8 @@ adding an external dependency to these functions requires revisiting this reuse.
 
 The process retains at most 1,024 entries, 256 KiB per row, and 16 MiB of charged
 row/candidate/key storage including a conservative fixed reservation for the
-preallocated map and string-allocation overhead. Entries expire 30 seconds after validation; hits never extend expiry. Oversize, saturation,
+preallocated map and string-allocation overhead. Entries expire 30 seconds after
+validation; hits never extend expiry. Oversize, saturation,
 changed bytes, expiry and restart take the complete parser path. Query/validation
 failure or cancellation clears reusable observations. No borrowed cursor batch
 is retained. Local attachment is checked on every sweep; parent/runtime checks,
@@ -190,8 +191,7 @@ without waiting for that cleanup. Two stalled probes disable extra probing.
 Positive/failed probes suppress further extra probes for
 30 seconds while ordinary discovery continues at its existing cadence. No mutex
 spans IO. Cancellation drops the caller's interest; at most two probes retain IO
-slots
-until completion, and runtime shutdown cancels their tasks. No recurring task or
+slots until completion, and runtime shutdown cancels their tasks. No recurring task or
 unbounded waiter map is introduced.
 
 Existing admission notifications and timers remain responsible for wakes. A
