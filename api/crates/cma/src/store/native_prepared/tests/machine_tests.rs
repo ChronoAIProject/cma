@@ -1,6 +1,6 @@
 use super::*;
 
-fn machine_plan() -> NativePreparedPlan {
+pub(super) fn machine_plan() -> NativePreparedPlan {
     let original = plan();
     let image = format!("registry.example/omarchy@sha256:{}", "c".repeat(64));
     let mut sandbox = original.warm.profile.content.clone();
@@ -24,7 +24,7 @@ fn machine_plan() -> NativePreparedPlan {
     .unwrap()
 }
 
-async fn ready_machine(store: &MongoSandboxStore) -> Record {
+pub(super) async fn ready_machine(store: &MongoSandboxStore) -> Record {
     let original = records(store)
         .await
         .into_iter()
