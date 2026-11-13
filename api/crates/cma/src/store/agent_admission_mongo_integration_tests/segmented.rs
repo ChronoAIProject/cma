@@ -238,3 +238,6 @@ mod bounds;
 
 #[path = "segmented/bindings.rs"]
 mod bindings;
+
+#[path = "segmented/replay.rs"]
+mod replay;
