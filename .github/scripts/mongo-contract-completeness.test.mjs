@@ -111,6 +111,7 @@ const desktopChild = 'store::sandbox_sessions::exclusive::process_tests::desktop
 const desktopParent = 'store::sandbox_sessions::exclusive::process_tests::independent_processes_preserve_claim_after_holder_exit';
 const desktopPerformance = 'store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows';
 const desktopEndpoints = [
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation',
   'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver',
   'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing',
   'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority',
@@ -133,7 +134,7 @@ test('desktop selection keeps the process parent while declaring its exact child
   const [metadata, exclusions] = desktopInventory();
   const result = check(metadata, exclusions);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /10 ignored CMA tests; 3 selected; 5 separate-fixture tests; 2 child helpers/);
+  assert.match(result.stdout, /11 ignored CMA tests; 3 selected; 6 separate-fixture tests; 2 child helpers/);
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   assert.ok(source.includes(`not test(=${desktopChild})`));
   assert.ok(source.includes(`not test(=${desktopPerformance})`));
