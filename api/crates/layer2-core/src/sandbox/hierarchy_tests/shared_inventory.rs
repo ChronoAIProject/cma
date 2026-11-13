@@ -157,6 +157,7 @@ async fn shared_sandbox_inventory_fences_hidden_grants_and_original_deadline_aft
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
         let reads = HierarchyReadService::new(Arc::new(BufferedStore {
+            projected: false,
             inner: f.store.clone(),
             sandbox: None,
             dependency_failure: false,

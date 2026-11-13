@@ -7,6 +7,8 @@ use mongodb::{bson::doc, ClientSession};
 
 use super::super::ApplyError;
 use super::trace_rejection;
+use crate::store::agent_capacity_recovery::source::fence_filter;
+use crate::store::agent_log_integrity::TransactionLogError;
 use crate::store::agents::read_agent;
 use crate::store::sandbox_mongo::{
     record_bson, signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -63,36 +65,55 @@ pub(super) async fn resources(
     parent: &Sandbox,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
-    for (collection, id, revision, created_at, stage) in [
-        (
-            &store.agents,
-            agent.id.as_str(),
-            agent.revision,
-            &agent.created_at,
+    let mut agent_filter = fence_filter(store, agent, session).await.map_err(|error| {
+        trace_rejection(
+            request,
             "resources_agent",
-        ),
-        (
-            &store.sandboxes,
-            parent.id.as_str(),
-            parent.revision,
-            &parent.created_at,
-            "resources_parent",
-        ),
-    ] {
-        let revision =
-            signed(revision, "resource revision").map_err(|_| CommandLedgerError::Corrupt)?;
-        let result = collection.update_one(
-            doc! { "_id": id, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": revision, "record.created_at": created_at },
+            match error {
+                TransactionLogError::Domain(_) => ApplyError::Domain(CommandLedgerError::Corrupt),
+                TransactionLogError::Driver(error) => ApplyError::Driver(error),
+            },
+        )
+    })?;
+    agent_filter.insert("record.created_at", &agent.created_at);
+    let result = store
+        .agents
+        .update_one(
+            agent_filter,
             doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
-        ).session(&mut *session).await
-            .map_err(|error| trace_rejection(request, stage, error.into()))?;
-        if result.matched_count != 1 {
-            return Err(trace_rejection(
-                request,
-                stage,
-                CommandLedgerError::Conflict.into(),
-            ));
-        }
+        )
+        .session(&mut *session)
+        .await
+        .map_err(|error| trace_rejection(request, "resources_agent", error.into()))?;
+    if result.matched_count != 1 {
+        return Err(trace_rejection(
+            request,
+            "resources_agent",
+            CommandLedgerError::Conflict.into(),
+        ));
+    }
+    let parent_revision =
+        signed(parent.revision, "resource revision").map_err(|_| CommandLedgerError::Corrupt)?;
+    let result = store
+        .sandboxes
+        .update_one(
+            doc! {
+                "_id": parent.id.as_str(),
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": parent_revision,
+                "record.created_at": &parent.created_at,
+            },
+            doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
+        )
+        .session(&mut *session)
+        .await
+        .map_err(|error| trace_rejection(request, "resources_parent", error.into()))?;
+    if result.matched_count != 1 {
+        return Err(trace_rejection(
+            request,
+            "resources_parent",
+            CommandLedgerError::Conflict.into(),
+        ));
     }
     Ok(())
 }

@@ -1,3 +1,5 @@
+import { Resources } from './Resources';
+import type { SandboxResourceAvailability } from './sandboxInput';
 import { useEffect, useRef } from 'react';
 import type { AgentDetail } from '../api/types';
 import { Button } from '../ui/Button';
@@ -11,6 +13,7 @@ import { AgentFiles } from './files/AgentFiles';
 import { AgentShareLinks } from '../resources/AgentShareLinks';
 
 interface AgentDetailsProps {
+  readonly availability?: SandboxResourceAvailability;
   readonly detail?: AgentDetail;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
@@ -22,6 +25,7 @@ interface AgentDetailsProps {
 
 export function AgentDetails({
   detail,
+  availability = { state: 'checking', notice: 'Checking Sandbox availability…' },
   pending,
   historyLoading = false,
   open = false,
@@ -83,6 +87,35 @@ export function AgentDetails({
                 </dd>
               </div>
             </dl>
+          </section>
+        ) : null}
+        {open ? (
+          <section className="agent-details__band" aria-label="Sandbox machine">
+            <h2>Sandbox machine</h2>
+            <dl>
+              <div className="agent-details__fact">
+                <dt>Sandbox id</dt>
+                <dd>
+                  <code>{detail.sandbox.id}</code>
+                </dd>
+              </div>
+            </dl>
+            <Resources
+              agentId={detail.id}
+              sandboxId={detail.sandbox.id}
+              sandboxProfile={detail.sandbox.profile}
+              availability={availability}
+            />
+            <h3>Agent key scope</h3>
+            {detail.reach.length ? (
+              <ul>
+                {[...new Set(detail.reach)].map((scope) => (
+                  <li key={scope}>{scope}</li>
+                ))}
+              </ul>
+            ) : (
+              <p>No services are enabled.</p>
+            )}
           </section>
         ) : null}
         <AgentFiles key={`files:${detail.id}`} agentId={detail.id} active={open} />

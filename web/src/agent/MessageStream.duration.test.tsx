@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import type { V2AgentCursor } from '@chronoai/cma-sdk';
 import type { AgentEvent, AgentLiveEvent } from '../api/types';
@@ -21,24 +21,24 @@ const draw = (conversation: ReturnType<typeof empty>) => (
   <MessageStream conversation={conversation} onApproval={vi.fn()} />
 );
 
-it('shows elapsed time immediately on completion, only under the final reply, and after replay', () => {
+it('keeps recorded timing through completion and reload while answer footers show only relative time', () => {
   const active = events.slice(0, -1).reduce(foldAgentEvent, empty());
   const view = render(draw(active));
   expect(screen.queryByLabelText('Turn duration')).not.toBeInTheDocument();
-  view.rerender(draw(foldAgentEvent(active, events[3]!)));
-  expect(screen.getByLabelText('Turn duration')).toHaveTextContent(
-    'Worked for 2 hours 3 minutes 4 seconds.',
+  const complete = foldAgentEvent(active, events[3]!);
+  view.rerender(draw(complete));
+  expect(workedFor(complete.turnTiming?.['1'])).toBe('Worked for 2 hours 3 minutes 4 seconds.');
+  expect(screen.queryByLabelText('Turn duration')).not.toBeInTheDocument();
+  expect(screen.getByText('Finished.').closest('article')!.querySelector('time')).toHaveAttribute(
+    'dateTime',
+    end,
   );
-  expect(
-    within(screen.getByText('Checking.').closest('article')!).queryByLabelText('Turn duration'),
-  ).toBeNull();
-  expect(
-    within(screen.getByText('Finished.').closest('article')!).getByLabelText('Turn duration'),
-  ).toBeVisible();
   view.unmount();
   render(draw(events.reduce(foldAgentEvent, empty())));
-  expect(screen.getByLabelText('Turn duration')).toHaveTextContent(
-    'Worked for 2 hours 3 minutes 4 seconds.',
+  expect(screen.queryByLabelText('Turn duration')).not.toBeInTheDocument();
+  expect(screen.getByText('Finished.').closest('article')!.querySelector('time')).toHaveAttribute(
+    'dateTime',
+    end,
   );
 });
 
@@ -132,9 +132,8 @@ it('uses the recorded terminal timestamp when hydrating a completed transcript',
     ],
   });
   render(draw(snapshot));
-  expect(screen.getByLabelText('Turn duration')).toHaveTextContent(
-    'Worked for 2 hours 3 minutes 4 seconds.',
-  );
+  expect(workedFor(snapshot.turnTiming?.['1'])).toBe('Worked for 2 hours 3 minutes 4 seconds.');
+  expect(screen.queryByLabelText('Turn duration')).not.toBeInTheDocument();
 });
 
 it.each([

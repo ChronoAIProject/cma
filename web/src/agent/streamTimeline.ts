@@ -1,8 +1,19 @@
 import type { ConversationState } from './model';
 import { groupToolCalls, type Entry, type TimelineItem } from './timeline';
 import { isPendingTool, toolOutcome } from './toolStatus';
+import type { ConversationMessage } from './model';
 
 const entryCache = new WeakMap<Entry['item'], Entry>();
+
+/** React identity follows a turn across its live and durable message ids. */
+export function messageStreamKey(item: TimelineItem): string {
+  if (item.kind === 'tools') return item.id;
+  if (item.kind === 'message') {
+    const message = item.item as ConversationMessage;
+    if (message.renderKey !== undefined) return `message:${message.renderKey}`;
+  }
+  return `${item.kind}:${item.item.id}`;
+}
 
 function entry<Kind extends Entry['kind']>(
   kind: Kind,
@@ -74,7 +85,17 @@ export function createStreamTimeline() {
     )
       return previous!.projection;
     const entries: Entry[] = [
-      ...conversation.messages.map((item) => entry('message', item)),
+      ...conversation.messages
+        .filter(
+          (item) =>
+            !(
+              item.liveOnly &&
+              item.role === 'assistant' &&
+              item.status === 'streaming' &&
+              item.content === ''
+            ),
+        )
+        .map((item) => entry('message', item)),
       ...conversation.toolCalls
         .filter(
           (item) =>
@@ -87,7 +108,9 @@ export function createStreamTimeline() {
       ...conversation.plans
         .filter((item) => item.entries.length > 0 || item.incomplete)
         .map((item) => entry('plan', item)),
-      ...conversation.recovery.map((item) => entry('recovery', item)),
+      ...conversation.recovery
+        .filter((item) => item.clearsOn === undefined)
+        .map((item) => entry('recovery', item)),
     ];
     let projection: ReturnType<typeof layout>;
     if (

@@ -18,7 +18,7 @@ fn restarted(harness: &Harness, skills: Arc<dyn AgentSkillResolver>) -> Arc<Agen
     AgentWorker::new(dependencies, config)
 }
 
-fn runtime_skill(version: &str, hash: char, locator: &str) -> AgentSkill {
+pub(super) fn runtime_skill(version: &str, hash: char, locator: &str) -> AgentSkill {
     AgentSkill {
         id: "research".into(),
         name: None,
@@ -453,3 +453,6 @@ async fn live_skill_resolution_failure_does_not_fail_the_agent_or_publish_instal
         .skills
         .is_empty());
 }
+
+#[path = "skill_upgrade_tests.rs"]
+mod upgrade_tests;

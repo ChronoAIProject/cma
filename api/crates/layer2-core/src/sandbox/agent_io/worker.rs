@@ -30,6 +30,21 @@ pub enum CommandReadiness {
     Reject(CommandFailureCode),
 }
 
+/// Preparation failures retain their retry/terminal distinction across adapters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CommandPreparationError {
+    #[error("revival authority is temporarily unavailable")]
+    AuthorityUnavailable,
+    #[error("command or lifecycle state changed; recheck current authority")]
+    StateChanged,
+    #[error("revival dependency is temporarily unavailable")]
+    DependencyUnavailable,
+    #[error("command preparation exceeded its IO bound")]
+    TimedOut,
+    #[error("command preparation refused: {0:?}")]
+    Rejected(CommandFailureCode),
+}
+
 /// Production implements this with actual current credential authorization and
 /// the existing context/claimed-operation services. No actor is synthesized from
 /// the envelope owner. Preparation may request revival but may never send input.
@@ -37,12 +52,16 @@ pub enum CommandReadiness {
 pub trait AgentCommandExecution: Send + Sync {
     /// Fresh authority and target checks, with no lifecycle or runtime effects.
     async fn check_queued(&self, command: &AdmittedAgentCommand) -> CommandReadiness;
-    async fn prepare_queued(&self, command: &AdmittedAgentCommand);
+    async fn prepare_queued(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError>;
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt;
 }
 
 pub struct AgentCommandWorker {
-    store: Arc<dyn AgentCommandWorkerStore>,
+    pub(super) store: Arc<dyn AgentCommandWorkerStore>,
+    pub(super) dispatched_recheck_delay: Duration,
     execution: Arc<dyn AgentCommandExecution>,
     holder: String,
 }
@@ -52,6 +71,15 @@ impl AgentCommandWorker {
         store: Arc<dyn AgentCommandWorkerStore>,
         execution: Arc<dyn AgentCommandExecution>,
         holder: String,
+    ) -> Result<Arc<Self>, CommandLedgerError> {
+        Self::with_recheck_delay(store, execution, holder, Duration::ZERO)
+    }
+
+    pub fn with_recheck_delay(
+        store: Arc<dyn AgentCommandWorkerStore>,
+        execution: Arc<dyn AgentCommandExecution>,
+        holder: String,
+        dispatched_recheck_delay: Duration,
     ) -> Result<Arc<Self>, CommandLedgerError> {
         CommandClaimRequest {
             agent_id: crate::AgentId("validation".into()),
@@ -64,6 +92,7 @@ impl AgentCommandWorker {
             store,
             execution,
             holder,
+            dispatched_recheck_delay,
         }))
     }
 
@@ -114,7 +143,12 @@ impl AgentCommandWorker {
         if candidate.work.dispatch.is_some() {
             return bounded(self.store.reconcile_command(id))
                 .await
-                .map(|_| Duration::ZERO);
+                .map(|command| {
+                    super::reconcile_pacing::recheck_delay(
+                        command.status,
+                        self.dispatched_recheck_delay,
+                    )
+                });
         }
         let delay = candidate.continuation_retry_delay(&now_rfc3339());
         if !delay.is_zero() && !candidate.queue_expired(&now_rfc3339()) {
@@ -135,6 +169,16 @@ impl AgentCommandWorker {
                     CommandReadiness::Retry
                 })
         };
+        if readiness != CommandReadiness::Ready {
+            tracing::warn!(
+                event = "command_readiness",
+                command_id = %id,
+                agent_id = %candidate.receipt.envelope.agent_id,
+                outcome = ?readiness,
+                timed_out = readiness_timed_out,
+                "Queued command is not ready"
+            );
+        }
         match readiness {
             CommandReadiness::Ready => {}
             CommandReadiness::Retry => {
@@ -189,7 +233,28 @@ impl AgentCommandWorker {
             {
                 return Ok(Duration::ZERO);
             }
-            let _ = tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current)).await;
+            let preparation =
+                tokio::time::timeout(IO_BOUND, self.execution.prepare_queued(&current))
+                    .await
+                    .unwrap_or(Err(CommandPreparationError::TimedOut));
+            if let Err(error) = preparation {
+                tracing::warn!(event = "command_preparation", command_id = %id,
+                    agent_id = %current.receipt.envelope.agent_id,
+                    boundary = "prepare_queued", error_kind = ?error,
+                    "Queued command preparation failed");
+                if let CommandPreparationError::Rejected(code) = error {
+                    // The revision CAS refuses stale rejection after another
+                    // worker claims, dispatches, edits or cancels this command.
+                    return bounded(self.store.reject_unclaimed_command(
+                        id,
+                        current.revision,
+                        code,
+                        now_rfc3339(),
+                    ))
+                    .await
+                    .map(|()| Duration::ZERO);
+                }
+            }
             // Channel preparation or an explicit interruption may have just
             // cancelled the active turn. Revisit its replacement promptly,
             // still reacquiring authority and the lane on the next attempt.

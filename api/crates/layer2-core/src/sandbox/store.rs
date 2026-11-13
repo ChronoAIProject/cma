@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-
 use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
+use async_trait::async_trait;
 
 use super::{
     Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus,
@@ -12,14 +11,23 @@ use super::{
 
 mod sandbox;
 pub use sandbox::SandboxStore;
+pub mod ledger_collection;
+mod pagination;
 mod service_traits;
 pub use super::binding::BindingStore;
+use pagination::page;
 pub use service_traits::*;
 
 mod agent;
 pub use agent::AgentStore;
 mod agent_log;
-pub use agent_log::AgentLogStore;
+pub use agent_log::{AgentLogFinalAnswer, AgentLogStore};
+#[cfg(any(test, feature = "test-support"))]
+pub mod agent_log_contract;
+mod agent_response_log;
+pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
+mod agent_log_publication;
+pub use agent_log_publication::AgentLogPublicationIdentity;
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
@@ -33,7 +41,8 @@ mod agent_reads;
 pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
-    apply_sandbox_runtime_loss, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
+    validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
@@ -45,7 +54,7 @@ mod provenance;
 mod provenance_inventory;
 pub use provenance::{
     AgentProvenanceBackfillStore, AgentProvenanceSnapshot, AgentProvenanceStore,
-    ProvenanceBackfillOutcome,
+    ProvenanceBackfillOutcome, ProvenanceBackfillProgress,
 };
 pub use provenance_inventory::AgentProvenanceInventoryStore;
 mod agent_admission;
@@ -53,26 +62,36 @@ pub use agent_admission::{
     AgentAdmission, AgentAdmissionResult, AgentAdmissionStore, AgentCreation,
 };
 mod agent_conversation;
+mod agent_conversation_capacity;
+pub use agent_conversation_capacity::AgentConversationCapacitySettlement;
 mod agent_message_checkpoint;
 mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
-pub use agent_message_checkpoint::AgentMessageCheckpoint;
+pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
 mod agent_log_capacity;
 pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
+mod agent_repeated_failure;
+pub use agent_repeated_failure::{
+    plan_agent_repeated_failure, validate_agent_repeated_failure, AgentRepeatedFailure,
+};
 mod agent_cleanup_capacity;
 pub use agent_cleanup_capacity::{
-    agent_cleanup_capacity_retry, plan_agent_cleanup_capacity_retry,
-    validate_agent_cleanup_capacity_log,
+    agent_cleanup_capacity_retry, agent_cleanup_capacity_retry_hint,
+    plan_agent_cleanup_capacity_retry, plan_agent_marked_cleanup_capacity_retry,
+    plan_agent_runtime_ledger_hold_retry, validate_agent_cleanup_capacity_log,
+    validate_agent_cleanup_capacity_log_with_retry, AGENT_RUNTIME_LEDGER_HOLD,
+    AGENT_RUNTIME_LEDGER_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
 };
 mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore, VersionedWorktree,
+    AgentConnectionRecoveryRequest, AgentRetryObservation, AgentWorkMutation, AgentWorkerStore,
+    VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
@@ -152,6 +171,10 @@ pub struct Page<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxStoreError {
+    #[error(transparent)]
+    Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]
@@ -171,6 +194,8 @@ pub enum SandboxStoreError {
     AgentLogCapacityExceeded,
     #[error("sandbox limit reached: {live} of {limit}")]
     LimitReached { limit: u16, live: u16 },
+    #[error("global sandbox capacity is unavailable")]
+    GlobalCapacityReached,
     #[error("sandbox is not ready for workspace admission")]
     SandboxNotReady,
     #[error("workspace name is already live in the sandbox")]
@@ -383,6 +408,10 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    admission_control: crate::admission::AdmissionControl,
+    admission_audit: Vec<crate::ActivityRecord>,
+    admission_history: Vec<crate::admission::AdmissionChange>,
+    retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
     binding_key_history: std::collections::HashSet<String>,
@@ -420,6 +449,7 @@ struct State {
     agent_logs: HashMap<AgentId, Vec<AgentLogEntry>>,
     agent_message_checkpoints: HashMap<AgentId, AgentMessageCheckpoint>,
     checkpoints: HashMap<(SandboxId, u64), super::SandboxCheckpointRef>,
+    sandbox_sessions: std::collections::BTreeMap<(SandboxId, String), String>,
 }
 
 impl InMemorySandboxStore {
@@ -457,28 +487,6 @@ impl InMemorySandboxStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-}
-
-fn page<T: Clone>(
-    mut values: Vec<(String, T)>,
-    request: &PageRequest,
-) -> Result<Page<T>, SandboxStoreError> {
-    if request.limit == 0 || request.limit > MAX_PAGE_SIZE {
-        return Err(SandboxStoreError::InvalidPage);
-    }
-    values.sort_by(|left, right| left.0.cmp(&right.0));
-    if let Some(cursor) = &request.cursor {
-        values.retain(|(key, _)| key > cursor);
-    }
-    let has_more = values.len() > usize::from(request.limit);
-    values.truncate(usize::from(request.limit));
-    let next = has_more
-        .then(|| values.last().map(|(key, _)| key.clone()))
-        .flatten();
-    Ok(Page {
-        items: values.into_iter().map(|(_, value)| value).collect(),
-        next,
-    })
 }
 
 mod admin_memory;

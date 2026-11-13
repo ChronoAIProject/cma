@@ -12,6 +12,7 @@ use super::Scenario;
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let (router, subject, capabilities) = match name {
+        "diagnostic_report" => (super::super::browser_telemetry_router(|_| {}), None, vec![]),
         "discovery" => (super::super::router(), None, vec![]),
         "profiles_owner" | "profiles_forbidden" | "profiles_anonymous" | "marketplace_disabled" => {
             (

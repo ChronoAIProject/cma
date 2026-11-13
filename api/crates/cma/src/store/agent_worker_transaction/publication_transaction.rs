@@ -5,11 +5,13 @@ pub(super) async fn commit(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
+    repeated_marker: Option<&AgentLogEntry>,
 ) -> Result<bool, SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
     timing.acquired();
+    let mut history_cache = publication_history::AttemptHistory::default();
     let mut last_transient = None;
     let jitter = uuid::Uuid::new_v4().as_u128() as u64;
     for attempt in 0..TRANSACTION_ATTEMPTS {
@@ -23,18 +25,25 @@ pub(super) async fn commit(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                last_transient = Some(error);
-                continue;
+        let scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) => {
+                if is_transient(&error) {
+                    last_transient = Some(error);
+                    continue;
+                }
+                return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let publication = if observed.is_some() {
-            apply_publication_observed(store, &mutation, observed, &mut session).await
-        } else {
-            apply_publication(store, &mutation, &mut session).await
         };
+        let publication = apply_publication_observed(
+            store,
+            &mutation,
+            observed,
+            repeated_marker,
+            &mut history_cache,
+            scope,
+        )
+        .await;
         let receipt = match publication {
             Ok(receipt) => receipt,
             Err(ApplyError::PreparedIneligible) => {
@@ -57,7 +66,9 @@ pub(super) async fn commit(
         };
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
+                history_cache.committed(store);
                 timing.committed();
+                crate::telemetry::work::published(&receipt.logs, "committed");
                 return Ok(true);
             }
             CommitOutcome::Retry(error) => last_transient = Some(error),
@@ -78,6 +89,7 @@ pub(super) async fn commit(
                     )
                     .await?
                     {
+                        crate::telemetry::work::published(&receipt.logs, "reconciled");
                         Ok(true)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(

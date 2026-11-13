@@ -14,19 +14,14 @@ use std::{
 #[path = "agent_skill_install_tests.rs"]
 mod tests;
 
-const MARKER: &str = ".cma-install-receipt.json";
+pub(crate) const MARKER: &str = ".cma-install-receipt.json";
 
 pub(crate) fn validate(request: &AgentSkillInstallRequest) -> Result<()> {
     safe_component(request.agent_id.as_str(), "agent id")?;
     safe_component(&request.skill.id, "skill id")?;
     if matches!(request.skill.id.as_str(), "nyxid" | "ornn-agent-manual-cli")
         || !request.has_valid_sha256()
-        || request.operation_id
-            != format!(
-                "agent:{}:skill:{}:install:v1",
-                request.agent_id.as_str(),
-                request.skill.id
-            )
+        || request.operation_id != request.expected_operation_id()
         || request
             .skill
             .version
@@ -41,10 +36,37 @@ pub(crate) fn validate(request: &AgentSkillInstallRequest) -> Result<()> {
     {
         return Err(rejected("invalid immutable skill installation request"));
     }
+    if let Some(upgrade) = &request.upgrade {
+        if upgrade.sequence == 0
+            || upgrade.previous.id != request.skill.id
+            || upgrade.previous.version == request.skill.version
+            || upgrade
+                .previous
+                .version
+                .as_ref()
+                .is_none_or(|v| v.is_empty() || v.len() > 256)
+            || upgrade.previous.archive_sha256.len() != 64
+            || !upgrade
+                .previous
+                .archive_sha256
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            || upgrade.previous_receipt.as_ref().is_some_and(|receipt| {
+                receipt.agent_id != request.agent_id
+                    || receipt.skill_id != request.skill.id
+                    || receipt.archive_sha256 != upgrade.previous.archive_sha256
+                    || receipt.request_sha256.len() != 64
+            })
+        {
+            return Err(crate::agent_skill_upgrade::conflict(
+                "invalid previous installation identity",
+            ));
+        }
+    }
     Ok(())
 }
 
-fn root(config: &RuntimeConfig, request: &AgentSkillInstallRequest) -> Result<PathBuf> {
+pub(crate) fn root(config: &RuntimeConfig, request: &AgentSkillInstallRequest) -> Result<PathBuf> {
     crate::persistent_home::verify(config)?;
     let root = config.agent_home(request.agent_id.as_str()).join("skills");
     let relative = root
@@ -66,6 +88,9 @@ fn root(config: &RuntimeConfig, request: &AgentSkillInstallRequest) -> Result<Pa
 pub(crate) fn preflight(config: &RuntimeConfig, request: &AgentSkillInstallRequest) -> Result<()> {
     validate(request)?;
     let path = root(config, request)?.join(&request.skill.id);
+    if request.upgrade.is_some() {
+        return crate::agent_skill_upgrade::preflight(config, request);
+    }
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io_error(error)),
@@ -105,6 +130,9 @@ pub(crate) async fn install(
     client: &reqwest::Client,
     request: &AgentSkillInstallRequest,
 ) -> Result<AgentSkillInstallReceipt> {
+    if request.upgrade.is_some() {
+        return crate::agent_skill_upgrade::install(config, client, request).await;
+    }
     if let Some(receipt) = recover(config, request)? {
         return Ok(receipt);
     }
@@ -146,7 +174,7 @@ pub(crate) async fn install(
 
 // Publish atomically and refuse even an empty existing directory. A check followed
 // by ordinary rename would silently overwrite a concurrent owner-created entry.
-fn rename_new(source: &Path, destination: &Path) -> std::io::Result<()> {
+pub(crate) fn rename_new(source: &Path, destination: &Path) -> std::io::Result<()> {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let source = CString::new(source.as_os_str().as_bytes())?;
     let destination = CString::new(destination.as_os_str().as_bytes())?;
@@ -177,7 +205,7 @@ fn rename_new(source: &Path, destination: &Path) -> std::io::Result<()> {
 fn rejected(detail: &str) -> RuntimeError {
     RuntimeError::rejected("agent_skill_install_conflict", detail)
 }
-fn io_error(error: std::io::Error) -> RuntimeError {
+pub(crate) fn io_error(error: std::io::Error) -> RuntimeError {
     RuntimeError::unavailable(
         "agent_skill_install_unavailable",
         format!("skill filesystem operation: {error}"),

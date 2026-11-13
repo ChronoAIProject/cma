@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "namespace": "chrono-bot",
+  "deployment": "cma-web",
+  "captured_generation": 209,
+  "captured_at": "2026-11-11T00:03:24.276426+00:00",
+  "initializer_count": 63,
+  "init_containers_sha256": "656c55d9b30266ebc59ef8865b78d8109b3a79eccd8b2ec2dda2691520352905",
+  "rollback_image_digest": "sha256:f85b24cea3bb0ed96d9caa34db37d2d0fd43472d74ef9f98872d0f6ccff6952c"
+}

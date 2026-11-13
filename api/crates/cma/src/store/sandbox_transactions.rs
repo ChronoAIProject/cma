@@ -168,6 +168,9 @@ async fn apply_transaction(
             if current.revision != *expected_revision {
                 return Err(ApplyError::Domain(SandboxStoreError::Conflict));
             }
+            current
+                .validate_retirement_archive_successor(sandbox)
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
             channel_reuse::require(store, &current, sandbox, session).await?;
             let revival_receipt = command_revival::fence(
                 store,

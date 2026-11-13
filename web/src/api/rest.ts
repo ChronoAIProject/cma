@@ -1,3 +1,4 @@
+import { createUsageClient } from '../usage/client';
 import { ApiError, ProtocolError, type Cma } from '@chronoai/cma-sdk';
 import { AgentLifecycleCreateError } from './client';
 import type {
@@ -69,7 +70,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     return profile.content;
   };
   return {
-    operationReplay: sdk.agentEventsV2,
+    usageViews: createUsageClient(sdk),
     deliverables: sdk.agents,
     documents: documentsClient(),
     browser: sdk.agentBrowser,
@@ -87,6 +88,16 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       );
       return { runtimeUpdate: runtimeUpdate(result.runtime_update), revision: result.revision };
     },
+    inspectSandboxRecovery: (id, options) => sdk.sandboxes.inspectRuntimeRecovery(id, options),
+    recoverSandboxRetained: (id, expectedRevision, options) =>
+      sdk.sandboxes.recoverRetained(
+        id,
+        {
+          expected_revision: expectedRevision,
+          confirm_same_image_recovery: true,
+        },
+        options,
+      ),
     ...agentSettingsClient(),
     ...messageFeedbackClient(),
     readSuggestedReplies: (agentId, scope, options) =>
@@ -99,23 +110,6 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     resourceViews: sdk,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
-    readDesktopCapability: async (scope, options) => {
-      const document = await sdk.readOpenApi(options);
-      const components = document.components as
-        | {
-            schemas?: { AgentLifecycleCreateRequest?: { properties?: { desktop?: unknown } } };
-          }
-        | undefined;
-      if (!components?.schemas?.AgentLifecycleCreateRequest?.properties?.desktop)
-        return {
-          state: 'unsupported',
-          reason: 'This service does not support desktop creation.',
-          runtime_contract: 3,
-          min_memory_mib: 2048,
-          min_cpu_millis: 1000,
-        };
-      return sdk.agents.desktopCapability(scope, options);
-    },
     readTaskCreationSupport: async (options) => {
       const document = await sdk.readOpenApi(options);
       const components = document.components as
@@ -392,6 +386,14 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     reviveSandbox: async (id, options) => {
       await sdk.sandboxes.revive(id, options);
+    },
+    setSandboxAlwaysOn: async (id, alwaysOn, expectedRevision, options) => {
+      await sdk.sandboxes.setAlwaysOn(
+        id,
+        { always_on: alwaysOn, expected_revision: expectedRevision },
+        options,
+      );
+      return sandboxDetail(await sdk.sandboxes.read(id, { signal: options.signal }));
     },
     deleteSandbox: async (id, options) => {
       await sdk.sandboxes.delete(id, options);

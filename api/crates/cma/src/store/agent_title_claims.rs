@@ -1,5 +1,6 @@
 //! Single-writer Mongo claims for automatic agent-title generation.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -10,7 +11,7 @@ use layer2_core::sandbox::{
 use mongodb::bson::{doc, Bson, DateTime, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
+use super::agent_log::scan_complete_log_with_session;
 use super::agent_log_integrity::TransactionLogError;
 use super::agent_title_state::{
     checked_claim_times, claim_fields, read_title_state, TitleState, TITLE,
@@ -112,20 +113,27 @@ async fn apply_claim(
     let Some((agent, state)) = load_agent(store, request.agent_id(), session).await? else {
         return Ok(ClaimApply::Settled(None));
     };
-    if state.stored.is_some() {
+    if state
+        .stored
+        .as_ref()
+        .is_some_and(|title| title.source != layer2_core::sandbox::AgentTitleSource::Fallback)
+    {
         return Ok(ClaimApply::Settled(None));
     }
     if title_transcript(store, &agent, session).await?.is_none() {
         return Ok(ClaimApply::Settled(None));
     }
     if let Some(lease) = state.lease.as_ref().filter(|lease| lease.expires_at > now) {
-        return Ok(ClaimApply::Settled(
-            lease
-                .matches_request(request)
-                .then(|| lease.to_claim(request)),
-        ));
+        return Ok(ClaimApply::Settled(lease.matches_request(request).then(
+            || lease.to_claim(request).with_attempts(state.retry.attempts),
+        )));
     }
-    let mode = if state.attempted {
+    if !state.retry.eligible(now) {
+        return Ok(ClaimApply::Settled(None));
+    }
+    let exhausted = state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS;
+    let attempts = state.retry.attempts + u32::from(!exhausted);
+    let mode = if exhausted {
         AgentTitleClaimMode::FallbackOnly
     } else {
         AgentTitleClaimMode::Generate
@@ -135,13 +143,23 @@ async fn apply_claim(
         mode,
         now.to_system_time(),
         expires_at.to_system_time(),
-    );
+    )
+    .with_attempts(attempts);
     let mut filter = current_agent_filter(&agent);
-    filter.insert(TITLE, Bson::Null);
-    filter.insert("record.title", Bson::Null);
+    filter.insert(
+        TITLE,
+        agent.title.clone().map(Bson::String).unwrap_or(Bson::Null),
+    );
+    filter.insert(
+        "record.title",
+        agent.title.clone().map(Bson::String).unwrap_or(Bson::Null),
+    );
     let result = store
         .agents
-        .update_one(filter, doc! { "$set": claim_fields(&claim) })
+        .update_one(
+            filter,
+            doc! { "$set": claim_fields(&claim, state.stored.is_some()) },
+        )
         .session(session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -175,8 +193,23 @@ async fn title_transcript(
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, ApplyError> {
+    let row = store
+        .agents
+        .find_one(doc! {"_id":agent.id.as_str()})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or_else(|| map_domain(SandboxStoreError::NotFound))?;
+    if let Some(transcript) =
+        super::agent_log_segments::ordinary::title(store, agent, &row, session)
+            .await
+            .map_err(map_transaction_log)?
+    {
+        return Ok(transcript);
+    }
     let mut logs = Vec::new();
     scan_complete_log_with_session(
+        ScanCaller::TitleDiscovery,
         store,
         &agent.id,
         agent.conversation.last_seq,
@@ -216,27 +249,24 @@ async fn reconcile_claim(
     {
         return Ok(false);
     }
-    let mut logs = Vec::new();
-    scan_complete_log_with_snapshot_session(
+    let segmented = super::agent_log_segments::read_format(&document)
+        .map_err(map_store_error)?
+        .is_some();
+    Ok(super::agent_titles::transcript_at_snapshot_with_format(
         store,
-        &agent.id,
-        agent.conversation.last_seq,
+        &agent,
         &mut session,
-        |entry| {
-            logs.push(entry);
-            Ok(())
-        },
+        segmented,
     )
-    .await
-    .map_err(map_reconciliation_log)?;
-    Ok(AgentTitleTranscript::from_agent_log(&agent, &logs).is_some())
+    .await?
+    .is_some())
 }
 
-fn current_agent_filter(agent: &Agent) -> Document {
+pub(super) fn current_agent_filter(agent: &Agent) -> Document {
     doc! {
         "channel_reuse_cleanup_execution": { "$exists": false },
         "_id": agent.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "document_schema_version": { "$in": [DOCUMENT_SCHEMA_VERSION, 2_i64] },
         "revision": signed(agent.revision, "agent revision").unwrap_or(i64::MIN),
         "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
             .unwrap_or(i64::MIN),
@@ -255,12 +285,5 @@ fn map_transaction_log(error: TransactionLogError) -> ApplyError {
     match error {
         TransactionLogError::Domain(error) => map_domain(error),
         TransactionLogError::Driver(error) => ApplyError::Driver(error),
-    }
-}
-
-fn map_reconciliation_log(error: TransactionLogError) -> AgentTitleStoreError {
-    match error {
-        TransactionLogError::Domain(error) => map_store_error(error),
-        TransactionLogError::Driver(_) => AgentTitleStoreError::Unavailable,
     }
 }

@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { SandboxUsageEvents } from '@chronoai/cma-sdk';
-import type { OperatorClient } from '../operator/client';
+import type { Cma, SandboxUsageEvents } from '@chronoai/cma-sdk';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Table, TableCell } from '../ui/Table';
@@ -12,7 +11,7 @@ export function UsageHistory({
   id,
   onClose,
 }: {
-  readonly client: OperatorClient['usage'];
+  readonly client: Pick<Cma['usage'], 'events'>;
   readonly id: string;
   readonly onClose: () => void;
 }) {

@@ -452,4 +452,7 @@ pub struct NativeDiscordActivation {
     pub capacity: usize,
     /// Current process selection count, not a socket count.
     pub selected_records: usize,
+    /// Serving-instance connection observations; absent on older gateways.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<super::NativeDiscordConnectionStatus>,
 }

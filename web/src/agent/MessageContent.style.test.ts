@@ -19,7 +19,7 @@ it('underlines reply links at rest, so they never rely on colour alone', () => {
 });
 
 it('sets one reading size for a reply and quiet, rule-only tables', () => {
-  expect(css).toMatch(/\.agent-content \{[^}]*font: var\(--dsw-font-markdown-base\)/);
+  expect(css).toMatch(/\.agent-content \{[^}]*font: var\(--dsw-alias-workspace-body-font\)/);
   const cells = css.match(/\.agent-content th,\n\.agent-content td \{[^}]*\}/)?.[0] ?? '';
   expect(cells).toMatch(/border-bottom: 1px solid/);
   expect(cells).not.toMatch(/border: 1px/);

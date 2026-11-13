@@ -197,6 +197,14 @@ it.each([false, true])(
 
 it('shows a saved generated result after a pending read, reopens it, and recovers its exact conditional send', async () => {
   const events = vi.spyOn(window, 'dispatchEvent');
+  const confirmations = () =>
+    events.mock.calls.flatMap(([event]) =>
+      event instanceof CustomEvent &&
+      event.type === 'cma:suggestion-metric' &&
+      event.detail.kind === 'send_confirmed'
+        ? [event.detail]
+        : [],
+    );
   const read = vi
     .fn()
     .mockResolvedValueOnce({ status: 'pending', set: null })
@@ -215,12 +223,18 @@ it('shows a saved generated result after a pending read, reopens it, and recover
   const restored = await screen.findByRole('button', { name: saved.set.items[0]!.text });
   const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep my existing notes.' } });
-  fixture.post.mockRejectedValueOnce(new TypeError('Receipt lost'));
+  let acknowledge!: (response: Response) => void;
+  fixture.post
+    .mockRejectedValueOnce(new TypeError('Receipt lost'))
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => (acknowledge = resolve)));
   fireEvent.click(restored);
   await screen.findByText('Awaiting confirmation');
   expect(restored).toBeDisabled();
   expect(composer).toHaveValue('Keep my existing notes.');
   fireEvent.click(screen.getByRole('button', { name: 'Recover pending request' }));
+  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
+  expect(confirmations()).toEqual([]);
+  await act(async () => acknowledge(accepted()));
   await waitFor(() => expect(screen.queryByText('Suggested follow-ups')).not.toBeInTheDocument());
   const original = fixture.post.mock.calls[0]![0]!;
   expect(JSON.parse(String(original.body))).toEqual({
@@ -233,14 +247,18 @@ it('shows a saved generated result after a pending read, reopens it, and recover
     new Headers(original.headers).get('Idempotency-Key'),
   );
   expect(composer).toHaveValue('Keep my existing notes.');
-  expect(
-    events.mock.calls.some(
-      ([event]) =>
-        event instanceof CustomEvent &&
-        event.type === 'cma:suggestion-metric' &&
-        event.detail.kind === 'send_confirmed',
-    ),
-  ).toBe(true);
+  // Hiding the suggestions is not the completion signal for the metric effect.
+  await waitFor(() =>
+    expect(confirmations()).toEqual([
+      expect.objectContaining({
+        kind: 'send_confirmed',
+        setId: saved.set.id,
+        itemId: saved.set.items[0]!.id,
+        mode: 'original',
+        receipt: { commandId: 'cmd_1', responseId: 'resp_1' },
+      }),
+    ]),
+  );
 });
 
 it.each(['empty', 'failed', 'unavailable', 'expired'])(

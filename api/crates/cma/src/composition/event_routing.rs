@@ -11,9 +11,10 @@ use layer2_core::{
     AgentId, Authorization, Caller, Capability,
 };
 use serde::Deserialize;
+mod sender;
 use std::{sync::Arc, time::Duration};
 
-pub(super) struct CmaEventRouter {
+pub(crate) struct CmaEventRouter {
     store: Arc<crate::store::MongoSandboxStore>,
     bindings: Arc<BindingService>,
     gateway: String,
@@ -21,7 +22,7 @@ pub(super) struct CmaEventRouter {
 }
 
 impl CmaEventRouter {
-    pub(super) fn new(
+    pub(crate) fn new(
         store: Arc<crate::store::MongoSandboxStore>,
         bindings: Arc<BindingService>,
         gateway: &str,
@@ -51,6 +52,53 @@ struct VerifiedContext {
 
 #[async_trait::async_trait]
 impl BindingEventRouter for CmaEventRouter {
+    fn sender_line(&self, event: &ExternalEventContext) -> Result<String, BindingRouteError> {
+        let activity = event
+            .payload
+            .get("activity")
+            .ok_or(BindingRouteError::SenderUnsupported)?;
+        let identity: ActivityIdentity = serde_json::from_value(activity.clone())
+            .map_err(|_| BindingRouteError::SenderUnsupported)?;
+        sender::line(&identity)
+    }
+    async fn verified_sender_line(
+        &self,
+        caller: &AuthenticatedResourceCaller,
+        event: &ExternalEventContext,
+        generation: u64,
+    ) -> Result<String, BindingRouteError> {
+        use BindingRouteError as E;
+        let binding = self
+            .store
+            .find_by_key_hash(&caller.context.credential.credential_id)
+            .await
+            .map_err(|_| E::SenderUnavailable)?
+            .ok_or(E::SenderInvalid)?;
+        binding
+            .require_generation(Some(generation))
+            .map_err(|_| E::SenderInvalid)?;
+        let credential = caller.credential.as_ref().ok_or(E::SenderInvalid)?;
+        // No transaction or lease crosses this bounded network operation. The
+        // caller separately fences its binding revision during turn reservation.
+        let activity = tokio::time::timeout(
+            Duration::from_secs(2),
+            verify_activity(
+                &self.http,
+                &self.gateway,
+                &binding.binding_id,
+                credential.value(),
+                event,
+            ),
+        )
+        .await
+        .map_err(|_| E::SenderUnavailable)?
+        .map_err(|error| match error {
+            E::Forbidden => E::SenderInvalid,
+            E::Invalid => E::SenderUnsupported,
+            _ => E::SenderUnavailable,
+        })?;
+        sender::line(&activity)
+    }
     async fn route(
         &self,
         caller: &AuthenticatedResourceCaller,
@@ -101,7 +149,7 @@ impl CmaEventRouter {
                     Some(binding.generation),
                 )
                 .await
-                .map_err(|_| E::Unavailable)?;
+                .map_err(binding_route_error)?;
             if conversation.agent_id != target.agent_id
                 || conversation.state != BindingConversationState::Ready
             {
@@ -132,7 +180,7 @@ impl CmaEventRouter {
                 Some(binding.generation),
             )
             .await
-            .map_err(|_| E::Unavailable)?;
+            .map_err(binding_route_error)?;
         match conversation.state {
             BindingConversationState::Ready => {}
             BindingConversationState::Provisioning => return Err(E::NotReady),
@@ -143,6 +191,15 @@ impl CmaEventRouter {
     }
 }
 
+fn binding_route_error(error: layer2_core::sandbox::binding::BindingError) -> BindingRouteError {
+    match error {
+        layer2_core::sandbox::binding::BindingError::AdmissionPaused => {
+            BindingRouteError::AdmissionPaused
+        }
+        _ => BindingRouteError::Unavailable,
+    }
+}
+
 // This is a CMA routing projection, not the gateway's activity schema.
 // The gateway validates the full original Activity through its authenticated API.
 #[derive(Deserialize)]
@@ -150,6 +207,7 @@ struct ActivityIdentity {
     event_id: String,
     actor: SourceActor,
     source: ActivitySource,
+    conversation: ActivityConversation,
     #[serde(default)]
     kind: serde_json::Value,
 }
@@ -160,8 +218,16 @@ struct SourceActor {
 }
 #[derive(Deserialize)]
 struct ActivitySource {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    region: Option<String>,
     #[serde(default)]
     platform: Option<String>,
+}
+#[derive(Deserialize)]
+struct ActivityConversation {
+    kind: String,
 }
 
 async fn verify_activity(
@@ -255,6 +321,27 @@ mod tests {
     use super::*;
     use axum::{http::HeaderMap, routing::post, Json, Router};
     use serde_json::json;
+
+    #[test]
+    fn operator_pause_keeps_its_category_through_binding_event_selection() {
+        use layer2_core::sandbox::binding::BindingError;
+        assert!(matches!(
+            binding_route_error(BindingError::AdmissionPaused),
+            BindingRouteError::AdmissionPaused
+        ));
+        for error in [
+            BindingError::Forbidden,
+            BindingError::NotFound,
+            BindingError::Conflict,
+            BindingError::Unavailable("fixture".into()),
+        ] {
+            assert!(matches!(
+                binding_route_error(error),
+                BindingRouteError::Unavailable
+            ));
+        }
+    }
+
     fn activity() -> serde_json::Value {
         json!({"schema_version":1,"event_id":"event-a",
             "kind":{"type":"message","text":"hello","mentions_bot":false},

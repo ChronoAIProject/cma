@@ -38,12 +38,16 @@ mod credential;
 mod exchange;
 #[path = "adapter_filesystem.rs"]
 mod filesystem;
+#[path = "adapter_finality.rs"]
+mod finality;
 #[path = "adapter_install.rs"]
 mod install;
 #[path = "adapter_nonexecuting.rs"]
 mod nonexecuting;
 #[path = "adapter_provider_tools.rs"]
 mod provider_tools;
+#[path = "adapter_runtime_identity.rs"]
+mod runtime_identity;
 #[path = "adapter_runtime.rs"]
 mod runtime_lifecycle;
 #[path = "adapter_workspace.rs"]

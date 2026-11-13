@@ -60,14 +60,71 @@ pub(super) fn response_operation(response: &ResponseFrame) -> WireOperation {
 
 pub(super) fn failure_error(failure: WireFailure) -> AdapterError {
     let detail = format!("{}: {}", failure.code, failure.detail);
-    if failure.retryable {
+    if ledger_hold(&failure) {
+        AdapterError::RuntimeLedgerHold(detail)
+    } else if failure.retryable {
         AdapterError::Unavailable(detail)
-    } else if failure.code == "attachment_upload_conflict" {
+    } else if matches!(
+        failure.code.as_str(),
+        "attachment_upload_conflict" | "agent_skill_upgrade_conflict"
+    ) {
         AdapterError::OperationIdentityConflict(detail)
+    } else if failure.operation == WireOperation::InstallAgentSkill
+        && matches!(
+            failure.code.as_str(),
+            "agent_skill_upgrade_modified"
+                | "agent_skill_upgrade_previous_unavailable"
+                | "agent_skill_upgrade_retention_full"
+                | "agent_skill_upgrade_recovery_conflict"
+                | "agent_skill_upgrade_preparation_exhausted"
+        )
+    {
+        use crate::AgentSkillUpgradeRefusal as Refusal;
+        AdapterError::SkillUpgradeRefused(match failure.code.as_str() {
+            "agent_skill_upgrade_modified" => Refusal::Modified,
+            "agent_skill_upgrade_previous_unavailable" => Refusal::PreviousUnavailable,
+            "agent_skill_upgrade_retention_full" => Refusal::RetentionFull,
+            "agent_skill_upgrade_recovery_conflict" => Refusal::RecoveryConflict,
+            _ => Refusal::PreparationExhausted,
+        })
     } else if failure.code == "at_capacity" {
         AdapterError::AtCapacity(detail)
     } else {
         AdapterError::Rejected(detail)
+    }
+}
+
+// Only exact code/detail pairs prove a capacity, storage or format hold.
+// Do not normalize, trim or search details, or mask other corruption as a hold.
+pub(super) fn ledger_hold(failure: &WireFailure) -> bool {
+    match failure.code.as_str() {
+        "mutation_ledger_capacity" => {
+            failure.detail == "runtime mutation ledger capacity is exhausted"
+        }
+        "mutation_ledger_storage_hold" => {
+            failure.detail == "runtime mutation ledger storage requires verification"
+        }
+        "mutation_ledger_busy" => {
+            failure.detail == "runtime mutation ledger worker capacity is exhausted"
+        }
+        "mutation_ledger_writer_held" => {
+            failure.detail == "runtime mutation ledger has another writer"
+        }
+        "mutation_ledger_format_hold" => {
+            failure.detail == "runtime mutation ledger format requires verification"
+        }
+        "mutation_ledger_import_held" => {
+            failure.detail == "imported runtime mutation ledger requires reviewed release authority"
+        }
+        "mutation_authority_corrupt" => matches!(
+            failure.detail.as_str(),
+            "runtime mutation authority contains too many records"
+                | "mutation authority contains too many records"
+        ),
+        "mutation_journal_corrupt" => {
+            failure.detail == "runtime mutation journal contains too many entries"
+        }
+        _ => false,
     }
 }
 
@@ -169,6 +226,36 @@ mod tests {
             retryable: false,
         });
         assert!(matches!(terminal, AdapterError::Rejected(_)));
+    }
+
+    #[test]
+    fn skill_upgrade_refusals_are_typed_only_for_terminal_skill_operations() {
+        for reason in [
+            crate::AgentSkillUpgradeRefusal::Modified,
+            crate::AgentSkillUpgradeRefusal::PreviousUnavailable,
+            crate::AgentSkillUpgradeRefusal::RetentionFull,
+            crate::AgentSkillUpgradeRefusal::RecoveryConflict,
+            crate::AgentSkillUpgradeRefusal::PreparationExhausted,
+        ] {
+            let mut failure = WireFailure {
+                operation: WireOperation::InstallAgentSkill,
+                code: reason.code().into(),
+                detail: "owner action required".into(),
+                retryable: false,
+            };
+            assert_eq!(
+                failure_error(failure.clone()),
+                AdapterError::SkillUpgradeRefused(reason)
+            );
+            failure.retryable = true;
+            assert!(matches!(
+                failure_error(failure.clone()),
+                AdapterError::Unavailable(_)
+            ));
+            failure.retryable = false;
+            failure.operation = WireOperation::Install;
+            assert!(matches!(failure_error(failure), AdapterError::Rejected(_)));
+        }
     }
 
     #[test]

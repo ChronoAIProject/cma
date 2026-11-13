@@ -1,0 +1,43 @@
+[
+  {
+    "name": "agent_capacity_recovery_due",
+    "key": {
+      "format_version": 1,
+      "work.phase": 1,
+      "work.ready_at": 1,
+      "_id": 1
+    },
+    "unique": false,
+    "sparse": false,
+    "collation": {
+      "locale": "simple"
+    }
+  },
+  {
+    "name": "agent_capacity_recovery_expired",
+    "key": {
+      "format_version": 1,
+      "work.phase": 1,
+      "work.lease.expires_at": 1,
+      "_id": 1
+    },
+    "unique": false,
+    "sparse": false,
+    "collation": {
+      "locale": "simple"
+    }
+  },
+  {
+    "name": "agent_capacity_recovery_agent",
+    "key": {
+      "agent_id": 1,
+      "format_version": 1,
+      "_id": 1
+    },
+    "unique": false,
+    "sparse": false,
+    "collation": {
+      "locale": "simple"
+    }
+  }
+]

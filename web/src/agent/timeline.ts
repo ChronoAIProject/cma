@@ -1,3 +1,4 @@
+import { screenOperation } from './screenOperations';
 import type {
   ApprovalRequest,
   ConversationMessage,
@@ -22,7 +23,7 @@ export interface ToolGroup {
   /** Keyed by its first call, which stays first while later calls join. */
   readonly id: string;
   readonly items: readonly ToolCall[];
-  /** A group holding a failure opens itself, so the failure is never folded away. */
+  /** A recorded failure remains in the collapsed summary. */
   readonly failed: boolean;
 }
 
@@ -51,7 +52,12 @@ export function groupToolCalls(entries: readonly Entry[]): TimelineItem[] {
   };
   for (const entry of entries) {
     if (entry.kind === 'tool') {
-      if (run.length > 0 && run[0]!.runId !== entry.item.runId) flush();
+      if (
+        run.length > 0 &&
+        (run[0]!.runId !== entry.item.runId ||
+          Boolean(screenOperation(run[0]!)) !== Boolean(screenOperation(entry.item)))
+      )
+        flush();
       run.push(entry.item);
       continue;
     }

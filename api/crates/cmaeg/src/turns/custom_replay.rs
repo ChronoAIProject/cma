@@ -27,23 +27,50 @@ pub(super) fn eligible(turn: &LaunchRequest) -> bool {
 pub(super) async fn lookup(
     providers: &ProviderClient,
     turn: &LaunchRequest,
+    retry_enabled: bool,
 ) -> Result<Option<LaunchOutcome>, Problem> {
     if !eligible(turn) {
         return Ok(None);
     }
     let consumer = turn.channel.consumer(None).ok_or_else(unavailable)?;
     let credential = consumer.credential.ok_or_else(unavailable)?;
-    let Some(retained) = providers
-        .find_event_context(
-            &consumer.provider.slug,
-            &consumer.provider.binding_id,
-            &turn.conversation_id,
-            &turn.activity.event_id,
-            credential,
-        )
-        .await
-        .map_err(problem)?
-    else {
+    let found = if retry_enabled {
+        providers
+            .find_event_context_with_retry(
+                &consumer.provider.slug,
+                &consumer.provider.binding_id,
+                &turn.conversation_id,
+                &turn.activity.event_id,
+                credential,
+            )
+            .await
+            .map_err(|failure| {
+                let retry_after = failure.retry_after;
+                let mut problem = problem(failure.error);
+                if let Some(after) = retry_after {
+                    problem.retry_after_seconds = Some(
+                        after
+                            .as_millis()
+                            .div_ceil(1000)
+                            .max(1)
+                            .min(u64::MAX as u128) as u64,
+                    );
+                }
+                problem
+            })?
+    } else {
+        providers
+            .find_event_context(
+                &consumer.provider.slug,
+                &consumer.provider.binding_id,
+                &turn.conversation_id,
+                &turn.activity.event_id,
+                credential,
+            )
+            .await
+            .map_err(problem)?
+    };
+    let Some(retained) = found else {
         return Ok(None);
     };
     if retained.channel_id != turn.channel.id {

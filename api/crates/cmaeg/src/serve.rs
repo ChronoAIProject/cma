@@ -14,6 +14,7 @@ use crate::{
 pub(crate) async fn serve(
     config: Config,
     complete_replies: bool,
+    commonmark_relay: bool,
     native_media: bool,
     relay_text_edits: bool,
     native_discord_edits: bool,
@@ -41,6 +42,8 @@ pub(crate) async fn serve(
     service_auth.bearer().await?;
     let (records, creator_auth, browser) =
         crate::serve_storage::compose(&config, service_auth.clone()).await?;
+    // Install before constructing instrumented pools and queues.
+    let metrics = telemetry::install()?;
     let providers = Arc::new(
         providers::ProviderClient::from_config(&config)?
             .with_service_auth(service_auth)
@@ -87,9 +90,8 @@ pub(crate) async fn serve(
     ));
     let _reachability_probe = state.readiness.start_probe(state.records.clone());
     let tracker = turns::TurnTracker::new(state.readiness.clone());
-    let (inbound, outcomes) = tokio::sync::mpsc::channel(256);
-    let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> =
-        Arc::new(delivery::router::ShardedScheduler::new(inbound));
+    let (scheduler, outcomes) = delivery::router::ShardedScheduler::channel(256);
+    let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> = Arc::new(scheduler);
     let waiters = Arc::new(delivery::sync::SyncRegistry::default());
     let custom_delivery = delivery::custom::CustomDelivery::new(
         config.management.public_url.clone(),
@@ -114,9 +116,6 @@ pub(crate) async fn serve(
     let (native_lark_controls, native_lark_thread_start) =
         source_settings::lark_issuance(&config, &state);
     let tool_providers = Arc::new(config.media.tool_providers.clone());
-    // Installed before the media transformer's setup so its readiness gauge
-    // is recorded; the metrics listener still binds after the gateway's.
-    let metrics = telemetry::install()?;
     // After the recorder, which registers its gauge. `None` while
     // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
     let console = console::compose(&config, &state, observers.queue.take())?;
@@ -163,6 +162,7 @@ pub(crate) async fn serve(
         .with_discord_voice_decoder(media.as_ref().and_then(|service| service.voice_decoder()))
         .with_native_whatsapp_config(&config)
         .with_complete_replies(complete_replies)
+        .with_commonmark_relay(commonmark_relay)
         .with_native_media(native_media)
         .with_text_edits(relay_text_edits)
         .with_discord_reactions(config.native_discord_reactions_enabled)
@@ -242,7 +242,6 @@ pub(crate) async fn serve(
             .map(|composition| composition.ingress.clone()),
     )
     .with_activity_observer(observers.activity.clone());
-    source_settings::attach_github(&mut state, &ingress)?;
     let tools_state = tools::ToolsState {
         native_typing,
         native_lark_conversation_history: source_settings::lark_history(
@@ -264,6 +263,7 @@ pub(crate) async fn serve(
             .transpose()?
             .map(Arc::new),
         complete_replies_enabled: complete_replies,
+        commonmark_relay_enabled: commonmark_relay,
         routed_replies: routed
             .as_ref()
             .map(|composition| composition.tool_replies.clone()),
@@ -348,13 +348,12 @@ pub(crate) async fn serve(
         ),
     };
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
-    let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
     let _connection_worker = connections.start_completion_worker(runner);
-    let mut github_worker = state
-        .github
-        .as_ref()
-        .map(|gateway| crate::github::Worker::start(gateway.clone()));
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
+    let mut github_initialization = config
+        .github_enabled
+        .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
+    let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
     let mut routed_workers = crate::serve_routed::start_workers(routed, state.readiness.clone());
     // Readers and recovery remain active when controls/forms issuance is disabled.
@@ -425,7 +424,7 @@ pub(crate) async fn serve(
         for worker in &routed_workers {
             worker.stop_scheduling();
         }
-        if let Some(worker) = &github_worker {
+        if let Some(worker) = &github_initialization {
             worker.stop();
         }
         let (
@@ -464,7 +463,7 @@ pub(crate) async fn serve(
             lark_controls_drained,
             whatsapp_forms_drained,
         );
-        shutdown::drain_github(&mut github_worker, deadline).await;
+        shutdown::drain_github(&mut github_initialization, deadline).await;
         if !delivery_engine.drain(deadline).await {
             tracing::warn!(
                 "delivery drain deadline reached; remaining sends cancelled with unknown outcome"

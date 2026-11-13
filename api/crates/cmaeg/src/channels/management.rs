@@ -74,6 +74,7 @@ pub async fn create(
         state.write_flags(),
     )
     .map_err(ManagementError::Invalid)?;
+    super::github_sources::validate(state, None, &definition).await?;
     super::custom_execution::validate_providers(&state.providers, &definition)?;
     super::custom_execution::validate_media(state, None, &definition)?;
     super::native_telegram::initialize(state, None, &mut definition)?;
@@ -93,6 +94,7 @@ pub async fn create(
         .await
         .map_err(ManagementError::Provider)?;
     definition.provider.level = binding.level;
+    definition.provider.capabilities = binding.capabilities.clone();
     let saved = async {
         let blob = seal_definition(&state.master_keys, &definition)?;
         state
@@ -270,6 +272,7 @@ pub async fn update(
     let mut definition = build_update(&request, &current.definition, state.write_flags())
         .map_err(ManagementError::Invalid)?;
     super::native_telegram::initialize(state, Some(&current.definition), &mut definition)?;
+    super::github_sources::validate(state, Some(&current.definition), &definition).await?;
     super::custom_execution::validate_providers(&state.providers, &definition)?;
     super::custom_execution::validate_media(state, Some(&current.definition), &definition)?;
     definition.version = current.record.version;
@@ -305,6 +308,7 @@ pub async fn update(
         .await
         .map_err(ManagementError::Provider)?;
     definition.provider.level = binding.level;
+    definition.provider.capabilities = binding.capabilities;
     let blob = seal_definition(&state.master_keys, &definition)?;
     // A failed CAS must never unbind a retained channel. The provider and CMA record store
     // do not share a transaction; retry with a freshly read version to reconcile a rebind.

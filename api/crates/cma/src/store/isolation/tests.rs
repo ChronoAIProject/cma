@@ -231,3 +231,103 @@ fn index_removal_is_confined_to_the_binding_migration() {
     let status = doc! {"authInfo":{"authenticatedUsers":[{"user":"agent-manager"}],"authenticatedUserPrivileges":missing}};
     assert!(validate(&status, "cma").is_err());
 }
+
+fn progress_grant(database: &str) -> Document {
+    doc! {"resource":{"db":database,"collection":super::super::provenance_progress::COLLECTION},
+    "actions":super::super::provenance_progress::ACTIONS}
+}
+fn status(grants: Vec<mongodb::bson::Bson>) -> Document {
+    doc! {"authInfo":{"authenticatedUsers":[{"user":"fixture"}],"authenticatedUserPrivileges":grants}}
+}
+
+#[test]
+fn progress_grants_are_optional_but_exact_and_confined() {
+    let base = role("cma").get_array("privileges").unwrap().clone();
+    validate(&status(base.clone()), "cma").unwrap();
+    let mut full = base.clone();
+    full.push(progress_grant("cma").into());
+    validate(&status(full), "cma").unwrap();
+    for forbidden in [
+        "remove",
+        "dropCollection",
+        "dropIndex",
+        "collMod",
+        "createIndex",
+    ] {
+        let mut grant = progress_grant("cma");
+        grant
+            .get_array_mut("actions")
+            .unwrap()
+            .push(forbidden.into());
+        let mut grants = base.clone();
+        grants.push(grant.into());
+        assert!(validate(&status(grants), "cma").is_err());
+    }
+    for missing in super::super::provenance_progress::ACTIONS {
+        let mut grant = progress_grant("cma");
+        grant
+            .get_array_mut("actions")
+            .unwrap()
+            .retain(|a| a.as_str() != Some(missing));
+        let mut grants = base.clone();
+        grants.push(grant.into());
+        assert!(validate(&status(grants), "cma").is_err());
+    }
+    let mut foreign = base;
+    foreign.push(progress_grant("foreign").into());
+    assert!(validate(&status(foreign), "cma").is_err());
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_progress_grants_cannot_delete_receipts_or_access_another_service() {
+    use mongodb::{
+        options::{ClientOptions, Credential},
+        Client,
+    };
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_progress_auth_{}", uuid::Uuid::new_v4().simple());
+    let db = admin.database(&name);
+    db.run_command(role(&name)).await.unwrap();
+    db.run_command(doc! {"createRole":"progress","privileges":[progress_grant(&name)],"roles":[]})
+        .await
+        .unwrap();
+    let password = uuid::Uuid::new_v4().to_string();
+    db.run_command(
+        doc! {"createUser":"progress-fixture","pwd":&password,"roles":[
+        {"role":"cma_am_runtime","db":&name},{"role":"progress","db":&name}]},
+    )
+    .await
+    .unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.credential = Some(
+        Credential::builder()
+            .username("progress-fixture".to_owned())
+            .password(password)
+            .source(name.clone())
+            .build(),
+    );
+    let client = Client::with_options(options).unwrap();
+    let scoped = client.database(&name);
+    verify(&scoped).await.unwrap();
+    super::super::provenance_progress::initialize(&scoped)
+        .await
+        .unwrap();
+    let rows = scoped.collection::<Document>(super::super::provenance_progress::COLLECTION);
+    assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 1);
+    let error = rows.delete_many(doc! {}).await.unwrap_err();
+    assert!(matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code == 13));
+    for foreign in ["eg_channel_records", "im_images"] {
+        let error = scoped
+            .collection::<Document>(foreign)
+            .find_one(doc! {})
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code == 13)
+        );
+    }
+    assert_eq!(rows.count_documents(doc! {}).await.unwrap(), 1);
+    db.drop().await.unwrap();
+}

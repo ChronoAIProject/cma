@@ -7,6 +7,12 @@ import {
 } from './warm-pools.js';
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
+import {
+  admissionControl,
+  admissionControlRead,
+  changeAdmissionRequest,
+  type ChangeAdmissionRequest,
+} from './admission.js';
 import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
 import { sandboxEvent } from '../instances/events.js';
@@ -25,7 +31,16 @@ import {
   type EventOptions,
   type PageOptions,
 } from '../resources.js';
-import { array, enumeration, integer, nullable, object, text, type Output } from '../schema.js';
+import {
+  array,
+  boolean,
+  enumeration,
+  integer,
+  nullable,
+  object,
+  text,
+  type Output,
+} from '../schema.js';
 import {
   patchSettingsRequest,
   replaceSettingsRequest,
@@ -48,11 +63,14 @@ import {
 
 export type * from './types.js';
 export type * from './settings.js';
+export type * from './admission.js';
 
 export interface AdminSandboxListOptions extends PageOptions {
   readonly owner?: string;
   readonly status?: SandboxStatus;
   readonly runtime_version?: string;
+  /** True selects explicit exceptions; false includes unset preferences. */
+  readonly always_on?: boolean;
 }
 export interface AdminProfileListOptions extends PageOptions {
   readonly kind?: ProfileKind;
@@ -63,6 +81,14 @@ export interface ActivityListOptions extends PageOptions {
   readonly actor?: string;
   readonly action?: ActivityAction;
 }
+
+const autoPausePreview = object({ candidates: integer });
+export type AutoPausePreview = Output<typeof autoPausePreview>;
+const pauseIdleNowRequest = object({ confirmed: boolean });
+const pauseIdleNow = object({ scheduled: integer, already_satisfied: integer, skipped: integer });
+export type PauseIdleNow = Output<typeof pauseIdleNow>;
+const setSandboxAlwaysOnRequest = object({ always_on: boolean, expected_revision: integer });
+export type SetSandboxAlwaysOnRequest = Output<typeof setSandboxAlwaysOnRequest>;
 
 const runtimeInventory = object({
   observed_at: text,
@@ -134,6 +160,7 @@ export class Administration {
         owner: options.owner,
         status: options.status,
         runtime_version: options.runtime_version,
+        always_on: options.always_on?.toString(),
         cursor: options.cursor,
         limit: options.limit,
       }),
@@ -232,6 +259,25 @@ export class Administration {
   readSettings(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/settings', storedPlatformSettings, options);
   }
+  readAdmission(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission', admissionControlRead, options);
+  }
+  /** Stop fresh work. A repeated stop returns the first operator's state. */
+  stopAdmission(body: ChangeAdmissionRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission/stop', admissionControl, {
+      ...options,
+      method: 'POST',
+      body: input(changeAdmissionRequest, body),
+    });
+  }
+  /** Resume only the observed stop revision; read again after an uncertain result. */
+  resumeAdmission(body: ChangeAdmissionRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/admission/resume', admissionControl, {
+      ...options,
+      method: 'POST',
+      body: input(changeAdmissionRequest, body),
+    });
+  }
   replaceSettings(body: ReplaceSettingsRequest, options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/settings', storedPlatformSettings, {
       ...options,
@@ -252,6 +298,30 @@ export class Administration {
       method: 'POST',
       body: input(resetSettingsRequest, body),
     });
+  }
+  previewAutoPause(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/auto-pause/preview', autoPausePreview, options);
+  }
+  pauseIdleNow(confirmed: boolean, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/auto-pause/pause-idle-now', pauseIdleNow, {
+      ...options,
+      method: 'POST',
+      body: input(pauseIdleNowRequest, { confirmed }),
+    });
+  }
+  /** Approve or revoke an exception with revision CAS and an administrator audit record. */
+  setSandboxAlwaysOn(id: string, body: SetSandboxAlwaysOnRequest, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/admin/sandboxes/${segment(id)}/always-on`,
+      identity(sandbox, id),
+      {
+        ...options,
+        method: 'POST',
+        body: input(setSandboxAlwaysOnRequest, body),
+        expectedStatus: 200,
+      },
+    );
   }
   pauseTriggers(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/triggers/pause', storedPlatformSettings, {

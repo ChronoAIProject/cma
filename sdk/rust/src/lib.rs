@@ -31,6 +31,7 @@ pub mod assets;
 pub mod auth;
 pub mod bot_setups;
 pub mod bots;
+pub mod browser_telemetry;
 mod client;
 pub mod cmaeg;
 mod conformance;
@@ -55,6 +56,7 @@ pub mod stream;
 pub mod task_experience;
 pub mod triggers;
 pub mod usage;
+pub mod usage_metrics;
 
 /// Executable integration guides shipped with the crate.
 pub mod guides {

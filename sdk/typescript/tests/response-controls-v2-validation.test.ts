@@ -78,3 +78,16 @@ it('rejects a different command returned by the status endpoint', async () => {
   t.fetch.mockResolvedValueOnce(json(fixture('source-status')));
   await expect(t.api.readCommand('cmd_cancel_contract')).rejects.toBeInstanceOf(ProtocolError);
 });
+
+it.each(['credential_setup_required', 'connections_required'])(
+  'preserves typed revival failure %s',
+  async (failure) => {
+    const body = fixture('queued-observe');
+    const source = body.response as Record<string, unknown>;
+    source.status = 'failed';
+    source.failure = failure;
+    const t = harness();
+    t.fetch.mockResolvedValueOnce(json(body));
+    expect((await t.api.observeControls(agent, response)).response.failure).toBe(failure);
+  },
+);

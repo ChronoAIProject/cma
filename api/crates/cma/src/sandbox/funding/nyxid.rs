@@ -1,10 +1,12 @@
 //! NyxID #2204 producer transport; no NyxID wire details in lifecycle callers.
+use super::token::{oauth::ClientCredentialsProvider, ProducerTokenProvider, StaticTokenProvider};
 use super::*;
 use futures_util::StreamExt;
 
 pub(crate) struct NyxIdFundingProvider {
     config: SandboxBillingConfig,
     http: reqwest::Client,
+    tokens: Arc<dyn ProducerTokenProvider>,
 }
 impl NyxIdFundingProvider {
     pub(crate) fn new(config: SandboxBillingConfig) -> Result<Arc<Self>, String> {
@@ -14,7 +16,25 @@ impl NyxIdFundingProvider {
             .user_agent("CMA-Sandbox-Funding/1")
             .build()
             .map_err(|_| "cannot construct funding HTTP client".to_string())?;
-        Ok(Arc::new(Self { config, http }))
+        let tokens: Arc<dyn ProducerTokenProvider> = match &config.client_credentials {
+            Some((id, secret)) => {
+                let read = |key| {
+                    std::env::var(key)
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or_else(|| {
+                            "producer client credentials reference is unavailable".to_string()
+                        })
+                };
+                ClientCredentialsProvider::new(&config.base_url, read(id)?, read(secret)?)?
+            }
+            None => Arc::new(StaticTokenProvider(config.credential_ref.clone())),
+        };
+        Ok(Arc::new(Self {
+            config,
+            http,
+            tokens,
+        }))
     }
     async fn send(
         &self,
@@ -22,9 +42,7 @@ impl NyxIdFundingProvider {
         path: &[&str],
         body: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, FundingError> {
-        let credential = std::env::var(&self.config.credential_ref).map_err(|_| {
-            FundingError::Invalid("producer credential reference is unavailable".into())
-        })?;
+        let credential = self.tokens.token().await?;
         let mut url = self.config.base_url.clone();
         url.path_segments_mut()
             .map_err(|_| FundingError::Invalid("producer URL is invalid".into()))?
@@ -33,7 +51,6 @@ impl NyxIdFundingProvider {
         let mut request = self
             .http
             .request(method, url)
-            .bearer_auth(credential)
             .header(reqwest::header::ACCEPT, "application/json");
         // NyxID establishes the producer from its verified SA JWT. This local
         // identity reference is validated as configuration, never an authority header.
@@ -49,9 +66,29 @@ impl NyxIdFundingProvider {
                 .header(reqwest::header::CONTENT_TYPE, "application/json")
                 .body(bytes);
         }
-        let response = request.send().await.map_err(|_| {
-            FundingError::Retryable("producer request timed out or transport failed".into())
-        })?;
+        // JSON is serialized once. Replays retain every durable idempotency identity.
+        let retry = request
+            .try_clone()
+            .ok_or_else(|| FundingError::Invalid("funding request cannot be replayed".into()))?;
+        let transport_error =
+            |_| FundingError::Retryable("producer request timed out or transport failed".into());
+        // reqwest appends headers: clone before authentication so a replay carries
+        // exactly one Authorization value, belonging to the refreshed token.
+        let mut response = request
+            .bearer_auth(credential.bearer())
+            .send()
+            .await
+            .map_err(transport_error)?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Some(token) = self.tokens.rejected(&credential).await? {
+                drop(response);
+                response = retry
+                    .bearer_auth(token.bearer())
+                    .send()
+                    .await
+                    .map_err(transport_error)?;
+            }
+        }
         let status = response.status();
         let retry_after = response
             .headers()
@@ -233,3 +270,6 @@ impl FundingProvider for NyxIdFundingProvider {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod token_tests;

@@ -356,7 +356,7 @@ key. `pending: true` means the durable desired settings still await runtime
 acknowledgement; read again until `pending` clears before treating them as applied.
 The immutable creation profile is preserved.
 
-## Additive skills
+## Skill installation and upgrades
 
 `agents().skills(agent_id)` returns profile and live skill items, their
 `AgentSkillStatus` (`Pending`, `Installed`, or `Failed`), and `pending`,
@@ -382,9 +382,12 @@ async fn add_skill(client: &Client, agent_id: &str, key: &IdempotencyKey) -> Res
 Installation requires an exact Ornn version and a stable idempotency key. Retry
 an uncertain reply with the same request and key. The `202` result records
 admission; poll `skills()` within your application's deadline until `pending`
-clears, then inspect each item's status before treating it as installed. A
-failed installation is reported explicitly. Installation preserves the original
-creation profile.
+clears, then confirm the requested version and inspect `error`. The same operation
+upgrades an installed ID on a capable idle runtime. During an upgrade its single
+row retains the old effective version and `Installed` status. A failed upgrade
+keeps that version and names the failed target in `error`. The original creation
+profile remains immutable. After a definitive busy or unsupported-runtime refusal,
+make a new attempt with a new key; the old key continues replaying its refusal.
 
 ## Service access decisions
 

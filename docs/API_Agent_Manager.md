@@ -8,6 +8,13 @@ This is a focused view of the existing API, with the same operation IDs, request
 schemas, responses and authorization. The full compatibility contract remains
 at `/openapi.json`; existing clients and routes remain supported.
 
+Both OpenAPI routes return `ETag` and `Cache-Control: no-cache`. Send a single
+`If-None-Match` with the exact returned ETag (or `*`) to receive an empty
+`304 Not Modified` response when it matches. Missing, nonmatching, malformed,
+weak, or multiple validators receive the complete JSON with `200 OK`.
+Revalidate on each use so a deployment's updated contract is discovered.
+`HEAD` uses the same status and headers with no response body.
+
 Use one **Agent ID** throughout. Creating an Agent returns a lifecycle operation
 ID, and the operation yields `agent_id`. Responses v2 uses that Agent ID as its
 conversation ID. Response IDs identify messages/turns; command IDs identify
@@ -20,6 +27,9 @@ Authenticate backend requests with `Authorization: Bearer <NyxID access token>`:
 use an ordinary NyxID **user access token** obtained through NyxID OAuth for the
 account that owns or is authorized to use the Agent. This is not the runtime's
 scoped Agent key, an ID token, an Event Gateway binding key or a machine token.
+For third-party clients, request an explicit CMA resource grant and deploy the
+[direct OAuth command reader](CMA_Direct_OAuth.md); identity-only grants do not
+authorize follow-up commands. Check `api_commands` in `/auth/session`.
 CMA verifies the token's subject, current permissions and expiry; requests use
 that user's authority. No browser cookie is required for bearer API calls.
 The same-origin CMA browser session cookie is also accepted. Creating a new

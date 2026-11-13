@@ -9,6 +9,9 @@ use super::{
     FirstMessageRecord,
 };
 
+#[path = "first_message_budget.rs"]
+mod budget;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentWorkAuthority {
     pub holder: String,
@@ -96,9 +99,21 @@ impl AgentOperationService {
                 }
                 FirstMessageDelivery::Queued => {}
             }
-            match self.fence_first_message(current, authority.clone()).await {
+            match self
+                .fence_first_message(current.clone(), authority.clone())
+                .await
+            {
                 Ok(prepared) => return self.send_first_message(prepared).await,
                 Err(AgentOperationError::Conflict) => continue,
+                Err(AgentOperationError::Budget(reason)) => {
+                    match self
+                        .refuse_first_message_budget(&current, &authority, reason)
+                        .await
+                    {
+                        Err(AgentOperationError::Conflict) => continue,
+                        result => return result,
+                    }
+                }
                 Err(error) => return Err(error),
             }
         }

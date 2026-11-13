@@ -7,9 +7,18 @@ use mongodb::{
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
+    super::budget::COLLECTION,
+    super::sandbox_metric_bindings::COLLECTION,
+    super::sandbox_metric_rollups::COLLECTION,
+    super::sandbox_usage_rollups::COLLECTION,
+    super::usage_reports::JOBS,
+    super::usage_reports::ROWS,
+    super::usage_reports::CHARTS,
+    super::usage_reports::CONTROL,
     super::request_limits::COLLECTION,
     "visitor_launch_days",
     crate::document_artifacts::COLLECTION,
+    crate::document_artifacts::QUOTA_COLLECTION,
     super::native_warm_pools::COLLECTION,
     super::native_prepared::COLLECTION,
     "runtime_backend_routes",
@@ -23,6 +32,15 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "agent_access_tools",
     "agent_access_requests",
     "agent_log",
+    super::agent_log_segments::HEADS,
+    super::agent_log_segments::SEGMENTS,
+    super::agent_log_segments::PUBLICATIONS,
+    super::agent_log_segments::PROJECTIONS,
+    super::agent_log_segments::EVIDENCE,
+    super::agent_log_segments::AUDITS,
+    super::agent_log_segments::writer_gate::COLLECTION,
+    super::agent_log_segments::writer_admission::COLLECTION,
+    super::agent_capacity_recovery::records::COLLECTION,
     super::message_feedback::COLLECTION,
     "agent_lifecycle_operations",
     "agent_profile_revisions",
@@ -125,6 +143,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
+    "sandbox_sessions",
     "sandboxes",
     "service_connection_handoffs",
     "trigger_definition_revisions",
@@ -193,7 +212,8 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
             || resource.get_str("db").ok() != Some(database)
             || (!collection.is_empty()
                 && !COLLECTIONS.contains(&collection)
-                && !replicas::COLLECTIONS.contains(&collection))
+                && !replicas::COLLECTIONS.contains(&collection)
+                && collection != super::provenance_progress::COLLECTION)
         {
             return Err(denied());
         }
@@ -201,6 +221,8 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
             let action = action.as_str().ok_or_else(&denied)?;
             if !(if collection.is_empty() {
                 action == "listCollections"
+            } else if collection == super::provenance_progress::COLLECTION {
+                super::provenance_progress::ACTIONS.contains(&action)
             } else {
                 ACTIONS.contains(&action)
                     || (collection == "binding_conversations" && action == "dropIndex")
@@ -212,6 +234,16 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
                 .or_default()
                 .insert(action.into());
         }
+    }
+    if grants
+        .get(super::provenance_progress::COLLECTION)
+        .is_some_and(|actions| {
+            !super::provenance_progress::ACTIONS
+                .iter()
+                .all(|action| actions.contains(*action))
+        })
+    {
+        return Err(denied());
     }
     if !COLLECTIONS.iter().all(|name| {
         ACTIONS
@@ -267,6 +299,8 @@ mod lifecycle_children_contract;
 #[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
+#[cfg(test)]
+mod segments;
 #[cfg(test)]
 #[path = "shared_schema_contract.rs"]
 mod shared_schema_contract;

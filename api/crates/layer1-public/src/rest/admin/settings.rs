@@ -11,6 +11,8 @@ use axum::{
 };
 use layer2_core::{Capability, CoreError, PlatformSettings};
 
+mod budget;
+
 use crate::AuthenticatedCaller;
 
 use super::{AdminState, NotAnOperator};
@@ -22,7 +24,7 @@ use body::SettingsJson;
 pub(crate) use body::{
     InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
     PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody,
+    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
 };
 
 pub(crate) enum Failure {
@@ -30,6 +32,7 @@ pub(crate) enum Failure {
     NotAnOperator,
     Invalid(Option<(String, String)>),
     Conflict,
+    BudgetWritesUnavailable,
     Unavailable,
 }
 
@@ -64,6 +67,7 @@ impl Failure {
 impl From<CoreError> for Failure {
     fn from(error: CoreError) -> Self {
         match error {
+            CoreError::ModelBudgetWritesUnavailable => Self::BudgetWritesUnavailable,
             CoreError::Forbidden => Self::NotAnOperator,
             CoreError::InvalidRequest(_) | CoreError::InvalidPressurePolicy(_) => {
                 Self::Invalid(None)
@@ -102,6 +106,13 @@ impl IntoResponse for Failure {
                 "settings_unavailable",
                 None,
             ),
+            Self::BudgetWritesUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "model-budget-writes-unavailable",
+                "Saving spend controls is not available yet.",
+                "model_budget_writes_unavailable",
+                None,
+            ),
             Self::NotAnOperator => unreachable!("handled above"),
         };
         let mut body = problem_document(status, slug, detail, code);
@@ -127,25 +138,39 @@ pub(crate) async fn read(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Result<Json<SettingsView>, Failure> {
-    Ok(Json(state.settings.read(&caller).await?.into()))
+    Ok(Json(SettingsView::new(
+        state.settings.read(&caller).await?,
+        &state.settings,
+    )))
 }
 
-#[utoipa::path(put, path = "/api/v1/admin/settings", tag = "administration", request_body = ReplaceRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(put, path = "/api/v1/admin/settings", tag = "administration", request_body = ReplaceRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument)))]
 pub(crate) async fn replace(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     SettingsJson(body): SettingsJson<ReplaceRequest>,
 ) -> Result<Json<SettingsView>, Failure> {
-    Ok(Json(
+    caller.require(Capability::ConfigurePlatform)?;
+    let has_budget = body.settings.has_model_budget();
+    let mut settings: PlatformSettings = body.settings.into();
+    if !has_budget {
+        // A predecessor client editing another section must not disable caps.
+        let current = state.settings.current().await?;
+        if current.revision != body.expected_revision {
+            return Err(Failure::Conflict);
+        }
+        settings.model_budget = current.settings.model_budget;
+    }
+    Ok(Json(SettingsView::new(
         state
             .settings
-            .configure_platform(&caller, body.expected_revision, &body.settings.into())
-            .await?
-            .into(),
-    ))
+            .configure_platform(&caller, body.expected_revision, &settings)
+            .await?,
+        &state.settings,
+    )))
 }
 
-#[utoipa::path(patch, path = "/api/v1/admin/settings", tag = "administration", request_body = PatchRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(patch, path = "/api/v1/admin/settings", tag = "administration", request_body = PatchRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument)))]
 pub(crate) async fn patch(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -157,22 +182,22 @@ pub(crate) async fn patch(
         return Err(Failure::Conflict);
     }
     let (expected_revision, settings) = body.apply(current.settings)?;
-    Ok(Json(
+    Ok(Json(SettingsView::new(
         state
             .settings
             .configure_platform(&caller, expected_revision, &settings)
-            .await?
-            .into(),
-    ))
+            .await?,
+        &state.settings,
+    )))
 }
 
-#[utoipa::path(post, path = "/api/v1/admin/settings/reset", tag = "administration", request_body = ResetRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument)))]
+#[utoipa::path(post, path = "/api/v1/admin/settings/reset", tag = "administration", request_body = ResetRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument)))]
 pub(crate) async fn reset(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     SettingsJson(body): SettingsJson<ResetRequest>,
 ) -> Result<Json<SettingsView>, Failure> {
-    Ok(Json(
+    Ok(Json(SettingsView::new(
         state
             .settings
             .configure_platform(
@@ -180,7 +205,7 @@ pub(crate) async fn reset(
                 body.expected_revision,
                 &PlatformSettings::default(),
             )
-            .await?
-            .into(),
-    ))
+            .await?,
+        &state.settings,
+    )))
 }

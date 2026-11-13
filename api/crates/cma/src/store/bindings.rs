@@ -37,6 +37,8 @@ mod association_tests;
 mod existing_tests;
 #[cfg(test)]
 mod mongo_tests;
+#[cfg(test)]
+mod operator_stop_tests;
 
 const BINDINGS: &str = "provider_bindings";
 const CONVERSATIONS: &str = "binding_conversations";
@@ -221,6 +223,13 @@ impl BindingStore for MongoSandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let current = self.binding(&next.binding_id).await?;
         validate_binding_write(current.as_ref(), expected, &next)?;
+        if next.existing_agent.is_none()
+            && current
+                .as_ref()
+                .is_none_or(|old| old.generation != next.generation)
+        {
+            crate::store::admission_checks::require_fresh_read(&self.budget_settings).await?;
+        }
         let mut document = binding_document(&next)?;
         if let Some(expected) = expected {
             document.remove("_id");

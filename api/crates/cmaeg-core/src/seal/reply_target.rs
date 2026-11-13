@@ -65,7 +65,11 @@ impl ReplyTargetRef {
             || p.event.validate().is_err()
             || !matches!(
                 p.event.reply,
-                super::ReplyAddress::NyxidRelay { .. } | super::ReplyAddress::Telegram { .. }
+                super::ReplyAddress::NyxidRelay { .. }
+                    | super::ReplyAddress::Telegram { .. }
+                    | super::ReplyAddress::Discord { .. }
+                    | super::ReplyAddress::Whatsapp { .. }
+                    | super::ReplyAddress::WhatsappGroup(_)
             )
         {
             return Err(OpenError::Format);

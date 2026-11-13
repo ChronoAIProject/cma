@@ -77,7 +77,17 @@ async fn api_admission_refuses_missing_verified_expiry_and_mismatched_identity()
         json!({"active":true,"sub":"owner","token_type":"refresh","exp":future_expiry(),"permissions":["cma:sandbox:use"]}),
         json!({"active":true,"sub":"owner","token_type":"access","exp":future_expiry(),"resource":["some-service"],"permissions":["cma:sandbox:use"]}),
     ] {
+        let expired = evidence["exp"] == 1;
         *fixture.identity.control.introspection.write().await = Reply::json(evidence);
+        if expired {
+            assert!(
+                identity::request_for_bearer(&fixture.identity.auth, credential.clone())
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            continue;
+        }
         let context = external_context(&fixture, &credential).await;
         assert!(service(&fixture, fixture.identity.auth.clone())
             .admit(

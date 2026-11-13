@@ -1,0 +1,35 @@
+# Explicit Agent log operator entry
+
+Part of #1348 and #1350. These commands are code entry points, not deployment or production authorization. They never run at service startup or from a public GET. No command in this record has been run against production.
+
+The binary recognizes explicit audit-unit, audit-cancel, audit-install and gate status/replace/close arguments. Unrecognized Agent-log arguments exit with a refusal rather than starting the API. Audit commands require the same bounded original Agent and audit identifiers on retries. Gate writes preserve S4's explicit expected-revision CAS and policy parser. No automatic new retry identity or revision exists.
+
+Examples, using placeholders only:
+
+```text
+cma --print-agent-log-operator-role audit
+cma --print-agent-log-operator-role gate-read
+cma --print-agent-log-operator-role gate-write
+cma --agent-log-audit-unit <agent-id> <original-audit-id>
+cma --agent-log-audit-cancel <agent-id> <original-audit-id>
+cma --agent-log-audit-install <agent-id> <original-audit-id>
+cma --agent-log-gate-status agent_log_segments_v1
+cma --agent-log-gate-close agent_log_segments_v1 <expected-revision>
+cma --agent-log-gate-replace agent_log_segments_v1 <expected-revision> <policy-file>
+```
+
+The existing CHRONO_MONGODB_URI, CHRONO_MONGODB_DATABASE and explicit authority mode supply connection configuration. The role-print path does not connect or create roles. An operator must independently provision the reviewed authority; this source change applies no grants. Isolated mode requires exact operation-specific collections/actions. Explicit shared-schema mode uses the existing shared-schema verifier and still rejects foreign-database or cluster grants. Neither role grants DDL, deletion or source-log writes. Gate status has no gate mutation grant. Audit installation can replace certified projection/head metadata and its exact Agent envelope fence; it does not rewrite Agent-log events.
+
+Before any operation, the entry verifies current authority, transaction topology and zero pending schema units. An absent, partial, incompatible or unavailable schema refuses before the operation. Gate actions additionally require gates and admissions to be present in S1's verified inventory. The gate/admission inventory is now present in the integrated S1 schema. Execution still refuses until that exact inventory is explicitly migrated and verified; source presence alone never authorizes a cohort.
+
+One invocation has a 45-second outer deadline and bounded connection/server-selection waits. A timeout or unknown commit is reported as uncertain: inspect and resume the original audit ID or gate revision. Driver messages and source records are not printed; output contains operation status or S4's aggregate gate status only. Unit audit may persist audit/evidence progress; install explicitly publishes the completed generation under S1's exact CAS. These are writes, not read-only production probes.
+
+S1 owns audit/rebuild semantics, complete output evidence in rebuilt generations, schema and the eventual migration checksum. The shared argument dispatcher lives in S2's segment_operations module and reuses S1's canonical audit_command parser; audit argument validation is not duplicated in the dispatcher. Shared migration-ledger registration reuses track B's step registry and remains separate from this operator entry. Production activation still requires complete caller wiring, local/CI qualification, review and release-owner execution.
+
+## Additive schema migration registration
+
+The segment reader schema is explicitly selected with migration ID `2026-11-05-am-log-segment-readers-v1`. Existing one-step spellings still select Activity, and both older migration IDs/checksums/receipt fields are retained. The segment step uses the same `agent_manager_migrations` history and global renewable runner lease. It cannot execute concurrently with either prior step. Older binaries whose registry does not recognize the new manifest refuse that history.
+
+Plan/status do not mutate schema or source. Explicit apply requires the exact manifest checksum, stamped release SHA and immutable API image identity. Schema inspection happens before the first ledger or DDL write. At most 64 additive schema units may execute per attempt; lease checks/renewal surround every effect and continue while it is pending. Missing collection validators are installed only when creating that collection. Drifted existing validators/indexes, TTLs and unknown migration history refuse; no automatic repair, validator replacement, source rewrite or activation occurs. A completed receipt is published only when no schema steps remain; subsequent postcondition drift refuses rather than silently repairing a completed migration. Status names this step's effects `applied_schema_steps`; older steps retain `created_indexes`.
+
+The checksum includes the schema implementation and this migration adapter. S1 must extend the checksum if it splits schema implementation into new children. The integrated inventory includes gate/admission, output evidence and the frozen format-2 recovery carrier validator/indexes; both carrier JSON sources are included in the manifest checksum. The release owner must explicitly apply and verify this complete schema before operator execution. Source registration does not establish that the production schema is installed. The schema runner is a source checkpoint until targeted tests, Mongo interruption/resume/lease/drift tests and review pass. No production invocation is authorized by this record.

@@ -26,6 +26,7 @@ pub(super) mod records;
 mod sandbox_inventory;
 mod snapshot;
 mod snapshot_lineage;
+mod snapshot_session;
 
 pub(super) async fn read_execution_snapshot(
     store: &MongoSandboxStore,
@@ -144,6 +145,16 @@ impl ResourceAccessStore for MongoSandboxStore {
         &self,
         target: &ResourceTarget,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
+        snapshot_session::read(self, target).await
+    }
+
+    async fn resource_access_snapshots(
+        &self,
+        targets: &[ResourceTarget],
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
         for _ in 0..TRANSACTION_ATTEMPTS {
             let mut session = self
                 .client
@@ -153,12 +164,19 @@ impl ResourceAccessStore for MongoSandboxStore {
             start_transaction(&mut session)
                 .await
                 .map_err(|_| ResourceAccessStoreError::Unavailable)?;
-            let result = snapshot::read(self, target, &mut session).await;
-            // This transaction performed reads only. Abort releases the snapshot;
-            // no write receipt or commit reconciliation is needed.
+            let result: Result<Vec<_>, ReadError> = async {
+                let mut snapshots = Vec::with_capacity(targets.len());
+                for target in targets {
+                    snapshots.push(snapshot::read(self, target, &mut session).await?);
+                }
+                Ok(snapshots)
+            }
+            .await;
+            // These are read-only snapshots; abort releases the transaction
+            // while preserving the same session for every row in the batch.
             let _ = session.abort_transaction().await;
             match result {
-                Ok(snapshot) => return Ok(snapshot),
+                Ok(snapshots) => return Ok(snapshots),
                 Err(ReadError::Domain(error)) => return Err(error),
                 Err(ReadError::Driver(error)) if is_transient(&error) => continue,
                 Err(ReadError::Driver(_)) => return Err(ResourceAccessStoreError::Unavailable),

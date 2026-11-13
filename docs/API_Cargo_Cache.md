@@ -25,7 +25,7 @@ job; other images and the release publisher keep their existing behavior.
 5. Save the archive only after the API job has scanned and exported its tested
    native image. An exact cache hit does not need a second immutable upload.
 
-All 15 check names and their dependencies remain unchanged. Cache hits never
+All check names and their dependencies remain unchanged. Cache hits never
 skip a build, scan, runtime check or native image export, and cache contents
 are not acceptance evidence. Only cache-service restore/save failures are
 optional; all existing image checks retain their failure behavior.
@@ -43,7 +43,11 @@ Weekly rotation also bounds reuse across changes behind upstream base tags.
 GitHub scopes caches to the key, archive version and ref, with default-branch
 fallback. A PR merge-ref cache cannot seed `develop` or another PR. The workflow
 and script both restrict the bridge to same-repository PR merge refs into
-`develop`/`main`, or pushes to `develop`. Fork PRs build without this bridge.
+`develop`/`main`, or pushes to `develop`. Fork PRs and `tl/release/**` pushes
+build without this bridge. Release-ref pushes skip cache prepare/restore/inject
+and extraction/save; they retain the complete image build, native load, scan
+and exact artifact export. The helper still rejects non-develop pushes, and
+CI must never relabel a release event to enter the develop cache path.
 No token or credential is passed into the cache-transfer containers.
 
 Archives are limited to 1 GiB compressed, 4 GiB expanded and 200,000 members.

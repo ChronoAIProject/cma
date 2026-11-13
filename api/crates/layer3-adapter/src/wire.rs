@@ -17,6 +17,9 @@ use crate::{
 
 /// Opt in to the additive Agent resource capability in RuntimeStatus responses.
 /// Old runtimes ignore Accept and retain their original request/response shape.
+pub const AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.agent-skill-upgrade-status.v1+json";
+
 pub const AGENT_RESOURCES_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.agent-resources-status+json";
 

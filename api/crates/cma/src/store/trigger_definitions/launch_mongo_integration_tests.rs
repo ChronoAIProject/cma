@@ -27,6 +27,7 @@ const LATEST: &str = "2026-09-05T04:02:00Z";
 mod initiation;
 #[path = "launch_observation_mongo_tests.rs"]
 mod observation_tests;
+mod platform_spend;
 mod visitor_quota;
 
 fn digest(byte: char) -> String {

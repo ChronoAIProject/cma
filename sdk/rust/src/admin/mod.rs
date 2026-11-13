@@ -7,9 +7,11 @@ use crate::{
     resources::identity,
 };
 use reqwest::{Method, StatusCode};
+mod admission;
 mod settings;
 mod types;
 mod warm_pools;
+pub use admission::*;
 pub use settings::*;
 pub use types::*;
 pub use warm_pools::*;
@@ -23,6 +25,8 @@ pub struct SandboxListOptions {
     pub status: Option<SandboxStatus>,
     /// Pinned runtime version filter.
     pub runtime_version: Option<String>,
+    /// True selects explicit exceptions; false includes unset preferences.
+    pub always_on: Option<bool>,
     /// Opaque pagination.
     pub page: PageOptions,
 }
@@ -57,6 +61,44 @@ pub struct Administration<'a> {
 }
 
 impl Administration<'_> {
+    /// Approve or revoke an exception with revision CAS and an administrator audit record.
+    pub async fn set_sandbox_always_on(
+        &self,
+        id: &str,
+        body: &AlwaysOnRequest,
+    ) -> Result<crate::instances::Sandbox> {
+        let value: crate::instances::Sandbox = self
+            .client
+            .operation(
+                Method::POST,
+                &["admin", "sandboxes", id, "always-on"],
+                Some(body),
+                StatusCode::OK,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
+    }
+
+    /// Preview how many Sandboxes satisfy the current idle-pause proof.
+    pub async fn preview_auto_pause(&self) -> Result<AutoPausePreview> {
+        self.client
+            .get(&["admin", "auto-pause", "preview"], &[])
+            .await
+    }
+
+    /// Schedule currently idle Sandboxes for pause after explicit confirmation.
+    pub async fn pause_idle_now(&self, body: &PauseIdleNowRequest) -> Result<PauseIdleNow> {
+        self.client
+            .operation(
+                Method::POST,
+                &["admin", "auto-pause", "pause-idle-now"],
+                Some(body),
+                StatusCode::OK,
+            )
+            .await
+    }
+
     /// List safe operator Sandbox summaries.
     pub async fn list_sandboxes(
         &self,
@@ -72,6 +114,9 @@ impl Administration<'_> {
         }
         if let Some(version) = &options.runtime_version {
             query.push(("runtime_version", version.clone()));
+        }
+        if let Some(always_on) = options.always_on {
+            query.push(("always_on", always_on.to_string()));
         }
         self.client.get(&["admin", "sandboxes"], &query).await
     }

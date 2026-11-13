@@ -250,3 +250,89 @@ interval as of the returned timestamp. Paused Sandboxes retain disk accrual.
 
 Allocated capacity is distinct from actual CPU load, memory in use and files
 stored. Prices and invoice totals are not inferred from these resource counts.
+
+## Measured resource reports
+
+`client.usageMetrics` provides owner-scoped actual CPU, working-set RAM and
+persistent-home filesystem reports. `client.adminUsageMetrics` has the same
+methods plus full-cohort owner search; it requires administrator capability.
+Agent selection still measures its shared Sandbox. These observational estimates
+do not change allocated billing or produce monetary estimates.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+const client = createClient({ baseUrl: 'https://cma.example.com' });
+const submitted = await client.usageMetrics.create({});
+const report = await client.usageMetrics.report(submitted.report_id);
+if (report.status === 'ready') {
+  const page = await client.usageMetrics.sandboxes(report.report_id, {
+    sort: 'cpu_mean_cores',
+    order: 'desc',
+    limit: 50,
+  });
+  const chart = await client.usageMetrics.series(report.report_id, { metric: 'cpu' });
+  console.log(report.effective_range, page.items, chart.lines);
+}
+```
+
+Create accepts 200 ready or 202 pending. Respect Retry-After and poll with a
+bounded application deadline; the SDK does not poll automatically. Reuse one
+report ID for summary, chart, detail and keyset pages. A report expires ten
+minutes after completion; 410 requires a new report. A 429 or 503 carries
+Retry-After. Every read rechecks authorization and current ownership.
+
+Use `measurement_cutoff`/`effective_range` for historical captions, and each
+metric's `observed_at`, state and coverage separately. Null is missing evidence,
+not zero use. Paused homes may have only `last_observed`. Large integer quantities
+are `number | string`; preserve decimal strings or use `BigInt` when exact integer
+arithmetic is needed. Charts include the full selected cohort, even when the
+current table page contains only 50 rows.
+
+### Owner allocation rankings
+
+`client.adminUsageMetrics.ownerAllocations(reportId, { metric: 'cpu', limit: 200 })` reads a bounded owner allocation page from an existing administrator
+report. Results cover the full selected cohort, ordered by allocation descending,
+with `total_count` and a signed `next` cursor. Supply that cursor with the same
+report and resource to continue. It does not create another report.
+
+Display `label`, and show `disambiguator` only as secondary duplicate-name context.
+`subject` is an opaque key and must not appear in chart text or tooltips. Respect
+partial `complete` flags, retain loaded/total counts on failures, and handle
+429/503 retries and 410 report expiry explicitly.
+
+## Same-image retained recovery
+
+`client.sandboxes.inspectRuntimeRecovery(id)` calls the owner-only
+`GET /api/v1/sandboxes/{id}/runtime-recovery` endpoint. It returns a bounded
+`disposition` and the deployment's `admission_enabled` flag. GET is read-only;
+it does not authorize reopening or establish that a later POST will qualify.
+
+After explicit owner consent, call `client.sandboxes.recoverRetained(id, body,
+options)` with `{ expected_revision, confirm_same_image_recovery: true }` and a
+persisted `options.idempotencyKey`. The default-off POST repeats complete proof
+and preserves the exact image, home and original conversations. It returns 202
+with an immutable `operation_id`, `revision` and `accepted_at`; follow the same
+Sandbox's lifecycle progress. A refusal retains the environment. After any lost
+reply, resend the same revision and key, including after progress or gate closure.
+An operator cannot substitute for the owning person's consent.
+
+## Always on exceptions
+
+Only an administrator can approve Always on. `sandboxes.setAlwaysOn(id, { always_on: false, expected_revision }, { idempotencyKey })` relinquishes an existing
+exception. Sending `true` returns HTTP 403 with `always_on_approval_required`,
+even when the exception is already enabled. A revision-matching `false` on an
+unset or already-false preference returns the current Sandbox unchanged, without
+advancing its revision or creating a persisted preference. Keep the same owner
+idempotency key and body through an uncertain response.
+
+Administrators use `admin.setSandboxAlwaysOn(id, { always_on, expected_revision })` to approve or revoke with revision CAS. Every successful
+write emits a `configure` activity with the administrator actor, resource target
+`sandbox:<id>`, and string details `setting=always_on`, `status=true|false`, and
+`revision=<resulting revision>`. A stale admin revision returns HTTP 409
+`operator_conflict`; missing operator capability returns HTTP 403 `forbidden`.
+
+Enumerate explicit exceptions with `admin.listSandboxes({ always_on: true, limit: 100 })`. Follow `next` with the same filter; `always_on=false` includes unset
+preferences. Read each admin detail for its current revision before a change.
+Retained true values may predate administrator approval: listing identifies the
+current exceptions, not their provenance. Re-approve or revoke each retained
+exception through the audited admin method before enabling auto-pause.

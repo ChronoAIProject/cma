@@ -11,10 +11,13 @@ use super::{
 pub trait SandboxControlStore: Send + Sync {
     /// Persist a new record and admission evidence atomically with its current
     /// resource-policy guard. Replay never changes the old command or deadline.
+    /// Apply `new_commitment` only after authenticated exact replay, so a
+    /// closure cannot hide a durable receipt whose acknowledgement was lost.
     async fn reserve_sandbox_control(
         &self,
         record: SandboxControlRecord,
         authorization: Arc<SandboxControlAuthorization>,
+        new_commitment: Result<(), crate::admission::AdmissionRefusal>,
     ) -> Result<SandboxControlRecord, SandboxControlError>;
     async fn sandbox_control(
         &self,

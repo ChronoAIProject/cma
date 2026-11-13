@@ -22,6 +22,7 @@ pub(super) fn sandbox() -> Sandbox {
             id: SandboxProfileId("sbp_skill_owner".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1000,
@@ -89,6 +90,7 @@ pub(super) enum CredentialReply {
     Missing,
     Failed(String),
     Refused(String),
+    Pending,
 }
 
 pub(super) struct TestCredentials {
@@ -127,6 +129,7 @@ impl SandboxCredentialController for TestCredentials {
             CredentialReply::Missing => Ok(None),
             CredentialReply::Failed(error) => Err(CredentialError::Unavailable(error.clone())),
             CredentialReply::Refused(error) => Err(CredentialError::Security(error.clone())),
+            CredentialReply::Pending => std::future::pending().await,
         }
     }
     async fn issue(

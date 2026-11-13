@@ -43,10 +43,10 @@ export async function composedControl(
     } else await route.fulfill({ response });
   });
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
-  await composer.fill('Keep the comparison draft through control and replay.');
+  await composer.fill('Keep the comparison draft through control and output.');
   const show = page.getByRole('button', { name: 'Show Agent computer', exact: true });
   if (await show.isVisible()) await show.click();
-  await page.getByRole('tab', { name: 'Browser', exact: true }).click();
+  await page.getByRole('tab', { name: 'Screen', exact: true }).click();
   const image = page.getByAltText('Agent browser page');
   await expect(image).toHaveJSProperty('naturalWidth', 1280);
   const recovery = page.getByRole('button', { name: 'Check original operation', exact: true });
@@ -85,7 +85,9 @@ export async function composedControl(
       new URL(response.url()).pathname === root + '/browser/control',
   );
   await page.getByRole('button', { name: 'Check original operation', exact: true }).click();
-  await expect(page.getByText('Agent is controlling', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Agent is in control · Working in Browser', { exact: true }),
+  ).toBeVisible();
   const auditResponse = await recoveredReturn;
   expect(auditResponse.status()).toBe(200);
   const audit = await auditResponse.json();
@@ -95,18 +97,14 @@ export async function composedControl(
   expect(audit.audit.some((entry: { kind: string }) => entry.kind === 'input')).toBe(true);
   expect(audit.audit.some((entry: { kind: string }) => entry.kind === 'returned')).toBe(true);
   if (process.env.CMA_INTEGRATED_POLICY === '1') await restoreAfterReturn(page, directory);
-  const answer = page.getByRole('article').filter({ hasText: 'The comparison is complete.' });
-  await answer.getByRole('button', { name: 'View plan and replay', exact: true }).click();
-  const replay = page.getByRole('region', { name: 'Operation record replay' });
-  await expect(replay.getByText('History · Read only', { exact: true })).toBeVisible();
-  await expect(replay.getByText('Turn ' + turn, { exact: true })).toBeVisible();
-  await expect(replay.getByRole('article')).toContainText('report.txt');
-  await page.screenshot({ path: info.outputPath('same-turn-operation-replay.png') });
-  await replay.getByRole('button', { name: 'Return Live', exact: true }).click();
-  await expect(replay.getByText('Live · Recorded operations', { exact: true })).toBeVisible();
-  await expect(composer).toHaveValue('Keep the comparison draft through control and replay.');
+  await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+  const output = page.locator('#computer-page-activity');
+  await expect(output.getByRole('article')).toContainText('report.txt');
+  await expect(output.getByRole('slider')).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('same-turn-operation-output.png') });
+  await expect(composer).toHaveValue('Keep the comparison draft through control and output.');
   await composer.fill('');
-  await page.getByRole('tab', { name: 'Browser', exact: true }).click();
+  await page.getByRole('tab', { name: 'Screen', exact: true }).click();
   await writeFile(
     join(directory, 'control-result.json'),
     JSON.stringify(

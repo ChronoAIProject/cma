@@ -168,10 +168,7 @@ export class AgentLifecycleCreateError extends Error {
 
 /** A transport-free view of the public CMA operations consumed by the web app. */
 export interface CmaWebClient {
-  readonly operationReplay?: Pick<
-    import('@chronoai/cma-sdk').Cma['agentEventsV2'],
-    'snapshot' | 'head' | 'events'
-  >;
+  readonly usageViews?: import('../usage/client').UsageClient;
   readonly readSuggestedReplies?: (
     agentId: string,
     scope: { readonly turn_sequence: number; readonly answer_sequence: number },
@@ -211,6 +208,15 @@ export interface CmaWebClient {
     targetVersion: string,
     options: CommandOptions,
   ) => Promise<{ readonly runtimeUpdate: SandboxRuntimeUpdate; readonly revision: number }>;
+  readonly inspectSandboxRecovery?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('@chronoai/cma-sdk').RetainedRecoveryAssessment>;
+  readonly recoverSandboxRetained?: (
+    id: string,
+    expectedRevision: number,
+    options: CommandOptions,
+  ) => Promise<import('@chronoai/cma-sdk').RetainedReopenReceipt>;
   readonly uploadAgentAttachment?: (
     id: string,
     file: File,
@@ -222,10 +228,6 @@ export interface CmaWebClient {
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@chronoai/cma-sdk').TaskExperienceClient;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
-  readonly readDesktopCapability?: (
-    scope: { readonly workspace_id?: string; readonly sandbox_id?: string },
-    options?: ReadOptions,
-  ) => Promise<import('@chronoai/cma-sdk').DesktopCapability>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
     options: CommandOptions,
@@ -310,6 +312,12 @@ export interface CmaWebClient {
   ): Promise<AgentDetail>;
   pauseSandbox(id: string, options: CommandOptions): Promise<void>;
   reviveSandbox(id: string, options: CommandOptions): Promise<void>;
+  setSandboxAlwaysOn(
+    id: string,
+    alwaysOn: boolean,
+    expectedRevision: number,
+    options: CommandOptions,
+  ): Promise<SandboxDetail>;
   deleteSandbox(id: string, options: CommandOptions): Promise<void>;
   removeWorkspace(id: string, options: CommandOptions): Promise<void>;
   interruptAgent(id: string, options: CommandOptions): Promise<void>;
@@ -352,6 +360,7 @@ export const unavailableClient: CmaWebClient = {
   createAgent: unavailable,
   pauseSandbox: unavailable,
   reviveSandbox: unavailable,
+  setSandboxAlwaysOn: unavailable,
   deleteSandbox: unavailable,
   removeWorkspace: unavailable,
   interruptAgent: unavailable,

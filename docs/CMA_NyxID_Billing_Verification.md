@@ -95,6 +95,10 @@ in the mandatory `.github/scripts/mongo-contract-tests.sh` selection, whose
 inventory and fixture cleanup regression suite also passes. Mongo failpoint
 tests and the coverage fixture use separate replica sets.
 
+Both Mongo shell runners retain local source builds with `CMA_NEXTEST_REUSE`
+unset. CI now reuses one workspace test archive; see
+[Backend CI archive](Backend_CI_Archive.md) for modes and selection verification.
+
 Native deadline semantics were checked against agent-sandbox v1.0.2 at
 `9a85153590e54cb980f3241f9e7a9228449412c9`: core Sandbox `shutdownTime` with
 `shutdownPolicy: Retain` removes the Pod/Service while retaining the Sandbox/PVC.

@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 use crate::resource_access::{ResourceAccessError, ResourceAccessService};
 use crate::{AgentId, Caller, Capability, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 
+mod agent_lineage;
+pub use agent_lineage::{SandboxAgentLineage, SandboxDetailRecord};
 mod authorized;
+mod timing;
+pub use timing::{SandboxDetailPhase, SandboxDetailTimer};
 mod inventory;
 mod projection;
 use projection::{sandbox_view, workspace_view};
@@ -50,15 +54,16 @@ pub struct SandboxInventoryRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandboxHierarchyRecord {
+pub struct SandboxHierarchyRecord<A = Agent> {
     pub sandbox: Sandbox,
     pub workspaces: Vec<Workspace>,
     pub worktrees: Vec<Worktree>,
-    pub agents: Vec<Agent>,
+    pub agents: Vec<A>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceHierarchyRecord {
+    pub task_started_at: std::collections::HashMap<AgentId, String>,
     pub task_statuses: std::collections::HashMap<AgentId, super::AgentTaskStatus>,
     pub workspace: Workspace,
     pub worktrees: Vec<Worktree>,
@@ -85,6 +90,15 @@ pub trait HierarchyReadStore: Send + Sync {
         &self,
         id: &SandboxId,
     ) -> Result<Option<SandboxHierarchyRecord>, SandboxStoreError>;
+
+    async fn read_sandbox_detail(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<SandboxDetailRecord>, SandboxStoreError> {
+        self.read_sandbox_hierarchy(id)
+            .await
+            .map(|record| record.map(SandboxDetailRecord::Complete))
+    }
 
     async fn read_workspace_hierarchy(
         &self,
@@ -134,6 +148,8 @@ pub struct WorktreeHierarchySummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHierarchySummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_started_at: Option<String>,
     #[serde(default)]
     pub task_status: super::AgentTaskStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,6 +237,7 @@ impl HierarchyReadError {
 pub struct HierarchyReadService {
     store: Arc<dyn HierarchyReadStore>,
     access: Option<Arc<ResourceAccessService>>,
+    detail_timings: bool,
 }
 
 pub struct SandboxSnapshotDownload {
@@ -257,6 +274,7 @@ impl HierarchyReadService {
         Arc::new(Self {
             store,
             access: None,
+            detail_timings: false,
         })
     }
 
@@ -264,6 +282,7 @@ impl HierarchyReadService {
         Arc::new(Self {
             store: self.store.clone(),
             access: Some(access),
+            detail_timings: self.detail_timings,
         })
     }
 
@@ -367,10 +386,10 @@ impl HierarchyReadService {
         }
         let record = self
             .store
-            .read_sandbox_hierarchy(id)
+            .read_sandbox_detail(id)
             .await
             .map_err(store_error)?
-            .filter(|record| record.sandbox.owner == caller.subject)
+            .filter(|record| record.sandbox().owner == caller.subject)
             .ok_or(HierarchyReadError::NotFound)?;
         sandbox_view(record)
     }

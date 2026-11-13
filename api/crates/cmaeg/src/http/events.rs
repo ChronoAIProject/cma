@@ -147,12 +147,14 @@ pub async fn receive_event(
     report.outcome(&state.ingress, LaunchClass::of(&outcome));
     match outcome {
         LaunchOutcome::Refused(error) => {
-            let busy = error.code == ProblemCode::ProviderBusy;
+            let retry_after = error
+                .retry_after_seconds
+                .or_else(|| (error.code == ProblemCode::ProviderBusy).then_some(2));
             let mut response = super::tools::result::<()>(Err(error));
-            if busy {
+            if let Some(seconds) = retry_after {
                 response
                     .headers_mut()
-                    .insert("retry-after", HeaderValue::from_static("2"));
+                    .insert("retry-after", HeaderValue::from(seconds));
             }
             response
         }

@@ -37,16 +37,19 @@ struct Window {
     checked_out: HashMap<u64, Instant>,
     in_use_peak: usize,
     untracked: u64,
+    tracking_incomplete: bool,
 }
 
 impl Window {
     fn new(started: Instant) -> Self {
+        super::mongo_diagnostics::output::initialize();
         Self {
             started,
             samples: [Sample::default(); LABELS.len()],
             checked_out: HashMap::new(),
             in_use_peak: 0,
             untracked: 0,
+            tracking_incomplete: false,
         }
     }
 
@@ -63,41 +66,66 @@ impl Window {
 }
 
 #[derive(Clone)]
-struct Observer(Arc<Mutex<Window>>);
+struct Observer(Arc<Mutex<Window>>, &'static str, u32);
 
 impl Observer {
     fn checked_out(&self, key: u64, duration: Duration) {
-        {
+        let pool_state = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
+            let pool_state = if window.tracking_incomplete
+                || window.checked_out.len() >= MAX_TRACKED_CONNECTIONS
+            {
+                "unknown"
+            } else if window.checked_out.len() + 1 >= self.2 as usize {
+                "at_limit"
+            } else {
+                "below_limit"
+            };
             if window.checked_out.len() < MAX_TRACKED_CONNECTIONS {
                 window.checked_out.insert(key, Instant::now());
                 window.in_use_peak = window.in_use_peak.max(window.checked_out.len());
             } else {
                 window.untracked = window.untracked.saturating_add(1);
+                window.tracking_incomplete = true;
+                metrics::counter!("cma_mongo_connection_tracking_overflow_total", "pool" => self.1)
+                    .increment(1);
             }
-        }
+            metrics::gauge!("cma_mongo_connections_tracked", "pool" => self.1)
+                .set(window.checked_out.len() as f64);
+            pool_state
+        };
+        metrics::histogram!("cma_mongo_checkout_wait_seconds", "pool" => self.1, "pool_state" => pool_state)
+            .record(duration.as_secs_f64());
         self.record(0, duration, false);
     }
 
     fn returned(&self, key: u64, closed: bool) {
-        let started = self
-            .0
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .checked_out
-            .remove(&key);
+        let started = {
+            let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
+            let started = window.checked_out.remove(&key);
+            metrics::gauge!("cma_mongo_connections_tracked", "pool" => self.1)
+                .set(window.checked_out.len() as f64);
+            started
+        };
         if let Some(started) = started {
             self.record(3, started.elapsed(), closed);
         }
     }
 
     fn record(&self, index: usize, duration: Duration, failed: bool) {
+        let operation = LABELS[index];
+        let outcome = if failed { "failed" } else { "ok" };
+        metrics::counter!("cma_mongo_pool_events_total", "pool" => self.1, "operation" => operation, "outcome" => outcome).increment(1);
+        metrics::histogram!("cma_mongo_pool_operation_seconds", "pool" => self.1, "operation" => operation, "outcome" => outcome).record(duration.as_secs_f64());
         let now = Instant::now();
         let completed = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
             window.record(index, duration, failed);
             (now.duration_since(window.started) >= WINDOW).then(|| {
                 let mut next = Window::new(now);
+                // An untracked connection can outlive a summary window. With
+                // no pairing key we cannot prove occupancy complete again.
+                next.tracking_incomplete = window.tracking_incomplete;
                 std::mem::swap(&mut next.checked_out, &mut window.checked_out);
                 next.in_use_peak = next.checked_out.len();
                 let in_use = next.checked_out.len();
@@ -110,19 +138,20 @@ impl Observer {
                 if sample.count == 0 {
                     continue;
                 }
-                tracing::info!(
-                    parent: None,
-                    operation,
-                    window_ms = now.duration_since(window.started).as_millis(),
-                    count = sample.count,
-                    failures = sample.failures,
-                    total_us = sample.total_us,
-                    max_us = sample.max_us,
-                    buckets = ?sample.buckets,
-                    in_use,
-                    in_use_peak = window.in_use_peak,
-                    untracked = window.untracked,
-                    "MongoDB client latency summary"
+                super::mongo_diagnostics::output::send(
+                    super::mongo_diagnostics::output::Record::Latency {
+                        pool: self.1,
+                        operation,
+                        window_ms: now.duration_since(window.started).as_millis() as u64,
+                        count: sample.count,
+                        failures: sample.failures,
+                        total_us: sample.total_us,
+                        max_us: sample.max_us,
+                        buckets: sample.buckets,
+                        in_use,
+                        in_use_peak: window.in_use_peak,
+                        untracked: window.untracked,
+                    },
                 );
             }
         }
@@ -130,15 +159,53 @@ impl Observer {
 }
 
 pub(super) fn observe(options: &mut ClientOptions) {
-    let observer = Observer(Arc::new(Mutex::new(Window::new(Instant::now()))));
-    attach(options, observer);
+    let pool_observer = observer(options, "application");
+    let diagnostics = super::mongo_diagnostics::install(options, "general");
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
+        pool_observer(event);
+    }));
 }
 
+/// Each independently configured client keeps its own bounded occupancy state.
+/// The fixed purpose label is never a URI, database, address or client identity.
+pub(crate) fn observer(
+    options: &ClientOptions,
+    pool: &'static str,
+) -> impl Fn(CmapEvent) + Send + Sync + 'static {
+    metrics::gauge!("cma_mongo_connections_tracked", "pool" => pool).set(0);
+    metrics::gauge!("cma_mongo_pool_max_connections", "pool" => pool)
+        .set(options.max_pool_size.unwrap_or(10) as f64);
+    let observer = Observer(
+        Arc::new(Mutex::new(Window::new(Instant::now()))),
+        pool,
+        options.max_pool_size.unwrap_or(10),
+    );
+    move |event| record_event(&observer, event)
+}
+
+#[cfg(test)]
 fn attach(options: &mut ClientOptions, observer: Observer) {
-    // Command monitoring makes mongodb 3.9 decode complete commands and replies
-    // before invoking the callback, even when it only reads duration. Keep it
-    // disabled so diagnostics do not add BSON decoding to every database call.
-    options.cmap_event_handler = Some(EventHandler::callback(move |event| match event {
+    // This fixture exercises monitoring explicitly, independent of process flags.
+    let diagnostics =
+        super::mongo_diagnostics::install_configured(options, "general", Some("true"));
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.cmap(&event);
+        }
+        record_event(&observer, event)
+    }));
+}
+
+fn record_event(observer: &Observer, event: CmapEvent) {
+    // Diagnostic command monitoring is composed separately from pool metrics.
+    match event {
+        CmapEvent::ConnectionCheckoutStarted(_) => {
+            // Cancellation can omit the end event; starts minus ends is not queue depth.
+            metrics::counter!("cma_mongo_checkout_started_total", "pool" => observer.1).increment(1)
+        }
         CmapEvent::ConnectionCheckedOut(event) => observer.checked_out(
             connection_key(&event.address, event.connection_id),
             event.duration,
@@ -153,12 +220,12 @@ fn attach(options: &mut ClientOptions, observer: Observer) {
         CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
         CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),
         _ => {}
-    }));
+    }
 }
 
 // Driver IDs are only unique within a server's pool. Keep a bounded, ephemeral
 // fingerprint for pairing; neither the address nor the fingerprint is logged.
-fn connection_key(address: &mongodb::options::ServerAddress, id: u32) -> u64 {
+pub(super) fn connection_key(address: &mongodb::options::ServerAddress, id: u32) -> u64 {
     let mut hash = DefaultHasher::new();
     (address, id).hash(&mut hash);
     hash.finish()
@@ -167,3 +234,7 @@ fn connection_key(address: &mongodb::options::ServerAddress, id: u32) -> u64 {
 #[cfg(test)]
 #[path = "mongo_latency_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mongo_checkout_tests.rs"]
+mod checkout_tests;

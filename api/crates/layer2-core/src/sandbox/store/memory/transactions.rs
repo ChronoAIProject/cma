@@ -44,6 +44,9 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 if candidate.sandboxes.get(&id).is_some_and(|current| {
                     current.owner != sandbox.owner
                         || current
+                            .validate_retirement_archive_successor(&sandbox)
+                            .is_err()
+                        || current
                             .validate_unpublished_recovery_save(&sandbox)
                             .is_err()
                         || current

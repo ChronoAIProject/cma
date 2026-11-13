@@ -162,9 +162,14 @@ async fn runtime_update_mongo_fence_conflicts_with_a_turn_after_idle_snapshot() 
     let (sandbox, ready) = fixture(&store, "sbx_update_turn_race").await;
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
-    evidence::live_activities(&store, std::slice::from_ref(&ready), &mut session)
-        .await
-        .unwrap();
+    evidence::live_activities(
+        &store,
+        std::slice::from_ref(&ready),
+        &mut session,
+        "2026-09-05T00:30:00Z",
+    )
+    .await
+    .unwrap();
     let mut working = ready.clone();
     working
         .transition(AgentStatus::Working, LATER.into(), None)

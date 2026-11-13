@@ -1,3 +1,6 @@
+import type { SandboxResourceAvailability } from './sandboxInput';
+import { screenApplication } from './screenOperations';
+import { changedFiles, homeFilePath } from './fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
@@ -8,17 +11,13 @@ import type { AgentCommand } from './controller';
 import { AgentDetails } from './Details';
 import { FileExplorer } from './files/FileExplorer';
 import { Button } from '../ui/Button';
+import { IconCloseOutline16, IconRefreshOutline14, IconFullscreenOutline16 } from '../ui/icons';
 import './files/AgentFiles.css';
 import type { ConversationState } from './model';
 import { OperationOutput } from './environment/OperationOutput';
-import { OperationReplay } from './environment/OperationReplay';
 import './environment/AgentComputer.css';
 import { FeatureAvailability, useAgentEnvironment } from './environment/availability';
-import {
-  useComputerObservation,
-  useReplaySelection,
-  type AgentComputerObservation,
-} from './environment/observation';
+import { useComputerObservation, type AgentComputerObservation } from './environment/observation';
 import { BrowserPanel, EnableBrowser } from './environment/BrowserPanel';
 import { useTaskExperience } from '../taskExperience';
 import { agentInitialized } from './modelReadiness';
@@ -43,7 +42,11 @@ export function AgentSidePanel({
   onSelect,
   observation,
   viewerId,
+  onStopForControl,
+  resourceAvailability,
 }: {
+  readonly onStopForControl?: () => Promise<void>;
+  readonly resourceAvailability?: SandboxResourceAvailability;
   readonly agentId: string;
   readonly shared: boolean;
   readonly detail?: AgentDetail;
@@ -64,7 +67,18 @@ export function AgentSidePanel({
   const filesOpen = panel === 'files';
   const computerOpen = panel !== undefined && panel !== 'details';
   const machineAvailable = !shared && detail?.desktop === true;
-  const [browserSource, setBrowserSource] = useState<'machine' | 'agent'>('machine');
+  const computerRef = useRef<HTMLElement>(null);
+  const [connectionRevision, reconnect] = useState(0);
+  const [fullScreen, setFullScreen] = useState(false);
+  const [screenError, setScreenError] = useState<string>();
+  useEffect(() => {
+    const changed = () => {
+      setFullScreen(document.fullscreenElement === computerRef.current);
+      setScreenError(undefined);
+    };
+    document.addEventListener('fullscreenchange', changed);
+    return () => document.removeEventListener('fullscreenchange', changed);
+  }, []);
   const [visitedScope, setVisitedScope] = useState<{
     client: typeof client;
     agentId: string;
@@ -88,62 +102,35 @@ export function AgentSidePanel({
     observedReadiness.current = readiness;
     reloadEnvironment();
   }, [readiness, reloadEnvironment]);
-  const replaySelection = useReplaySelection(observation);
-  const [selection, setSelection] = useState<
-    | { client: typeof client; agentId: string; tab: AgentPanel; open: boolean; explicit: boolean }
-    | undefined
-  >(undefined);
-  const announcedSelection = useRef<typeof selection>(undefined);
-  const chosen =
-    selection?.client === client && selection.agentId === agentId ? selection : undefined;
-  if (!computerOpen && chosen?.open) setSelection({ ...chosen, open: false });
-  else if (
-    computerOpen &&
-    replaySelection &&
-    panel === 'activity' &&
-    (!chosen?.open || chosen.tab !== 'activity')
-  )
-    setSelection({ client, agentId, tab: 'activity', open: true, explicit: true });
-  else if (
-    computerOpen &&
-    (features || machineAvailable) &&
-    (!chosen?.open ||
-      (!chosen.explicit &&
-        chosen.tab === 'files' &&
-        (machineAvailable || features?.browser.state === 'available')))
-  ) {
-    const tab =
-      (chosen?.explicit ? chosen.tab : undefined) ??
-      (panel === 'files' && (machineAvailable || features?.browser.state === 'available')
-        ? 'browser'
-        : panel);
-    setSelection({ client, agentId, tab, open: true, explicit: chosen?.explicit ?? false });
+  const [errorPanel, setErrorPanel] = useState(panel);
+  if (errorPanel !== panel) {
+    setErrorPanel(panel);
+    setScreenError(undefined);
   }
-  useEffect(() => {
-    if (
-      computerOpen &&
-      panel === 'files' &&
-      chosen?.open &&
-      chosen.tab !== panel &&
-      onSelect &&
-      announcedSelection.current !== chosen
-    ) {
-      announcedSelection.current = chosen;
-      onSelect(chosen.tab);
-    }
-  }, [computerOpen, chosen, panel, onSelect]);
-  const select = (tab: AgentPanel) => {
-    const next = { client, agentId, tab, open: computerOpen, explicit: true };
-    announcedSelection.current = next;
-    setSelection(next);
-    onSelect?.(tab);
-  };
+  const select = (tab: AgentPanel) => onSelect?.(tab);
   const observed = useComputerObservation(observation);
   const operations = shared ? observed : (conversation ?? observed);
+  const terminalAvailable = operations?.toolCalls.some((tool) => tool.kind === 'execute') === true;
+  const historyLoaded =
+    !historyLoading && (conversation !== undefined || observed?.historyLoaded === true);
+  useEffect(() => {
+    if (historyLoaded && panel === 'activity' && !terminalAvailable) onSelect?.('browser');
+  }, [historyLoaded, panel, terminalAvailable, onSelect]);
+  const lastScreen = [...(operations?.toolCalls ?? [])]
+    .reverse()
+    .map(screenApplication)
+    .find(Boolean);
+  const running =
+    operations?.activeRunId !== undefined || (!historyLoaded && detail?.status === 'working');
+  const agentBrowserActive =
+    lastScreen === 'Browser' &&
+    features?.browser.state === 'available' &&
+    !!features.runtime_incarnation &&
+    !!client.browser;
   // Shared file access is independently renewed and never inferred from a visible toolbar.
   const access = useAgentAccess(
     client.resourceViews,
-    shared && (visited || computerOpen) ? agentId : undefined,
+    shared && (visited || computerOpen || observation) ? agentId : undefined,
   );
   const authorized = access.state.status === 'ready' ? access.state.value.access : undefined;
   const reloadAccess = access.reload;
@@ -165,13 +152,7 @@ export function AgentSidePanel({
       environment.state.status === 'loading' ||
       (environment.state.status === 'error' && environment.state.transient) ||
       (environment.state.status === 'ready' && features?.files.state !== 'forbidden'));
-  const choosingBrowser = Boolean(
-    onSelect &&
-    filesOpen &&
-    (machineAvailable || features?.browser.state === 'available') &&
-    !(selection?.client === client && selection.agentId === agentId && selection.tab === 'files'),
-  );
-  if (filesOpen && mayRead && !choosingBrowser && !visited)
+  if (filesOpen && mayRead && !visited)
     setVisitedScope({ client, agentId, subject, generation: (visitedScope?.generation ?? 0) + 1 });
   const mayWrite = features
     ? features.files.writable
@@ -195,6 +176,7 @@ export function AgentSidePanel({
           />
         ) : (
           <AgentDetails
+            availability={resourceAvailability}
             detail={detail}
             open={panel === 'details'}
             onClose={onClose}
@@ -205,46 +187,96 @@ export function AgentSidePanel({
         )}
       </div>
       <aside
+        ref={computerRef}
         aria-label="Agent computer"
         id="agent-files-panel"
         className="agent-computer"
         hidden={!computerOpen}
         inert={!computerOpen || undefined}
       >
-        <header className="agent-files-panel__header">
-          <h2>Agent computer</h2>
-          <Button size="sm" onClick={onClose}>
-            Back to conversation
-          </Button>
-        </header>
-        <div className="agent-computer__tabs" role="tablist" aria-label="Agent computer views">
-          {(['browser', 'activity', 'files'] as const).map((tab, index, tabs) => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              id={`computer-tab-${tab}`}
-              aria-controls={`computer-page-${tab}`}
-              aria-selected={panel === tab}
-              tabIndex={panel === tab ? 0 : -1}
-              onClick={() => select(tab)}
-              onKeyDown={(event) => {
-                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-                event.preventDefault();
-                const next =
-                  event.key === 'Home'
-                    ? 0
-                    : event.key === 'End'
-                      ? 2
-                      : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
-                select(tabs[next]);
-                document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
+        <header className="agent-computer__header">
+          <h2 className="sr-only">Agent computer</h2>
+          <div className="agent-computer__tabs" role="tablist" aria-label="Agent computer views">
+            {(
+              [
+                'browser',
+                ...(terminalAvailable || (panel === 'activity' && !historyLoaded)
+                  ? (['activity'] as const)
+                  : []),
+                'files',
+              ] as const
+            ).map((tab, index, tabs) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                id={`computer-tab-${tab}`}
+                aria-controls={`computer-page-${tab}`}
+                aria-selected={panel === tab}
+                tabIndex={panel === tab ? 0 : -1}
+                onClick={() => select(tab)}
+                onKeyDown={(event) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                  event.preventDefault();
+                  const next =
+                    event.key === 'Home'
+                      ? 0
+                      : event.key === 'End'
+                        ? tabs.length - 1
+                        : (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) %
+                          tabs.length;
+                  select(tabs[next]);
+                  document.getElementById(`computer-tab-${tabs[next]}`)?.focus();
+                }}
+              >
+                {tab === 'files' ? 'Files' : tab === 'activity' ? 'Terminal' : 'Screen'}
+              </button>
+            ))}
+          </div>
+          <div className="agent-computer__actions">
+            {panel === 'browser' ? (
+              <>
+                <Button
+                  size="sm"
+                  icon={<IconRefreshOutline14 />}
+                  aria-label="Reconnect"
+                  title="Reconnect"
+                  onClick={() => {
+                    setScreenError(undefined);
+                    reconnect((revision) => revision + 1);
+                    environment.reload();
+                  }}
+                />
+                <Button
+                  size="sm"
+                  icon={<IconFullscreenOutline16 />}
+                  aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
+                  title={fullScreen ? 'Exit full screen' : 'Full screen'}
+                  onClick={() => {
+                    const request = fullScreen
+                      ? document.exitFullscreen?.()
+                      : computerRef.current?.requestFullscreen?.();
+                    if (!request) setScreenError('Full screen is unavailable in this browser.');
+                    else
+                      void request.catch(() => setScreenError('Full screen could not be opened.'));
+                  }}
+                />
+              </>
+            ) : null}
+            <Button
+              size="sm"
+              icon={<IconCloseOutline16 />}
+              aria-label="Close computer"
+              title="Close computer"
+              onClick={() => {
+                if (document.fullscreenElement === computerRef.current)
+                  void document.exitFullscreen?.();
+                onClose();
               }}
-            >
-              {tab === 'files' ? 'Files' : tab === 'activity' ? 'Terminal' : 'Browser'}
-            </button>
-          ))}
-        </div>
+            />
+          </div>
+        </header>
+        {screenError ? <p role="status">{screenError}</p> : null}
         <div
           id="computer-page-files"
           role="tabpanel"
@@ -261,6 +293,18 @@ export function AgentSidePanel({
           ) : null}
           {visited && mayRetain && client.files ? (
             <FileExplorer
+              initialDirectory={homeFilePath(
+                conversation?.runtimeMetadata?.workingDirectory ??
+                  detail?.runtimeMetadata?.workingDirectory ??
+                  detail?.worktree.path ??
+                  '',
+              )}
+              changes={changedFiles(
+                operations?.toolCalls,
+                conversation?.runtimeMetadata?.workingDirectory ??
+                  detail?.runtimeMetadata?.workingDirectory ??
+                  detail?.worktree.path,
+              )}
               key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
               panel
               embedded
@@ -320,9 +364,7 @@ export function AgentSidePanel({
             </>
           ) : features?.operation_output.state === 'forbidden' ? (
             <FeatureAvailability name="Operation output" feature={features.operation_output} />
-          ) : client.operationReplay &&
-            client.files?.environment &&
-            environment.state.status !== 'ready' ? (
+          ) : client.files?.environment && environment.state.status !== 'ready' ? (
             <>
               <p role="status">
                 {environment.state.status === 'loading'
@@ -335,24 +377,17 @@ export function AgentSidePanel({
                 </Button>
               ) : null}
             </>
-          ) : policy.replay_presentation &&
-            features?.replay.state === 'available' &&
-            client.operationReplay &&
-            panel === 'activity' ? (
-            <OperationReplay
-              key={`${agentId}:${observation?.scope.subject}:${features.policy_revision}`}
-              reader={client.operationReplay}
-              agentId={agentId}
-              scope={observation?.scope.subject ?? 'owner'}
-              toolCalls={operations?.toolCalls}
-              selection={replaySelection}
-              onSelectionHandled={observation?.clearReplaySelection}
-            />
           ) : (
             <OperationOutput
-              toolCalls={operations?.toolCalls}
-              activeRunId={operations?.activeRunId}
+              toolCalls={historyLoaded || terminalAvailable ? operations?.toolCalls : undefined}
+              activeRunId={running ? operations?.activeRunId : undefined}
               active={panel === 'activity'}
+              observation={observation}
+              workingDirectory={
+                conversation?.runtimeMetadata?.workingDirectory ??
+                detail?.runtimeMetadata?.workingDirectory ??
+                detail?.worktree.path
+              }
             />
           )}
         </div>
@@ -360,76 +395,61 @@ export function AgentSidePanel({
           id="computer-page-browser"
           role="tabpanel"
           aria-labelledby="computer-tab-browser"
-          className="agent-computer__page agent-computer__output"
+          className="agent-computer__page agent-computer__screen"
           hidden={panel !== 'browser'}
         >
-          {machineAvailable && features?.browser.state === 'available' ? (
-            <div className="agent-computer__sources" role="group" aria-label="Computer source">
-              <Button
-                size="sm"
-                aria-pressed={browserSource === 'machine'}
-                onClick={() => setBrowserSource('machine')}
-              >
-                Shared desktop
-              </Button>
-              <Button
-                size="sm"
-                aria-pressed={browserSource === 'agent'}
-                onClick={() => setBrowserSource('agent')}
-              >
-                Agent browser
-              </Button>
-            </div>
-          ) : null}
-          {machineAvailable &&
-          (browserSource === 'machine' || features?.browser.state !== 'available') ? (
-            panel === 'browser' ? (
-              <DesktopPanel
-                agentId={agentId}
-                runtimeReady={desktopRuntimeReady(detail)}
-                running={
-                  conversation?.activeRunId !== undefined ||
-                  pending === 'send' ||
-                  detail.status === 'working' ||
-                  detail.status === 'starting'
+          <>
+            {machineAvailable && !agentBrowserActive ? (
+              panel === 'browser' ? (
+                <DesktopPanel
+                  key={`${agentId}:${connectionRevision}`}
+                  agentId={agentId}
+                  application="Desktop"
+                  runtimeReady={desktopRuntimeReady(detail)}
+                  running={running}
+                  runId={operations?.activeRunId}
+                  onStop={onStopForControl}
+                  controlUnavailable={!historyLoaded}
+                  preparation={{ context: client, owner: subject }}
+                  onClose={onClose}
+                  embedded
+                />
+              ) : null
+            ) : features?.browser.state === 'available' &&
+              features.runtime_incarnation &&
+              client.browser &&
+              (!shared || authorized?.capabilities.includes('view_history') === true) ? (
+              <BrowserPanel
+                key={`${agentId}:${features.runtime_incarnation}:${features.policy_revision}:${observation?.scope.subject}:${connectionRevision}`}
+                client={client.browser}
+                controlAccountId={subject}
+                controlClient={
+                  !shared && features.control.state === 'available' && features.control.writable
+                    ? client.browserControl
+                    : undefined
                 }
-                preparation={{ context: client, owner: subject }}
-                onClose={onClose}
-                embedded
+                agentId={agentId}
+                incarnation={features.runtime_incarnation}
+                active={panel === 'browser'}
+                running={running}
+                controlAdmission={policy.browser_takeover}
+                onReload={environment.reload}
               />
-            ) : null
-          ) : features?.browser.state === 'available' &&
-            features.runtime_incarnation &&
-            client.browser &&
-            (!shared || authorized?.capabilities.includes('view_history') === true) ? (
-            <BrowserPanel
-              key={`${agentId}:${features.runtime_incarnation}:${features.policy_revision}:${observation?.scope.subject}`}
-              client={client.browser}
-              controlAccountId={observation?.scope.subject}
-              controlClient={
-                !shared && features.control.state === 'available' && features.control.writable
-                  ? client.browserControl
-                  : undefined
-              }
-              agentId={agentId}
-              incarnation={features.runtime_incarnation}
-              active={panel === 'browser'}
-              controlAdmission={policy.browser_takeover}
-              onReload={environment.reload}
-            />
-          ) : features ? (
-            <FeatureAvailability name="Browser" feature={features.browser} />
-          ) : (
-            <p role="status">
-              {!client.files?.environment || environment.state.status === 'ready'
-                ? 'Environment capabilities not reported.'
-                : environment.state.status === 'loading'
-                  ? 'Checking environment capabilities…'
-                  : environment.state.transient
-                    ? 'Environment capabilities are temporarily unavailable. Try again.'
-                    : 'Environment capabilities are unavailable. Try again.'}
-            </p>
-          )}
+            ) : features ? (
+              <FeatureAvailability name="Browser" feature={features.browser} />
+            ) : (
+              <p role="status">
+                {!client.files?.environment || environment.state.status === 'ready'
+                  ? 'Environment capabilities not reported.'
+                  : environment.state.status === 'loading'
+                    ? 'Checking environment capabilities…'
+                    : environment.state.transient
+                      ? 'Environment capabilities are temporarily unavailable. Try again.'
+                      : 'Environment capabilities are unavailable. Try again.'}
+              </p>
+            )}
+          </>
+
           {!shared &&
           policy.desktop_enable &&
           features?.browser.state === 'not_enabled' &&
@@ -449,25 +469,6 @@ export function AgentSidePanel({
             </Button>
           ) : null}
         </div>
-        {panel !== 'activity' &&
-        policy.replay_presentation &&
-        client.operationReplay &&
-        features?.replay.state === 'available' &&
-        features.operation_output.state === 'available' &&
-        (!shared || authorized?.capabilities.includes('view_history') === true) ? (
-          <footer className="agent-computer__history">
-            <Button
-              size="sm"
-              onClick={() => {
-                select('activity');
-                document.getElementById('computer-tab-activity')?.focus();
-              }}
-            >
-              View operation history
-            </Button>
-            <span>Recorded actions · Read only</span>
-          </footer>
-        ) : null}
       </aside>
     </>
   );

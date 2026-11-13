@@ -1,5 +1,6 @@
 //! Replay loading and commit reconciliation for Mongo agent admission.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     AgentAdmission, AgentAdmissionResult, AgentCreation, SandboxStoreError,
 };
@@ -16,6 +17,8 @@ use super::sandbox_mongo::MongoSandboxStore;
 use super::sandboxes::read_sandbox;
 use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
+
+mod source;
 
 pub(super) struct CreatedReceipt {
     pub(super) creation: AgentCreation,
@@ -155,28 +158,20 @@ async fn load_replay_with_session(
         .session(&mut *session)
         .await
         .map_err(LoadError::Driver)?;
-    let last_seq = agent.conversation.last_seq;
-    let mut initial_log = None;
-    match read {
-        ReplayRead::Transaction => {
-            scan_complete_log_with_session(store, &agent.id, last_seq, session, |entry| {
-                if initial_log.is_none() {
-                    initial_log = Some(entry);
-                }
-                Ok(())
-            })
-            .await?;
-        }
-        ReplayRead::Snapshot => {
-            scan_complete_log_with_snapshot_session(store, &agent.id, last_seq, session, |entry| {
-                if initial_log.is_none() {
-                    initial_log = Some(entry);
-                }
-                Ok(())
-            })
-            .await?;
-        }
-    }
+    let initial_log = match super::agent_log_segment_reads::range_with_snapshot(
+        store,
+        &agent,
+        session,
+        0,
+        1,
+        matches!(read, ReplayRead::Snapshot),
+    )
+    .await
+    .map_err(LoadError::Domain)?
+    {
+        Some(entries) => entries.into_iter().next(),
+        None => source::legacy_initial(store, &agent, session, read).await?,
+    };
     let creation =
         assemble_creation(agent, worktree_document, initial_log).map_err(LoadError::Domain)?;
     if binding.is_some() {
@@ -322,6 +317,7 @@ pub(super) async fn reconcile_created(
     let provenance_matches = exact_artifact_matches(provenance.as_ref(), &receipt.provenance)?;
     let mut initial_log = None;
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &receipt.creation.agent.id,
         receipt.creation.agent.conversation.last_seq,

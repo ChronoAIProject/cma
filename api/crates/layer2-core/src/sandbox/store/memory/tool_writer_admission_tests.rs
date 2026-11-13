@@ -119,7 +119,7 @@ async fn disabled_tool_output_still_checkpoints_source_receipts_and_rejects_stal
             },
             ack,
         ),
-        update: Some(Box::new(tool(false))),
+        update: Some(Box::new(tool(false)).into()),
     };
     let outcome = recorder
         .record_update(&working.id, 1, &mut assembly, update.clone(), NOW.into())
@@ -171,7 +171,7 @@ async fn closed_tool_writer_replays_retained_new_output_receipt_without_rewritin
             },
             ack,
         ),
-        update: Some(Box::new(tool(false))),
+        update: Some(Box::new(tool(false)).into()),
     };
     let written = admitted
         .record_update(

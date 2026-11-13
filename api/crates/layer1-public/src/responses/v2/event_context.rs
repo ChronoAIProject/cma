@@ -100,16 +100,30 @@ pub(super) async fn retrieve(
             }
         }
     }
-    let result = state
-        .commands
-        .external_event_context_for_source(
-            &auth.context,
-            auth.credential.as_ref().map(|value| value.value()),
-            &binding,
-            &conversation,
-            &event,
-        )
-        .await;
+    let credential = auth.credential.as_ref().map(|value| value.value());
+    let result = if state.retained_context_lookup {
+        state
+            .commands
+            .external_event_context_for_source_buffered(
+                &auth.context,
+                credential,
+                &binding,
+                &conversation,
+                &event,
+            )
+            .await
+    } else {
+        state
+            .commands
+            .external_event_context_for_source(
+                &auth.context,
+                credential,
+                &binding,
+                &conversation,
+                &event,
+            )
+            .await
+    };
     let response = match result {
         Ok(context) => Json(context.payload).into_response(),
         Err(CommandAdmissionError::Ledger(CommandLedgerError::NotFound)) => error::error(

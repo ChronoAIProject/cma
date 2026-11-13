@@ -25,6 +25,7 @@ pub struct Config {
     pub post_status: u16,
     pub post_error_body: Option<String>,
     pub post_error_content_type: String,
+    pub post_error_retry_after: Option<String>,
     pub post_error_response_id: bool,
     pub post_error_idle: bool,
     pub post_error_transport_failure: bool,
@@ -50,6 +51,7 @@ impl Default for Config {
             post_status: 200,
             post_error_body: None,
             post_error_content_type: "application/json".into(),
+            post_error_retry_after: None,
             post_error_response_id: false,
             post_error_idle: false,
             post_error_transport_failure: false,
@@ -185,6 +187,9 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
         let mut response = Response::builder()
             .status(config.post_status)
             .header("content-type", config.post_error_content_type);
+        if let Some(value) = config.post_error_retry_after {
+            response = response.header("retry-after", value);
+        }
         if config.post_error_response_id {
             response = response.header("x-cma-response-id", "resp_accepted");
         }

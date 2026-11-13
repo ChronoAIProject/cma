@@ -1,0 +1,102 @@
+.repository-dialog {
+  display: grid;
+  gap: 20px;
+  color: var(--dsw-specific-task-primary);
+}
+.repository-dialog__header {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+}
+.repository-dialog__icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--dsw-specific-task-panel-border);
+  border-radius: 16px;
+}
+.repository-dialog__header h2 {
+  font-size: 26px;
+  line-height: 32px;
+  font-weight: 700;
+  margin: 0;
+}
+.repository-dialog__header p,
+.repository-dialog__helper {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  line-height: 22px;
+  margin: 0;
+}
+.repository-dialog__field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 22px;
+}
+.repository-dialog__field + .repository-dialog__field {
+  margin-top: -4px;
+}
+.repository-dialog__optional {
+  margin-left: 8px;
+  color: var(--dsw-specific-task-weak);
+}
+.repository-dialog__input {
+  height: 48px;
+  border-radius: 12px;
+  border-color: var(--dsw-specific-task-panel-border);
+  background: var(--dsw-specific-task-panel);
+}
+.repository-dialog__input:focus-within {
+  border-color: var(--dsw-specific-task-accent);
+  box-shadow: var(--dsw-specific-task-focus-ring);
+}
+.repository-dialog__input input:focus-visible {
+  box-shadow: none;
+}
+.repository-dialog__input input::placeholder {
+  color: var(--dsw-specific-task-placeholder);
+}
+.repository-dialog__input [data-repository-ref] {
+  font-family: var(--ds-font-family-code);
+}
+.repository-dialog__field [role='alert'] {
+  color: var(--dsw-alias-state-error-primary);
+  margin: 0;
+}
+.repository-dialog__footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.repository-dialog__action,
+.repository-dialog__save {
+  height: 48px;
+  border-radius: 12px;
+}
+.repository-dialog__save {
+  background: var(--dsw-specific-task-button-fill);
+  color: var(--dsw-specific-task-on-accent);
+}
+.repository-dialog__save:hover:not(:disabled) {
+  background: var(--dsw-specific-task-accent-hover);
+}
+.repository-dialog__save:disabled {
+  opacity: 1;
+  background: var(--dsw-specific-task-disabled);
+  color: var(--dsw-alias-label-tertiary);
+}
+.repository-dialog__close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+@media (pointer: coarse), (max-width: 600px) {
+  .repository-dialog__close {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

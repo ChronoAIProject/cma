@@ -3,6 +3,7 @@ import type { Dispatch, RefObject, SetStateAction } from 'react';
 import type { AgentResourceState } from './controllerTypes';
 import { loadAgent } from './loadAgent';
 import { loadV2Agent } from './transport/load';
+import { ReadinessWake, readinessDelay } from './readinessWait';
 
 /** Observe startup without repeatedly loading the still-empty conversation. */
 export async function readPreparation(
@@ -11,6 +12,7 @@ export async function readPreparation(
   signal: AbortSignal,
   state: RefObject<AgentResourceState>,
   publish: Dispatch<SetStateAction<AgentResourceState>>,
+  wake = new ReadinessWake(),
 ) {
   const current = state.current;
   if (current.status !== 'ready' || current.detail.id !== agentId)
@@ -21,10 +23,15 @@ export async function readPreparation(
     sandboxId: current.detail.sandbox.id,
   };
   let publishPreparation: (() => void) | undefined;
-  if (current.detail.status === 'starting') {
-    const started = performance.now();
+  // V2 has durable replay for an active first message. Retained legacy tabs
+  // still need their JSON reconciliation while first-message delivery is pending.
+  if (
+    current.detail.status === 'starting' ||
+    (current.v2 !== undefined && current.detail.firstMessage !== undefined)
+  ) {
+    let attempt = 0;
     for (;;) {
-      const readStarted = performance.now();
+      if (document.hidden) await wake.wait(0, signal);
       await current.v2?.authorize(signal);
       signal.throwIfAborted();
       const detail = await client.readAgent(agentId, { signal });
@@ -36,7 +43,11 @@ export async function readPreparation(
         detail.worktree.id !== current.detail.worktree.id
       )
         throw new Error('Agent projections changed identity.');
-      if (detail.status !== 'starting' || detail.sandbox.status !== current.detail.sandbox.status) {
+      if (
+        detail.status !== current.detail.status ||
+        detail.sandbox.status !== current.detail.sandbox.status ||
+        JSON.stringify(detail.firstMessage) !== JSON.stringify(current.detail.firstMessage)
+      ) {
         // Pending first-message work keeps the preparation effect alive while
         // history refreshes. Settled preparation publishes only the full read.
         if (
@@ -59,13 +70,7 @@ export async function readPreparation(
         }
         break;
       }
-      // Include authorization and the completed read in the short startup cadence.
-      // Slow preparation retains its full backoff; requests never overlap.
-      const elapsed = performance.now() - readStarted;
-      // The runtime publishes Ready before the first-message acknowledgement.
-      // A short cadence keeps that bounded readiness window visible without
-      // overlapping reads; prolonged preparation still uses the full delay.
-      await wait(performance.now() - started < 10000 ? Math.max(0, 100 - elapsed) : 1500, signal);
+      await wake.wait(readinessDelay(attempt++), signal);
     }
   }
   // Keep the selected transport and journal, with a fresh handle so live replay
@@ -85,20 +90,4 @@ export async function readPreparation(
     undefined,
     publishPreparation,
   );
-}
-
-function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const abort = () => {
-      clearTimeout(timer);
-      signal.removeEventListener('abort', abort);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', abort);
-      resolve();
-    }, milliseconds);
-    signal.addEventListener('abort', abort, { once: true });
-  });
 }

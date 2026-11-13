@@ -1,4 +1,4 @@
-//! Additive Agent skills and durable runtime-confirmed installation state.
+//! Agent skill installation and upgrades with runtime-confirmed effective versions.
 
 use super::Agents;
 use crate::{Error, IdempotencyKey, Result, profiles::SkillSource};
@@ -16,7 +16,7 @@ pub struct AgentSkill {
     pub id: String,
     /// Display name when the registry material has resolved one.
     pub name: Option<String>,
-    /// Exact registry version.
+    /// Effective registry version; upgrades retain the previous version until confirmed.
     pub version: String,
     /// Registry supplying this skill.
     pub source: SkillSource,
@@ -39,7 +39,7 @@ pub struct AgentSkills {
     pub unavailable_reason: Option<String>,
 }
 
-/// Install one explicitly selected Ornn skill at an exact version.
+/// Install or upgrade an Ornn skill to an exact version on a capable idle Agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InstallAgentSkillRequest {
@@ -57,9 +57,10 @@ impl Agents<'_> {
         self.client.get(&["agents", id, "skills"], &[]).await
     }
 
-    /// Admit an additive skill installation for an idle Agent. A `202` receipt
+    /// Admit a skill installation or upgrade for a capable idle Agent. A `202` receipt
     /// is not runtime confirmation; read `skills()` until `pending` is false.
     /// Retry uncertain replies with the same body and idempotency key.
+    /// After a definitive readiness/support refusal, use a new key for a new attempt.
     pub async fn install_skill(
         &self,
         id: &str,

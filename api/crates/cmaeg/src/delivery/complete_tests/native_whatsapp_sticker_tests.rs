@@ -163,7 +163,7 @@ async fn sticker_requests_are_refused_before_native_or_relay_transports_other_th
     let (receipt, _) = sender.reply(&ctx, &event, &message).await;
     assert!(matches!(receipt.delivery, DeliveryOutcome::Unsupported));
     assert!(
-        matches!(RelayClient::prepare_native(&event.reply, "Must not send", &message.native_attachments),
+        matches!(RelayClient::prepare_native(&event.reply, "Must not send", &message.native_attachments, false),
         Err(DeliveryOutcome::Rejected { reason }) if reason == "native_media_unsupported")
     );
     assert!(

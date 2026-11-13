@@ -22,8 +22,19 @@ async fn fail_created(
     workspace: &Workspace,
 ) -> Agent {
     let created = store.admit_agent(request).await.unwrap();
-    let mut agent = created.creation().agent.clone();
-    let mut worktree = created.creation().worktree.clone();
+    fail_retained(store, created.creation().agent.clone(), workspace).await
+}
+
+async fn fail_retained(
+    store: &MongoSandboxStore,
+    mut agent: Agent,
+    workspace: &Workspace,
+) -> Agent {
+    let mut worktree = store
+        .get_worktree(&agent.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
     let request = WorktreeRequest::new(
         format!("worktree:{}:{}:add:v1", workspace.name, worktree.name),
         workspace.name.clone(),
@@ -441,3 +452,6 @@ async fn worktree_recovery_unknown_commit_uses_one_snapshot_and_never_allocates_
     assert_eq!(store.worktrees.count_documents(doc! {}).await.unwrap(), 2);
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "agent_worktree_recovery_integrity_tests.rs"]
+mod integrity;

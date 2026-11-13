@@ -3,6 +3,7 @@ use super::{
     inbox_dispatch::InboxDispatcher,
     runtime_source,
     source_worker::{self, Attempt, SourcePort, Timing},
+    status::StatusAttempt,
     DiscordApi, DurableJournal, GatewayError,
 };
 use crate::{
@@ -43,14 +44,16 @@ impl SourcePort for Production {
         &'a self,
         record: &'a str,
         stop: watch::Receiver<bool>,
+        status: StatusAttempt,
     ) -> BoxFuture<'a, Attempt> {
         Box::pin(async move {
-            let result = match DurableJournal::acquire(
+            let result = match DurableJournal::acquire_observed(
                 self.records.clone(),
                 self.keys.clone(),
                 record,
                 self.api.clone(),
                 self.activity.clone(),
+                status.clone(),
             )
             .await
             {
@@ -156,6 +159,7 @@ impl Worker {
         });
         let dispatcher = InboxDispatcher::with_selection(records, keys, ingress, selection.clone());
         let discovery_enabled = config.discovery_enabled;
+        let statuses = selection.status();
         let (stop, stopped) = watch::channel(false);
         let signal = stop.clone();
         let task = tokio::spawn(async move {
@@ -166,6 +170,7 @@ impl Worker {
                     selection,
                     selected,
                     stopped.clone(),
+                    statuses.clone(),
                 ));
             } else {
                 for record in selected {
@@ -174,10 +179,11 @@ impl Worker {
                         record,
                         stopped.clone(),
                         Timing::default(),
+                        statuses.clone(),
                     ));
                 }
             }
-            tasks.spawn(inbox_loop(dispatcher, stopped.clone()));
+            tasks.spawn(inbox_loop(dispatcher, stopped.clone(), statuses));
             let mut stopping = stopped.clone();
             let healthy = tokio::select! {
                 biased;
@@ -228,7 +234,11 @@ impl Drop for Worker {
         }
     }
 }
-async fn inbox_loop(dispatcher: InboxDispatcher, mut stop: watch::Receiver<bool>) {
+async fn inbox_loop(
+    dispatcher: InboxDispatcher,
+    mut stop: watch::Receiver<bool>,
+    statuses: super::status::StatusRegistry,
+) {
     let mut cursor = None;
     loop {
         if *stop.borrow() {
@@ -250,7 +260,10 @@ async fn inbox_loop(dispatcher: InboxDispatcher, mut stop: watch::Receiver<bool>
                     Duration::from_secs(5)
                 }
             }
-            Err(_) => Duration::from_secs(5),
+            Err(_) => {
+                statuses.diagnostic(false);
+                Duration::from_secs(5)
+            }
         };
         if source_worker::stopped(&mut stop, delay).await {
             return;

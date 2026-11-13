@@ -126,3 +126,56 @@ async fn a_busy_shared_budget_defers_backfill_without_advancing_its_cursor() {
     sender.send(true).unwrap();
     worker.await.unwrap();
 }
+
+#[derive(Default)]
+struct DurableStore {
+    calls: std::sync::atomic::AtomicUsize,
+    done: tokio::sync::Notify,
+}
+#[async_trait::async_trait]
+impl AgentProvenanceBackfillStore for DurableStore {
+    async fn durable_provenance_backfill_step(
+        &self,
+        worker: &str,
+    ) -> Result<Option<ProvenanceBackfillProgress>, SandboxStoreError> {
+        assert!(uuid::Uuid::parse_str(worker).is_ok());
+        match self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => Err(SandboxStoreError::Unavailable("fixture".into())),
+            1 => Ok(Some(ProvenanceBackfillProgress::Busy)),
+            2 => Ok(Some(ProvenanceBackfillProgress::Advanced)),
+            3 => Ok(None), // Activation disappearing must not allow legacy work.
+            _ => {
+                self.done.notify_one();
+                Ok(Some(ProvenanceBackfillProgress::SweepFinished))
+            }
+        }
+    }
+    async fn scan_agent_provenance_backfill(
+        &self,
+        _: &PageRequest,
+    ) -> Result<Page<AgentId>, SandboxStoreError> {
+        panic!("durable errors/activation loss must not fall back to legacy scans")
+    }
+    async fn backfill_agent_provenance(
+        &self,
+        _: &AgentId,
+    ) -> Result<ProvenanceBackfillOutcome, SandboxStoreError> {
+        panic!("durable observations own their effect and counters")
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn durable_worker_defers_startup_and_refuses_fallback_after_error_or_activation() {
+    let store = Arc::new(DurableStore::default());
+    let (sender, receiver) = watch::channel(false);
+    let mut backfill = AgentProvenanceBackfill::new(store.clone());
+    backfill.budget = crate::background::BackgroundBudget::new();
+    let worker = backfill.spawn(receiver);
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(29)).await;
+    assert_eq!(store.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    store.done.notified().await;
+    assert_eq!(store.calls.load(std::sync::atomic::Ordering::SeqCst), 5);
+    sender.send(true).unwrap();
+    worker.await.unwrap();
+}

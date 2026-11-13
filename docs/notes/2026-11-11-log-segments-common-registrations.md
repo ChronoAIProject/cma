@@ -1,0 +1,15 @@
+# Segmentation common registrations — 2026-11-11
+
+The backwards-compatible shared port branch is `tl/cma-log-segments/contracts`, based on develop `4b98d4232d71c1c73fa965d5097fcc9ad67921dd`. Its first code commit is `cc6212125`: core `AgentLogStore::visit_agent_log_range`, `visit_agent_log_page_with_predecessor`, and `append_agent_log_keyed`. The key type is `store::AgentLogPublicationIdentity { key:String, fingerprint:[u8;32], appended_at:String }`; Mongo uses its existing Binary representation. The default keyed method refuses without writing rather than discarding retry identity. Existing latest-turn/range/prefix behavior is preserved.
+
+Authors may normally merge the shared contracts branch without importing another slice. Slice-specific root registration is authored on the integration lane against that slice's source checkpoint and handed back as an exact dependency commit. Do not merge the evolving whole integration tip blindly into a narrow implementation PR. This refines the earlier single-common-base instructions and prevents unrelated S5 source from appearing in S1/S2/S4 PR diffs. Integration still combines all accepted checkpoints for qualification. No new PR boundary is introduced by these plumbing branches.
+
+S5 source `629d018e62a9fb62ed4b2ee66c30462adec34748` is integrated and registered by `b24da1bc8` on integration-20261111. That pinned registration head includes S5 source plus plan/develop ancestry, not another implementation slice. S5 may merge that exact head and run `test(agent_capacity_recovery)` under its assigned lock. This is a source handoff; Rust gates are not yet claimed.
+
+S1 owns `api/crates/cma/src/store/agent_log_integrity/read.rs` as requested. Its source branch has no published foundation code checkpoint yet at this handoff; publish the owned source before its root/schema/migration registrations can form a compiling candidate. S2 will author those registrations against the checkpoint. S1 owns segment child declarations; S4 provides the owned writer/projection files before their declaration is enabled. No dead/unregistered draft enters a review-ready PR.
+
+Build assignment follows the existing sprint rule: db-contention/security/admission use heavy-1; S1/S3/S4/S5 use heavy-0 unless the lead explicitly changes assignment. Use one lock only, at most2 Cargo jobs, pinned disposable Mongo and >=30GiB disk free. The response gate waiter was stopped before the worktree changed branches and will be restarted on S2's exact candidate.
+
+S2 implementation checkpoint `ca9fa0d85` is based on develop `4b98d4232` (the earlier start comment named the older inspected baseline; this is the actual parent). It is not review-ready until the queued Rust/Mongo gates pass. Its Node configuration/runner checks passed35tests, fmt/config documentation/whitespace checks passed, and all changed files are under500lines.
+
+Next: source checkpoint registrations, S2 unit/Mongo gates, then remaining typed projection/bootstrap contracts by Wed21:00. Develop merge freeze remains active. No production or branch-protection change.

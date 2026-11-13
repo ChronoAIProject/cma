@@ -1,15 +1,20 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use utoipa::ToSchema;
 
 use crate::activity::{ActivityConsumer, ConsumerState};
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BindRequest {
     pub app_ref: String,
     pub installation_id: u64,
-    pub proof_ref: String,
+    /// Retained for legacy requests; static proofs no longer grant authority.
+    #[schema(value_type = String, required = false)]
+    pub proof_ref: Option<String>,
+    #[schema(value_type = u64, required = false)]
+    pub account_id: Option<u64>,
+    #[schema(value_type = Vec<u64>, required = false, max_items = 256)]
+    pub repository_ids: Option<Vec<u64>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -26,6 +31,49 @@ pub struct Binding {
     pub verified_by: String,
     pub verification_ref: String,
     pub repository_ids: Vec<u64>,
+    #[schema(required = false)]
+    pub version: u64,
+    #[schema(required = false)]
+    pub requested_repository_ids: Vec<u64>,
+    #[schema(required = false)]
+    pub approved_repository_ids: Vec<u64>,
+    #[schema(required = false)]
+    pub excluded_repository_ids: Vec<u64>,
+    pub approval: Option<BindingApproval>,
+}
+
+impl Binding {
+    /// Outside-scope repositories already have no authority. Retain exclusions
+    /// only for the approved/requested scope, never an installation inventory.
+    pub(super) fn exclude_repository(&mut self, id: u64) {
+        if (self.approved_repository_ids.contains(&id)
+            || self.requested_repository_ids.contains(&id))
+            && !self.excluded_repository_ids.contains(&id)
+        {
+            self.excluded_repository_ids.push(id);
+            self.excluded_repository_ids.sort_unstable();
+        }
+        self.repository_ids.retain(|candidate| *candidate != id);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BindingApproval {
+    pub verified_by: String,
+    pub evidence_ref: String,
+    pub approved_at: i64,
+    pub authority_revision: u64,
+    pub repository_ids: Vec<u64>,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VerifyBindingRequest {
+    pub expected_version: u64,
+    pub evidence_ref: String,
+    #[schema(max_items = 256)]
+    pub repository_ids: Vec<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
@@ -39,11 +87,31 @@ pub struct Receipt {
     pub event: String,
     pub action: Option<String>,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub received_at: i64,
     pub raw_body_expires_at: i64,
+    /// End of the bounded receipt and duplicate-detection window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_until: Option<i64>,
     pub body_sha256: String,
     pub task_ids: Vec<String>,
     pub authority_revision: u64,
+    /// Per-channel durable dispatch progress. This is additive to the v1 receipt
+    /// contract and is absent on retained lifecycle/ignored receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<Vec<DispatchProgress>>,
+}
+
+#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DispatchProgress {
+    pub channel_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_id: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, ToSchema)]
@@ -59,6 +127,7 @@ pub struct Task {
     pub accepted_at: i64,
     pub retained_until: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Retained v1 compatibility field; the gateway never interprets agent results.
     pub result: Option<TaskResult>,
 }
 
@@ -79,74 +148,6 @@ pub struct TaskResult {
 pub enum TaskResultStatus {
     Succeeded,
     NoChange,
-}
-
-impl TaskResult {
-    fn from_value(value: &Value) -> Option<Self> {
-        let status = match value.get("status")?.as_str()? {
-            "succeeded" => TaskResultStatus::Succeeded,
-            "no_change" => TaskResultStatus::NoChange,
-            _ => return None,
-        };
-        let branch = bounded_string(value.get("branch"), 128)?;
-        let commit = bounded_string(value.get("commit"), 512)?;
-        let pull_request = bounded_string(value.get("pull_request"), 2_048)?;
-        match status {
-            TaskResultStatus::Succeeded
-                if branch.is_none() || commit.is_none() || pull_request.is_none() =>
-            {
-                return None;
-            }
-            TaskResultStatus::NoChange if commit.is_some() || pull_request.is_some() => {
-                return None;
-            }
-            _ => {}
-        }
-        Some(Self {
-            status,
-            branch,
-            commit,
-            pull_request,
-        })
-    }
-}
-
-fn bounded_string(value: Option<&Value>, max: usize) -> Option<Option<String>> {
-    let Some(value) = value else {
-        return Some(None);
-    };
-    if value.is_null() {
-        return Some(None);
-    }
-    let text = value.as_str()?;
-    if text.is_empty() || text.len() > max || text.bytes().any(|byte| byte.is_ascii_control()) {
-        return None;
-    }
-    Some(Some(text.to_owned()))
-}
-
-pub(crate) fn parse_task_result(response: &Value) -> Option<TaskResult> {
-    if response.get("status").and_then(Value::as_str) != Some("completed") {
-        return None;
-    }
-    let output = response.get("output")?.as_array()?;
-    for item in output.iter().rev() {
-        let Some(content) = item.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for part in content.iter().rev() {
-            let Some(text) = part.get("text").and_then(Value::as_str) else {
-                continue;
-            };
-            let Ok(value) = serde_json::from_str::<Value>(text.trim()) else {
-                continue;
-            };
-            if let Some(result) = TaskResult::from_value(&value) {
-                return Some(result);
-            }
-        }
-    }
-    None
 }
 
 impl Task {
@@ -191,10 +192,11 @@ impl Task {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn consumer(state: ConsumerState) -> ActivityConsumer {
         ActivityConsumer {
+            refusal_code: None,
+            last_non_admission_code: None,
             consumer_id: "goal-agent".into(),
             display_name: None,
             agent_id: None,
@@ -209,54 +211,6 @@ mod tests {
             deliveries: Vec::new(),
             media_responses: Vec::new(),
         }
-    }
-
-    #[test]
-    fn parses_the_machine_readable_no_change_result_from_a_completed_response() {
-        let response = json!({
-            "status": "completed",
-            "output": [{"content": [{
-                "type": "output_text",
-                "text": r#"{"status":"no_change","branch":"automation/chrono-goals-sync","commit":null,"pull_request":null}"#
-            }]}]
-        });
-
-        assert_eq!(
-            parse_task_result(&response),
-            Some(TaskResult {
-                status: TaskResultStatus::NoChange,
-                branch: Some("automation/chrono-goals-sync".into()),
-                commit: None,
-                pull_request: None,
-            })
-        );
-    }
-
-    #[test]
-    fn rejects_incomplete_or_contradictory_terminal_result_text() {
-        for text in [
-            r#"{"status":"succeeded","branch":"automation/chrono-goals-sync"}"#,
-            r#"{"status":"no_change","branch":"automation/chrono-goals-sync","commit":"abc"}"#,
-        ] {
-            let response = json!({
-                "status": "completed",
-                "output": [{"content": [{"type": "output_text", "text": text}]}]
-            });
-            assert_eq!(parse_task_result(&response), None, "{text}");
-        }
-    }
-
-    #[test]
-    fn ignores_untrusted_or_incomplete_result_text() {
-        let response = json!({
-            "status": "in_progress",
-            "output": [{"content": [{
-                "type": "output_text",
-                "text": r#"{"status":"succeeded","pull_request":"https://evil.example"}"#
-            }]}]
-        });
-
-        assert_eq!(parse_task_result(&response), None);
     }
 
     #[test]

@@ -3,6 +3,7 @@ use layer2_core::{
     sandbox::{Sandbox, SandboxInterruptionCause},
     seconds_from_rfc3339,
 };
+use layer3_adapter::binding_diagnostics::{adapter_outcome, measure, Outcome, Stage};
 use layer3_adapter::{RuntimeHandle, RuntimeTermination, SandboxAdapter};
 use std::time::{Duration, SystemTime};
 
@@ -14,9 +15,17 @@ pub(super) async fn observe(
     let Some(binding) = &sandbox.runtime else {
         return SandboxInterruptionCause::RuntimeUnavailable;
     };
-    match tokio::time::timeout(
-        Duration::from_secs(2),
-        adapter.runtime_termination(&RuntimeHandle(binding.runtime_id.clone())),
+    match measure(
+        Stage::InterruptionObservation,
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            adapter.runtime_termination(&RuntimeHandle(binding.runtime_id.clone())),
+        ),
+        |result| match result {
+            Err(_) => Outcome::Deadline,
+            Ok(Ok(None)) => Outcome::Absent,
+            Ok(result) => adapter_outcome(result),
+        },
     )
     .await
     {

@@ -43,19 +43,55 @@ idempotency keys and replay rules.
 
 ## Deployment and rollback
 
-1. Deploy the compatible reader with
-   `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED=false` to every Gateway replica and
-   rollback target. The checked-in manifest intentionally leaves it false.
+The checked-in ConfigMap enables `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED=true`.
+With routed recovery/admission and multi-consumer authoring enabled, discovery
+advertises `relay_authoring.custom_durable_execution_enabled: true`. Existing
+channels keep their saved execution mode; only new channels can opt in.
+
+### Reader evidence and image promotion (2026-11-08)
+
+Reader support was added by
+[`ee4540d9d512a673d47dd3364a3a9276e40b05d6`](https://github.com/ChronoAIProject/cma/commit/ee4540d9d512a673d47dd3364a3a9276e40b05d6).
+The release base `619655da83fb4437cc613f743f70ac81a9653938` on develop contains
+that commit. A read-only production check on 2026-11-08 at 03:07 UTC found:
+
+- [Live OpenAPI](https://cma.nyxid.ai/event-gateway/openapi.json) exposes
+  `POST /v1/github/apps`, `PUT /v1/github/apps/{app_ref}/webhook-secret`, and
+  `POST /v1/github/apps/{app_ref}/verification`.
+- Authenticated `GET https://cma.nyxid.ai/event-gateway/v1/channel-capabilities`
+  returned HTTP 200 with `relay_authoring.custom_durable_execution_enabled: true`,
+  `multi_consumer_writes_enabled: true`, and
+  `response_recovery_providers: ["cma_codex", "nyxbot"]`.
+
+The discovery field proves the serving binary includes the Custom reader; its
+observed value was already **true**, so this manifest change records the enabled
+production setting. This read did not create a channel or prove event delivery.
+
+The checked-in Gateway image pin still names the older `615c6f23` source, which
+predates the reader and lags production. It is not the rollback target for this
+release. Image pins are unchanged here: Shining's release promotion must pin
+images containing the develop head above and this configuration change. Retain
+the actual compatible live Gateway image as the rollback target and record its
+digest during promotion; do not redeploy the stale checked-in image pin. This
+discovery check establishes reader capability, not an exact live image digest.
+
+### Activation and rollback procedure
+
+1. Preserve the verified live reader for rollback and deploy the compatible
+   release reader to every Gateway replica. On a deployment without a compatible
+   reader, first deploy with `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED=false` and
+   wait for predecessor Pods to drain before enabling authoring.
 2. Verify routed recovery, admission, multi-consumer authoring, provider replay
-   paths and the shared synchronous delivery registry. Enable the new writer
-   only after compatible readers are available. Discovery becomes true only
-   when the writer and these routing/admission prerequisites are enabled.
+   paths and the shared synchronous delivery registry. With the checked-in flag
+   enabled, confirm discovery reports true after promotion.
 3. Create a fresh owned Custom channel using ordinary owner APIs, send one
    authenticated event, retain its HTTP/SSE result and durable response, and
    verify first-event, replay and permitted attachment delivery. Do not send a
    second event to guess an ambiguous first outcome.
 
-Disabling the new flag stops authoring new opted-in channels. It does not demote
+Set `CMAEG_CUSTOM_DURABLE_EXECUTION_ENABLED=false` to roll back authoring and
+confirm discovery reports false after configuration rollout. This stops
+authoring new opted-in channels. It does not demote
 retained marked channels to the legacy runner. Disabling durable admission
 refuses new events while exact accepted retries and recovery continue. If the
 routing reader, provider replay capability or required durable dependencies are

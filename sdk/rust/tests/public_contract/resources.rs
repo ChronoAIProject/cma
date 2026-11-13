@@ -348,6 +348,12 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .update_runtime(c.param("id"), &c.body()?, &c.key()?)
                 .await,
         ),
+        "POST /api/v1/sandboxes/{id}/always-on" => c.check(
+            client
+                .sandboxes()
+                .set_always_on(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        ),
         "POST /api/v1/sandboxes/{id}/commands" => c.check(
             client
                 .sandboxes()

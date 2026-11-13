@@ -58,6 +58,7 @@ pub(super) fn sandbox(id: &str, launch_id: &str) -> Sandbox {
             id: SandboxProfileId("sbp_trigger".into()),
             revision: 1,
             digest: content_digest(&content).unwrap(),
+            always_on: None,
             content,
         },
         status: SandboxStatus::Provisioning,
@@ -342,3 +343,6 @@ async fn concurrent_trigger_admissions_converge_on_one_origin_row_and_event() {
     assert!(indexes.contains(&"sandboxes_owner_trigger_launch".to_string()));
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "sandbox_global_admission_mongo_tests.rs"]
+mod global_admission;

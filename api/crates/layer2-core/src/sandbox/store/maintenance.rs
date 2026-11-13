@@ -4,9 +4,9 @@ use async_trait::async_trait;
 
 use crate::ids::SandboxId;
 use crate::sandbox::{
-    image_rotation_required, inactivity_pause_notice, is_inactivity_pause_candidate, Agent,
-    Sandbox, SandboxAgentActivity, SandboxEventKind, SandboxLifecycleOperation,
-    SandboxRotationIdentity, SandboxStatus,
+    image_rotation_required, inactivity_pause_notice, is_inactivity_pause_candidate,
+    is_platform_stop_pause_candidate, Agent, Sandbox, SandboxAgentActivity, SandboxEventKind,
+    SandboxLifecycleOperation, SandboxRotationIdentity, SandboxStatus, PLATFORM_SPEND_PAUSE_NOTICE,
 };
 use crate::{seconds_from_rfc3339, MAX_PAUSE_AFTER_SECONDS, MIN_PAUSE_AFTER_SECONDS};
 
@@ -19,6 +19,51 @@ pub struct SandboxInactivityPauseRequest {
     pub sandbox_id: SandboxId,
     pub requested_at: String,
     pub pause_after_seconds: u64,
+    /// When true, historical profile `always_keep_alive` is migrated to the
+    /// new per-Sandbox preference: only an explicit `always_on: true` remains.
+    pub auto_pause_enabled: bool,
+    pub cause: InactivityPauseCause,
+}
+
+/// Why a quiet Sandbox is paused. A platform spend stop is a platform action,
+/// not an inactivity policy: it ignores the idle threshold (zero) and shows its
+/// own notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InactivityPauseCause {
+    #[default]
+    Inactivity,
+    PlatformSpendStop,
+}
+
+impl InactivityPauseCause {
+    /// A platform stop overrides every keep-alive preference without changing
+    /// it (decision 26); an inactivity pause always honours them.
+    pub const fn honours_keep_alive(self) -> bool {
+        matches!(self, Self::Inactivity)
+    }
+}
+
+impl SandboxInactivityPauseRequest {
+    fn notice(&self) -> String {
+        match self.cause {
+            InactivityPauseCause::Inactivity => inactivity_pause_notice(self.pause_after_seconds),
+            InactivityPauseCause::PlatformSpendStop => PLATFORM_SPEND_PAUSE_NOTICE.to_owned(),
+        }
+    }
+
+    fn eligible(&self, current: &Sandbox, live_agents: &[SandboxAgentActivity]) -> bool {
+        match self.cause {
+            InactivityPauseCause::Inactivity => is_inactivity_pause_candidate(
+                current,
+                live_agents,
+                &self.requested_at,
+                self.pause_after_seconds,
+            ),
+            InactivityPauseCause::PlatformSpendStop => {
+                is_platform_stop_pause_candidate(current, live_agents, &self.requested_at)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +78,38 @@ pub enum SandboxMaintenanceOutcome {
     Scheduled,
     AlreadyScheduled,
     NotEligible,
+}
+
+/// Short lived owner-facing terminal/desktop session leases. The lease is
+/// additive evidence for inactivity and is fenced by the store adapter so a
+/// concurrent open stream cannot race a pause admission.
+#[async_trait]
+pub trait SandboxSessionStore: Send + Sync {
+    async fn open_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+        lease_expires_at: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn renew_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+        lease_expires_at: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn close_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        session_id: &str,
+    ) -> Result<(), SandboxStoreError>;
+
+    async fn has_open_sandbox_session(
+        &self,
+        sandbox_id: &SandboxId,
+        observed_at: &str,
+    ) -> Result<bool, SandboxStoreError>;
 }
 
 /// A fully decided mutation which an adapter can persist transactionally.
@@ -57,18 +134,13 @@ pub fn apply_inactivity_pause(
     validate_inactivity_pause_request(request)?;
     validate_current(current, &request.sandbox_id)?;
 
-    let notice = inactivity_pause_notice(request.pause_after_seconds);
+    let notice = request.notice();
     if matching_pause(current, &notice) {
         return Ok(SandboxMaintenanceApplication::Complete(
             SandboxMaintenanceOutcome::AlreadyScheduled,
         ));
     }
-    if !is_inactivity_pause_candidate(
-        current,
-        live_agents,
-        &request.requested_at,
-        request.pause_after_seconds,
-    ) {
+    if !request.eligible(current, live_agents) {
         return Ok(SandboxMaintenanceApplication::Complete(
             SandboxMaintenanceOutcome::NotEligible,
         ));
@@ -125,10 +197,12 @@ pub fn apply_image_rotation(
 pub fn validate_inactivity_pause_request(
     request: &SandboxInactivityPauseRequest,
 ) -> Result<(), SandboxStoreError> {
-    if invalid_common_request(&request.sandbox_id, &request.requested_at)
-        || !(MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS)
-            .contains(&request.pause_after_seconds)
-    {
+    let threshold = match request.cause {
+        InactivityPauseCause::Inactivity => (MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS)
+            .contains(&request.pause_after_seconds),
+        InactivityPauseCause::PlatformSpendStop => request.pause_after_seconds == 0,
+    };
+    if invalid_common_request(&request.sandbox_id, &request.requested_at) || !threshold {
         return Err(invalid_request());
     }
     Ok(())
@@ -160,6 +234,23 @@ pub trait SandboxMaintenanceStore: Send + Sync {
         &self,
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
+
+    /// Evaluate the same evidence and policy fences as an inactivity pause
+    /// without committing the resulting lifecycle mutation.
+    async fn preview_inactivity_pause(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
+
+    /// Change the durable automatic-pause exception through an operator-authorized
+    /// path. The caller performs capability checks; the store supplies the
+    /// same revision compare-and-swap used by owner controls.
+    async fn set_sandbox_always_on(
+        &self,
+        sandbox_id: SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxStoreError>;
 
     async fn schedule_image_rotation(
         &self,
@@ -230,3 +321,7 @@ fn invalid_common_request(id: &SandboxId, requested_at: &str) -> bool {
 const fn invalid_request() -> SandboxStoreError {
     SandboxStoreError::InvalidTransaction("sandbox maintenance request is invalid")
 }
+
+#[cfg(test)]
+#[path = "maintenance_tests.rs"]
+mod tests;

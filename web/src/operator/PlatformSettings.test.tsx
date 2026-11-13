@@ -53,6 +53,30 @@ describe('platform settings', () => {
     });
   });
 
+  it('shows one hours/minutes/seconds threshold when auto pause is enabled', async () => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    render(<PlatformSettings client={client} />);
+    await screen.findByLabelText('Enable auto pause');
+    expect(screen.queryByLabelText('Pause after hours')).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText('Enable auto pause'));
+    expect(screen.getByLabelText('Pause after hours')).toHaveValue(0);
+    expect(screen.getByLabelText('Pause after minutes')).toHaveValue(15);
+    expect(screen.getByLabelText('Pause after seconds')).toHaveValue(0);
+    expect(screen.queryByLabelText('Pause after (seconds)')).not.toBeInTheDocument();
+    await user.clear(screen.getByLabelText('Pause after minutes'));
+    await user.type(screen.getByLabelText('Pause after minutes'), '30');
+    await user.click(screen.getByRole('button', { name: 'Save settings' }));
+    await screen.findByText('Settings saved at revision 5.');
+    expect(client.admin.replaceSettings).toHaveBeenCalledWith({
+      expected_revision: 4,
+      settings: {
+        ...settings,
+        inactivity: { pause_after_seconds: 1800, auto_pause_enabled: true },
+      },
+    });
+  });
+
   it('retains the draft on conflict and rebases only edited values without automatically writing', async () => {
     const client = operatorClient();
     const user = userEvent.setup();

@@ -8,17 +8,18 @@ use axum::{
 use layer2_core::profiles::{content_digest, AgentProvider, ProfileCapacityBounds};
 use layer2_core::sandbox::binding::*;
 use layer2_core::{
+    ids::{AgentCommandId, AgentResponseId},
     resource_access::*,
     sandbox::{
         agent_io::*,
-        store::{AgentStore, InMemorySandboxStore, SandboxStore},
-        AgentStatus,
+        store::{AgentStore, InMemorySandboxStore, PageRequest, SandboxStore},
+        AgentListQuery, AgentStatus, OwnerSandboxQuery,
     },
     Caller, SubjectId,
 };
 use serde_json::{json, Value};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use tower::ServiceExt;
@@ -141,6 +142,208 @@ pub(crate) fn request(path: &str, principal: &BindingPrincipal, body: Value) -> 
     request
 }
 
+struct UnavailableContextCommands {
+    inner: Arc<dyn AgentCommandStore>,
+}
+
+#[async_trait]
+impl AgentCommandStore for UnavailableContextCommands {
+    async fn get_external_event_command(
+        &self,
+        _: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        Err(CommandLedgerError::Unavailable)
+    }
+
+    async fn reserve_command(
+        &self,
+        request: CommandReservation,
+    ) -> Result<CommandReservationResult, CommandLedgerError> {
+        self.inner.reserve_command(request).await
+    }
+
+    async fn get_command(
+        &self,
+        id: &AgentCommandId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_command(id).await
+    }
+
+    async fn get_response_command(
+        &self,
+        id: &AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_response_command(id).await
+    }
+}
+
+struct ArmOnExternalLookup {
+    inner: Arc<dyn AgentCommandStore>,
+    phase: Arc<AtomicUsize>,
+}
+
+struct RetireAfterExternalLookup {
+    inner: Arc<InMemorySandboxStore>,
+    binding_id: String,
+}
+
+async fn retire_binding(store: &InMemorySandboxStore, binding_id: &str) {
+    let mut binding = store.binding(binding_id).await.unwrap().unwrap();
+    binding.state = BindingState::Retired;
+    binding.work = BindingWork::RetireCurrentConversations;
+    let expected = binding.revision;
+    binding
+        .advance_revision(layer2_core::now_rfc3339())
+        .unwrap();
+    store.save_binding(Some(expected), binding).await.unwrap();
+}
+
+#[async_trait]
+impl AgentCommandStore for RetireAfterExternalLookup {
+    async fn get_external_event_command(
+        &self,
+        key: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let result = self.inner.get_external_event_command(key).await;
+        retire_binding(&self.inner, &self.binding_id).await;
+        result
+    }
+
+    async fn reserve_command(
+        &self,
+        request: CommandReservation,
+    ) -> Result<CommandReservationResult, CommandLedgerError> {
+        self.inner.reserve_command(request).await
+    }
+
+    async fn get_command(
+        &self,
+        id: &AgentCommandId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_command(id).await
+    }
+
+    async fn get_response_command(
+        &self,
+        id: &AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_response_command(id).await
+    }
+}
+
+#[async_trait]
+impl AgentCommandStore for ArmOnExternalLookup {
+    async fn get_external_event_command(
+        &self,
+        key: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let result = self.inner.get_external_event_command(key).await;
+        self.phase.store(1, Ordering::SeqCst);
+        result
+    }
+
+    async fn reserve_command(
+        &self,
+        request: CommandReservation,
+    ) -> Result<CommandReservationResult, CommandLedgerError> {
+        self.inner.reserve_command(request).await
+    }
+
+    async fn get_command(
+        &self,
+        id: &AgentCommandId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_command(id).await
+    }
+
+    async fn get_response_command(
+        &self,
+        id: &AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.inner.get_response_command(id).await
+    }
+}
+
+struct RetireOnFenceStore {
+    inner: Arc<InMemorySandboxStore>,
+    phase: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl ResourceAccessStore for RetireOnFenceStore {
+    async fn organization_sandboxes(
+        &self,
+        organization: &SubjectId,
+        query: &OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.inner.organization_sandboxes(organization, query).await
+    }
+
+    async fn shared_sandboxes(
+        &self,
+        recipient: &SubjectId,
+        organizations: &[SubjectId],
+        query: &OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.inner
+            .shared_sandboxes(recipient, organizations, query)
+            .await
+    }
+
+    async fn organization_agents(
+        &self,
+        organization: &SubjectId,
+        query: &AgentListQuery,
+        page: &PageRequest,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        self.inner
+            .organization_agents(organization, query, page)
+            .await
+    }
+
+    async fn resource_access_snapshot(
+        &self,
+        target: &ResourceTarget,
+    ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
+        if self
+            .phase
+            .compare_exchange(2, 3, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return Err(ResourceAccessStoreError::Unavailable);
+        } else {
+            let _ = self
+                .phase
+                .compare_exchange(1, 2, Ordering::SeqCst, Ordering::SeqCst);
+        }
+        self.inner.resource_access_snapshot(target).await
+    }
+}
+
+#[async_trait]
+impl ResourceShareStore for RetireOnFenceStore {
+    async fn share_mutation_receipt(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<ShareMutationReceipt>, ResourceAccessStoreError> {
+        self.inner.share_mutation_receipt(operation_id).await
+    }
+
+    async fn mutate_share(
+        &self,
+        request: ShareMutation,
+    ) -> Result<ShareMutationReceipt, ResourceAccessStoreError> {
+        self.inner.mutate_share(request).await
+    }
+
+    async fn resource_share(
+        &self,
+        id: &str,
+    ) -> Result<Option<ResourceShare>, ResourceAccessStoreError> {
+        self.inner.resource_share(id).await
+    }
+}
+
 pub(crate) async fn fixture() -> (
     axum::Router,
     Arc<InMemorySandboxStore>,
@@ -206,10 +409,130 @@ pub(crate) async fn fixture_for_owner_with_router(
     Arc<BindingAccessService>,
     BindingPrincipal,
 ) {
+    fixture_for_owner_with_router_and_context(
+        conversation_state,
+        admission_race,
+        owner_kind,
+        router,
+        false,
+    )
+    .await
+}
+
+pub(crate) async fn fixture_for_owner_with_router_and_context(
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+    owner_kind: &str,
+    router: Option<Arc<dyn super::BindingEventRouter>>,
+    retained_context_lookup: bool,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
+        conversation_state,
+        admission_race,
+        owner_kind,
+        router,
+        retained_context_lookup,
+        unavailable_context: false,
+        fence_race: false,
+        revoke_on_lookup: false,
+    })
+    .await
+}
+
+pub(crate) async fn fixture_for_owner_with_unavailable_context(
+    conversation_state: BindingConversationState,
+    owner_kind: &str,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
+        conversation_state,
+        admission_race: false,
+        owner_kind,
+        router: None,
+        retained_context_lookup: true,
+        unavailable_context: true,
+        fence_race: false,
+        revoke_on_lookup: false,
+    })
+    .await
+}
+
+pub(crate) async fn fixture_for_owner_with_fence_race(
+    conversation_state: BindingConversationState,
+    owner_kind: &str,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
+        conversation_state,
+        admission_race: false,
+        owner_kind,
+        router: None,
+        retained_context_lookup: true,
+        unavailable_context: false,
+        fence_race: true,
+        revoke_on_lookup: false,
+    })
+    .await
+}
+
+pub(crate) async fn fixture_for_owner_with_revocation_race(
+    conversation_state: BindingConversationState,
+    owner_kind: &str,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
+    fixture_for_owner_with_context_mode(ContextFixtureMode {
+        conversation_state,
+        admission_race: false,
+        owner_kind,
+        router: None,
+        retained_context_lookup: true,
+        unavailable_context: false,
+        fence_race: false,
+        revoke_on_lookup: true,
+    })
+    .await
+}
+
+struct ContextFixtureMode<'a> {
+    conversation_state: BindingConversationState,
+    admission_race: bool,
+    owner_kind: &'a str,
+    router: Option<Arc<dyn super::BindingEventRouter>>,
+    retained_context_lookup: bool,
+    unavailable_context: bool,
+    fence_race: bool,
+    revoke_on_lookup: bool,
+}
+
+async fn fixture_for_owner_with_context_mode<'a>(
+    mode: ContextFixtureMode<'a>,
+) -> (
+    axum::Router,
+    Arc<InMemorySandboxStore>,
+    Arc<BindingAccessService>,
+    BindingPrincipal,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     let agent = fixtures::seeded_agent("agt_fixture", AgentStatus::Ready, 2, None);
     fixtures::insert_agent(&store, agent.clone(), vec![]).await;
-    let mut reserved = binding_with_owner("binding-responses", &"a".repeat(64), owner_kind);
+    let mut reserved = binding_with_owner("binding-responses", &"a".repeat(64), mode.owner_kind);
     reserved.sandbox_id = agent.sandbox_id.clone();
     reserved.workspace_id = agent.workspace_id.clone();
     let binding = ready(&store, reserved).await;
@@ -233,7 +556,7 @@ pub(crate) async fn fixture_for_owner_with_router(
         .save_binding_conversation(binding.revision, None, conversation.clone())
         .await
         .unwrap();
-    conversation.state = conversation_state;
+    conversation.state = mode.conversation_state;
     conversation.revision += 1;
     store
         .save_binding_conversation(binding.revision, Some(1), conversation)
@@ -247,21 +570,48 @@ pub(crate) async fn fixture_for_owner_with_router(
         .unwrap();
     let authority = Arc::new(BindingAuthority {
         bindings: bindings.clone(),
-        admission_race: admission_race.then(|| store.clone()),
+        admission_race: mode.admission_race.then(|| store.clone()),
         changed: AtomicBool::new(false),
     });
+    let phase = Arc::new(AtomicUsize::new(0));
+    let resource_store: Arc<dyn ResourceShareStore> = if mode.fence_race {
+        Arc::new(RetireOnFenceStore {
+            inner: store.clone(),
+            phase: phase.clone(),
+        })
+    } else {
+        store.clone()
+    };
     let access = Arc::new(
-        ResourceAccessService::new(store.clone(), authority.clone())
+        ResourceAccessService::new(resource_store, authority.clone())
             .with_bindings(bindings.clone()),
     );
-    let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
+    let command_store: Arc<dyn AgentCommandStore> = if mode.unavailable_context {
+        Arc::new(UnavailableContextCommands {
+            inner: store.clone(),
+        })
+    } else if mode.revoke_on_lookup {
+        Arc::new(RetireAfterExternalLookup {
+            inner: store.clone(),
+            binding_id: binding.binding_id.clone(),
+        })
+    } else if mode.fence_race {
+        Arc::new(ArmOnExternalLookup {
+            inner: store.clone(),
+            phase,
+        })
+    } else {
+        store.clone()
+    };
+    let commands = AgentCommandService::new(command_store, access.clone(), authority);
     let mut state = super::ResponsesV2State::new(
         crate::agent_page::AgentPageOrigin::test(),
         commands,
         state.reads.with_resource_access(access),
     )
-    .with_bindings(bindings.clone());
-    if let Some(router) = router {
+    .with_bindings(bindings.clone())
+    .with_retained_context_lookup(mode.retained_context_lookup);
+    if let Some(router) = mode.router {
         state = state.with_event_router(router);
     }
     let app = super::router(state);

@@ -52,6 +52,10 @@ unsafe pin refusal and rejection of an interrupted candidate pinned to B.
 
 ## Spec P2 — independent shared desktop choice in Home
 
+Current landing behavior is refined by `docs/Web_Style.md` (2026-11-06): only
+Shared desktop is selectable; Agent browser remains visible only for a frozen
+recorded intent. The independent-choice evidence below describes the earlier UI.
+
 Normal task entry now includes the existing **Include a shared desktop** choice,
 with the same new-Sandbox permission/context gate and Linux/Chromium meaning as
 `AgentLifecycleCard`. It sends `machine_included`; ticket 16's **Enable desktop**

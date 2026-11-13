@@ -1,3 +1,5 @@
+import { ProviderBindingSchema, ProviderRequestSchema } from './provider-binding.js';
+export * from './provider-binding.js';
 import {
   EndpointResponseSchema,
   FieldRefusalSchema,
@@ -11,13 +13,11 @@ import { LarkResourceBindingSchema, LarkMessageEffectsBindingSchema } from './la
 export * from './lark.js';
 import { EventWorkerProfileSchema, NyxIdIdentitySchema } from './profile.js';
 import {
-  BindingIdSchema,
   ChannelIdSchema,
   ConformanceLevelSchema,
   GroupAdmissionSchema,
   PartitionKeySchema,
   PlatformSchema,
-  ProviderSlugSchema,
   RecordIdSchema,
 } from './primitives.js';
 import {
@@ -75,21 +75,6 @@ export const PartitionRuleSchema = object({
   version: integer,
 });
 export type PartitionRule = Output<typeof PartitionRuleSchema>;
-
-export const ProviderTargetSchema = tagged(
-  {
-    profile: object({ type: enumeration('profile') }),
-    existing_agent: object({ type: enumeration('existing_agent'), agent_id: text }),
-  },
-  'type',
-);
-export type ProviderTarget = Output<typeof ProviderTargetSchema>;
-
-export const ProviderRequestSchema = object({
-  slug: ProviderSlugSchema,
-  target: optional(ProviderTargetSchema),
-});
-export type ProviderRequest = Output<typeof ProviderRequestSchema>;
 
 export const SinkSchema = tagged(
   {
@@ -218,14 +203,6 @@ export const ChannelCreationSchema = object({
   ready: boolean,
 });
 export type ChannelCreation = Output<typeof ChannelCreationSchema>;
-
-export const ProviderBindingSchema = object({
-  binding_id: BindingIdSchema,
-  level: ConformanceLevelSchema,
-  slug: ProviderSlugSchema,
-  target: optional(ProviderTargetSchema),
-});
-export type ProviderBinding = Output<typeof ProviderBindingSchema>;
 
 /** A channel consumer's id: `default` or `csm_` and 12 lowercase hex digits. */
 export const ConsumerIdSchema = text;

@@ -317,6 +317,7 @@ fn stored_sandbox(id: &str, owner: &str, status: SandboxStatus, max_workspaces: 
             id: SandboxProfileId("sbp_stored".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: sandbox_content(max_workspaces),
         },
         status,
@@ -926,6 +927,65 @@ async fn task_navigation_workspace_list_reports_completion_without_reading_conve
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["agents"][0]["task_status"], "completed");
+    assert!(body["agents"][0].get("task_started_at").is_none());
+}
+
+#[tokio::test]
+async fn task_clock_uses_its_recorded_turn_start_instead_of_last_metadata_update() {
+    use layer2_core::sandbox::{store::AgentLogStore, AgentLogKind};
+    let fixture = fixture(10);
+    let sandbox = stored_sandbox("sbx_clock", "owner", SandboxStatus::Active, 4);
+    let workspace = stored_workspace(&sandbox, "wks_clock");
+    let tree = stored_worktree(&workspace, "wkt_clock", "agt_clock");
+    let mut agent = stored_agent(&workspace, &tree, "agt_clock");
+    agent.status = AgentStatus::Working;
+    agent.work = AgentWorkState::new(AgentWorkStep::None, NOW.into());
+    agent.conversation.conversation_id = Some("clock-conversation".into());
+    agent.conversation.runtime_generation = Some(1);
+    agent.conversation.last_seq = 2;
+    agent.conversation.active_turn = Some(2);
+    agent.updated_at = "2026-09-05T00:05:00Z".into();
+    insert_hierarchy(
+        &fixture.store,
+        &sandbox,
+        Some(&workspace),
+        Some(&tree),
+        Some(&agent),
+    )
+    .await;
+    fixture
+        .store
+        .append_agent_log(
+            &agent.id,
+            NOW.into(),
+            AgentLogKind::Created {
+                workspace_id: workspace.id.clone(),
+                worktree_id: tree.id.clone(),
+            },
+        )
+        .await
+        .unwrap();
+    fixture
+        .store
+        .append_agent_log(
+            &agent.id,
+            "2026-09-05T00:01:00Z".into(),
+            AgentLogKind::TurnStarted {
+                turn_sequence: 2,
+                model: None,
+                origin_key: None,
+            },
+        )
+        .await
+        .unwrap();
+    let (status, body) = json_response(
+        &fixture.router,
+        authenticated(Method::GET, "/api/v1/workspaces/wks_clock", None, None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agents"][0]["task_started_at"], "2026-09-05T00:01:00Z");
+    assert_eq!(body["agents"][0]["updated_at"], "2026-09-05T00:05:00Z");
 }
 
 #[tokio::test]

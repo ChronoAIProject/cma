@@ -9,6 +9,7 @@ pub const CMAEG_DRAIN_SECONDS: &str = "CMAEG_DRAIN_SECONDS";
 pub const CMAEG_BUSY_RETRY_MAX_MS: &str = "CMAEG_BUSY_RETRY_MAX_MS";
 #[derive(Debug, Clone)]
 pub struct TurnConfig {
+    pub context_retry_enabled: bool,
     pub accept_budget: Duration,
     pub turn_timeout: Duration,
     pub drain: Duration,
@@ -17,6 +18,7 @@ pub struct TurnConfig {
 impl Default for TurnConfig {
     fn default() -> Self {
         Self {
+            context_retry_enabled: false,
             accept_budget: Duration::from_secs(20),
             turn_timeout: Duration::from_secs(600),
             drain: Duration::from_secs(660),
@@ -40,10 +42,21 @@ impl TurnConfig {
                 detail: format!("{CMAEG_DRAIN_SECONDS} must be positive and representable"),
             })?;
         Ok(Self {
+            context_retry_enabled: super::routing::write_flag("CMAEG_CONTEXT_RETRY_ENABLED")?,
             accept_budget: positive_duration(CMAEG_ACCEPT_BUDGET_MS, 20000)?,
             turn_timeout: positive_duration(CMAEG_TURN_TIMEOUT_MS, 600000)?,
             drain: Duration::from_secs(seconds),
             busy_retry_max: positive_duration(CMAEG_BUSY_RETRY_MAX_MS, 180000)?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn context_retry_is_opt_in_without_changing_existing_turn_budgets() {
+        let config = super::TurnConfig::default();
+        assert!(!config.context_retry_enabled);
+        assert_eq!(config.accept_budget, std::time::Duration::from_secs(20));
     }
 }

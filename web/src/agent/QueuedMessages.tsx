@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Presence } from '../ui/Presence';
 import type { UploadAttachment } from './attachments';
-import { MessageAvatar, messageIdentity, type MessageUser } from './MessageIdentity';
+import type { MessageUser } from './MessageIdentity';
+import { IconCloseOutline16 } from '../ui/icons';
 import { QueuedMessageEditor } from './QueuedMessageEditor';
 import { UserMessage } from './UserMessage';
 import './QueuedMessages.css';
@@ -95,7 +96,7 @@ export function QueuedMessages({
           className="queued-messages"
           aria-label={items.length ? 'Queued messages' : 'Retained drafts'}
         >
-          <h3 className="queued-messages__heading">
+          <h3 className="sr-only">
             {items.length ? 'Queued' : 'Retained drafts'}{' '}
             <span>{items.length || retained.length}</span>
           </h3>
@@ -136,7 +137,6 @@ function QueueRow({
   onRemove,
   onRecover,
   uploadAttachment,
-  user,
 }: QueueActions & {
   readonly item: QueuedMessageItem;
   readonly position: number;
@@ -150,7 +150,6 @@ function QueueRow({
   const active = useRef(false);
   const opener = useRef<HTMLDivElement>(null);
   const restoreFocus = useRef(false);
-  const identity = messageIdentity('user', user);
   const busy = disabled || (!unavailable && item.busy === true) || working !== undefined;
   const locked = busy || item.needsRecovery === true || unavailable;
   const close = () => {
@@ -194,14 +193,10 @@ function QueueRow({
       className="queued-message"
       aria-label={`${unavailable ? 'Retained message draft' : 'Queued message'} ${String(position)}`}
     >
-      <span className="queued-message__avatar">
-        <MessageAvatar identity={identity} />
-      </span>
       <div className="queued-message__body">
         <div className="queued-message__heading">
-          <span className="queued-message__author">{identity.name}</span>
           <span className="queued-message__status">
-            {unavailable ? 'Draft retained' : 'Queued'}
+            {unavailable ? 'Draft retained' : 'Queued'} ·
           </span>
         </div>
         <div
@@ -243,18 +238,14 @@ function QueueRow({
         </Presence>
         {!unavailable ? (
           <div className="queued-message__actions">
-            {editing ? null : (
-              <Button size="sm" disabled={locked} onClick={edit}>
-                Edit
-              </Button>
-            )}
             <Button
               size="sm"
+              icon={<IconCloseOutline16 />}
+              aria-label={`Remove queued message ${position}`}
+              title="Remove queued message"
               disabled={locked || editing !== undefined}
               onClick={() => void run('remove')}
-            >
-              {working === 'remove' ? 'Removing…' : 'Remove'}
-            </Button>
+            ></Button>
             {item.needsRecovery && onRecover ? (
               <Button size="sm" disabled={busy} onClick={() => void run('recover')}>
                 {working === 'recover' ? 'Recovering…' : 'Recover request'}

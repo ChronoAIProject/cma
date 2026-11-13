@@ -1,6 +1,9 @@
 use super::*;
 use layer2_core::sandbox::store::AgentProvenanceInventoryStore;
 use layer2_core::sandbox::AgentListQuery;
+use mongodb::event::{cmap::CmapEvent, EventHandler};
+use mongodb::options::ClientOptions;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 async fn add_agent(store: &MongoSandboxStore, id: &str) -> ResourceTarget {
     let snapshot = store
@@ -57,6 +60,41 @@ async fn add_agent(store: &MongoSandboxStore, id: &str) -> ResourceTarget {
     }
     ResourceTarget::Agent { agent_id: agent.id }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn batched_current_snapshots_reduce_connection_checkouts() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let checkouts = Arc::new(AtomicU64::new(0));
+    let captured = checkouts.clone();
+    let mut options = ClientOptions::parse(uri).await.unwrap();
+    options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        if matches!(event, CmapEvent::ConnectionCheckedOut(_)) {
+            captured.fetch_add(1, Ordering::SeqCst);
+        }
+    }));
+    let client = Client::with_options(options).unwrap();
+    let name = format!("cma_inventory_batch_{}", uuid::Uuid::new_v4().simple());
+    let (store, target) = fixture(&client, &name).await;
+    let targets = vec![target; 16];
+
+    let before_individual = checkouts.load(Ordering::SeqCst);
+    for target in &targets {
+        store.resource_access_snapshot(target).await.unwrap();
+    }
+    let individual = checkouts.load(Ordering::SeqCst) - before_individual;
+
+    let before_batch = checkouts.load(Ordering::SeqCst);
+    store.resource_access_snapshots(&targets).await.unwrap();
+    let batched = checkouts.load(Ordering::SeqCst) - before_batch;
+
+    assert!(
+        batched < individual,
+        "batched current reads should use fewer checkouts: individual={individual}, batched={batched}"
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 fn ids(values: &[ResourceAccessSnapshot]) -> Vec<&str> {
     values
         .iter()

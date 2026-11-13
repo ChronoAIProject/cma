@@ -25,6 +25,9 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+#[path = "custom_delivery_tests/retained.rs"]
+mod retained;
+
 #[derive(Default)]
 struct Receiver {
     events: Mutex<Vec<Value>>,

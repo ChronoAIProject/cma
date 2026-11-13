@@ -1,0 +1,28 @@
+.usage-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.usage-identity > code {
+  max-width: calc(100% - 40px);
+  font: 12px/20px var(--ds-font-family-code);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-identity .usage-identity__full {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.usage-identity__feedback {
+  width: 100%;
+  font: var(--dsw-font-xs-13);
+}
+.usage-identity code:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 4px;
+  border-radius: 4px;
+}

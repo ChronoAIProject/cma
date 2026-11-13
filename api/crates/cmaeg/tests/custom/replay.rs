@@ -146,10 +146,28 @@ async fn changed_event_content_is_a_conflict_without_overwriting_original_result
 
 #[tokio::test]
 async fn concurrent_first_requests_recover_the_winner_and_keep_only_its_stream() {
-    for changed in [false, true] {
+    for (changed, retry_enabled) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut config = exact_provider();
         config.admission_barrier = Some(Arc::new(tokio::sync::Barrier::new(2)));
-        let mut app = App::new(|_| {}, config, Default::default(), 0).await;
+        if retry_enabled {
+            // Both preflights see absence; retry only the losing POST's
+            // retained-context reconciliation, without another submission.
+            config.context_steps = vec![
+                (Duration::ZERO, None, None),
+                (Duration::ZERO, None, None),
+                (Duration::ZERO, Some(503), None),
+            ];
+        }
+        let mut app = App::new(
+            |_| {},
+            config,
+            cmaeg::TurnConfig {
+                context_retry_enabled: retry_enabled,
+                ..Default::default()
+            },
+            0,
+        )
+        .await;
         let event = app.event("concurrent-replay");
         let mut second = event.clone();
         if changed {
@@ -192,7 +210,7 @@ async fn concurrent_first_requests_recover_the_winner_and_keep_only_its_stream()
                 .iter()
                 .filter(|r| r.method == "GET")
                 .count(),
-            3
+            if retry_enabled { 4 } else { 3 }
         );
         assert_eq!(app.receiver.events().len(), 1);
         assert!(app.waiters.is_empty());

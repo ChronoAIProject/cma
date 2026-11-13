@@ -354,7 +354,7 @@ conservatively flagged for review. The freshness test also checks the CLI export
 From the repository root, regenerate, review the diff, commit:
 
 ```sh
-cargo run --manifest-path api/Cargo.toml -p cmaeg --locked -- --print-openapi > api/crates/cmaeg/openapi/v1.json
+cargo run --manifest-path api/Cargo.toml -p cmaeg --bin cmaeg --locked -- --print-openapi > api/crates/cmaeg/openapi/v1.json
 cargo nextest run --manifest-path api/Cargo.toml -p cmaeg --locked -E 'test(openapi_compat)'
 node .github/scripts/check-api-docs.mjs api/crates/cmaeg/openapi/v1.json docs/CMAEG_Protocol.md
 git diff -- api/crates/cmaeg/openapi/v1.json docs/CMAEG_Protocol.md
@@ -363,6 +363,19 @@ git diff -- api/crates/cmaeg/openapi/v1.json docs/CMAEG_Protocol.md
 A non-additive baseline diff MUST NOT be approved under `/v1`. Updating the file
 does not waive compatibility review. Human interoperability review is separate
 from automated checks; no second-engineer review is claimed by this document.
+
+Internally tagged newtype variants use the `cmaeg-core::schema` view at their
+`ToSchema` source. The closed payload declares the enclosing `type` property,
+and the enum requires its exact value. This avoids an impossible intersection
+between `additionalProperties:false` and a discriminator absent from that
+payload. Standalone payload schemas and runtime Serde decoding remain closed.
+The audit covers `Source.native_lark`, `SourceRequest.native_lark`,
+`SourceKind.native_lark` and `ActivityKind.interaction`. The private sealed
+`ReplyAddressWire` has no public schema; `IdentityAdmission` uses an adjacent
+`ids` field and does not have this intersection. Other tagged variants have
+named fields or no payload. `tagged_schemas` validates all four wire examples,
+a complete native-Lark create request and negative cases with a Draft 2020-12
+JSON Schema validator, and audits the generated document for this pattern.
 
 Stored channel definitions roll out readers before writers. An image that
 cannot parse a stored definition refuses that channel, so a new stored shape is
@@ -476,6 +489,35 @@ Transient provider capacity and transport failures retain their 503 behavior.
 Provider response bodies are not forwarded; only recognized safe reason codes
 are retained in diagnostic detail.
 
+A provider refusal during turn startup may additionally carry `upstream`:
+
+```json
+{"type":"about:blank","title":"provider rejected","status":502,"code":"provider_rejected","detail":"provider_rejected","upstream":{"operation":"responses","status":403,"code":"media_source_refused"}}
+```
+
+`upstream.operation` is `responses` or `conversation`, identifying the failed
+provider operation. `upstream.status` is the actual HTTP status in 100–599.
+`upstream.code` uses a closed vocabulary: `media_source_refused`,
+`partition_agent_missing`, `partition_agent_unavailable`,
+`agent_command_admission_conflict`, `agent_command_key_conflict`,
+`binding_not_ready`, `binding_resources_unavailable`,
+`command_authority_required`, `response_forbidden`, `response_not_found`,
+`model_mismatch`, or the fallback `unrecognized`. Every other provider value,
+including a short identifier containing only letters and digits, becomes
+`unrecognized` in both this extension and the provider-start warning log.
+No provider body or arbitrary provider code is forwarded.
+
+The outer HTTP status, problem code, diagnostic detail, retry decisions and
+configured failure reply retain their existing semantics. The extension is
+absent for non-provider failures and older responses. It does not establish
+that a notification was delivered or that a provider turn succeeded. Relay
+consumers may read these fields for owner diagnostics after independently
+validating this closed contract; they must retain the outer error outcome.
+The repository SDK readers reject unknown operations, unknown codes and status
+values outside the integer range 100–599 before exposing the extension. They
+continue to accept older problems that omit it and the generic `unrecognized`
+code produced by the gateway.
+
 A persisted channel whose original creation has not completed returns 409
 `conflict` with detail beginning `channel_creation_pending`. The owner must
 complete the original creation request using its exact reserved `record_id`
@@ -513,7 +555,14 @@ subject in `profile.metadata.owner` MUST equal the authenticated owner. For an
 organization selected using a human bearer, send `X-CMAEG-Owner: <organization-id>`
 on every management request. CMAEG verifies that exact organization and current
 admin authority with NyxID; cache entries are isolated by bearer and selected
-owner. Omitting the header preserves the token's personal/native organization
+owner. Ordinary channel create/read/update/delete, listing and source diagnostics
+apply that same owner selection under service authentication; gateway permission
+alone does not replace current organization-admin evidence. A personal request
+cannot access an organization channel by knowing its opaque ID. Activity-stream
+refresh preserves the selected owner and rechecks current organization-admin
+authority before further data; losing that authority closes the stream. Provider
+binding requests retain the verified organization owner and exact existing Agent
+target. Omitting the header preserves the token's personal/native organization
 subject. The header is not accepted as authority without that verification.
 The optional [personal owner service-key lane](CMAEG_Owner_Service_Keys.md) uses
 the same Bearer routes and method permissions, requires a verified tracking
@@ -601,6 +650,33 @@ Context fields default to empty. A skill is `{source:"ornn",id,version?}`; an MC
 server is `{url,auth}` with HTTPS URL and auth `{type:"none"}` or
 `{type:"nyxid_service",slug}`. Provider refusals MUST explicitly identify
 unsupported fields; accepting a profile does not silently promise every field.
+
+Optional `profile.queue_lifetime_seconds` configures the provider binding's maximum
+wait for a newly admitted message: 300 seconds by default, with whole values from
+1 through 86,400. CMA reports the effective value on binding reads and lists the
+explicit field in `honoured`. Only verified, persisted binding authority selects
+this deadline; message metadata cannot override it. The Agent lane still holds at
+most 64 queued commands. A policy update preserves existing Agent settings and
+already admitted deadlines; exact retries retain the original deadline. Ordinary
+chat, UI and Trigger submissions retain their existing five-minute policy.
+
+If the queue deadline expires before dispatch, the response fails durably with
+`agent_command_queue_timeout`. No Agent turn starts, and the gateway settles the
+failed response without resubmitting it. Owners can inspect the failed activity
+and explicitly submit a new event after addressing the queue delay.
+
+For already provider-accepted Custom and GitHub execution, the gateway can verify
+retained event identity and settle terminal provider frames after the reply
+reference expires, within the existing seven-day journal retention. This does not
+renew a reply or tool capability: expired answers and result webhooks are refused
+with `event_ref_expired`. The original Custom stream may receive only a content-free
+terminal control after expiry. Never-started gateway work keeps its existing
+expiry refusal, and other source behavior is unchanged.
+
+See the [routed binding deadline audit](CMAEG_Binding_Queue_Deadlines.md) for the
+submission, recovery, lease, retention and observer deadlines, and the
+clock-advanced existing-Agent regression covering a near-day queue wait plus a
+thirty-minute run.
 
 An optional `Idempotency-Key` header of 1–256 ASCII bytes replays an identical
 create for the same creator on the same replica for ten minutes. Different
@@ -1817,12 +1893,27 @@ channel without routing) and `Content-Type: application/json`:
 | `replyToTarget` | POST `/v1/reply-targets/{reply_target_ref}/messages`, required `Idempotency-Key` header, body `OutboundMessage` | The ordinary `{message_ref?,rendering,delivery}` receipt |
 
 The sealed `cmaeg1.rt` capability derives only from the original authenticated
-relay event with verified retained activity. The request cannot supply a route,
-sender, chat or replacement event. It is bounded to 4 KiB and carries no NyxID
-user credential or relay reply token. The gateway uses the current channel key
-to reply to the original relay message. Custom/synchronous destinations cannot
-issue this capability. Providers retain the opaque reference securely with their
+event with verified retained activity. Native Discord, native WhatsApp private,
+and native WhatsApp group destinations are supported alongside relay and
+Telegram destinations. The request cannot supply a route, sender, chat or
+replacement event. It is bounded to 4 KiB and carries no NyxID user credential
+or relay reply token. The gateway reads the current platform credentials from
+the encrypted channel record and uses the channel key for relay delivery.
+Custom/synchronous destinations cannot issue this capability. Providers retain the opaque reference securely with their
 own pending operation; it is not a login grant or a new incoming user event.
+
+| Native source | Retained destination |
+| --- | --- |
+| Discord channel | Original bot, channel and message. |
+| Discord thread | Original bot, thread channel and message; a thread never falls back to its parent channel. |
+| WhatsApp private | Original app, business account, phone number, recipient and message. |
+| WhatsApp group | Original app, business account, phone number, group, participant and message, plus the original source/credential revision. The group must remain admitted. |
+
+All of these variants use the same maximum 24-hour target lifetime and return
+the authoritative Unix `expires_at` at minting. A sealed target does not override
+platform permissions or WhatsApp's messaging window; a platform refusal remains
+a rejected receipt. Providers must deploy against a gateway version supporting
+the listed native variants; minting alone is not a successful send probe.
 
 Creation and every send, including receipt replay, read current channel authority
 without accepting a stale cache. The original route must still belong to the
@@ -1848,8 +1939,19 @@ An in-progress or abandoned claim returns `delivery.outcome: "unknown"` with
 reason `delivery_in_progress_or_uncertain`, without initiating another send. A
 later retry can read the finalized receipt if the original worker finishes.
 A lost external response also remains unknown; this API does not promise exactly
-once external delivery. Do not invent a new ID to retry an uncertain send. Multiple
-different IDs are independent messages, with no ordering guarantee across events.
+once external delivery. A second durable fence covers the original channel record,
+event ID and consumer, independently of the caller's key, message content or
+reminted capability. While a send is in progress, abandoned, unknown, or lacks a
+durable final receipt, another key returns `delivery.outcome: "unknown"` with
+reason `reply_target_delivery_uncertain` and performs no dispatch. That refusal is
+itself retained under the submitted key. Read the original occurrence's receipt
+by repeating its original key and body; neither reads nor replacement keys retry
+the external effect. The fence is released only after a definite result and its
+exact receipt have been saved. After that, a fresh key denotes a new
+result occurrence (including deliberately identical text), and can send once.
+Different events remain independent. Drain old reply-target writers before
+activating this behavior: writers predating the fence cannot honor it, and
+preexisting claims without a fence require reconciliation or expiry.
 Records persist through all capabilities that can be minted from the original
 event. Delivery records cannot authorize interaction callbacks. Native MCP keeps
 the four existing tools, plus `readEventAttachment` when media is enabled; delayed
@@ -2018,7 +2120,7 @@ context is unchanged. Both `readEventContext` and `verifyEventContext` report it
 
 | `inbound_media` field | True or value when |
 | --- | --- |
-| `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS`. Existing-agent bindings and other providers report `false`. |
+| `read_tool` | The binding installs `readEventAttachment`: a profile binding of a provider named in `CMAEG_MEDIA_TOOL_PROVIDERS` (the CMAEG deployment enables `cma_codex` and `nyxbot`). Existing-agent bindings and other providers report `false`. |
 | `transcripts` | A transcriber is configured, so audio and video can be transcribed. |
 | `visuals` | `keyframes` while the operator's media transformer is configured, for every source (see [Event attachments](#event-attachments)); otherwise `platform_thumbnail` for natively received Telegram activities, whose videos can carry the platform's preview image; otherwise `none`. |
 | `downloads` | The binding may save originals with `readEventAttachment` view `download`: `read_tool` is true and the profile's `action_mode` is `autonomous` (see [Media downloads](#media-downloads)). Guarded and other bindings report `false`. |
@@ -2109,7 +2211,7 @@ The response is an `AttachmentView`:
 | `text?` | `{source,content,page,pages,truncated}`: one page of at most 16 KiB of a `transcript` or `document`. `page` is 1-based; `truncated` means the transcript or document text was itself cut at its cap (document text is read up to 1 MiB). |
 | `images[]` | Metadata of each delivered image, in order: `{origin,mime_type,width,height,bytes,at_ms?}`. `origin` is `normalized` (the attachment itself, re-encoded within 2048 px and 1 MiB), `platform_thumbnail` or `keyframe`, decided per image; `at_ms` is a keyframe's position in the video. |
 | `notice?` | Human-readable guidance; several notices are joined with `; `. |
-| `download?` | With view `download` and status `ready`: `{method,url,expires_at,curl}`, a single-use link to the original as one ready `curl` command. |
+| `download?` | With view `download` and status `ready`: `{method,url,expires_at,authorization,curl}`. `authorization` is `{scheme:"Bearer",token}` for clients that cannot execute shell text; it is scoped to this event attachment, expires shortly, and is accepted once. `curl` carries the same credential for compatibility. |
 
 A page past the last returns `unavailable` with `not_found`, and `text.pages`
 still says how many pages exist. The reasons are:
@@ -2181,10 +2283,10 @@ attachment bytes and text are not stored by CMA.
 An autonomous agent can save an attachment's original, such as a PDF, an
 archive, a large video or a full-resolution image, into its own workspace and
 open it with its own tools. It calls `readEventAttachment` with view
-`download` and runs the returned `curl` command once; that command fetches
-`GET /v1/media/content` with a single-use media link. The operation is not an
-agent tool: it never accepts the agent key, and the SDKs have no method for
-it, because the link is meant for `curl` in an agent's sandbox. The route is
+`download` and either runs the returned `curl` command once or sends the
+structured `authorization` object to its own HTTP client; both use the same
+single-use media link. The operation is not an agent tool: it never accepts the
+agent key. The route is
 always mounted; while `CMAEG_MEDIA_ENABLED` is `false` it answers
 `503 media_unavailable` with detail `media_disabled`.
 
@@ -2207,15 +2309,27 @@ event's reply token. A link that would not fit the 4096-character token
 limit, such as one for an event with a very large partition key, is never
 truncated: the view is `unavailable` with `link_unavailable`.
 
+The deployment includes `nyxbot` alongside `cma_codex` in the provider setting.
+NyxBot's autonomous profile bindings can download native Discord and WhatsApp
+originals through this same authority path; `existing_agent` bindings do not gain
+download permission.
+
 A minted view is `ready`, with the notice `the command works once and expires
 at expires_at; run it in your workspace` and `download`:
 
 | Field | Meaning |
 | --- | --- |
 | `method` | Always `GET`. |
-| `url` | `<CMAEG_PUBLIC_URL>/v1/media/content`; it never carries the link. |
+| `url` | The advertised public API base followed by `/v1/media/content`; it never carries the link. |
 | `expires_at` | Unix seconds after which the link is refused. |
-| `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, the only place the link appears; `<name>` is the safe file name described below. |
+| `authorization` | `{scheme:"Bearer",token:"<link>"}` for clients that cannot execute shell text. The token is scoped to this event attachment and is accepted once. |
+| `curl` | `curl -fsSL -H 'Authorization: Bearer <link>' -o '<name>' '<url>'`, a compatibility command carrying the same link; `<name>` is the safe file name described below. |
+
+With `CMAEG_ADVERTISE_PUBLIC_API_URL=true`, the base is `CMAEG_PUBLIC_API_URL`;
+otherwise it is `CMAEG_PUBLIC_URL`. The checked-in deployment advertises
+`https://cma.nyxid.ai/event-gateway/v1/media/content`. Clients pin the base from
+operator configuration and compare it with the returned URL before sending the
+capability. This configuration is not evidence that a particular image is live.
 
 The REST twin returns the same view. When the media response budget defers an
 MCP result, the deferred `pending` view carries no `download`, so a link never
@@ -2230,24 +2344,29 @@ path, the query and every other header are never read, because they reach
 load-balancer and access logs, so a link in a query string is ignored and the
 request is refused like one without a link. The request body must be empty.
 
-**Single use.** A link is redeemed on the replica that serves it before any
-other check, so a refused request spends it too. A second request with the
-same link on that replica is refused. The redemption set is per replica and is
-kept for the link's whole life, but it is not shared: during a rollout surge,
-or after a restart, a link can be redeemed once more on another replica within
-its short lifetime. Single use is therefore exact per replica and best effort
-across replicas.
+**Single use.** Before authority checks or source fetch, the gateway atomically
+creates an encrypted redemption record in the shared record store. Its identity
+is derived from the sealed link's random ID and it is retained through that
+link's expiry. Exactly one replica can establish the claim. A refused request
+spends the link too; later requests return `410 media_link_used`, including after
+replica changes and restarts. An unavailable store or an uncertain write
+acknowledgement returns `503 media_redemption_unavailable` without fetching or
+releasing bytes. A local cache only accelerates refusals; it cannot authorize a
+fetch. Rollout must drain readers that only enforce process-local redemption
+before enabling native downloads; a mixed fleet cannot enforce this contract.
 
 **Re-validation.** Every request checks, in this order, that the link is
-authentic and unexpired; that the channel still exists with the same record;
+authentic and unexpired; that its shared redemption claim succeeds; that a fresh
+authority read establishes that the channel still exists with the same record;
 that its binding, provider and agent key are the ones the link was minted for
 (rotating the agent key revokes every outstanding link); that the binding may
 still download (it is autonomous, and its provider is still in
 `CMAEG_MEDIA_TOOL_PROVIDERS`); that the provider's persisted activity still
 verifies against the sealed activity digest; that the attachment exists; and
 that its source is still configured: the relay source of the platform still
-routes the activity's route, the native Telegram bot is still configured with
-its token, or a custom URL's origin is still in the source's allowlist. Relay
+routes the activity's route, the native Telegram/Discord bot or WhatsApp
+app/account/phone is still configured with its credentials, or a custom URL's
+origin is still in the source's allowlist. Relay
 originals are fetched with the channel key, never the event's reply token,
 which a link does not carry.
 
@@ -2290,7 +2409,8 @@ Refusals are problems, sent before any body byte:
 | 503 | `media_unavailable` | `media_disabled` | Inbound media is disabled. |
 | 400 | `invalid_request` | `media_link_invalid` | Not exactly one `Authorization: Bearer` header, or a malformed, tampered or foreign link. |
 | 410 | `media_unavailable` | `media_link_expired` | The link's lifetime has passed. |
-| 410 | `media_unavailable` | `media_link_used` | The link was already redeemed on this replica. |
+| 410 | `media_unavailable` | `media_link_used` | The link was already redeemed in the shared store (or refused locally). |
+| 503 | `media_unavailable` | `media_redemption_unavailable` | The shared claim could not be established; no source fetch or bytes are released. |
 | 403 | `forbidden` | `media_link_revoked` | The channel was deleted, or its record, binding, agent key, download permission or attachment source changed. |
 | 503 | `media_unavailable` | `event_context_unverified` | The provider's activity cannot be read or no longer matches the sealed digest. |
 | 404 | `attachment_not_found` | `attachment_not_found` | The event has no attachment at the link's index, or the source no longer has it. |
@@ -2408,6 +2528,15 @@ carry matching numeric SSE IDs and `sequence_number` values with no gaps or
 duplicates after the requested `starting_after` cursor. Observation `error`
 frames have no SSE ID and cannot change the command outcome or advance the
 gateway's durable cursor. Recovery support grants no right to repeat a POST.
+The SSE decoder's 1 MiB frame limit also governs routed frame acknowledgement;
+the gateway hashes the full decoded JSON and persists its digest, not the raw
+frame. The separate 256 KiB serialized delivery-effect limit and bounded output
+projection remain unchanged. A large terminal snapshot can therefore settle
+without storing or delivering its repeated tool bodies. Retained executions
+blocked by the former 256 KiB raw-frame guard recover through GET at their last
+acknowledged cursor, including a terminal projection saved before that guard
+failed. This does not renew reply authority: expired EventRefs still suppress
+outbound replies while allowing already-accepted Custom/GitHub settlement.
 See [recovery transport operations](CMAEG_Operations.md#provider-response-recovery-transport)
 for configuration, bounds and staged activation.
 
@@ -2537,6 +2666,71 @@ received, not as a projection of it.
 Synthetic management tests omit this extension. Unsupported/unavailable reads
 must fail explicitly; the gateway does not invent a context from the sealed ref.
 
+### Verified sender context (CMA Responses v2 dialect)
+
+CMA's opaque `profile.environment.verified_sender_context:true` extension is
+supported for existing-Agent bindings. The provider lists the enabled extension
+in `honoured`; omitted/false disables it. Profile targets refuse it by name.
+Other existing-Agent profile settings remain unapplied as before. Policy-only
+PUTs preserve the borrowed Agent, credentials, binding generation and history.
+See [the CMA binding API](API_REST.md) for the exact first-line format and replay
+contract. CMAEG forwards the profile and full Activity without interpreting this
+policy or any product workflow.
+
+These precise refusals without `x-cma-response-id` precede **durable turn admission**, including input
+rendering and prefix-size validation:
+
+| HTTP | `error.code` | Meaning |
+| --- | --- | --- |
+| 403 | `verified_sender_context_invalid` | The original Activity/reference was not attested for this binding, or proof identity did not match. Definite, non-retryable. |
+| 422 | `verified_sender_context_unsupported` | Attested identity cannot be represented safely, or the complete prefixed input exceeds the input limit. Definite, non-retryable. |
+| 503 | `verified_sender_context_unavailable` | Attestation timed out or was unavailable for a request with no retained admission. No turn was admitted. Retry with the same frozen body/key after `Retry-After: 5`. |
+
+CMAEG recognizes only the matching status, `application/json` content type,
+exact nested error code and error type (`invalid_request_error` for 403/422,
+`server_error` for 503), with no `x-cma-response-id`. Other 403/422/503 responses,
+malformed/truncated bodies and contradictory admission headers remain `Unknown`
+and use existing uncertain-submission recovery; they never authorize a blind
+transport retry. The provider transport itself never retries a POST.
+
+Exact replay of admitted input never contacts the gateway. CMA compares the
+complete request, including its ExternalEvent, to the retained command using
+local deterministic prefix rendering. Only new admissions call attestation;
+reference expiry and gateway outages do not prevent exact replay. A changed
+request still conflicts. Disabled-policy turns retain ordinary admission;
+only a ledger conflict invokes the prefixed replay comparison.
+
+Attestation has a **2-second** deadline; opted-in sender preflight has a
+**5-second** deadline and holds no Mongo transaction, binding lock or worker lease
+across HTTP. Disabled-policy admission has no new deadline. The deployed provider
+request timeout is 30 seconds, capped at **20 seconds** for frozen submission.
+Keep that POST budget above the opted-in preflight budget with transport headroom
+(at least 10 seconds). Both attestation and outer preflight timeouts return the
+named 503 with `Retry-After: 5`: preflight performs no admission writes. Other
+read failures retain their existing unavailable response and recovery semantics.
+
+Rollback readers can dispatch the existing text schema but ignore the new policy
+in `honoured`, so new gateway turns may lack the line. Consumers must refuse
+`event_ref` inputs without a verified first line, including during rollback.
+
+The scheduler retries proven non-admissions with its existing **5-second**
+cooldown, rechecking original event expiry and current authority. Definite
+failures settle as `Refused`. An expired, proven-unadmitted prepared request
+settles with `event_expired_before_start`; an uncertain/accepted request is never
+misclassified as unstarted. Prepared targets can retain media work; original
+expiry closes its effect guards before any upload, supplement or delivery. The
+media worker records refusal for every indexed obligation and removes its active
+head. A late derivative cannot recreate that head or send after expiry. See
+[binding queue deadlines](CMAEG_Binding_Queue_Deadlines.md). Terminal activity records include optional
+`refusal_code`, `last_non_admission_code` and a completion timestamp. The last
+precise retryable refusal (for example `verified_sender_context_unavailable` or
+`conversation_not_ready`) is retained in a separate sealed diagnostic receipt
+and restored to Activity on expiry, including after restart. The Feishu
+user receives **no reply** for these refusals or expiry: no Agent ran, and no
+platform failure message is invented. Channel Activity shows the recorded reason.
+If a temporary outage recovers before expiry, the original turn admits once and
+normal automatic-final reply delivery resumes.
+
 ### Verify a fresh activity before admitting a workflow
 
 Providers that run a deterministic workflow before creating any model turn can
@@ -2597,6 +2791,123 @@ advertisement, not proof of unimplemented behavior. Providers MUST only advertis
 capabilities verified against their implementation. The binding response records
 its own level and field refusals for that channel.
 
+### Authenticated delivery traces
+
+`CMAEG_NYXID_TURN_TRACE_ENABLED` defaults to `false`. The enabled gateway
+interprets bounded, single-value W3C `traceparent` headers only after the
+existing reply or edit authority checks. Context follows the existing queued
+operation; it confers no execution authority and changes no idempotency key,
+request body, send decision or retry policy.
+
+The dedicated stdout NDJSON writer uses `target: "nyxid::turn_trace"`,
+`schema_version: 1` and `service: "cma"`. Records contain validated UUID/span
+identifiers, fixed stage/outcome labels, monotonic durations and bounded status
+or part indices. They never inherit surrounding log fields or include content,
+URLs, capabilities, credentials, platform identifiers or raw error strings.
+Each operation captures one span/request pair for its start and end. Successful
+HTTP transport is `completed`; only existing native receipts prove `confirmed`.
+Ambiguous writes, including 502 responses after possible partial delivery, stay
+`unknown`; tracing never retries them. Upload completion is separate from
+recipient delivery, and mixed confirmed/uncertain parts report `partial`.
+
+Two lossy queues hold at most 4,096 records in total; trace lines are limited to
+2 KiB; oversized ordinary log lines sharing that queue are dropped and counted
+as well. Serialization and output run on background workers, with no stdout lock
+held while waiting for work. Overflow or sink failure increments the dropped
+counter and emits a throttled fixed health warning. With the switch off, no
+trace queue, record, diagnostic ID or outbound trace header is constructed.
+
+### Optional provider capabilities
+
+A stored `ProviderBinding` may include a `capabilities` array of strings
+acknowledged by the provider. An empty array is omitted, preserving the legacy
+wire shape. Both SDKs accept the optional array. Retaining a nonempty array
+requires compatible channel readers during rollback; the routing audit reports
+this extension and refuses to clear it as a routing-only migration.
+
+### Optional NyxID turn correlation
+
+`CMAEG_NYXID_TURN_TRACE_ENABLED` defaults to `false`. When enabled, the existing
+authenticated `GET /v1/channel-capabilities` includes `nyxid_turn_trace_v1` in
+`source_features`, advertising the installed response reader. The NyxBot binding
+PUT requests `capabilities: ["nyxid_turn_trace_v1"]`. Only an
+authenticated response for that binding with the exact supported capability
+array enables the contract. Missing, null, unknown or malformed echoes leave
+the binding unnegotiated. A rejected PUT remains a rejected PUT; the gateway
+does not retry it with a different body to infer support.
+
+The normalized acknowledgement is retained in the optional
+`ProviderBinding.capabilities` array through the existing channel write. Empty
+capabilities are omitted. Both the process switch and this binding's retained
+acknowledgement are required before native response, snapshot or replay requests
+send `X-NyxID-Turn-Trace-Contract: 1`. Request bodies and execution idempotency
+keys do not contain diagnostic IDs. With the switch disabled, capability
+requests and trace headers are absent and existing wire bodies are unchanged.
+Readers must support the optional provider capability field before writers are
+enabled; routing audit refuses to clear that reader floor while it is retained.
+
+The negotiated reader accepts the version-1 `nyxid_trace` annotation on a
+response snapshot and the ordered metadata event `response.nyxid_trace` for
+that same authenticated response. The annotation has exactly five fields:
+`version: 1`, canonical UUID-v4 `turn_id`, the matching lowercase 32-hex
+`trace_id`, a nonzero lowercase 16-hex `parent_span_id`, and canonical UUID-v4
+`ingress_request_id`. Invalid or conflicting diagnostic data cannot retarget
+execution, replace the first valid association, corrupt a retained execution
+digest, or initiate another send. The event never becomes model output.
+
+For a negotiated binding, different valid UUID-v4 values in response
+`X-NyxID-Trace-Id` and `X-Request-Id` establish the admitted turn and the server
+ingress request respectively. Equal values are a request-scoped fallback and
+establish no turn. Missing, duplicate or malformed values are coverage gaps.
+Headers carry no NyxID parent span: delivery preserves the canonical turn but
+does not invent a remote parent. A later valid full annotation supplies its
+own canonical parent when delivery has not already adopted the header context.
+Admission attempts record their own paired ingress span and, when a turn binds,
+a link to the server-issued request. They never delay headers or the first event
+to obtain a turn.
+
+Live delivery retains the association in its existing per-turn context. Routed
+recovery retains it in the existing encrypted projection, under the existing
+writer fence and expiry. It adds no correlation collection or trace-only
+database operation. Old projections omit the field; malformed optional trace
+metadata is a coverage gap. Only negotiated top-level `nyxid_trace` and
+`response.nyxid_trace` annotation fields are excluded from execution frame
+digests. Output, identity, cursor and all other metadata integrity checks remain
+unchanged, and a stored diagnostic digest mode remains readable after disabling
+the writer.
+
+Enabling the writer raises the rollback reader floor for retained encrypted
+projections as well as channel bindings. Every serving and rollback binary must
+accept the optional projection association and diagnostic digest mode. Clearing
+a binding capability or disabling new tracing does not remove metadata from
+already admitted responses; those responses retain their original source turn
+through the existing recovery, expiry and purge paths. An older binary that
+rejects these projection fields is not a supported rollback target while such
+responses remain retained.
+
+NyxID companion activation is an owner prerequisite. Read-only inspection of
+NyxID at `da70dddc9ad9a8de7026b4319909a6927cd2d3e1` confirms that binding PUT
+accepts generic JSON and ignores additional top-level capabilities; it neither
+persists nor echoes them. This applies to the
+[custom binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/handlers/nyxbot.rs#L4416),
+[ordinary binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/handlers/nyxbot.rs#L4476),
+and [shared-entry binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/services/platform_entry_gateway_service.rs#L412).
+That version therefore remains unnegotiated even if the gateway switch is
+enabled. The CMA reader can ship before the companion; the owner must confirm
+the companion's persisted binding negotiation and response contract before
+activation. This contract does not establish deployed end-to-end coverage.
+
+Local throughput acceptance uses 16 concurrent turns and 2,048 turns per sample,
+with six alternating pairs through real local provider SSE and relay HTTP.
+The default OFF path must regress by less than 1% against `develop` with a
+zero-delay provider. Negotiated ON must regress by less than 1% against OFF
+with a 100 ms synthetic provider delay. Report the ON 10 ms result as well as
+zero-delay added p50/p99 latency and process CPU per turn, dropped records and
+external call counts. Synthetic delays are local acceptance fixtures; activation
+also requires the owner to re-measure against production provider latency when
+those metrics become available. That activation check does not block shipping
+the default-off CMA reader.
+
 ### Attachment block in turn input
 
 This subsection is informative: it describes text the gateway writes into
@@ -2645,7 +2956,7 @@ week 41: 1,204 orders
 and its provider is listed in the operator's `CMAEG_MEDIA_TOOL_PROVIDERS`
 (default `cma_codex`). Neither the conformance level nor the binding request
 proves that a provider installed the gateway MCP server, so the set is
-configured. Existing-agent bindings and other providers, such as `nyxbot`, are
+configured. Existing-agent bindings and providers omitted from that setting are
 never tool-bearing. Downloads additionally require the profile's `action_mode`
 to be `autonomous`. The first matching rule wins:
 
@@ -2736,7 +3047,33 @@ route. The first send may consume an unexpired single-use reply token; subsequen
 intentional sends use the channel key. Token selection happens after pacing; a
 claimed token is never replayed, including after event state cleanup.
 
-`CMAEG_NYXID_COMPLETE_REPLIES` selects a coordinated deployment mode:
+Telegram `nyxid_relay` also has the independent default-off switch
+`CMAEG_NYXID_COMMONMARK_RELAY_ENABLED`. When true, original CommonMark text is
+sent once to `/api/v1/channel-relay/reply/commonmark` or, for an explicitly
+requested and authorized thread target, `/thread-reply/commonmark`. The gateway
+does not escape Markdown or split it into platform parts. This applies to
+ordinary text, interactive keyboards and media captions, preserving the sealed
+target, attachment data and `reply.metadata.reply_markup`. NyxID converts and
+splits; multipart keyboard/media shapes may be refused by NyxID before sending.
+Native Telegram, other relay platforms and initiated messages keep their
+existing contracts. This switch takes precedence over the legacy/complete
+ordinary Telegram rendering choices below.
+
+Ordinary and keyboard updates use `/api/v1/channel-relay/reply/update/commonmark`
+with the retained exact outbound/platform identifiers. CommonMark source length
+is bounded by the request budget, while NyxID validates converted platform
+length and the single-message edit constraint. A 200 alone does not confirm an
+edit: its `upstream_message_id` must match and `edited_at` must be RFC 3339.
+The gateway retains durable send and interaction barriers. Failed, malformed or
+lost replies remain unknown, without a new reference, automatic replay or
+fallback to another endpoint. A possibly accepted prefix cannot be classified
+as total rejection. The existing receipt does not expose per-part completion;
+provider stream completion does not supply that missing platform evidence.
+No public receipt fields or enums change. Activation requires the
+[deployed counterpart checks](CMAEG_Operations.md#commonmark-relay-rollout).
+
+With CommonMark disabled, `CMAEG_NYXID_COMPLETE_REPLIES` selects the ordinary
+relay deployment mode:
 
 - **`false` (default, legacy compatibility).** CMAEG escapes and chunks ordinary
   relay text at 4000 UTF-16 units and sends each part independently. A bare 429
@@ -2930,7 +3267,9 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `PATCH /v1/github/apps/{app_ref}` | Versioned, replay-safe display-name update for the owner; App identity and authority are immutable through this interface. |
 | `PUT /v1/github/apps/{app_ref}/webhook-secret` | Write-only setup/rotation for the owner with bounded credential overlap and redacted metadata. |
 | `POST /v1/github/apps/{app_ref}/verification` | Gateway-admin App-identity approval and atomic identity reservation; does not approve an installation or activate execution. |
-| `POST /v1/github/installation-bindings` | Historical binding interface; dynamic installation ownership approval is not yet available. |
+| `POST /v1/github/apps/{app_ref}/retirement` | Owner-scoped terminal retirement with CAS and idempotency; refuses subsequent webhook receipts and authority mutations. |
+| `POST /v1/github/installation-bindings` | Request a pending installation binding for an owned verified integration; idempotent, with no static proof authority. |
+| `POST /v1/github/installation-bindings/{binding_id}/verification` | Independently authenticated gateway-admin approval or explicit re-approval with CAS and an exact repository set. |
 | `GET /v1/github/installation-bindings/{binding_id}` | Read the owner's GitHub installation binding. |
 | `POST /v1/github/apps/{app_ref}/webhooks` | Receive and durably admit a signed native GitHub webhook. |
 | `GET /v1/github/deliveries/{receipt_id}` | Read a GitHub delivery receipt owned by the authenticated owner. |
@@ -2938,79 +3277,188 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/github/tasks/{task_id}` | Read the durable admission task associated with a GitHub delivery. |
 <!-- openapi-operations:end -->
 
-GitHub App registration derives ownership from creator authentication and returns
-201 on creation or 200 for an exact replay of the same `Idempotency-Key` and
-private request. A changed request under that owner/key returns 409 `conflict`.
-The integration, sealed webhook credential and replay result commit atomically;
-an uncertain commit returns 503 and is recovered by replaying the same key/body.
-Credentials never appear in registration, read, list or capability responses.
-Responses use `Cache-Control: no-store`; another owner's App returns 404.
-Listing accepts `limit` (1–100, default 50) and `after` and returns `items` plus
-an optional `next_cursor` to pass as the next `after` value.
+GitHub storage initializes in the background only when `CMAEG_GITHUB_ENABLED=true`.
+The false-default flag is read at startup. Until initialization succeeds,
+integration operations return 503 and capabilities report `store_ready: false`;
+ordinary gateway readiness and other channel sources remain independent. Disabled
+support preserves records and performs no GitHub schema writes. New or changed
+GitHub sources remain subject to `github_writes_disabled`; retaining unchanged
+sources or removing them remains allowed.
 
-Existing-resource mutations require `expected_version` and `Idempotency-Key`.
-PATCH accepts only `expected_version` and `display_name`. Unknown fields,
-including `app_id`, `owner` or `status`, return 400. PUT accepts
-`expected_version`, `webhook_secret` (16–4096 UTF-8 bytes, write-only) and optional
-`overlap_seconds` (0–3600, default 600). It keeps at most the current and previous
-credential eligible, reporting the previous `version` and `valid_until` under
-`webhook_credential.previous`. A new positive overlap during an active overlap
-returns 409; explicit zero retires all earlier versions when replacement commits.
-Expired previous metadata may remain visible but never extends credential validity.
-Missing credentials refuse webhook authentication. Replay checks current
-credentials before returning an existing receipt, so a retired key cannot recover it.
+Startup prepares missing/version-1/version-2/version-3/version-4/version-5 storage with the existing database
+credential and commits the `github_integrations` version-6 marker last. It verifies
+runtime authority and indexes before publishing readiness. Unknown versions fail
+closed; the 30-second initialization deadline or an error leaves GitHub unavailable
+until a later successful startup. No manual migration is required for a normal
+release and the program grants no roles. The schema retains historical record
+kinds without executing legacy groups. There is no static App/proof/route loader.
 
-Verification accepts only `expected_version` and a nonempty `evidence_ref`
-(at most 512 bytes). It requires current service permission `cma-eg:admin` and
-the correct owner scope; the legacy identity-only authentication path cannot
-grant verifier authority. A trusted administrator makes the independent App
-administration decision and supplies its evidence reference; a reference string
-from an ordinary creator is insufficient. Approval atomically reserves the
-`(github.com, app_id)` identity and records `verification.verified_by`,
-`verified_at` and `evidence_ref`. Concurrent conflicting approvals yield one
-verified integration; the other draft remains pending. Numeric App IDs may
-repeat among pending drafts. The resulting `verified` status does not grant
-installation ownership, access to repositories or permission to dispatch.
+Capabilities report `dynamic_app_registration`, `native_app_webhook`,
+`webhook_secret_rotation`, `app_identity_verification` and
+`ownership_verification` as implemented. **`automatic_reconciliation: false` and
+`durable_dispatch: true` is available after the receipt-first ordinary-dispatch migration.**
+No App private key, JWT signer, installation-token issuance or automatic GitHub
+inventory reconciliation is implemented. A signed lifecycle event is the automatic
+tightening signal; a missed event is not independently discovered by this service.
 
-Organization selection through `X-CMAEG-Owner` requires current NyxID admin
-membership as well as the operation's service permission. Requests cannot select
-ownership through JSON. Another owner's resource returns 404; missing verifier
-permission returns 403. Stale versions, changed operation input and reserved App
-identity conflicts return 409. A stale-version error reports the safe current
-version; read the App to obtain current metadata. A 503 or lost write response
-requires replay with the same key/body. Replays return the original result,
-even if later mutations have advanced state, and never restore earlier authority
-or credentials. Read current metadata after recovering an operation.
+App registration derives ownership from creator authentication and returns 201,
+or 200 for exact replay of the same owner/`Idempotency-Key`/request. Changed input
+returns 409 `conflict`. The integration, separately sealed optional webhook
+credential and replay result commit atomically. Uncertain results return 503 and
+must be recovered with the same body/key. Public metadata never returns secrets.
+Owner list accepts `limit` (1–100, default 50) and `after`, with optional
+`next_cursor`. Another owner's resource returns 404. Responses use no-store caching.
 
-Signed ping returns 200 only after retaining its receipt. It remains `ignored`
-with no task IDs, even before App approval or installation setup. Verify
-`X-Hub-Signature-256` over the exact request bytes, with the stored credential
-selected by `app_ref`, before parsing or looking up duplicates. Changed bytes
-under a valid signature or a changed event type under the same delivery ID
-conflict with the original receipt (409); an invalid signature returns 401 and
-creates no receipt. The stable identity is scoped to integration reference and
-delivery ID, including for unverified drafts sharing a numeric App ID. Both GET
-lookup routes enforce the retained receipt owner. Webhook and receipt responses
-use `Cache-Control: no-store`.
+App PATCH retains its `expected_version` and `display_name` contract; it cannot
+change App ID or authority. Webhook-secret PUT retains `expected_version`,
+write-only `webhook_secret` (16–4096 bytes) and `overlap_seconds` (0–3600, default
+600). Only current and bounded previous credentials can authenticate. A further
+positive overlap during an active overlap is 409; zero immediately retires earlier
+credentials. Replay never restores retired credentials.
 
-The deployment-wide `CMAEG_GITHUB_ENABLED` flag defaults to false and is read at
-startup. Disabled GitHub support performs no GitHub schema changes, starts no
-GitHub worker and returns 503 for integration operations; the authenticated
-capability query remains available with `store_ready: false`. When enabled,
-startup automatically prepares missing or version-1 integration storage using
-the existing database credential, then verifies runtime authority and non-TTL
-indexes before exposing availability. The version-2 marker is committed last;
-restarts skip completed migration, and unknown future versions are refused.
-The 30-second initialization bound or any failure leaves GitHub unavailable
-without disabling other sources; a later startup can resume after the cause is
-fixed. Disabling the flag preserves records and schema. The normal release needs
-no manual `--migrate-automation` command, and the program grants no database roles.
-No App configuration is loaded from environment or deployment files; onboarding
-subsequent Apps needs no restart. Capabilities report `native_app_webhook`, `webhook_secret_rotation`
-and `app_identity_verification` as true. `ownership_verification` refers to
-installation approval and remains false; `automatic_reconciliation` also
-remains false until those slices are delivered. These flags do not prove a
-deployed release, GitHub installation access or successful agent execution.
+App verification requires independently authenticated `cma-eg:admin`, correct owner
+scope, `expected_version`, `evidence_ref` and an idempotency key. It reserves
+`(github.com, app_id)` and records verifier/time/evidence. Drafts may share numeric
+App IDs; their references, credentials and receipts remain separate. A verified App
+does not itself authorize installation events to execute.
+
+Organization management sends `X-CMAEG-Owner: <organization-id>` and requires
+current NyxID organization-admin membership plus the operation's service permission.
+Owner JSON is not accepted. A verifier's personal identity is recorded separately
+from the selected organization. Neither ordinary creator permission nor an
+identity-only legacy authentication path grants verifier authority.
+
+A new binding request supplies `app_ref`, positive `installation_id`, positive
+`account_id`, a nonempty unique `repository_ids` list (at most 256), and
+`Idempotency-Key`. It requires an owned verified integration and creates
+`pending_verification`, version 1, authority revision 0. Requested IDs are advisory and confer no
+repository authority. The administrator’s approved set is authoritative and may
+differ from the request. Same-key changed input is 409; installation identity cannot
+be reassigned by changing the request. The retained `proof_ref` request property
+has no authority: a static-proof request returns 422 `github_proof_withdrawn`,
+including when it has no idempotency header. This conditional new request shape
+preserves the existing operation ID and published properties.
+
+Binding verification requires the independent administrator, owner scope,
+`expected_version`, `evidence_ref`, an explicit unique nonempty `repository_ids`
+set (at most 256), and `Idempotency-Key`. This bound keeps authority and its
+replay/audit metadata within the existing sealed-record size limit. Initial approval
+or explicit re-approval sets active authority and records `approval` with verifier, evidence, approved time,
+repository set and authority revision. The immutable approval audit, binding
+version and replay result commit together. Stale CAS and changed replay input are
+409. Replay returns its original result without rewriting current authority; use
+GET for current state. Uninstalled bindings cannot be re-approved.
+
+Binding GET retains the original response fields and adds management `version`,
+`requested_repository_ids`, `approved_repository_ids`, `excluded_repository_ids`
+and approval audit metadata. `repository_ids` is the effective approved set.
+`verified_by` and `verification_ref` retain the latest approval attribution;
+pending bindings use empty strings. **`verified_until` is retained as integer zero
+for v1 compatibility and is never an authority deadline.** Legacy rows missing
+the new binding shape fail closed rather than becoming approved by inference.
+
+The approved binding repository set is the authority boundary; a channel's
+`repository_ids` is routing selection within it. New/changed sources must reference
+an integration and approved installations owned by the channel owner and may not
+include repositories outside effective approval. Current source diagnostics read
+dynamic integration, webhook-credential and binding state. Source configuration
+does not imply that business dispatch is enabled. Ordinary durable routing and
+explicit non-human acceptance remain prerequisites for the subsequent dispatch
+release; there is no legacy execution fallback.
+
+Lifecycle tightening is monotonic until an explicit administrator re-approval:
+`installation.suspend` suspends; `installation.deleted` uninstalls terminally;
+repository removal, transfer, deletion or an observed account-owner mismatch
+excludes that repository. Only a binding-status or effective approved-repository change advances
+`authority_revision`. Outside-scope notifications and repeated exclusions do not
+advance it. Management `version` may advance to fence a stale scope-expansion
+request, without revoking eligibility. Unchanged re-approval changes audit/version
+only.
+Exclusion lists retain only requested/approved IDs; everything outside effective
+approval remains unauthorized. Re-approval discards exclusions outside both its
+new approved set and the original requested set, without granting those IDs.
+`created`, `unsuspend`, `new_permissions_accepted` and `added` never widen authority,
+including when delayed after a negative event. Exact redelivery applies no change
+twice. Lifecycle receipts remain receivable for inactive bindings.
+
+Retirement POST accepts `expected_version` and `Idempotency-Key`. It records terminal
+`retired` status and `retired_at`. Subsequent verification, credential mutation,
+binding creation/approval and webhook requests return 410
+`github_integration_retired`; neither replay nor another positive event can
+reactivate the integration. An exact retirement replay returns its original
+retirement result. Existing metadata and receipts remain owner-readable. A verified
+App identity reservation is atomically released, allowing independent verification
+of another owner’s pending integration. Concurrent reclaims have one winner. Old
+retirement/verification replays cannot disturb a later reservation. Retirement
+terminates all of that integration's installation authority. New binding identities
+are scoped to the integration and installation, so a newly verified integration can
+request and independently approve the same installation. No previous repository
+approval is inherited. Historical binding IDs and receipts remain readable only by
+their original owner; recorded binding state is history, not authority after the
+parent integration retires. Existing App/installation-derived binding IDs remain
+readable and usable only with their original non-retired integration. Source checks
+and webhook resolution use the current integration and never adopt another
+integration's historical binding.
+
+Webhook authentication uses the stored integration's current credentials before
+parsing or duplicate lookup. Only uncompressed UTF-8 JSON, at most 256 KiB, and
+single-valued event/delivery/signature headers are accepted. The overall receipt
+handler budget is five seconds. Identity is `(github.com, app_ref, delivery_id)`;
+changed bytes/event under the same ID return 409 `github_delivery_conflict` and
+preserve the original receipt. Invalid signatures are 401 and create no receipt.
+Supported shapes must agree with the event header because that header is not HMAC
+covered. Payloads cannot select a CMA owner, channel, Agent or credential.
+
+Valid ping returns 200 after receipt commitment, with no task IDs. Unbound
+installations receive compact terminal ignored receipts with reason
+`installation_unbound`. Pending/suspended/uninstalled or repository-ineligible
+business deliveries are terminal ignored with a reason; future approval never
+routes them retroactively. Retired integrations instead refuse every webhook,
+including ping and exact redelivery, without creating a receipt.
+
+**An approved eligible business delivery commits a pending receipt and returns 202.**
+Bounded ordinary routed admission updates per-channel dispatch progress; a retry or
+recovery restores the same admission root. Unsupported actions/events and lifecycle
+deliveries return ignored receipts. A 200 ignored receipt does not promise any turn.
+`receipt.task_ids` contains only durably committed routed admission IDs, never group IDs. `Task.result`, `TaskResult` and
+its enum values are retained compatibility shapes but no Agent reply is parsed
+or used to populate them.
+
+Ignored receipt roots have a seven-day `retained_until`; pending business receipts
+use fourteen days so a late admission retains its full seven-day execution horizon.
+The authenticated expiry field and TTL index mirror that choice. Reads/replay reject expired retained rows
+with 410 `github_delivery_expired` before any dispatch; physical TTL deletion later
+makes lookup 404. Duplicates never extend retention. Ignored business/ping raw
+bodies last at most 24 hours; lifecycle bodies last seven days; compact ineligible
+receipts retain no body. Configuration and approval audit records have no expiry.
+The migration stamps historical receipts once with a seven-day upgrade deadline,
+never extends an existing expiry, and does not rewrite their sealed body.
+Receipt and duplicate-recovery guarantees apply within the seven-day horizon;
+older IDs are not a recovery path. Expiry never itself schedules/restarts work.
+The ordinary-dispatch release must cap admission/task retention at the receipt
+horizon and refuse expired pending work. [GitHub.com redelivery](https://docs.github.com/en/webhooks/testing-and-troubleshooting-webhooks/redelivering-webhooks)
+is available for three days.
+
+Inert ignored/ping receipt inserts do not take integration or binding write guards:
+they authorize nothing. Integration status is read before insertion. Requests
+already authenticated before retirement may finish inert persistence; retired
+endpoints admit no new authenticated request. Binding creation/approval and
+lifecycle/owner-mismatch mutations retain transactional guards, binding CAS and
+receipt/audit writes. These protect authority changes and management decisions
+against concurrent retirement. Snapshot reads alone cannot provide that fence.
+Transient conflicts use bounded jittered backoff within 3.5 seconds; the total
+webhook budget remains five seconds. Management retries retain body, key and
+expected version. A CAS race returns 409 with the safe current version.
+
+Both App verification and binding approval require independently authenticated
+`cma-eg:admin`. For organization-owned resources the caller must additionally act
+within the owning organization using `X-CMAEG-Owner` and current organization-admin
+evidence. Gateway admin permission is not cross-tenant approval authority.
+
+Future GitHub admission guards recheck the delivery repository’s actual eligibility
+at root commit: active binding, approved and not excluded repository, non-retired
+integration. Global authority revision inequality alone must not reject unrelated
+pending work. The guard stays opt-in for GitHub; other source admission is unchanged.
 
 ## Platform connections and optional management capabilities
 
@@ -3921,6 +4369,10 @@ https://core.telegram.org/bots/api#setmessagereaction (reviewed 2026-10-26).
 
 
 ## Native Discord source reader and durable intake
+
+The additive [native Discord connection observations](CMAEG_Discord_Connection_Status.md)
+contract defines `native_discord_activation.connection`. Selection is scheduling,
+not connection health; all status is scoped to the serving instance.
 
 The additive source `{"type":"discord","bot_id":"<snowflake>","intents":37377,
 "admission":{"type":"all"}}` names a CMAEG-owned Discord Gateway connection.

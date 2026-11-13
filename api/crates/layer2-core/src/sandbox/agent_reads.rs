@@ -6,7 +6,7 @@ use crate::resource_access::{
 };
 use crate::{Caller, Capability, SubjectId};
 
-use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
+use super::agent_reads_fold::fold_agent_log;
 use super::store::{AgentReadStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
 use super::{
     Agent, AgentLineage, AgentListQuery, AgentLogEntry, AgentReadError, AgentResourceReading,
@@ -16,15 +16,24 @@ use super::{
 
 pub struct AgentReadService {
     store: Arc<dyn AgentReadStore>,
+    sessions: Option<Arc<dyn super::store::SandboxSessionStore>>,
     resources: Arc<dyn SandboxResourceReader>,
     access: Option<Arc<ResourceAccessService>>,
+    response_logs: Option<Arc<dyn super::store::AgentResponseLogStore>>,
 }
 
 #[path = "agent_reads/authorized.rs"]
 mod authorized;
+#[path = "agent_reads/composition.rs"]
+mod composition;
 #[path = "agent_reads/recovery.rs"]
 mod recovery;
+#[path = "agent_reads/transcript_pages.rs"]
+mod transcript_pages;
 pub use authorized::{AgentDetailReading, SharedAgentDetail};
+#[path = "agent_reads/history.rs"]
+mod history;
+pub use history::AgentHistoryReading;
 #[path = "agent_reads/configuration.rs"]
 mod configuration;
 pub use configuration::AgentConfigurationRead;
@@ -34,9 +43,17 @@ pub use source::{AgentSourceReadError, AgentSourceReading, SharedAgentOrigin};
 #[path = "agent_reads/visibility.rs"]
 mod visibility;
 pub use visibility::AgentVisibleLogEntry;
+#[path = "agent_reads/sessions.rs"]
+mod sessions;
 #[path = "agent_reads/stream.rs"]
 mod stream;
 pub use stream::{AgentEventStreamAuthorization, AgentEventStreamSnapshot};
+#[path = "agent_reads/response.rs"]
+mod response;
+pub use response::indexed::AgentOutputObservation;
+#[path = "agent_reads/buffered.rs"]
+mod buffered;
+pub use buffered::AgentBufferedEventRequest;
 #[path = "agent_reads/window.rs"]
 mod window;
 pub use window::{
@@ -45,29 +62,14 @@ pub use window::{
 
 #[path = "agent_reads/answer.rs"]
 mod answer;
+#[path = "agent_reads/log_pages.rs"]
+mod log_pages;
 pub use answer::AgentFinalAnswer;
+#[path = "agent_reads/usage.rs"]
+mod usage;
+use usage::fold_agent_usage;
 
 impl AgentReadService {
-    pub fn new<S, R>(store: Arc<S>, resources: Arc<R>) -> Arc<Self>
-    where
-        S: AgentReadStore + 'static,
-        R: SandboxResourceReader + 'static,
-    {
-        Arc::new(Self {
-            store,
-            resources,
-            access: None,
-        })
-    }
-
-    pub fn with_resource_access(self: &Arc<Self>, access: Arc<ResourceAccessService>) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            resources: self.resources.clone(),
-            access: Some(access),
-        })
-    }
-
     pub async fn list(
         &self,
         caller: &Caller,
@@ -89,24 +91,6 @@ impl AgentReadService {
         Ok(self.owned_lineage(caller, id).await?.agent)
     }
 
-    pub(super) async fn require_owned_final_answer(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        sequence: u64,
-    ) -> Result<(), AgentReadError> {
-        let transcript = self.transcript(caller, id).await?;
-        if transcript.turns.iter().any(|turn| {
-            turn.final_answer()
-                .is_some_and(|answer| answer.sequence == sequence)
-        }) {
-            Ok(())
-        } else {
-            Err(AgentReadError::NotFound)
-        }
-    }
-
-    /// Read the Agent and every parent needed to project its public context.
     pub async fn lineage(
         &self,
         caller: &Caller,
@@ -114,36 +98,6 @@ impl AgentReadService {
     ) -> Result<AgentLineage, AgentReadError> {
         require(caller)?;
         self.owned_lineage(caller, id).await
-    }
-
-    pub async fn log(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        after: u64,
-        limit: u16,
-    ) -> Result<Vec<AgentLogEntry>, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        validate_limit(limit)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)?;
-        Ok(entries
-            .into_iter()
-            .filter(|entry| entry.seq > after)
-            .take(usize::from(limit))
-            .collect())
-    }
-
-    pub async fn transcript(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-    ) -> Result<AgentTranscript, AgentReadError> {
-        let projection = self
-            .projection(caller, id, crate::RuntimeCapability::Conversation)
-            .await?;
-        Ok(projection.transcript)
     }
 
     /// Read a validated log through the exact aggregate captured for this read.
@@ -164,10 +118,7 @@ impl AgentReadService {
         caller: &Caller,
         id: &AgentId,
     ) -> Result<AgentUsageReading, AgentReadError> {
-        let projection = self
-            .projection(caller, id, crate::RuntimeCapability::Usage)
-            .await?;
-        Ok(projection.usage)
+        self.usage_bounded(caller, id).await
     }
 
     pub async fn resources(
@@ -188,19 +139,6 @@ impl AgentReadService {
             sandbox_id: lineage.sandbox.id,
             reading,
         })
-    }
-
-    async fn projection(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        capability: crate::RuntimeCapability,
-    ) -> Result<AgentLogProjection, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        require_granted(&lineage.agent, capability)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)
     }
 
     async fn owned_lineage(
@@ -444,7 +382,11 @@ fn store_error(error: SandboxStoreError) -> AgentReadError {
         SandboxStoreError::SequenceConflict => {
             corrupt("agent store reported an inconsistent sequence")
         }
-        other => AgentReadError::Unavailable(other.to_string()),
+        other => {
+            use crate::dependency_diagnostics::{Dependency, Failure, Reason};
+            Failure::new(Dependency::Storage, Reason::Unavailable).record();
+            AgentReadError::Unavailable(other.to_string())
+        }
     }
 }
 

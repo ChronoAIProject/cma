@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import {
+  EventWorkerProfileSchema,
   NativeMediaCapabilitiesSchema,
   ActivityRoutingSchema,
   ActivitySchema,
@@ -32,6 +33,22 @@ import {
   ManageThreadRequestSchema,
   SourceSchema,
 } from '../src/cmaeg/types.js';
+
+it('preserves the opaque verified sender provider policy', () => {
+  const fixtures = JSON.parse(
+    readFileSync(
+      new URL('../../../api/crates/cmaeg/tests/fixtures/sdk-contract.json', import.meta.url),
+      'utf8',
+    ),
+  ) as Record<string, Record<string, unknown>[]>;
+  for (const enabled of [true, false]) {
+    const profile = {
+      ...fixtures.EventWorkerProfile![0],
+      environment: { verified_sender_context: enabled },
+    };
+    expect(EventWorkerProfileSchema(profile)).toEqual(profile);
+  }
+});
 
 it('preserves older discovery and optional provider recovery and WhatsApp capabilities', () => {
   const legacy = {

@@ -11,7 +11,9 @@ mod commands;
 mod events;
 pub use commands::*;
 mod lifecycle;
+mod retained_recovery;
 mod runtime_update;
+pub use retained_recovery::*;
 mod shared;
 pub use runtime_update::*;
 mod types;
@@ -47,7 +49,38 @@ pub struct Sandboxes<'a> {
     client: &'a Client,
 }
 
+/// Owner relinquishment of an administrator-approved automatic-pause exception.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AlwaysOnRequest {
+    /// Send false to relinquish; true is refused with 403 `always_on_approval_required`.
+    pub always_on: bool,
+    /// Exact Sandbox revision being changed.
+    pub expected_revision: u64,
+}
+
 impl Sandboxes<'_> {
+    /// Relinquish an exception with `always_on: false`. Unset/false is a
+    /// revision-checked no-op. `true` returns 403 `always_on_approval_required`.
+    /// Only `Administration::set_sandbox_always_on` can approve an exception.
+    pub async fn set_always_on(
+        &self,
+        id: &str,
+        body: &AlwaysOnRequest,
+        key: &IdempotencyKey,
+    ) -> Result<Sandbox> {
+        let value: Sandbox = self
+            .client
+            .command(
+                Method::POST,
+                &["sandboxes", id, "always-on"],
+                Some(body),
+                key,
+                StatusCode::OK,
+            )
+            .await?;
+        identity(&value.id, id)?;
+        Ok(value)
+    }
     /// List personally owned Sandboxes or current organization-visible metadata.
     pub async fn list_accessible(
         &self,

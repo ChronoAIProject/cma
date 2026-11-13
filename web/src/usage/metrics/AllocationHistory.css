@@ -1,0 +1,30 @@
+.usage-allocation-history {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+.usage-allocation-history summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.usage-history-disclosure {
+  margin-inline-start: auto;
+  color: var(--dsw-alias-label-primary);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.usage-allocation-history p,
+.usage-history-facts {
+  margin-top: 12px;
+}
+.usage-history-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.usage-history-facts dd {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
+}

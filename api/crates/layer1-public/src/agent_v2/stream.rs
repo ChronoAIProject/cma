@@ -1,6 +1,7 @@
 use super::{
     cursor, error::Error, parse, projection, shapes::DurableEvent, snapshot, AgentV2State,
 };
+use crate::stream_telemetry::{self, Kind, Poll};
 use crate::AuthenticatedResourceCaller;
 use axum::{
     extract::{Path, RawQuery, State},
@@ -13,12 +14,15 @@ use axum::{
 use layer2_core::{
     sandbox::{
         agent_io::{AgentEventKind, AgentMessageRole},
-        AgentEventStreamAuthorization, AgentEventStreamHeader, AgentLiveFragment,
-        AgentLiveSubscription,
+        AgentEventStreamAuthorization, AgentEventStreamHeader, AgentHeadSubscription,
+        AgentLiveDelivery, AgentLiveSubscription,
     },
     AgentId,
 };
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
+#[cfg(test)]
+#[path = "telemetry_tests.rs"]
+mod telemetry_tests;
 #[cfg(test)]
 #[path = "stream_tests.rs"]
 mod tests;
@@ -61,6 +65,15 @@ async fn open(
     } else {
         None
     };
+    let heads = if follow && state.event_wake {
+        state
+            .updates
+            .as_ref()
+            .and_then(|updates| updates.subscribe_head(&id))
+    } else {
+        None
+    };
+    let fallback_due = tokio::time::Instant::now() + state.fallback_poll;
     let header = state.reads.event_stream_header(&authorization).await?;
     let identity = cursor::incarnation(&header);
     let after = after
@@ -80,25 +93,32 @@ async fn open(
         live_timestamps: projection::live_timestamps(&headers),
         tool_output: projection::tool_output(&headers),
         pending: VecDeque::new(),
+        deferred_live: VecDeque::new(),
         watching,
+        heads,
+        fallback_due,
+        needs_catchup: false,
+        release_failed: false,
         held: None,
         committed_message: after,
         initial_gap: follow,
         discarded_fragments: 0,
+        live_batch_needs_validation: false,
         ended: false,
     };
     open.fill().await?;
     Ok(open)
 }
 
+#[derive(Clone)]
 pub(super) struct Frame {
     pub event: Event,
     pub live: bool,
-    pub fragment: bool,
+    pub fragment: Option<AgentLiveDelivery>,
 }
 pub(super) struct Following {
     pub state: AgentV2State,
-    authorization: AgentEventStreamAuthorization,
+    pub(super) authorization: AgentEventStreamAuthorization,
     pub header: AgentEventStreamHeader,
     pub identity: String,
     pub after: u64,
@@ -108,16 +128,22 @@ pub(super) struct Following {
     pub live_timestamps: bool,
     tool_output: bool,
     pub pending: VecDeque<Frame>,
+    pub(super) deferred_live: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
-    pub held: Option<AgentLiveFragment>,
+    pub held: Option<AgentLiveDelivery>,
     pub committed_message: u64,
-    initial_gap: bool,
-    discarded_fragments: u64,
+    pub(super) initial_gap: bool,
+    pub(super) discarded_fragments: u64,
+    pub(super) live_batch_needs_validation: bool,
     ended: bool,
+    pub(super) heads: Option<AgentHeadSubscription>,
+    pub(super) fallback_due: tokio::time::Instant,
+    pub(super) needs_catchup: bool,
+    release_failed: bool,
 }
 
 impl Following {
-    async fn fill(&mut self) -> Result<(), Error> {
+    pub(super) async fn fill(&mut self) -> Result<(), Error> {
         let window = projection::window(
             &self.state,
             &self.authorization,
@@ -156,56 +182,111 @@ impl Following {
             self.pending.push_back(Frame {
                 event: Event::default().event("cma.agent.event").id(id).data(body),
                 live: false,
-                fragment: false,
+                fragment: None,
             });
             self.after = sequence;
         }
         if self.after >= window.through && !self.follow {
             self.ended = true;
         }
+        self.needs_catchup = false;
+        self.queue_tail();
+        Ok(())
+    }
+
+    pub(super) fn queue_tail(&mut self) {
         // Complete durable catch-up always precedes live fragments or gaps.
         if self.pending.is_empty() && self.follow && self.after == self.header.head {
             if self.initial_gap {
                 self.initial_gap = false;
                 self.queue_gap(None, "reconnected");
             }
+            self.revalidate_deferred_live();
             if self.discarded_fragments > 0 {
                 let frames = std::mem::take(&mut self.discarded_fragments);
                 self.queue_gap(Some(frames), "lagged");
             }
-            self.queue_live();
+            if self.deferred_live.is_empty() {
+                self.queue_live();
+            } else {
+                self.pending.append(&mut self.deferred_live);
+                self.live_batch_needs_validation =
+                    self.pending.iter().any(|frame| frame.fragment.is_some());
+            }
         }
-        Ok(())
     }
 
     async fn release(&mut self, frame: &Frame) -> bool {
-        if frame.fragment {
-            let Ok(current) = self
-                .state
-                .reads
-                .event_stream_header(&self.authorization)
-                .await
-            else {
+        if self.state.event_wake
+            && self
+                .authorization
+                .revalidation_deadline()
+                .is_some_and(|deadline| deadline <= tokio::time::Instant::now())
+        {
+            self.release_failed = true;
+            return false;
+        }
+        if frame.fragment.is_some() {
+            if !self.live_batch_needs_validation {
+                return true;
+            }
+            self.live_batch_needs_validation = false;
+            let current = if self.state.event_wake {
+                self.state
+                    .reads
+                    .current_event_stream_header(&self.authorization)
+                    .await
+            } else {
+                self.state
+                    .reads
+                    .event_stream_header(&self.authorization)
+                    .await
+            };
+            let Ok(current) = current else {
+                self.release_failed = true;
                 return false;
             };
-            if current.head != self.header.head
-                || current.runtime_generation != self.header.runtime_generation
+            if current.runtime_generation != self.header.runtime_generation
                 || current.active_turn != self.header.active_turn
+                || current.head != self.header.head
             {
-                // The buffered live batch is now stale. Refill durable history
-                // before deciding whether any newly observed fragment is safe.
-                self.discarded_fragments +=
-                    1 + self.pending.iter().filter(|frame| frame.fragment).count() as u64;
-                self.pending.clear();
+                // Durable events can race a live batch. Preserve the buffered
+                // source fragments, catch up durably, then recheck their validity.
+                let pending = std::mem::take(&mut self.pending);
+                self.header = current;
+                self.needs_catchup = self.state.event_wake;
+                self.deferred_live.push_back(frame.clone());
+                self.deferred_live.extend(pending);
                 return false;
             }
             true
         } else {
-            self.state
+            let allowed = self
+                .state
                 .reads
                 .validate_event_stream(&self.authorization)
                 .await
-                .is_ok()
+                .is_ok();
+            self.release_failed = !allowed;
+            allowed
+        }
+    }
+
+    fn revalidate_deferred_live(&mut self) {
+        let deferred = std::mem::take(&mut self.deferred_live);
+        for frame in deferred {
+            if let Some(fragment) = &frame.fragment {
+                if fragment.agent_id == self.header.id
+                    && Some(fragment.turn_sequence) == self.header.active_turn
+                    && Some(fragment.runtime_generation) != self.header.runtime_generation
+                {
+                    self.discarded_fragments += 1;
+                }
+                if !self.current_live_fragment(fragment) || fragment.after_seq > self.header.head {
+                    continue;
+                }
+            }
+            self.deferred_live.push_back(frame);
         }
     }
 }
@@ -216,31 +297,51 @@ fn response(open: Following) -> Response {
             if let Some(frame) = open.pending.pop_front() {
                 if !open.release(&frame).await {
                     if !frame.live
-                        || open
-                            .state
-                            .reads
-                            .validate_event_stream(&open.authorization)
-                            .await
-                            .is_err()
+                        || (open.state.event_wake && open.release_failed)
+                        || (!open.state.event_wake
+                            && open
+                                .state
+                                .reads
+                                .validate_event_stream(&open.authorization)
+                                .await
+                                .is_err())
                     {
                         return None;
                     }
                     continue;
+                }
+                if let Some(fragment) = &frame.fragment {
+                    stream_telemetry::agent_live_delivered(fragment.published_at());
                 }
                 return Some((Ok::<_, Infallible>(frame.event), open));
             }
             if open.ended {
                 return None;
             }
-            if open.after == open.header.head {
-                let wake = tokio::time::Instant::now() + Duration::from_millis(100);
-                let wake = open
-                    .authorization
-                    .revalidation_deadline()
-                    .map_or(wake, |deadline| deadline.min(wake));
-                tokio::time::sleep_until(wake).await;
-            }
-            if let Err(error) = open.fill().await {
+            let result = if open.state.event_wake
+                && open.follow
+                && open.after == open.header.head
+                && !open.needs_catchup
+            {
+                // Keep the nested replay future off the response poll stack.
+                Box::pin(open.wait_for_change()).await
+            } else {
+                if open.after == open.header.head && !open.needs_catchup {
+                    let wake = tokio::time::Instant::now() + Duration::from_millis(100);
+                    let wake = open
+                        .authorization
+                        .revalidation_deadline()
+                        .map_or(wake, |deadline| deadline.min(wake));
+                    tokio::time::sleep_until(wake).await;
+                }
+                let poll = Poll::new(Kind::AgentEventsV2);
+                let result = open.fill().await;
+                if result.is_ok() {
+                    poll.complete(!open.pending.is_empty());
+                }
+                result
+            };
+            if let Err(error) = result {
                 if open
                     .state
                     .reads
@@ -262,7 +363,7 @@ fn response(open: Following) -> Response {
             }
         }
     });
-    let mut response = Sse::new(stream)
+    let mut response = Sse::new(stream_telemetry::observe(stream, Kind::AgentEventsV2))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
     response

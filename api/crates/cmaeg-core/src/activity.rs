@@ -72,7 +72,8 @@ pub enum ActivityKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         album_id: Option<String>,
     },
-    Interaction(InteractionResult),
+    #[schema(value_type = crate::schema::InteractionResult)]
+    Interaction(#[schema(inline)] InteractionResult),
     Command {
         name: String,
         args: String,
@@ -126,7 +127,8 @@ pub enum ConversationKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SourceKind {
-    NativeLark(crate::channel::NativeLarkIdentity),
+    #[schema(value_type = crate::schema::NativeLarkIdentity)]
+    NativeLark(#[schema(inline)] crate::channel::NativeLarkIdentity),
     Whatsapp {
         app_id: String,
         waba_id: String,

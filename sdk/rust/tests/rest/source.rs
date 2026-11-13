@@ -1,4 +1,6 @@
 use super::*;
+#[path = "source/transcript.rs"]
+mod transcript;
 
 #[tokio::test]
 async fn provenance_inventory_preserves_empty_continuations_and_typed_scope_filters() {

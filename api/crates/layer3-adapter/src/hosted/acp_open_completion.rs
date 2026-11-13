@@ -1,6 +1,7 @@
 //! Exact native setup evidence supplements a missing durable confirmation only.
 use std::time::Duration;
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -47,7 +48,7 @@ impl Bridge {
             .await
             .map_err(|_| unavailable())?;
         let receipt: CompletionReceipt =
-            serde_json::from_value(result).map_err(|_| unavailable())?;
+            CompletionReceipt::deserialize(&*result).map_err(|_| unavailable())?;
         if !receipt.complete
             || receipt.version != 1
             || receipt.session_id != conversation

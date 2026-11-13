@@ -129,7 +129,7 @@ impl AuthState {
         subject: &layer2_core::SubjectId,
         credential: &str,
     ) -> Result<RequestAuth, CommandAuthorizationError> {
-        if !crate::auth::bearer::permits_independent_commands(credential) {
+        if !self.permits_oauth_or_key_commands(credential) {
             return Err(CommandAuthorizationError::Revoked);
         }
         self.require_ordinary_api_credential(credential).await?;

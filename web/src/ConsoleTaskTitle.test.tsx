@@ -136,7 +136,7 @@ it('keeps the owner rename after a late provider title in navigation, header, br
   fireEvent.change(composer, { target: { value: 'Keep my draft' } });
   const messages = [...document.querySelectorAll('article.message')];
   fireEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Rename Agent' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
   await act(() => vi.advanceTimersByTimeAsync(0));
   fireEvent.change(screen.getByRole('textbox', { name: 'Agent name' }), {
     target: { value: '工具选型' },
@@ -181,8 +181,16 @@ it('keeps the first task preview through resumed setup, blank and unknown metada
   vi.useFakeTimers();
   let update: ((event: AgentLiveEvent) => void) | undefined;
   const client = agentClient({
+    readWorkspace: async () => {
+      const workspace = workspaceFixture();
+      return {
+        ...workspace,
+        agents: workspace.agents.map((agent) => ({ ...agent, title: undefined })),
+      };
+    },
     readAgent: async () => ({
       ...AGENT_DETAIL,
+      title: undefined,
       runtimeMetadata: {
         description: 'Investigate checkout failures',
         descriptionSource: 'prompt_preview',

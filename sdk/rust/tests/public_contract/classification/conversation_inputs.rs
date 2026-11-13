@@ -1,0 +1,250 @@
+use super::Classification;
+
+pub(super) const CASES: &[(&str, Classification)] = &[
+    ("queued-cancellation-v2-missing-key", Classification::Local),
+    (
+        "queued-cancellation-v2-invalid-revision",
+        Classification::Local,
+    ),
+    (
+        "queued-cancellation-v2-unknown-field",
+        Classification::TypedShape,
+    ),
+    (
+        "queued-cancellation-v2-invalid-json",
+        Classification::RawJson,
+    ),
+    (
+        "queued-cancellation-v2-query-observe",
+        Classification::QueryShape,
+    ),
+    (
+        "queued-cancellation-v2-query-submit",
+        Classification::QueryShape,
+    ),
+    ("interruption-v2-missing-key", Classification::Local),
+    ("interruption-v2-invalid-revision", Classification::Local),
+    ("interruption-v2-empty-text", Classification::Local),
+    ("interruption-v2-whitespace-text", Classification::Local),
+    ("interruption-v2-null-text", Classification::TypedShape),
+    ("interruption-v2-unknown-field", Classification::TypedShape),
+    ("interruption-v2-invalid-json", Classification::RawJson),
+    ("interruption-v2-query", Classification::QueryShape),
+    ("queued-input-v2-missing-key", Classification::Local),
+    ("queued-input-v2-invalid-revision", Classification::Local),
+    ("queued-input-v2-empty-text", Classification::Local),
+    ("queued-input-v2-whitespace-text", Classification::Local),
+    ("queued-input-v2-null-text", Classification::TypedShape),
+    ("queued-input-v2-unknown-field", Classification::TypedShape),
+    ("queued-input-v2-invalid-json", Classification::RawJson),
+    ("queued-input-v2-query-list", Classification::QueryShape),
+    ("queued-input-v2-query-submit", Classification::QueryShape),
+    ("response-controls-v2-missing-key", Classification::Local),
+    (
+        "response-controls-v2-unknown-body",
+        Classification::TypedShape,
+    ),
+    (
+        "response-controls-v2-invalid-observation",
+        Classification::Local,
+    ),
+    ("response-controls-v2-invalid-json", Classification::RawJson),
+    (
+        "response-controls-v2-observe-query",
+        Classification::QueryShape,
+    ),
+    (
+        "response-controls-v2-status-query",
+        Classification::QueryShape,
+    ),
+    ("responses-v2-field-stream", Classification::Local),
+    (
+        "responses-v2-field-previous_response_id",
+        Classification::Local,
+    ),
+    ("responses-v2-field-tools", Classification::TypedShape),
+    ("responses-v2-field-store", Classification::Local),
+    ("responses-v2-field-metadata", Classification::TypedShape),
+    ("responses-v2-field-input", Classification::TypedShape),
+    ("responses-v2-field-conversation", Classification::Local),
+    ("responses-v2-alias-mismatch", Classification::Local),
+    ("responses-v2-items-limit", Classification::Local),
+    ("responses-v2-items-order", Classification::TypedShape),
+    ("responses-v2-retrieve-query", Classification::QueryShape),
+    ("launch-error-create-missing-key", Classification::Local),
+    ("launch-error-create-invalid-key", Classification::Local),
+    (
+        "launch-error-create-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "launch-error-create-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "launch-error-create-malformed-body",
+        Classification::RawJson,
+    ),
+    ("launch-error-start-missing-key", Classification::Local),
+    ("launch-error-start-invalid-key", Classification::Local),
+    (
+        "launch-error-start-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "launch-error-start-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("launch-error-start-malformed-body", Classification::RawJson),
+    ("launch-error-cancel-missing-key", Classification::Local),
+    ("launch-error-cancel-invalid-key", Classification::Local),
+    (
+        "launch-error-connection-create-missing-key",
+        Classification::Local,
+    ),
+    (
+        "launch-error-connection-create-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "launch-error-connection-create-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "launch-error-connection-create-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "launch-error-connection-create-malformed-body",
+        Classification::RawJson,
+    ),
+    (
+        "launch-error-create-missing-start-choice",
+        Classification::TypedShape,
+    ),
+    (
+        "launch-error-list-invalid-state",
+        Classification::TypedShape,
+    ),
+    (
+        "launch-error-list-malformed-limit",
+        Classification::TypedShape,
+    ),
+    (
+        "launch-error-events-malformed-after",
+        Classification::TypedShape,
+    ),
+    (
+        "launch-error-stream-invalid-query",
+        Classification::QueryShape,
+    ),
+    (
+        "launch-error-stream-malformed-follow",
+        Classification::TypedShape,
+    ),
+    ("launch-error-stream-invalid-limit", Classification::Local),
+    (
+        "trigger-error-create-invalid-body",
+        Classification::TypedShape,
+    ),
+    ("trigger-error-create-invalid-key", Classification::Local),
+    ("trigger-error-create-missing-key", Classification::Local),
+    (
+        "trigger-error-create-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "trigger-error-delete-published-refused-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "trigger-error-delete-published-refused-missing-key",
+        Classification::Local,
+    ),
+    (
+        "trigger-error-list-malformed-query",
+        Classification::TypedShape,
+    ),
+    (
+        "trigger-error-placement-create-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "trigger-error-placement-create-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "trigger-error-placement-create-missing-key",
+        Classification::Local,
+    ),
+    (
+        "trigger-error-placement-create-missing-media-type",
+        Classification::MediaType,
+    ),
+    (
+        "trigger-error-placement-retire-invalid-key",
+        Classification::Local,
+    ),
+    (
+        "trigger-error-placement-retire-missing-key",
+        Classification::Local,
+    ),
+    (
+        "trigger-error-placements-list-invalid-query",
+        Classification::TypedShape,
+    ),
+    (
+        "trigger-error-publish-invalid-body",
+        Classification::TypedShape,
+    ),
+    ("trigger-error-publish-invalid-key", Classification::Local),
+    ("trigger-error-publish-missing-key", Classification::Local),
+    (
+        "trigger-error-publish-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("trigger-error-retire-invalid-key", Classification::Local),
+    ("trigger-error-retire-missing-key", Classification::Local),
+    (
+        "trigger-error-save-invalid-body",
+        Classification::TypedShape,
+    ),
+    ("trigger-error-save-invalid-key", Classification::Local),
+    ("trigger-error-save-missing-key", Classification::Local),
+    (
+        "trigger-error-save-missing-media-type",
+        Classification::MediaType,
+    ),
+    ("agui-empty-run", Classification::Local),
+    ("agui-invalid-body", Classification::TypedShape),
+    ("agui-invalid-replay-query", Classification::QueryShape),
+    ("agui-invalid-run", Classification::Local),
+    ("agui-missing-content-type", Classification::MediaType),
+    ("agui-profile-override-refused", Classification::TypedShape),
+    (
+        "responses-conversation-content-type",
+        Classification::MediaType,
+    ),
+    (
+        "responses-conversation-invalid-body",
+        Classification::TypedShape,
+    ),
+    (
+        "responses-conversation-metadata-refusal",
+        Classification::TypedShape,
+    ),
+    ("responses-input-role", Classification::TypedShape),
+    ("responses-instructions-null", Classification::TypedShape),
+    ("responses-items-bad-limit", Classification::Local),
+    ("responses-items-bad-query", Classification::QueryShape),
+    ("responses-metadata-values", Classification::TypedShape),
+    ("responses-missing-content-type", Classification::MediaType),
+    ("responses-read-bad-query", Classification::QueryShape),
+    ("responses-read-stream-refused", Classification::QueryShape),
+    ("responses-stateless", Classification::TypedShape),
+    ("responses-store-false", Classification::Local),
+    ("responses-stream-false", Classification::Local),
+    ("responses-tools-null", Classification::TypedShape),
+    ("triggers-badge-invalid-query", Classification::TypedShape),
+    ("triggers-embed-invalid-query", Classification::QueryShape),
+];

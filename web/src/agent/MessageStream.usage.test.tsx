@@ -41,25 +41,18 @@ const events = [
 ];
 const empty = () => conversationFromTranscript({ agentId: 'agent', throughSeq: 0, turns: [] });
 
-it('keeps each completed turn count under its final reply through a full history reload', () => {
+it('retains completed turn counts through history reload without exposing them in answer footers', () => {
   const state = events.reduce(foldAgentEvent, empty());
   const view = render(<MessageStream conversation={state} onApproval={vi.fn()} />);
   const verify = () => {
     const replies = screen.getAllByRole('article', { name: 'Chrono Agent' });
     expect(within(replies[0]!).queryByLabelText('Turn token usage')).not.toBeInTheDocument();
-    expect(within(replies[1]!).getByLabelText('Turn input tokens: 13,831')).toHaveTextContent(
-      '13,831 input',
-    );
-    expect(within(replies[1]!).getByLabelText('Turn output tokens: 61')).toHaveTextContent(
-      '61 output',
-    );
-    expect(within(replies[2]!).getByLabelText('Turn input tokens: 13,899')).toHaveTextContent(
-      '13,899 input',
-    );
-    expect(within(replies[2]!).getByLabelText('Turn output tokens: 14')).toHaveTextContent(
-      '14 output',
-    );
-    expect(screen.getAllByLabelText('Turn token usage')).toHaveLength(2);
+    for (const reply of replies) {
+      expect(within(reply).getByRole('button', { name: 'Copy content' })).toBeVisible();
+      expect(within(reply).queryByLabelText('Turn token usage')).not.toBeInTheDocument();
+    }
+    expect(state.turnUsage?.['10']).toMatchObject({ inputTokens: 13831, outputTokens: 61 });
+    expect(state.turnUsage?.['25']).toMatchObject({ inputTokens: 13899, outputTokens: 14 });
   };
   verify();
   view.unmount();
@@ -72,7 +65,8 @@ it('keeps each completed turn count under its final reply through a full history
 it('does not attribute earlier usage to a new reply and draws no line for unknown usage', () => {
   const started = events.slice(0, -1).reduce(foldAgentEvent, empty());
   const view = render(<MessageStream conversation={started} onApproval={vi.fn()} />);
-  expect(screen.getAllByLabelText('Turn token usage')).toHaveLength(1);
+  expect(screen.queryByLabelText('Turn token usage')).not.toBeInTheDocument();
+  expect(started.turnUsage?.['25']).toMatchObject({ inputTokens: 13899, outputTokens: 14 });
   const noReport = [
     ...events.slice(0, 6),
     event(25, { type: 'turn_started', turn_sequence: 25 }),
@@ -83,5 +77,6 @@ it('does not attribute earlier usage to a new reply and draws no line for unknow
   const unreported = screen.getByText('No usage report for this turn.').closest('article')!;
   expect(within(unreported).queryByLabelText('Turn token usage')).not.toBeInTheDocument();
   expect(unreported).not.toHaveTextContent(/\b0 (input|output)/);
-  expect(screen.getAllByLabelText('Turn input tokens: 13,831')).toHaveLength(1);
+  expect(screen.queryByLabelText('Turn input tokens: 13,831')).not.toBeInTheDocument();
+  expect(noReport.turnUsage?.['25']).toBeUndefined();
 });

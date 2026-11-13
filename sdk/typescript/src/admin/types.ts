@@ -3,6 +3,7 @@ import { sandboxRuntimeUpdate } from '../instances/runtime-update.js';
 import { profileKind, profileVisibility } from '../profiles/types.js';
 import {
   array,
+  boolean,
   dictionary,
   enumeration,
   integer,
@@ -39,7 +40,12 @@ export const adminSandbox = object({
   owner: text,
   name: text,
   status: sandboxStatus,
-  profile: object({ id: text, revision: positiveInteger, digest: text }),
+  profile: object({
+    id: text,
+    revision: positiveInteger,
+    digest: text,
+    always_on: optional(boolean),
+  }),
   runtime: optional(object({ runtime_version: text })),
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
   failure: optional(failure),

@@ -209,6 +209,7 @@ impl CustomDelivery {
             } else {
                 crate::turns::observer::DeliveryStep::Answer
             };
+            crate::telemetry::delivery::webhook(step, &outcome);
             self.activity
                 .checkpoint(
                     &event.record_id,
@@ -244,6 +245,7 @@ impl CustomDelivery {
         if !matches!(event.reply, ReplyAddress::Sync { .. }) {
             return;
         }
+        crate::telemetry::delivery::local(buffered);
         let mut change = crate::activity::facts::delivery(
             event.consumer.as_ref().map_or("default", |id| id.as_str()),
             crate::turns::observer::DeliveryStep::Answer,

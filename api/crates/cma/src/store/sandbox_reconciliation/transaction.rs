@@ -1,6 +1,7 @@
 use layer2_core::sandbox::store::{
-    apply_sandbox_runtime_loss, SandboxRuntimeLossApplication, SandboxRuntimeLossOutcome,
-    SandboxRuntimeLossRequest, SandboxStoreError,
+    apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
+    SandboxRuntimeLossApplication, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
+    SandboxStoreError,
 };
 use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
 use mongodb::bson::doc;
@@ -16,6 +17,10 @@ use super::super::sandbox_mongo::{
 };
 use super::super::sandboxes::{read_sandbox, sandbox_replacement_fields};
 use super::agents::{load_agents, publish_agents};
+use super::telemetry::measure;
+
+mod scoped;
+pub(super) use scoped::apply_scoped;
 
 #[derive(Debug)]
 pub(super) enum ApplyError {
@@ -50,7 +55,9 @@ impl From<TransactionLogError> for ApplyError {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct RecoveryReceipt {
+    pub(super) segmented: Vec<crate::store::agent_log_segments::writer_commit::Recorded>,
     pub(super) sandbox: Sandbox,
     pub(super) agents: Vec<Agent>,
     pub(super) logs: Vec<AgentLogEntry>,
@@ -68,23 +75,48 @@ pub(super) async fn apply(
     request: &SandboxRuntimeLossRequest,
     session: &mut ClientSession,
 ) -> Result<RecoveryApplication, ApplyError> {
-    let document = store
-        .sandboxes
-        .find_one(doc! { "_id": request.sandbox_id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    let document = measure("sandbox_read", async {
+        store
+            .sandboxes
+            .find_one(doc! { "_id": request.sandbox_id.as_str() })
+            .session(&mut *session)
+            .await
+    })
+    .await
+    .map_err(ApplyError::Driver)?
+    .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_sandbox(&document).map_err(ApplyError::Domain)?;
+    if store.runtime_loss_bounded_proof_enabled {
+        if let Some(outcome) =
+            precheck_sandbox_runtime_loss(&current, request).map_err(ApplyError::Domain)?
+        {
+            return Ok(RecoveryApplication::Complete(outcome));
+        }
+    }
     let last_seq = document
         .get_i64("last_seq")
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
         .and_then(|seq| unsigned(seq, "sandbox event sequence").map_err(SandboxStoreError::Corrupt))
         .map_err(ApplyError::Domain)?;
-    let rows = load_agents(store, &current.id, session).await?;
+    let rows = if store.runtime_loss_bounded_proof_enabled {
+        let agents = measure(
+            "agent_rows",
+            super::super::lifecycle_execution::load_sandbox_agents(store, &current.id, session),
+        )
+        .await?;
+        super::telemetry::agent_counts(&agents);
+        if let Some(outcome) =
+            precheck_runtime_loss_agents(&current, &agents, request).map_err(ApplyError::Domain)?
+        {
+            return Ok(RecoveryApplication::Complete(outcome));
+        }
+        super::agents::validate_agents(store, agents, session).await?
+    } else {
+        load_agents(store, &current.id, session).await?
+    };
     let evidence = rows
         .iter()
-        .map(|(agent, summary)| (agent.clone(), summary.entry_count()))
+        .map(|(agent, source)| (agent.clone(), source.through()))
         .collect::<Vec<_>>();
     let mutation = match apply_sandbox_runtime_loss(&current, &evidence, request)
         .map_err(ApplyError::Domain)?
@@ -94,10 +126,35 @@ pub(super) async fn apply(
         }
         SandboxRuntimeLossApplication::Persist(mutation) => mutation,
     };
-    validate_in_transaction(store, &current.id, last_seq, session).await?;
-    let (agents, logs) =
-        publish_agents(store, rows, &mutation.agents, &request.observed_at, session).await?;
-    let advanced = store.sandboxes.update_one(
+    let (agents, logs) = measure(
+        "agent_writes",
+        publish_agents(store, rows, &mutation.agents, request, session),
+    )
+    .await?;
+    persist_sandbox(
+        store, request, &current, last_seq, *mutation, agents, logs, session,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn persist_sandbox(
+    store: &MongoSandboxStore,
+    request: &SandboxRuntimeLossRequest,
+    current: &Sandbox,
+    last_seq: u64,
+    mutation: layer2_core::sandbox::store::SandboxRuntimeLossMutation,
+    agents: Vec<Agent>,
+    logs: Vec<AgentLogEntry>,
+    session: &mut ClientSession,
+) -> Result<RecoveryApplication, ApplyError> {
+    measure(
+        "event_validation",
+        validate_in_transaction(store, &current.id, last_seq, session),
+    )
+    .await?;
+    measure("sandbox_writes", async {
+        let advanced = store.sandboxes.update_one(
         doc! {
             "_id": current.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
@@ -111,34 +168,37 @@ pub(super) async fn apply(
         },
         doc! { "$set": sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)? },
     ).session(&mut *session).await.map_err(ApplyError::Driver)?;
-    if advanced.matched_count != 1 {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    crate::store::sandbox_usage::save::record_saved(
-        store,
-        session,
-        &mutation.sandbox,
-        current.revision,
-    )
-    .await?;
-    let mut events = Vec::with_capacity(mutation.events.len());
-    for kind in mutation.events {
-        events.push(
-            append_in_transaction(
-                store,
-                session,
-                &current.id,
-                request.observed_at.clone(),
-                kind,
-            )
-            .await?,
-        );
-    }
-    Ok(RecoveryApplication::Persist(Box::new(RecoveryReceipt {
-        sandbox: mutation.sandbox,
-        agents,
-        logs,
-        events,
-        outcome: mutation.outcome,
-    })))
+        if advanced.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        crate::store::sandbox_usage::save::record_saved(
+            store,
+            session,
+            &mutation.sandbox,
+            current.revision,
+        )
+        .await?;
+        let mut events = Vec::with_capacity(mutation.events.len());
+        for kind in mutation.events {
+            events.push(
+                append_in_transaction(
+                    store,
+                    session,
+                    &current.id,
+                    request.observed_at.clone(),
+                    kind,
+                )
+                .await?,
+            );
+        }
+        Ok(RecoveryApplication::Persist(Box::new(RecoveryReceipt {
+            segmented: Vec::new(),
+            sandbox: mutation.sandbox,
+            agents,
+            logs,
+            events,
+            outcome: mutation.outcome,
+        })))
+    })
+    .await
 }

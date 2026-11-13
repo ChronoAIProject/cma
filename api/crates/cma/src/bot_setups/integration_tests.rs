@@ -6,6 +6,7 @@ mod connections;
 mod corpus;
 mod fixture;
 mod ports;
+mod tenant_isolation;
 use crate::auth::{actor_links::ActorWakeupState, persistence::AuthStore};
 use axum::{
     body::{to_bytes, Body},

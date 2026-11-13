@@ -41,15 +41,14 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   state = live(state, 'TOOL_CALL_START', { toolCallId: 'slow', toolCallName: 'Run tests' });
   state = live(state, 'TOOL_CALL_START', { toolCallId: 'fast', toolCallName: 'Read package' });
   const { rerender } = render(draw(state));
-  const toggle = screen.getByRole('button', { name: /^Thinking/ });
+  const toggle = screen.getByRole('button', { name: 'View activity' });
   expect(toggle).toHaveAttribute('aria-expanded', 'false');
-  expect(toggle).toHaveTextContent('2 operations in progress');
+  expect(toggle).toHaveTextContent('View activity');
   expect(toggle).not.toHaveTextContent('Turn input unavailable');
   expect(toggle).not.toHaveTextContent('Inspecting dependencies');
   // Pending tools put the turn's character to work (§28).
-  const character = () => toggle.querySelector('.character-avatar');
-  expect(character()).toHaveAttribute('data-pose', 'working');
-  expect(character()).toHaveAttribute('aria-hidden', 'true');
+  const logo = () => document.querySelector('.thinking__logo');
+  expect(logo()).toHaveAttribute('aria-hidden', 'true');
   fireEvent.click(toggle);
   const dock = screen.getByRole('region', { name: 'What the agent is working through' });
   expect(within(dock).getByText('Inspecting dependencies')).toBeInTheDocument();
@@ -64,15 +63,17 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   });
   state = live(state, 'TOOL_CALL_END', { toolCallId: 'fast', result: 'package.json read' });
   rerender(draw(state));
-  expect(screen.getByRole('button', { name: /^Thinking/ })).toBe(toggle);
+  expect(screen.getByRole('button', { name: 'View activity' })).toBe(toggle);
   expect(within(dock).getAllByRole('listitem')).toHaveLength(1);
   expect(within(dock).queryByText(/Read package/)).not.toBeInTheDocument();
-  const completed = screen.getByRole('button', { name: /^1 tool call$/ });
+  const completed = screen.getByRole('button', { name: /^Read package/ });
   expect(completed).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(completed);
-  expect(screen.getByRole('article', { name: 'Tool call: Read package' })).toHaveTextContent(
-    'Completed',
-  );
+  expect(
+    within(screen.getByRole('article', { name: 'Tool call: Read package' })).getByRole('img', {
+      name: 'Completed',
+    }),
+  ).toBeInTheDocument();
   expect(
     screen.getByText('The first check is ready.').compareDocumentPosition(dock) &
       Node.DOCUMENT_POSITION_FOLLOWING,
@@ -85,27 +86,27 @@ it('keeps Thinking below new text and moves concurrent tools into separate compl
   });
   rerender(draw(state));
   // With no tool left pending and reply text streaming, the character replies.
-  expect(character()).toHaveAttribute('data-pose', 'replying');
+  expect(logo()).toHaveAttribute('aria-hidden', 'true');
   const cards = screen.getAllByRole('article', { name: /^Tool call:/ });
   expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
     'Tool call: Read package',
     'Tool call: Run tests',
   ]);
-  expect(cards[1]).toHaveTextContent('Failed');
-  expect(screen.getByRole('button', { name: /^2 tool calls/ })).toHaveAttribute(
+  expect(cards[1]).toHaveTextContent('One assertion failed');
+  expect(screen.getByRole('button', { name: /Read package · Run tests/ })).toHaveAttribute(
     'aria-expanded',
     'true',
   );
-  fireEvent.click(within(cards[1]!).getByText('Details'));
-  expect(within(cards[1]!).getByText('One assertion failed')).toBeVisible();
+  fireEvent.click(within(cards[1]!).getByRole('button', { name: /Run tests/ }));
+  expect(within(cards[1]!).getAllByText('One assertion failed')[0]).toBeVisible();
   expect(within(dock).queryByRole('list')).not.toBeInTheDocument();
   expect(toggle).toHaveAttribute('aria-expanded', 'true');
 
   vi.useFakeTimers();
   rerender(draw(live(state, 'RUN_FINISHED')));
-  expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
   act(() => vi.advanceTimersByTime(200));
-  expect(screen.queryAllByRole('article', { name: /^Tool call:/ })).toHaveLength(0);
+  expect(screen.getAllByRole('article', { name: /^Tool call:/ })).toHaveLength(2);
   expect(screen.queryByText('Inspecting dependencies')).not.toBeInTheDocument();
 });
 
@@ -125,7 +126,7 @@ it('shows exactly one transient row before the first reply and before queued fol
   expect(thinking.closest('article')).toBeNull();
   expect(container.querySelectorAll('.active-thinking')).toHaveLength(1);
   // Before any tool or reply, the character thinks.
-  expect(thinking.querySelector('.character-avatar')).toHaveAttribute('data-pose', 'thinking');
+  expect(thinking.querySelector('.thinking__logo')).toHaveAttribute('aria-hidden', 'true');
   expect(
     thinking.compareDocumentPosition(screen.getByText('Next question')) &
       Node.DOCUMENT_POSITION_FOLLOWING,
@@ -138,19 +139,19 @@ it('restores elapsed time on navigation and replay, and resets it only for a new
   vi.setSystemTime(new Date('2026-09-14T00:02:00Z'));
   const active = start();
   const first = render(draw(active));
-  expect(screen.getByText('for 120s')).toBeInTheDocument();
+  expect(screen.getByText('2m 0s')).toBeInTheDocument();
   act(() => vi.advanceTimersByTime(3_000));
-  expect(screen.getByText('for 123s')).toBeInTheDocument();
+  expect(screen.getByText('2m 3s')).toBeInTheDocument();
   first.unmount();
   act(() => vi.advanceTimersByTime(7_000));
   const next = render(draw(live(active, 'RUN_STARTED', { timestamp: '2026-09-14T00:02:10Z' })));
-  expect(screen.getByText('for 130s')).toBeInTheDocument();
+  expect(screen.getByText('2m 10s')).toBeInTheDocument();
   next.rerender(
     draw(live(active, 'RUN_STARTED', { runId: '2', timestamp: '2026-09-14T00:02:10Z' })),
   );
-  expect(screen.getByText('for 0s')).toBeInTheDocument();
+  expect(screen.getByText('0s')).toBeInTheDocument();
   next.rerender(draw({ ...active, activeRunStartedAt: undefined }));
-  expect(screen.queryByText(/^for \d+s$/)).not.toBeInTheDocument();
+  expect(document.querySelector('.thinking__elapsed')).toBeNull();
 });
 
 it.each(['RUN_FINISHED', 'RUN_ERROR'])(
@@ -161,13 +162,15 @@ it.each(['RUN_FINISHED', 'RUN_ERROR'])(
       toolCallName: 'Long task',
     });
     render(draw(live(pending, end)));
-    expect(screen.queryByRole('button', { name: /^Thinking/ })).not.toBeInTheDocument();
-    const process = screen.getByRole('button', { name: /^1 tool call$/ });
+    expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
+    const process = screen.getByRole('button', { name: 'Long task' });
     expect(process).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(process);
-    expect(screen.getByRole('article', { name: 'Tool call: Long task' })).toHaveTextContent(
-      'Outcome not reported (last status: running)',
-    );
+    expect(
+      within(screen.getByRole('article', { name: 'Tool call: Long task' })).getByRole('img', {
+        name: 'Outcome not reported (last status: running)',
+      }),
+    ).toBeInTheDocument();
   },
 );
 
@@ -216,10 +219,10 @@ it('reconciles terminal tools without duplicates or pending regression during re
   expect(state.toolCalls).toHaveLength(1);
   expect(state.toolCalls[0]).toMatchObject({ status: 'completed', order: position });
   render(draw(state));
-  const process = screen.getByRole('button', { name: /^1 tool call$/ });
+  const process = screen.getByRole('button', { name: /^Read file/ });
   expect(process).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(process);
   expect(screen.getAllByRole('article', { name: 'Tool call: Read file' })).toHaveLength(1);
-  fireEvent.click(screen.getByRole('button', { name: /^Thinking/ }));
+  fireEvent.click(screen.getByRole('button', { name: 'View activity' }));
   expect(screen.queryByRole('listitem')).not.toBeInTheDocument();
 });

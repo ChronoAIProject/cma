@@ -1,13 +1,16 @@
 use std::future::Future;
 use std::time::{Duration, SystemTime};
 
-use layer2_core::sandbox::store::SandboxStoreError;
+use crate::sandbox::live_agents::LiveAgentTarget;
+use layer2_core::rfc3339_at;
+use layer2_core::sandbox::store::{AgentWorkMutation, SandboxStoreError, VersionedWorktree};
 use layer2_core::sandbox::{
     Agent, AgentStatus, AgentWorkStep, FirstMessageRecord, Sandbox, SandboxStatus,
 };
+use layer2_core::sandbox::{AgentLogKind, SandboxEventKind, WorktreeStatus};
 use layer2_core::seconds_from_rfc3339;
 
-use super::support::RequestEvidence;
+use super::support::{bump_log_sequence, claimed_fence, AgentContext, RequestEvidence};
 use super::AgentWorker;
 
 const MAX_PUBLICATION_ATTEMPTS: usize = 8;
@@ -144,4 +147,68 @@ pub(super) fn only_startup_metadata_changed(previous: &Agent, current: &Agent) -
     normalized.conversation.last_seq = previous.conversation.last_seq;
     normalized.conversation.first_message = previous.conversation.first_message.clone();
     normalized == *previous
+}
+
+impl AgentWorker {
+    pub(super) async fn publish_ready_once(
+        &self,
+        mut agent: Agent,
+        context: &AgentContext,
+        target: &LiveAgentTarget,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let expected = agent.revision;
+        let fence = claimed_fence(&agent, &self.config.holder)?;
+        let stamp = rfc3339_at(now);
+        agent
+            .work
+            .advance(
+                &self.config.holder,
+                fence,
+                AgentWorkStep::PublishConnection,
+                stamp.clone(),
+            )
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        agent
+            .transition(AgentStatus::Ready, stamp.clone(), None)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        let conversation_id = target.conversation_id.clone();
+        let runtime_generation = target.runtime_generation;
+        let logs = vec![
+            AgentLogKind::ConversationOpened {
+                conversation_id,
+                runtime_generation,
+            },
+            AgentLogKind::StatusChanged {
+                from: AgentStatus::Starting,
+                to: AgentStatus::Ready,
+            },
+        ];
+        bump_log_sequence(&mut agent, logs.len())?;
+        let mut worktree = context.worktree.clone();
+        let expected_worktree_revision = worktree.revision;
+        worktree
+            .transition(WorktreeStatus::Ready)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+        self.dependencies
+            .store
+            .commit_agent_work(AgentWorkMutation {
+                expected_agent_revision: expected,
+                holder: self.config.holder.clone(),
+                fence,
+                agent: agent.clone(),
+                worktree: Some(VersionedWorktree {
+                    expected_revision: expected_worktree_revision,
+                    worktree,
+                }),
+                appended_at: stamp,
+                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
+                    agent_id: agent.id.clone(),
+                    from: AgentStatus::Starting,
+                    to: AgentStatus::Ready,
+                }),
+                agent_logs: logs,
+            })
+            .await
+    }
 }

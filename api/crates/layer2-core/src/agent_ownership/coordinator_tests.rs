@@ -54,6 +54,47 @@ async fn two_and_three_instances_keep_live_owner_when_other_local_registries_are
 }
 
 #[tokio::test(start_paused = true)]
+async fn just_renewed_loss_waits_for_expiry_then_allows_one_successor() {
+    let store = MemoryOwnershipStore::default();
+    let instances = vec![
+        start(store.client(), "a").await,
+        start(store.client(), "b").await,
+        start(store.client(), "c").await,
+    ];
+    let id = AgentId("agent".into());
+    let old = claim(&instances, &id).await;
+    let crashed = instances
+        .iter()
+        .find(|instance| instance.instance_id == old.token.instance_id)
+        .unwrap();
+    crashed.maintain().await.unwrap();
+    let survivors: Vec<_> = instances
+        .iter()
+        .filter(|instance| instance.instance_id != old.token.instance_id)
+        .cloned()
+        .collect();
+    let started = tokio::time::Instant::now();
+    for tick in 1..=5 {
+        tokio::time::advance(Duration::from_millis(HEARTBEAT_INTERVAL_MS)).await;
+        for survivor in &survivors {
+            survivor.maintain().await.unwrap();
+        }
+        if tick < 5 {
+            for survivor in &survivors {
+                assert!(survivor.acquire(&id).await.unwrap().is_none());
+            }
+        }
+    }
+    let successor = claim(&survivors, &id).await;
+    assert!(successor.token.epoch > old.token.epoch);
+    assert!(!old.is_current());
+    assert_eq!(store.check(&old.token).await, Err(OwnershipError::Stale));
+    // This proves the ownership portion only. Runtime attach and user-service
+    // readiness still require the measured end-to-end recovery gate.
+    assert!(started.elapsed() <= Duration::from_secs(15));
+}
+
+#[tokio::test(start_paused = true)]
 async fn partition_revokes_old_epoch_and_late_provider_completion_after_takeover() {
     let store = MemoryOwnershipStore::default();
     let clients: Vec<_> = (0..3).map(|_| store.client()).collect();

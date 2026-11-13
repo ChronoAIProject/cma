@@ -159,7 +159,9 @@ fn generation_constants_preserve_the_bounded_protocol() {
     assert_eq!(AGENT_TITLE_FALLBACK_SCALARS, 48);
     assert_eq!(AGENT_TITLE_CALL_TIMEOUT_SECONDS, 10);
     assert_eq!(AGENT_TITLE_CLAIM_SECONDS, 45);
-    assert_eq!(AGENT_TITLE_ATTEMPTS, 2);
+    assert_eq!(AGENT_TITLE_ATTEMPTS, 1);
+    assert_eq!(AGENT_TITLE_MAX_ATTEMPTS, 3);
+    assert_eq!(AGENT_TITLE_RETRY_SECONDS, 60);
     assert!(AgentTitleGenerationContext::new("", "bearer").is_none());
     assert!(AgentTitleGenerationContext::new("model", "").is_none());
 }
