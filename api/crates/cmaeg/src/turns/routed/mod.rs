@@ -183,3 +183,6 @@ mod replica_test_fixture;
 mod replica_tool_tests;
 
 mod media_effects;
+
+#[cfg(test)]
+mod replica_legacy_tool_tests;

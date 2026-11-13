@@ -100,6 +100,8 @@ nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)'
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::tool_relay::mongo_tests::)'
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::tool_effects::mongo_)'
