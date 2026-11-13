@@ -19,7 +19,9 @@ mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
+mod agent_manager;
 mod agent_sandbox;
+pub(crate) use agent_manager::AgentManagerReplicas;
 mod execution;
 mod gateway;
 mod home;
@@ -224,6 +226,7 @@ pub struct Config {
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
+    pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
@@ -467,6 +470,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
+            agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
             agent_log_fleet_percent,

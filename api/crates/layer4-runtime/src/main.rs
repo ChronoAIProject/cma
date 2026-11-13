@@ -31,6 +31,7 @@ mod ledger_import;
 mod ledger_reclamation;
 mod ledger_storage;
 mod link;
+mod manager_ownership;
 mod mutation_authority;
 #[cfg(test)]
 #[allow(dead_code)]

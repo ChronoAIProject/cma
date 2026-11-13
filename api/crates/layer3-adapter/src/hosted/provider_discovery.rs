@@ -51,6 +51,7 @@ impl ProviderHostedControlTransport {
                 ))
             })?;
         Ok(Self {
+            owner_router: None,
             output_json_budget: false,
             client,
             http,
