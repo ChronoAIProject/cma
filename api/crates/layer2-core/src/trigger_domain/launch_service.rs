@@ -8,7 +8,7 @@ use crate::sandbox::{SandboxCredentialPrerequisite, SandboxCredentialPrerequisit
 use crate::{now_rfc3339, Caller, Capability, LaunchId, SubjectId};
 
 use super::launch_service_support::{
-    append_resolution_events, connection_error, create_result, request_fingerprint,
+    append_resolution_events, command_hash, connection_error, create_result, request_fingerprint,
     require_launcher, store_error, trigger_error, validate_create_request,
     validate_requirement_identity,
 };
@@ -114,6 +114,8 @@ pub enum LaunchServiceError {
     InvalidCursor,
     #[error("launch changed while the operation was committed")]
     Conflict,
+    #[error("model budget refused the Launch: {0}")]
+    Budget(crate::budget::BudgetError),
     #[error("launch dependency is unavailable: {0}")]
     Unavailable(String),
     #[error("launch data is not usable: {0}")]
@@ -139,6 +141,7 @@ impl LaunchServiceError {
             Self::IdempotencyKeyReused => "idempotency_key_reused",
             Self::InvalidCursor => "invalid_launch_cursor",
             Self::Conflict => "launch_changed",
+            Self::Budget(reason) => reason.code(),
             Self::Unavailable(_) => "launch_service_unavailable",
             Self::Corrupt(_) => "stored_launch_corrupt",
         }
@@ -245,8 +248,7 @@ impl LaunchService {
     ) -> Result<LaunchCreateResult, LaunchServiceError> {
         require_launcher(caller)?;
         validate_create_request(&request)?;
-        let command_key_hash =
-            super::launch_service_support::command_hash(&request.idempotency_key);
+        let command_key_hash = command_hash(&request.idempotency_key);
         let command_fingerprint = request_fingerprint(public_id, &request)?;
         if let Some(replay) = self
             .replayed_command(

@@ -183,6 +183,7 @@ async fn admit_once(
         )));
     }
     super::visitor_quota::admit(&store.launch_data, launch, session).await?;
+    platform_open(store, session).await?;
     let trigger =
         counters::record_admission(store, trigger, launch.state == LaunchState::Ready, session)
             .await
@@ -269,6 +270,28 @@ fn replay(existing: Launch, intended: &Launch) -> Result<LaunchAdmissionResult, 
     } else {
         Ok(LaunchAdmissionResult::Existing(existing))
     }
+}
+
+/// A Launch carries no model liability: read the platform admission state in
+/// this transaction without the settings fence (contract §4.1).
+async fn platform_open(
+    store: &MongoTriggerDefinitionStore,
+    session: &mut ClientSession,
+) -> Result<(), AttemptError> {
+    use crate::store::agent_conversation_store::ApplyError;
+    let data = &store.launch_data;
+    let now = crate::store::budget::now_seconds();
+    crate::store::budget::require_open_with(&data.settings, &data.model_budget, now, session)
+        .await
+        .map_err(|error| match error {
+            ApplyError::Domain(layer2_core::sandbox::store::SandboxStoreError::Budget(reason)) => {
+                AttemptError::Domain(LaunchStoreError::Budget(reason))
+            }
+            ApplyError::Domain(error) => {
+                AttemptError::Domain(LaunchStoreError::Unavailable(error.to_string()))
+            }
+            ApplyError::Driver(error) => AttemptError::Driver(error),
+        })
 }
 
 enum Attempt {
