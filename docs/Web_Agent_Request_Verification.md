@@ -25,7 +25,12 @@ Unchanged Sandbox transitions back off from the initial 1.5-second readiness
 cadence to at most 5.5 seconds. State or phase progress resets that cadence.
 After readiness, the separate five-second lifecycle observation remains: the
 Agent stream does not expose the full checkpoint, operation, runtime and input
-eligibility contract. Its ten-second freshness expiry, denial handling and late
+eligibility contract. Each observation expires after its next poll delay plus
+the ten-second request timeout (15 seconds settled, at most 15.5 seconds during
+readiness). A successful slow refresh does not pause sending within this window.
+One transient failure retains still-valid evidence; repeated failures and expiry
+hold input. Foreground return retains valid evidence or shows checking until a
+new observation arrives. Immediate denial handling and late
 result fencing remain enforced. Removing this check needs a complete lifecycle
 subscription or a compatible bounded lifecycle endpoint; ordinary conversation
 traffic cannot prove lifecycle readiness.
