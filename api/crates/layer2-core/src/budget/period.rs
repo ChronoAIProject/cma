@@ -94,6 +94,7 @@ impl PlatformPeriodLedger {
         Ok(PlatformAdmissionState {
             configured: true,
             closures,
+            operator_control: Default::default(),
         })
     }
 

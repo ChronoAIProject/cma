@@ -281,17 +281,26 @@ async fn platform_open(
     use crate::store::agent_conversation_store::ApplyError;
     let data = &store.launch_data;
     let now = crate::store::budget::now_seconds();
-    crate::store::budget::require_open_with(&data.settings, &data.model_budget, now, session)
-        .await
-        .map_err(|error| match error {
-            ApplyError::Domain(layer2_core::sandbox::store::SandboxStoreError::Budget(reason)) => {
-                AttemptError::Domain(LaunchStoreError::Budget(reason))
-            }
-            ApplyError::Domain(error) => {
-                AttemptError::Domain(LaunchStoreError::Unavailable(error.to_string()))
-            }
-            ApplyError::Driver(error) => AttemptError::Driver(error),
-        })
+    crate::store::budget::require_open_with(
+        &data.settings,
+        &data.model_budget,
+        now,
+        layer2_core::admission::AdmissionCause::Fresh,
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        ApplyError::Domain(layer2_core::sandbox::store::SandboxStoreError::Budget(reason)) => {
+            AttemptError::Domain(LaunchStoreError::Budget(reason))
+        }
+        ApplyError::Domain(layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused) => {
+            AttemptError::Domain(LaunchStoreError::AdmissionPaused)
+        }
+        ApplyError::Domain(error) => {
+            AttemptError::Domain(LaunchStoreError::Unavailable(error.to_string()))
+        }
+        ApplyError::Driver(error) => AttemptError::Driver(error),
+    })
 }
 
 enum Attempt {
