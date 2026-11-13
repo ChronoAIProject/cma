@@ -6,6 +6,14 @@ pub(super) async fn reconcile_title(
     snapshot_time: Timestamp,
 ) -> Result<bool, AgentTitleStoreError> {
     let mut session = snapshot_session(store, Some(snapshot_time)).await?;
+    if let Some(recorded) = &receipt.segmented {
+        // Immutable publication identity survives later title-independent
+        // appends and metadata changes; a newer Agent is not lost success.
+        return recorded
+            .matches(store, &mut session)
+            .await
+            .map_err(map_store_error);
+    }
     let document = store
         .agents
         .find_one(doc! { "_id": receipt.agent.id.as_str() })

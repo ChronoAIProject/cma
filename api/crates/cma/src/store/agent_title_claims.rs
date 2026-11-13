@@ -11,7 +11,7 @@ use layer2_core::sandbox::{
 use mongodb::bson::{doc, Bson, DateTime, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
+use super::agent_log::scan_complete_log_with_session;
 use super::agent_log_integrity::TransactionLogError;
 use super::agent_title_state::{
     checked_claim_times, claim_fields, read_title_state, TitleState, TITLE,
@@ -193,6 +193,20 @@ async fn title_transcript(
     agent: &Agent,
     session: &mut mongodb::ClientSession,
 ) -> Result<Option<AgentTitleTranscript>, ApplyError> {
+    let row = store
+        .agents
+        .find_one(doc! {"_id":agent.id.as_str()})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or_else(|| map_domain(SandboxStoreError::NotFound))?;
+    if let Some(transcript) =
+        super::agent_log_segments::ordinary::title(store, agent, &row, session)
+            .await
+            .map_err(map_transaction_log)?
+    {
+        return Ok(transcript);
+    }
     let mut logs = Vec::new();
     scan_complete_log_with_session(
         ScanCaller::TitleDiscovery,
@@ -235,28 +249,18 @@ async fn reconcile_claim(
     {
         return Ok(false);
     }
-    let mut logs = Vec::new();
-    scan_complete_log_with_snapshot_session(
-        ScanCaller::UnknownCommitProof,
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        &mut session,
-        |entry| {
-            logs.push(entry);
-            Ok(())
-        },
+    Ok(
+        super::agent_titles::transcript_at_snapshot(store, &agent, &mut session)
+            .await?
+            .is_some(),
     )
-    .await
-    .map_err(map_reconciliation_log)?;
-    Ok(AgentTitleTranscript::from_agent_log(&agent, &logs).is_some())
 }
 
 pub(super) fn current_agent_filter(agent: &Agent) -> Document {
     doc! {
         "channel_reuse_cleanup_execution": { "$exists": false },
         "_id": agent.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "document_schema_version": { "$in": [DOCUMENT_SCHEMA_VERSION, 2_i64] },
         "revision": signed(agent.revision, "agent revision").unwrap_or(i64::MIN),
         "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
             .unwrap_or(i64::MIN),
@@ -275,12 +279,5 @@ fn map_transaction_log(error: TransactionLogError) -> ApplyError {
     match error {
         TransactionLogError::Domain(error) => map_domain(error),
         TransactionLogError::Driver(error) => ApplyError::Driver(error),
-    }
-}
-
-fn map_reconciliation_log(error: TransactionLogError) -> AgentTitleStoreError {
-    match error {
-        TransactionLogError::Domain(error) => map_store_error(error),
-        TransactionLogError::Driver(_) => AgentTitleStoreError::Unavailable,
     }
 }
