@@ -274,17 +274,18 @@ pub(crate) fn inventory(config: &RuntimeConfig) -> Result<Vec<Operation>> {
 }
 
 fn records(config: &RuntimeConfig) -> Result<Vec<Record>> {
-    crate::mutation_capacity::check(config, &[])?;
+    crate::mutation_capacity::check_recovery(config)?;
     read_records(config, true)
 }
 
 fn read_records(config: &RuntimeConfig, apply: bool) -> Result<Vec<Record>> {
     let mut files = Vec::new();
+    let mut budget = crate::mutation_recovery::ScanBudget::new(
+        config,
+        crate::mutation_recovery::journal_limit(config),
+    );
     for root in crate::mutation_scope::roots(config)? {
-        files.extend(io::scan(&root)?);
-        if files.len() > MAX_JOURNAL_ENTRIES {
-            return Err(crate::mutation_capacity::exhausted());
-        }
+        files.extend(io::scan(&root, &mut budget)?);
     }
     for file in &files {
         validation::validate_record(&file.record, config)?;

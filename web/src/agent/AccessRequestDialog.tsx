@@ -9,6 +9,7 @@ import { accessRequests, validAccessServices, type AgentAccessRequest } from './
 import { loadAccessDecision, saveAccessDecision } from './accessDecisionStorage';
 import type { SandboxStatus } from '../api/types';
 import { useScopeConnections } from './scopeConnections';
+import { useAccessRequests } from './useAccessRequests';
 
 export function AgentAccessRequests({
   agentId,
@@ -16,50 +17,25 @@ export function AgentAccessRequests({
   granted,
   enabled,
   sandboxStatus,
+  running = false,
+  eventRevision = '',
 }: {
   readonly agentId: string;
   readonly owner?: string;
   readonly granted: readonly string[];
   readonly enabled: boolean;
   readonly sandboxStatus?: SandboxStatus;
+  readonly running?: boolean;
+  readonly eventRevision?: string | number;
 }) {
-  const [requests, setRequests] = useState<readonly AgentAccessRequest[]>([]);
-  const [error, setError] = useState<string>();
-  const [refresh, setRefresh] = useState(0);
+  const { requests, error, refresh, update } = useAccessRequests(
+    agentId,
+    owner,
+    enabled,
+    running,
+    eventRevision,
+  );
   const [dismissed, setDismissed] = useState<readonly string[]>([]);
-  useEffect(() => {
-    if (!enabled) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let inFlight = false;
-    const poll = async () => {
-      if (request.signal.aborted || inFlight || document.hidden) return;
-      clearTimeout(timer);
-      inFlight = true;
-      try {
-        const next = await accessRequests.list(agentId, request.signal);
-        if (request.signal.aborted) return;
-        setRequests(next);
-        setError(undefined);
-      } catch (cause) {
-        if (request.signal.aborted) return;
-        setError(
-          cause instanceof Error ? cause.message : 'Agent access requests could not be checked.',
-        );
-      } finally {
-        inFlight = false;
-      }
-      if (!request.signal.aborted) timer = setTimeout(() => void poll(), 2000);
-    };
-    const onVisibilityChange = () => void poll();
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    void poll();
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [agentId, enabled, refresh]);
   if (!enabled) return null;
   const request =
     requests.find((item) => ['pending', 'connecting', 'applying'].includes(item.status)) ??
@@ -88,10 +64,8 @@ export function AgentAccessRequests({
           owner={owner}
           granted={granted}
           sandboxStatus={sandboxStatus}
-          onUpdate={(value) =>
-            setRequests((items) => items.map((item) => (item.id === value.id ? value : item)))
-          }
-          onRefresh={() => setRefresh((value) => value + 1)}
+          onUpdate={update}
+          onRefresh={refresh}
           onClose={() => setDismissed((ids) => [...ids, request.id])}
         />
       )}

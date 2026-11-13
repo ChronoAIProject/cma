@@ -260,7 +260,7 @@ impl ControlPlaneComposition {
                 funding: runtime::funding(config, &stores, adapter.clone())?,
             },
             runtime::lifecycle_config(config, worker_holder.clone()),
-        );
+        )?;
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             standing,
             common_first_messages: config.features.trigger_command_admission,
@@ -457,7 +457,7 @@ impl ControlPlaneComposition {
         let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
-        let worker_observations = stores.worker_observations();
+        let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
         let health = crate::health::router_with_workers(stores, workers.clone());
         let router = routes::compose(

@@ -1,6 +1,7 @@
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{SandboxLifecycleStore, SandboxStoreError, SandboxTransaction};
+use layer2_core::sandbox::work_retry::WorkRetryFailure;
 use layer2_core::sandbox::{
     Sandbox, SandboxCredentialAuthority, SandboxEventKind, SandboxStatus, SandboxWorkStep,
     TypedFailure,
@@ -143,16 +144,14 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let decision = self.retry_decision(&sandbox, &failure, self.config.retry_delay);
+        let telemetry = self.retry_telemetry(&sandbox, &failure, decision, now);
         let expected_revision = sandbox.revision;
         let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
         sandbox
             .work
-            .retry(
-                &self.config.holder,
-                fence,
-                rfc3339_at(now + self.config.retry_delay),
-            )
+            .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
             .map_err(|_| SandboxStoreError::Conflict)?;
         sandbox.revision = expected_revision
             .checked_add(1)
@@ -169,7 +168,11 @@ impl SandboxWorker {
                 failure: failure.typed(),
             },
         )
-        .await
+        .await?;
+        if let Some(telemetry) = telemetry {
+            telemetry.published();
+        }
+        Ok(())
     }
 
     fn claimed_fence(&self, sandbox: &Sandbox) -> Result<u64, SandboxStoreError> {
@@ -269,11 +272,25 @@ pub(super) struct WorkerFailure {
     class: &'static str,
     detail: String,
     retryable: bool,
+    retry_kind: WorkRetryFailure,
 }
 
 impl WorkerFailure {
     pub(super) fn retryable(detail: &str) -> Self {
         Self::new("retryable_transient", detail, true)
+    }
+
+    pub(super) fn waiting(detail: &str) -> Self {
+        Self::retryable(detail).with_retry_kind(WorkRetryFailure::Waiting)
+    }
+
+    pub(super) fn with_retry_kind(mut self, kind: WorkRetryFailure) -> Self {
+        self.retry_kind = kind;
+        self
+    }
+
+    pub(super) fn retry_kind(&self) -> WorkRetryFailure {
+        self.retry_kind
     }
 
     fn resource_quota(detail: &str) -> Self {
@@ -297,6 +314,11 @@ impl WorkerFailure {
             class,
             detail: safe_detail(detail),
             retryable,
+            retry_kind: if retryable {
+                WorkRetryFailure::Transient
+            } else {
+                WorkRetryFailure::ExternalAction
+            },
         }
     }
 
@@ -318,15 +340,22 @@ impl WorkerFailure {
 
 pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     tracing::warn!(error = %error, "agent-sandbox runtime operation failed");
+    let external = matches!(&error, AdapterError::Unavailable(detail)
+        if crate::sandbox::work_retry::replaced_runtime(detail));
     match error {
         AdapterError::AccessRevoked => {
             WorkerFailure::terminal_security("current runtime authority was revoked")
         }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
-        | AdapterError::Unavailable(_) => {
-            WorkerFailure::retryable("runtime dependency unavailable")
-        }
+        | AdapterError::Unavailable(_) => WorkerFailure::retryable(
+            "runtime dependency unavailable",
+        )
+        .with_retry_kind(if external {
+            WorkRetryFailure::ExternalAction
+        } else {
+            WorkRetryFailure::Transient
+        }),
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
         }
@@ -389,9 +418,14 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
-        SandboxDependencyError::Transient(_) => {
-            WorkerFailure::retryable("lifecycle dependency unavailable")
-        }
+        SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
+            "lifecycle dependency unavailable",
+        )
+        .with_retry_kind(if detail == "sandbox agents are still stopping" {
+            WorkRetryFailure::Waiting
+        } else {
+            WorkRetryFailure::Transient
+        }),
         SandboxDependencyError::ResourceQuota(_) => {
             WorkerFailure::resource_quota("lifecycle dependency has no available capacity")
         }

@@ -69,6 +69,7 @@ mod startup_failure_tests;
 mod startup_publication_tests;
 mod startup_scheduling_tests;
 mod warm_handoff_tests;
+mod work_retry_policy_tests;
 mod workspace_removal_tests;
 mod worktree_recovery_tests;
 
