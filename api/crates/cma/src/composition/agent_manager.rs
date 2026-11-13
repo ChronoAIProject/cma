@@ -25,6 +25,12 @@ pub(super) fn relay(
     lifecycle: &SandboxLifecycleComposition,
     stores: Arc<crate::store::MongoSandboxStore>,
     controls: layer3_adapter::owner_control::ControlRoutes,
+    (auth, reads, access, adapter): (
+        Arc<crate::auth::AuthState>,
+        Arc<layer2_core::sandbox::AgentReadService>,
+        Arc<layer2_core::resource_access::ResourceAccessService>,
+        Arc<dyn layer3_adapter::SandboxAdapter>,
+    ),
 ) -> Result<Option<Arc<crate::agent_manager::relay::Relay>>, String> {
     let Some(manager) = manager else {
         return Ok(None);
@@ -37,6 +43,9 @@ pub(super) fn relay(
             .auth_encryption_key
             .agent_manager_signing_key(&config.deployment_id),
     )?;
+    relay.install_public_access(crate::agent_manager::relay::PublicAccess::new(
+        auth, reads, access, adapter,
+    ))?;
     relay.install_controls(stores.clone(), controls);
     relay.install_reopen(lifecycle.reopen_worker.clone(), stores);
     updates.install_live_source(relay.live_source());
