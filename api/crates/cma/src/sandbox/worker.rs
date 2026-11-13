@@ -28,6 +28,7 @@ mod retry;
 mod scheduling;
 mod support;
 mod teardown;
+mod teardown_timing;
 
 pub(crate) const CREDENTIAL_ROTATION_AGE: Duration = Duration::from_secs(12 * 60 * 60);
 pub(crate) const CREDENTIAL_EXPIRY_MARGIN: Duration = Duration::from_secs(5 * 60);

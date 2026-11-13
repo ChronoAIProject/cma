@@ -2572,6 +2572,15 @@ remain release-owner work; see [the contract](CMA_Admission_Control.md).
 
 ### Work-step retry policy
 
+`Sandbox teardown phase observed` records a hashed Sandbox identity, persisted
+attempt count, fixed phase/outcome labels and elapsed wall milliseconds. It
+separates retained-home verification, retained runtime deletion, adoption,
+inventory, ordinary teardown, funding settlement and publication. An `ok` outcome
+means that phase returned successfully; it is not terminal deletion or CPU time.
+Use phase failures alongside the next persisted work deadline to distinguish
+execution from retry waiting. A worker's `published=true` can include a persisted
+failure and must not be counted as successful cleanup.
+
 `CHRONO_WORK_RETRY_POLICY_ENABLED` ships disabled. With it enabled, retry delays
 use the persisted attempt count before the failed attempt is published. Maintenance
 retries use 30, 60, 120, 240, then 300 seconds at the default base. At an input

@@ -7,8 +7,8 @@ use layer2_core::sandbox::{Sandbox, SandboxEventKind, SandboxStatus, SandboxWork
 use layer3_adapter::RuntimeHandle;
 
 use super::support::{
-    adapter_failure, credential_failure, dependency_failure, operation_id,
-    system_time, WorkerFailure,
+    adapter_failure, credential_failure, dependency_failure, operation_id, system_time,
+    WorkerFailure,
 };
 use super::SandboxWorker;
 
