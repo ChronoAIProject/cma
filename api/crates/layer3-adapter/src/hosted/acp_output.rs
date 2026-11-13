@@ -45,6 +45,7 @@ struct HeldOutput {
     /// Bootstrap RPCs must run now; their domain effect still owns this cursor.
     prepared: Option<Option<ConversationUpdate>>,
     sign_in: Option<crate::hosted::sign_in_retention::Admission>,
+    observation: Option<crate::RuntimeOutputUpdate>,
     // Last field: release only after the payload and queued node are gone.
     _storage: Option<IngressReservation>,
 }
@@ -166,12 +167,17 @@ impl Bridge {
             (Some(pools), Some(frame)) => pools.admit_sign_in(frame)?,
             _ => None,
         };
+        let observation = match (&state.json_pools, &decoded) {
+            (Some(pools), Some(frame)) => pools.admit_observation(frame)?,
+            _ => None,
+        };
         let mut held = HeldOutput {
             cursor,
             payload: bytes[HEADER_BYTES..].to_vec(),
             decoded,
             prepared: None,
             sign_in,
+            observation,
             _storage: storage,
         };
         state.last_received = Some(cursor);
@@ -222,9 +228,10 @@ impl Bridge {
     ) -> crate::Result<Option<ConversationUpdate>> {
         let (capture, mut effects) = UpdateRelay::capture();
         let sign_in = held.sign_in.take();
+        let observation = held.observation.take();
         match &held.decoded {
             Some(frame) => {
-                self.receive_admitted_frame(frame.clone(), &capture, sign_in)
+                self.receive_admitted_frame(frame.clone(), &capture, sign_in, observation)
                     .await?
             }
             None => self.receive(&held.payload, &capture).await?,
@@ -357,3 +364,11 @@ mod sign_in_retention_tests;
 #[cfg(test)]
 #[path = "acp_context_goal_ownership_tests.rs"]
 mod context_goal_ownership_tests;
+
+#[cfg(test)]
+#[path = "acp_observation_retention_tests.rs"]
+mod observation_retention_tests;
+
+#[cfg(test)]
+#[path = "acp_session_identity_startup_tests.rs"]
+mod session_identity_startup_tests;
