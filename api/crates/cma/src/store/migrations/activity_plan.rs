@@ -49,21 +49,60 @@ pub(super) fn sanitize(plan: &Document) -> Value {
     }
     for key in ["inputStages", "children"] {
         if let Ok(children) = plan.get_array(key) {
+            let mut incomplete = false;
             let values = children
                 .iter()
-                .filter_map(Bson::as_document)
-                .map(sanitize)
+                .filter_map(|child| match child.as_document() {
+                    Some(child) => Some(sanitize(child)),
+                    None => {
+                        incomplete = true;
+                        None
+                    }
+                })
                 .collect();
             output.insert(key.to_snake_case(), Value::Array(values));
+            if incomplete {
+                output.insert("incomplete".into(), Value::Bool(true));
+            }
         }
     }
-    if let Ok(shards) = plan.get_document("shards") {
+    if let Ok(shards) = plan.get_array("shards") {
+        let mut incomplete = false;
         let values = shards
-            .values()
-            .filter_map(Bson::as_document)
-            .map(sanitize)
+            .iter()
+            .filter_map(|shard| match shard.as_document() {
+                Some(shard) => Some(sanitize(shard)),
+                None => {
+                    incomplete = true;
+                    None
+                }
+            })
             .collect();
         output.insert("shards".into(), Value::Array(values));
+        if incomplete {
+            output.insert("incomplete".into(), Value::Bool(true));
+        }
+    } else if let Ok(shards) = plan.get_document("shards") {
+        let mut incomplete = false;
+        let values = shards
+            .values()
+            .filter_map(|shard| match shard.as_document() {
+                Some(shard) => Some(sanitize(shard)),
+                None => {
+                    incomplete = true;
+                    None
+                }
+            })
+            .collect();
+        output.insert("shards".into(), Value::Array(values));
+        if incomplete {
+            output.insert("incomplete".into(), Value::Bool(true));
+        }
+    } else if plan.contains_key("shards") {
+        output.insert("incomplete".into(), Value::Bool(true));
+    }
+    if output.is_empty() {
+        output.insert("incomplete".into(), Value::Bool(true));
     }
     Value::Object(output)
 }
@@ -150,6 +189,33 @@ mod tests {
         assert!(!output.contains("secret.example"));
         assert!(!output.contains("secret plan text"));
         assert!(!output.contains("private"));
+    }
+
+    #[test]
+    fn explain_projection_keeps_array_shard_plans_and_marks_unsupported_shapes() {
+        let plan = doc! {
+            "stage":"SHARD_MERGE",
+            "shards":[
+                {"shardName":"shard-a","winningPlan":{
+                    "stage":"IXSCAN",
+                    "indexName":"activity_recorded_at_id_desc"
+                }},
+                {"shardName":"shard-b","connectionString":"mongodb://secret.example",
+                 "winningPlan":{"stage":"SORT","private":"redact-me"}}
+            ],
+            "private":"redact-me"
+        };
+        let output = sanitize(&plan).to_string();
+        assert!(output.contains("IXSCAN"));
+        assert!(output.contains("SORT"));
+        assert!(output.contains("activity_recorded_at_id_desc"));
+        assert!(!output.contains("shard-a"));
+        assert!(!output.contains("secret.example"));
+        assert!(!output.contains("redact-me"));
+        assert!(!output.contains("incomplete"));
+
+        let incomplete = sanitize(&doc! {"stage":"SHARD_MERGE","shards":"unknown"});
+        assert_eq!(incomplete["incomplete"], true);
     }
 
     #[test]
