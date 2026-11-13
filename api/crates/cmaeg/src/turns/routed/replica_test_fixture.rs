@@ -19,7 +19,7 @@ use crate::{
 use cmaeg_core::{
     ids::ConversationId,
     message::OutboundMessage,
-    seal::{EventRef, EventRefPayload},
+    seal::{EventRef, EventRefPayload, ReplyTargetPayload},
 };
 use std::{
     collections::BTreeSet,
@@ -112,6 +112,18 @@ impl Harness {
     pub fn event(&self) -> EventRefPayload {
         model::delivery_event(&self.plan, self.target())
     }
+    pub fn capability(&self) -> ReplyTargetPayload {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        ReplyTargetPayload {
+            v: 1,
+            provider: self.target().launch.provider.slug.clone(),
+            binding_id: self.target().launch.provider.binding_id.clone(),
+            agent_key_hash: [9; 32],
+            issued_at: now,
+            expires_at: now + 3600,
+            event: self.event(),
+        }
+    }
     pub async fn acquire(&self) -> (usize, Lease) {
         let until = tokio::time::Instant::now() + Duration::from_secs(25);
         loop {
@@ -155,6 +167,38 @@ impl Harness {
             .await
             .unwrap();
         (owner, lease)
+    }
+    pub async fn finish_parent(&self, owner: usize, lease: &mut Lease) {
+        let delivery = RoutedDelivery::new(
+            self.nodes[owner].plans(),
+            self.nodes[owner].journal(),
+            self.current.clone(),
+            self.tools[owner].coordinator.clone(),
+        );
+        let frame = test_support::recovery_frame("fixture-response", 0, true);
+        assert!(matches!(
+            delivery
+                .deliver_frame(
+                    &self.plan.identity,
+                    &self.target().id,
+                    lease,
+                    &frame,
+                    ReplayEffect::NoEffect
+                )
+                .await
+                .unwrap(),
+            FrameDelivery::Settled { .. }
+        ));
+        self.nodes[owner]
+            .journal()
+            .complete(lease, "fixture-response")
+            .await
+            .unwrap();
+        self.nodes[owner]
+            .partitions
+            .complete(lease.partition.as_ref().unwrap())
+            .await
+            .unwrap();
     }
     pub async fn cleanup(self) {
         drop(self.tools);
