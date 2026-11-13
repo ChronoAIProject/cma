@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { ApiError } from '@chronoai/cma-sdk';
 import { connectionClient, type StartedConnection } from './client';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -26,3 +27,22 @@ it('polls and cancels a started OAuth handoff using the strict server intent sha
     });
   }
 });
+
+it.each(['{}', 'not-json'])(
+  'preserves Retry-After even when the error body is %s',
+  async (body) => {
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(body, {
+        status: 429,
+        headers: { 'retry-after': '45' },
+      }),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const error = await connectionClient
+      .check({ type: 'agent', id: 'agt_1' })
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 429, retryAfterMs: 45000 });
+    expect(fetch).toHaveBeenCalledOnce();
+  },
+);
