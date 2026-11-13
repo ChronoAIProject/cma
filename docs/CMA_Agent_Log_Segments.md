@@ -63,6 +63,57 @@ format/head distribution. The predecessor harness is an executable tripwire
 check, not certification of that release artifact. Production observations and
 activation remain release deliverables; no local test result substitutes for them.
 
+## Consumer-to-evidence inventory (#1349)
+
+The table records format-2 dispatch, including legacy compatibility callers.
+Store paths are relative to `api/crates/cma/src/store/`; core paths are relative
+to `api/crates/layer2-core/src/sandbox/`. A captured source validates its active
+physical segment once, bounded by 10,128 events / 65 MiB. Exact points verify
+original BSON against their seals. Missing or inconsistent segmented evidence
+refuses the operation; it never selects a legacy lifetime fold or repairs data.
+
+| Consumer / retained scan caller | Segmented evidence and work bound | Compatibility / verification |
+| --- | --- | --- |
+| Personal/shared transcript (`agent_reads/{authorized,transcript_pages}`) | Certified turn index, at most 32 requested source events plus four header points; adaptive reads and serialized admission keep each page within 4 MiB. One long turn can span any number of pages. | Complete shape remains available within 200 source events / 4 MiB; otherwise `transcript_pagination_required`. `agent_log_segment_reads/transcript/tests/{parity,byte_pages,refusal}.rs` and core bounded-consumer tests. |
+| v1 event pages (`agent_reads/log_pages`, public `rest/agent_reads`) | One captured source, at most 200 events / 4 MiB. Read chunks contain at most 32 points. A short byte-limited page retains a continuation at its last admitted original. | Legacy exact fold and existing cursor semantics retained; byte-page and core cursor tests. |
+| v2 history and SSE (`agent_reads/{window,stream}`) | Snapshot range/visitor with frozen high-water, predecessor proof, redaction and final authority checks. | Existing cursor protocol and shared-history authorization tests. |
+| Raw complete vectors (`agent_log_prefix`, `log_snapshot`, old `event_stream_snapshot`) | `agent_log_reads/segmented` refuses above 10,128 events or 4 MiB before returning a complete result. It never represents a partial vector as complete. | Compatibility-only API; callers needing larger histories use paged history/transcript ports. Legacy data retains its original bounded lifetime format. |
+| Final answer and feedback (`agent_reads/answer`) | Exact message evidence → exact turn evidence → original message/start/terminal points. Terminal outcome, lost frames, steering and latest nonblank answer determine eligibility without a turn-length scan. | `agent_log_segment_reads/transcript/tests/answers.rs` covers 1/10/100/1,000 segments and corrupt/non-final refusals; core tests enforce owner/capability revalidation. |
+| Usage (`agent_reads/authorized`, `agent_log_segment_reads`) | Certified incremental usage peaks/totals at the captured source. | Existing usage-generation/parity and stale-proof tests; legacy fold remains format-1 fallback. |
+| Title read/claim (`agent_titles`, `agent_title_claims`) | Certified first eligible task turn and at most four originals in the same snapshot or transaction. Claim reconciliation repeats this bounded proof. | Existing truncation/setup/steering semantics; transcript/title parity and title claim scaling tests. |
+| Title completion/rename (`agent_title_writes/{scoped,reconcile}`) | Common scoped publication updates Agent, head, projection, original event and exact operation receipt atomically. Unknown commit uses the immutable `Recorded` receipt. | Original claim/user token binds publication. No v2-to-v1 replacement; stale automatic work loses to owner title. Legacy writer remains format-1 only. |
+| Suggestions (`suggestions`) | Fixed context policy with format-aware bounded range; enqueue validates the contiguous already-published batch in the same transaction. | Empty tails and unpublished append batches refuse; no transaction exception to source validation. |
+| Command/approval admission (`agent_commands/{reserve,targeted_control}`) | `agent_log_segments/ordinary` reads exact answer/approval evidence plus bounded original points. Outstanding sets use indexed evidence. | Legacy semantic scans run only after positive legacy dispatch. Existing admission and approval contract tests. |
+| Command reconciliation (`agent_commands/reconcile`) | Exact indexed command/dispatch evidence; original identities remain authoritative. | Missing proof cannot imply safe redispatch. Existing command publication/reconciliation contracts. |
+| Conversation/work/lifecycle publication (`agent_conversation_store`, `agent_worker_transaction`, `lifecycle_transaction`) | Scoped capture, common projection update and exact publication receipt; later unrelated appends do not erase prior success. Empty-event metadata publications retain receipts. | `agent_worker_reconcile` and conversation reconciliation select exact recorded evidence before legacy scans. Existing common-writer Mongo contracts. |
+| Creation replay (`agent_admission_records`) | Original creation event at sequence 1 in the same snapshot, checked against the retained binding. | `transcript/tests/admission.rs` covers scale and missing-original refusal. New creation remains legacy; its unknown-created-commit check validates the original one-event prefix. |
+| Checkpoint/export (`checkpoint_capture`, `checkpoints/agents`) | Captured Agent/projection and global prefix identity through scoped capture. | Native/runtime/worktree identity and acknowledgment semantics remain exact; rebuild stays outside interactive lifecycle transactions. |
+| Reconciliation/maintenance (`sandbox_reconciliation/agents`, `sandbox_maintenance/evidence`, `sandbox_unpublished_recovery`) | Bounded Agent/workspace inventories and scoped certified current-state/native-conversation facts. | Legacy scans are format-1 branches. Existing recovery, maintenance and checkpoint contract tests. |
+| Retained reopen (`retained_reopen`, `sandbox_unpublished_recovery/transaction/reopen`) | Same-transaction creation point and digest of certified head, previous seal, active leaves and projection. Normal startup allowance remains 64 events / 512 KiB; no rollover or cleanup-reserve admission. | Original legacy history digest retained. Exact accepted-receipt replay precedes new capture; corruption refuses without mutation. `transcript/tests/reopen.rs` covers 1/10/100/1,000 segments. |
+| First-message attachment on reuse (`agent_admission_reuse`) | Current legacy transaction root explicitly refuses segmented input before `scan_complete_log`; a common-writer adapter is still required. | Writer ownership/scope tracked with #1350; this inventory does not claim the mutation is implemented. New-format activation must remain closed until supported. |
+| Terminal Trigger first-message publication (`trigger_first_messages/projection`) | Current legacy transaction root explicitly refuses segmented input before scanning. Both worker completion and refusal callers require a common-writer adapter. | Writer ownership/scope tracked with #1350; same activation prerequisite as reuse attachment. |
+| Response projections/retention (`segment_response`, response readers) | Separate exact response/command evidence and retention ownership. | #1674 is developer-07's work; this consumer change does not certify or alter that implementation. |
+| Bootstrap/audit/rebuild (`agent_log_segments/{writer_bootstrap,audit}`) | Fenced bounded source capture, resumable physical-segment traversal and exact promotion CAS. | Administrative/background procedures; no synchronous lifetime rebuild on foreground refusal. |
+
+`scan_complete_log*` rejects a format-2 envelope before opening its legacy
+source scan. In-memory stores retain finite legacy fixtures and do not represent
+the Mongo segmented format. The inventory was checked with searches for
+`scan_complete_log`, `agent_log_prefix`, and `complete_log` across the store and
+core consumer modules, including the retained vector APIs above.
+
+The source-bound proof has a separately tracked pre-existing restored-data gap:
+[#1913](https://github.com/ChronoAIProject/cma/issues/1913) covers missing/null/string
+top-level sequence keys omitted by Mongo numeric comparison type bracketing.
+The numeric range checks in #1900 do not certify rejection of those shapes.
+
+Consumer migration identity: `2026-11-05-am-log-segment-consumers-v1`, compatible
+consumer phase. This change adds no DDL, TTL, source deletion, active-Agent
+conversion or activation switch. Schema/index prerequisites and projection
+formats remain those of the common segmented reader/writer modules. New-format
+emission remains default off. Source/image, retained-client/recovery artifact,
+gate revision, coherent restore and production verification receipts belong to
+the release record; local consumer tests do not supply those receipts.
+
 ## Historical design baseline — November 5, 2026
 
 Design spike · 5 November 2026 · owner/author: `cma-log-segments` / `chronoai-shining`.
