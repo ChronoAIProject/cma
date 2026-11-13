@@ -1,6 +1,7 @@
 use super::*;
 use layer2_core::sandbox::{store::AgentLogStore, AgentTitleTranscript};
 mod answers;
+mod byte_pages;
 mod parity;
 mod refusal;
 mod support;
