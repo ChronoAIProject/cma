@@ -5,6 +5,7 @@ use super::{
     relay_client::{RelayClient, RelayTransport, REQUEST_MAX_BYTES},
     send::{SendContext, Sender},
 };
+mod commonmark;
 mod destinations;
 mod durable;
 mod native_lark_control_tests;
@@ -17,6 +18,7 @@ mod native_lark_sticker_tests;
 mod native_lark_tests;
 pub(crate) mod native_lark_thread_start_fixture;
 mod native_lark_thread_start_tests;
+mod native_trace;
 mod native_whatsapp_control_tests;
 mod native_whatsapp_document_tests;
 mod native_whatsapp_group_tests;

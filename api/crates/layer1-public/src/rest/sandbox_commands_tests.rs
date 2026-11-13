@@ -377,6 +377,7 @@ impl layer2_core::budget::PlatformSpendLedger for Stopped {
     ) -> Result<layer2_core::budget::PlatformAdmissionState, layer2_core::budget::BudgetError> {
         Ok(layer2_core::budget::PlatformAdmissionState {
             configured: true,
+            operator_control: layer2_core::budget::OperatorAdmissionState::Open,
             closures: vec![layer2_core::budget::Closure {
                 reason: layer2_core::budget::ClosureReason::SpendStop,
                 since: 1,

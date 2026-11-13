@@ -4,7 +4,7 @@ use super::{
     outcomes::TurnOutcome,
     preparation,
     preparation::has_attachments,
-    refusal::{ProviderCall, StartFailure},
+    refusal::{ClassifiedFailure, ProviderCall, StartFailure},
     render_media::{self, Audience, RenderMedia},
     sequencer::{Sequencer, Ticket},
     tracker::TurnTracker,
@@ -175,10 +175,12 @@ impl TurnRunner {
                 &mut admitted,
             )
             .await
-            .map_err(|reason| (ProblemCode::ProviderUnavailable, reason, 503))
+            .map_err(|reason| {
+                super::refusal::failure(ProblemCode::ProviderUnavailable, reason, 503)
+            })
         })
         .await;
-        let error = match result {
+        let error: ClassifiedFailure = match result {
             Ok(Ok(outcome)) => {
                 observation.finish(outcome);
                 if !matches!(outcome, "completed" | "replayed" | "refused") {
@@ -187,20 +189,24 @@ impl TurnRunner {
                 return;
             }
             Ok(Err(error)) => error,
-            Err(_) => (ProblemCode::ProviderUnavailable, "turn_timeout", 503),
+            Err(_) => {
+                super::refusal::failure(ProblemCode::ProviderUnavailable, "turn_timeout", 503)
+            }
         };
-        observation.finish(error.1);
-        provider_error(&provider, error.1);
+        observation.finish(error.detail);
+        provider_error(&provider, error.detail);
         if let Some(sender) = admitted.take() {
-            let _ = sender.send(LaunchOutcome::Refused(Problem::new(
-                error.0, error.2, error.1,
-            )));
+            let mut problem = Problem::new(error.code, error.status, error.detail);
+            if let Some(upstream) = error.upstream {
+                problem = problem.with_upstream(upstream);
+            }
+            let _ = sender.send(LaunchOutcome::Refused(problem));
         }
         self.delivery.terminal(
             turn,
             TurnOutcome::Failed {
-                code: error.1.into(),
-                message: failure_message(error.1).into(),
+                code: error.detail.into(),
+                message: failure_message(error.detail).into(),
             },
         );
     }
@@ -244,6 +250,7 @@ impl TurnRunner {
         })?;
         let rendered = preparation::render(turn, media, audience, None);
         let request = TurnRequest {
+            nyxid_trace: self.providers.nyxid_trace_contract(consumer.provider),
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
             input: rendered.input,
@@ -360,7 +367,16 @@ impl TurnRunner {
                 Ok(None) => {}
             }
             let deadline = request.received_at + self.config.accept_budget;
-            request.trace = tracing::Span::current();
+            request.trace = if crate::telemetry::turn_trace::enabled()
+                && request
+                    .channel
+                    .consumer(request.consumer.as_ref())
+                    .is_some_and(|consumer| self.providers.nyxid_trace_contract(consumer.provider))
+            {
+                crate::telemetry::turn_trace::scope::span()
+            } else {
+                tracing::Span::current()
+            };
             let turn = Arc::new(request);
             let (sender, accepted) = oneshot::channel();
             let runner = self.clone();

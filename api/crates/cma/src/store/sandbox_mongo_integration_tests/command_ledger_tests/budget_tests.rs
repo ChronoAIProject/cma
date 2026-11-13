@@ -299,6 +299,7 @@ async fn aborted_model_budget_transaction_releases_its_reservation() {
         &current,
         "rolled-back-command",
         layer2_core::seconds_from_rfc3339(NOW).unwrap(),
+        layer2_core::admission::AdmissionCause::Fresh,
         &mut session,
     )
     .await

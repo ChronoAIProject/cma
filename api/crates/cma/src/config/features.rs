@@ -23,6 +23,7 @@ pub(crate) struct FeatureFlags {
     pub model_request_budget_writes_enabled: bool,
     pub platform_spend_writes_enabled: bool,
     pub platform_counter_shards: bool,
+    pub admission_control_writes_enabled: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
@@ -109,6 +110,10 @@ impl FeatureFlags {
             )?,
             platform_spend_writes_enabled: flag(lookup, "CHRONO_PLATFORM_SPEND_WRITES_ENABLED")?,
             platform_counter_shards: flag(lookup, "CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED")?,
+            admission_control_writes_enabled: flag(
+                lookup,
+                "CHRONO_ADMISSION_CONTROL_WRITES_ENABLED",
+            )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
             bounded_transcript_reads: flag(
@@ -472,3 +477,7 @@ mod sandbox_enrichment_tests;
 
 #[cfg(test)]
 mod document_maintenance_tests;
+
+#[cfg(test)]
+#[path = "admission_control_tests.rs"]
+mod admission_control_tests;
