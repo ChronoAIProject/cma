@@ -180,6 +180,19 @@ pub trait AgentLogStore: Send + Sync {
             .next())
     }
 
+    /// Return a prefix only after proving its lineage, consecutive rows and
+    /// absence beyond the store's committed head in one snapshot. Bind that
+    /// head to the captured Agent's identity/ownership/parentage; a newer
+    /// committed head may extend, but never replace, the requested history.
+    /// `None` means unsupported, never a failed proof. Only `Some` lets the
+    /// caller omit its independent tail check; release authorization is separate.
+    async fn agent_log_prefix_with_tail(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Read the exact prefix needed for a captured Agent projection.
     async fn agent_log_prefix(
         &self,
