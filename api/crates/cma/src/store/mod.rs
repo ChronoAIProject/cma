@@ -1,6 +1,8 @@
 //! Durable adapters that do not depend on a resource aggregate.
+mod admission_checks;
 
 pub mod activity;
+pub(crate) mod admission_control;
 #[cfg(test)]
 mod admission_wake_test_support;
 pub(crate) mod agent_access_requests;
@@ -62,6 +64,7 @@ mod checkpoint_storage;
 mod checkpoints;
 mod child_writer_claims;
 mod codex_subscriptions;
+mod contention;
 mod default_profiles;
 pub mod directory;
 mod durability;
@@ -108,6 +111,7 @@ pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
 mod operator_sandboxes;
+mod platform_write_coordination;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
@@ -172,14 +176,15 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore,
-    DISCOVERY_BATCH, HEARTBEAT,
+    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
+    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

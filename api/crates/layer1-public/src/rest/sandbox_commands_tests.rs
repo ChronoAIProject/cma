@@ -367,3 +367,62 @@ async fn sandbox_command_http_rejects_viewers_retirement_spoofing_and_missing_cu
             .is_empty());
     }
 }
+
+struct Stopped;
+#[async_trait::async_trait]
+impl layer2_core::budget::PlatformSpendLedger for Stopped {
+    async fn admission_state(
+        &self,
+        _: u64,
+    ) -> Result<layer2_core::budget::PlatformAdmissionState, layer2_core::budget::BudgetError> {
+        Ok(layer2_core::budget::PlatformAdmissionState {
+            configured: true,
+            operator_control: layer2_core::budget::OperatorAdmissionState::Open,
+            closures: vec![layer2_core::budget::Closure {
+                reason: layer2_core::budget::ClosureReason::SpendStop,
+                since: 1,
+                settings_revision: 1,
+                committed_at_entry: 0,
+            }],
+        })
+    }
+    async fn spend_state(
+        &self,
+        _: u64,
+    ) -> Result<layer2_core::budget::PlatformSpendState, layer2_core::budget::BudgetError> {
+        unreachable!("controls read only the admission state")
+    }
+    async fn record_cloud_observation(
+        &self,
+        _: layer2_core::budget::CloudObservationInput,
+        _: u64,
+    ) -> Result<layer2_core::budget::PlatformSpendState, layer2_core::budget::ObservationError>
+    {
+        unreachable!("controls record no observation")
+    }
+}
+
+#[tokio::test]
+async fn sandbox_command_http_refuses_revive_under_a_platform_stop_with_402_and_no_retry() {
+    let f = Fixture::new().await;
+    f.service.attach_platform_spend(Arc::new(Stopped));
+    let response = f
+        .router
+        .clone()
+        .oneshot(submit("owner-a", Some("revive"), "revive", 1))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+    assert!(response.headers().get("retry-after").is_none());
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(body["code"], "platform_budget_exhausted");
+    assert_eq!(
+        body["detail"],
+        layer2_core::budget::BudgetError::PlatformExhausted.guidance()
+    );
+    let (status, _) =
+        agents::json_response(&f.router, submit("owner-a", Some("pause"), "pause", 1)).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+}

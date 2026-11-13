@@ -473,7 +473,7 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
             .operations
             .create(&caller.subject, idempotency_key, input)
             .await
-            .map_err(validation::operation_error)?;
+            .map_err(validation::creation_error)?;
         let operation_id = match operation {
             CreateResult::Created(id) => id,
             CreateResult::Existing(record) => record.id.clone(),
