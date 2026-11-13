@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 import tempfile
@@ -13,6 +14,51 @@ import urllib.request
 
 def output(*args):
     return subprocess.check_output(args, text=True).strip()
+
+
+def run_browser(command, *, cwd, env, evidence, timeout, grace=30):
+    """Interrupt the runner first so Playwright can retain its trace and screenshot."""
+    started = time.monotonic()
+    process = subprocess.Popen(command, cwd=cwd, env=env, start_new_session=True)
+    timed_out = False
+    forced = False
+
+    def record():
+        evidence.mkdir(parents=True, exist_ok=True)
+        (evidence / "browser-process.json").write_text(json.dumps({
+            "timeout_seconds": timeout, "interrupt_grace_seconds": grace,
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "timed_out": timed_out, "forced_kill": forced,
+            "returncode": process.returncode,
+        }, indent=2) + "\n")
+
+    try:
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            # Save evidence before signalling, even if the runner cannot respond.
+            record()
+            print(f"Web browser watchdog expired after {timeout}s; "
+                  f"interrupting Playwright with {grace}s to retain evidence", flush=True)
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                forced = True
+                print("Playwright did not stop; killing its process group", flush=True)
+            # A timeout remains a failure even if an interrupted runner exits zero.
+            raise subprocess.TimeoutExpired(command, timeout)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command)
+    finally:
+        # Reap descendants too; subprocess.run(timeout=...) only kills its direct child.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # The owned process group has already exited.
+        process.wait()
+        record()
 
 
 def verify_image(reference):
@@ -50,13 +96,18 @@ def verify_image(reference):
                     time.sleep(0.2)
             else:
                 raise RuntimeError("Web image did not start")
-            subprocess.run(
-                ["npx", "--no-install", "playwright", "test", "--config", "e2e/image-smoke.config.ts"],
+            evidence = Path(os.environ.get("CMA_WEB_IMAGE_EVIDENCE_DIR")
+                            or tempfile.mkdtemp(prefix="cma-web-image-evidence-"))
+            # Passing CI suites already consume 176s before CLI overhead. Allow
+            # 240s per engine, then SIGINT the actual runner with 30s for artifacts.
+            run_browser(
+                ["node", "node_modules/@playwright/test/cli.js", "test", "--config", "e2e/image-smoke.config.ts"],
                 cwd=root / "web", env={**os.environ, "CMA_WEB_IMAGE_URL": url,
+                                      "CMA_WEB_IMAGE_EVIDENCE_DIR": str(evidence.resolve()),
                                       "CMA_EXPECTED_WEB_REVISION": revision,
                                       "CMA_EXPECTED_WEB_VERSION": version},
-                check=True,
-                timeout=180 * min(3, len(os.environ.get("CMA_E2E_BROWSERS", "chromium").split(","))),
+                evidence=evidence,
+                timeout=240 * min(3, len(os.environ.get("CMA_E2E_BROWSERS", "chromium").split(","))),
             )
             print(json.dumps({"image": image_id, "revision": revision, "version": version,
                               "browsers": os.environ.get("CMA_E2E_BROWSERS", "chromium"),
