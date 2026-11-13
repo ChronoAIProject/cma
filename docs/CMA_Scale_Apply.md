@@ -127,10 +127,20 @@ for role, image in [('am', sys.argv[2]), ('eg', sys.argv[3])]:
             {'name': 'CHRONO_AGENT_MANAGER_REPLICAS_ENABLED', 'value': 'true'},
             {'name': 'CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS', 'value': sys.argv[4]}]
     else:
-        c['env'] = [{'name': 'CMAEG_REPLICAS_ENABLED', 'value': 'true'}]
+        c['env'] = [
+            {'name': 'POD_IP', 'valueFrom': {'fieldRef': {'fieldPath': 'status.podIP'}}},
+            {'name': 'CMAEG_REPLICA_ADDRESS', 'value': 'http://$(POD_IP):8080'},
+            {'name': 'CMAEG_REPLICAS_ENABLED', 'value': 'true'}]
     path.write_text(json.dumps(patch, indent=2) + '\n')
 PY
 ```
+
+EG address and switch names are developer-15's source contract pending exact
+integrated-SHA review. Confirm the existing listen port8080, direct Mongo mode,
+additive `--migrate-replicas` marker/index and durable routed admission/recovery
+before S2. The advertised address must be a literal Pod IP/direct origin, never
+a Service address. Neither this patch nor drain204 proves sockets/leases handed
+off. Reconcile any final reviewed binary contract change before sealing the packet.
 
 Existing named env entries must have the expected source/type; if a valueFrom
 already exists for an overridden literal, add a reviewed removal in the patch.
