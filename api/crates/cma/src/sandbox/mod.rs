@@ -36,6 +36,7 @@ mod titles;
 mod unavailable_credentials;
 pub(crate) mod unpublished_recovery;
 mod warmup;
+pub(crate) mod work_retry;
 pub(crate) mod worker;
 mod workspace_worker;
 
