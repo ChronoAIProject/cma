@@ -7,6 +7,7 @@ use tokio::task::JoinHandle;
 pub(crate) struct Server {
     listener: JoinHandle<()>,
     upkeep: JoinHandle<()>,
+    runtime: JoinHandle<()>,
 }
 
 impl Server {
@@ -36,7 +37,12 @@ impl Server {
                 tracing::error!(%error, "CMA metrics listener stopped");
             }
         });
-        Ok(Self { listener, upkeep })
+        let runtime = super::runtime::spawn();
+        Ok(Self {
+            listener,
+            upkeep,
+            runtime,
+        })
     }
 }
 
@@ -44,6 +50,7 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.listener.abort();
         self.upkeep.abort();
+        self.runtime.abort();
     }
 }
 
@@ -85,12 +92,19 @@ mod tests {
             .unwrap();
         let listener = server.listener.abort_handle();
         let upkeep = server.upkeep.abort_handle();
+        let runtime = server.runtime.abort_handle();
         tokio::task::yield_now().await;
         assert!(!listener.is_finished());
         assert!(!upkeep.is_finished());
+        assert!(!runtime.is_finished());
+        // Losing the listener must not stop local sampling or histogram upkeep.
+        listener.abort();
+        tokio::task::yield_now().await;
+        assert!(!runtime.is_finished());
+        assert!(!upkeep.is_finished());
         drop(server);
         tokio::time::timeout(std::time::Duration::from_secs(1), async {
-            while !listener.is_finished() || !upkeep.is_finished() {
+            while !listener.is_finished() || !upkeep.is_finished() || !runtime.is_finished() {
                 tokio::task::yield_now().await;
             }
         })

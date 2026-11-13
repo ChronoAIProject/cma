@@ -128,7 +128,13 @@ impl Sender {
                         .await
                 }
             };
-            let mut sent = send_part().await;
+            let mut sent = super::trace::native::part(
+                index,
+                false,
+                send_part(),
+                super::trace::native::telegram,
+            )
+            .await;
             drop(permit);
             if let Err(Error::RateLimited(delay)) = sent {
                 slot.cooldown(delay);
@@ -140,7 +146,13 @@ impl Sender {
                         break;
                     }
                 };
-                sent = send_part().await;
+                sent = super::trace::native::part(
+                    index,
+                    false,
+                    send_part(),
+                    super::trace::native::telegram,
+                )
+                .await;
             }
             ctx.gate.progress();
             match sent {

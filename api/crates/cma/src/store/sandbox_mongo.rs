@@ -1,19 +1,26 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
 use layer2_core::StoreError;
-use mongodb::bson::{doc, Bson, Document};
-use mongodb::error::{
-    Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
-};
-use mongodb::options::{ReadConcern, WriteConcern};
-use mongodb::{Client, ClientSession, Collection};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
+use mongodb::bson::{doc, Document};
+use mongodb::error::Error;
+use mongodb::{Client, Collection};
 use std::future::Future;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
+mod records;
+pub(super) use records::{
+    i64_field_matches, nullable, read_record, record_bson, require_version, signed,
+    string_field_matches, unsigned,
+};
+
 use super::MongoCheckpointObjectStore;
 use super::{durability::majority_collection, schema::initialize_collections};
+
+#[path = "sandbox_mongo_transactions.rs"]
+mod transactions;
+pub(super) use transactions::{
+    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+};
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
@@ -23,8 +30,6 @@ pub(super) use topology::require_transaction_topology;
 use topology::validate_transaction_server;
 
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
-const COMMIT_ATTEMPTS: usize = 5;
-const DUPLICATE_KEY: i32 = 11_000;
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PENDING_RECONCILIATIONS: usize = 16;
 static RECONCILIATION_SLOTS: Semaphore = Semaphore::const_new(MAX_PENDING_RECONCILIATIONS);
@@ -101,9 +106,15 @@ pub struct MongoSandboxStore {
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
+    pub(super) runtime_loss_bounded_proof_enabled: bool,
     pub(super) bounded_close_retries: bool,
+    pub(super) retry_single_marker_enabled: bool,
+    pub(super) retry_audits:
+        std::sync::Arc<super::agent_worker_transaction::retry_audit::RetryAudits>,
+    pub(super) scan_cooperation: super::cooperative_budget::Policy,
     pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
+    pub(super) platform_counter_shards: bool,
     pub(super) bounded_title_reads: bool,
     pub(super) bounded_transcript_reads: bool,
     pub(super) bounded_usage_reads: bool,
@@ -122,6 +133,7 @@ pub struct MongoSandboxStore {
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
+    pub(super) platform: std::sync::Arc<super::platform_write_coordination::PlatformState>,
     pub(super) agent_access_tools: Collection<Document>,
     pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
@@ -161,6 +173,7 @@ pub struct MongoSandboxStore {
     pub(super) managed_machine_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
     // Coalesced process-local hints; durable discovery owns recovery and authority.
     pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) access_admitted: std::sync::Arc<tokio::sync::Notify>,
@@ -203,8 +216,13 @@ impl MongoSandboxStore {
             bounded_admission_agents: Default::default(),
             segment_adoption_enabled: false,
             bounded_approval_reads: false,
+            runtime_loss_bounded_proof_enabled: false,
             bounded_close_retries: false,
+            retry_single_marker_enabled: false,
+            retry_audits: Default::default(),
+            scan_cooperation: Default::default(),
             fleet_log_activation: Default::default(),
+            platform_counter_shards: false,
             bounded_title_reads: false,
             bounded_transcript_reads: false,
             bounded_usage_reads: false,
@@ -222,6 +240,7 @@ impl MongoSandboxStore {
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
+            platform: Default::default(),
             agent_access_tools: majority_collection(
                 &database,
                 super::agent_access_tools::COLLECTION,
@@ -270,6 +289,7 @@ impl MongoSandboxStore {
             managed_machine_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
+            native_prepared_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -310,92 +330,6 @@ impl MongoSandboxStore {
         tracing::info!(database = name, "sandbox-model Mongo store ready");
         Ok(store)
     }
-}
-
-pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {
-    mongodb::bson::serialize_to_bson(record).map_err(|error| error.to_string())
-}
-
-pub(super) fn read_record<T: DeserializeOwned>(document: &Document) -> Result<T, String> {
-    require_version(document)?;
-    let record = document
-        .get("record")
-        .cloned()
-        .ok_or_else(|| "stored document has no aggregate record".to_string())?;
-    mongodb::bson::deserialize_from_bson(record).map_err(|error| error.to_string())
-}
-
-pub(super) fn require_version(document: &Document) -> Result<(), String> {
-    match document.get("document_schema_version") {
-        Some(Bson::Int32(version)) if i64::from(*version) == DOCUMENT_SCHEMA_VERSION => Ok(()),
-        Some(Bson::Int64(version)) if *version == DOCUMENT_SCHEMA_VERSION => Ok(()),
-        Some(version) => Err(format!("unsupported document schema version {version}")),
-        None => Err("stored document has no schema version".into()),
-    }
-}
-
-pub(super) fn signed(value: u64, field: &str) -> Result<i64, String> {
-    i64::try_from(value).map_err(|_| format!("{field} exceeds the BSON integer range"))
-}
-
-pub(super) fn unsigned(value: i64, field: &str) -> Result<u64, String> {
-    u64::try_from(value).map_err(|_| format!("{field} must not be negative"))
-}
-
-pub(super) fn nullable(value: Option<&String>) -> Bson {
-    value.cloned().map(Bson::String).unwrap_or(Bson::Null)
-}
-
-pub(super) fn string_field_matches(document: &Document, field: &str, expected: &str) -> bool {
-    matches!(document.get_str(field), Ok(actual) if actual == expected)
-}
-
-pub(super) fn i64_field_matches(document: &Document, field: &str, expected: i64) -> bool {
-    matches!(document.get_i64(field), Ok(actual) if actual == expected)
-}
-
-pub(super) fn is_duplicate_key(error: &Error) -> bool {
-    match error.kind.as_ref() {
-        ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == DUPLICATE_KEY,
-        ErrorKind::Command(command) => command.code == DUPLICATE_KEY,
-        _ => false,
-    }
-}
-
-pub(super) fn is_transient(error: &Error) -> bool {
-    error.contains_label(TRANSIENT_TRANSACTION_ERROR)
-}
-
-pub(super) enum CommitOutcome {
-    Committed,
-    Retry(Error),
-    Unknown(Error),
-    Failed(Error),
-}
-
-pub(super) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
-    session
-        .start_transaction()
-        .read_concern(ReadConcern::snapshot())
-        .write_concern(WriteConcern::majority())
-        .await
-}
-
-pub(super) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
-    for attempt in 0..COMMIT_ATTEMPTS {
-        match session.commit_transaction().await {
-            Ok(()) => return CommitOutcome::Committed,
-            Err(error) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
-                if attempt + 1 == COMMIT_ATTEMPTS {
-                    return CommitOutcome::Unknown(error);
-                }
-                tokio::task::yield_now().await;
-            }
-            Err(error) if is_transient(&error) => return CommitOutcome::Retry(error),
-            Err(error) => return CommitOutcome::Failed(error),
-        }
-    }
-    unreachable!("the bounded commit loop always returns")
 }
 
 /// Bound reconciliation without cancelling a Mongo driver future mid-command.

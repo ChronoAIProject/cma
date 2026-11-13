@@ -134,6 +134,7 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
     assert_eq!(config.mongodb_database, DEFAULT_DATABASE);
     assert_eq!(config.deployment_id, "cma-test");
     assert_eq!(config.activity_retention, Duration::from_secs(90 * 86_400));
+    assert!(!config.activity_async_enabled);
     assert_eq!(config.default_profiles.cpu_millis, 1_000);
     assert_eq!(config.default_profiles.memory_mib, 1_024);
     assert_eq!(config.agent_manager_sandbox_capacity.cpu_millis, 2_000);
@@ -392,6 +393,8 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     assert!(!config.features.retained_reopen_enabled);
     assert!(!config.features.model_budget_writes_enabled);
     assert!(!config.features.model_request_budget_writes_enabled);
+    assert!(!config.features.platform_spend_writes_enabled);
+    assert!(!config.features.platform_counter_shards);
     assert!(!config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.nyxid_resource_request);
@@ -402,6 +405,8 @@ fn interface_feature_flags_are_strict_independent_booleans() {
         "CHRONO_RETAINED_REOPEN_ENABLED",
         "CHRONO_MODEL_BUDGET_WRITES_ENABLED",
         "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
+        "CHRONO_PLATFORM_SPEND_WRITES_ENABLED",
+        "CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED",
         "CHRONO_V2_UI_TRANSPORT_ENABLED",
         "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED",
         "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED",
@@ -420,6 +425,15 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             config.features.model_request_budget_writes_enabled,
             key == "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED"
         );
+        assert_eq!(config.features.platform_counter_shards, key == "CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED");
+        assert_eq!(
+            config.features.platform_spend_writes_enabled,
+            key == "CHRONO_PLATFORM_SPEND_WRITES_ENABLED"
+        );
+        assert!(!configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .platform_spend_writes_enabled);
         assert!(!configured(&[(key, "false")])
             .unwrap()
             .features
