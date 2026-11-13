@@ -71,6 +71,7 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         allow_local_git: false,
         machine_included: false,
         capacity_recovery_enabled: false,
+        legacy_journal_recovery_enabled: false,
     })
 }
 

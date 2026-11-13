@@ -1,7 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
+import { detailReadSource } from '../api/detailReads';
+import { PROLONGED_POLL_MS, unchangedPollMaximum } from './pollDelay';
 import type { SandboxDetail, SandboxProfileSettings } from '../api/types';
 import { useOwnerViews, type SandboxContents } from '../resources/retainedOwnerViews';
+
+interface ContentsObservation {
+  readonly key: string;
+  readonly fingerprint: string;
+  readonly unchangedSince: number;
+  readonly refreshAt: number;
+}
+
+// Metadata follows the retained value's lifetime and cannot cross owner views.
+const observations = new WeakMap<SandboxContents, ContentsObservation>();
+
+function contentsKey(sandbox: SandboxDetail) {
+  return JSON.stringify([
+    sandbox.id,
+    sandbox.revision,
+    sandbox.workspaces.map(({ id, status, agentCount, worktreeCount }) =>
+      [id, status, agentCount, worktreeCount].join(':'),
+    ),
+  ]);
+}
 
 /**
  * The owner's view of what a Sandbox holds: its pinned settings, its
@@ -25,7 +47,7 @@ export function useSandboxContents({
 }) {
   const ownerViews = useOwnerViews();
   const views =
-    ownerViews?.client === client &&
+    ownerViews?.client === detailReadSource(client) &&
     sandbox.owner === ownerViews.viewerId &&
     !['retiring', 'retired'].includes(sandbox.status)
       ? ownerViews
@@ -48,6 +70,9 @@ export function useSandboxContents({
   const { id: profileId, revision: profileRevision, digest: profileDigest } = sandbox.profile;
   useEffect(() => {
     if (hasPinnedSettings || !readEnabled) return;
+    // Settings are pinned to an immutable profile revision, so a retained
+    // successful read stays valid until the owner explicitly retries.
+    if (retry === 0 && views?.settings.get(sandbox.id)?.profileKey === profileKey) return;
     const abort = new AbortController();
     void client
       .readSandboxProfileSettings(
@@ -83,26 +108,42 @@ export function useSandboxContents({
     sandbox.id,
     profileKey,
   ]);
+  const sandboxId = sandbox.id;
+  const key = contentsKey(sandbox);
+  const workspaceIds = JSON.stringify(
+    sandbox.workspaces.filter((workspace) => workspace.status !== 'removed').map((row) => row.id),
+  );
+  const handledRetry = useRef(0);
   useEffect(() => {
     if (!readEnabled) return;
     const abort = new AbortController();
-    void (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let inFlight = false;
+    const cached = views?.contents.get(sandboxId);
+    const saved = cached === undefined ? undefined : observations.get(cached);
+    let observation = saved?.key === key && handledRetry.current === retry ? saved : undefined;
+    handledRetry.current = retry;
+    // projection.rs exposes Workspace status/counts in the Sandbox summary,
+    // but Agent status, titles and task progress only in child details. A stable
+    // parent revision therefore still needs this bounded child observation.
+    const refresh = async () => {
+      if (abort.signal.aborted || document.hidden || inFlight) return;
+      clearTimeout(timer);
+      inFlight = true;
+      const ids: string[] = JSON.parse(workspaceIds);
       const results = await Promise.allSettled(
-        sandbox.workspaces
-          .filter((workspace) => workspace.status !== 'removed')
-          .map(async (row) => {
-            const workspace = await client.readWorkspace(row.id, { signal: abort.signal });
-            if (workspace.id !== row.id || workspace.sandboxId !== sandbox.id)
-              throw new Error('Workspace identity mismatch');
-            return workspace;
-          }),
+        ids.map(async (id) => {
+          const workspace = await client.readWorkspace(id, { signal: abort.signal });
+          if (workspace.id !== id || workspace.sandboxId !== sandboxId)
+            throw new Error('Workspace identity mismatch');
+          return workspace;
+        }),
       );
       if (abort.signal.aborted) return;
       const workspaces = results.flatMap((result) =>
         result.status === 'fulfilled' ? [result.value] : [],
       );
-      if (results.some((result) => result.status === 'rejected'))
-        views?.contents.delete(sandbox.id);
+      if (results.some((result) => result.status === 'rejected')) views?.contents.delete(sandboxId);
       setContents((previous) => ({
         workspaces,
         agents:
@@ -116,7 +157,7 @@ export function useSandboxContents({
               ),
             ),
           ) ?? [],
-        failed: results.some((result) => result.status === 'rejected'),
+        failed: previous?.failed === true || results.some((result) => result.status === 'rejected'),
       }));
       const agentResults = await Promise.allSettled(
         workspaces.flatMap((workspace) =>
@@ -126,7 +167,7 @@ export function useSandboxContents({
               const agent = await client.readAgent(row.id, { signal: abort.signal });
               if (
                 agent.id !== row.id ||
-                agent.sandbox.id !== sandbox.id ||
+                agent.sandbox.id !== sandboxId ||
                 agent.workspace.id !== workspace.id ||
                 agent.worktree.id !== row.worktreeId
               )
@@ -144,13 +185,47 @@ export function useSandboxContents({
           failed: [...results, ...agentResults].some((result) => result.status === 'rejected'),
         };
         setContents(value);
-        if (value.failed) views?.contents.delete(sandbox.id);
-        else if (views?.sandboxes.get(sandbox.id)?.sandbox === sandbox)
-          views.contents.put(sandbox.id, value);
+        if (value.failed) views?.contents.delete(sandboxId);
+        const now = Date.now();
+        const fingerprint = JSON.stringify(value);
+        const unchangedSince =
+          observation?.fingerprint === fingerprint ? observation.unchangedSince : now;
+        const delay = value.failed
+          ? 5000
+          : Math.max(PROLONGED_POLL_MS, unchangedPollMaximum(now - unchangedSince));
+        observation = value.failed
+          ? undefined
+          : {
+              key,
+              fingerprint,
+              unchangedSince,
+              refreshAt: now + delay,
+            };
+        const parent = views?.sandboxes.get(sandboxId)?.sandbox;
+        if (observation !== undefined && parent !== undefined && contentsKey(parent) === key) {
+          observations.set(value, observation);
+          views?.contents.put(sandboxId, value);
+        }
+        timer = setTimeout(() => void refresh(), delay);
       }
-    })();
-    return () => abort.abort();
-  }, [client, sandbox, retry, views, readEnabled]);
+      inFlight = false;
+    };
+    const visible = () => {
+      clearTimeout(timer);
+      if (document.hidden) return;
+      observation = undefined;
+      void refresh();
+    };
+    document.addEventListener('visibilitychange', visible);
+    const remaining = (observation?.refreshAt ?? 0) - Date.now();
+    if (remaining > 0) timer = setTimeout(() => void refresh(), remaining);
+    else void refresh();
+    return () => {
+      abort.abort();
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [client, sandboxId, key, workspaceIds, retry, views, readEnabled]);
   return {
     settings,
     settingsLoaded,
