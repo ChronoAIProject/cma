@@ -19,13 +19,13 @@ async fn native_prepared_concurrent_target_fence_caps_and_expiry_preserves_lease
     }
     assert_eq!(records(&store).await.len(), 2);
     let claim = store
-        .claim_native_prepared_work(NOW, LATER)
+        .claim_native_prepared_work(NOW, &lease_deadline())
         .await
         .unwrap()
         .unwrap();
     assert_ne!(
         store
-            .claim_native_prepared_work(NOW, LATER)
+            .claim_native_prepared_work(NOW, &lease_deadline())
             .await
             .unwrap()
             .unwrap()
@@ -34,7 +34,7 @@ async fn native_prepared_concurrent_target_fence_caps_and_expiry_preserves_lease
         claim.record.id
     );
     assert!(store
-        .claim_native_prepared_work(NOW, LATER)
+        .claim_native_prepared_work(NOW, &lease_deadline())
         .await
         .unwrap()
         .is_none());
@@ -48,7 +48,7 @@ async fn native_prepared_concurrent_target_fence_caps_and_expiry_preserves_lease
         .is_err());
     assert!(
         store
-            .claim_native_prepared_work(NOW, LATER)
+            .claim_native_prepared_work(NOW, &lease_deadline())
             .await
             .unwrap()
             .is_none(),
@@ -63,8 +63,18 @@ async fn native_prepared_concurrent_target_fence_caps_and_expiry_preserves_lease
         2,
         "retirement occupies bounded capacity"
     );
+    // Advance actual lease authority explicitly; a fabricated caller clock
+    // must no longer steal a live reservation during this retirement fixture.
+    store
+        .native_prepared
+        .update_many(
+            doc! {"kind":"reservation"},
+            doc! {"$set":{"lease_until":NOW}},
+        )
+        .await
+        .unwrap();
     let cleanup = store
-        .claim_native_prepared_work(EXPIRED, "2026-09-05T00:31:00Z")
+        .claim_native_prepared_work(EXPIRED, &lease_deadline())
         .await
         .unwrap()
         .unwrap();
