@@ -47,9 +47,14 @@ pub(super) fn compose(
 
 pub(super) fn worker(
     config: &Config,
-    reclaim: Arc<dyn layer2_core::document_artifacts::DocumentReclaimStore>,
+    stores: &MongoStores,
     blobs: Option<Arc<dyn DocumentBlobMaintenance>>,
 ) -> crate::document_artifacts::worker::DocumentMaintenanceWorker {
+    let reclaim = Arc::new(
+        stores
+            .document_artifacts
+            .reclaim(config.features.document_quotas),
+    );
     let maintenance = blobs
         .filter(|_| config.features.document_reclaim)
         .map(|blobs| {

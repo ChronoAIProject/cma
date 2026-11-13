@@ -31,12 +31,17 @@ pub enum SandboxControlServiceError {
     Authority(#[from] CommandAuthorizationError),
     #[error(transparent)]
     Store(#[from] SandboxControlError),
+    #[error("model budget refused the revival: {0}")]
+    Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
 }
 
 pub struct SandboxControlService {
     store: Arc<dyn SandboxControlStore>,
     access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
+    platform_spend: std::sync::OnceLock<Arc<dyn crate::budget::PlatformSpendLedger>>,
 }
 
 impl SandboxControlService {
@@ -49,7 +54,34 @@ impl SandboxControlService {
             store,
             access,
             authority,
+            platform_spend: std::sync::OnceLock::new(),
         })
+    }
+
+    /// An explicit Revive reads the platform admission state at admission,
+    /// as the owner's revive does (contract section 5.1); other controls
+    /// carry no new commitment and stay available under a stop.
+    pub fn attach_platform_spend(&self, spend: Arc<dyn crate::budget::PlatformSpendLedger>) {
+        let _ = self.platform_spend.set(spend);
+    }
+
+    async fn require_platform_open(
+        &self,
+        cause: crate::admission::AdmissionCause,
+    ) -> Result<(), crate::admission::AdmissionRefusal> {
+        let Some(spend) = self.platform_spend.get() else {
+            return Ok(());
+        };
+        let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
+            .ok_or(crate::budget::BudgetError::Unavailable)?;
+        match spend
+            .admission_state(now)
+            .await?
+            .commitment_refusal_for(cause)
+        {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        }
     }
 
     pub async fn admit(
@@ -128,6 +160,12 @@ impl SandboxControlService {
             request_fingerprint: submission.command.fingerprint(submission.expected_revision),
         };
         envelope.validate()?;
+        let new_commitment = if envelope.command == SandboxControl::Revive {
+            self.require_platform_open(crate::admission::AdmissionCause::Fresh)
+                .await
+        } else {
+            Ok(())
+        };
         let proof = SandboxControlAuthorization::bind(
             (*self.access).clone(),
             authorized,
@@ -149,7 +187,14 @@ impl SandboxControlService {
             admission_audit: proof.audit()?,
             execution_audit: None,
         };
-        Ok(self.store.reserve_sandbox_control(record, proof).await?)
+        self.store
+            .reserve_sandbox_control(record, proof, new_commitment)
+            .await
+            .map_err(|error| match error {
+                SandboxControlError::AdmissionPaused => SandboxControlServiceError::AdmissionPaused,
+                SandboxControlError::Budget(reason) => SandboxControlServiceError::Budget(reason),
+                other => SandboxControlServiceError::Store(other),
+            })
     }
 
     /// The requesting actor can recover its receipt only while the exact target
