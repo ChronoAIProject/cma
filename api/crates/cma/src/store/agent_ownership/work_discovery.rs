@@ -23,16 +23,24 @@ impl MongoSandboxStore {
         let mut last = None;
         let mut result = Vec::new();
         loop {
-            let mut query = doc! {"document_schema_version": 1_i64, "work_pending": true, "work_ready_at": {"$lte": now}};
-            if let Some(last) = last {
-                query.insert("_id", doc! {"$gt": last});
-            }
+            let mut pipeline = super::super::agent_failure_pacing::discovery::owned_pipeline(
+                self,
+                now,
+                100,
+                last.as_deref(),
+            );
+            // Fetch claim metadata only for the bounded, paced candidate page.
+            // Claims still revalidate the complete current row and exact epoch.
+            pipeline.extend([
+                doc! {"$lookup": {"from": self.agents.name(), "localField": "_id", "foreignField": "_id",
+                    "pipeline": [{"$project": {"_id": 1, "work_lease_expires_at": 1, effects::WORK_EPOCH: 1}}],
+                    "as": "owned_candidate"}},
+                doc! {"$unwind": "$owned_candidate"},
+                doc! {"$replaceWith": "$owned_candidate"},
+            ]);
             let rows: Vec<Document> = self
                 .agents
-                .find(query)
-                .projection(doc! {"_id": 1, "work_lease_expires_at": 1, effects::WORK_EPOCH: 1})
-                .sort(doc! {"_id": 1})
-                .limit(100)
+                .aggregate(pipeline)
                 .await
                 .map_err(failure)?
                 .try_collect()

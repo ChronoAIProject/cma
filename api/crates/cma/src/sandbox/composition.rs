@@ -67,6 +67,7 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    inline_lifecycle: Option<crate::agent_lifecycle::LifecycleDrain>,
     pub(crate) reopen_worker: Arc<SandboxWorker>,
     warmup: super::warmup::LegacyWarmSandboxCleanup,
     reconciliation: SandboxReconciler,
@@ -82,6 +83,17 @@ pub(crate) struct SandboxLifecycleComposition {
 }
 
 impl SandboxLifecycleComposition {
+    pub(crate) fn register_inline_lifecycle(
+        &mut self,
+        drain: crate::agent_lifecycle::LifecycleDrain,
+    ) {
+        assert!(
+            self.inline_lifecycle.is_none(),
+            "lifecycle drain registered once"
+        );
+        self.inline_lifecycle = Some(drain);
+    }
+
     pub(crate) fn new(
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
@@ -228,6 +240,7 @@ impl SandboxLifecycleComposition {
         );
 
         Ok(Self {
+            inline_lifecycle: None,
             reopen_worker: sandbox_worker.clone(),
             warmup,
             updates,
@@ -289,6 +302,9 @@ impl SandboxLifecycleComposition {
         shutdown: &mut ShutdownCoordinator,
         workers: &crate::worker_supervision::Workers,
     ) {
+        if let Some(lifecycle) = self.inline_lifecycle {
+            shutdown.register_lifecycle(lifecycle);
+        }
         if let Some(scheduler) = self.capacity_recovery {
             shutdown.push(
                 scheduler

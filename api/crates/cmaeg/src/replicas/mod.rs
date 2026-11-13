@@ -3,6 +3,7 @@ mod backfill;
 pub mod config;
 pub(crate) mod drain;
 mod drain_cli;
+pub(crate) mod effect_recovery;
 mod effect_roots;
 pub mod effects;
 pub(crate) mod membership;
