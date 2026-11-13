@@ -6,7 +6,7 @@ use crate::resource_access::{
 };
 use crate::{Caller, Capability, SubjectId};
 
-use super::agent_reads_fold::{fold_agent_log, AgentLogProjection};
+use super::agent_reads_fold::fold_agent_log;
 use super::store::{AgentReadStore, Page, PageRequest, SandboxStoreError, MAX_PAGE_SIZE};
 use super::{
     Agent, AgentLineage, AgentListQuery, AgentLogEntry, AgentReadError, AgentResourceReading,
@@ -117,17 +117,6 @@ impl AgentReadService {
             .collect())
     }
 
-    pub async fn transcript(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-    ) -> Result<AgentTranscript, AgentReadError> {
-        let projection = self
-            .projection(caller, id, crate::RuntimeCapability::Conversation)
-            .await?;
-        Ok(projection.transcript)
-    }
-
     /// Read a validated log through the exact aggregate captured for this read.
     pub async fn log_snapshot(
         &self,
@@ -167,19 +156,6 @@ impl AgentReadService {
             sandbox_id: lineage.sandbox.id,
             reading,
         })
-    }
-
-    async fn projection(
-        &self,
-        caller: &Caller,
-        id: &AgentId,
-        capability: crate::RuntimeCapability,
-    ) -> Result<AgentLogProjection, AgentReadError> {
-        require(caller)?;
-        let lineage = self.owned_lineage(caller, id).await?;
-        require_granted(&lineage.agent, capability)?;
-        let entries = self.complete_log(&lineage.agent).await?;
-        fold_agent_log(&lineage.agent, &entries).map_err(AgentReadError::Corrupt)
     }
 
     async fn owned_lineage(
