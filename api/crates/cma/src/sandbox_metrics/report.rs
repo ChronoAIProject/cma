@@ -1,4 +1,5 @@
 use super::projection::{add_summary, Accumulator};
+use super::report_trace::{report_hash, ReportTrace, Stage};
 use super::*;
 use crate::store::usage_reports::{chart_documents, now, ReportLease};
 use layer2_core::sandbox_metrics::*;
@@ -15,22 +16,46 @@ impl MetricsWorkers {
             match self.store.claim_report(&slot, &holder).await {
                 Ok(Some(lease)) => {
                     let start = std::time::Instant::now();
-                    let result = tokio::time::timeout(
+                    let generation = tokio::time::timeout(
                         Duration::from_secs(self.store.budgets.report_seconds),
                         self.generate(&lease),
                     )
-                    .await
-                    .unwrap_or(Err(MetricsError::Unavailable));
+                    .await;
+                    let failure_class = match &generation {
+                        Err(_) => "deadline",
+                        Ok(Ok(_)) => "none",
+                        Ok(Err(MetricsError::Unavailable)) => "unavailable",
+                        Ok(Err(MetricsError::Busy)) => "budget",
+                        Ok(Err(MetricsError::Expired)) => "expired",
+                        Ok(Err(MetricsError::Forbidden | MetricsError::NotFound)) => "authority",
+                        Ok(Err(MetricsError::Invalid(_))) => "invalid",
+                    };
+                    let result = generation.unwrap_or(Err(MetricsError::Unavailable));
+                    let generation_ms = start.elapsed().as_millis() as u64;
+                    let digest = report_hash(&lease.report.report_id);
                     if let Err(error) = &result {
                         tracing::warn!(error=%error, "sandbox report generation failed");
                     }
-                    let success = result.is_ok();
+                    let generation_success = result.is_ok();
                     let report = result.unwrap_or_else(|_| lease.report.clone());
-                    if let Err(error) = self.store.finish_report(&lease, report, success).await {
+                    let finish_started = std::time::Instant::now();
+                    let finalized = self
+                        .store
+                        .finish_report(&lease, report, generation_success)
+                        .await;
+                    if let Err(error) = &finalized {
                         tracing::warn!(error=%error,"sandbox report finalization failed");
                     }
+                    let _root = tracing::info_span!(parent: None, "usage_report_diagnostic").entered();
                     tracing::info!(
-                        success,
+                        parent: None,
+                        report_hash = %digest,
+                        success = generation_success && finalized.is_ok(),
+                        generation_success,
+                        finalized = finalized.is_ok(),
+                        failure_class,
+                        generation_ms,
+                        finalization_ms = finish_started.elapsed().as_millis() as u64,
                         elapsed_ms = start.elapsed().as_millis() as u64,
                         "sandbox usage report generated"
                     );
@@ -43,10 +68,25 @@ impl MetricsWorkers {
         }
     }
     pub(super) async fn generate(&self, lease: &ReportLease) -> Result<Report> {
+        let mut trace = ReportTrace::new(&lease.report.report_id);
+        let result = self.generate_traced(lease, &mut trace).await;
+        trace.finish(result.is_ok());
+        result
+    }
+    async fn generate_traced(
+        &self,
+        lease: &ReportLease,
+        trace: &mut ReportTrace,
+    ) -> Result<Report> {
         let mut report = lease.report.clone();
-        let mut snapshot = self.store.snapshot().await?;
+        let mut snapshot = trace.stage(Stage::Inventory, self.store.snapshot()).await?;
         if self.enabled {
-            report.mapping_revision = self.store.mapping_revision_at(&mut snapshot).await?;
+            report.mapping_revision = trace
+                .stage(
+                    Stage::Measured,
+                    self.store.mapping_revision_at(&mut snapshot),
+                )
+                .await?;
         }
         let mut summary = Summary {
             allocated_period: AllocatedPeriod {
@@ -60,13 +100,15 @@ impl MetricsWorkers {
         let mut after = None;
         let mut source_complete = self.enabled;
         loop {
-            let page = self
-                .store
-                .inventory(
-                    &mut snapshot,
-                    &report.scope,
-                    &report.query,
-                    after.as_deref(),
+            let page = trace
+                .stage(
+                    Stage::Inventory,
+                    self.store.inventory(
+                        &mut snapshot,
+                        &report.scope,
+                        &report.query,
+                        after.as_deref(),
+                    ),
                 )
                 .await?;
             if page.is_empty() {
@@ -86,7 +128,13 @@ impl MetricsWorkers {
                 continue;
             }
             if self.enabled {
-                if let Some(first) = self.store.tracking_started_at(&ids, &mut snapshot).await? {
+                if let Some(first) = trace
+                    .stage(
+                        Stage::Measured,
+                        self.store.tracking_started_at(&ids, &mut snapshot),
+                    )
+                    .await?
+                {
                     report.tracking_started_at = Some(
                         report
                             .tracking_started_at
@@ -95,7 +143,12 @@ impl MetricsWorkers {
                 }
             }
             let live = if self.enabled {
-                self.store.live_readings_at(&ids, &mut snapshot).await?
+                trace
+                    .stage(
+                        Stage::Measured,
+                        self.store.live_readings_at(&ids, &mut snapshot),
+                    )
+                    .await?
             } else {
                 BTreeMap::new()
             };
@@ -110,9 +163,11 @@ impl MetricsWorkers {
                     from,
                     to: ((from / 86_400 + 1) * 86_400).min(report.effective_range.to),
                 };
-                let allocation = self
-                    .store
-                    .allocation_periods(&mut snapshot, &states, range)
+                let allocation = trace
+                    .stage(
+                        Stage::Allocation,
+                        self.store.allocation_periods(&mut snapshot, &states, range),
+                    )
                     .await?;
                 for (id, value) in allocation {
                     if let Some(a) = accum.get_mut(&id) {
@@ -121,9 +176,11 @@ impl MetricsWorkers {
                     }
                 }
                 if self.enabled {
-                    let rollups = self
-                        .store
-                        .metric_rollups(&mut snapshot, &ids, range)
+                    let rollups = trace
+                        .stage(
+                            Stage::Measured,
+                            self.store.metric_rollups(&mut snapshot, &ids, range),
+                        )
                         .await?;
                     let mut minutes = BTreeMap::<String, Vec<Minute>>::new();
                     for rollup in rollups {
@@ -168,14 +225,22 @@ impl MetricsWorkers {
                         }
                     }
                     for edge in edges {
-                        let bindings = self.store.bindings_at(&ids, edge, &mut snapshot).await?;
-                        let (samples, complete) = self
-                            .raw(
-                                &bindings,
-                                Range {
-                                    from: edge.from.saturating_sub(120),
-                                    to: (edge.to + 90).min(report.as_of),
-                                },
+                        let bindings = trace
+                            .stage(
+                                Stage::Measured,
+                                self.store.bindings_at(&ids, edge, &mut snapshot),
+                            )
+                            .await?;
+                        let (samples, complete) = trace
+                            .stage(
+                                Stage::Source,
+                                self.raw(
+                                    &bindings,
+                                    Range {
+                                        from: edge.from.saturating_sub(120),
+                                        to: (edge.to + 90).min(report.as_of),
+                                    },
+                                ),
                             )
                             .await?;
                         source_complete &= complete;
@@ -223,27 +288,41 @@ impl MetricsWorkers {
                 pending_rows.push(row);
                 pending_charts.extend(charts);
                 if pending_rows.len() == 100 {
-                    self.store
-                        .write_report_chunk(
-                            lease,
-                            &pending_rows,
-                            std::mem::take(&mut pending_charts),
+                    trace
+                        .stage(
+                            Stage::Write,
+                            self.store.write_report_chunk(
+                                lease,
+                                &pending_rows,
+                                std::mem::take(&mut pending_charts),
+                            ),
                         )
                         .await?;
                     pending_rows.clear();
                 }
             }
             if !pending_rows.is_empty() {
-                self.store
-                    .write_report_chunk(lease, &pending_rows, pending_charts)
+                trace
+                    .stage(
+                        Stage::Write,
+                        self.store
+                            .write_report_chunk(lease, &pending_rows, pending_charts),
+                    )
                     .await?;
             }
         }
         summary.measured = Some(aggregate.measured(report.as_of, summary.running_count > 0));
         if self.enabled && report.scope.admin {
             summary.infrastructure = Some(
-                self.store
-                    .infrastructure_at(&mut snapshot, report.mapping_revision, report.as_of)
+                trace
+                    .stage(
+                        Stage::Measured,
+                        self.store.infrastructure_at(
+                            &mut snapshot,
+                            report.mapping_revision,
+                            report.as_of,
+                        ),
+                    )
                     .await?,
             );
         }
@@ -281,7 +360,9 @@ impl MetricsWorkers {
             memory_covered=aggregate.totals[1].covered_seconds,disk_covered=aggregate.totals[2].covered_seconds,
             "sandbox report coverage");
         report.summary = Some(summary);
-        self.store.reauthorize(&report).await?;
+        trace
+            .stage(Stage::Authority, self.store.reauthorize(&report))
+            .await?;
         if now() >= report.expires_at {
             return Err(MetricsError::Expired);
         }
