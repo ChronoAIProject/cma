@@ -1024,6 +1024,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_MACHINE_SANDBOX_IMAGE` | Optional immutable OCI reference for the Agent Manager **Machine Included** choice. It must point to a runtime built with `RUNTIME_DESKTOP=1` (XFCE session, panel, desktop icons, Thunar, terminal and Chromium). Leaving it unset makes that choice fail closed. |
 | `CHRONO_SANDBOX_PROVIDER` | Runtime provider selector: `opensandbox` (default) or `agent-sandbox`; selects the direct agent-sandbox backend for new allocations |
 | `CHRONO_RETAIN_OPENSANDBOX` | Whether to retain the legacy OpenSandbox endpoint configuration; `true` by default, and required while existing OpenSandbox runtimes remain addressable |
+| `CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED` | Strict boolean, default `false`. Bounds native home pre-adoption and create-time binding readiness to two seconds per guard. The exact owned runtime Pod is checked for `CrashLoopBackOff` and increasing restart count within the observation window. Failure is retryable and preserves the Claim/member/home identities; it does not authorize replacement or prove runtime loss. Resume retains its existing readiness policy. |
 | `CHRONO_AGENT_SANDBOX_ENABLED` | Optional boolean override for the direct agent-sandbox adapter; defaults to the provider selection |
 | `CHRONO_NATIVE_PREPARED_TARGET` | Deployment-owned count of credential-free agent-only native Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires native allocation and `native_vct_full_home_v2`. A matching ready native pool must exist first. A separate durable collection bounds preparing, ready and retiring reservations to two per image class across replicas. Explicit default Agent Manager creation atomically takes one matching reservation; other requests use normal creation. Set to `0` to retire unclaimed agent-only prepared capacity while preserving owned Sandboxes and machine spares. |
 | `CHRONO_NATIVE_MACHINE_PREPARED_TARGET` | Independent count of credential-free machine Sandbox/Workspace/idle Agent hierarchies: `0` (default, disabled), `1`, or `2`. Requires a pinned machine image, native allocation and full native home. Starts the desktop and Agent before owner adoption. Its durable target and admission fence are independent from agent-only preparations. Keep the compatible preparation reader during rollback after enablement. |
@@ -2382,6 +2383,21 @@ on the same image. Local measurements do not complete production verification.
 
 ## Sandbox detail read rollout
 
+`CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. It selects lineage-only Agent documents for the Sandbox
+detail store port, independently of authorization sessions, enrichment and the
+existing hierarchy switches. The projected fields retain both indexed and
+aggregate copies of identity, ownership, ancestry and revision; every existing
+hierarchy edge/count check still runs. The complete hierarchy port used by
+lifecycle/recovery, Workspace views and Agent-target authorization stays full.
+The enabled detail path does not decode or validate omitted Agent payload,
+including conversation and work/recovery state. Segmented envelope discriminators,
+head-revision shape and incarnation identity remain checked without reading logs.
+Omitted-payload checks remain with complete Agent consumers. This validation-boundary change
+requires its own review. Activation waits for the production phase baseline
+and #1743 attribution. Set this flag back to `false` and roll the same
+API image to restore full detail records; no data migration or repair is needed.
+
 `CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED` defaults to `false` and accepts only
 exact `true` or `false`. When enabled, each individual resource authorization
 snapshot uses a Mongo snapshot session for its lineage aggregation and bounded
@@ -2682,6 +2698,32 @@ Rollback sets `CHRONO_ACTIVITY_ASYNC_ENABLED=false` and restarts through the
 reviewed release route. Normal restart drains the old queue first; no data repair
 is needed. The stated deadline and crash loss boundary still apply if Mongo is
 unavailable during rollback.
+
+### Native claim readiness guard
+
+`CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED=false` preserves the existing readiness
+path. When enabled, readiness observations before home adoption and during create
+binding each have a two-second bound, including Kubernetes read time.
+CrashLoopBackOff exits on the first verified observation; a rising runtime restart count exits on the next
+observation of the same Pod UID. The subsequent read-only home-authority
+acknowledgement wait has its own two-second bound. A replacement Pod starts a new
+observation baseline. A nonzero historical restart count alone is not a failure.
+
+The guard retains the exact Claim, assigned Sandbox and PVC authority. A missing
+local receipt does not prove that a preceding provider write had no effect. The
+retry continues the same durable operation; the guard never deletes a Claim or
+silently allocates a second home. In particular, a controller-assigned unready
+member is already beyond the release boundary. Safe fresh-Claim replacement
+requires a separate fenced allocation-retirement transition or controller
+selection support; the external controller patch is tracked in #1887.
+
+`cma_native_claim_guard_total` and `cma_native_claim_guard_seconds` use only
+`stage` (`home`, `home_authority`, `bind`) and `outcome` (`ready`, `timeout`, `crash_loop`,
+`restarting`, `error`, `cancelled`). They measure guard attempts, including worker
+retries, not unique user creates. Kubernetes Ready is bootstrap readiness, not
+proof that an Agent or desktop is usable. No pool size, resources or concurrency
+change accompanies this switch. Activation and end-to-end production acceptance
+remain separate from merging the default-off implementation.
 
 ### Agent Events v2 local wake rollout
 
