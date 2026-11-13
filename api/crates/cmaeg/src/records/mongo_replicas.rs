@@ -48,6 +48,7 @@ pub(crate) struct ReplicaWrite {
     pub expires_at: Option<i64>,
     pub condition: Option<LeaseCondition>,
     pub guard: Option<ReplicaGuard>,
+    pub channel: Option<(String, u64)>,
     pub projection: Option<ReplicaProjection>,
 }
 
@@ -125,6 +126,28 @@ impl MongoRecords {
             CONNECTIONS
         };
         let records = self.db.collection::<Record>(collection);
+        if let Some((id, version)) = &write.channel {
+            let version_i64 = i64::try_from(*version)
+                .ok()
+                .filter(|version| *version > 0)
+                .ok_or_else(|| RecordError::Rejected("invalid source guard version".into()))?;
+            let changed = self
+                .db
+                .collection::<Document>(super::RECORDS)
+                .update_one(
+                    doc! {"_id":id,"owner":&write.owner,"version":version_i64},
+                    doc! {"$inc":{"guard_revision":1_i64}},
+                )
+                .session(&mut *session)
+                .await
+                .map_err(failure)?;
+            if changed.matched_count != 1 {
+                return Err(RecordError::GuardConflict {
+                    scope: "channel",
+                    expected: *version,
+                });
+            }
+        }
         if let Some(guard) = &write.guard {
             let guarded_version = i64::try_from(guard.version)
                 .map_err(|_| RecordError::Rejected("invalid replica guard version".into()))?;
