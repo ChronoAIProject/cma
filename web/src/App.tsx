@@ -52,6 +52,7 @@ export function App() {
         <UsageDialog
           key={identity.user.id}
           client={client.usageViews}
+          documents={client.documents}
           open={usageOpen}
           appearanceNotice={browserRouter.usageAppearanceNotice}
           onClose={() => browserRouter.closeUsage?.()}

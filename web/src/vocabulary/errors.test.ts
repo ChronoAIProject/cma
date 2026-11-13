@@ -1,5 +1,6 @@
 import { ApiError, ProtocolError, TransportError } from '@chronoai/cma-sdk';
 import { readableError } from './errors';
+import { DocumentError } from '../api/documents';
 
 describe('readableError', () => {
   it('keeps a service sentence written for people', () => {
@@ -42,5 +43,37 @@ describe('readableError', () => {
       'Draft could not be saved.',
     );
     expect(readableError('nope', 'fallback')).toBe('fallback');
+  });
+
+  it.each([
+    ['document_limit_reached', 'document count limit'],
+    ['document_bytes_limit_reached', 'retained document storage limit'],
+    ['document_objects_limit_reached', 'stored document object limit'],
+    ['document_write_busy', 'Document writing is busy'],
+    ['document_deletion_unavailable', 'Document deletion is unavailable'],
+  ])('explains typed document refusal %s before displaying technical details', (code, sentence) => {
+    const message = readableError(new DocumentError('Technical detail', 503, code), 'fallback');
+    expect(message).toContain(sentence);
+    if (code.endsWith('_limit_reached')) expect(message).toContain('Delete old documents');
+  });
+
+  it('never displays invalid quota dimensions or negative remaining capacity', () => {
+    const over = readableError(
+      new DocumentError('Capacity', 429, 'document_limit_reached', {
+        limit: 100,
+        live: 104,
+      }),
+      'fallback',
+    );
+    expect(over).toContain('0 documents available');
+    expect(over).toContain('104 / 100 used');
+    const unknown = readableError(
+      new DocumentError('Capacity', 429, 'document_bytes_limit_reached', {
+        limit: NaN,
+        live: 0,
+      }),
+      'fallback',
+    );
+    expect(unknown).not.toMatch(/NaN|available/);
   });
 });
