@@ -21,8 +21,8 @@ use super::agent_title_state::{
 use super::agent_titles::{map_store_error, snapshot_session};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
+    CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 
 enum ApplyError {
@@ -43,6 +43,7 @@ enum TitleApply {
 
 #[derive(Clone)]
 struct TitleReceipt {
+    segmented: Option<super::agent_log_segments::writer_commit::Recorded>,
     agent: Agent,
     entry: AgentLogEntry,
     stored: StoredAgentTitle,
@@ -134,13 +135,23 @@ async fn run_title_mutation(
             Err(error) if is_transient(&error) => continue,
             Err(_) => return Err(AgentTitleStoreError::Unavailable),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                continue;
-            }
-            return Err(AgentTitleStoreError::Unavailable);
-        }
-        let receipt = match apply_title(store, &mutation, &mut session).await {
+        let mut scope = match super::agent_log_segments::transaction_scope::TransactionScope::start(
+            &mut session,
+        )
+        .await
+        {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => continue,
+            Err(_) => return Err(AgentTitleStoreError::Unavailable),
+        };
+        let applied = scoped::apply(store, &mutation, &mut scope).await;
+        let session = scope.release();
+        let applied = match applied {
+            Ok(Some(result)) => Ok(result),
+            Ok(None) => apply_title(store, &mutation, session).await,
+            Err(error) => Err(error),
+        };
+        let receipt = match applied {
             Ok(TitleApply::Settled(outcome)) => {
                 let _ = session.abort_transaction().await;
                 return Ok(outcome);
@@ -159,7 +170,7 @@ async fn run_title_mutation(
                 return Err(AgentTitleStoreError::Unavailable);
             }
         };
-        match commit_transaction(&mut session).await {
+        match commit_transaction(session).await {
             CommitOutcome::Committed => return Ok(receipt.outcome),
             CommitOutcome::Retry(_) => continue,
             CommitOutcome::Unknown(_) => {
@@ -271,6 +282,7 @@ async fn apply_title(
     let proof = mutation.proof();
     let outcome = mutation.success_outcome();
     Ok(TitleApply::Written(Box::new(TitleReceipt {
+        segmented: None,
         agent: next,
         entry,
         stored,
@@ -336,6 +348,7 @@ mod reconcile;
 use reconcile::reconcile_title;
 
 mod mutation;
+mod scoped;
 
 mod integrity;
 use integrity::transaction_log;

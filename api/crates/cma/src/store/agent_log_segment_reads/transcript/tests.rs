@@ -5,6 +5,7 @@ mod byte_pages;
 mod parity;
 mod refusal;
 mod support;
+mod titles;
 use support::*;
 
 #[tokio::test]
