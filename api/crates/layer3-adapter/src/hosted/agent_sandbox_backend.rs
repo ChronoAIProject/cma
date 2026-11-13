@@ -58,6 +58,13 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn capacity_recovery_transport(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
+        Some(self)
+    }
+
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         self.transport.open_desktop(handle).await
     }
@@ -344,6 +351,22 @@ impl HostedBackend for AgentSandboxBackend {
         self.forget_assignment(handle);
         self.transport.retire(handle).await?;
         self.client.delete(handle).await
+    }
+}
+
+#[async_trait::async_trait]
+impl super::CapacityRecoveryNativeTransport for AgentSandboxBackend {
+    async fn reattach_existing(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<(
+        ConversationChannel,
+        crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+    )> {
+        self.transport
+            .reattach_existing_capacity_recovery(request, updates)
+            .await
     }
 }
 
