@@ -1,3 +1,4 @@
+import { rateLimitDelay } from './transport/readRetry';
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
@@ -92,6 +93,7 @@ export function useSandboxInput(
     const readiness = createPollDelay();
     let validUntil = 0;
     let failures = 0;
+    let retryAt = 0;
     const markStale = (staleReason: StaleReason) => {
       if (controller.signal.aborted) return;
       setObservation((current) => ({
@@ -113,6 +115,10 @@ export function useSandboxInput(
     const poll = () => {
       if (controller.signal.aborted || pending !== undefined || document.hidden) return;
       clearTimeout(timer);
+      if (Date.now() < retryAt) {
+        timer = setTimeout(poll, retryAt - Date.now());
+        return;
+      }
       const request = new AbortController();
       pending = request;
       const requestEpoch = visibilityEpoch;
@@ -176,6 +182,7 @@ export function useSandboxInput(
           // five-second lifecycle check: Agent SSE has no full lifecycle fence.
           pollInterval = readiness.next(sandboxPollKey(sandbox), sandboxRefreshDelay(sandbox));
           failures = 0;
+          retryAt = 0;
           const observedAtMs = performance.now();
           validUntil = observedAtMs + pollInterval + READ_TIMEOUT_MS;
           clearTimeout(expiry);
@@ -199,7 +206,8 @@ export function useSandboxInput(
             clearTimeout(expiry);
             setObservation({ scope, agentId, sandboxId, stale: true, staleReason: 'unavailable' });
           } else readFailed();
-          timer = setTimeout(poll, requestEpoch === visibilityEpoch ? pollInterval : 0);
+          retryAt = Date.now() + rateLimitDelay(error, pollInterval, failures);
+          timer = setTimeout(poll, retryAt - Date.now());
         })
         .finally(() => {
           clearTimeout(timeout);

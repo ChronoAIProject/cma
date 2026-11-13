@@ -1,3 +1,4 @@
+import { readRetryDelay } from '../transport/readRetry';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ApiError,
@@ -69,6 +70,7 @@ export function BrowserControl({
   const inputs = useRef<BrowserInput[]>([]);
   const draining = useRef(false);
   const renewAt = useRef(0);
+  const readRetry = useRef({ at: 0, failures: 0 });
   const [view, setView] = useState<View>({ phase: 'loading' });
   const [sending, setSending] = useState(false);
   const [text, setText] = useState('');
@@ -87,6 +89,7 @@ export function BrowserControl({
       token: own ? (value.lease_token ?? current.current.token) : undefined,
     });
     renewAt.current = Date.now() + 5000;
+    readRetry.current = { at: 0, failures: 0 };
   };
   const fail = (error: unknown, pending?: BrowserControlChange) => {
     inputs.current = [];
@@ -155,7 +158,8 @@ export function BrowserControl({
     });
   };
   const read = async () => {
-    if (busy.current || !lifetime.current.alive || !visible()) return;
+    if (busy.current || !lifetime.current.alive || !visible() || Date.now() < readRetry.current.at)
+      return;
     const version = lifetime.current;
     busy.current = true;
     setSending(true);
@@ -176,7 +180,10 @@ export function BrowserControl({
       recovery.clear(pending?.operation_id);
       if (version.alive) accept(value);
     } catch (error) {
-      if (version.alive) fail(error, current.current.pending);
+      if (version.alive) {
+        readRetry.current.at = Date.now() + readRetryDelay(error, ++readRetry.current.failures);
+        fail(error, current.current.pending);
+      }
     } finally {
       if (version.alive) {
         busy.current = false;
@@ -220,7 +227,11 @@ export function BrowserControl({
       setClock(Date.now());
       if (!ready.current || !visible() || busy.current) return;
       const value = current.current;
-      if (value.phase !== 'ready') return;
+      if (value.phase === 'forbidden' || value.phase === 'transferring') return;
+      if (value.phase !== 'ready') {
+        void actions.current.read();
+        return;
+      }
       if (value.token && Date.parse(value.value?.expires_at ?? '') <= Date.now()) {
         inputs.current = [];
         publish({ ...value, phase: 'unknown', token: undefined });
