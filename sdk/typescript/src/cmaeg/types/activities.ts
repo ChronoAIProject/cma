@@ -412,6 +412,13 @@ export const EventContextSnapshotSchema = object({
 });
 export type EventContextSnapshot = Output<typeof EventContextSnapshotSchema>;
 
+export const UpstreamRefusalSchema = object({
+  operation: text,
+  status: integer,
+  code: text,
+});
+export type UpstreamRefusal = Output<typeof UpstreamRefusalSchema>;
+
 export const ProblemSchema = object({
   code: ProblemCodeSchema,
   detail: optional(nullable(text)),
@@ -419,5 +426,6 @@ export const ProblemSchema = object({
   status: integer,
   title: text,
   type: optional(text),
+  upstream: optional(nullable(UpstreamRefusalSchema)),
 });
 export type Problem = Output<typeof ProblemSchema>;
