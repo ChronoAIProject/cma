@@ -960,6 +960,54 @@ same-account sign-in and continuation. Retain an ambiguous command's original
 key and body; use a fresh key only after a definitive refusal. A successful
 `GET /auth/session` alone does not prove that the next admission will succeed.
 
+## Desktop session compatibility across Agent Managers
+
+Replica-mode desktop admission is exclusive per Sandbox, including Agents in
+different Worktrees of that Sandbox. The default service mode remains the legacy
+single-manager path. Replica composition must explicitly enable the shared mode
+and provide a receiver implementing the ownership challenge/control protocol.
+An unsupported receiver or missing renewable credential proof refuses attachment;
+neither condition falls back to the local mutex.
+
+Shared admission uses the existing `sandbox_sessions` collection. One
+snapshot/majority transaction writes the Sandbox's `desktop_activity_fence`,
+increments its permanent `desktop_session_epoch`, checks for any unexpired
+session, and inserts an exact session token before runtime socket opening.
+Renewal fences the same Sandbox and requires the exact token, epoch, runtime
+binding and prior expiry. Mongo server time sets the lease to 14–15 seconds.
+The existing `{sandbox_id:1, lease_expires_at:1}` index serves the live-session
+check; no new collection or online index build is required. No database request
+is issued per desktop frame.
+
+The receiver issues a one-use challenge before each acquire/renew transaction.
+Its original monotonic deadline is at most ten seconds and cannot restart on
+confirmation. Renewal runs every three seconds independently of frame forwarding
+and rechecks the original credential custody and current Agent/runtime binding.
+Store/provider uncertainty stops forwarding. The receiver must reject stale
+epochs and expired challenges, persist its epoch floor across restart, revoke
+legacy sockets before first owned acceptance, and refuse subsequent legacy opens.
+The Mongo lease alone cannot stop a paused manager with a surviving socket.
+
+Normal close obtains exact receiver revocation before releasing the durable
+token. An uncertain revoke or ambiguous runtime-open result retains the claim
+until expiry; a definite unsupported/no-effect open releases its own claim.
+Discovery on another manager reports `desktop_busy` while the prior claim is
+live, with private/no-store and Retry-After. It is an advisory observation; socket
+opening still performs transactional admission. The legacy path drops its local
+socket and mutex before bounded persistence cleanup, preserving reconnect
+behavior when shared mode is disabled.
+
+The additive claim fields remain under document schema version 1. Current and
+legacy activity readers continue using `sandbox_id` and `lease_expires_at`.
+Expired session rows are disposable, but `desktop_session_epoch` on the Sandbox
+must not be erased or reset by cleanup, maintenance, recovery or rollback.
+Initial activation requires a verified complete drain of nonparticipating legacy
+writers. Rolling back to a receiver or writer which ignores the protocol floor
+is not a compatible live downgrade; retain the compatible receiver and drain
+owned streams before any separately authorized mode change. Source-level
+compatibility tests do not substitute for the release's image-bound migration
+and retained-runtime qualification.
+
 ## Configuration Inventory
 
 The lifecycle flags `machine_included` and `desktop` retain independent meanings.
