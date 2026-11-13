@@ -54,7 +54,7 @@ it('keeps live resource eligibility separate from checkpoint input holds and exp
   await act(async () => {});
   expect(result.current.inputAvailability.allowed).toBe(false);
   expect(result.current.resourceAvailability).toEqual({ state: 'live', runtimeVersion: '1.2.3' });
-  await act(() => vi.advanceTimersByTimeAsync(10000));
+  await act(() => vi.advanceTimersByTimeAsync(11500));
   expect(result.current.resourceAvailability.state).toBe('unavailable');
   expect(readSandbox).toHaveBeenCalledTimes(2);
 });
@@ -141,7 +141,7 @@ it('retains the recorded save time on a failed refresh but holds input until a f
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(result.current).toEqual({
     allowed: false,
-    notice: 'Sandbox status is unavailable. Reconnecting.',
+    notice: 'Saving progress. Messages will be available when saving finishes.',
     savingStartedAt: '2026-09-08T00:00:00Z',
   });
   await act(() => vi.advanceTimersByTimeAsync(1500));
@@ -168,8 +168,9 @@ it('aborts a stalled refresh, recovers on a fresh read and refuses the timed-out
   await act(async () => {});
   expect(result.current.allowed).toBe(true);
   await act(() => vi.advanceTimersByTimeAsync(10000));
-  expect(result.current.allowed).toBe(false);
-  expect(result.current.notice).toContain('Reconnecting');
+  // The next read keeps its full ten-second timeout before the observation expires.
+  expect(result.current.allowed).toBe(true);
+  expect(result.current.notice).toBeUndefined();
   await act(() => vi.advanceTimersByTimeAsync(4999));
   expect(readSandbox).toHaveBeenCalledTimes(2);
   const signal = readSandbox.mock.calls[1]?.[1].signal;
@@ -210,8 +211,9 @@ it('holds input after returning to a hidden tab until a new foreground read comp
     hidden = true;
     document.dispatchEvent(new Event('visibilitychange'));
   });
-  expect(result.current.allowed).toBe(false);
+  expect(result.current.allowed).toBe(true);
   await act(() => vi.advanceTimersByTimeAsync(20000));
+  expect(result.current.allowed).toBe(false);
   expect(readSandbox).toHaveBeenCalledTimes(2);
   act(() => {
     hidden = false;
