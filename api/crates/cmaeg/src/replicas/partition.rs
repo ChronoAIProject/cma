@@ -53,6 +53,16 @@ pub struct PartitionOwner {
 }
 
 impl PartitionLease {
+    /// Snapshot only: this value cannot acquire or extend partition authority.
+    pub fn fence(&self) -> PartitionFence {
+        PartitionFence {
+            instance: self.token.instance.clone(),
+            epoch: self.token.epoch,
+            claim: self.token.claim.clone(),
+            until_ms: self.token.until_ms,
+        }
+    }
+
     pub fn matches(&self, expected: &PartitionFence) -> bool {
         self.live()
             && self.token.instance == expected.instance

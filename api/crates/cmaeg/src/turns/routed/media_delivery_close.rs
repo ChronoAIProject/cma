@@ -6,7 +6,9 @@ impl MediaDelivery {
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
+        partition: &Option<crate::replicas::partition::PartitionLease>,
     ) -> Result<(), ExecutionError> {
+        self.store.0.guard_partition(partition).await?;
         let mut failed = false;
         for (index, item) in crate::turns::render_media::attachments(&plan.activity)
             .iter()
@@ -26,7 +28,7 @@ impl MediaDelivery {
             }
             let mut lease = self
                 .store
-                .claim(plan, target, index as u8, "media-close")
+                .claim_partition(plan, target, index as u8, "media-close", partition.clone())
                 .await?;
             for supplement in &lease.state().supplements {
                 let response = self
@@ -40,13 +42,20 @@ impl MediaDelivery {
             self.store.release(&mut lease).await?;
         }
         let id = super::super::storage::identifier(&("media_stream_close_v1", &target.id));
-        if self.store.0.read::<Value>(&id).await?.is_some() {
+        if let Some((retained, _)) = self.store.0.read::<Value>(&id).await? {
+            if retained["root"] != plan.admission_id || retained["target"] != target.id {
+                return Err(ExecutionError::Corrupt);
+            }
+            if partition.is_some() && retained["outcome"] == "intent" {
+                return Err(ExecutionError::Uncertain);
+            }
             return Ok(());
         }
         let intent = json!({"kind":"media_stream_close_v1","root":plan.admission_id,"target":target.id,"failed":failed,"outcome":"intent"});
         self.store
             .0
-            .write(
+            .write_fenced(
+                partition,
                 &id,
                 &plan.identity.owner,
                 plan.retained_until,
@@ -90,6 +99,7 @@ impl MediaDelivery {
                 "media_stream_authority_unavailable",
             ),
         });
+        self.store.0.guard_partition(partition).await?;
         let local = self.coordinator.custom.as_ref().map(|custom| {
             let event = super::super::model::delivery_event(plan, target);
             match refusal.as_ref() {
@@ -100,7 +110,8 @@ impl MediaDelivery {
         let outcome = json!({"kind":"media_stream_close_v1","root":plan.admission_id,"target":target.id,"failed":failed || refusal.is_some(),"outcome":local,"content_suppressed":refusal.is_some(),"refusal":refusal});
         self.store
             .0
-            .write(
+            .write_fenced(
+                partition,
                 &id,
                 &plan.identity.owner,
                 plan.retained_until,

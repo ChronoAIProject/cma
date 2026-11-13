@@ -36,6 +36,14 @@ pub(crate) struct Node {
     pub control: Control,
 }
 impl Node {
+    pub async fn claim_effect(
+        &self,
+        plan: &crate::ingress::routing_store::AdmittedPlan,
+        target: &crate::ingress::routing_store::StoredTarget,
+        work_id: &str,
+    ) -> Result<super::partition::PartitionLease, super::Error> {
+        self.partitions.claim_work(plan, target, work_id).await
+    }
     pub fn journal(&self) -> crate::turns::routed::Journal {
         crate::turns::routed::Journal::new(
             self.partitions.store.records.clone(),
@@ -54,6 +62,15 @@ impl Node {
 impl Fixture {
     pub fn keys(&self) -> Arc<MasterKeyRing> {
         self.keys.clone()
+    }
+
+    pub async fn enable_media(&self) {
+        let db = self.admin.database(&self.database);
+        db.run_command(mongo::media_continuations_role(&self.database, false))
+            .await
+            .unwrap();
+        mongo::migrate_media_continuations(&db).await.unwrap();
+        db.run_command(doc! {"grantRolesToUser":"runtime","roles":[{"role":"cma_eg_media_continuations_runtime","db":&self.database}]}).await.unwrap();
     }
 
     pub async fn new() -> Self {
