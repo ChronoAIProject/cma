@@ -80,6 +80,12 @@ pub struct ToolsAdvertisement {
 pub struct BindingResponse {
     pub binding_id: BindingId,
     pub level: ConformanceLevel,
+    #[serde(
+        default,
+        deserialize_with = "super::trace_contract::read_echo",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub capabilities: Vec<String>,
     #[serde(default)]
     pub honoured: Vec<String>,
     #[serde(default)]
@@ -94,6 +100,8 @@ pub struct FieldRefusal {
 
 #[derive(Debug, Clone)]
 pub struct TurnRequest {
+    /// Set only from this binding's retained provider capability acknowledgement.
+    pub nyxid_trace: bool,
     pub timing: Option<crate::telemetry::timing::IngressTiming>,
     pub conversation_id: ConversationId,
     pub input: Vec<Value>,
@@ -115,6 +123,8 @@ pub struct Accepted {
 pub struct TurnStream {
     pub accepted: oneshot::Receiver<Accepted>,
     pub events: mpsc::Receiver<ResponsesEvent>,
+    pub(crate) trace:
+        Option<std::sync::Arc<std::sync::OnceLock<crate::telemetry::turn_trace::Association>>>,
     /// First successful socket write of this attempt, excluding provider processing.
     pub request_started: Instant,
 }

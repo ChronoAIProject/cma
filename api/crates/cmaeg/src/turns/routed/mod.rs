@@ -46,6 +46,7 @@ mod projection_store;
 mod received_message;
 mod received_source;
 pub(crate) use received_source::retained_received_source;
+mod replay_frame;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
@@ -135,6 +136,8 @@ mod expiry_tests;
 mod oversized_frame_tests;
 #[cfg(test)]
 mod projection_store_tests;
+#[cfg(test)]
+mod replay_trace_tests;
 #[cfg(test)]
 mod tool_reply_tests;
 
