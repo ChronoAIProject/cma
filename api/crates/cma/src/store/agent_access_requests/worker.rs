@@ -38,6 +38,17 @@ impl MongoSandboxStore {
         if holder.trim().is_empty() || holder.len() > 128 {
             return Err(AgentAccessError::Invalid);
         }
+        if self
+            .empty_discovery
+            .empty(
+                super::super::empty_discovery::Kind::Access,
+                &self.agent_access_requests,
+                doc! {"record.phase":{"$in":ACTIVE}},
+            )
+            .await
+        {
+            return Ok(None);
+        }
         let now = now_millis();
         let expiry =
             layer2_core::rfc3339_at(std::time::SystemTime::now() - Duration::from_secs(24 * 3600));
@@ -48,7 +59,12 @@ impl MongoSandboxStore {
                     {"$or":[{"record.phase":{"$ne":"pending"}},{"record.created_at":{"$lte":&expiry}}]},
                     {"$or":[{"record.lease":null},{"record.lease.expires_at":{"$lte":now}}]},
                 ],
-            }).sort(doc! {"record.retry_at":1,"record.created_at":1,"_id":1}).session(&mut *session).await? else { return Ok(None); };
+            }).sort(doc! {"record.retry_at":1,"record.created_at":1,"_id":1}).session(&mut *session).await? else {
+                self.empty_discovery.observed(super::super::empty_discovery::Kind::Access, true);
+                return Ok(None);
+            };
+            self.empty_discovery
+                .observed(super::super::empty_discovery::Kind::Access, false);
             let mut record = read(&value)?;
             let revision = record.revision;
             record.revision += 1;

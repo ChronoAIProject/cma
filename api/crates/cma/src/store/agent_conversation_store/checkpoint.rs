@@ -40,16 +40,28 @@ pub(super) async fn load(
     store: &MongoSandboxStore,
     id: &AgentId,
 ) -> Result<Option<AgentMessageCheckpoint>, SandboxStoreError> {
-    let Some(row) = store
+    Ok(load_snapshot(store, id)
+        .await?
+        .and_then(|snapshot| snapshot.checkpoint))
+}
+
+pub(super) async fn load_snapshot(
+    store: &MongoSandboxStore,
+    id: &AgentId,
+) -> Result<Option<layer2_core::sandbox::store::AgentMessageSnapshot>, SandboxStoreError> {
+    store
         .agents
         .find_one(doc! { "_id": id.as_str() })
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-    else {
-        return Ok(None);
-    };
-    read_agent(&row)?;
-    read(&row)
+        .as_ref()
+        .map(|row| {
+            Ok(layer2_core::sandbox::store::AgentMessageSnapshot {
+                agent: read_agent(row)?,
+                checkpoint: read(row)?,
+            })
+        })
+        .transpose()
 }
 
 pub(super) async fn carry(
@@ -250,8 +262,20 @@ pub(in crate::store) async fn write(
         .await
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    super::super::agent_log_segments::ordinary::source(store, current, &row, session).await?;
-    let mut filter = super::super::agent_capacity_recovery::source::envelope_filter(current, &row)
+    write_from_row(store, current, &row, checkpoint, session).await
+}
+
+/// Only use a row read in this transaction whose aggregate has not been mutated.
+/// Publication may change the format/head as well as revision and last_seq.
+pub(in crate::store) async fn write_from_row(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    row: &Document,
+    checkpoint: Option<&AgentMessageCheckpoint>,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), ApplyError> {
+    super::super::agent_log_segments::ordinary::source(store, current, row, session).await?;
+    let mut filter = super::super::agent_capacity_recovery::source::envelope_filter(current, row)
         .map_err(ApplyError::Domain)?;
     filter.insert(
         "record.conversation.last_seq",

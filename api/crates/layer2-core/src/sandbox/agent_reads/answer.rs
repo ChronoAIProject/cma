@@ -17,6 +17,43 @@ enum AnswerAuthority {
 }
 
 impl AgentReadService {
+    pub(in crate::sandbox) async fn require_owned_final_answer(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        sequence: u64,
+    ) -> Result<(), AgentReadError> {
+        let (lineage, held) = self
+            .owner_projection_authority(caller, id, crate::RuntimeCapability::Conversation)
+            .await?;
+        if self
+            .store
+            .agent_log_final_answer(&lineage.agent, sequence)
+            .await
+            .map_err(store_error)?
+            .is_some()
+        {
+            return self
+                .finish_owner_projection(
+                    caller,
+                    id,
+                    &lineage,
+                    held,
+                    crate::RuntimeCapability::Conversation,
+                )
+                .await;
+        }
+        let transcript = self.transcript(caller, id).await?;
+        if transcript.turns.iter().any(|turn| {
+            turn.final_answer()
+                .is_some_and(|answer| answer.sequence == sequence)
+        }) {
+            Ok(())
+        } else {
+            Err(AgentReadError::NotFound)
+        }
+    }
+
     pub async fn final_answer(
         &self,
         caller: &Caller,
@@ -49,6 +86,20 @@ impl AgentReadService {
                     )
                 };
                 require_granted(&agent, crate::RuntimeCapability::Conversation)?;
+                if let Some(evidence) = self
+                    .store
+                    .agent_log_final_answer(&agent, sequence)
+                    .await
+                    .map_err(store_error)?
+                {
+                    let answer = AgentFinalAnswer {
+                        turn_sequence: evidence.turn_sequence,
+                        message: evidence.message,
+                        authority,
+                    };
+                    Box::pin(self.validate_final_answer(&answer)).await?;
+                    return Ok(answer);
+                }
                 let mut budget = 4 * 1024 * 1024;
                 let entry = self.answer_entry(&agent, sequence, &mut budget).await?;
                 if !matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
@@ -170,6 +221,7 @@ impl AgentReadService {
             AnswerAuthority::Shared(held) => Box::pin(self.validate_event_stream(held)).await,
             AnswerAuthority::Personal(caller, original) => {
                 let current = self.owned_lineage(caller, &original.agent.id).await?;
+                require_granted(&current.agent, crate::RuntimeCapability::Conversation)?;
                 if current.agent.created_at != original.agent.created_at
                     || current.sandbox.id != original.sandbox.id
                     || current.sandbox.created_at != original.sandbox.created_at
