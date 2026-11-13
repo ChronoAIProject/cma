@@ -2,6 +2,8 @@
 export const requiredPrefixes = [
   'auth::account_standing::mongo_tests::',
   'store::account_deletions::tests::',
+  'store::budget::',
+  'store::sandbox_unpublished_recovery::mongo_integration_tests::platform_stop::',
   'store::usage_reports::tests::',
   'sandbox::funding::tests::mongo::',
   'usage_billing::tests::',

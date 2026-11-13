@@ -269,6 +269,9 @@ async fn apply_admission(
     if !bootstrap && !sandbox.accepts_creation_admission() {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
     }
+    // Before reuse too: reusing a profile Agent revives a Paused Sandbox, and
+    // revival is refused under a platform stop (contract section 5.1).
+    super::budget::require_open(store, super::budget::now_seconds(), session).await?;
     if let Some(creation) = reuse_profile_agent(
         store,
         admission,

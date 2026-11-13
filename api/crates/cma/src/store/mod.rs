@@ -63,6 +63,7 @@ mod checkpoint_storage;
 mod checkpoints;
 mod child_writer_claims;
 mod codex_subscriptions;
+mod contention;
 mod default_profiles;
 pub mod directory;
 mod durability;
@@ -109,6 +110,7 @@ pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
 mod operator_sandboxes;
+mod platform_write_coordination;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;

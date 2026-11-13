@@ -165,6 +165,19 @@ async fn complete_callback(
             Ok(identity) => identity,
             Err(error) => return provider_failure("identity_resolution_failed", error),
         };
+    // Registration is decided before the subject is persisted or a browser
+    // login is minted (platform spend decision 25). The caller clears the
+    // binding cookie and, as no cookie is set here, cancels the browser login.
+    match auth.admit_registration(&subject).await {
+        Ok(super::super::records::RegistrationDecision::Closed) => {
+            return super::super::records::registration_closed(None)
+        }
+        Ok(_) => {}
+        Err(error) => {
+            tracing::error!(error = %error, "could not read the platform admission state");
+            return store_failure();
+        }
+    }
     let authorization = crate::permissions::capabilities_from_permissions(permission_names);
     match auth.standing.authoritative(&subject).await {
         Ok(false) => {}
