@@ -37,3 +37,9 @@ impl From<TransactionLogError> for ApplyError {
         }
     }
 }
+
+impl From<SandboxStoreError> for ApplyError {
+    fn from(error: SandboxStoreError) -> Self {
+        Self::Domain(error)
+    }
+}

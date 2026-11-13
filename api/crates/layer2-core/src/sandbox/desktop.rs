@@ -28,7 +28,23 @@ pub enum DesktopError {
 pub struct DesktopService {
     reads: Arc<AgentReadService>,
     adapter: Arc<dyn SandboxAdapter>,
-    leases: Mutex<BTreeMap<String, Weak<Mutex<()>>>>,
+    leases: DesktopLeases,
+}
+
+#[derive(Default)]
+struct DesktopLeases(Mutex<BTreeMap<String, Weak<Mutex<()>>>>);
+
+impl DesktopLeases {
+    async fn acquire(&self, sandbox_id: &str) -> Result<OwnedMutexGuard<()>, DesktopError> {
+        let mut leases = self.0.lock().await;
+        leases.retain(|_, value| value.strong_count() > 0);
+        let lease = leases
+            .get(sandbox_id)
+            .and_then(Weak::upgrade)
+            .unwrap_or_default();
+        leases.insert(sandbox_id.to_owned(), Arc::downgrade(&lease));
+        lease.try_lock_owned().map_err(|_| DesktopError::Busy)
+    }
 }
 
 pub struct DesktopConnection {
@@ -70,7 +86,7 @@ impl DesktopService {
         Self {
             reads,
             adapter,
-            leases: Mutex::new(BTreeMap::new()),
+            leases: DesktopLeases::default(),
         }
     }
 
@@ -115,7 +131,11 @@ impl DesktopService {
     }
 
     pub async fn available(&self, caller: &Caller, id: &AgentId) -> Result<(), DesktopError> {
-        self.authorize(caller, id).await.map(|_| ())
+        let (sandbox_id, _) = self.authorize(caller, id).await?;
+        // Discovery makes the old viewer's outstanding lease observable before
+        // a new WebSocket hides its refusal headers. Opening still checks atomically.
+        let _lease = self.leases.acquire(&sandbox_id).await?;
+        Ok(())
     }
 
     pub async fn still_authorized(
@@ -141,10 +161,18 @@ impl DesktopService {
     }
 
     pub async fn close(&self, sandbox_id: SandboxId, session_id: String) {
-        let _ = self
-            .reads
-            .close_sandbox_session(&sandbox_id, &session_id)
-            .await;
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            self.reads.close_sandbox_session(&sandbox_id, &session_id),
+        )
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => tracing::warn!(
+                "desktop session close could not be recorded; awaiting session expiry"
+            ),
+            Err(_) => tracing::warn!("desktop session close timed out; awaiting session expiry"),
+        }
     }
 
     pub async fn open(
@@ -153,16 +181,7 @@ impl DesktopService {
         id: &AgentId,
     ) -> Result<DesktopConnection, DesktopError> {
         let (sandbox_id, runtime_id) = self.authorize(caller, id).await?;
-        let lease = {
-            let mut leases = self.leases.lock().await;
-            leases.retain(|_, value| value.strong_count() > 0);
-            let lease = leases
-                .get(&sandbox_id)
-                .and_then(Weak::upgrade)
-                .unwrap_or_default();
-            leases.insert(sandbox_id.clone(), Arc::downgrade(&lease));
-            lease.try_lock_owned().map_err(|_| DesktopError::Busy)?
-        };
+        let lease = self.leases.acquire(&sandbox_id).await?;
         let connection = tokio::time::timeout(
             Duration::from_secs(10),
             self.adapter
@@ -191,3 +210,7 @@ impl DesktopService {
 fn session_expiry() -> String {
     rfc3339_at(SystemTime::now() + Duration::from_secs(90))
 }
+
+#[cfg(test)]
+#[path = "desktop_lease_tests.rs"]
+mod lease_tests;

@@ -1,9 +1,10 @@
+import { AgentAccessPending } from './agent/AgentAccessPending';
 import { ComputerContext } from './agent/environment/context';
 import { SkeletonRows } from './ui/Skeleton';
-import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
+import { Documents, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
+import { CmaReadScope, useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
@@ -45,6 +46,8 @@ import { useConsoleScope } from './resources/useConsoleScope';
 import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
 import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
+import { useReportOwner } from './usage/metrics/reportOwner';
+import { OperationsRoute } from './operator/OperationsRoute';
 
 export function Console(props: ConsoleProps) {
   return (
@@ -56,6 +59,7 @@ export function Console(props: ConsoleProps) {
 
 function ConsoleContent({
   user,
+  authEpoch = 0,
   route,
   onSignOut,
   onNavigate,
@@ -118,8 +122,9 @@ function ConsoleContent({
     route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
       ? route.agentId
       : undefined;
-  const operator = useOperatorClient();
-  const publisher = usePublisherClient();
+  const operator = useOperatorClient(),
+    publisher = usePublisherClient();
+  const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
   useEffect(() => {
@@ -224,20 +229,7 @@ function ConsoleContent({
     ) : route.kind === 'agent' &&
       client.resourceViews !== undefined &&
       personalAgentId === undefined ? (
-      <section
-        className="console__empty"
-        role={agentAccess.state.status === 'error' ? 'alert' : undefined}
-      >
-        <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
-        {agentAccess.state.status === 'error' ? (
-          <>
-            <p>{agentAccess.state.message}</p>
-            <Button onClick={agentAccess.reload}>Check access again</Button>
-          </>
-        ) : (
-          <SkeletonRows rows={3} label="Opening Agent" />
-        )}
-      </section>
+      <AgentAccessPending state={agentAccess.state} onRetry={agentAccess.reload} />
     ) : route.kind === 'agent' ? (
       <CharacterColorContext value={located?.sandbox.color}>
         <AgentSurface
@@ -308,22 +300,11 @@ function ConsoleContent({
     ) : route.kind === 'marketplace' || route.kind === 'marketplace_profile' ? (
       <LegacyProfileNotice />
     ) : route.kind === 'operations' ? (
-      operator !== undefined && canOpenOperations(user.capabilities) ? (
-        <Suspense
-          fallback={
-            <section className="console__empty" role="status">
-              Loading Operations
-            </section>
-          }
-        >
-          <Operations client={operator} capabilities={user.capabilities} />
-        </Suspense>
-      ) : (
-        <UnavailableView
-          title="Operations unavailable"
-          reason="Operations is for CMA operators. Ask your CMA administrator if you need access."
-        />
-      )
+      <OperationsRoute
+        operator={operator}
+        capabilities={user.capabilities}
+        principal={usagePrincipal}
+      />
     ) : route.kind === 'triggers' || route.kind === 'trigger' || route.kind === 'trigger_embed' ? (
       publisher !== undefined && !user.visitor && user.capabilities.includes('publish_triggers') ? (
         <Suspense
@@ -361,7 +342,7 @@ function ConsoleContent({
         }}
       />
     );
-  return (
+  const frame = (
     <ComputerContext value={computerObservation}>
       <AppFrame
         previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
@@ -496,4 +477,5 @@ function ConsoleContent({
       />
     </ComputerContext>
   );
+  return <CmaReadScope client={client}>{frame}</CmaReadScope>;
 }

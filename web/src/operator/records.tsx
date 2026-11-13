@@ -16,6 +16,7 @@ export interface RecordPage<T> {
 
 export function useRecords<T>(
   load: (cursor: string | undefined, signal: AbortSignal) => Promise<RecordPage<T>>,
+  { retainOnError = true }: { readonly retainOnError?: boolean } = {},
 ) {
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined]);
   const [reload, setReload] = useState(0);
@@ -33,11 +34,15 @@ export function useRecords<T>(
       },
       (error: unknown) => {
         if (!controller.signal.aborted)
-          setState((previous) => ({ ...previous, error: operatorFailure(error), loading: false }));
+          setState((previous) => ({
+            ...(retainOnError ? previous : {}),
+            error: operatorFailure(error),
+            loading: false,
+          }));
       },
     );
     return () => controller.abort();
-  }, [load, cursor, reload]);
+  }, [load, cursor, reload, retainOnError]);
   const refresh = () => {
     setState((previous) => ({ ...previous, error: undefined, loading: true }));
     setReload((value) => value + 1);

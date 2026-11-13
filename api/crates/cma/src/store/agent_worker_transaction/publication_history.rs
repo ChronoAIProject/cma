@@ -113,7 +113,8 @@ pub(super) async fn read(
                 && ((!store.retry_single_marker_enabled && eligible(current, mutation))
                     || repeat && store.retry_audits.recent(current))
             {
-                let proof = trusted_summary(store, current, row, caller, session, false).await;
+                let proof =
+                    Box::pin(trusted_summary(store, current, row, caller, session, false)).await;
                 if proof.is_err() {
                     telemetry::settlement(caller, SettlementRead::ProofError);
                 }
@@ -158,7 +159,7 @@ pub(super) async fn read(
             let audit_at = repeat.then(Instant::now);
             let mut entries = Vec::new();
             let mut last = None;
-            let summary = scan_complete_log_with_session(
+            let summary = Box::pin(scan_complete_log_with_session(
                 caller,
                 store,
                 &current.id,
@@ -171,7 +172,7 @@ pub(super) async fn read(
                     }
                     Ok(())
                 },
-            )
+            ))
             .await?;
             Ok(History {
                 summary,
