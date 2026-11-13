@@ -1426,8 +1426,15 @@ verification and reconnection, without inventing downloads or file percentages.
 
 The Agent conversation independently reads its exact public Sandbox while open,
 using the settled five-second and saving 1.5-second refresh cadence from §16.
-Returning from a hidden tab requires a new foreground observation; an otherwise
-allowed observation expires after ten seconds without a successful refresh.
+Each successful observation remains valid for the next refresh delay plus the
+ten-second request timeout (15 seconds when settled, at most 15.5 seconds during
+readiness backoff). A slow refresh keeps input available within that deadline;
+one transient failure retains the valid observation, while two consecutive
+failures, a timeout beyond the deadline, or an authorization denial hold input.
+Returning from a hidden tab immediately refreshes: a still-valid observation
+remains usable, while an expired observation shows **Checking Sandbox status.**
+until a foreground read succeeds. Revalidation uses **Checking Sandbox resources.**
+for resources; confirmed observation unavailability retains the reconnecting copy.
 Actual saving phases and their recorded start time use the existing composer
 notice. While saving is known, or lifecycle information is missing or stale,
 hold Send and approval decisions without disabling draft editing or hiding
@@ -1912,9 +1919,17 @@ Message-submission progress stays beside the composer; it does not replace the
 recorded Agent state in the header.
 Normal owner or operator stops and resource deletion use the recorded terminal
 state, not an Agent run failed notification. Genuine provider failures remain visible.
-Visible Sandbox detail reads refresh every five seconds while settled,
-and every 1.5 seconds while recorded lifecycle work is in progress. Sidebar
-hierarchy reads start at fifteen seconds and back off to thirty, then sixty
+Visible owner Sandbox and Workspace pages refresh every five seconds while
+settled. Recorded lifecycle work starts at 1.5 seconds; an unchanged observation
+backs off through three and five seconds with ten-percent jitter, then to fifteen
+seconds after two unchanged minutes and thirty seconds after ten. Observed state
+or phase changes, explicit revision/retry and becoming visible reset readiness.
+Failed reads retry after five seconds and preserve the last observation unless
+access is refused. Reads never overlap or admit work. Hidden pages defer refresh
+until visible again. The Agent composer retains its separate 5.5-second maximum
+and its independent lifecycle freshness fence.
+
+Sidebar hierarchy reads start at fifteen seconds and back off to thirty, then sixty
 seconds when the result is unchanged. Any observed change, explicit resource
 refresh or return to visibility restores the fifteen-second cadence; resource
 refresh and return to visibility read immediately. Reads never overlap or admit
@@ -1944,7 +1959,15 @@ After command acceptance, the targeted Sandbox status and open deletion dialog
 may poll every 250ms for ten seconds, then return to 1.5-second progress reads.
 These reads never overlap; failed reads back off to five seconds and report
 uncertainty. Timers never imply completion, and retries retain the original key.
-Every poll refreshes the authorized inventory and mutable Sandbox subtrees.
+Owner Sandbox subtrees refresh when the parent revision or Workspace membership,
+status or counts change, on explicit retry, and at a bounded fifteen-second
+interval while visible. Unchanged child results extend that interval to thirty
+seconds after ten minutes. Agent status, titles and task progress do not appear
+in the parent summary, so stable parent revisions never eliminate child refresh.
+A retained owner view reuses children until their next bounded refresh while the
+parent and access checks revalidate; different accounts or underlying clients
+never share it. Independent inventory and access revalidation keep their own
+cadences.
 Deleted Sandboxes are omitted before fetching their details or descendants,
 including on initial load and explicit refresh. Their retained conversation
 history remains available through direct Agent reads, independently of navigation.
@@ -6320,3 +6343,7 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-12 | Specify capability-gated self-service account deletion, acknowledged CMA-only loss, immediate access revocation and the seven-day live-data deadline, published retention-policy guidance, recorded cleanup progress and same-key recovery, and the restricted Deletion in progress page using existing components. |
 
 | 2026-11-13 | Bound Agent access-request observation by request state, turn activity, durable event hints and visibility. Suspend hidden personal-tree badge reads, share immutable creation-origin categories within a mounted account, and back off unchanged sidebar hierarchy reads from fifteen to sixty seconds while preserving explicit refresh, denial clearing and lifecycle observation. |
+
+| 2026-11-13 | Keep valid composer observations through slow refreshes and short tab switches; bound freshness by poll delay plus request timeout, distinguish revalidation from unavailability, and retain checkpoint, lifecycle and denial fences (#1801). |
+
+| 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
