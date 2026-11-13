@@ -373,6 +373,7 @@ async fn store_context(provider: &ProviderClient, request: LaunchRequest) {
         .start_turn(
             &request.channel.definition.provider.slug,
             TurnRequest {
+                nyxid_trace: false,
                 timing: None,
                 conversation_id: request.conversation_id,
                 input: vec![],

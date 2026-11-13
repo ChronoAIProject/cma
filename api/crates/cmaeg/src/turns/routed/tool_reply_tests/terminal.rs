@@ -102,6 +102,8 @@ async fn explicit_failure_reply_can_settle_when_automatic_final_answers_are_disa
     let raw = serde_json::json!({"type":"response.failed", "response_id":"resp_1",
         "sequence_number":0, "error":{"code":"provider_failed","message":"failed"}});
     let frame = crate::providers::RecoveryEvent {
+        trace_contract: false,
+        trace: None,
         response_id: "resp_1".into(),
         sequence_number: 0,
         event: crate::providers::parse_event(&crate::providers::SseFrame {

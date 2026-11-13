@@ -2752,6 +2752,78 @@ wire shape. Both SDKs accept the optional array. Retaining a nonempty array
 requires compatible channel readers during rollback; the routing audit reports
 this extension and refuses to clear it as a routing-only migration.
 
+### Optional NyxID turn correlation
+
+`CMAEG_NYXID_TURN_TRACE_ENABLED` defaults to `false`. When enabled, the existing
+authenticated `GET /v1/channel-capabilities` includes `nyxid_turn_trace_v1` in
+`source_features`, advertising the installed response reader. The NyxBot binding
+PUT requests `capabilities: ["nyxid_turn_trace_v1"]`. Only an
+authenticated response for that binding with the exact supported capability
+array enables the contract. Missing, null, unknown or malformed echoes leave
+the binding unnegotiated. A rejected PUT remains a rejected PUT; the gateway
+does not retry it with a different body to infer support.
+
+The normalized acknowledgement is retained in the optional
+`ProviderBinding.capabilities` array through the existing channel write. Empty
+capabilities are omitted. Both the process switch and this binding's retained
+acknowledgement are required before native response, snapshot or replay requests
+send `X-NyxID-Turn-Trace-Contract: 1`. Request bodies and execution idempotency
+keys do not contain diagnostic IDs. With the switch disabled, capability
+requests and trace headers are absent and existing wire bodies are unchanged.
+Readers must support the optional provider capability field before writers are
+enabled; routing audit refuses to clear that reader floor while it is retained.
+
+The negotiated reader accepts the version-1 `nyxid_trace` annotation on a
+response snapshot and the ordered metadata event `response.nyxid_trace` for
+that same authenticated response. The annotation has exactly five fields:
+`version: 1`, canonical UUID-v4 `turn_id`, the matching lowercase 32-hex
+`trace_id`, a nonzero lowercase 16-hex `parent_span_id`, and canonical UUID-v4
+`ingress_request_id`. Invalid or conflicting diagnostic data cannot retarget
+execution, replace the first valid association, corrupt a retained execution
+digest, or initiate another send. The event never becomes model output.
+
+For a negotiated binding, different valid UUID-v4 values in response
+`X-NyxID-Trace-Id` and `X-Request-Id` establish the admitted turn and the server
+ingress request respectively. Equal values are a request-scoped fallback and
+establish no turn. Missing, duplicate or malformed values are coverage gaps.
+Headers carry no NyxID parent span: delivery preserves the canonical turn but
+does not invent a remote parent. A later valid full annotation supplies its
+own canonical parent when delivery has not already adopted the header context.
+Admission attempts record their own paired ingress span and, when a turn binds,
+a link to the server-issued request. They never delay headers or the first event
+to obtain a turn.
+
+Live delivery retains the association in its existing per-turn context. Routed
+recovery retains it in the existing encrypted projection, under the existing
+writer fence and expiry. It adds no correlation collection or trace-only
+database operation. Old projections omit the field; malformed optional trace
+metadata is a coverage gap. Only negotiated top-level `nyxid_trace` and
+`response.nyxid_trace` annotation fields are excluded from execution frame
+digests. Output, identity, cursor and all other metadata integrity checks remain
+unchanged, and a stored diagnostic digest mode remains readable after disabling
+the writer.
+
+Enabling the writer raises the rollback reader floor for retained encrypted
+projections as well as channel bindings. Every serving and rollback binary must
+accept the optional projection association and diagnostic digest mode. Clearing
+a binding capability or disabling new tracing does not remove metadata from
+already admitted responses; those responses retain their original source turn
+through the existing recovery, expiry and purge paths. An older binary that
+rejects these projection fields is not a supported rollback target while such
+responses remain retained.
+
+NyxID companion activation is an owner prerequisite. Read-only inspection of
+NyxID at `da70dddc9ad9a8de7026b4319909a6927cd2d3e1` confirms that binding PUT
+accepts generic JSON and ignores additional top-level capabilities; it neither
+persists nor echoes them. This applies to the
+[custom binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/handlers/nyxbot.rs#L4416),
+[ordinary binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/handlers/nyxbot.rs#L4476),
+and [shared-entry binding](https://github.com/ChronoAIProject/NyxID/blob/da70dddc9ad9a8de7026b4319909a6927cd2d3e1/backend/src/services/platform_entry_gateway_service.rs#L412).
+That version therefore remains unnegotiated even if the gateway switch is
+enabled. The CMA reader can ship before the companion; the owner must confirm
+the companion's persisted binding negotiation and response contract before
+activation. This contract does not establish deployed end-to-end coverage.
+
 ### Attachment block in turn input
 
 This subsection is informative: it describes text the gateway writes into

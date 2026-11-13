@@ -129,6 +129,81 @@ fn cancelled_send_is_unknown_and_does_not_inherit_surrounding_fields() {
     assert_eq!(end["schema_version"], 1);
 }
 
+#[tokio::test]
+async fn restarted_worker_uses_retained_parent_and_queued_send_keeps_original_turn() {
+    use crate::telemetry::turn_trace::{scope, Association, AssociationSlot, BoundOperation};
+    use tracing::instrument::WithSubscriber;
+    use tracing::Instrument;
+    use tracing_subscriber::layer::SubscriberExt;
+    let (output, lines) = capture();
+    let original = Association {
+        turn_id: Uuid::new_v4(),
+        parent_span_id: Some(SpanId::fresh()),
+        ingress_request_id: Uuid::new_v4(),
+    };
+    let mut retained = AssociationSlot::default();
+    retained.bind(original);
+    let restored: AssociationSlot =
+        serde_json::from_slice(&serde_json::to_vec(&retained).unwrap()).unwrap();
+    async {
+        let worker = BoundOperation::with_writer(
+            output.writer.clone(),
+            restored.get().unwrap(),
+            Stage::Replay,
+        );
+        let queued = worker.within(async { tracing::Span::current() }).await;
+        let context = scope::context(&queued).unwrap();
+        assert_eq!(context.turn_id, Some(original.turn_id));
+        assert_eq!(context.parent_span_id, original.parent_span_id);
+        assert_eq!(
+            context.ingress_request_id,
+            Some(original.ingress_request_id)
+        );
+        assert_ne!(context.request_id, original.ingress_request_id);
+        worker.finish(Outcome::Completed);
+        let newer = BoundOperation::with_writer(
+            output.writer.clone(),
+            Association {
+                turn_id: Uuid::new_v4(),
+                ..original
+            },
+            Stage::Replay,
+        );
+        newer.finish(Outcome::Completed);
+        async {
+            let parent = scope::context(&tracing::Span::current()).unwrap();
+            assert_eq!(parent.turn_id, Some(original.turn_id));
+            let send = Operation::start(
+                output.writer.clone(),
+                Stage::Platform,
+                Some(parent),
+                Some(0),
+            );
+            send.finish(Outcome::Unknown, Some(502));
+        }
+        .instrument(queued)
+        .await;
+    }
+    .with_subscriber(tracing_subscriber::registry().with(scope::testable_layer()))
+    .await;
+    let records: Vec<_> = (0..8).map(|_| read(&lines)).collect();
+    assert_eq!(
+        records[0]["parent_span_id"],
+        original.parent_span_id.unwrap().to_string()
+    );
+    assert_eq!(records[1]["phase"], "link");
+    assert_eq!(
+        records[1]["ingress_request_id"],
+        original.ingress_request_id.to_string()
+    );
+    assert_eq!(records[0]["span_id"], records[2]["span_id"]);
+    assert_eq!(records[0]["request_id"], records[2]["request_id"]);
+    assert_ne!(records[0]["span_id"], records[3]["span_id"]);
+    assert_eq!(records[6]["parent_span_id"], records[0]["span_id"]);
+    assert_eq!(records[7]["outcome"], "unknown");
+    assert!(lines.try_recv().is_err());
+}
+
 struct Stalled {
     entered: mpsc::Sender<()>,
     release: Arc<(Mutex<bool>, Condvar)>,
