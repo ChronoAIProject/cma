@@ -8,22 +8,42 @@ Environment delivery: #1970. Repository scripts live under
 **Status: local AM×2, EG×2 and Mongo×3 are running; HPA and candidate acceptance gates are pending.**
 The initial integration checkout is `d6fc953a6cb43f8d9c90337b4e4ce17ecb291fbc`.
 Do not label measurements from it as verification of developer-13's forthcoming refreshed candidate.
-Read `evidence/binary-source-sha.txt` and `evidence/image-identity.txt` for the binaries actually installed.
+Read `evidence/deployment-ledger.jsonl` and `evidence/standing-duty-state.json` for live
+source, OCI revision, Docker config ID, running CRI image digest and readiness.
+The Docker config ID and CRI digest are different identities; do not equate them.
+At 2026-11-14 00:30 SGT, a rollout initiated outside this turn had replaced both
+images with separate amd64 builds from the same source. AM/EG remain 2/2 with
+zero restarts, and three TLS readiness probes per service returned 200. The
+00:22 native-arm64 observation remains historical in the ledger. Mongo is 3/3;
+metrics-server was verified 1/1. No authenticated journey baseline is active.
+
+| Service | Current image | Running CRI image digest |
+|---|---|---|
+| AM | `cma-scale-api:amd64-d6fc953a6cb4` | `sha256:9036f557b2bf9f100d1c2b9ca6fccdadc2c9b5c3015476a9ae750fdc33874f9f` |
+| EG | `cma-scale-eg:amd64-d6fc953a6cb4` | `sha256:4621e1eebcf404fa409ad58aea89a3eb2d6d6ff763d9952da20fd6aa4a97c1d0` |
+
+Placement at 00:30 is degraded: both AM pods share one worker, and both EG pods
+share the other. Existing service-wide spread constraints do not rebalance after
+old rollout pods disappear. Earlier placement and native-arm64 measurements do
+not qualify these images or this topology.
 
 ## Isolation and capacity
 
-Use **kind v0.30.0 / Kubernetes v1.34.0, native arm64**. Docker Desktop's VM is arm64,
+Use **kind v0.30.0 / Kubernetes v1.34.0 with arm64 nodes**. Docker Desktop's VM is arm64,
 8 CPUs / 16 GiB; the Mac has 18 CPUs / 128 GiB and approximately 1.5 TiB free.
 Kind gives this task a disposable cluster with its own kubeconfig, independently
 bounded node containers, and two worker scheduling domains without enabling or
-reconfiguring Docker Desktop Kubernetes. There is no amd64 emulation.
+reconfiguring Docker Desktop Kubernetes. The initial application images were
+native arm64. The current amd64 images run through the Docker Desktop host
+translation path; qualify new matched baselines and record architecture. Native
+compilation does not imply native execution on these nodes.
 
 | Component | Count | CPU request / limit each | Memory request / limit each |
 |---|---:|---:|---:|
 | Kind control plane | 1 | Docker cap 2 CPUs | Docker cap 3 GiB |
 | Kind worker | 2 | Docker cap 2 CPUs | Docker cap 3.5 GiB |
-| AM | 2; planned local HPA ceiling 4 | 250m / 500m | 256 MiB / 512 MiB |
-| EG | 2; planned local HPA ceiling 4 | 250m / 500m | 256 MiB / 384 MiB |
+| AM | 2; A2 requires qualification through 5 | 250m / 500m | 256 MiB / 512 MiB |
+| EG | 2; A2 requires qualification through 5 | 250m / 500m | 256 MiB / 384 MiB |
 | Mongo | 3 | 100m / 500m | 384 MiB / 768 MiB |
 | Nginx / Toxiproxy | 1 each | 25m / 200m; 25m / 100m | 32 MiB / 128 MiB each |
 | Metrics server | 1 | 100m / 200m | 200 MiB / 256 MiB |
@@ -31,8 +51,7 @@ reconfiguring Docker Desktop Kubernetes. There is no amd64 emulation.
 | k6 | on demand | Docker cap 0.5 CPU | Docker cap 256 MiB |
 | Rust compilation | on demand | Docker cap 2 CPUs, 2 jobs | Docker cap 5 GiB |
 
-At AM=4/EG=4 the app and database memory limits total 5.75 GiB, plus routing and
-system overhead. The namespace quota bounds requests to 4 CPUs/6 GiB, limits to
+The old max 4 projection does not qualify the A2 max 5 requirement. The namespace quota bounds requests to 4 CPUs/6 GiB, limits to
 9 CPUs/9 GiB, storage requests to 12 GiB and pods to 24. The node containers are a
 second, physical 6 CPU/10 GiB ceiling. Kind reports the Docker VM's nominal
 8 CPU/16 GiB capacity on each node despite these cgroup limits; budget against
@@ -151,6 +170,11 @@ or production resources are imported.
 
 ## Build and deploy the application candidate
 
+The commands in this section describe the initial successful Docker-native build.
+For subsequent integration pushes the lead requires local-env-manager-01's
+build-and-load helper; follow the standing-duty handoff below after its exact
+review and prerequisites are supplied. Do not silently substitute a build path.
+
 Obtain developer-13's ready SHA and the complete applicable review verdict first.
 Refresh the existing integration checkout only when no build is reading it; the
 lead/integrator merges develop into that branch. The local manager does not
@@ -209,32 +233,23 @@ scripts/k get hpa,pdb,deployments
 
 `fixed-1`/`fixed-2` remove only HPAs targeting these two deployments before scaling
 and wait for terminating pods to disappear. Ownership mode remains enabled.
-`auto` deliberately fails until `manifests/hpa-pdb-reviewed.json` exists from
-developer-16's exact reviewed handoff. Preserve HPA CPU targets and stabilization
-policy; localize the namespace and cap maxReplicas at four for this machine.
-Do not silently replace the reviewed policy with a newly invented HPA.
-Record original SHA/file hashes and every local resource/namespace/ceiling override.
-The currently published draft is PR #1968 at
-`594fe05074fb090584a71dbd78174699f4059c29`; its complete PR description says it is
-not merge-ready, and there is no review verdict on GitHub.
-`manifests/hpa-pdb-proposed.json` is a server-dry-run-valid projection only,
-with namespace `cma-scale` and maxReplicas=4. It is NOT installed.
-The draft specifies AM60% / EG200% CPU, +1/60s, 600-second downscale stabilization
-and -1/120s. The lead is resolving that cadence. For EG, 200% of the current
-250m request equals its 500m local limit: reliable scale-up cannot trigger.
-Proposed local adjustment for review is EG request=125m with the 500m limit,
-preserving the draft target while keeping headroom. Apply it to all matched
-cohorts only after the handoff, and rerun the baseline. The installer requires
-`cma.chronoai.dev/review-state: approved` on each exact reviewed object.
-Keep PDB minAvailable=1 for each application; PDBs govern eviction, not forced pod
-deletion or Deployment scale-down.
+The commands above require an approving exact-version execution-tool verdict before a new cohort. The earlier runs are observations, not satisfaction of that process gate. At 00:22 SGT no complete approving verdict was found for the environment bundle in draft PR #1972. The mode script SHA256 is `27ee2b7bb94a18749a04a118a99622b203f4f59ab1e94f5aa9e076be0026f487`; the guarded kubectl wrapper is `f840846e60499fc992e958c3e8075962306d30292153db703918895080d8d8f1`.
 
-The acceptance suite must observe actual HPA growth to at least four, then return
-to two after load removal. Manual `kubectl scale` is not autoscaling evidence.
-The current draft's 600-second downscale stabilization and drain horizon must
-be included in the observation window. Observe aggregate Mongo pool demand,
-worker requests/limits, throttling, OOM and Pending pods at every stage. Stop a
-load run on resource pressure rather than lifting quotas without a new budget.
+The joint developer-17/local-verifier-02 N=1 request is queued, not active. Record the actual cohort start/end and source/configuration hashes before reserving it. After tool approval the environment owner runs `scripts/mode.sh fixed-1`, waits for exactly one Ready pod per service and no terminating pods, and hands off that observation. Do not change the candidate, configuration, resources or ownership-enabled flags during matched cohorts. The lead resolves a conflict between an active cohort and a newly pushed candidate.
+
+`auto` fails until `manifests/hpa-pdb-reviewed.json` exists. The current code also rejects maxReplicas above four; **that guard must be revised and reviewed with a sufficient resource envelope before A2 activation**. Do not set an `approved` annotation yourself to bypass a missing verdict. The older `manifests/hpa-pdb-proposed.json` is an unapplied, superseded A1 projection and must not be used for A2 acceptance.
+
+Developer-16's current PR #1968 head is `c01168ca86348bb8a58d03ba68010c7fe317e1bb`. The complete architect verdict in `/Users/shining/code/work/tech-lead.staff/solution-architect-04/reviews/pr-1968-c01168ca8.md` is **NO-GO pending A2 updates**. Metrics-server is ready; application HPA/PDB remains absent. A2 requires:
+
+- Both services min 2 / max 5; up stabilization 0s, Max(2 pods, 100%)/60s.
+- Down stabilization 300s, one pod/120s with Min selection initially. If qualified drain/handoff p95 exceeds 90s, extend the period to ceil(p95+30s). Missing timing remains a hold; p95 is not a hard process lifetime.
+- Preserve reviewed CPU targets, application PDB minAvailable 1 and AlwaysAllow, and record every namespace/resource override. No HPA/rollout overlap; wait for previous terminations before a rollout.
+
+The present local resource envelope cannot qualify the conservative A2 process bound. If an effective lifetime G = 760s is proven with P = 120s, ceil(G/P) = 7 terminating plus 5 active means 12 processes/service. Application pods alone then request 6 CPU / 6 GiB, limit 12 CPU / 10.5 GiB and consume 24 pods, exceeding current quota before Mongo/routing/runtime/daemon overhead. The two workers are capped at 4 CPU / 7 GiB total. A reviewed capacity revision is required; lowering max 5 to four does not satisfy the requirement. The assumption G = 760s itself needs evidence.
+
+The provisional EG target 200% of its 250m request equals the local 500m limit, so reliable scale-up cannot trigger. EG request 125m with the 500m limit is a proposal for review, not an applied change. Any revised resources must be identical in all matched cohorts, followed by new baselines. Preserve original source SHA and file hashes for the final localized manifests.
+
+Qualify both services through max 5 and observe automatic growth and return to two after load removal. Manual `kubectl scale` is not autoscaling evidence. Include the reviewed 300s stabilization, measured drain/handoff period and actual termination horizon in the observation window. Watch Mongo sockets, worker requests/limits, throttling, OOM, quota and Pending pods. Stop a load run on pressure; do not lift quotas without a revised budget. PDBs govern eviction, not forced deletion or Deployment scale-down.
 
 ## Load and failure tools
 
@@ -307,14 +322,30 @@ Current evidence:
 Outstanding before full-task DONE: refreshed integration candidate,
 developer-16's exact HPA/PDB handoff and verdict, real fixture adapter handoff,
 observed N=1/N=2 and HPA/fault gates, and delivery to all requested peers.
-The guarded peer-send calls to developer-13, developer-16 and local-env-manager-01
-and all five requested runbook recipients were denied on 2026-11-13; the lead must grant the routes or relay the handoffs.
+The original runbook reached local-verifier-02 at 00:07 SGT on 2026-11-14.
+The 00:24 SGT baseline follow-up failed or is uncertain because that recipient
+was WORKING; it was not automatically resent. A new material rollout notice at
+00:32 SGT was delivered using the guarded command's authorized `--force` queue.
+Developer-17 and debugger-03 directed routes were denied at 00:33 SGT. The other original recipient routes also remain unresolved; retain
+exact delivery receipts and ask the lead to relay or repair grants.
 Missing prerequisites are BLOCKED, never PASS.
+
+## Standing-duty build and fixture handoff
+
+The lead owns the monitoring loop. This workspace has no background watcher and does not independently monitor/poll GitHub CI. At each lead tick or pushed-head handoff, compare `git -C source ls-remote origin refs/heads/tl/cma-am-replicas/integration` with the live ledger after `gh auth status --active` confirms `chronoai-shining`. Build only the integrator's exact pushed SHA, including EG topic changes when integrated. Never switch the active GitHub account, rebase or force-push.
+
+Required helper: `/Users/shining/code/work/tech-lead.staff/local-env-manager-01/build-cma-scale-native-load.sh`, SHA256 `e923551842bb3a50138da72ec2950ae2c5e83f28903912a9e671c53bd1081285`. Its complete exact-version review verdict has not been supplied. It requires `cargo-zigbuild`, `zig`, the matching musl Rust target and the shared build-slot wrapper. In this shell the first two are absent and only `aarch64-apple-darwin` is installed. The peer's arm64 attempt failed with `E0463: can't find crate for core` for `aarch64-unknown-linux-musl`; its separate amd64 build subsequently loaded and rolled out successfully around 00:25 SGT. The manager-02 shell still needs the approved prerequisite/PATH handoff to reproduce that build. Do not perform a global toolchain install to bypass it.
+
+Before the next deploy, obtain a reviewed prerequisite/PATH setup, isolate the helper's temp/cache output under this workspace (it creates temp files beside itself), use a bounded task-owned BuildKit worker, and resolve shared build-slot writes outside this workspace. Pin a local copy to the approved helper hash. Supply `CHRONO_BUILD_SHA` and `CHRONO_BUILD` to native compilation, not only Docker packaging. The helper currently applies a full generated apps manifest and waits for exactly two replicas; reconcile current configuration/fixtures first, exclude HPA/rollout overlap and a running baseline, and do not overwrite newer environment state. The helper also needs a verified termination-aware rollout timeout; the current 300s wait can be shorter than the 760s AM grace. These are review inputs, not a claim that the helper is ready.
+
+After a successful new rollout, record each service's source SHA, OCI revision, binary hashes, Docker config ID, actual pod `status.containerStatuses[].imageID`, configuration hash, replica readiness and timestamps in `evidence/deployment-ledger.jsonl`. Confirm both TLS readiness endpoints, Mongo quorum and metrics health, preserving failed checks. Only then notify local-verifier-02, developer-17 and debugger-03 with that exact identity via granted `team.sh peer-send`. A message delivery failure is a handoff blocker; it does not turn a rollout into a failed build. Do not automatically retry a delivery reported as uncertain.
+
+No operational user/browser fixture authentication is available yet. Generated local service client secrets are not user login credentials. Supply approved local identity/provider adapters, runtime/frontend artifacts and fixture claims/grants before authenticated journeys. The reviewed harness should consume short-lived auth through an ignored mode 0600 file or mounted secret, with no credential values in argv, logs, evidence or peer messages. Do not disable authentication or import production credentials. `handoffs/baseline-standing-duty.txt` records the exact current gap and tool hashes; it is a handoff, not a completed baseline reservation.
 
 ## Repository review and current handoff
 
 The environment is tracked by #1970. The scoped source bundle and operational
-runbook are prepared for a draft PR into `tl/cma-am-replicas/integration`, so the
+runbook are in draft PR #1972 into `tl/cma-am-replicas/integration`, so the
 lead can review/integrate them with #1370. This draft is not MERGE READY: HPA/PDB
 approval, the refreshed application candidate, live acceptance fixtures and
 guarded peer delivery remain outstanding. Local syntax, server dry-run, secret
