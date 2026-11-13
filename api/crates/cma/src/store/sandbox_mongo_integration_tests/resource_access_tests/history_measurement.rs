@@ -2,6 +2,8 @@ use super::*;
 use layer2_core::sandbox::{agent_io::*, *};
 use std::time::Instant;
 
+#[path = "history_callers.rs"]
+mod callers;
 #[path = "history_fixture.rs"]
 mod fixture;
 #[path = "history_meter.rs"]

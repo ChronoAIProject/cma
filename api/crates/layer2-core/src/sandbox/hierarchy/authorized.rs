@@ -178,16 +178,16 @@ impl HierarchyReadService {
         let result = timer
             .scope(tokio::time::timeout(
                 std::time::Duration::from_secs(15),
-                self.store.read_sandbox_hierarchy(id),
+                self.store.read_sandbox_detail(id),
             ))
             .await
             .map_err(|_| HierarchyReadError::Unavailable("hierarchy read timed out".into()))
             .and_then(|result| result.map_err(store_error));
         let projected = (|| {
             let record = result?.ok_or(HierarchyReadError::NotFound)?;
-            if record.sandbox.id != *id
-                || record.sandbox.owner != held.snapshot.lineage.sandbox.owner
-                || record.sandbox.created_at != held.snapshot.lineage.sandbox.created_at
+            if record.sandbox().id != *id
+                || record.sandbox().owner != held.snapshot.lineage.sandbox.owner
+                || record.sandbox().created_at != held.snapshot.lineage.sandbox.created_at
             {
                 return Err(corrupt("Sandbox hierarchy crossed its authorized root"));
             }

@@ -35,9 +35,17 @@ pub(in crate::store) fn leaf(agent: &str, incarnation: &str, seq: i64, raw: &[u8
 }
 
 pub(in crate::store) fn incarnation(agent: &layer2_core::sandbox::Agent) -> String {
+    incarnation_fields(agent.id.as_str(), &agent.creation_key, &agent.created_at)
+}
+
+pub(in crate::store) fn incarnation_fields(
+    id: &str,
+    creation_key: &str,
+    created_at: &str,
+) -> String {
     let mut hash = Sha256::new();
     hash.update(b"cma.agent-log.incarnation.v1\0");
-    for value in [agent.id.as_str(), &agent.creation_key, &agent.created_at] {
+    for value in [id, creation_key, created_at] {
         field(&mut hash, value.as_bytes());
     }
     format!("{:x}", hash.finalize())
