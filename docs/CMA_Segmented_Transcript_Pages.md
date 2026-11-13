@@ -35,6 +35,16 @@ complete-log allocation. Legacy histories keep their existing exact fold and
 limits; explicit paging slices that exact result. Legacy optimization flags
 remain default off. Format-2 dispatch always uses certified segmented readers.
 
+The complete legacy fallback retains every row and the exact fold. Mongo proves
+the requested prefix and absence beyond its current committed head in the same
+snapshot, bound to the captured Agent's owner, parentage and incarnation. A
+later committed append may extend that head without changing the requested
+prefix. Core still checks the complete sequence and revalidates authorization
+before release. Stores without this proof retain the independent tail check;
+corrupt or unavailable proof never falls back. This removes a repeated Mongo
+proof, not the full-history allocation or its existing limits, and introduces
+no persistent cache, format, migration or activation switch.
+
 Titles use the certified first task turn and four original points (start,
 owner, last assistant, terminal); the existing exact fold owns title truncation.
 Setup, queued input, steering, and terminal eligibility retain their prior

@@ -145,3 +145,68 @@ errors, or existing checkout/readiness/circuit-breaker gate failures. There are
 no persistent fields, indexes or migrations. API rollout does not stop Sandbox
 runtimes or interrupt a turn that its owner has not stopped. Production rollout
 and the full-hour evidence in #1785 remain release-owner gates.
+
+## Fresh discovery observations
+
+`CHRONO_AGENT_RECONCILIATION_VALIDATION_REUSE_ENABLED` is a strict boolean,
+default `false`. When enabled, the live-Agent query still reads every complete
+candidate document and the hidden lookahead row. It can reuse the parsed
+connection candidate only when the **entire fresh BSON byte sequence** equals a
+previously fully validated row. Revision equality alone is insufficient because
+trigger admission can update a hydration sidecar without advancing the revision.
+The reader, hydration and candidate parser are pure functions of that document;
+adding an external dependency to these functions requires revisiting this reuse.
+
+The process retains at most 1,024 entries, 256 KiB per row, and 16 MiB of charged
+row/candidate/key storage including a conservative fixed reservation for the
+preallocated map and string-allocation overhead. Entries expire 30 seconds after
+validation; hits never extend expiry. Oversize, saturation,
+changed bytes, expiry and restart take the complete parser path. Query/validation
+failure or cancellation clears reusable observations. No borrowed cursor batch
+is retained. Local attachment is checked on every sweep; parent/runtime checks,
+maintenance admission and recovery claims/CAS retain their existing authority.
+This saves decoding/validation work; Mongo scan frequency and consumed bytes stay
+unchanged. `cma_agent_discovery_validation_total` and
+`cma_agent_discovery_validation_seconds` use fixed outcomes; cache bytes and
+entries are exposed as gauges. No Agent IDs or document contents are metric labels.
+
+`CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED` is independent and defaults to `false`.
+It coalesces overlapping discovery requests into one fresh snapshot aggregate
+with bounded pending-population probes. Commands, Sandbox controls, Agent work,
+Sandbox work, Workspace work, bindings, binding conversations, Agent access and
+launches keep separate results. Supersets include future-ready and leased work;
+any possible pending work takes the ordinary query and validation/claim path.
+The failed-binding recovery predicate is included, and disabling new admission
+does not suppress already accepted work.
+
+There is **no absence TTL or change to scheduler cadence**. Requests that arrive
+after a batch starts IO form a new batch. A single request bypasses probing.
+Each batch verifies collection presence and preserves the command reader's
+mandatory index hint. At most 16 requests queue per batch and two probe batches
+run concurrently; excess, errors and timeouts fall through to normal discovery.
+The aggregate has a 25 ms server time limit and each caller waits at most
+50 ms for coordination, subject to executor scheduling. A late probe retains its
+slot until the driver completes; callers immediately resume ordinary discovery
+without waiting for that cleanup. Two stalled probes disable extra probing.
+Positive/failed probes suppress further extra probes for
+30 seconds while ordinary discovery continues at its existing cadence. No mutex
+spans IO. Cancellation drops the caller's interest; at most two probes retain IO
+slots until completion, and runtime shutdown cancels their tasks. No recurring task or
+unbounded waiter map is introduced.
+
+Existing admission notifications and timers remain responsible for wakes. A
+remote/missed wake is rediscovered on the existing scheduler interval (250 ms for
+commands; the existing intervals for the other workers), plus normal scheduling
+and query time and at most the probe wait above. Cursor continuation, newly due
+records and lease expiry take ordinary discovery when a pending population
+exists. Batched emptiness replaces only the participating request, never a later
+tick. `cma_empty_discovery_total`, `cma_empty_discovery_batches_total`,
+`cma_empty_discovery_probe_seconds` and `cma_empty_discovery_batch_requests` expose
+fixed worker/outcome labels, failures, savings and overhead.
+
+Both switches require a separate owner activation decision. Compare scan and
+validation counters, cache memory, process CPU, checkout wait/hold, foreground
+request tails and durable work completion under empty, mixed and busy loads.
+Disable the affected switch if work latency, recovery, errors or request tails
+regress; no data migration or persisted format rollback is needed. Local
+measurements do not complete #1421 production or multi-replica acceptance.
