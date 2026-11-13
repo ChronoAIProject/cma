@@ -73,6 +73,7 @@ pub(super) async fn attempt<T>(
                 tracing::info!(
                     event = "eg_admission_response",
                     public_status = problem.status,
+                    public_code = %problem.code,
                     "Admission returned a refusal"
                 );
             }
