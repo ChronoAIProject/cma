@@ -1103,6 +1103,8 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_SERVER_RATE_CONTROL_ENABLED` | Strict boolean, default `false`. Separately activates the independent recovery/control policy; while false, prior Create/Input classification and shared keys are preserved. |
 | `CHRONO_SERVER_RATE_DEFAULT_LEASE_ENABLED` | Strict boolean, default `false`. Separately opts Default requests into prepaid Mongo credits: 10-second leases, at most `max(1, per_minute / 20)` credits, and 16,384 tracked keys per process. Create, Input, Control, admission, and health policies are unchanged. See [prepaid Default budgets](CMA_Response_Input_Rate_Policy.md#prepaid-default-budgets) for guarantees, metrics, and rollback. |
 | `CHRONO_SERVER_RATE_CONTROL_PER_MINUTE` | Independent per-subject Control budget/burst; default 120, positive integer. Protects recovery and controls of admitted work after the Create allowance is exhausted. |
+| `CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED` | Strict boolean, default `false`. Enables local live/head wakes for Agent Events v2 after durable catch-up. |
+| `CHRONO_AGENT_EVENT_STREAM_FALLBACK_POLL_MS` | Strict integer milliseconds, 100 through 4294967295; default 1000. Maximum wait before a fallback check begins when event wakes are enabled. |
 | `CHRONO_PUBLIC_STREAM_LIMIT` | Concurrent public stream request/body lifetimes per process; strict 0..4096, default 0/off. See [public stream admission](CMA_Public_Stream_Admission.md); this is not a decoded-memory or fleet-capacity bound. |
 | `CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED` | Strict default-off hosted output backpressure; requires retained ACK support. See [hosted update backpressure](CMA_Hosted_Update_Backpressure.md). |
 | `CHRONO_USAGE_BILLING_ENABLED` | Default false. Enables durable delivery of recorded Sandbox resource-time to NyxID's existing Lago organization; metering remains active when false. |
@@ -2225,6 +2227,8 @@ runtime hold diagnostics, with no public metrics endpoint.
 | --- | --- | --- |
 | `cma_public_streams_active` | `stream_kind` | Gauge of successful SSE response bodies still open, including bodies waiting for consumer reads. Ends at EOF or drop. |
 | `cma_public_stream_polls_total` | `stream_kind`, `outcome` | Refreshes of stream state; `quiet` has no new projected frames, `output` queues new frames, `failed` includes failed or cancelled refreshes. |
+| `cma_agent_event_stream_wakes_total` | `source` | Wake sources: `live`, `head`, `fallback`, `authorization`. Only enabled event-driven tails emit these counters. |
+| `cma_agent_event_stream_delivery_lag_seconds` | none | Histogram from local live-fragment publication to SSE yield, including consumer backpressure; coalesced frames retain the oldest publication time. This excludes provider generation and browser rendering. |
 | `cma_agent_log_scans_total` | `outcome` | Attempts to validate a complete captured Agent log, classified as `success` or `failed` (including cancellation). |
 | `cma_agent_log_scan_documents_total` | `outcome` | Documents consumed by those validation attempts, including the offending document on validation failure. |
 | `cma_agent_log_scan_bytes_total` | `outcome` | Encoded BSON document bytes consumed by those validation attempts, excluding reply/batch envelopes. |
@@ -2678,3 +2682,38 @@ Rollback sets `CHRONO_ACTIVITY_ASYNC_ENABLED=false` and restarts through the
 reviewed release route. Normal restart drains the old queue first; no data repair
 is needed. The stated deadline and crash loss boundary still apply if Mongo is
 unavailable during rollback.
+
+### Agent Events v2 local wake rollout
+
+`CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED=false` preserves the existing 100 ms
+polling loop. When enabled, caught-up streams wait on local live fragments,
+content-free durable head hints, the authorization deadline, and a fixed fallback
+timer. Each unchanged fallback performs one current authorization snapshot and
+no log reads or tail probes. Changed head, turn or runtime generation retains
+the existing replay and tail integrity proofs before live delivery. Each live
+batch has one current authorization snapshot; durable frames retain their
+individual release checks. Authorization failures close the stream.
+
+Successful recorder output commits that append events or close turns publish
+local hints, including capacity and reopen commits. Checkpoint-only live updates
+use the live channel. Command-worker turn starts, other writers, lost hints and
+other API replicas rely on fallback. Hints contain no event data and never grant
+authority. There is no cross-replica live forwarding in this change. The default
+fallback is 1000 ms (minimum 100 ms); database IO adds to discovery/delivery time.
+Live traffic cannot postpone the fixed fallback deadline.
+
+Deploy with the switch off, then activate through the release owner. Compare
+fixed-source wake counts, quiet/output poll counts, delivery-lag distributions
+and per-stream Mongo commands before and after activation during natural active
+turns. With the transactional authorization snapshot, one unchanged fallback is
+three Mongo commands: at the default interval, 100 idle streams imply about 300
+commands/s before IO time. This is not the shared-head target of 100 commands/s
+in #1475. Idle log work stays zero as history grows; authorization snapshots are
+per stream. Deployment measurements must establish the actual command rate and
+client-visible latency; the local delivery histogram does not measure UI E2E.
+
+Rollback by setting the same image's switch to `false` and rolling API replicas.
+Existing streams reconnect with their last durable cursor under the unchanged
+SSE contract. Sandbox state and ongoing turns do not change. Reordered live
+fragments, live delivery preceding durable catch-up, or delayed revocation
+closure are rollback signals.
