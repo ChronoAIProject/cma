@@ -65,7 +65,11 @@ README.md
 .dockerignore
 ```
 
-Adding any other root-level file or directory is a CI failure. Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, or the SDK it governs.
+Adding any other root-level file or directory is a CI failure. Explicit operator stage patches live in `.github/agent-log-stages/`; their approval
+packet is [CMA Agent-log activation](docs/CMA_Agent_Log_Activation.md). They are
+operator inputs, not additional deployed resources or automatic CI actions.
+
+Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, or the SDK it governs.
 
 `sdk/` contains repository-only client SDKs. Each immediate subdirectory is one
 self-contained package, with its own manifest, toolchain configuration, lockfile,

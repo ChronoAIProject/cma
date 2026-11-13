@@ -6,6 +6,9 @@ and data-changing operation. Implementation and merge do not authorize execution
 Deployment engineers execute approved changes through the reviewed release
 controller. The implementation owner performs no production activation.
 
+The four exact selector-stage patches live in `.github/agent-log-stages/`.
+They are explicit operator inputs, not automatically applied deployment manifests.
+
 ## Release record required before approval
 
 Bind this packet to the merged source, immutable API and runtime image digests,
@@ -102,7 +105,7 @@ never a pass. The owner may tighten these proposed thresholds before execution.
 
 ## Rollback and evidence retention
 
-For fleet rollback, the release controller applies `off.json` and rolls the same
+For fleet rollback, the release controller applies `.github/agent-log-stages/off.json` and rolls the same
 qualified API image after checking Deployment overrides. It clears both selection
 modes and closes new process admission. Preserve quarantine and all trusted
 metadata. The patch alone does not change running processes. Optional reader
