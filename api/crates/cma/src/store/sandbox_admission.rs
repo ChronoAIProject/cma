@@ -133,7 +133,13 @@ where
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
-    super::budget::require_open(store, super::budget::now_seconds(), session).await?;
+    super::budget::require_open(
+        store,
+        super::budget::now_seconds(),
+        admission.admission_cause(),
+        session,
+    )
+    .await?;
     let mut sandbox = admission.sandbox.clone();
     sandbox.name = choose_name(store, session, owner, &admission.name).await?;
     let prepared_outcome = if admission.binding.is_none() {

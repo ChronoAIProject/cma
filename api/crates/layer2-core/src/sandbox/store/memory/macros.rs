@@ -7,7 +7,7 @@ macro_rules! create_record {
             return Err(SandboxStoreError::Duplicate);
         }
         $state.$collection.insert($id, $record);
-        Ok(())
+        Ok::<(), SandboxStoreError>(())
     }};
 }
 
@@ -24,6 +24,6 @@ macro_rules! save_record {
             return Err(SandboxStoreError::Conflict);
         }
         $state.$collection.insert($id, $record);
-        Ok(())
+        Ok::<(), SandboxStoreError>(())
     }};
 }
