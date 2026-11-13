@@ -353,6 +353,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         } else {
             WorkRetryFailure::Transient
         }),
+        AdapterError::NativeClaimNotReady(_) => {
+            WorkerFailure::retryable("native claim is not ready; original identity retained")
+        }
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
         }
@@ -465,5 +468,24 @@ fn safe_detail(detail: &str) -> String {
         "lifecycle operation failed".into()
     } else {
         filtered
+    }
+}
+
+#[cfg(test)]
+mod claim_guard_tests {
+    use super::*;
+    use layer3_adapter::agent_sandbox::NativeClaimGuardReason;
+
+    #[test]
+    fn readiness_guard_remains_retryable_without_replacement_authority() {
+        for reason in [
+            NativeClaimGuardReason::TimedOut,
+            NativeClaimGuardReason::CrashLoop,
+            NativeClaimGuardReason::Restarting,
+        ] {
+            let failure = adapter_failure(AdapterError::NativeClaimNotReady(reason));
+            assert!(failure.retryable);
+            assert_eq!(failure.retry_kind(), WorkRetryFailure::Transient);
+        }
     }
 }
