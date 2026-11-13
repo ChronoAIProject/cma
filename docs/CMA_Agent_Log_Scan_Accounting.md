@@ -237,6 +237,16 @@ observer, then verify whole-request Agent/tab/send/interrupt latency, scan failu
 and publication retry rates, pool/hold/runtime telemetry and probes. Activation
 and rollback remain governed by the operations procedure above.
 
+The integration repeat at `54c2a1594` passed 25 targeted unit tests and all six
+Mongo tests after strict Clippy and formatting. All work and query counts stayed
+equal. Paired cooperative-owned driver-poll p95 was 9.71/6.51 ms versus
+0.084/0.092 ms raw; mean scan time was 709.53 versus 559.42 ms (-21.15%).
+The host was noisier: section p99 was 48.87/36.72 ms owned and 30.11/14.91 ms
+raw. Checkout p99 was 1.848/2.492 ms owned and 1.427/1.416 ms raw. Both runs
+support removing the batch-copy cost, but the varying tails and effect size
+reinforce the production and hard-bound limitations. The same artifact retains
+all eight integration-repeat round summaries and their exact source commit.
+
 Runtime-loss recovery (`CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED`, default
 `false`) rejects stale Sandbox/Agent observations before reading logs. Ineligible
 requests therefore no longer discover unrelated log corruption; eligible recovery
