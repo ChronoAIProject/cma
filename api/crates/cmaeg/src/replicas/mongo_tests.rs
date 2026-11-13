@@ -7,6 +7,9 @@ use super::{
 use crate::ingress::routing_store::AdmittedPlan;
 use std::time::{Duration, Instant};
 
+#[path = "mongo_admission_tests.rs"]
+mod admission;
+
 async fn plan() -> AdmittedPlan {
     let (_server, mut plan) = super::partition_tests::plan().await;
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
@@ -57,7 +60,10 @@ async fn independent_mongo_queue_replay_takeover_and_stale_mutation_fences() {
         nodes[0].partitions.enqueue(&plan),
         nodes[1].partitions.enqueue(&plan)
     );
-    assert!(a.is_ok() || b.is_ok());
+    assert!(
+        a.is_ok() && b.is_ok(),
+        "both duplicate admissions require custody: {a:?}, {b:?}"
+    );
     nodes[2].partitions.enqueue(&plan).await.unwrap();
     nodes[2].partitions.enqueue(&later).await.unwrap();
     let id = partition_id(
@@ -107,6 +113,10 @@ async fn independent_mongo_queue_replay_takeover_and_stale_mutation_fences() {
     drop(nodes[owner].worker.take());
     let started = Instant::now();
     let (successor, next) = claim(&nodes, &plan).await;
+    println!(
+        "replica_timing family=partition takeover_ms={}",
+        started.elapsed().as_millis()
+    );
     assert_ne!(owner, successor);
     assert!(started.elapsed() < Duration::from_secs(30));
     assert!(next.token.epoch > stale.token.epoch);
@@ -234,6 +244,7 @@ async fn mongo_balances_twenty_partitions_through_two_four_two_members() {
             owned[owner] += 1;
             nodes[owner].partitions.release(&token).await.unwrap();
         }
+        println!("replica_placement members={count} counts={owned:?}");
         assert!(owned.iter().all(|count| *count > 0));
         assert!(owned.iter().max().unwrap() - owned.iter().min().unwrap() <= 1);
     }
@@ -260,5 +271,119 @@ async fn mongo_protocol_floor_rejects_mode_off_and_split_deployment_after_activa
         Err(Error::Corrupt)
     );
     drop(node);
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn mongo_native_bot_epoch_refuses_old_checkpoint_and_rotated_source() {
+    use crate::discord::{journal_fixture, DurableJournal, GatewayError, NativeDiscordJournal};
+    use cmaeg_core::seal::seal_blob;
+    use std::sync::Arc;
+    let fixture = Fixture::new().await;
+    let nodes = vec![fixture.node(1).await, fixture.node(2).await];
+    let upstream = journal_fixture::Fixture::new().await;
+    let mut channel = journal_fixture::definition();
+    let records = &nodes[0].partitions.store.records;
+    let keys = &nodes[0].partitions.store.keys;
+    let blob = seal_blob(keys, &serde_json::to_vec(&channel.to_blob_json()).unwrap()).unwrap();
+    records
+        .put_expiring(
+            &channel.record_id,
+            &channel.owner.subject,
+            &blob,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let acquire = |index: usize| {
+        let node = &nodes[index];
+        let api = upstream.api.clone();
+        let record = channel.record_id.to_string();
+        async move {
+            DurableJournal::acquire_replicated(
+                node.partitions.store.records.clone(),
+                node.partitions.store.keys.clone(),
+                &record,
+                api,
+                Arc::new(crate::turns::observer::NoopObserver),
+                Default::default(),
+                &node.partitions.membership,
+            )
+            .await
+        }
+    };
+    let owner = acquire(0).await.unwrap();
+    owner.authorize_connection(None).await.unwrap();
+    let ready = crate::discord::Dispatch {
+        name: "READY".into(),
+        sequence: 0,
+        data: serde_json::json!({"session_id":"fixture-session","resume_gateway_url":"wss://gateway.discord.gg/","user":{"id":"77","bot":true}}),
+    };
+    let checkpoint = crate::discord::Checkpoint {
+        session_id: "fixture-session".into(),
+        resume_url: "wss://gateway.discord.gg/?v=10&encoding=json".into(),
+        sequence: 0,
+    };
+    owner.admit(&checkpoint, &ready).await.unwrap();
+    assert!(matches!(acquire(1).await, Err(GatewayError::Authority)));
+    owner.renew().await.unwrap();
+    // No heartbeat task owns this journal: model abrupt loss immediately after
+    // renewal, then use an independent authenticated receiver for takeover.
+    let started = Instant::now();
+    let successor = loop {
+        match acquire(1).await {
+            Ok(journal) => break journal,
+            Err(GatewayError::Authority) => {}
+            Err(error) => panic!("native takeover failed: {error:?}"),
+        }
+        assert!(started.elapsed() < Duration::from_secs(30));
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    assert!(started.elapsed() < Duration::from_secs(30));
+    println!(
+        "replica_timing family=native_discord_source takeover_ms={}",
+        started.elapsed().as_millis()
+    );
+    assert_eq!(owner.renew().await, Err(GatewayError::Authority));
+    assert_eq!(owner.release().await, Err(GatewayError::Authority));
+    assert_eq!(
+        owner.admit(&checkpoint, &ready).await,
+        Err(GatewayError::Authority)
+    );
+    assert!(successor.checkpoint().await.unwrap() == Some(checkpoint));
+    channel.secrets.discord_bot_token = Some(cmaeg_core::channel::Secret::new(
+        uuid::Uuid::new_v4().to_string(),
+    ));
+    let blob = seal_blob(keys, &serde_json::to_vec(&channel.to_blob_json()).unwrap()).unwrap();
+    records
+        .put_expiring(
+            &channel.record_id,
+            &channel.owner.subject,
+            &blob,
+            Some(1),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(successor.renew().await, Err(GatewayError::Authority));
+    let stale_source_write = nodes[0]
+        .partitions
+        .store
+        .write(
+            &uuid::Uuid::new_v4().to_string(),
+            &channel.owner.subject,
+            &serde_json::json!({"kind":"stale_source_ack"}),
+            super::store::Write {
+                channel: Some((channel.record_id.to_string(), 1)),
+                retained_until: Some(time::OffsetDateTime::now_utc().unix_timestamp() + 60),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert_eq!(stale_source_write, Err(Error::Lost));
+
+    drop(nodes);
     fixture.cleanup().await;
 }
