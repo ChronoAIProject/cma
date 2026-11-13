@@ -22,10 +22,10 @@ class BrowserWatchdogTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
 
-    def run_child(self, source, timeout=1, grace=1):
+    def run_child(self, source, timeout=1, grace=1, **startup):
         smoke.run_browser([sys.executable, "-c", source], cwd=self.root,
                           env=os.environ.copy(), evidence=self.root,
-                          timeout=timeout, grace=grace)
+                          timeout=timeout, grace=grace, **startup)
 
     def evidence(self):
         return json.loads((self.root / "browser-process.json").read_text())
@@ -112,6 +112,94 @@ raise SystemExit(STATUS)
             smoke.run_browser([str(self.root / "missing-executable")], cwd=self.root,
                               env=os.environ.copy(), evidence=self.root, timeout=1)
         self.assertFalse((self.root / "browser-process.json").exists())
+
+    def test_slow_start_gets_a_full_execution_budget(self):
+        self.run_child("""
+from pathlib import Path
+import time
+time.sleep(.6)
+Path('ready.json').write_text('{}')
+while not Path('ready.armed.json').exists(): time.sleep(.01)
+time.sleep(.1)
+""", timeout=.4, startup_timeout=3, ready_file=self.root / "ready.json")
+        result = self.evidence()
+        self.assertGreaterEqual(result["startup_seconds"], .6)
+        self.assertLess(result["execution_elapsed_seconds"], .4)
+        self.assertIsNotNone(result["execution_armed_at"])
+        self.assertFalse(result["timed_out"])
+        self.assertTrue(result["cleanup_complete"])
+
+    def test_execution_timeout_is_measured_from_readiness(self):
+        with self.assertRaises(subprocess.TimeoutExpired) as error:
+            self.run_child("""
+from pathlib import Path
+import time
+time.sleep(.6)
+Path('ready.json').write_text('{}')
+while True: time.sleep(.01)
+""", timeout=.3, startup_timeout=3, ready_file=self.root / "ready.json")
+        result = self.evidence()
+        self.assertEqual(error.exception.timeout, .3)
+        self.assertEqual(result["timeout_phase"], "execution")
+        self.assertGreaterEqual(result["startup_seconds"], .6)
+        self.assertGreaterEqual(result["execution_elapsed_seconds"], .3)
+        self.assertFalse(result["process_cleanup"]["remaining"])
+
+    def test_never_ready_flushes_evidence_without_arming_execution(self):
+        # Stale markers must not arm this run, even if an earlier run succeeded.
+        (self.root / "ready.json").write_text('{}')
+        (self.root / "ready.armed.json").write_text('{}')
+        with self.assertRaises(subprocess.TimeoutExpired) as error:
+            self.run_child("""
+from pathlib import Path
+import signal, time
+def stop(*_):
+    Path('startup-artifact').write_text('retained')
+    raise SystemExit(0)
+signal.signal(signal.SIGINT, stop)
+while True: time.sleep(.01)
+""", timeout=.1, startup_timeout=.6, ready_file=self.root / "ready.json")
+        result = self.evidence()
+        self.assertEqual(error.exception.timeout, .6)
+        self.assertEqual(result["timeout_phase"], "startup")
+        self.assertIsNone(result["execution_elapsed_seconds"])
+        self.assertIsNone(result["execution_armed_at"])
+        self.assertFalse((self.root / "ready.armed.json").exists())
+        self.assertEqual((self.root / "startup-artifact").read_text(), 'retained')
+        self.assertTrue(result["cleanup_complete"])
+        self.assertFalse(result["forced_kill"])
+
+    def test_never_ready_unresponsive_runner_is_killed(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.run_child("""
+import signal, time
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+while True: time.sleep(.01)
+""", grace=.1, startup_timeout=.6, ready_file=self.root / "ready.json")
+        result = self.evidence()
+        self.assertEqual(result["timeout_phase"], "startup")
+        self.assertTrue(result["forced_kill"])
+        self.assertTrue(result["cleanup_complete"])
+        self.assertFalse(result["process_cleanup"]["remaining"])
+
+    def test_exit_before_readiness_cannot_pass(self):
+        for status in (0, 7):
+            with self.subTest(status=status), self.assertRaises(subprocess.CalledProcessError):
+                self.run_child(f"raise SystemExit({status})", startup_timeout=3,
+                               ready_file=self.root / "ready.json")
+            result = self.evidence()
+            self.assertEqual(result["returncode"], status)
+            self.assertIsNone(result["execution_armed_at"])
+            self.assertTrue(result["cleanup_complete"])
+            self.assertFalse(result["process_cleanup"]["remaining"])
+
+    def test_startup_requires_both_a_marker_and_a_positive_bound(self):
+        invalid = [{"startup_timeout": 1}, {"ready_file": self.root / "ready.json"}]
+        invalid.extend({"ready_file": self.root / "ready.json", "startup_timeout": value}
+                       for value in (0, -1, float('inf'), float('nan')))
+        for options in invalid:
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.run_child("pass", **options)
 
 
 if __name__ == "__main__":
