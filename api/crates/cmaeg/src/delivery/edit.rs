@@ -171,7 +171,15 @@ impl Sender {
         } else {
             Capabilities::telegram()
         };
-        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        // Native Telegram updates returned above; this remaining card path is
+        // authenticated as either a Lark card or a Telegram relay card.
+        let commonmark = !lark && self.relay.commonmark_for_platform(Platform::Telegram);
+        let (parts, mut rendering) = if commonmark {
+            let (part, report) = RelayText.whole_with_commonmark(message, &capabilities, true);
+            (vec![part], report)
+        } else {
+            RelayText.render(message, &capabilities)
+        };
         if lark {
             let render = if native_form {
                 crate::interactions::lark::render_form
@@ -272,7 +280,13 @@ impl Sender {
                 .await
         } else {
             self.relay
-                .edit(key, &destination, &parts[0].text, &prepared.markup)
+                .edit_with_commonmark(
+                    key,
+                    &destination,
+                    &parts[0].text,
+                    &prepared.markup,
+                    commonmark,
+                )
                 .await
         };
         let mut result = IntentReceipt {
@@ -345,11 +359,16 @@ impl Sender {
         let Some(key) = ctx.channel.definition.secrets.channel_key.as_ref() else {
             return unsupported();
         };
-        let (part, rendering) =
-            RelayText.whole(message, &Capabilities::relay(destination.platform));
+        let commonmark = self.relay.commonmark_for_platform(destination.platform);
+        let (part, rendering) = RelayText.whole_with_commonmark(
+            message,
+            &Capabilities::relay(destination.platform),
+            commonmark,
+        );
         if part.text.is_empty()
-            || text_limit(destination.platform)
-                .is_none_or(|limit| part.text.encode_utf16().count() > limit)
+            || (!commonmark
+                && text_limit(destination.platform)
+                    .is_none_or(|limit| part.text.encode_utf16().count() > limit))
         {
             return refused(
                 rendering,
@@ -383,11 +402,12 @@ impl Sender {
         };
         let delivery = self
             .relay
-            .edit_text(
+            .edit_text_with_commonmark(
                 key,
                 &reference.platform_message_id,
                 &destination.outbound_message_id,
                 &part.text,
+                commonmark,
             )
             .await;
         if let DeliveryOutcome::RateLimited { retry_after } = delivery {

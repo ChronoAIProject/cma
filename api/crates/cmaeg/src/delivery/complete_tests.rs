@@ -5,6 +5,7 @@ use super::{
     relay_client::{RelayClient, RelayTransport, REQUEST_MAX_BYTES},
     send::{SendContext, Sender},
 };
+mod commonmark;
 mod destinations;
 mod durable;
 mod native_lark_control_tests;
