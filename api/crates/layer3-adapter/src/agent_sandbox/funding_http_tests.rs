@@ -50,13 +50,19 @@ async fn funding_deadline_is_uid_and_version_fenced_and_retains_home() {
 async fn funding_expired_generation_cannot_be_extended() {
     let (request, mut object) = object();
     object["spec"]["shutdownTime"] = json!("2020-01-01T00:00:00Z");
+    object["spec"]["shutdownPolicy"] = json!("Retain");
     let fixture = Fixture::start(vec![(200, object.clone())]).await;
-    assert!(fixture
+    let error = fixture
         .client
         .set_runtime_deadline(&handle(&object), &request, until())
         .await
-        .is_err());
-    assert_eq!(fixture.calls.lock().unwrap().len(), 1);
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("expired runtime generation cannot be extended"));
+    let calls = fixture.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].0.starts_with("GET "));
 }
 #[tokio::test]
 async fn funding_conflict_missing_runtime_and_unconfirmed_patch_fail_closed() {
