@@ -185,7 +185,10 @@ async fn native_create_retry_delayed_assignment_keeps_deadline_provenance() {
         let stored = h.stored(&created.id).await;
         // 100 ms responses finish before the last interval's deadline. A 400 ms
         // response is still in flight at expiry and must use ordinary scheduling.
-        assert_eq!(stored.work.ready_at, rfc3339_at(now + Duration::from_secs(due_seconds)));
+        assert_eq!(
+            stored.work.ready_at,
+            rfc3339_at(now + Duration::from_secs(due_seconds))
+        );
         assert_eq!(stored.work.attempts, 1);
         let home = stored.lifecycle.home.as_deref().unwrap();
         let native = home.native_pool.as_ref().unwrap();
