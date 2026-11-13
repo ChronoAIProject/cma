@@ -18,6 +18,13 @@ fn pending() -> serde_json::Value {
         "tracking_started_at":null,"warnings":[],"source_health":"pending","summary":null,
         "poll_url":format!("/api/v1/admin/usage/metrics/reports/{id}"),"retry_after_seconds":2}})
 }
+#[test]
+fn resource_extensions_prevent_route_absence_fallback() {
+    let error = Error::from_http_problem(404, None, None, br#"{"reason":"concealed"}"#);
+    assert!(!view_unavailable(&error));
+    let absent = Error::from_http_problem(404, None, None, b"");
+    assert!(view_unavailable(&absent));
+}
 #[tokio::test]
 async fn latest_usage_uses_dedicated_route_and_refuses_mixed_scope_without_polling() {
     let server = WireServer::new().await;

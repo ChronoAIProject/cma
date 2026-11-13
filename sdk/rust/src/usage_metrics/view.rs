@@ -86,8 +86,9 @@ pub fn view_unavailable(error: &Error) -> bool {
             Error::Api {
                 status: 404,
                 code: None,
+                extensions,
                 ..
-            }
+            } if extensions.is_empty()
         )
 }
 impl UsageMetrics<'_> {

@@ -86,6 +86,7 @@ it('allows compatibility fallback only for explicit feature or route absence', (
   expect(isUsageViewUnavailable(new ApiError(404, 'route missing'))).toBe(true);
   for (const error of [
     new ApiError(404, 'resource', 'not_found'),
+    new ApiError(404, 'resource', undefined, undefined, undefined, { reason: 'concealed' }),
     new ApiError(403, 'denied'),
     new ApiError(503, 'busy'),
     new ApiError(501, 'other', 'different'),

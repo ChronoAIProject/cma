@@ -30,7 +30,9 @@ export function isUsageViewUnavailable(error: unknown): boolean {
   return (
     error instanceof ApiError &&
     ((error.status === 501 && error.code === 'report_view_disabled') ||
-      (error.status === 404 && error.code === undefined))
+      (error.status === 404 &&
+        error.code === undefined &&
+        Object.keys(error.extensions).length === 0))
   );
 }
 export function latestView(
