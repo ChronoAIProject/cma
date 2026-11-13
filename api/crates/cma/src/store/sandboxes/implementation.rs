@@ -93,7 +93,7 @@ impl SandboxStore for MongoSandboxStore {
         expected_revision: u64,
         sandbox: Sandbox,
     ) -> Result<(), SandboxStoreError> {
-        self.save_sandbox_validated(expected_revision, sandbox)
+        self.save_sandbox_validated(expected_revision, sandbox, None)
             .await
     }
 
@@ -127,6 +127,7 @@ impl MongoSandboxStore {
         &self,
         expected_revision: u64,
         sandbox: Sandbox,
+        acquisition: Option<&Document>,
     ) -> Result<(), SandboxStoreError> {
         let next = expected_revision
             .checked_add(1)
@@ -163,7 +164,8 @@ impl MongoSandboxStore {
             .map_err(|_| SandboxStoreError::Conflict)?;
         // Even a metadata-only revision must advance the usage watermark;
         // otherwise the next lifecycle edge looks like an unmetered writer gap.
-        super::super::sandbox_usage::save::save(self, expected_revision, &sandbox).await
+        super::super::sandbox_usage::save::save(self, expected_revision, &sandbox, acquisition)
+            .await
     }
 
     async fn sandbox_page(

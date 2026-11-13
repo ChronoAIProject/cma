@@ -1,3 +1,4 @@
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use std::sync::Arc;
 
 use layer2_core::sandbox::store::{
@@ -61,7 +62,7 @@ async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_dupli
         .await
         .unwrap();
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -74,7 +75,7 @@ async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_dupli
         parked.push(store.get_agent(&agent.id).await.unwrap().unwrap());
     }
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -108,7 +109,7 @@ async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_dupli
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     assert_eq!(store.get_sandbox(&claimed.id).await.unwrap(), Some(renewed));
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -121,7 +122,7 @@ async fn lifecycle_recapture_atomically_fences_already_paused_rows_without_dupli
         .await
         .unwrap();
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -217,7 +218,7 @@ pub(in crate::store) async fn claimed_pause_fixture(
         .await
         .unwrap();
     let claimed = store
-        .claim_sandbox_work(&value.id, "worker", NOW.into(), MINUTE.into())
+        .claim_sandbox_work(&value.id, "worker", NOW.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();

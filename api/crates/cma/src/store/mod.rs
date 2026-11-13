@@ -173,6 +173,7 @@ mod trigger_first_messages;
 mod warm_sandboxes;
 pub(crate) mod worker_observations;
 pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
+mod work_claim_authority;
 mod workspace_admission;
 mod workspace_prepare_recovery;
 mod workspace_profiles;

@@ -1,5 +1,6 @@
 use super::super::{workspace_proof, NativePreparedWorkspaceProof};
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 
 fn prepared_record() -> Record {
     let plan = plan();
@@ -286,7 +287,12 @@ async fn workspace_completion_survives_health_and_claim_with_old_record_fallback
         panic!("fresh workspace");
     };
     let claimed = store
-        .claim_workspace_work(&workspace.id, "proof-worker", NOW.into(), LATER.into())
+        .claim_workspace_work(
+            &workspace.id,
+            "proof-worker",
+            NOW.into(),
+            work_lease_deadline(),
+        )
         .await
         .unwrap()
         .unwrap();
