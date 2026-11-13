@@ -409,7 +409,7 @@ async fn reset_repaired_fixture(store: &MongoSandboxStore, agent: &Agent) {
         &agent.id,
         agent.conversation.last_seq,
         &mut session,
-        true,
+        crate::store::agent_log_integrity::ScanOptions::new(true, Default::default()),
         |_| Ok(())
     )
     .await
