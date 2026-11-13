@@ -16,13 +16,33 @@ use layer2_core::budget::{
 };
 use layer2_core::CoreError;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{OpenApi, ToSchema};
 
 use super::{AdminState, NotAnOperator};
 use crate::rest::{problem_document, problem_response};
 use crate::AuthenticatedCaller;
 
 const MAXIMUM_UNITS: u64 = (1 << 53) - 1;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(read, observe),
+    components(schemas(
+        ObservationRequest,
+        ObservationSource,
+        SpendView,
+        LevelsView,
+        LedgerView,
+        CloudView,
+        ClosureView,
+        SpendClosureReason
+    ))
+)]
+struct SpendApi;
+
+pub(crate) fn document() -> utoipa::openapi::OpenApi {
+    SpendApi::openapi()
+}
 
 pub(super) fn routes() -> Router<Arc<AdminState>> {
     Router::new()
@@ -39,7 +59,7 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
         (status = 503, body = crate::rest::ProblemDocument, content_type = "application/problem+json")
     )
 )]
-pub(crate) async fn read(
+async fn read(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Result<Json<SpendView>, SpendFailure> {
@@ -58,7 +78,7 @@ pub(crate) async fn read(
         (status = 503, body = crate::rest::ProblemDocument, content_type = "application/problem+json")
     )
 )]
-pub(crate) async fn observe(
+async fn observe(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     body: Result<Json<ObservationRequest>, JsonRejection>,
@@ -87,7 +107,7 @@ pub(crate) async fn observe(
 
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ObservationRequest {
+struct ObservationRequest {
     /// Only `cloud` in this delivery; model-provider and adjustment sources are deferred.
     #[allow(dead_code)]
     source: ObservationSource,
@@ -100,12 +120,12 @@ pub(crate) struct ObservationRequest {
 
 #[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum ObservationSource {
+enum ObservationSource {
     Cloud,
 }
 
 #[derive(Serialize, ToSchema)]
-pub(crate) struct SpendView {
+struct SpendView {
     /// False when budgets or the platform cloud source are not configured:
     /// metering is off, which is distinct from enabled but unavailable.
     metering_enabled: bool,
@@ -119,14 +139,14 @@ pub(crate) struct SpendView {
 }
 
 #[derive(Serialize, ToSchema)]
-pub(crate) struct LevelsView {
+struct LevelsView {
     warning: u64,
     stop: u64,
     disposable: u64,
 }
 
 #[derive(Serialize, ToSchema)]
-pub(crate) struct LedgerView {
+struct LedgerView {
     period_start: String,
     period_end: String,
     settings_revision: u64,
@@ -141,7 +161,7 @@ pub(crate) struct LedgerView {
 }
 
 #[derive(Serialize, ToSchema)]
-pub(crate) struct CloudView {
+struct CloudView {
     observed_through: String,
     units: u64,
     recorded_at: String,
@@ -149,7 +169,7 @@ pub(crate) struct CloudView {
 }
 
 #[derive(Serialize, ToSchema)]
-pub(crate) struct ClosureView {
+struct ClosureView {
     reason: SpendClosureReason,
     since: String,
     settings_revision: u64,
@@ -159,7 +179,7 @@ pub(crate) struct ClosureView {
 /// Layer 1 projection of the core's serialized closure reasons.
 #[derive(Serialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SpendClosureReason {
+pub(super) enum SpendClosureReason {
     /// Committed spend has reached the warning level.
     SpendWarning,
     /// Committed spend has reached disposable capacity.
@@ -234,7 +254,7 @@ impl From<PlatformPeriodLedger> for LedgerView {
     }
 }
 
-pub(crate) enum SpendFailure {
+enum SpendFailure {
     NotAnOperator,
     Invalid(Option<String>),
     WritesUnavailable,
