@@ -474,5 +474,8 @@ mod open_overlap_tests;
 #[path = "native_http_reuse_tests.rs"]
 mod reuse_tests;
 
+#[path = "native_desktop_tests.rs"]
+mod desktop_tests;
+
 #[path = "native_transport_cases.rs"]
 mod cases;
