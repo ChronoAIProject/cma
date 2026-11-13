@@ -129,6 +129,12 @@ and `purged` documents to purge. Reclaim finalization can release a document slo
 only if there is no main document, no lifecycle row and no other object row.
 Already claimed reclaim deletes can overlap purge safely: deletion is idempotent
 and actual row removal determines the single accounting release.
+Candidate discovery excludes purge-owned documents through the lifecycle primary
+key before applying its 64-row result limit. The state/age index and three-second
+query deadline remain in force. Rejecting handed-off rows can inspect more than
+64 rows; the output limit is not a scan bound or a progress guarantee for an
+arbitrarily large backlog. Transactional ownership checks still fence races
+after discovery.
 
 Unproved maintenance deletion records
 `purge.blocked: storage_deletion_unsupported`, preserving the tombstone and all

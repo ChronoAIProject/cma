@@ -441,7 +441,10 @@ that outcome.
   only those rows, then marks lifecycle `purged`. Unknown commits reconcile from
   a snapshot at operation time. Replays and competing stores release once.
   Reclaim yields lifecycle-owned objects and cannot release a document slot while
-  any lifecycle exists. With no quota rows, purge only completes lifecycle.
+  any lifecycle exists. Discovery excludes purge-owned rows through indexed
+  lifecycle identity lookups before limiting its output to 64 candidates; the
+  three-second deadline bounds rejected scans, whose row count can exceed 64.
+  With no quota rows, purge only completes lifecycle.
 - **Recovery and backup:** retain the private inventory, Mongo/object recovery
   unit, storage finality/scope evidence, all-writer census, enabled-switch record
   and qualified rollback image. A backup restore must preserve tombstones and
