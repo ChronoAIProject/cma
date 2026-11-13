@@ -26,6 +26,7 @@ mod home;
 mod oauth_resource;
 mod profiles;
 mod public_streams;
+mod rate_default_lease;
 mod runtime;
 
 mod features;
@@ -77,6 +78,7 @@ pub struct RateLimitConfig {
     pub control_per_minute: NonZeroU32,
     pub control_tier_enabled: bool,
     pub response_input_tier_enabled: bool,
+    pub default_lease_enabled: bool,
 }
 
 impl RateLimitConfig {
@@ -84,6 +86,7 @@ impl RateLimitConfig {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         Ok(Self {
+            default_lease_enabled: rate_default_lease::enabled(lookup)?,
             control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
                 None | Some("false") => false,
                 Some("true") => true,
