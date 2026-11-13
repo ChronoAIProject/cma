@@ -14,7 +14,7 @@ use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 const RETRY: Duration = Duration::from_secs(5);
-const RENEW: Duration = Duration::from_secs(10);
+const RENEW: Duration = Duration::from_secs(3);
 const GET_BOUND: Duration = Duration::from_secs(15);
 const INVOCATION_BOUND: Duration = Duration::from_secs(60);
 const MAX_FRAMES: usize = 4096;
@@ -266,7 +266,7 @@ impl TargetExecutor for RoutedTargetExecutor {
             match self.run(work).await {
                 Ok(result) => result,
                 Err(error) => {
-                    tracing::warn!(target_id = %work.target_id, ?error, "routed execution deferred");
+                    tracing::warn!(target_sha256 = %super::storage::hash(work.target_id.as_bytes()), ?error, "routed execution deferred");
                     match error {
                         ExecutionError::Busy
                         | ExecutionError::LostLease
