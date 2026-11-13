@@ -48,6 +48,21 @@ pub(super) async fn json(
         );
         return Err(error);
     }
+    // A throttle is not successful identity evidence. Legal advisory headers
+    // must not hide its backoff or turn it into an invalid-evidence refusal.
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        let error = Error::RateLimited(super::identity_throttle::RetryAfter::from_headers(
+            response.headers(),
+        ));
+        record(
+            endpoint,
+            Stage::Status,
+            Reason::HttpStatus,
+            Some(status.as_u16()),
+            &error,
+        );
+        return Err(error);
+    }
     if response.headers().contains_key(header::CONTENT_RANGE)
         || response.headers().contains_key(header::LINK)
         || response
@@ -71,13 +86,7 @@ pub(super) async fn json(
         return Err(error);
     }
     if response.status() != StatusCode::OK {
-        let error = if status == StatusCode::TOO_MANY_REQUESTS {
-            Error::RateLimited(super::identity_throttle::RetryAfter::from_headers(
-                response.headers(),
-            ))
-        } else {
-            Error::status(status)
-        };
+        let error = Error::status(status);
         record(
             endpoint,
             Stage::Status,
