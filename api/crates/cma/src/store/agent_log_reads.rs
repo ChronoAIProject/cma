@@ -144,7 +144,7 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
             agent_id,
             head.last_seq,
             &mut session,
-            true,
+            crate::store::agent_log_integrity::ScanOptions::new(true, store.scan_cooperation),
             |entry| {
                 head.validate_lineage(&entry)?;
                 if window.contains(entry.seq) && (entries.len() as u64) < window.limit() {

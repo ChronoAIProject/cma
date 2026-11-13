@@ -95,7 +95,10 @@ data:
   CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
+  CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
+  # Enable only after runtime and scan measurements support cooperative decoding.
+  CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED: "false"
   CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Expand-only skill upgrade readers; enable new writers only after migration qualification.
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
@@ -246,6 +249,8 @@ data:
   CHRONO_SERVER_RATE_CONTROL_PER_MINUTE: "120"
   # Activate only after the separate recovery/control policy review.
   CHRONO_SERVER_RATE_CONTROL_ENABLED: "false"
+  # Prepaid Default-tier leases require a separate owner activation decision.
+  CHRONO_SERVER_RATE_DEFAULT_LEASE_ENABLED: "false"
   # Separate policy activation after exact-route classification review.
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # Per-process public stream lifetimes; zero keeps admission disabled.
