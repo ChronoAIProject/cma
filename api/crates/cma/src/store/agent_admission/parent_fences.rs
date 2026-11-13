@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn advance_workspace(
+pub(in crate::store) async fn advance_workspace(
     store: &MongoSandboxStore,
     previous: &layer2_core::sandbox::Workspace,
     next: &layer2_core::sandbox::Workspace,
@@ -34,7 +34,7 @@ pub(super) async fn advance_workspace(
     }
 }
 
-pub(super) async fn advance_sandbox(
+pub(in crate::store) async fn advance_sandbox(
     store: &MongoSandboxStore,
     previous: &layer2_core::sandbox::Sandbox,
     next: &layer2_core::sandbox::Sandbox,

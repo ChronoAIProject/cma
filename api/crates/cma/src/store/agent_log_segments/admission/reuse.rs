@@ -1,5 +1,11 @@
 use super::*;
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::{
+    agent_log::scan_complete_log_with_session,
+    agent_log_integrity::{integrity_document, prepare_append, AppendCapacity},
+    agents::LIVE_STATUSES,
+    sandbox_mongo::{signed, DOCUMENT_SCHEMA_VERSION},
+};
 
 pub(super) async fn reuse_profile_agent(
     store: &MongoSandboxStore,
@@ -8,10 +14,10 @@ pub(super) async fn reuse_profile_agent(
     sandbox: &layer2_core::sandbox::Sandbox,
     reuse_existing: bool,
     common_launch: Option<&layer2_core::trigger_domain::Launch>,
-    session: &mut mongodb::ClientSession,
+    scope: &mut TransactionScope<'_>,
 ) -> Result<Option<layer2_core::sandbox::store::AgentCreation>, ApplyError> {
-    use super::super::agents::{agent_replacement_fields, read_agent};
-    use super::super::worktrees::read_worktree;
+    use crate::store::agents::{agent_replacement_fields, read_agent};
+    use crate::store::worktrees::read_worktree;
     let prepared_only = !reuse_existing && matches!(admission.origin, AgentOrigin::Trigger { .. });
     if !reuse_existing
         && !prepared_only
@@ -27,7 +33,7 @@ pub(super) async fn reuse_profile_agent(
             "owned_workspace_cleanup_admission_v1":{"$exists":false}},
             doc! {"$inc":{"owned_workspace_admission_fence":1_i64}},
         )
-        .session(&mut *session)
+        .session(scope.session())
         .await
         .map_err(ApplyError::Driver)?;
     if open.matched_count != 1 {
@@ -65,7 +71,7 @@ pub(super) async fn reuse_profile_agent(
         .agents
         .find_one(query)
         .sort(doc! { "record.created_at": -1, "_id": -1 })
-        .session(&mut *session)
+        .session(scope.session())
         .await
         .map_err(ApplyError::Driver)?
     else {
@@ -86,7 +92,7 @@ pub(super) async fn reuse_profile_agent(
             "channel_reuse_cleanup_admission":{"$exists":false}},
             doc! {"$inc":{"agent_reuse_admission_fence":1_i64}},
         )
-        .session(&mut *session)
+        .session(scope.session())
         .await
         .map_err(ApplyError::Driver)?;
     if changed.matched_count != 1 {
@@ -96,7 +102,7 @@ pub(super) async fn reuse_profile_agent(
         && store
             .agent_reuse_bindings
             .find_one(doc! { "agent_id": agent.id.as_str() })
-            .session(&mut *session)
+            .session(scope.session())
             .await
             .map_err(ApplyError::Driver)?
             .is_some()
@@ -114,7 +120,7 @@ pub(super) async fn reuse_profile_agent(
         store,
         &agent.id,
         agent.conversation.last_seq,
-        session,
+        scope.session(),
         |entry| {
             entries.push(entry.clone());
             has_input |= matches!(
@@ -135,15 +141,19 @@ pub(super) async fn reuse_profile_agent(
         has_input |= store
             .agent_commands
             .find_one(doc! {"agent_id":agent.id.as_str()})
-            .session(&mut *session)
+            .session(scope.session())
             .await
             .map_err(ApplyError::Driver)?
             .is_some();
     }
     let prior_revision = agent.revision;
-    let prior_semantic =
-        crate::store::agent_log_integrity::audit_checkpoint(store, &agent, &entries, session)
-            .await?;
+    let prior_semantic = crate::store::agent_log_integrity::audit_checkpoint(
+        store,
+        &agent,
+        &entries,
+        scope.session(),
+    )
+    .await?;
     let kind = admission
         .initialize_reused_agent(&mut agent, has_input)
         .map_err(ApplyError::Domain)?;
@@ -175,7 +185,7 @@ pub(super) async fn reuse_profile_agent(
                 .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
         );
         let changed = store.agents.update_one(doc! { "_id": agent.id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(prior_revision, "Agent revision").map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))? }, doc! { "$set": fields })
-            .session(&mut *session).await.map_err(ApplyError::Driver)?;
+            .session(scope.session()).await.map_err(ApplyError::Driver)?;
         if changed.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
@@ -183,7 +193,7 @@ pub(super) async fn reuse_profile_agent(
             .agent_log
             .clone_with_type::<mongodb::bson::RawDocumentBuf>()
             .insert_one(&integrity.documents[0])
-            .session(&mut *session)
+            .session(scope.session())
             .await
             .map_err(classify_log_insert)?;
     } else {
@@ -201,7 +211,7 @@ pub(super) async fn reuse_profile_agent(
                 },
                 doc! { "$set": { "agent_log_integrity_v1": integrity } },
             )
-            .session(&mut *session)
+            .session(scope.session())
             .await
             .map_err(ApplyError::Driver)?;
         if changed.matched_count != 1 {
@@ -212,20 +222,20 @@ pub(super) async fn reuse_profile_agent(
     // against automatic profile children and inactivity pause.
     if reuse_existing || prepared_only {
         store.agent_reuse_bindings.insert_one(doc! {
-            "_id": super::super::agent_admission_records::binding_id(admission).map_err(ApplyError::Domain)?,
+            "_id": crate::store::agent_admission_records::binding_id(admission).map_err(ApplyError::Domain)?,
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "owner": admission.owner.as_str(),
             "creation_key": &admission.creation_key,
             "fingerprint": admission.fingerprint().map_err(ApplyError::Domain)?,
             "agent_id": agent.id.as_str(),
             "sandbox_id": agent.sandbox_id.as_str(),
-        }).session(&mut *session).await.map_err(classify_agent_insert)?;
+        }).session(scope.session()).await.map_err(classify_agent_insert)?;
         let mut next_workspace = workspace.clone();
         next_workspace.revision = next_workspace
             .revision
             .checked_add(1)
             .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
-        advance_workspace(store, workspace, &next_workspace, session).await?;
+        advance_workspace(store, workspace, &next_workspace, scope.session()).await?;
         let mut next_sandbox = sandbox.clone();
         let revival = next_sandbox
             .record_creation_admission_with_managed_runtime(
@@ -234,11 +244,11 @@ pub(super) async fn reuse_profile_agent(
                 admission.event_at.clone(),
             )
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
-        advance_sandbox(store, sandbox, &next_sandbox, session).await?;
+        advance_sandbox(store, sandbox, &next_sandbox, scope.session()).await?;
         if let Some(event) = revival {
             append_in_transaction(
                 store,
-                session,
+                scope.session(),
                 &sandbox.id,
                 admission.event_at.clone(),
                 event,
@@ -248,8 +258,12 @@ pub(super) async fn reuse_profile_agent(
     }
     if attached_first {
         if let Some(launch) = common_launch {
-            super::super::trigger_first_messages::attach(
-                store, launch, admission, &mut agent, session,
+            crate::store::trigger_first_messages::attach(
+                store,
+                launch,
+                admission,
+                &mut agent,
+                scope.session(),
             )
             .await
             .map_err(ApplyError::from)?;
@@ -258,7 +272,7 @@ pub(super) async fn reuse_profile_agent(
     let worktree = store
         .worktrees
         .find_one(doc! { "_id": agent.worktree_id.as_str() })
-        .session(&mut *session)
+        .session(scope.session())
         .await
         .map_err(ApplyError::Driver)?
         .as_ref()

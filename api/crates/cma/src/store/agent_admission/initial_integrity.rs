@@ -2,7 +2,7 @@
 use super::*;
 use crate::store::agent_log_integrity::empty_summary;
 
-pub(super) fn initial_integrity(
+pub(in crate::store) fn initial_integrity(
     creation: &layer2_core::sandbox::store::AgentCreation,
 ) -> Result<crate::store::agent_log_integrity::PreparedAppend, SandboxStoreError> {
     let log_summary = empty_summary();

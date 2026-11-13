@@ -44,21 +44,18 @@ async fn admission_replays_reject_an_incomplete_log() {
 async fn admission_reconciliation_rejects_an_above_high_water_orphan() {
     let (client, database, store, _, _, admission) = fixture("reconcile_orphan").await;
     let mut transaction = store.client.start_session().await.unwrap();
-    start_transaction(&mut transaction).await.unwrap();
-    let receipt = match super::super::apply_admission(
-        &store,
-        &admission,
-        false,
-        None,
+    let mut scope = crate::store::agent_log_segments::transaction_scope::TransactionScope::start(
         &mut transaction,
     )
     .await
-    {
-        Ok(AdmissionReceipt::Created(receipt)) => receipt,
-        Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
-        Err(_) => panic!("fresh admission transaction failed"),
-    };
-    transaction.commit_transaction().await.unwrap();
+    .unwrap();
+    let receipt =
+        match super::super::apply_admission(&store, &admission, false, None, &mut scope).await {
+            Ok(AdmissionReceipt::Created(receipt)) => receipt,
+            Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
+            Err(_) => panic!("fresh admission transaction failed"),
+        };
+    scope.release().commit_transaction().await.unwrap();
 
     let mut anchor_session = store.client.start_session().await.unwrap();
     store
