@@ -208,12 +208,15 @@ pub fn install_panic_hook() {
 /// Initialize the container logger with the service's stable default filter.
 pub fn init_logging() {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    let writer = telemetry::turn_trace::log_writer();
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .with_ansi(false)
+                .with_writer(writer)
                 .with_filter(log_layer_filter(std::env::var("RUST_LOG").ok().as_deref())),
         )
+        .with(telemetry::turn_trace::scope::layer())
         .init();
 }
 

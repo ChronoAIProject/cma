@@ -6438,6 +6438,9 @@
   "ProviderBinding": [
     {
       "binding_id": "fixture",
+      "capabilities": [
+        "nyxid_turn_trace_v1"
+      ],
       "level": "l1",
       "slug": "fixture",
       "target": {
