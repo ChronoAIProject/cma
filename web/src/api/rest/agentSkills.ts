@@ -1,12 +1,9 @@
-import { ProtocolError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
 import type { AgentSkillsView, CmaWebClient } from '../client';
 
-export class AgentSkillsError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
+export class AgentSkillsError extends ApiError {
+  constructor(message: string, status: number, retryAfterMs?: number) {
+    super(status, message, undefined, undefined, retryAfterMs);
   }
 }
 async function request(id: string, init: RequestInit): Promise<AgentSkillsView> {
@@ -20,6 +17,7 @@ async function request(id: string, init: RequestInit): Promise<AgentSkillsView> 
     throw new AgentSkillsError(
       typeof problem.detail === 'string' ? problem.detail : 'Agent skills are unavailable.',
       response.status,
+      retryAfterMilliseconds(response),
     );
   }
   const value = (await response.json()) as AgentSkillsView;

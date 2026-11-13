@@ -6,6 +6,11 @@ export async function desktopBoundary(
   autoPaint = true,
   autoConnect: boolean | ((connection: number) => boolean) = true,
 ) {
+  // Reconnect discovery is a public HTTP read before the RFB upgrade. Keep
+  // the fixture boundary complete instead of falling through to a real API.
+  await page.route('**/api/v1/agents/agt_contract/desktop', (route) =>
+    route.fulfill({ json: { websocket_url: '/api/v1/agents/agt_contract/desktop/ws' } }),
+  );
   const connections: number[] = [];
   const painters: (() => void)[] = [];
   const starters: (() => void)[] = [];
