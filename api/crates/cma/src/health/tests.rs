@@ -116,8 +116,9 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
         checked_at: "2026-11-05T00:00:00Z".into(),
         duration_ms: 5,
         failure: None,
+        diagnostic_check: 0,
     }));
-    let app = routes(state);
+    let app = routes(state, None);
     assert_eq!(response(&app, "/ready").await.0, StatusCode::OK);
     tick(MAX_CHECK_AGE).await;
     let (status, body) = response(&app, "/ready").await;
@@ -139,4 +140,57 @@ async fn dropping_the_router_cancels_the_inflight_check_and_stops_retries() {
     assert_eq!(probe.active.load(Ordering::SeqCst), 0);
     tick(Duration::from_secs(30)).await;
     assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn execution_capability_is_separate_from_store_and_optional_warm_capacity() {
+    let probe = Arc::new(Probe::default());
+    let workers = crate::worker_supervision::Workers::new();
+    let app = router_with_workers(probe.clone(), workers.clone());
+    tokio::task::yield_now().await;
+    let (status, body) = response(&app, "/ready").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["reason"], "workers");
+    for worker in workers.snapshot().iter().filter(|w| w.required) {
+        let activity = workers.get(worker.worker);
+        // Construction without a completed scheduling turn is insufficient.
+        activity.waiting(Duration::from_secs(1), "idle_scan");
+    }
+    assert_eq!(
+        response(&app, "/ready").await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    for worker in workers.snapshot().iter().filter(|w| w.required) {
+        let activity = workers.get(worker.worker);
+        activity.scheduled();
+        activity.waiting(Duration::from_secs(1), "execution_slots");
+    }
+    assert_eq!(response(&app, "/ready").await.0, StatusCode::OK);
+    assert_eq!(
+        workers.get("native_warm_pools").snapshot().state,
+        "starting"
+    );
+    let calls = probe.calls.load(Ordering::SeqCst);
+    for _ in 0..50 {
+        assert_eq!(response(&app, "/ready").await.0, StatusCode::OK);
+    }
+    assert_eq!(probe.calls.load(Ordering::SeqCst), calls);
+    tick(Duration::from_secs(6)).await;
+    let (status, body) = response(&app, "/ready").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["reason"], "workers");
+    assert_eq!(response(&app, "/livez").await.0, StatusCode::OK);
+    for worker in workers.snapshot().iter().filter(|w| w.required) {
+        workers
+            .get(worker.worker)
+            .waiting(Duration::from_secs(1), "idle_scan");
+    }
+    assert_eq!(response(&app, "/ready").await.0, StatusCode::OK);
+    probe.mode.store(1, Ordering::SeqCst);
+    tick(CHECK_INTERVAL).await;
+    let (status, body) = response(&app, "/ready").await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["reason"], "store");
+    assert!(workers.snapshot().iter().all(|w| w.available()));
+    assert_eq!(response(&app, "/livez").await.0, StatusCode::OK);
 }
