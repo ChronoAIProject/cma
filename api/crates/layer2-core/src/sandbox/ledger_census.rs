@@ -15,6 +15,21 @@ pub enum LedgerFailureCause {
     OtherOrUnknown,
 }
 
+impl LedgerFailureCause {
+    /// Diagnostic evidence only; this never grants execution authority.
+    pub fn from_diagnostic(detail: &str) -> Self {
+        if detail.contains("runtime mutation journal contains too many") {
+            Self::JournalLifetimeBound
+        } else if detail.contains("runtime mutation authority contains too many records") {
+            Self::AuthorityLifetimeBound
+        } else if detail.contains("runtime mutation ledger capacity is exhausted") {
+            Self::SharedLedgerCapacity
+        } else {
+            Self::OtherOrUnknown
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LedgerCensusAssessment {
@@ -69,25 +84,7 @@ impl Agent {
             .failure
             .as_ref()
             .map_or(LedgerFailureCause::OtherOrUnknown, |failure| {
-                // Diagnostic classification only. A matching string never grants recovery.
-                if failure
-                    .detail
-                    .contains("runtime mutation journal contains too many")
-                {
-                    LedgerFailureCause::JournalLifetimeBound
-                } else if failure
-                    .detail
-                    .contains("runtime mutation authority contains too many records")
-                {
-                    LedgerFailureCause::AuthorityLifetimeBound
-                } else if failure
-                    .detail
-                    .contains("runtime mutation ledger capacity is exhausted")
-                {
-                    LedgerFailureCause::SharedLedgerCapacity
-                } else {
-                    LedgerFailureCause::OtherOrUnknown
-                }
+                LedgerFailureCause::from_diagnostic(&failure.detail)
             });
         let conversation_present =
             self.conversation.conversation_id.is_some() || self.work.warm_conversation_id.is_some();
