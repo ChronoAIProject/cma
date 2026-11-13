@@ -142,6 +142,7 @@ impl Fixture {
             native_lark_conversation_history: None,
             discord_conversation_history: None,
             complete_replies_enabled: false,
+            commonmark_relay_enabled: false,
             resolver: management.resolver.clone(),
             keys: self.keys.clone(),
             providers,

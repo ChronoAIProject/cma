@@ -2857,7 +2857,33 @@ route. The first send may consume an unexpired single-use reply token; subsequen
 intentional sends use the channel key. Token selection happens after pacing; a
 claimed token is never replayed, including after event state cleanup.
 
-`CMAEG_NYXID_COMPLETE_REPLIES` selects a coordinated deployment mode:
+Telegram `nyxid_relay` also has the independent default-off switch
+`CMAEG_NYXID_COMMONMARK_RELAY_ENABLED`. When true, original CommonMark text is
+sent once to `/api/v1/channel-relay/reply/commonmark` or, for an explicitly
+requested and authorized thread target, `/thread-reply/commonmark`. The gateway
+does not escape Markdown or split it into platform parts. This applies to
+ordinary text, interactive keyboards and media captions, preserving the sealed
+target, attachment data and `reply.metadata.reply_markup`. NyxID converts and
+splits; multipart keyboard/media shapes may be refused by NyxID before sending.
+Native Telegram, other relay platforms and initiated messages keep their
+existing contracts. This switch takes precedence over the legacy/complete
+ordinary Telegram rendering choices below.
+
+Ordinary and keyboard updates use `/api/v1/channel-relay/reply/update/commonmark`
+with the retained exact outbound/platform identifiers. CommonMark source length
+is bounded by the request budget, while NyxID validates converted platform
+length and the single-message edit constraint. A 200 alone does not confirm an
+edit: its `upstream_message_id` must match and `edited_at` must be RFC 3339.
+The gateway retains durable send and interaction barriers. Failed, malformed or
+lost replies remain unknown, without a new reference, automatic replay or
+fallback to another endpoint. A possibly accepted prefix cannot be classified
+as total rejection. The existing receipt does not expose per-part completion;
+provider stream completion does not supply that missing platform evidence.
+No public receipt fields or enums change. Activation requires the
+[deployed counterpart checks](CMAEG_Operations.md#commonmark-relay-rollout).
+
+With CommonMark disabled, `CMAEG_NYXID_COMPLETE_REPLIES` selects the ordinary
+relay deployment mode:
 
 - **`false` (default, legacy compatibility).** CMAEG escapes and chunks ordinary
   relay text at 4000 UTF-16 units and sends each part independently. A bare 429

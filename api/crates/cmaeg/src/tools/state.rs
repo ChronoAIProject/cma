@@ -16,9 +16,11 @@ use cmaeg_core::{
     problem::{Problem, ProblemCode},
     seal::{EventRef, EventRefPayload, MasterKeyRing, MessageRefPayload, OpenError},
 };
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::Instrument;
+#[path = "delivery_timeout.rs"]
+mod delivery_timeout;
 #[path = "state_validation.rs"]
 mod validation;
 pub(super) use validation::validate;
@@ -36,6 +38,7 @@ pub struct ToolsState {
     pub discord_conversation_history: Option<Arc<super::DiscordConversationHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
+    pub commonmark_relay_enabled: bool,
     pub telegram_effects_issuance_enabled: bool,
     pub native_telegram_media_controls_enabled: bool,
     pub native_telegram_media_control_edits_enabled: bool,
@@ -394,27 +397,11 @@ impl ToolsState {
         command: DeliveryCommand,
         received: oneshot::Receiver<T>,
     ) -> Result<T, Problem> {
-        // These include queueing/pacing before the exchange. Routed tool replies
-        // use their separate 20 s window and 30 s claims before reaching this path.
-        // Structured relay replies can fall back to complete text after the
-        // engine checks their Activity. Their outer wait is also 18 s; native
-        // card/control transport still uses the configured ordinary timeout.
-        // Template media lives in its components, not native_attachments; both
-        // use the same 60 s exchange and need room for queueing/pacing here.
-        let timeout = if matches!(&command, DeliveryCommand::Reply { message, .. }
-            if !message.native_attachments.is_empty()
-                || message.whatsapp_template.as_ref().is_some_and(|template| template.has_media()))
-        {
-            Duration::from_secs(65)
-        } else if self.complete_replies_enabled
-            && matches!(&command, DeliveryCommand::Reply { event, message, .. }
-                if matches!(event.reply, cmaeg_core::seal::ReplyAddress::NyxidRelay { .. })
-                    && message.whatsapp_template.is_none())
-        {
-            crate::delivery::relay_client::COMPLETE_REPLY_TOOL_TIMEOUT
-        } else {
-            Duration::from_secs(8)
-        };
+        let timeout = delivery_timeout::for_command(
+            &command,
+            self.complete_replies_enabled,
+            self.commonmark_relay_enabled,
+        );
         let (channel, event_id) = match &command {
             DeliveryCommand::DurableReply(reply) => {
                 (reply.channel.id.as_str(), reply.event.event_id.as_str())

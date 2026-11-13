@@ -39,6 +39,7 @@ pub(super) struct PreparedReply {
     thread_reply: bool,
     native_media: bool,
     complete_text: bool,
+    commonmark: bool,
 }
 
 pub enum Credential<'a> {
@@ -51,6 +52,7 @@ pub struct RelayClient {
     endpoint: Url,
     timeout: Duration,
     complete_replies: bool,
+    commonmark_relay: bool,
     native_media: bool,
     pub(super) native_lark_outbound_media: bool,
     pub(super) native_lark_sticker_replies: bool,
@@ -169,6 +171,18 @@ impl RelayClient {
     pub(super) fn complete_replies(&self) -> bool {
         self.complete_replies
     }
+    /// Enable only after every serving NyxID replica supports the explicit routes.
+    pub fn with_commonmark_relay(mut self, enabled: bool) -> Self {
+        self.commonmark_relay = enabled;
+        self
+    }
+    pub(super) fn commonmark_for(&self, address: &ReplyAddress) -> bool {
+        matches!(address, ReplyAddress::NyxidRelay { platform, .. }
+            if self.commonmark_for_platform(*platform))
+    }
+    pub(super) fn commonmark_for_platform(&self, platform: cmaeg_core::channel::Platform) -> bool {
+        self.commonmark_relay && platform == cmaeg_core::channel::Platform::Telegram
+    }
     pub fn with_interactions(
         mut self,
         store: std::sync::Arc<crate::interactions::InteractionStore>,
@@ -194,6 +208,7 @@ impl RelayClient {
             endpoint,
             timeout,
             complete_replies: false,
+            commonmark_relay: false,
             native_media: false,
             native_lark_outbound_media: false,
             native_lark_sticker_replies: false,
@@ -279,7 +294,14 @@ impl RelayClient {
         };
         tokio::time::timeout(
             self.timeout,
-            self.post(message_id, secret, text, markup, *thread_reply),
+            self.post(
+                message_id,
+                secret,
+                text,
+                markup,
+                *thread_reply,
+                self.commonmark_for(address),
+            ),
         )
         .await
         .unwrap_or_else(|_| (unknown("response_lost"), None))
@@ -288,6 +310,7 @@ impl RelayClient {
         address: &ReplyAddress,
         text: &str,
         markup: Option<&serde_json::Value>,
+        commonmark: bool,
     ) -> Result<PreparedReply, DeliveryOutcome> {
         let ReplyAddress::NyxidRelay {
             message_id,
@@ -313,6 +336,7 @@ impl RelayClient {
             thread_reply: *thread_reply,
             native_media: false,
             complete_text: true,
+            commonmark,
         })
     }
     pub(super) async fn send_prepared(
@@ -326,7 +350,7 @@ impl RelayClient {
         };
         let timeout = if prepared.native_media {
             Duration::from_secs(60)
-        } else if self.complete_replies && prepared.complete_text {
+        } else if (self.complete_replies || prepared.commonmark) && prepared.complete_text {
             COMPLETE_REPLY_TIMEOUT
         } else {
             self.timeout
@@ -354,6 +378,7 @@ impl RelayClient {
         text: &str,
         markup: Option<&serde_json::Value>,
         thread_reply: bool,
+        commonmark: bool,
     ) -> (DeliveryOutcome, Option<String>) {
         let Some(headers) = headers(secret) else {
             return (unknown("response_lost"), None);
@@ -361,8 +386,15 @@ impl RelayClient {
         let Ok(body) = serialize_reply(message_id, text, markup, thread_reply) else {
             return (unknown("response_lost"), None);
         };
-        self.post_serialized(message_id, headers, body, thread_reply, self.timeout)
-            .await
+        self.post_serialized(
+            message_id,
+            headers,
+            body,
+            thread_reply,
+            commonmark,
+            self.timeout,
+        )
+        .await
     }
     async fn post_prepared(
         &self,
@@ -378,6 +410,7 @@ impl RelayClient {
             headers,
             prepared.body.clone(),
             prepared.thread_reply,
+            prepared.commonmark,
             timeout,
         )
         .await
@@ -388,12 +421,20 @@ impl RelayClient {
         headers: HeaderMap,
         body: Vec<u8>,
         thread_reply: bool,
+        commonmark: bool,
         timeout: Duration,
     ) -> (DeliveryOutcome, Option<String>) {
         let mut endpoint = self.endpoint.clone();
         if thread_reply {
             // Old NyxID replicas must fail before sending, never ignore the flag.
             endpoint.set_path("/api/v1/channel-relay/thread-reply");
+        }
+        if commonmark {
+            endpoint.set_path(if thread_reply {
+                "/api/v1/channel-relay/thread-reply/commonmark"
+            } else {
+                "/api/v1/channel-relay/reply/commonmark"
+            });
         }
         let reply = match self.transport.post(endpoint, headers, body, timeout).await {
             Ok(reply) => reply,

@@ -374,6 +374,7 @@ applies with all media flags off.**
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
+| `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED` | boolean | `false` | Preserves original CommonMark for Telegram NyxID relay replies, keyboard replies, media captions and edits using explicit CommonMark routes. Requires verified deployed NyxID support; never falls back to legacy after submission. Only exact `true`/`false` are accepted; see [CommonMark relay rollout](#commonmark-relay-rollout). |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s non-routed tool deadline; legacy text keeps its configured timeout and 8 s tool deadline. Complete ordinary replies use 15 s/18 s. Compatible runtime tool proxies wait 70 s; retained older Sandbox images may still cut off at 10 s. Routed sends retain their independent 20 s window. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
 | `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; one mixed native upload requires `CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED`, and interactive edits have a separate gate. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
@@ -2730,6 +2731,44 @@ bounds and canonical replay rules. Local tests do not establish regional live
 rendering or callback acceptance.
 
 ## Coordinated complete-reply rollout
+
+### CommonMark relay rollout
+
+Keep `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED=false` until every serving NyxID
+replica supports `/api/v1/channel-relay/reply/commonmark`,
+`/api/v1/channel-relay/thread-reply/commonmark`, and
+`/api/v1/channel-relay/reply/update/commonmark`. This is an independent switch:
+Telegram relay replies use one original CommonMark request when enabled, even
+with `CMAEG_NYXID_COMPLETE_REPLIES=false`. Native Telegram and other platforms
+retain their existing rendering. Initiated `/send` messages retain their existing
+contract. Enabling the switch attests to deployed support; a 404 does not trigger
+a legacy retry.
+
+The counterpart source inspected at NyxID
+`da70dddc9ad9a8de7026b4319909a6927cd2d3e1` marks these requests as CommonMark,
+preserves keyboard/attachment metadata for single-part output, and refuses
+multipart output with keyboards or attachments before platform sends. Source
+inspection is not deployment evidence. Before activation, verify on the intended
+builds the multilingual control from #1602, literal brackets/backslashes, inline
+and fenced code, astral/combining characters, and at least 11k characters in
+ordered ordinary and thread replies. Verify keyboard callbacks and updates,
+media captions, and the one-part refusal boundary after CommonMark conversion.
+Exercise a formatting failure with NyxID's plain fallback, then failed/lost
+fallback and an accepted multipart prefix; confirm terminal outcomes and no
+replay of accepted or uncertain parts. Record exact serving build IDs and safe
+receipt evidence. No production rendering or root cause is proved by local mocks.
+
+Ordinary CommonMark exchanges use 15 s and Telegram reply tools wait 18 s;
+media uses the existing 60 s/65 s budgets. Keyboards and edits retain the configured
+exchange timeout. Routed 20 s windows, leases and retained runtime proxy budgets
+remain as described below. Timeout, malformed receipt, non-200 response and
+possibly delivered multipart prefixes remain unknown. Neither 502 nor an absent
+receipt proves that nothing was delivered. NyxID owns per-part fallback and
+receipts; CMAEG submits each logical reply once and never changes endpoints after
+submission. Disable the switch for future operations to roll back; do not replay
+uncertain sends.
+
+### Complete ordinary reply activation
 
 Keep `CMAEG_NYXID_COMPLETE_REPLIES=false` until the NyxID dependency is ready.
 This default preserves existing short and long reply behavior and its known
