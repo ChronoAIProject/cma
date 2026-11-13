@@ -16,6 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod legacy;
 mod replay;
 mod retained;
 mod settlement;
@@ -55,6 +56,9 @@ pub(super) struct Record {
     pub(super) confirmed_tool: bool,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub(super) operation_keys: BTreeSet<String>,
+    /// One pre-replica unkeyed confirmation, archived before displacing its slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) legacy_confirmation: Option<String>,
     #[serde(default)]
     pub(super) closed: bool,
     pub(super) tool: Option<Attempt>,
@@ -212,6 +216,23 @@ impl ReplyStore {
         operation: String,
         content_hash: String,
     ) -> Result<Admission, ExecutionError> {
+        self.admit_keyed_inner(
+            plan,
+            target,
+            operation,
+            content_hash,
+            self.0.partitions.is_some(),
+        )
+        .await
+    }
+    async fn admit_keyed_inner(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        operation: String,
+        content_hash: String,
+        preserve_legacy: bool,
+    ) -> Result<Admission, ExecutionError> {
         let mut record = self.load(plan, target).await?;
         if record.operation_keys.contains(&operation) {
             if let Some(receipt) = OperationStore(self.0.clone())
@@ -247,7 +268,10 @@ impl ReplyStore {
         if record.closed {
             return Ok(Admission::Closed);
         }
-        if record.operation_keys.len() >= 64 {
+        if preserve_legacy {
+            self.preserve_legacy(&mut record).await?;
+        }
+        if record.operation_keys.len() + usize::from(record.legacy_confirmation.is_some()) >= 64 {
             return Err(ExecutionError::OperationLimit);
         }
         record.operation_keys.insert(operation.clone());
@@ -284,3 +308,6 @@ impl ReplyStore {
         })))
     }
 }
+
+#[cfg(test)]
+mod legacy_tests;

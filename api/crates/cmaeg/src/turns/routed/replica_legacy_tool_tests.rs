@@ -164,9 +164,9 @@ async fn legacy_unkeyed_pending_and_unknown_never_gain_resend_authority() {
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo replica set"]
-async fn legacy_confirmation_does_not_confirm_different_enabled_content() {
+async fn legacy_confirmation_survives_different_enabled_content_and_fresh_closed_reader() {
     let mut h = Harness::new().await;
-    let (owner, _) = h.accepted().await;
+    let (owner, lease) = h.accepted().await;
     let old = legacy(&h, owner);
     let channel = h.current.channel.lock().unwrap().clone();
     let event = h.event();
@@ -178,7 +178,7 @@ async fn legacy_confirmation_does_not_confirm_different_enabled_content() {
             reply.receipt.send(receipt()).unwrap();
         }
     );
-    sent.unwrap().unwrap();
+    let original = sent.unwrap().unwrap();
     drop(old);
     let mut changed = message();
     changed.text = Some("another explicit reply".into());
@@ -198,6 +198,38 @@ async fn legacy_confirmation_does_not_confirm_different_enabled_content() {
         storage::bytes(&sent.unwrap().unwrap()).unwrap(),
         storage::bytes(&expected).unwrap()
     );
+    for closed in [false, true] {
+        if closed {
+            ReplyStore(h.nodes[owner].journal(), lease.partition.clone())
+                .close(&h.plan, h.target())
+                .await
+                .unwrap();
+        }
+        let before = retained(&h, owner).await;
+        let fresh = RoutedToolReplies::new(
+            h.nodes[1 - owner].plans(),
+            h.nodes[1 - owner].journal(),
+            h.current.clone(),
+            h.tools[owner].coordinator.clone(),
+        );
+        let replay = tokio::time::timeout(
+            Duration::from_secs(2),
+            fresh.reply(caller(), &channel, &event, message(), false),
+        )
+        .await
+        .expect("A remains replayable after B without another send")
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            storage::bytes(&replay).unwrap(),
+            storage::bytes(&original).unwrap()
+        );
+        assert_eq!(retained(&h, owner).await, before);
+        assert!(h.rx.try_recv().is_err(), "A -> B -> A emits only A and B");
+    }
     assert!(h.rx.try_recv().is_err());
     h.cleanup().await;
 }
+
+#[path = "replica_legacy_preservation_tests.rs"]
+mod preservation;
