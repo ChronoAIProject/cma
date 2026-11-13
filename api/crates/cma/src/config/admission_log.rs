@@ -75,19 +75,19 @@ mod fleet_tests {
     fn release_stage_patches_use_valid_independent_default_closed_controls() {
         const STAGES: [(&str, u8); 4] = [
             (
-                include_str!("../../../../../infra/api/agent-log-stages/off.json"),
+                include_str!("../../../../../.github/agent-log-stages/off.json"),
                 0,
             ),
             (
-                include_str!("../../../../../infra/api/agent-log-stages/10.json"),
+                include_str!("../../../../../.github/agent-log-stages/10.json"),
                 10,
             ),
             (
-                include_str!("../../../../../infra/api/agent-log-stages/50.json"),
+                include_str!("../../../../../.github/agent-log-stages/50.json"),
                 50,
             ),
             (
-                include_str!("../../../../../infra/api/agent-log-stages/100.json"),
+                include_str!("../../../../../.github/agent-log-stages/100.json"),
                 100,
             ),
         ];
