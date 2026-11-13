@@ -43,7 +43,9 @@ export function SessionSettings({
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState<string>();
   useEffect(() => {
-    if (!active || !runtimeReady) return;
+    // The saved settings already name the current model. Fetch the provider's
+    // catalog only when its picker is needed, outside the opening critical path.
+    if (!active || !runtimeReady || !expanded) return;
     const request = new AbortController();
     void (async () => {
       setModelsLoading(true);
@@ -65,7 +67,7 @@ export function SessionSettings({
       }
     })();
     return () => request.abort();
-  }, [active, runtimeReady, agentId, busy, client, modelsReload]);
+  }, [active, runtimeReady, expanded, agentId, busy, client, modelsReload]);
   const [intent, setIntent] = useState<{ key: string; body: AgentSettingsView } | undefined>(
     undefined,
   );
