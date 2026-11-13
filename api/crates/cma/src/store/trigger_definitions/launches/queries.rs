@@ -286,6 +286,17 @@ pub(super) async fn due(
     if limit == 0 || limit > layer2_core::trigger_domain::MAX_LAUNCH_EVENT_LIMIT {
         return Err(LaunchStoreError::InvalidCursor);
     }
+    if store
+        .empty_discovery
+        .empty(
+            crate::store::empty_discovery::Kind::Launches,
+            &store.launch_data.launches,
+            doc! {"work_step":{"$ne":"none"}},
+        )
+        .await
+    {
+        return Ok(Vec::new());
+    }
     let mut session = store
         .client
         .start_session()
@@ -317,6 +328,10 @@ pub(super) async fn due(
         }
         launches.push(launch);
     }
+    store.empty_discovery.observed(
+        crate::store::empty_discovery::Kind::Launches,
+        launches.is_empty(),
+    );
     Ok(launches.into_iter().map(|launch| launch.id).collect())
 }
 
