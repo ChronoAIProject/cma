@@ -12,6 +12,11 @@ pub(super) async fn browser(fixture: &Fixture) -> (Router, String) {
     let app = crate::auth::router(fixture.auth.clone())
         .route("/api/v1/admin/settings", get(|| async { StatusCode::OK }))
         .route("/api/v1/agents", get(|| async { StatusCode::OK }))
+        .route("/api/v1/agents/{id}", get(|| async { StatusCode::OK }))
+        .route(
+            "/api/v1/agents/provenance",
+            get(|| async { StatusCode::OK }),
+        )
         .layer(axum::middleware::from_fn_with_state(
             fixture.auth.clone(),
             crate::auth::attach_subject,
@@ -103,8 +108,8 @@ async fn rejection_in_either_endpoint_invalidates_warm_record_even_if_the_other_
 }
 
 #[tokio::test]
-async fn limits_malformed_evidence_and_other_http_errors_never_retry_or_fallback() {
-    for status in [429, 400, 404, 500, 504, 200] {
+async fn malformed_evidence_and_nonretryable_http_errors_never_retry_or_fallback() {
+    for status in [400, 404, 500, 504, 200] {
         let fixture = Fixture::new().await;
         fixture.seed().await;
         let (app, login) = browser(&fixture).await;
@@ -136,7 +141,7 @@ async fn logout_clears_records_and_does_not_restore_them_from_pending_success() 
     let (gate, pending) = fixture.blocked_request(state.clone()).await;
     fixture.auth.revoke_browser_login(&login).await.unwrap();
     gate.release.notify_one();
-    pending.await.unwrap().unwrap();
+    assert_unavailable(pending.await.unwrap());
     fixture.control.introspection.write().await.gate = None;
     // A new browser cookie with the same retained access token must verify anew.
     let new_login = fixture

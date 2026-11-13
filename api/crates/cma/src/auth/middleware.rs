@@ -40,13 +40,20 @@ pub async fn attach_subject(
         .fallback_policy
         .permits(request.method(), request.uri().path());
     let mut observation = crate::telemetry::request::Resolution::start(&request, "ambient");
-    let (resolved, failure) = layer2_core::diagnostic_context::DiagnosticContext::current()
-        .with_phase("identity")
-        .scope(diagnostics::capture(auth.resolve_request_with_policy(
-            request.headers(),
-            allow_fallback,
-        )))
-        .await;
+    let ((resolved, failure), retry_after) = super::identity_throttle::capture(
+        layer2_core::diagnostic_context::DiagnosticContext::current()
+            .with_phase("identity")
+            .scope(diagnostics::capture(super::identity_reuse::scope(
+                &auth,
+                request.method(),
+                request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .map_or("unmatched", axum::extract::MatchedPath::as_str),
+                auth.resolve_request_with_policy(request.headers(), allow_fallback),
+            ))),
+    )
+    .await;
     let outcome = match &resolved {
         Ok(Some(_)) => "resolved",
         Ok(None) => "anonymous",
@@ -87,6 +94,9 @@ pub async fn attach_subject(
                     Reason::Unknown,
                 ))),
             );
+            if let Some(seconds) = retry_after {
+                return identity_failure_after(seconds);
+            }
             if request.uri().path() == "/auth/session"
                 && matches!(&error, layer2_core::StoreError::Unavailable(detail) if detail == "identity_provider_unavailable")
             {
@@ -149,7 +159,11 @@ pub async fn attach_subject(
 }
 
 pub(super) fn identity_failure() -> Response {
-    (
+    identity_failure_after(3)
+}
+
+fn identity_failure_after(seconds: u64) -> Response {
+    let mut response = (
         StatusCode::SERVICE_UNAVAILABLE,
         [
             (axum::http::header::CONTENT_TYPE, "application/problem+json"),
@@ -162,9 +176,15 @@ pub(super) fn identity_failure() -> Response {
             "status": 503,
             "detail": "The identity service is temporarily unavailable. Please retry shortly.",
             "code": "identity_unavailable",
+            "retryable": true,
         })),
     )
-        .into_response()
+        .into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        seconds.max(1).to_string().parse().expect("integer header"),
+    );
+    response
 }
 
 pub(super) fn store_failure() -> Response {
@@ -176,6 +196,7 @@ pub(super) fn store_failure() -> Response {
             "status": 503,
             "detail": "Authentication authority is temporarily unavailable.",
             "code": "store_failed",
+            "retryable": false,
         })),
     )
         .into_response()

@@ -7,7 +7,7 @@ async fn cookie_and_bearer_keep_final_reasons_but_not_successful_fallbacks() {
         for (status, reason) in [
             (502, Reason::BadGateway),
             (503, Reason::UpstreamUnavailable),
-            (429, Reason::InvalidEvidence),
+            (429, Reason::RateLimited),
         ] {
             let fixture = Fixture::new().await;
             let retained = fixture.seed().await;
@@ -121,7 +121,7 @@ async fn authentication_logs_one_content_free_counter_per_503_only() {
             crate::auth::attach_subject,
         ));
         for (upstream, expected, code) in [
-            (429, 503, Some("store_failed")),
+            (429, 503, Some("identity_unavailable")),
             (503, 503, Some("identity_unavailable")),
             (200, 200, None),
             (401, 401, None),
@@ -149,7 +149,7 @@ async fn authentication_logs_one_content_free_counter_per_503_only() {
         .filter(|line| line.contains("cma_dependency_failures_total"))
         .collect();
     assert_eq!(events.len(), 2, "{text}");
-    assert!(events[0].contains("invalid_evidence"));
+    assert!(events[0].contains("http_429"));
     assert!(events[1].contains("http_503"));
     for line in events {
         assert!(line.contains("authentication"));

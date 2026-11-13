@@ -21,6 +21,7 @@ pub(super) async fn json(
 ) -> Result<Value, Error> {
     // Only a timeout before response headers is fallback-eligible. Once headers
     // arrive, the body must complete and validate within the same attempt budget.
+    let mut call = super::identity_observations::Call::start(endpoint);
     let response = timeout_at(deadline, request.send())
         .await
         .map_err(|_| Error::Transient("timeout"))
@@ -31,9 +32,11 @@ pub(super) async fn json(
                 Error::Transient("connection") => Reason::Connection,
                 _ => Reason::Transport,
             };
+            call.finish(None);
             record(endpoint, Stage::ResponseHeaders, reason, None, error);
         })?;
     let status = response.status();
+    call.finish(Some(status.as_u16()));
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
         let error = Error::status(status);
         record(
@@ -68,7 +71,13 @@ pub(super) async fn json(
         return Err(error);
     }
     if response.status() != StatusCode::OK {
-        let error = Error::status(status);
+        let error = if status == StatusCode::TOO_MANY_REQUESTS {
+            Error::RateLimited(super::identity_throttle::RetryAfter::from_headers(
+                response.headers(),
+            ))
+        } else {
+            Error::status(status)
+        };
         record(
             endpoint,
             Stage::Status,
