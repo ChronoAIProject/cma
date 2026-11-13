@@ -8,6 +8,7 @@ use layer2_core::Authorization;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod admission_control_cases;
 mod agent_access_cases;
 mod agent_cases;
 mod agent_customization_cases;
@@ -169,6 +170,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = admission_control_cases::scenario(name).await {
+        return scenario;
+    }
     if let Some(scenario) = capacity_recovery_cases::scenario(name).await {
         return scenario;
     }

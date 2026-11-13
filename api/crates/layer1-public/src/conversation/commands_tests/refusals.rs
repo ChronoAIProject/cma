@@ -9,6 +9,24 @@ use std::time::Duration;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn shared_agui_and_responses_command_refusal_preserves_operator_pause() {
+    let response = crate::conversation::commands::admission_failure(CommandAdmissionError::Ledger(
+        CommandLedgerError::AdmissionPaused,
+    ));
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "60");
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["code"], "admission_paused");
+    assert_eq!(
+        value["detail"],
+        layer2_core::admission::ADMISSION_PAUSED_GUIDANCE
+    );
+}
+
+#[tokio::test]
 async fn a_missing_predecessor_refuses_after_an_older_turn_without_creating_turn_zero() {
     let f = fixture(true).await;
     let task = tokio::spawn(f.router.clone().oneshot(request(

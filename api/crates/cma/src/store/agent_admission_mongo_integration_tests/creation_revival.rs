@@ -329,3 +329,81 @@ async fn a_profile_reuse_does_not_revive_a_paused_sandbox_under_a_platform_stop(
     ));
     client.database(&database).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn operator_stop_keeps_profile_agent_reuse_and_its_launch_revival_exactly_once() {
+    use layer2_core::admission::AdmissionControlStore;
+    let (client, database, store, parent, mut workspace, mut automatic) =
+        fixture("operator_profile_reuse").await;
+    workspace.profile.content.agent_profiles = vec![layer2_core::profiles::AgentProfileRef::new(
+        automatic.profile.id.clone(),
+        automatic.profile.revision,
+    )];
+    workspace.profile.digest =
+        layer2_core::profiles::content_digest(&workspace.profile.content).unwrap();
+    let revision = workspace.revision;
+    workspace.revision += 1;
+    store
+        .save_workspace(revision, workspace.clone())
+        .await
+        .unwrap();
+    automatic.origin = AgentOrigin::WorkspaceProfile { index: 0 };
+    automatic.creation_key = format!("workspace-profile:{}:0", workspace.id);
+    let existing = store
+        .admit_agent(automatic.clone())
+        .await
+        .unwrap()
+        .creation()
+        .agent
+        .clone();
+    let paused = pause(
+        &store,
+        store.get_sandbox(&parent.id).await.unwrap().unwrap(),
+    )
+    .await;
+    crate::store::admission_control::MongoAdmissionControlStore::open(&client, &database)
+        .await
+        .unwrap()
+        .change(
+            0,
+            &SubjectId::new("operator"),
+            "contain new work",
+            true,
+            100,
+        )
+        .await
+        .unwrap();
+    let mut fresh = automatic.clone();
+    fresh.agent_id = AgentId::generate();
+    fresh.worktree_id = WorktreeId::generate();
+    fresh.origin = AgentOrigin::Manual;
+    fresh.creation_key = "manual-refused".into();
+    assert_eq!(
+        store.admit_agent(fresh).await.unwrap_err(),
+        SandboxStoreError::AdmissionPaused
+    );
+    let mut trigger = automatic;
+    trigger.agent_id = AgentId::generate();
+    trigger.worktree_id = WorktreeId::generate();
+    trigger.origin = AgentOrigin::Trigger {
+        trigger_id: "trg_operator".into(),
+        launch_id: "lch_operator".into(),
+    };
+    trigger.creation_key = format!(
+        "trigger-profile:{}",
+        layer2_core::profiles::content_digest(&trigger.origin).unwrap()
+    );
+    let first = store
+        .admit_agent_reusing_profile(trigger.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.creation().agent.id, existing.id);
+    let reviving = store.get_sandbox(&paused.id).await.unwrap().unwrap();
+    assert_eq!(reviving.status, SandboxStatus::Reviving);
+    let replay = store.admit_agent_reusing_profile(trigger).await.unwrap();
+    assert_eq!(replay.creation().agent.id, existing.id);
+    assert_eq!(store.get_sandbox(&paused.id).await.unwrap(), Some(reviving));
+    assert_eq!(store.agents.count_documents(doc! {}).await.unwrap(), 1);
+    client.database(&database).drop().await.unwrap();
+}

@@ -138,7 +138,7 @@ async fn reserve(
     store: &MongoSandboxStore,
     record: &SandboxControlRecord,
     proof: &SandboxControlAuthorization,
-    new_commitment: Result<(), layer2_core::budget::BudgetError>,
+    new_commitment: Result<(), layer2_core::admission::AdmissionRefusal>,
     session: &mut ClientSession,
 ) -> Result<SandboxControlRecord, ApplyError> {
     record.validate()?;
@@ -162,7 +162,7 @@ async fn reserve(
     {
         return Ok(record.replay(records::read(&previous)?)?);
     }
-    new_commitment.map_err(SandboxControlError::Budget)?;
+    new_commitment.map_err(SandboxControlError::from)?;
     if record.envelope.expected_revision != snapshot.lineage.sandbox.revision
         || record.expired(&layer2_core::now_rfc3339())?
     {

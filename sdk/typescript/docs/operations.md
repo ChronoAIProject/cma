@@ -59,6 +59,39 @@ saving platform `cloud` spend fields requires the first and third. Keep this
 read-only metadata outside writable settings.
 The server remains authoritative and can refuse a save if availability changes.
 
+`readAdmission`, `stopAdmission` and `resumeAdmission` require `configure_platform`.
+Admission control has an independent revision and never changes settings revision.
+`readAdmission` also returns `history`, containing at most 20 immutable changes
+newest first. Each retains its operator, time, reason and old/new stop state,
+even after later stop/resume cycles. No-op requests add no history.
+Read its `writes_available` flag before changing the control. Writes stay unavailable
+until every API replica runs a compatible image; reads and enforcement always apply.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+const observed = await cma.admin.readAdmission();
+const stopped = await cma.admin.stopAdmission({
+  reason: 'Contain the incident while existing work finishes',
+  expected_revision: observed.revision,
+});
+// After the operator verifies recovery:
+await cma.admin.resumeAdmission({
+  reason: 'Incident resolved and admission verified',
+  expected_revision: stopped.operator_stop!.revision,
+});
+```
+
+Reasons contain 1–512 UTF-8 bytes without control characters. An already active
+stop returns its original actor, reason and revision. Resume must match the current
+stop's revision; a stale command receives a conflict. Commands do not retry an
+uncertain response automatically: reread control state first. Fresh work receives
+503 `admission_paused` with `Retry-After: 60`; existing admitted work and its control
+and observation paths continue. Registration keeps `registration_closed`. A closed
+writer gate returns 503 `admission_control_writes_unavailable`. Never deploy or roll
+back while stopped; follow the operator runbook before opening the write gate.
+
 Sandbox persistence is owned by Agent Sandbox and its attached PV. CMA exposes
 no public setting for snapshot scheduling or checkpoint archive retention.
 
