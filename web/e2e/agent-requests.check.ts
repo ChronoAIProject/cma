@@ -2,6 +2,66 @@ import { test, expect } from '@playwright/test';
 import { LocalAgentV2 } from './agent-v2.fixture';
 import { PerformanceObserver } from './ui-performance-observer';
 
+test('LOCAL slow composer refresh and visibility preserve valid input', async ({
+  page,
+  baseURL,
+}) => {
+  test.setTimeout(90_000);
+  const fixture = new LocalAgentV2();
+  let started = 0;
+  let completed = 0;
+  const visibility = (hidden: boolean) =>
+    page.evaluate((value) => {
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => value });
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => (value ? 'hidden' : 'visible'),
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }, hidden);
+  try {
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v1/sandboxes/sbx_route', async (route) => {
+      started += 1;
+      if (started > 1) await new Promise((resolve) => setTimeout(resolve, 7000));
+      await route.fulfill({ json: fixture.boundary.sandbox });
+      completed += 1;
+    });
+    await page.goto('/agents/agt_contract');
+    const input = page.getByRole('textbox', { name: 'Message', exact: true });
+    const send = page.getByRole('button', { name: 'Send message', exact: true });
+    await input.fill('Retained slow-read draft');
+    await expect(send).toBeEnabled();
+    await expect.poll(() => started, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+    await page.waitForTimeout(5500);
+    expect(completed).toBe(1);
+    await expect(send).toBeEnabled();
+    await expect(
+      page.getByText('Sandbox status is unavailable. Reconnecting.', { exact: true }),
+    ).toHaveCount(0);
+    await expect.poll(() => completed).toBeGreaterThanOrEqual(2);
+    await visibility(true);
+    await page.waitForTimeout(3000);
+    await visibility(false);
+    await expect(send).toBeEnabled();
+    await expect.poll(() => completed, { timeout: 10_000 }).toBeGreaterThanOrEqual(3);
+    await visibility(true);
+    await page.waitForTimeout(30_000);
+    await visibility(false);
+    await expect(page.getByText('Checking Sandbox status.', { exact: true })).toBeVisible();
+    await expect(send).toBeDisabled();
+    await input.press('Enter');
+    expect(fixture.writes).toHaveLength(0);
+    await expect(send).toBeEnabled({ timeout: 10_000 });
+    await expect(input).toHaveValue('Retained slow-read draft');
+    expect(fixture.writes).toHaveLength(0);
+    expect(fixture.errors).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
+
 test('LOCAL readiness, idle and visibility request counts', async ({ page, baseURL }, info) => {
   test.setTimeout(150_000);
   const fixture = new LocalAgentV2();
