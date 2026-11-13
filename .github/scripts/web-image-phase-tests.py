@@ -42,7 +42,8 @@ def regression(mode):
             assert begins[key]["at"] <= end["at"] and end["durationMs"] >= 0
             assert end["outcome"] == "completed", end
         required = {"reporter-onEnd", "trace-finalization", "worker-teardown",
-                    "worker-host-stop", "browser-close"}
+                    "worker-host-stop", "browser-close", "worker-start", "browser-launch",
+                    "context-create", "page-create"}
         traces = list(evidence.rglob("trace.zip"))
         if failed:
             required.add("zip-finalization")
