@@ -25,6 +25,53 @@ fn start(provider: &Provider) -> MetadataSpan {
         &Context::new(),
     )
 }
+
+#[test]
+fn disabled_details_still_count_real_command_attempts_without_private_attributes() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    metrics::with_local_recorder(&recorder, || {
+        runtime.block_on(async {
+            let provider = Provider(None);
+            crate::telemetry::agent_output::observe(async {
+                drop(start(&provider));
+                drop(
+                    provider.build_with_context(
+                        SpanBuilder::from_name("private-operation-name")
+                            .with_attributes([KeyValue::new("db.operation.name", "find")]),
+                        &Context::new(),
+                    ),
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
+            let error = crate::telemetry::agent_output::observe(async {
+                drop(start(&provider));
+                Err::<(), _>(layer2_core::sandbox::AgentConversationError::Unavailable(
+                    "private-error".into(),
+                ))
+            })
+            .await;
+            assert!(error.is_err());
+        })
+    });
+    let text = handle.render();
+    for outcome in ["recorded", "unavailable"] {
+        let sum = text
+            .lines()
+            .find(|line| {
+                line.starts_with("cma_agent_output_mongo_commands_sum{")
+                    && line.contains(&format!("outcome=\"{outcome}\""))
+            })
+            .unwrap();
+        assert!(sum.ends_with(" 1"), "{sum}");
+    }
+    assert!(!text.contains("private"));
+}
 #[test]
 fn connection_metadata_matches_cmap_without_retaining_address() {
     let expected = crate::store::mongo_latency::connection_key(
@@ -50,7 +97,7 @@ async fn metadata_is_private_and_completion_is_once_with_unknowns_explicit() {
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
     let diagnostics = Diagnostics::default();
-    let provider = Provider(diagnostics.clone());
+    let provider = Provider(Some(diagnostics.clone()));
     let mut span = DiagnosticContext::background("scheduler")
         .with_phase("probe")
         .scope(async { start(&provider) })
@@ -84,7 +131,7 @@ async fn metadata_is_private_and_completion_is_once_with_unknowns_explicit() {
 #[tokio::test]
 async fn concurrent_contexts_remain_distinct_and_operation_spans_are_ignored() {
     let diagnostics = Diagnostics::default();
-    let provider = Provider(diagnostics.clone());
+    let provider = Provider(Some(diagnostics.clone()));
     let a = DiagnosticContext::background("scheduler").scope(async {
         tokio::task::yield_now().await;
         start(&provider)
@@ -131,7 +178,7 @@ async fn readiness_spans_keep_attempt_joins_and_never_promote_unknown_outcomes()
             2: Some(capture.recorder.clone()),
             ..Default::default()
         };
-        let provider = Provider(diagnostics.clone());
+        let provider = Provider(Some(diagnostics.clone()));
         let mut attempt = Attempt::start(
             Some(capture.recorder.clone()),
             tokio::time::Instant::now(),
