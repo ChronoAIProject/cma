@@ -30,18 +30,24 @@ export function Operations({
   const selectedView = available.find((view) => view.id === selected) ?? available[0];
   const id = useId();
   const hasSandboxes = available.some((view) => view.id === 'sandboxes');
+  const prefetchDefault = hasSandboxes && selectedView?.id !== 'sandboxes';
   const prefetchRelease = useRef<(() => void) | undefined>(undefined);
   const warmDefault = () => {
-    if (hasSandboxes) retainDefaultReport(prefetchRelease, client.adminUsageMetrics, principal);
+    if (prefetchDefault) retainDefaultReport(prefetchRelease, client.adminUsageMetrics, principal);
   };
   useDocumentTitle('Operations');
   useEffect(() => {
-    if (hasSandboxes) retainDefaultReport(prefetchRelease, client.adminUsageMetrics, principal);
+    // The visible dashboard owns its selected report. Keeping a second default
+    // owner here would continue polling it after the user changes filters.
+    if (prefetchDefault) retainDefaultReport(prefetchRelease, client.adminUsageMetrics, principal);
     return () => {
-      prefetchRelease.current?.();
+      const release = prefetchRelease.current;
       prefetchRelease.current = undefined;
+      // Let the newly mounted dashboard subscribe in this commit before
+      // releasing the prefetch owner; leaving Operations still cancels it.
+      queueMicrotask(() => release?.());
     };
-  }, [client.adminUsageMetrics, hasSandboxes, principal]);
+  }, [client.adminUsageMetrics, prefetchDefault, principal]);
   if (selectedView === undefined) return null;
   const canControl = capabilities.includes('control_any_sandbox');
   return (
