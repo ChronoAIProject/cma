@@ -3,13 +3,36 @@ use super::*;
 
 impl SandboxReconciler {
     pub(crate) async fn run_due(&self, now: SystemTime) -> Result<bool, SandboxStoreError> {
-        let mut progress = self.progress.lock().await;
-        // Independent of sweep progress: a failing earlier phase must not hold
-        // back platform spend transitions (contract §5.3).
-        self.platform_spend_stop(now).await;
+        // Capture before any awaited lock or platform I/O so enabled reserved
+        // work keeps five seconds below the outer 30-second opportunity.
+        let opportunity_deadline = tokio::time::Instant::now() + Duration::from_secs(25);
+        let prelude = async {
+            let progress = self.progress.lock().await;
+            // Independent of sweep progress: a failing earlier phase must not
+            // hold back platform spend transitions (contract §5.3).
+            self.platform_spend_stop(now).await;
+            let recovery = if self.failed_runtime_recovery.is_some() {
+                Some(self.recovery_schedule.lock().await)
+            } else {
+                None
+            };
+            (progress, recovery)
+        };
+        let (mut progress, recovery) = if self.runtime_loss_bounded_proof_enabled {
+            tokio::time::timeout_at(opportunity_deadline, prelude)
+                .await
+                .map_err(|_| {
+                    tracing::warn!(parent: None, phase = "prelude", outcome = "deadline",
+                        "sandbox reconciliation prelude exhausted the reserved opportunity");
+                    SandboxStoreError::Unavailable(
+                        "sandbox reconciliation prelude deadline exceeded".into(),
+                    )
+                })?
+        } else {
+            prelude.await
+        };
         // The progress lock serializes both lanes, including outer cancellation.
-        if self.failed_runtime_recovery.is_some() {
-            let mut recovery = self.recovery_schedule.lock().await;
+        if let Some(mut recovery) = recovery {
             if recovery.take_turn() {
                 recovery.run(self).await?;
                 return Ok(false);
@@ -44,21 +67,14 @@ impl SandboxReconciler {
             if reserved && dispatched {
                 break false;
             }
-            let budget = if reserved {
+            let deadline = if reserved {
                 if self.runtime_loss_bounded_proof_enabled {
-                    Duration::from_secs(25)
+                    opportunity_deadline
                 } else {
-                    BINDING_OPPORTUNITY
+                    started + BINDING_OPPORTUNITY
                 }
             } else {
-                OPERATION
-            };
-            let deadline = if reserved {
-                // Reserved work starts an empty slice. Keep five seconds under
-                // the outer 30s deadline for cancellation and bookkeeping.
-                started + budget
-            } else {
-                tokio::time::Instant::now() + budget
+                tokio::time::Instant::now() + OPERATION
             };
             if !refreshing && !current.is_binding_phase() {
                 // Set before awaiting, so errors, deadlines and outer cancellation

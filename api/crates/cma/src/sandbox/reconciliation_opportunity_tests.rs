@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "reconciliation_prelude_tests.rs"]
+mod prelude;
+
 #[tokio::test(start_paused = true)]
 async fn a_reserved_retry_keeps_parent_revision_fences_after_loss_observation() {
     let (store, reconciler) = setup(2, Duration::ZERO).await;
