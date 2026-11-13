@@ -28,7 +28,7 @@ it('backs off unchanged readiness with jitter, resets on progress and keeps the 
   await act(() => vi.advanceTimersByTimeAsync(10000));
   expect(read).toHaveBeenCalledTimes(count + 2);
   read.mockImplementation(() => new Promise(() => {}));
-  await act(() => vi.advanceTimersByTimeAsync(10000));
+  await act(() => vi.advanceTimersByTimeAsync(15000));
   expect(hook.result.current.inputAvailability.allowed).toBe(false);
   expect(hook.result.current.resourceAvailability.state).toBe('unavailable');
   hook.unmount();

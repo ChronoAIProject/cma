@@ -36,10 +36,13 @@ impl LiveBudget {
         // it into retained shared storage, using its actual owned capacities.
         let bytes = retained_bytes(&fragment)?;
         let permit = IngressReservation::try_acquire(&self.0, self.1.as_ref(), bytes as usize)?;
-        Some(AgentLiveDelivery(Delivery::Reserved(Arc::new(Reserved {
-            fragment,
-            _permit: permit,
-        }))))
+        Some(AgentLiveDelivery(
+            Delivery::Reserved(Arc::new(Reserved {
+                fragment,
+                _permit: permit,
+            })),
+            tokio::time::Instant::now(),
+        ))
     }
 
     #[cfg(test)]
@@ -73,7 +76,7 @@ enum Delivery {
 /// Immutable source data. Enabled deliveries share both storage and reservation
 /// across subscribers and deferred frames, until the final clone is dropped.
 #[derive(Clone)]
-pub struct AgentLiveDelivery(Delivery);
+pub struct AgentLiveDelivery(Delivery, tokio::time::Instant);
 
 impl Deref for AgentLiveDelivery {
     type Target = AgentLiveFragment;
@@ -88,7 +91,7 @@ impl Deref for AgentLiveDelivery {
 
 impl From<AgentLiveFragment> for AgentLiveDelivery {
     fn from(fragment: AgentLiveFragment) -> Self {
-        Self(Delivery::Legacy(fragment))
+        Self(Delivery::Legacy(fragment), tokio::time::Instant::now())
     }
 }
 
@@ -106,6 +109,10 @@ impl std::fmt::Debug for AgentLiveDelivery {
 }
 
 impl AgentLiveDelivery {
+    /// Local monotonic publication time; never part of the wire contract.
+    pub fn published_at(&self) -> tokio::time::Instant {
+        self.1
+    }
     /// Preserve legacy batching. Budgeted source data remains immutable: copying
     /// it into a new coalesced allocation would need a separate byte reservation.
     pub fn coalesce_legacy(&mut self, next: &Self, max_bytes: usize) -> bool {

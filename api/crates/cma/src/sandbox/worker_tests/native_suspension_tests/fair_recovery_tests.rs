@@ -148,7 +148,53 @@ async fn permanently_failed_early_binding_does_not_starve_a_real_native_boot_rep
     assert!(reconciler.run_due(now).await.unwrap());
     assert_eq!(fixture.harness.stored(&active.id).await, active);
     fixture.backend.restart_process().await;
-    assert!(reconciler.run_due(now).await.unwrap());
+    // The real supervised recovery loop must progress while foreground and an
+    // unrelated optional worker occupy all remaining shared capacity (#1791).
+    let shared = crate::background::BackgroundBudget::new();
+    let reserved = shared.reserve(1).unwrap();
+    let _foreground = shared.foreground();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let released = release.clone();
+    let (started, entered) = tokio::sync::oneshot::channel();
+    let optional = tokio::spawn(async move {
+        crate::background::BackgroundWork::new(
+            shared,
+            "fixture_optional",
+            Duration::from_secs(30),
+            Duration::ZERO,
+        )
+        .run(|| async {
+            started.send(()).unwrap();
+            released.notified().await;
+            Ok(())
+        })
+        .await
+    });
+    entered.await.unwrap();
+    let reconciler = reconciler
+        .with_background_work(crate::background::BackgroundWork::new(
+            reserved,
+            "sandbox_reconciliation",
+            Duration::from_secs(30),
+            Duration::from_secs(15),
+        ))
+        .with_background_resumption(true);
+    let (stop, signal) = tokio::sync::watch::channel(false);
+    let scheduler = reconciler.spawn_supervised(
+        signal,
+        crate::worker_supervision::Workers::new().get("sandbox_reconciliation"),
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while fixture.harness.stored(&active.id).await.status != SandboxStatus::Reviving {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("held binding and optional work must not starve genuine runtime loss");
+    stop.send(true).unwrap();
+    scheduler.await.unwrap();
+    release.notify_one();
+    optional.await.unwrap().unwrap();
     let recovered = fixture.harness.stored(&active.id).await;
     assert_eq!(recovered.status, SandboxStatus::Reviving);
     assert_eq!(recovered.lifecycle.home, active.lifecycle.home);
