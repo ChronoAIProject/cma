@@ -75,6 +75,7 @@ unavailable_port!(AgentAdmissionStore {
     fn admit_agent(admission: AgentAdmission) -> AgentAdmissionResult;
 });
 unavailable_port!(AgentConversationStore {
+    fn agent_message_snapshot(id: &AgentId) -> Option<AgentMessageSnapshot>;
     fn agent_message_checkpoint(id: &AgentId) -> Option<AgentMessageCheckpoint>;
     fn commit_agent_message_update(current: Agent, previous: Option<AgentMessageCheckpoint>, next: AgentMessageCheckpoint, mutation: Option<AgentConversationMutation>) -> AgentUpdateOutcome;
     fn commit_agent_conversation(mutation: AgentConversationMutation) -> Vec<AgentLogEntry>;
