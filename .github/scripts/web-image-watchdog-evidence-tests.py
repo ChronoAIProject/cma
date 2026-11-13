@@ -40,9 +40,12 @@ def regression():
     assert json.loads((launch / "observer-process.json").read_text())["driver_returncode"] is None
     assert events(launch / "startup.jsonl")[-1]["event"] == "observer-finished"
 
+    # Readiness beyond the old 25s guard must still arm the complete execution
+    # budget, then exercise the same early-crash ownership assertions.
+    watchdog.regression("slow-start", evidence_root=root)
+
     # The real browser exists, but the ready marker is deliberately never written.
-    # The observer's 25s assertion must fail while the 30s + 30s supervisor remains
-    # responsible for SIGINT, trace retention, browser shutdown and process reaping.
+    # Startup must expire without arming execution, retaining graceful diagnostics.
     try:
         watchdog.regression("pre-ready-stall", evidence_root=root)
     except AssertionError as error:
@@ -52,16 +55,19 @@ def regression():
     directory = root / "pre-ready-stall"
     startup = events(directory / "startup.jsonl")
     failed = next(e for e in startup if e["event"] == "readiness-failed")
-    assert failed["deadline_expired"] and failed["driver_returncode"] is None
-    assert 25 <= failed["elapsed_seconds"] < 30, failed
-    assert [e["event"] for e in startup][-3:] == ["await-supervisor", "driver-exited", "observer-finished"]
+    assert not failed["deadline_expired"] and failed["driver_returncode"] != 0
+    assert 60 <= failed["elapsed_seconds"] < 110, failed
+    assert not (directory / "ready.json").exists()
+    assert not (directory / "ready.armed.json").exists()
     observer = json.loads((directory / "observer-process.json").read_text())
     assert not observer["fallback_kill"] and not observer["remaining"], observer
     assert observer["control_alive_before_cleanup"], observer
     result = json.loads((directory / "evidence/browser-process.json").read_text())
     assert result["timeout_seconds"] == 30 and result["interrupt_grace_seconds"] == 30
+    assert result["startup_timeout_seconds"] == 60 and result["timeout_phase"] == "startup"
+    assert result["execution_elapsed_seconds"] is None and result["execution_armed_at"] is None
     assert result["timed_out"] and not result["forced_kill"] and result["cleanup_complete"], result
-    assert 30 <= result["elapsed_seconds"] < 80 and not result["process_cleanup"]["remaining"]
+    assert 60 <= result["elapsed_seconds"] < 110 and not result["process_cleanup"]["remaining"]
     assert any(e["event"] == "injected-pre-ready-stall" for e in events(directory / "fixture-startup.jsonl"))
     reporter = events(directory / "evidence/browser-events.jsonl")
     assert any(e["event"] == "test-begin" for e in reporter)
