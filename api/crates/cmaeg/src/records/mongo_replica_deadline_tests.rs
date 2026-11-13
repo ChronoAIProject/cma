@@ -1,4 +1,5 @@
 //! Exercise the real direct admission-root route, replacing only Mongo attempts.
+use super::super::replica_observation::{Observation, Phase};
 use super::{AttemptError, WRITE_TIMEOUT};
 use crate::records::{
     mongo::{MongoRecords, ReplicaKind, ReplicaWrite, INTERACTIONS},
@@ -35,6 +36,7 @@ impl AttemptFixture {
     pub(in crate::records::mongo) async fn attempt(
         &self,
         writes: &[ReplicaWrite],
+        observation: &Observation,
     ) -> Result<Vec<u64>, AttemptError> {
         // The production root adapter must keep the same identity, payload and
         // expected version on every attempt; there is no outer Store::batch.
@@ -55,18 +57,21 @@ impl AttemptFixture {
         if matches!(outcome, Outcome::CommitBeforeReply) {
             self.committed.store(true, Ordering::SeqCst);
         }
+        observation.phase(Phase::Commit);
         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+        let mongo_error = |labels: &[&str]| {
+            let error = super::tests::error(labels);
+            observation.mongo_error(&error);
+            AttemptError::from(error)
+        };
         match outcome {
             Outcome::Success | Outcome::CommitBeforeReply => Ok(vec![1]),
-            Outcome::Aborted => Err(super::tests::error(&["TransientTransactionError"]).into()),
-            Outcome::Ambiguous => {
-                Err(super::tests::error(&["UnknownTransactionCommitResult"]).into())
-            }
-            Outcome::BothLabels => Err(super::tests::error(&[
+            Outcome::Aborted => Err(mongo_error(&["TransientTransactionError"])),
+            Outcome::Ambiguous => Err(mongo_error(&["UnknownTransactionCommitResult"])),
+            Outcome::BothLabels => Err(mongo_error(&[
                 "TransientTransactionError",
                 "UnknownTransactionCommitResult",
-            ])
-            .into()),
+            ])),
             Outcome::Conflict => Err(RecordError::Conflict {
                 expected: 0,
                 actual: Some(1),
@@ -204,3 +209,6 @@ async fn direct_root_version_conflict_returns_to_caller_reconciliation() {
     );
     assert_eq!(attempt.started.load(Ordering::SeqCst), 1);
 }
+
+#[path = "mongo_replica_observation_tests.rs"]
+mod observation_tests;
