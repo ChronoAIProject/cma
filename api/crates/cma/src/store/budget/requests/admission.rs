@@ -34,7 +34,14 @@ pub(super) async fn reserve(
     let snapshot = super::super::period::fenced_snapshot(store, &agent.owner, session).await?;
     let Some(policy) = snapshot.owner.clone() else {
         let timestamp = now(store).map_err(domain)?;
-        super::super::period::require_unbudgeted(store, &snapshot, timestamp, session).await?;
+        super::super::period::require_unbudgeted(
+            store,
+            &snapshot,
+            timestamp,
+            layer2_core::admission::AdmissionCause::Continuation,
+            session,
+        )
+        .await?;
         return Ok(None);
     };
     let settings = store

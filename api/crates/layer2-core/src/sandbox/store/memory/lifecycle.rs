@@ -47,6 +47,7 @@ impl SandboxAdmissionStore for InMemorySandboxStore {
             }
             return Ok(SandboxAdmissionResult::Existing(replay.sandbox));
         }
+        super::admission::require_operator_open(&state, admission.admission_cause())?;
         let live = state
             .sandboxes
             .values()

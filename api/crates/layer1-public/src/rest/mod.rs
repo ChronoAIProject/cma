@@ -11,6 +11,7 @@ use axum::{
 use layer2_core::StoreError;
 
 pub mod admin;
+pub(crate) mod admission_problem;
 mod bot_setups;
 mod bots;
 pub use bot_setups::bot_setup_router;
