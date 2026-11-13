@@ -113,7 +113,7 @@ impl MetricsWorkers {
                     "observer" => self.observe(&holder).await,
                     "rollups" => self.collect(&holder, false).await,
                     "replay" => self.collect(&holder, true).await,
-                    _ => self.diagnostics().await,
+                    _ => self.diagnostics(&holder).await,
                 }
             })
             .await

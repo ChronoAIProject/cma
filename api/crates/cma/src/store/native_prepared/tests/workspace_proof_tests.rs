@@ -231,7 +231,7 @@ async fn workspace_completion_survives_health_and_claim_with_old_record_fallback
         .await
         .unwrap();
     let claim = store
-        .claim_native_prepared_work(NOW, LATER)
+        .claim_native_prepared_work(NOW, &lease_deadline())
         .await
         .unwrap()
         .unwrap();

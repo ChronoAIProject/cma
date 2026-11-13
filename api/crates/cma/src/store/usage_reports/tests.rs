@@ -1,4 +1,6 @@
 mod binding_fence;
+mod publication_fence;
+mod publication_races;
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::*;
