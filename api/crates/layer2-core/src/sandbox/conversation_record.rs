@@ -1,7 +1,6 @@
 //! Ordered conversation folding and durable output publication.
-use super::output::{
-    is_identity_terminal_for_current, output_replayed, output_source_for_checkpoint, store_error,
-};
+use super::coalesce::{self, RecordInput};
+use super::output::{is_identity_terminal_for_current, output_source_for_checkpoint, store_error};
 use super::{
     budget, checkpoint, live, output, DurableAgentUpdateRecorder, MAX_CONVERSATION_COMMIT_RETRIES,
 };
@@ -10,11 +9,11 @@ use crate::sandbox::conversation_fold::{fold_update, FoldedConversationUpdate};
 use crate::sandbox::store::{
     AgentConversationMutation, AgentMessageCheckpoint, AgentStore, SandboxStoreError,
 };
+use crate::sandbox::AgentOutputCommit;
 use crate::sandbox::{
     AgentConversationError, AgentMessageAssembly, AgentOutputCategory, AgentUpdateOutcome,
 };
 use crate::{seconds_from_rfc3339, AgentId};
-use layer3_adapter::ConversationUpdate;
 
 impl DurableAgentUpdateRecorder {
     pub(super) async fn record_with_reopen(
@@ -22,10 +21,10 @@ impl DurableAgentUpdateRecorder {
         id: &AgentId,
         runtime_generation: u64,
         assembly: &mut AgentMessageAssembly,
-        update: ConversationUpdate,
+        input: RecordInput<'_>,
         appended_at: String,
         guard: Option<&crate::sandbox::store::AgentReopenGuard>,
-    ) -> Result<AgentUpdateOutcome, AgentConversationError> {
+    ) -> Result<AgentOutputCommit, AgentConversationError> {
         if runtime_generation == 0 {
             return Err(AgentConversationError::StaleGeneration);
         }
@@ -34,7 +33,12 @@ impl DurableAgentUpdateRecorder {
                 "conversation update timestamp is invalid",
             ));
         }
-        let (source, update, shared) = output::update_parts(&update);
+        if !input.coalesce() && !input.flush() && assembly.quiet_output.is_some() {
+            return Err(AgentConversationError::InvalidState(
+                "flush quiet receipts before immediate recording",
+            ));
+        }
+        let (source, update, shared) = input.parts();
         let fingerprint = output::fingerprint(source, update);
         let update_id = if let Some(pending) = &assembly.pending_update {
             if pending.fingerprint != fingerprint
@@ -77,16 +81,23 @@ impl DurableAgentUpdateRecorder {
                 .as_ref()
                 .filter(|checkpoint| checkpoint.update_id == update_id);
             let identity_terminal = is_identity_terminal_for_current(&current, update);
-            let replayed = if let Some(source) = &source {
-                let replayed = output_replayed(source, &current, previous.as_ref())?;
+            let (replayed, buffered_replay) = if let Some(source) = &source {
+                let (replayed, buffered) =
+                    coalesce::replay_state(source, &current, previous.as_ref(), assembly)?;
                 // An older observer may have durably recorded this exact
                 // terminal as a quiet receipt. Preserve the validated source
                 // position, but let the replacement observer apply its
                 // identity-bearing terminal meaning to the still-active turn.
-                replayed && !identity_terminal
+                (replayed && !identity_terminal, buffered)
             } else {
-                false
+                (false, false)
             };
+            if buffered_replay && !input.flush() && !identity_terminal {
+                return Ok(AgentOutputCommit {
+                    outcome: AgentUpdateOutcome::quiet(),
+                    committed: None,
+                });
+            }
             if let Some(recorded) = recorded {
                 if recorded.update_fingerprint != fingerprint {
                     return Err(AgentConversationError::Corrupt(
@@ -94,7 +105,7 @@ impl DurableAgentUpdateRecorder {
                     ));
                 }
             }
-            let recovered = match checkpoint::recover_assembly(
+            let mut recovered = match checkpoint::recover_assembly(
                 self.store.as_ref(),
                 &current,
                 previous.as_ref(),
@@ -114,6 +125,10 @@ impl DurableAgentUpdateRecorder {
                     return Err(error);
                 }
             };
+            if assembly.quiet_output.is_some() {
+                // Ephemeral thought identity must survive snapshots while its receipt is buffered.
+                recovered.live_thought = assembly.live_thought.clone();
+            }
             if replayed {
                 AgentOutputCategory::Replay.observe();
                 // A reconnect may parse an old terminal as a no-op after the turn closed.
@@ -153,8 +168,12 @@ impl DurableAgentUpdateRecorder {
                     .await
                     .map_err(store_error)?;
                 }
-                *assembly = recovered;
-                return Ok(AgentUpdateOutcome::quiet());
+                *assembly =
+                    coalesce::accepted(recovered, assembly, source, self.coalesce_policy.is_some());
+                return Ok(AgentOutputCommit {
+                    outcome: AgentUpdateOutcome::quiet(),
+                    committed: source.cloned(),
+                });
             }
             if let Some(recorded) = recorded {
                 AgentOutputCategory::Replay.observe();
@@ -189,8 +208,12 @@ impl DurableAgentUpdateRecorder {
                     .await
                     .map_err(store_error)?;
                 }
-                *assembly = recovered;
-                return Ok(recorded.outcome.clone());
+                *assembly =
+                    coalesce::accepted(recovered, assembly, source, self.coalesce_policy.is_some());
+                return Ok(AgentOutputCommit {
+                    outcome: recorded.outcome.clone(),
+                    committed: source.cloned(),
+                });
             }
             if let Some(pending) = &assembly.pending_update {
                 if pending.active_turn != current.conversation.active_turn
@@ -200,6 +223,11 @@ impl DurableAgentUpdateRecorder {
                         "uncertain update receipt is no longer the current checkpoint".into(),
                     ));
                 }
+            }
+            if !current.status.is_live() {
+                return Err(AgentConversationError::InvalidState(
+                    "conversation updates require a live agent",
+                ));
             }
             let folded = match &update {
                 Some(update) => fold_update(
@@ -251,11 +279,32 @@ impl DurableAgentUpdateRecorder {
                 && previous
                     .as_ref()
                     .is_some_and(|checkpoint| !checkpoint.matches(&current));
+            if let (Some(source), Some(policy)) = (source, self.coalesce_policy) {
+                if input.coalesce()
+                    && guard.is_none()
+                    && assembly.pending_update.is_none()
+                    && logs.is_empty()
+                    && !durable_assembly_changed
+                    && !recovered_anchor
+                    && !identity_terminal
+                    && next_assembly.retain_quiet(assembly, source, runtime_generation, policy)
+                {
+                    *assembly = next_assembly;
+                    self.live.publish(fragment);
+                    return Ok(AgentOutputCommit {
+                        outcome: AgentUpdateOutcome::quiet(),
+                        committed: None,
+                    });
+                }
+            }
             if source.is_none() && logs.is_empty() && !durable_assembly_changed && !recovered_anchor
             {
                 *assembly = next_assembly;
                 self.live.publish(fragment);
-                return Ok(AgentUpdateOutcome::quiet());
+                return Ok(AgentOutputCommit {
+                    outcome: AgentUpdateOutcome::quiet(),
+                    committed: source.cloned(),
+                });
             }
             let outcome = AgentUpdateOutcome {
                 appended: logs
@@ -280,7 +329,7 @@ impl DurableAgentUpdateRecorder {
                 runtime_generation,
                 active_turn: next_agent.conversation.active_turn,
                 after_seq: next_agent.conversation.last_seq,
-                assembly: next_assembly.clone(),
+                assembly: next_assembly.durable_copy(),
                 outcome,
                 output: output_source_for_checkpoint(
                     source,
@@ -316,12 +365,25 @@ impl DurableAgentUpdateRecorder {
             {
                 Ok(outcome) => {
                     if outcome.turn_closed {
-                        *assembly = AgentMessageAssembly::default();
+                        *assembly = coalesce::accepted(
+                            AgentMessageAssembly::default(),
+                            assembly,
+                            source,
+                            self.coalesce_policy.is_some(),
+                        );
                     } else {
-                        *assembly = next_assembly;
+                        *assembly = coalesce::accepted(
+                            next_assembly,
+                            assembly,
+                            source,
+                            self.coalesce_policy.is_some(),
+                        );
                         self.live.publish(fragment);
                     }
-                    return Ok(outcome);
+                    return Ok(AgentOutputCommit {
+                        outcome,
+                        committed: source.cloned(),
+                    });
                 }
                 Err(SandboxStoreError::Conflict) => {}
                 Err(SandboxStoreError::SequenceConflict) => {

@@ -84,6 +84,20 @@ pub(super) fn output_replayed(
     current: &Agent,
     previous: Option<&AgentMessageCheckpoint>,
 ) -> Result<bool, AgentConversationError> {
+    let previous = previous
+        .filter(|checkpoint| {
+            checkpoint.native_conversation_id == source.native_conversation_id
+                && Some(checkpoint.runtime_generation) == current.conversation.runtime_generation
+        })
+        .and_then(|checkpoint| checkpoint.output.as_ref());
+    output_position_replayed(source, current, previous)
+}
+
+pub(super) fn output_position_replayed(
+    source: &layer3_adapter::RuntimeOutputSource,
+    current: &Agent,
+    previous: Option<&layer3_adapter::RuntimeOutputSource>,
+) -> Result<bool, AgentConversationError> {
     let invalid = || {
         AgentConversationError::Corrupt(
             "runtime output receipt is not contiguous with its conversation".into(),
@@ -91,6 +105,7 @@ pub(super) fn output_replayed(
     };
     if current.conversation.conversation_id.as_deref() != Some(&source.native_conversation_id)
         || uuid::Uuid::parse_str(&source.stream_id).is_err()
+        || source.native_conversation_id.len() > 4096
         || source.cursor == 0
         || source.payload_sha256.len() != 64
         || !source
@@ -100,12 +115,6 @@ pub(super) fn output_replayed(
     {
         return Err(invalid());
     }
-    let previous = previous
-        .filter(|checkpoint| {
-            checkpoint.native_conversation_id == source.native_conversation_id
-                && Some(checkpoint.runtime_generation) == current.conversation.runtime_generation
-        })
-        .and_then(|checkpoint| checkpoint.output.as_ref());
     match previous {
         Some(previous) if previous.stream_id != source.stream_id => Err(invalid()),
         Some(previous)

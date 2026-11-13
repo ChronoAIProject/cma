@@ -8,6 +8,8 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixtu
 
 #[path = "checkpoint_anchor_tests.rs"]
 mod anchor;
+#[path = "checkpoint_coalesce_tests.rs"]
+mod coalesce;
 #[path = "checkpoint_failpoint_tests.rs"]
 mod failpoints;
 #[path = "checkpoint_measurement_tests.rs"]
