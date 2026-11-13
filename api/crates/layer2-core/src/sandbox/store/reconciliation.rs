@@ -128,48 +128,19 @@ pub fn apply_sandbox_runtime_loss(
     agents: &[(Agent, u64)],
     request: &SandboxRuntimeLossRequest,
 ) -> Result<SandboxRuntimeLossApplication, SandboxStoreError> {
-    validate_sandbox_runtime_loss_request(request)?;
-    if current.id != request.sandbox_id {
-        return Err(corrupt("stored Sandbox key disagrees with its identity"));
-    }
-    current
-        .validate()
-        .map_err(|error| corrupt(&error.to_string()))?;
-    if current.revision != request.expected_revision || current.runtime != request.expected_runtime
-    {
-        return Ok(SandboxRuntimeLossApplication::Complete(
-            SandboxRuntimeLossOutcome::Superseded,
-        ));
-    }
-    if !current.requires_runtime_loss_recovery()
-        || seconds_from_rfc3339(&current.updated_at)
-            .is_none_or(|at| Some(at) > seconds_from_rfc3339(&request.observed_at))
-    {
-        return Ok(SandboxRuntimeLossApplication::Complete(
-            SandboxRuntimeLossOutcome::NotEligible,
-        ));
+    if let Some(outcome) = precheck_sandbox_runtime_loss(current, request)? {
+        return Ok(SandboxRuntimeLossApplication::Complete(outcome));
     }
     let mut ids = BTreeSet::new();
     let mut changes = Vec::new();
     let mut events = Vec::new();
     for (agent, log_head) in agents {
-        if agent.sandbox_id != current.id
-            || agent.owner != current.owner
-            || agent.revision == 0
-            || agent.work.next_fence == 0
-            || !ids.insert(&agent.id)
-        {
-            return Err(corrupt("stored Agent identity is invalid"));
-        }
+        validate_agent_identity(current, agent, &mut ids)?;
         if agent.conversation.last_seq != *log_head {
             return Err(SandboxStoreError::SequenceConflict);
         }
-        let updated_at = seconds_from_rfc3339(&agent.updated_at)
-            .ok_or_else(|| corrupt("stored Agent update time is invalid"))?;
-        if Some(updated_at) > seconds_from_rfc3339(&request.observed_at) {
-            return Ok(SandboxRuntimeLossApplication::Complete(
-                SandboxRuntimeLossOutcome::NotEligible,
-            ));
+        if let Some(outcome) = precheck_agent_time(agent, request)? {
+            return Ok(SandboxRuntimeLossApplication::Complete(outcome));
         }
         if !agent.status.is_live() {
             continue;
@@ -244,3 +215,78 @@ pub fn apply_sandbox_runtime_loss(
 fn corrupt(detail: &str) -> SandboxStoreError {
     SandboxStoreError::Corrupt(detail.into())
 }
+
+/// Row-only rejection before adapters read any Agent history.
+#[doc(hidden)]
+pub fn precheck_sandbox_runtime_loss(
+    current: &Sandbox,
+    request: &SandboxRuntimeLossRequest,
+) -> Result<Option<SandboxRuntimeLossOutcome>, SandboxStoreError> {
+    validate_sandbox_runtime_loss_request(request)?;
+    if current.id != request.sandbox_id {
+        return Err(corrupt("stored Sandbox key disagrees with its identity"));
+    }
+    current
+        .validate()
+        .map_err(|error| corrupt(&error.to_string()))?;
+    if current.revision != request.expected_revision || current.runtime != request.expected_runtime
+    {
+        return Ok(Some(SandboxRuntimeLossOutcome::Superseded));
+    }
+    if !current.requires_runtime_loss_recovery()
+        || seconds_from_rfc3339(&current.updated_at)
+            .is_none_or(|at| Some(at) > seconds_from_rfc3339(&request.observed_at))
+    {
+        return Ok(Some(SandboxRuntimeLossOutcome::NotEligible));
+    }
+    Ok(None)
+}
+
+/// Complete Agent membership still comes from the same transaction snapshot.
+#[doc(hidden)]
+pub fn precheck_runtime_loss_agents<'a>(
+    current: &Sandbox,
+    agents: impl IntoIterator<Item = &'a Agent>,
+    request: &SandboxRuntimeLossRequest,
+) -> Result<Option<SandboxRuntimeLossOutcome>, SandboxStoreError> {
+    let mut ids = BTreeSet::new();
+    for agent in agents {
+        validate_agent_identity(current, agent, &mut ids)?;
+        if let Some(outcome) = precheck_agent_time(agent, request)? {
+            return Ok(Some(outcome));
+        }
+    }
+    Ok(None)
+}
+
+fn validate_agent_identity<'a>(
+    current: &Sandbox,
+    agent: &'a Agent,
+    ids: &mut BTreeSet<&'a crate::AgentId>,
+) -> Result<(), SandboxStoreError> {
+    if agent.sandbox_id != current.id
+        || agent.owner != current.owner
+        || agent.revision == 0
+        || agent.work.next_fence == 0
+        || !ids.insert(&agent.id)
+    {
+        return Err(corrupt("stored Agent identity is invalid"));
+    }
+    Ok(())
+}
+
+fn precheck_agent_time(
+    agent: &Agent,
+    request: &SandboxRuntimeLossRequest,
+) -> Result<Option<SandboxRuntimeLossOutcome>, SandboxStoreError> {
+    let updated_at = seconds_from_rfc3339(&agent.updated_at)
+        .ok_or_else(|| corrupt("stored Agent update time is invalid"))?;
+    Ok(
+        (Some(updated_at) > seconds_from_rfc3339(&request.observed_at))
+            .then_some(SandboxRuntimeLossOutcome::NotEligible),
+    )
+}
+
+#[cfg(test)]
+#[path = "reconciliation_tests.rs"]
+mod tests;

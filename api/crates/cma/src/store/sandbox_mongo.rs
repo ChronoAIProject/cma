@@ -106,6 +106,7 @@ pub struct MongoSandboxStore {
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
+    pub(super) runtime_loss_bounded_proof_enabled: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) retry_single_marker_enabled: bool,
     pub(super) retry_audits:
@@ -172,6 +173,7 @@ pub struct MongoSandboxStore {
     pub(super) managed_machine_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
     // Coalesced process-local hints; durable discovery owns recovery and authority.
     pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) access_admitted: std::sync::Arc<tokio::sync::Notify>,
@@ -214,6 +216,7 @@ impl MongoSandboxStore {
             bounded_admission_agents: Default::default(),
             segment_adoption_enabled: false,
             bounded_approval_reads: false,
+            runtime_loss_bounded_proof_enabled: false,
             bounded_close_retries: false,
             retry_single_marker_enabled: false,
             retry_audits: Default::default(),
@@ -286,6 +289,7 @@ impl MongoSandboxStore {
             managed_machine_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
+            native_prepared_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),

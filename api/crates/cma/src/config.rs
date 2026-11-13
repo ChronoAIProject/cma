@@ -13,6 +13,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 mod access_migration;
 mod access_origins;
 mod access_snapshot;
+mod activity;
 mod admission_log;
 mod global_admission;
 mod provider_tool_relay;
@@ -25,6 +26,7 @@ mod home;
 mod oauth_resource;
 mod profiles;
 mod public_streams;
+mod rate_default_lease;
 mod runtime;
 
 mod features;
@@ -76,6 +78,7 @@ pub struct RateLimitConfig {
     pub control_per_minute: NonZeroU32,
     pub control_tier_enabled: bool,
     pub response_input_tier_enabled: bool,
+    pub default_lease_enabled: bool,
 }
 
 impl RateLimitConfig {
@@ -83,6 +86,7 @@ impl RateLimitConfig {
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         Ok(Self {
+            default_lease_enabled: rate_default_lease::enabled(lookup)?,
             control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
                 None | Some("false") => false,
                 Some("true") => true,
@@ -212,6 +216,7 @@ pub struct Config {
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
+    pub activity_async_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
@@ -253,6 +258,7 @@ impl std::fmt::Debug for Config {
             .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
+            .field("activity_async_enabled", &self.activity_async_enabled)
             .field("default_profiles", &self.default_profiles)
             .field(
                 "agent_manager_sandbox_capacity",
@@ -452,6 +458,7 @@ impl Config {
             baseline_services,
             auth_encryption_key,
             activity_retention,
+            activity_async_enabled: activity::enabled(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
