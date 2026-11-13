@@ -25,6 +25,16 @@ test-binary hash, output hash and successful cleanup are in
 `evidence/mongo-routed.json`. No real provider, ownership-mode transition,
 load, crash, node loss or HPA was exercised by that test.
 
+## Refreshed integration checkpoint
+
+After merging integration `3415875c609443de0b2ca917b4550e059ff25740`, the same
+N=1/2/3 routed-ingress case passed again in 10.22 seconds with a newly compiled
+binary. See `evidence/mongo-routed-3415875.json` and
+`evidence/refresh-3415875.json`. Formatting and strict cmaeg Clippy passed.
+The compiler-path mismatch and two cancelled queued checks are retained;
+no current control/oracle rerun is inferred from the earlier results.
+The newer integrated ownership candidate is the next dependency to test.
+
 ## Required acceptance scenarios
 
 | Scenario | Status | Remaining evidence |
