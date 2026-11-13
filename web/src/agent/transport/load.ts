@@ -9,6 +9,7 @@ import type { AgentV2Session } from './client';
 import { conversationFromHead } from './liveHead';
 import { createIdentityHandoff, IDENTITY_HANDOFF_ENABLED } from './identityGate';
 import { createProjectionPublication } from './publication';
+import { readAgentProjections } from './projections';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -27,42 +28,10 @@ export async function loadV2Agent(
   onReadAuthorized?.();
   signal.throwIfAborted();
   v2.journal.read();
-  const readHierarchy = async () => {
-    const detailRead = (async () => client.readAgent(agentId, { signal }))();
-    const [detail, preparedWorkspace] = await Promise.all([
-      detailRead,
-      lineage?.agentId === agentId
-        ? (async () => client.readWorkspace(lineage.workspaceId, { signal }))()
-        : undefined,
-    ]);
-    signal.throwIfAborted();
-    if (
-      detail.id !== agentId ||
-      (lineage !== undefined &&
-        (lineage.agentId !== agentId ||
-          lineage.workspaceId !== detail.workspace.id ||
-          lineage.sandboxId !== detail.sandbox.id))
-    )
-      throw new Error('Agent projections changed identity.');
-    const workspace =
-      preparedWorkspace ?? (await client.readWorkspace(detail.workspace.id, { signal }));
-    signal.throwIfAborted();
-    if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
-      throw new Error('Agent projections changed identity.');
-    return { detail, workspace };
-  };
-  const readUsage = async () => {
-    const usage = await client.readAgentUsage(agentId, { signal });
-    signal.throwIfAborted();
-    if (usage.agentId !== agentId) throw new Error('Agent projections changed identity.');
-    return usage;
-  };
+  const reads = readAgentProjections(client, agentId, signal, lineage);
   const readTranscript = async () => {
     try {
-      const transcript = await client.readAgentTranscript(agentId, { signal });
-      signal.throwIfAborted();
-      if (transcript.agentId !== agentId) throw new Error('Agent projections changed identity.');
-      return transcript;
+      return await reads.transcript;
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
       return undefined;
@@ -92,7 +61,7 @@ export async function loadV2Agent(
   // Observe every parallel failure even if another read or early callback fails.
   // Projections that finish before metadata can share one publication check.
   // A later completion never joins a check that has already started.
-  const hierarchy = readHierarchy();
+  const hierarchy = reads.hierarchy;
   const publish = createProjectionPublication(
     hierarchy,
     () => v2.authorize(signal),
@@ -145,7 +114,7 @@ export async function loadV2Agent(
   })();
   const [{ detail, workspace, preview: latest }, usage, firstPage, head] = await Promise.all([
     projections,
-    readUsage(),
+    reads.usage,
     readPage(),
     liveHead,
     hierarchyPublished,
