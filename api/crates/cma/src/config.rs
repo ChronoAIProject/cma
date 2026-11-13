@@ -14,7 +14,9 @@ mod access_migration;
 mod access_origins;
 mod access_snapshot;
 mod account_deletion;
+mod activity;
 mod admission_log;
+mod auth_mode;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
@@ -217,6 +219,7 @@ pub struct Config {
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
+    pub activity_async_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
@@ -258,6 +261,7 @@ impl std::fmt::Debug for Config {
             .field("baseline_services", &self.baseline_services)
             .field("auth_encryption_key", &self.auth_encryption_key)
             .field("activity_retention", &self.activity_retention)
+            .field("activity_async_enabled", &self.activity_async_enabled)
             .field("default_profiles", &self.default_profiles)
             .field(
                 "agent_manager_sandbox_capacity",
@@ -459,6 +463,7 @@ impl Config {
             baseline_services,
             auth_encryption_key,
             activity_retention,
+            activity_async_enabled: activity::enabled(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
@@ -476,13 +481,6 @@ impl Config {
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,
         })
-    }
-
-    pub fn auth_mode_name(&self) -> &'static str {
-        match self.auth_mode {
-            AuthMode::Provider { .. } => "provider",
-            AuthMode::Trusted { .. } => "trusted",
-        }
     }
 }
 
