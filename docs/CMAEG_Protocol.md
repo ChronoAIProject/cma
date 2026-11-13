@@ -2853,6 +2853,17 @@ enabled. The CMA reader can ship before the companion; the owner must confirm
 the companion's persisted binding negotiation and response contract before
 activation. This contract does not establish deployed end-to-end coverage.
 
+Local throughput acceptance uses 16 concurrent turns and 2,048 turns per sample,
+with six alternating pairs through real local provider SSE and relay HTTP.
+The default OFF path must regress by less than 1% against `develop` with a
+zero-delay provider. Negotiated ON must regress by less than 1% against OFF
+with a 100 ms synthetic provider delay. Report the ON 10 ms result as well as
+zero-delay added p50/p99 latency and process CPU per turn, dropped records and
+external call counts. Synthetic delays are local acceptance fixtures; activation
+also requires the owner to re-measure against production provider latency when
+those metrics become available. That activation check does not block shipping
+the default-off CMA reader.
+
 ### Attachment block in turn input
 
 This subsection is informative: it describes text the gateway writes into
