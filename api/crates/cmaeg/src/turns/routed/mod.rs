@@ -181,3 +181,5 @@ mod whatsapp_structured_tests;
 mod replica_test_fixture;
 #[cfg(test)]
 mod replica_tool_tests;
+
+mod media_effects;

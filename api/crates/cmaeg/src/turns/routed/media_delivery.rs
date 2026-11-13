@@ -204,14 +204,32 @@ impl MediaDelivery {
                             }),
                         }
                     };
-                    let outcome = tokio::time::timeout(Duration::from_secs(20), send)
+                    let receipt = tokio::time::timeout(Duration::from_secs(20), send)
                         .await
-                        .map(|r| r.delivery)
-                        .unwrap_or(DeliveryOutcome::Unknown {
-                            reason: "media_delivery_deadline".into(),
+                        .unwrap_or_else(|_| {
+                            crate::delivery::durable::receipt_for(DeliveryOutcome::Unknown {
+                                reason: "media_delivery_deadline".into(),
+                            })
                         });
                     drop(cancel);
-                    state.native = NativeOutcome::Settled { outcome };
+                    self.store.guard(lease).await?;
+                    if lease.partition.is_some() {
+                        state.native_receipt = Some(
+                            self.store
+                                .0
+                                .receipts(
+                                    &state.id,
+                                    &lease.record.owner,
+                                    lease.record.retained_until,
+                                )
+                                .retain(&receipt)
+                                .await
+                                .map_err(|_| ExecutionError::Unavailable)?,
+                        );
+                    }
+                    state.native = NativeOutcome::Settled {
+                        outcome: receipt.delivery,
+                    };
                     self.store.record_media_response(lease, &mut state).await?;
                 }
                 _ => {}
@@ -234,6 +252,14 @@ impl MediaDelivery {
             (&state.status, delivery),
         )
         .await;
+        if self.store.0.partitions.is_some() && matches!(delivery, "unknown" | "pending") {
+            tracing::warn!(
+                effect_sha256 = super::storage::hash(state.id.as_bytes()),
+                outcome = delivery,
+                "Media delivery retains FIFO custody pending reconciliation"
+            );
+            return Err(ExecutionError::Uncertain);
+        }
         self.store.settle_media_response(lease, kind).await
     }
     async fn custom(
@@ -267,6 +293,9 @@ impl MediaDelivery {
             }
             state.custom = Some(evidence.clone());
             self.store.record_media_response(lease, state).await?;
+            if lease.partition.is_some() && summary(state) == "unknown" {
+                return Err(ExecutionError::Uncertain);
+            }
         }
         if evidence.local == Some(LocalStreamOutcome::Pending) {
             self.store.renew(lease).await?;
@@ -343,6 +372,9 @@ impl MediaDelivery {
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };
             state.custom = Some(evidence.clone());
             self.store.record_media_response(lease, state).await?;
+            if lease.partition.is_some() && summary(state) == "unknown" {
+                return Err(ExecutionError::Uncertain);
+            }
         }
         Ok(())
     }
@@ -375,6 +407,14 @@ impl MediaDelivery {
     }
 }
 impl MediaResponseDelivery for MediaDelivery {
+    fn finish_partition<'a>(
+        &'a self,
+        plan: &'a AdmittedPlan,
+        target: &'a StoredTarget,
+        partition: &'a Option<crate::replicas::partition::PartitionLease>,
+    ) -> BoxFuture<'a, Result<(), ExecutionError>> {
+        Box::pin(self.finish_inner(plan, target, partition))
+    }
     fn deliver<'a>(
         &'a self,
         plan: &'a AdmittedPlan,
@@ -388,6 +428,6 @@ impl MediaResponseDelivery for MediaDelivery {
         plan: &'a AdmittedPlan,
         target: &'a StoredTarget,
     ) -> BoxFuture<'a, Result<(), ExecutionError>> {
-        Box::pin(self.finish_inner(plan, target))
+        Box::pin(async move { self.finish_inner(plan, target, &None).await })
     }
 }
