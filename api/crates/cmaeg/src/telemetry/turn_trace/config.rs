@@ -1,6 +1,4 @@
-use crate::config::ConfigError;
-
-pub(crate) const ENABLED: &str = "CMAEG_NYXID_TURN_TRACE_ENABLED";
+use crate::config::{ConfigError, CMAEG_NYXID_TURN_TRACE_ENABLED as ENABLED};
 
 pub(crate) fn enabled() -> Result<bool, ConfigError> {
     match std::env::var(ENABLED) {
