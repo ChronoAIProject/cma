@@ -440,3 +440,8 @@ async fn view_only_and_view_write_links_enforce_filesystem_capabilities_and_revo
             .unwrap();
     }
 }
+
+#[path = "agent_environment_observation_tests.rs"]
+mod environment_observation;
+#[path = "agent_filesystem_tests/read_timings.rs"]
+mod read_timings;

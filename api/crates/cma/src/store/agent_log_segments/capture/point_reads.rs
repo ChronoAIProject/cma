@@ -77,11 +77,7 @@ pub(super) async fn read(
         bytes = bytes
             .checked_add(raw.as_bytes().len())
             .filter(|n| *n <= 4 * 1024 * 1024)
-            .ok_or_else(|| {
-                SandboxStoreError::Unavailable(
-                    "captured Agent points exceed the source byte budget".into(),
-                )
-            })?;
+            .ok_or(SandboxStoreError::AgentLogCapacityExceeded)?;
         let entry = read_entry(&Document::try_from(&raw).map_err(|_| corrupt())?)?;
         if entry.agent_id != captured.agent.id || sequences.get(entries.len()) != Some(&entry.seq) {
             return Err(SandboxStoreError::SequenceConflict.into());

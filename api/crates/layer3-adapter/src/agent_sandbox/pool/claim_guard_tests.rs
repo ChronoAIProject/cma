@@ -8,6 +8,8 @@ use serde_json::json;
 
 const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-pod";
 
+mod authority_tests;
+
 async fn fixture(ready: bool) -> (Fixture, NativePoolClaim) {
     let mut fixture = Fixture::new().await;
     let mut spec = tests::spec();
