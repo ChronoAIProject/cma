@@ -234,11 +234,10 @@ impl LaunchService {
             .definitions
             .trigger_by_public_id(&launch.public_id)
             .await
-            .map_err(trigger_error)?
-            .ok_or_else(|| {
-                LaunchServiceError::Corrupt("Launch public mapping is missing".into())
-            })?;
-        if public.public_id != launch.public_id || public.trigger_id != launch.trigger_id {
+            .map_err(trigger_error)?;
+        if public.as_ref().is_some_and(|public| {
+            public.public_id != launch.public_id || public.trigger_id != launch.trigger_id
+        }) {
             return Err(LaunchServiceError::Corrupt(
                 "Launch public mapping does not match".into(),
             ));
@@ -247,17 +246,45 @@ impl LaunchService {
             .definitions
             .trigger_revision(&launch.trigger_id, &launch.revision_digest)
             .await
-            .map_err(trigger_error)?
-            .ok_or_else(|| LaunchServiceError::Corrupt("Launch revision is missing".into()))?;
+            .map_err(trigger_error)?;
+        let Some(revision) = revision else {
+            return Err(self
+                .missing_launch_input(launch, "Launch immutable revision is missing")
+                .await);
+        };
         revision
             .validate()
             .map_err(|error| LaunchServiceError::Corrupt(error.to_string()))?;
+        if public.is_none() {
+            return Err(self
+                .missing_launch_input(launch, "Launch public mapping is missing")
+                .await);
+        }
+        if revision.publisher_deleted {
+            return Err(LaunchServiceError::TriggerRetired);
+        }
         if revision.digest != launch.revision_digest {
             return Err(LaunchServiceError::Corrupt(
                 "Launch revision digest does not match".into(),
             ));
         }
         Ok(revision)
+    }
+
+    async fn missing_launch_input(&self, launch: &Launch, detail: &str) -> LaunchServiceError {
+        match self
+            .definitions
+            .trigger_publisher_erased(
+                &launch.trigger_id,
+                &launch.revision_digest,
+                &launch.public_id,
+            )
+            .await
+        {
+            Ok(true) => LaunchServiceError::TriggerRetired,
+            Ok(false) => LaunchServiceError::Corrupt(detail.into()),
+            Err(error) => trigger_error(error),
+        }
     }
 
     async fn commit_review_refresh(

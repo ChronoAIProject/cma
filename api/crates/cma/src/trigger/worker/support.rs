@@ -103,6 +103,9 @@ impl LaunchWorker {
         let key = FrozenContextKey::for_launch(&launch);
         if let Some((cached_key, context)) = &cache.value {
             if *cached_key == key {
+                // Exact inputs remain cached within this scheduled run. New
+                // catalogue effects serialize at admission; a terminal refusal
+                // rechecks publisher erasure before it is settled.
                 return Ok(Some((launch, Arc::clone(context))));
             }
         }
@@ -130,8 +133,8 @@ impl LaunchWorker {
         {
             Ok(Some(revision)) => revision,
             Ok(None) => {
-                self.settle_resource_failure(launch, missing_trigger_revision(), now)
-                    .await?;
+                let failure = self.missing_trigger_revision(&launch).await?;
+                self.settle_resource_failure(launch, failure, now).await?;
                 return Ok(None);
             }
             Err(failure) => {
@@ -139,7 +142,13 @@ impl LaunchWorker {
                 return Ok(None);
             }
         };
-        let target = match self.existing_conversation_target(&launch).await {
+        let retained = if revision.publisher_deleted {
+            self.retained_agent_target(&launch).await.map(Some)
+        } else {
+            self.existing_conversation_target(&launch).await
+        };
+        let catalogue_target = matches!(&retained, Ok(None));
+        let target = match retained {
             Ok(Some(target)) => target,
             Ok(None) => revision.content.target.clone(),
             Err(failure) => {
@@ -149,7 +158,15 @@ impl LaunchWorker {
         };
         let profiles = match self.resources.frozen_profiles(&target).await {
             Ok(profiles) => profiles,
-            Err(failure) => {
+            Err(mut failure) => {
+                if catalogue_target
+                    && !revision.publisher_deleted
+                    && failure.code == "frozen_profile_missing"
+                {
+                    // Erasure can sanitize the publisher and delete an unreferenced
+                    // Profile after this claim read the ordinary Trigger revision.
+                    failure = self.recheck_publisher_erasure(&launch, failure).await?;
+                }
                 self.settle_resource_failure(launch, failure, now).await?;
                 return Ok(None);
             }
@@ -350,13 +367,6 @@ pub(super) fn missing_resource(resource: &'static str) -> LaunchResourceError {
             "agent" => "The Agent selected for this launch is unavailable",
             _ => "A resource selected for this launch is unavailable",
         },
-    )
-}
-
-fn missing_trigger_revision() -> LaunchResourceError {
-    LaunchResourceError::terminal(
-        "trigger_revision_missing",
-        "The Trigger revision selected for this launch is unavailable",
     )
 }
 

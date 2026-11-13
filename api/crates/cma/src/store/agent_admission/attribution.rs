@@ -1,13 +1,39 @@
 use super::*;
 #[async_trait::async_trait]
 impl AgentAdmissionStore for MongoSandboxStore {
+    async fn admit_catalogue_agent_with_trigger_initiator(
+        &self,
+        admission: AgentAdmission,
+        initiation: layer2_core::trigger_domain::LaunchInitiation,
+        reuse_existing: bool,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        self.admit_agent_with_reuse(admission, reuse_existing, true, Some(initiation))
+            .await
+    }
+
+    async fn admit_catalogue_agent_reusing_profile(
+        &self,
+        admission: AgentAdmission,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        self.admit_agent_with_reuse(admission, true, true, None)
+            .await
+    }
+
+    async fn admit_catalogue_agent(
+        &self,
+        admission: AgentAdmission,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        self.admit_agent_with_reuse(admission, false, true, None)
+            .await
+    }
+
     async fn admit_agent_with_trigger_initiator(
         &self,
         admission: AgentAdmission,
         initiation: layer2_core::trigger_domain::LaunchInitiation,
         reuse_existing: bool,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
-        self.admit_agent_with_reuse(admission, reuse_existing, Some(initiation))
+        self.admit_agent_with_reuse(admission, reuse_existing, false, Some(initiation))
             .await
     }
 
@@ -15,14 +41,16 @@ impl AgentAdmissionStore for MongoSandboxStore {
         &self,
         admission: AgentAdmission,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
-        self.admit_agent_with_reuse(admission, true, None).await
+        self.admit_agent_with_reuse(admission, true, false, None)
+            .await
     }
 
     async fn admit_agent(
         &self,
         admission: AgentAdmission,
     ) -> Result<AgentAdmissionResult, SandboxStoreError> {
-        self.admit_agent_with_reuse(admission, false, None).await
+        self.admit_agent_with_reuse(admission, false, false, None)
+            .await
     }
 }
 

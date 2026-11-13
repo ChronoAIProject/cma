@@ -9,7 +9,10 @@ use mongodb::{
 use std::sync::{Arc, Mutex};
 
 async fn mode(db: &Database, enabled: bool) -> Result<BTreeMap<String, u64>, Error> {
-    let mut cursor = Cursor::default();
+    let mut cursor = Cursor {
+        test_drain_seconds: Some(0),
+        ..Default::default()
+    };
     let subject = SubjectId::new("a");
     let mut inventory = ErasureInventory::default();
     let mut counts = BTreeMap::new();
@@ -26,6 +29,7 @@ async fn mode(db: &Database, enabled: bool) -> Result<BTreeMap<String, u64>, Err
                 allocation_rollups_enabled: Some(false),
                 agent_shared_observation: Some(false),
                 billing_enabled: enabled,
+                transaction_drain_fallback_secs: 120,
             },
         )
         .await?;

@@ -34,13 +34,25 @@ pub(in crate::store) async fn apply(
     initiation: Option<&layer2_core::trigger_domain::LaunchInitiation>,
     scope: &mut TransactionScope<'_>,
 ) -> Result<AdmissionReceipt, ApplyError> {
+    apply_catalogue(store, admission, reuse_existing, false, initiation, scope).await
+}
+
+pub(in crate::store) async fn apply_catalogue(
+    store: &MongoSandboxStore,
+    admission: &AgentAdmission,
+    reuse_existing: bool,
+    catalogue: bool,
+    initiation: Option<&layer2_core::trigger_domain::LaunchInitiation>,
+    scope: &mut TransactionScope<'_>,
+) -> Result<AdmissionReceipt, ApplyError> {
     store
         .bindings
         .admit_agent(admission, scope.session())
         .await
         .map_err(ApplyError::Domain)?;
-    let common_launch = trigger_protocol::selected(store, admission, scope.session()).await?;
-    if let Some(launch) = &common_launch {
+    let persisted_launch = trigger_protocol::selected(store, admission, scope.session()).await?;
+    let common_launch = persisted_launch.as_ref().filter(|launch| launch.input_protocol.is_some());
+    if let Some(launch) = common_launch {
         if launch.initiation.as_ref() != initiation {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
@@ -61,6 +73,15 @@ pub(in crate::store) async fn apply(
     }
     if let Some(replay) = replay_in_transaction(store, admission, scope.session()).await? {
         return Ok(replay);
+    }
+
+    if let Some(launch) = &persisted_launch {
+        let database = store.client.database(&store.agents.namespace().db);
+        if !crate::store::trigger_definitions::fence_new_agent_publisher(&database, launch, scope.session())
+            .await.map_err(ApplyError::Driver)?
+        {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
     }
 
     let open = store
@@ -128,7 +149,7 @@ pub(in crate::store) async fn apply(
         &workspace,
         &sandbox,
         reuse_existing,
-        common_launch.as_ref(),
+        common_launch,
         scope,
     ))
     .await?
@@ -139,6 +160,18 @@ pub(in crate::store) async fn apply(
         && sandbox.status != layer2_core::sandbox::SandboxStatus::Active
     {
         return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
+    }
+
+    if catalogue {
+        let profile = &admission.profile;
+        let database = store.client.database(&store.agents.namespace().db);
+        if !crate::store::profile_pin_admission::agent(
+            &database, profile.id.as_str(), profile.revision, Some(&profile.digest), scope.session(),
+        ).await.map_err(ApplyError::Driver)? {
+            crate::store::profile_pin_admission::frozen::agent(
+                &database, admission, &sandbox, &workspace, scope.session(),
+            ).await.map_err(ApplyError::Driver)?.require().map_err(ApplyError::Domain)?;
+        }
     }
 
     let live = crate::store::shared_child_capacity::agents(
@@ -257,7 +290,7 @@ pub(in crate::store) async fn apply(
         .await
         .map_err(classify_log_insert)?;
 
-    if let Some(launch) = &common_launch {
+    if let Some(launch) = common_launch {
         Box::pin(crate::store::trigger_first_messages::attach(
             store,
             launch,

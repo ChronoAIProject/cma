@@ -14,6 +14,7 @@ use layer2_core::{
 };
 mod common_execution;
 mod input_protocol;
+mod publisher_erasure;
 struct Connected;
 #[async_trait::async_trait]
 impl ServiceConnectionBroker for Connected {
@@ -60,12 +61,12 @@ struct Fixture {
 
 impl Fixture {
     async fn new(api: bool) -> Self {
-        let seed = seeded(if api {
+        let case = if api {
             "initiation_api"
         } else {
             "initiation_human"
-        })
-        .await;
+        };
+        let seed = seeded(case).await;
         let (resources, target) =
             crate::store::sandbox_mongo_integration_tests::resource_access_tests::fixture(
                 &seed.client,

@@ -307,6 +307,105 @@ async fn billing_preflight_queries_are_bounded_and_pending_owner_still_blocks() 
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn profile_reference_scan_serves_all_profiles_and_revisions_once() {
+    let commands = Commands::default();
+    let db = commands.database().await;
+    for n in 0..12 {
+        let id = format!("agp_owned_{n}");
+        put(
+            &db,
+            "agent_profiles",
+            doc! {"_id":&id,"owner":if n % 2 == 0 {"a"} else {"c"},"record":{}},
+        )
+        .await;
+        db.collection::<Document>("agent_profile_revisions").insert_many((1..=10).map(|revision| doc! {"_id":format!("{id}:{revision:010}"),"profile_id":&id,"revision":revision,"document_schema_version":1_i64,"record":{"profile_id":&id,"revision":revision,"content":{}}})).await.unwrap();
+    }
+    db.collection::<Document>("agents").insert_many((0..1000).map(|n| doc! {"_id":format!("foreign-{n}"),"owner":"b","record":{"profile":{"id":"agp_owned_0","revision":1}}})).await.unwrap();
+    commands.take();
+    let retained = profile_refs::retained(&db, &BTreeSet::from(["a".into(), "c".into()]))
+        .await
+        .unwrap();
+    assert!(retained.contains("agp_owned_0:0000000001"));
+    assert!(retained.contains("agp_owned_0"));
+    assert!(!retained.contains("agp_owned_1"));
+    let scanned = commands.take();
+    for name in [
+        "agent_profiles",
+        "workspace_profiles",
+        "sandbox_profiles",
+        "agent_profile_revisions",
+        "workspace_profile_revisions",
+        "sandbox_profile_revisions",
+        "sandboxes",
+        "workspaces",
+        "agents",
+        "bots",
+        "trigger_definitions",
+        "trigger_definition_revisions",
+        "event_worker_profiles",
+        "event_worker_profile_revisions",
+        "platform_settings",
+    ] {
+        let source: Vec<_> = scanned
+            .iter()
+            .filter(|command| command.get_str("find").ok() == Some(name))
+            .filter(|command| {
+                !command.get_document("projection").is_ok_and(|projection| {
+                    projection.len() == 1 && projection.contains_key("owner")
+                })
+            })
+            .collect();
+        let total = db
+            .collection::<Document>(name)
+            .count_documents(doc! {})
+            .await
+            .unwrap() as i64;
+        assert_eq!(
+            source.len(),
+            total as usize / 500 + 1,
+            "source {name} repeated across owned profiles/revisions"
+        );
+        let mut keys = 0;
+        let mut documents = 0;
+        for command in &source {
+            assert!(command.contains_key("projection"));
+            assert_eq!(command.get_document("sort").unwrap(), &doc! {"_id":1});
+            assert_eq!(number(command, "limit"), 500);
+            let plan = explain(&db, command).await;
+            let stats = plan.get_document("executionStats").unwrap();
+            let winning = plan
+                .get_document("queryPlanner")
+                .unwrap()
+                .get("winningPlan")
+                .unwrap();
+            assert!(
+                index_scan(winning)
+                    || (number(stats, "totalKeysExamined") == 0
+                        && number(stats, "totalDocsExamined") == 0)
+            );
+            assert!(!format!("{winning:?}").contains("\"SORT\""));
+            assert!(number(stats, "totalKeysExamined") <= 501);
+            assert!(number(stats, "totalDocsExamined") <= 501);
+            keys += number(stats, "totalKeysExamined");
+            documents += number(stats, "totalDocsExamined");
+        }
+        assert!(source
+            .windows(2)
+            .all(|pair| pair[0].get("filter") != pair[1].get("filter")));
+        assert!(
+            documents <= total,
+            "shared source repeated documents: {source:?}"
+        );
+        assert!(
+            keys <= total + source.len() as i64,
+            "shared source exceeded linear key work: {source:?}"
+        );
+    }
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn discovery_indexes_preserve_normal_startup_and_do_not_reuse_partial_coverage() {
     use mongodb::{options::IndexOptions, IndexModel};
     let db = database().await;

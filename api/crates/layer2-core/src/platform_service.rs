@@ -141,7 +141,7 @@ impl PlatformSettingsService {
             .store
             .replace(expected_revision, &effective)
             .await
-            .map_err(store_failed)?;
+            .map_err(mutation_failed)?;
         self.audit(
             caller,
             ActivityAction::Configure,
@@ -188,7 +188,7 @@ impl PlatformSettingsService {
                     return Ok(stored);
                 }
                 Err(StoreError::RevisionConflict { .. }) => continue,
-                Err(error) => return Err(store_failed(error)),
+                Err(error) => return Err(mutation_failed(error)),
             }
         }
         Err(CoreError::InvalidState(
@@ -233,6 +233,13 @@ impl PlatformSettingsService {
             .record(&record)
             .await
             .map_err(|error| CoreError::RuntimeUnavailable(error.to_string()))
+    }
+}
+
+fn mutation_failed(error: StoreError) -> CoreError {
+    match error {
+        StoreError::ReferenceUnavailable(detail) => CoreError::InvalidRequest(detail),
+        error => store_failed(error),
     }
 }
 
