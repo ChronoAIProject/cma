@@ -4,7 +4,7 @@ import { SkeletonRows } from './ui/Skeleton';
 import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
+import { CmaReadScope, useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
@@ -349,7 +349,7 @@ function ConsoleContent({
         }}
       />
     );
-  return (
+  const frame = (
     <ComputerContext value={computerObservation}>
       <AppFrame
         previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
@@ -484,4 +484,5 @@ function ConsoleContent({
       />
     </ComputerContext>
   );
+  return <CmaReadScope client={client}>{frame}</CmaReadScope>;
 }
