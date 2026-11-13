@@ -1,5 +1,6 @@
 //! A failed pause must not authorize a new runtime commitment under STOP.
 use super::*;
+use layer2_core::admission::AdmissionControlStore;
 use layer2_core::budget::{
     BudgetError, BudgetPolicy, BudgetSettings, CloudObservation, CloudSpendPolicy,
     PlatformBudgetPolicy, PlatformPeriodLedger,
@@ -117,6 +118,18 @@ async fn failed_platform_pause_cannot_admit_runtime_recovery_until_lift() {
     request.automatic = true;
     request.target_runtime_version = failed.runtime.as_ref().unwrap().runtime_version.clone();
     let policy = spend_stop(&store).await;
+    crate::store::admission_control::MongoAdmissionControlStore::open(&client, &name)
+        .await
+        .unwrap()
+        .change(
+            0,
+            &layer2_core::SubjectId::new("operator"),
+            "contain new work",
+            true,
+            100,
+        )
+        .await
+        .unwrap();
 
     assert_eq!(
         store
@@ -159,6 +172,8 @@ async fn failed_platform_pause_cannot_admit_runtime_recovery_until_lift() {
         .evaluate_period(layer2_core::seconds_from_rfc3339(NOW).unwrap())
         .await
         .unwrap();
+    // The operator stop remains active: this recovers existing admitted work.
+    // Only the lifted spend closure was blocking its runtime liability.
     let recovered = store
         .admit_unpublished_runtime_recovery(request.clone())
         .await

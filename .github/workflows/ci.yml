@@ -239,6 +239,9 @@ jobs:
       - name: Web artifact identity contract
         run: |
           python3 .github/scripts/web-build-identity-tests.py
+          python3 .github/scripts/web-image-smoke-tests.py
+          python3 .github/scripts/web-image-processes-tests.py
+          python3 .github/scripts/web-image-evidence-tests.py
           ruby .github/scripts/web-build-contract.rb
       - name: Final image metadata declarations
         run: bash .github/image-metadata-tests.sh
@@ -1183,25 +1186,49 @@ jobs:
       - uses: actions/setup-node@v6
         if: matrix.component == 'web'
         with:
-          node-version: 26
+          # Playwright 1.58.2 trace ZIP finalization stalls on Node 26.
+          node-version: 24.15.0
       - name: Install web image browser harness
         if: matrix.component == 'web'
         run: npm ci --prefix web
-      - name: Render exact web image with stale retained assets
+      - name: Detached browser cleanup regression
         if: matrix.component == 'web'
-        timeout-minutes: 5
+        timeout-minutes: 2
         env:
           CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-          CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence
+          CMA_WEB_WATCHDOG_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence/watchdog
+        run: python3 .github/scripts/web-image-watchdog-tests.py
+      - name: Browser finalization phase regression
+        if: matrix.component == 'web'
+        timeout-minutes: 2
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+        run: python3 .github/scripts/web-image-phase-tests.py
+      - name: Render exact web image with stale retained assets
+        if: matrix.component == 'web'
+        # Includes image startup, the 240s suite and bounded evidence/cleanup time.
+        timeout-minutes: 6
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+          # Playwright clears outputDir; preserve the preceding regression's evidence.
+          CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence/suite
         run: python3 .github/scripts/web-image-smoke.py cma-web:ci
+      - name: Bound web image browser evidence
+        if: always() && matrix.component == 'web'
+        timeout-minutes: 1
+        # At most 128 MiB total / 32 MiB per file; retain JSON, traces and failure
+        # screenshots first. The manifest records every bounded inventory omission.
+        run: python3 .github/scripts/web-image-evidence.py "$RUNNER_TEMP/web-image-evidence" "$RUNNER_TEMP/web-image-upload"
       - name: Retain web image browser evidence
         if: always() && matrix.component == 'web'
+        timeout-minutes: 3
         uses: actions/upload-artifact@v4
         with:
           name: web-image-browser-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/web-image-evidence/
+          path: ${{ runner.temp }}/web-image-upload/
           if-no-files-found: warn
           retention-days: 7
+          compression-level: 0
       - name: Export tested native image
         if: success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         timeout-minutes: 10

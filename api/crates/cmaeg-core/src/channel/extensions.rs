@@ -8,6 +8,8 @@ use super::ChannelDefinition;
 /// what every deployed image reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Extensions {
+    /// Optional provider negotiation must be readable before activation.
+    pub provider_capabilities: bool,
     /// Optional native automated-group admission, unreadable by older readers.
     pub native_bot_mentions: bool,
     pub lark_resources: bool,
@@ -28,6 +30,13 @@ impl Extensions {
     /// verification; older readers cannot parse either optional field.
     pub fn of(def: &ChannelDefinition) -> Self {
         Self {
+            provider_capabilities: !def.provider.capabilities.is_empty()
+                || def.routing.as_ref().is_some_and(|routing| {
+                    routing
+                        .consumers
+                        .iter()
+                        .any(|consumer| !consumer.provider.capabilities.is_empty())
+                }),
             native_bot_mentions: def.sources.iter().any(super::Source::native_bot_mentions),
             lark_message_effects: def.sources.iter().any(|source| {
                 matches!(
@@ -66,10 +75,42 @@ impl Extensions {
     /// Whether an image that predates every extension can read the definition.
     pub fn legacy_compatible(&self) -> bool {
         !self.routing
+            && !self.provider_capabilities
             && !self.sources
             && !self.native_bot_mentions
             && !self.thread_contract
             && !self.lark_resources
             && !self.lark_message_effects
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retained_provider_capability_requires_a_compatible_rollback_reader() {
+        let mut definition: ChannelDefinition =
+            serde_json::from_str(include_str!("../../tests/fixtures/channel.json")).unwrap();
+        let legacy = serde_json::to_value(&definition).unwrap();
+        assert!(legacy["provider"].get("capabilities").is_none());
+        assert!(!Extensions::of(&definition).provider_capabilities);
+        definition.provider.capabilities = vec!["nyxid_turn_trace_v1".into()];
+        let extensions = Extensions::of(&definition);
+        assert!(extensions.provider_capabilities);
+        assert!(!extensions.legacy_compatible());
+        let encoded = serde_json::to_value(&definition).unwrap();
+        let retained: ChannelDefinition = serde_json::from_value(encoded.clone()).unwrap();
+        assert_eq!(
+            retained.provider.capabilities,
+            definition.provider.capabilities
+        );
+        for invalid in [serde_json::json!(42), serde_json::json!([false])] {
+            let mut invalid_definition = encoded.clone();
+            invalid_definition["provider"]["capabilities"] = invalid;
+            assert!(serde_json::from_value::<ChannelDefinition>(invalid_definition).is_err());
+        }
+        definition.provider.capabilities.clear();
+        assert_eq!(serde_json::to_value(&definition).unwrap(), legacy);
     }
 }

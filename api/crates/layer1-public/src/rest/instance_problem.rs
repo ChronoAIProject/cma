@@ -10,6 +10,7 @@ use layer2_core::RuntimeCapability;
 use super::{problem_document, problem_response};
 
 pub(crate) enum InstanceProblem {
+    AdmissionPaused,
     Budget(layer2_core::budget::BudgetError),
     ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError),
@@ -59,6 +60,7 @@ impl InstanceProblem {
         match error {
             AgentServiceError::Connection(error) => Self::Connection(error),
             AgentServiceError::Budget(reason) => Self::Budget(reason),
+            AgentServiceError::AdmissionPaused => Self::AdmissionPaused,
             AgentServiceError::Forbidden => Self::Forbidden,
             AgentServiceError::ProfileNotFound => Self::AgentProfileNotFound,
             AgentServiceError::WorkspaceNotFound => Self::WorkspaceNotFound,
@@ -133,6 +135,7 @@ impl From<AgentOperationError> for InstanceProblem {
         match error {
             AgentOperationError::Connection(error) => Self::Connection(error),
             AgentOperationError::Budget(reason) => Self::Budget(reason),
+            AgentOperationError::AdmissionPaused => Self::AdmissionPaused,
             AgentOperationError::Forbidden => Self::Forbidden,
             AgentOperationError::NotFound => Self::AgentNotFound,
             AgentOperationError::StatusConflict { .. }
@@ -179,6 +182,7 @@ impl From<AgentOperationError> for InstanceProblem {
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code): (_, _, &str, _) = match &self {
+            Self::AdmissionPaused => return super::admission_problem::paused(),
             // Every budget refusal, the platform's included, is a final 402
             // without Retry-After: clients treat >= 500 as retryable.
             Self::Budget(reason) => (StatusCode::PAYMENT_REQUIRED, "model-budget-refused", reason.guidance(), reason.code()),

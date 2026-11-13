@@ -85,6 +85,7 @@ impl PlatformSpendLedger for Spend {
     async fn admission_state(&self, _: u64) -> Result<PlatformAdmissionState, BudgetError> {
         Ok(PlatformAdmissionState {
             configured: true,
+            operator_control: crate::budget::OperatorAdmissionState::Open,
             closures: self
                 .0
                 .lock()
@@ -164,4 +165,62 @@ async fn a_revive_control_is_refused_under_a_platform_stop_while_pause_stays_ava
         applied.status,
         SandboxControlStatus::Applied { .. }
     ));
+}
+
+#[tokio::test]
+async fn operator_stop_preserves_exact_revive_replay_and_pause_but_refuses_fresh_revive() {
+    use crate::admission::AdmissionControlStore;
+    let f = Fixture::new().await;
+    f.service.attach_platform_spend(f.store.clone());
+    let revision = f.store.lock().sandboxes[&sandbox(4).id].revision;
+    let accepted = f
+        .admit("owner", SandboxControl::Revive, "accepted-revive", revision)
+        .await
+        .unwrap();
+    f.store
+        .change(
+            0,
+            &SubjectId::new("operator"),
+            "contain new work",
+            true,
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.admit("owner", SandboxControl::Revive, "accepted-revive", revision)
+            .await
+            .unwrap(),
+        accepted
+    );
+    assert!(matches!(
+        f.admit("owner", SandboxControl::Revive, "fresh-revive", revision)
+            .await,
+        Err(SandboxControlServiceError::AdmissionPaused)
+    ));
+    assert!(matches!(
+        f.admit(
+            "owner",
+            SandboxControl::Revive,
+            "accepted-revive",
+            revision + 1
+        )
+        .await,
+        Err(SandboxControlServiceError::Store(
+            SandboxControlError::IdempotencyConflict
+        ))
+    ));
+    let proof = f.proof("owner", &accepted).await;
+    f.store
+        .apply_sandbox_control(&accepted, proof)
+        .await
+        .unwrap();
+    let revision = f.store.lock().sandboxes[&sandbox(4).id].revision;
+    let pause = f
+        .admit("owner", SandboxControl::Pause, "pause-after-stop", revision)
+        .await
+        .unwrap();
+    let proof = f.proof("owner", &pause).await;
+    f.store.apply_sandbox_control(&pause, proof).await.unwrap();
+    assert_eq!(f.store.lock().sandbox_controls.len(), 2);
 }

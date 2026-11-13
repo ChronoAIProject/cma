@@ -165,6 +165,8 @@ pub struct Page<T> {
 pub enum SandboxStoreError {
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]
@@ -398,6 +400,9 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    admission_control: crate::admission::AdmissionControl,
+    admission_audit: Vec<crate::ActivityRecord>,
+    admission_history: Vec<crate::admission::AdmissionChange>,
     retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
