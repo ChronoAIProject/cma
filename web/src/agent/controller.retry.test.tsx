@@ -29,6 +29,12 @@ it.each(['detail', 'usage'] as const)(
         status: 'error',
         retryAt: Date.now() + 20_000,
       });
+    const beforeReload = hook.result.current.state;
+    act(() => {
+      hook.result.current.reload();
+      hook.result.current.reload();
+    });
+    expect(hook.result.current.state).toBe(beforeReload);
     await act(() => vi.advanceTimersByTimeAsync(19_999));
     expect(read).toHaveBeenCalledTimes(1);
     hidden.mockReturnValue(true);
@@ -41,5 +47,35 @@ it.each(['detail', 'usage'] as const)(
     expect(read).toHaveBeenCalledTimes(2);
     expect(hook.result.current.state.status).toBe('ready');
     hook.unmount();
+  },
+);
+
+it.each([45_000, 90_000])(
+  'retains a %ims read floor through an exact-scope remount',
+  async (delay) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(429, 'Busy', 'rate_limited', undefined, delay))
+      .mockResolvedValue(AGENT_DETAIL);
+    const client = agentClient({ readAgent: read });
+    const mount = () =>
+      renderHook(() => useAgentController(client, 'agt_1', { viewerId: 'alice' }));
+    let view = mount();
+    await act(async () => {});
+    view.unmount();
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    view = mount();
+    act(() => {
+      view.result.current.reload();
+      window.dispatchEvent(new Event('focus'));
+    });
+    await act(() => vi.advanceTimersByTimeAsync(delay - 1001));
+    expect(read).toHaveBeenCalledOnce();
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(view.result.current.state.status).toBe('ready');
+    view.unmount();
   },
 );
