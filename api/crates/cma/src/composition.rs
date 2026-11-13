@@ -207,6 +207,7 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_concurrent_detail_enrichment(config.features.concurrent_sandbox_detail_enrichment)
         .with_runtime_updates(runtime.updates)
         .with_retained_recovery(runtime.recovery)
         .with_retained_reopening(runtime.reopen)
@@ -302,6 +303,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
+            config.features.command_reconcile_pacing,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -452,6 +454,9 @@ impl ControlPlaneComposition {
                 .document_artifacts
                 .reclaim(config.features.document_quotas),
         );
+        let document_maintenance = documents::worker(config, reclaim, document_blob_maintenance);
+        let workers = crate::worker_supervision::Workers::new();
+        let health = crate::health::router_with_workers(stores, workers.clone());
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -461,15 +466,15 @@ impl ControlPlaneComposition {
                 limits,
                 crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
             ),
-            stores,
+            health,
             tool_routes.merge(service_portal::router(
                 auth.clone(),
                 config.gateway.as_ref(),
             )?),
         );
-        let mut composition = Self {
-            document_blob_maintenance,
-            document_maintenance: Default::default(),
+        Ok(Self {
+            workers,
+            document_maintenance,
             worker_observations,
             router,
             auth,
@@ -486,12 +491,6 @@ impl ControlPlaneComposition {
             native_warm_pools,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
-        };
-        composition.document_maintenance = documents::worker(
-            config,
-            reclaim,
-            composition.document_blob_maintenance.clone(),
-        );
-        Ok(composition)
+        })
     }
 }

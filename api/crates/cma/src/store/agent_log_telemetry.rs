@@ -135,5 +135,17 @@ pub(in crate::store) fn snapshot(caller: ScanCaller, success: bool) -> [u64; 4] 
     .map(|v| v.load(Ordering::Relaxed))
 }
 #[cfg(test)]
+pub(in crate::store) fn snapshot_all() -> [u64; 4] {
+    let mut total = [0; 4];
+    for caller in CALLERS {
+        for success in [false, true] {
+            for (sum, value) in total.iter_mut().zip(snapshot(caller, success)) {
+                *sum += value;
+            }
+        }
+    }
+    total
+}
+#[cfg(test)]
 #[path = "agent_log_telemetry_tests.rs"]
 mod tests;

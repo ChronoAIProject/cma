@@ -4,7 +4,11 @@ use layer2_core::{
     sandbox::store::SandboxStoreError,
 };
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::watch,
+    task::{JoinHandle, JoinSet},
+    time::MissedTickBehavior,
+};
 
 pub(crate) struct DocumentMaintenanceWorker {
     maintenance: Option<DocumentMaintenance>,
@@ -22,14 +26,72 @@ impl DocumentMaintenanceWorker {
             budget: crate::background::shared(),
         }
     }
-    pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            tokio::select! {
-                biased;
-                _ = crate::shutdown::signalled(shutdown.clone()) => (),
-                _ = self.run(&mut shutdown) => (),
-            }
-        })
+    #[cfg(test)]
+    pub(crate) fn spawn(self, shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
+        self.spawn_supervised(
+            shutdown,
+            crate::worker_supervision::Workers::new().get("document_maintenance"),
+        )
+    }
+    pub(crate) fn spawn_supervised(
+        self,
+        shutdown: watch::Receiver<bool>,
+        activity: crate::worker_supervision::Activity,
+    ) -> JoinHandle<()> {
+        crate::worker_supervision::spawn(
+            (Arc::new(self), JoinSet::new()),
+            activity,
+            shutdown,
+            |(worker, tasks), activity, mut shutdown| {
+                Box::pin(async move {
+                    let telemetry = crate::telemetry::worker::Worker::start("document_maintenance");
+                    let mut scheduling = tokio::time::interval(Duration::from_secs(1));
+                    scheduling.set_missed_tick_behavior(MissedTickBehavior::Skip);
+                    let enabled = worker.maintenance.is_some();
+                    if !enabled {
+                        record_blocked(&mut None, "reclaim_disabled_or_storage_unconfigured");
+                    }
+                    loop {
+                        if *shutdown.borrow() {
+                            break;
+                        }
+                        if enabled && tasks.is_empty() {
+                            let worker = Arc::clone(worker);
+                            let mut signal = shutdown.clone();
+                            // The complete paced loop remains owned across scheduler
+                            // recovery, including any ambiguous reclaim effects.
+                            tasks.spawn(async move {
+                                tokio::select! {
+                                    biased;
+                                    _ = crate::shutdown::signalled(signal.clone()) => (),
+                                    _ = worker.run(&mut signal) => (),
+                                }
+                            });
+                        }
+                        activity.waiting(
+                            Duration::from_secs(1),
+                            if enabled { "maintenance" } else { "disabled" },
+                        );
+                        telemetry.heartbeat();
+                        telemetry.queue(0, tasks.len());
+                        tokio::select! {
+                            changed = shutdown.changed() => {
+                                if changed.is_err() || *shutdown.borrow() { break; }
+                            }
+                            result = tasks.join_next(), if !tasks.is_empty() => {
+                                if let Some(Err(error)) = result {
+                                    tracing::error!(%error, "Document maintenance child terminated");
+                                }
+                                return;
+                            }
+                            _ = scheduling.tick() => {},
+                        }
+                        activity.scheduled();
+                    }
+                })
+            },
+            |(_, tasks)| Box::pin(async move { while tasks.join_next().await.is_some() {} }),
+        )
     }
     async fn run(&self, shutdown: &mut watch::Receiver<bool>) {
         let Some(maintenance) = &self.maintenance else {

@@ -42,7 +42,17 @@ The storage proxy is
 An upload includes generation 1 and the source digest; CMA checks the returned
 key, size, digest, generation and fence version before acknowledging a save.
 Reads use the service's bounded download endpoint. Redirects are disabled and
-credentials never leave the configured origin. Token refresh is single-flight
+credentials never leave the configured origin.
+
+`CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED` is strict and defaults to `false`
+in code and infra. While disabled, tokens retain the serialized refresh/cache,
+60-second expiry margin and one 401 replay; downloads have no added transport
+retry and receipt mismatches retain their existing typed rejection. The shared
+refresh, retry and receipt telemetry policy below requires explicit activation
+following dependency qualification. Disable the switch on every API process to
+restore the prior policy; no persistent format or migration changes.
+
+With the switch enabled, token refresh is single-flight
 and survives cancellation of any waiter. Failed refreshes fail fast for a
 nominal 2-second window, doubling to 30 seconds with 75–100% jitter; success
 resets backoff. Below 20% remaining lifetime, a token with more than 60 seconds
@@ -56,12 +66,13 @@ infrastructure, NyxID deployment or runtime storage credential is required.
 Each object read or write has a 30-second total deadline, including waiting for
 token-state lock wait, shared token acquisition, the single 401 refresh/replay,
 retry delay and response-body validation. Individual HTTP requests remain
-bounded to 12 seconds with a 3-second connection limit. Downloads retry at most
+bounded to 12 seconds with a 3-second connection limit in both modes. With the
+resilience switch enabled, downloads retry at most
 once on connection failure, request timeout (including body reads), or
 502/503/504, after 100–300 ms jitter and only with at least 3 seconds remaining.
 Uploads never retry transport failures or 5xx. Expiry returns typed
-`DocumentError::Unavailable` and drops the local object operation; the shared
-token refresh retains its own deadline. A cancelled caller never sends a late
+`DocumentError::Unavailable` and drops the local object operation; when enabled,
+the shared token refresh retains its own deadline. A cancelled caller never sends a late
 object request. The deadline cannot undo a write already accepted by the storage
 service. Content addressing and generation fencing remain mandatory.
 See [the dependency contract ledger](Dependency_Contracts.md)
