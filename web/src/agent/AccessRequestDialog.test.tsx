@@ -344,7 +344,9 @@ it('pauses hidden access-request reads and resumes without overlapping an unfini
     document.dispatchEvent(new Event('visibilitychange'));
   });
   expect(accessRequests.list).toHaveBeenCalledTimes(2);
-  await act(() => vi.advanceTimersByTimeAsync(2000));
+  await act(() => vi.advanceTimersByTimeAsync(29999));
+  expect(accessRequests.list).toHaveBeenCalledTimes(2);
+  await act(() => vi.advanceTimersByTimeAsync(1));
   expect(accessRequests.list).toHaveBeenCalledTimes(3);
   unmount();
   await act(async () => {

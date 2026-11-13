@@ -1,11 +1,21 @@
 //! Assembled control-plane services and worker handles.
 use super::*;
+mod openapi;
+
+impl ControlPlaneComposition {
+    pub(crate) async fn build(config: &Config) -> Result<Self, String> {
+        openapi::warm(layer1_public::rest::openapi_cache::warm).await?;
+        Self::assemble(config).await
+    }
+}
+
 pub(crate) struct ControlPlaneComposition {
     // Reserved for document purge/reclaim and account erasure workers, never routes.
     #[allow(dead_code)]
     pub document_blob_maintenance:
         Option<Arc<dyn layer2_core::document_artifacts::DocumentBlobMaintenance>>,
     pub router: Router,
+    pub activity_worker: Option<crate::activity::queue::ActivityWorker>,
     pub workers: crate::worker_supervision::Workers,
     pub worker_observations: crate::store::worker_observations::Observations,
     pub bindings: bindings::BindingComposition,

@@ -28,6 +28,7 @@ fn scrape_observes_checkout_failures_and_occupancy_without_connection_identifier
         let observer = Observer(
             Arc::new(Mutex::new(Window::new(Instant::now()))),
             "application",
+            10,
         );
         observer.checked_out(424242, Duration::from_millis(12));
         assert!(handle
@@ -100,6 +101,7 @@ fn summary_is_bounded_and_excludes_parent_span_payloads() {
         let unobserved = Observer(
             Arc::new(Mutex::new(Window::new(Instant::now() - WINDOW))),
             "application",
+            10,
         );
         unobserved.record(0, Duration::ZERO, false);
         super::super::mongo_diagnostics::output::flush();
@@ -107,6 +109,7 @@ fn summary_is_bounded_and_excludes_parent_span_payloads() {
     let observer = Observer(
         Arc::new(Mutex::new(Window::new(Instant::now()))),
         "application",
+        10,
     );
     let untrusted = "private query text must never enter logs";
     let span = tracing::info_span!("caller", private_context = untrusted);
@@ -159,6 +162,7 @@ fn connection_holds_survive_windows_and_closed_connections_release_tracking() {
     let observer = Observer(
         Arc::new(Mutex::new(Window::new(Instant::now()))),
         "application",
+        10,
     );
     observer.checked_out(1, Duration::ZERO);
     observer.checked_out(2, Duration::ZERO);
@@ -187,6 +191,7 @@ fn connection_tracking_is_bounded_and_separates_server_local_ids() {
     let observer = Observer(
         Arc::new(Mutex::new(Window::new(Instant::now()))),
         "application",
+        10,
     );
     for key in 0..MAX_TRACKED_CONNECTIONS as u64 + 2 {
         observer.checked_out(key, Duration::ZERO);
@@ -212,6 +217,7 @@ async fn real_driver_observations_preserve_operations_and_exclude_payloads() {
     let observer = Observer(
         Arc::new(Mutex::new(Window::new(Instant::now()))),
         "application",
+        10,
     );
     let mut options = ClientOptions::parse(uri).await.unwrap();
     attach(&mut options, observer.clone());

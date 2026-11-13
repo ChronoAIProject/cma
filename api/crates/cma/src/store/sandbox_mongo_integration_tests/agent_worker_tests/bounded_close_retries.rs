@@ -7,6 +7,7 @@ mod exclusions;
 mod fixture;
 mod recovery;
 mod refusals;
+mod repeated;
 use fixture::{claim, retry, Fixture};
 const CALLER: ScanCaller = ScanCaller::WorkerPublication(AgentWorkStep::CloseProcess);
 

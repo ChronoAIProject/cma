@@ -52,6 +52,7 @@ mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
     AgentWorktreeRecoveryMutation,
@@ -258,8 +259,8 @@ pub use conversation::{
     MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
-    DurableAgentUpdateRecorder,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
+    AgentLiveSubscription, DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
