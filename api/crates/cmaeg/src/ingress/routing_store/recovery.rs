@@ -124,6 +124,7 @@ impl PlanStore {
         if manifest.identity.owner != owner || manifest.id != id || row.version != 1 {
             return Err(AdmissionError::Corrupt);
         }
-        self.restore(&manifest).await.map(Some)
+        let plan = self.restore(&manifest).await?;
+        self.queue_committed(plan).await.map(Some)
     }
 }
