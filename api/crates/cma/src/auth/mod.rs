@@ -15,21 +15,30 @@ pub mod bearer;
 mod bearer_authorization;
 mod binding;
 mod bots;
+mod browser_login;
 mod browser_origins;
+mod browser_session;
 mod cookie_authorization;
 pub mod deferred_commands;
 pub mod entitlements;
 pub mod flow;
 mod identity;
+mod identity_fallback;
+mod identity_http;
+mod identity_retry;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
 mod middleware;
+#[cfg(test)]
+pub(super) mod nyxid_contract_tests;
 pub(crate) mod nyxid_proxy;
+mod oauth_commands;
 pub mod organizations;
 mod permissions;
 pub mod persistence;
 pub mod profile;
 pub(crate) mod provider_http;
+mod provider_metadata;
 #[cfg(test)]
 mod public_contract_tests;
 mod records;
@@ -39,10 +48,13 @@ mod sandbox_prerequisite;
 pub(crate) mod service_portal;
 mod session_routes;
 mod signup_options;
+mod silent_preference;
 #[cfg(test)]
 pub(crate) mod test_resources;
 mod token;
 mod tokens;
+mod usage_reporting;
+mod verification_diagnostics;
 mod verification_error;
 mod worker_credentials;
 
@@ -53,12 +65,20 @@ pub use tokens::ProviderMetadata;
 
 #[cfg(test)]
 use persistence::MemoryAuthStore;
-use persistence::{AuthStore, BrowserLogin, DurableSubjectTokens, SecretDigest, SubjectAuthState};
+use persistence::{AuthStore, DurableSubjectTokens, SecretDigest, SubjectAuthState};
 use profile::Profile;
 
 pub const AUTH_COOKIE: &str = "cma_session";
 const AUTH_COOKIE_DOMAIN: &str = "browser-login";
 const AUTH_COOKIE_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+pub(crate) const SIGN_IN_PREFERENCE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const LOGIN_ATTEMPT_LIFETIME: Duration = Duration::from_secs(10 * 60);
+/// One minute beyond the ten-minute attempt for callback I/O and response processing.
+/// This margin extends browser custody only, never the attempt's authority.
+pub(crate) const BROWSER_BINDING_LIFETIME: Duration =
+    Duration::from_secs(LOGIN_ATTEMPT_LIFETIME.as_secs() + 60);
+/// Time of explicit logout; compared with the start of a successful interactive login.
+const SIGNED_OUT_COOKIE: &str = "cma_signed_out";
 
 /// How CMA establishes the caller attached to an HTTP request.
 #[derive(Clone)]
@@ -98,9 +118,15 @@ impl std::fmt::Debug for AuthMode {
 }
 
 pub struct AuthState {
+    platform_settings: Option<Arc<layer2_core::PlatformSettingsService>>,
     bot_father_username: Option<String>,
     agent_key_service_id: Option<String>,
+    oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
+    silent_sign_in_enabled: bool,
+    browser_session_join_enabled: bool,
+    #[cfg(test)]
+    preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
@@ -109,11 +135,15 @@ pub struct AuthState {
     browser_origins: Vec<String>,
     pub(super) http: reqwest::Client,
     pub(super) metadata: RwLock<Option<ProviderMetadata>>,
+    identity_store: Arc<dyn identity_fallback::IdentityStore>,
+    verification_slots: tokio::sync::Semaphore,
+    fallback_policy: Arc<dyn identity_fallback::FallbackPolicy>,
     cookie_verifications: cookie_authorization::VerificationFlights,
     bearer_verifications: bearer_authorization::VerificationFlights,
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
+    spend: Option<Arc<dyn layer2_core::budget::PlatformSpendLedger>>,
 }
 
 pub(super) struct RequestAuth {
@@ -165,15 +195,22 @@ impl AuthState {
             AuthMode::Trusted { .. } => vec![],
         };
         Arc::new(Self {
+            platform_settings: None,
             bot_father_username: None,
             bindings: None,
             agent_key_service_id: None,
+            oauth_api_resource: None,
             resource_request_enabled: false,
+            silent_sign_in_enabled: false,
+            browser_session_join_enabled: false,
+            #[cfg(test)]
+            preference_clock: SystemTime::now,
             identity_proxy: None,
             mode,
             nyxid_public_url,
             browser_origins,
             records,
+            spend: None,
             store,
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
@@ -181,10 +218,20 @@ impl AuthState {
                 .build()
                 .expect("the rustls HTTP client builds"),
             metadata: RwLock::new(None),
+            identity_store: Arc::new(identity_fallback::MemoryIdentityStore::default()),
+            verification_slots: tokio::sync::Semaphore::new(64),
+            fallback_policy: Arc::new(identity_fallback::SessionReadOnly),
             cookie_verifications: cookie_authorization::VerificationFlights::default(),
             bearer_verifications: bearer_authorization::VerificationFlights::default(),
             signup_options_cache: signup_options::SignupOptionsCache::default(),
         })
+    }
+
+    pub(crate) fn with_silent_sign_in(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("auth configured before sharing")
+            .silent_sign_in_enabled = enabled;
+        self
     }
 
     pub fn requires_credential(&self) -> bool {
@@ -234,6 +281,14 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
+        self.resolve_request_with_policy(headers, false).await
+    }
+
+    pub(super) async fn resolve_request_with_policy(
+        &self,
+        headers: &HeaderMap,
+        allow_fallback: bool,
+    ) -> Result<Option<RequestAuth>, StoreError> {
         if self.identity_proxy.is_some() && headers.contains_key(nyxid_proxy::HEADER) {
             return self.proxy_request(headers).await;
         }
@@ -265,12 +320,17 @@ impl AuthState {
             AuthMode::Provider { .. } => {
                 if let Some(cookie) = session_routes::request_cookie(headers, AUTH_COOKIE) {
                     let id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, cookie);
-                    if let Some(login) = self.store.browser_login(&id).await? {
+                    if let Some((login, state)) = self.read_browser_session(&id).await? {
                         if login.expires_at <= SystemTime::now() {
                             let _ = self.store.delete_browser_login(&id).await;
                             return Ok(None);
                         }
-                        let Some(mut state) = self.store.subject(&login.subject).await? else {
+                        let state = if self.browser_session_join_enabled {
+                            state
+                        } else {
+                            self.store.subject(&login.subject).await?
+                        };
+                        let Some(mut state) = state else {
                             return Ok(Some(RequestAuth {
                                 binding: None,
                                 credential_source:
@@ -286,7 +346,28 @@ impl AuthState {
                                 "browser authority crossed its identity boundary".into(),
                             ));
                         }
+                        let had_tokens = state.tokens.is_some();
                         refresh::refresh_if_needed(self, &mut state).await?;
+                        if had_tokens && state.tokens.is_none() {
+                            return Ok(None);
+                        }
+                        if allow_fallback {
+                            let resolved = cookie_authorization::request_for_session(
+                                self,
+                                &login.subject,
+                                state,
+                            )
+                            .await?;
+                            // A logout may revoke the browser while verification
+                            // is pending, including on another CMA process.
+                            if !self.store.browser_login(&id).await?.is_some_and(|current| {
+                                current.subject == login.subject
+                                    && current.expires_at > SystemTime::now()
+                            }) {
+                                return Ok(None);
+                            }
+                            return Ok(resolved);
+                        }
                         return cookie_authorization::request_for_browser_cookie(
                             self,
                             &login.subject,
@@ -301,27 +382,6 @@ impl AuthState {
                 identity::request_for_bearer(self, token).await
             }
         }
-    }
-
-    pub(super) async fn issue_browser_login(
-        &self,
-        subject: SubjectId,
-    ) -> Result<String, StoreError> {
-        let value = token::random_token();
-        self.store
-            .put_browser_login(BrowserLogin {
-                id: SecretDigest::identify(AUTH_COOKIE_DOMAIN, &value),
-                subject,
-                expires_at: SystemTime::now() + AUTH_COOKIE_LIFETIME,
-            })
-            .await?;
-        Ok(value)
-    }
-
-    pub(super) async fn revoke_browser_login(&self, value: &str) -> Result<(), StoreError> {
-        self.store
-            .delete_browser_login(&SecretDigest::identify(AUTH_COOKIE_DOMAIN, value))
-            .await
     }
 
     pub(super) async fn store_sign_in(
@@ -363,56 +423,6 @@ impl AuthState {
         Err(StoreError::Unavailable(
             "subject sign-in remained contended".into(),
         ))
-    }
-
-    pub(super) async fn metadata(&self) -> Result<ProviderMetadata, String> {
-        if let Some(metadata) = self.metadata.read().await.clone() {
-            return Ok(metadata);
-        }
-        let AuthMode::Provider { base_url, .. } = &self.mode else {
-            return Err("no identity provider is configured".into());
-        };
-        let discovery_url = format!(
-            "{}/.well-known/openid-configuration",
-            base_url.trim_end_matches('/')
-        );
-        let response = self
-            .http
-            .get(&discovery_url)
-            .send()
-            .await
-            .map_err(|error| {
-                identity::verification_failure("discovery", "transport", None);
-                format!("identity discovery request failed: {error}")
-            })?;
-        if !response.status().is_success() {
-            identity::verification_failure(
-                "discovery",
-                "http_status",
-                Some(response.status().as_u16()),
-            );
-            return Err(format!(
-                "identity discovery returned HTTP {}",
-                response.status().as_u16()
-            ));
-        }
-        let mut metadata = response
-            .json::<ProviderMetadata>()
-            .await
-            .map_err(|error| format!("identity discovery document is invalid: {error}"))?;
-        metadata.token_endpoint = rebase(&metadata.token_endpoint, base_url)?;
-        metadata.userinfo_endpoint = metadata
-            .userinfo_endpoint
-            .as_deref()
-            .map(|endpoint| rebase(endpoint, base_url))
-            .transpose()?;
-        metadata.introspection_endpoint = metadata
-            .introspection_endpoint
-            .as_deref()
-            .map(|endpoint| rebase(endpoint, base_url))
-            .transpose()?;
-        *self.metadata.write().await = Some(metadata.clone());
-        Ok(metadata)
     }
 }
 

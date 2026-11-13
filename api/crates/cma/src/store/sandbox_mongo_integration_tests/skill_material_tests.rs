@@ -220,3 +220,6 @@ async fn mongo_skill_material_is_atomic_fenced_and_immutable_for_ordinary_saves(
     }
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "skill_upgrade_tests.rs"]
+mod upgrade_tests;

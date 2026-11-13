@@ -497,3 +497,51 @@ async fn request_read_authority_cannot_admit_commands_or_borrow_retained_custody
     ));
     assert!(f.forms.read().await.is_empty());
 }
+
+#[tokio::test]
+async fn request_proof_metrics_cover_verified_refused_and_unavailable_paths() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let f = Fixture::new().await;
+    let app =
+        app(f.auth(true).await).layer(axum::middleware::from_fn(crate::telemetry::http::observe));
+    assert_eq!(
+        app.clone()
+            .oneshot(request(Method::GET, "/api/v1/agents"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    *f.status.write().await = StatusCode::SERVICE_UNAVAILABLE;
+    assert_eq!(
+        app.clone()
+            .oneshot(request(Method::GET, "/api/v1/agents"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    let disabled = self::app(f.auth(false).await)
+        .layer(axum::middleware::from_fn(crate::telemetry::http::observe));
+    assert_eq!(
+        disabled
+            .oneshot(request(Method::GET, "/api/v1/agents"))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let text = handle.render();
+    for outcome in ["resolved", "rejected", "unavailable"] {
+        assert!(
+            text.contains(&format!(
+                "cma_auth_resolutions_total{{path=\"resource_request\",outcome=\"{outcome}\"}} 1"
+            )),
+            "{text}"
+        );
+    }
+    assert!(text.contains("status=\"200\",consumer=\"nyxid\",protocol=\"rest\""));
+    assert!(text.contains("status=\"503\",consumer=\"unknown\",protocol=\"rest\""));
+}

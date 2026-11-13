@@ -3,6 +3,8 @@ use layer2_core::document_artifacts::{
     memory::{MemoryDocumentBlobs, MemoryDocuments},
     DocumentService,
 };
+#[path = "document_tests/tenant_isolation.rs"]
+mod tenant_isolation;
 
 struct RuntimeAuth(Arc<Stub>);
 #[async_trait::async_trait]

@@ -1,5 +1,5 @@
 import { Button } from '../../ui/Button';
-import { Choice, Section, StringList, TextField } from './Fields';
+import { Choice, NumberField, Section, StringList, TextField } from './Fields';
 import { object, optional, records, strings, type Fields } from './model';
 import { ValueBuilder } from './ValueBuilder';
 export function ProviderFields({
@@ -124,6 +124,18 @@ export function ProfileFields({
             onChange={(kind) => set('metadata', { ...metadata, owner: { ...owner, kind } })}
           />
         </fieldset>
+      </Section>
+      <Section
+        title="Queue wait"
+        description="Messages can wait five minutes by default, or up to one day. When this time runs out, the message fails without starting. Changes apply to new messages."
+      >
+        <NumberField
+          label="Maximum wait (seconds)"
+          value={value.queue_lifetime_seconds ?? 300}
+          min={1}
+          max={86400}
+          onChange={(seconds) => set('queue_lifetime_seconds', seconds)}
+        />
       </Section>
       <Section
         title="Model and behavior"

@@ -6,8 +6,10 @@ use crate::owner_protocol::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 
-const NEGOTIATION_DEADLINE: Duration = Duration::from_secs(8);
-const RENEW_INTERVAL: Duration = Duration::from_secs(5);
+// Two bounded negotiations plus the intervening sleep fit within the receiver
+// lifetime, including a slow initial confirmation. Never extend a challenge.
+const NEGOTIATION_DEADLINE: Duration = Duration::from_secs(3);
+const RENEW_INTERVAL: Duration = Duration::from_secs(3);
 const RESPONSE_LIMIT: usize = 4_096;
 
 pub(super) struct ReceiverLease(tokio::task::JoinHandle<()>);

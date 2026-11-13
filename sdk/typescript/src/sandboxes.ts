@@ -1,7 +1,7 @@
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
 import { ProtocolError, ValidationError } from './errors.js';
-import { array, boolean } from './schema.js';
+import { array, boolean, integer, object, type Output } from './schema.js';
 import {
   command,
   identity,
@@ -27,6 +27,12 @@ import {
 } from './instances/types.js';
 import { sandboxEvent } from './instances/events.js';
 import {
+  retainedRecoveryAssessment,
+  recoverRetainedRequest,
+  retainedReopenReceipt,
+  type RecoverRetainedRequest,
+} from './instances/retained-recovery.js';
+import {
   updateSandboxRuntimeRequest,
   type UpdateSandboxRuntimeRequest,
 } from './instances/runtime-update.js';
@@ -36,6 +42,10 @@ import {
   sandboxCommandRequest,
   type SandboxCommandRequest,
 } from './instances/commands.js';
+
+const alwaysOnRequest = object({ always_on: boolean, expected_revision: integer });
+/** Owners may send false only; true receives 403 always_on_approval_required. */
+export type AlwaysOnRequest = Output<typeof alwaysOnRequest>;
 
 export interface SandboxListOptions extends PageOptions {
   readonly status?: SandboxStatus;
@@ -161,6 +171,45 @@ export class Sandboxes {
   }
   revive(id: string, options: CommandOptions) {
     return this.lifecycle(id, '/revive', 'POST', options);
+  }
+
+  /**
+   * Relinquish an existing exception with `always_on: false`. Unset/false is a
+   * revision-checked no-op. `true` returns 403 `always_on_approval_required`.
+   * Only admin.setSandboxAlwaysOn can approve an exception.
+   */
+  setAlwaysOn(id: string, body: AlwaysOnRequest, options: CommandOptions) {
+    return read(this.config, `/api/v1/sandboxes/${segment(id)}/always-on`, identity(sandbox, id), {
+      ...command(options),
+      method: 'POST',
+      body: input(alwaysOnRequest, body),
+      expectedStatus: 200,
+    });
+  }
+
+  /** Read fresh retained-runtime facts without admitting or interrupting work. */
+  inspectRuntimeRecovery(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/runtime-recovery`,
+      retainedRecoveryAssessment,
+      options,
+    );
+  }
+
+  /** Explicit owner consent; server re-proves exact retained authority and idle history. */
+  recoverRetained(id: string, body: RecoverRetainedRequest, options: CommandOptions) {
+    return read(
+      this.config,
+      `/api/v1/sandboxes/${segment(id)}/runtime-recovery`,
+      retainedReopenReceipt,
+      {
+        ...command(options),
+        method: 'POST',
+        body: input(recoverRetainedRequest, body),
+        expectedStatus: 202,
+      },
+    );
   }
 
   /** Queue an exact deployment runtime image; active work finishes before rotation. */

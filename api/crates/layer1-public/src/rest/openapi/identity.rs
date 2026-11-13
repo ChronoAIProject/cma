@@ -3,6 +3,7 @@ pub(super) fn anonymous_path(path: &str) -> bool {
         path,
         "/auth/signup-options"
             | "/api/v1/conformance"
+            | "/api/v1/telemetry/browser"
             | "/api/v1/agui/capabilities"
             | "/api/v1/triggers/public/{public_id}"
             | "/api/v1/triggers/public/{public_id}/badge.svg"

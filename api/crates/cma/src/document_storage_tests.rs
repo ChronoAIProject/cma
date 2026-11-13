@@ -8,6 +8,7 @@ use axum::{
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::Mutex;
 
 #[derive(Default)]
 struct Probe {
@@ -105,6 +106,7 @@ async fn fixture() -> (
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let client = StorageDocuments::new(DocumentStorageConfig {
+        resilience_enabled: true,
         platform_origin: origin,
         bucket: "fixture".into(),
         client_id: "fixture-machine".into(),

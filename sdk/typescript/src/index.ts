@@ -9,6 +9,7 @@ export type {
 export { answerContext, type AnswerContext } from './answer-context.js';
 export * from './resource-access.js';
 export * from './usage.js';
+export * from './usage-metrics/index.js';
 export * from './agent-files.js';
 export * from './bots.js';
 export * from './bot-setups.js';
@@ -66,6 +67,7 @@ export type * from './agents/events.js';
 export type * from './instances/types.js';
 export type * from './instances/events.js';
 export type * from './instances/commands.js';
+export type * from './instances/retained-recovery.js';
 export type * from './profiles/types.js';
 export type * from './profiles/marketplace.js';
 export {
@@ -150,3 +152,7 @@ export {
   type AgentEnvironment,
   type EnvironmentFeature,
 } from './agent-environment.js';
+
+export type * from './agents/transcript.js';
+export { reportBrowserFault, type BrowserFault } from './browser-telemetry.js';
+export * from './agents/capacity-recovery.js';

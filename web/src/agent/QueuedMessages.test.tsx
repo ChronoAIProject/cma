@@ -34,8 +34,8 @@ it('edits and removes only the chosen entry, keeping another row draft and origi
     />
   );
   const { rerender } = render(draw([first, second]));
-  expect(screen.getAllByText('Sam Owner')).toHaveLength(2);
-  await userEvent.click(row(2).getByRole('button', { name: 'Edit' }));
+  expect(screen.getAllByText('Queued ·')).toHaveLength(2);
+  await userEvent.click(row(2).getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(row(2).getByRole('textbox'), { target: { value: 'Second draft remains' } });
   await userEvent.click(row(1).getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(row(1).getByRole('textbox'), { target: { value: 'Edited first' } });
@@ -47,7 +47,7 @@ it('edits and removes only the chosen entry, keeping another row draft and origi
   expect(row(1).getByRole('button', { name: 'Edit queued message content' })).toHaveTextContent(
     'Edited first',
   );
-  await userEvent.click(row(1).getByRole('button', { name: 'Remove' }));
+  await userEvent.click(row(1).getByRole('button', { name: /Remove queued message/ }));
   expect(remove).toHaveBeenCalledExactlyOnceWith(changed);
   rerender(draw([second]));
   expect(row(1).getByRole('textbox')).toHaveValue('Second draft remains');
@@ -60,7 +60,7 @@ it('uses the original revision if a refresh races an edit and retains a refused 
     .mockRejectedValue(new Error('This message has started. It can no longer be edited.'));
   const remove = vi.fn();
   const { rerender } = render(<QueuedMessages items={[first]} onEdit={edit} onRemove={remove} />);
-  await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'My revised request' } });
   rerender(
     <QueuedMessages
@@ -102,15 +102,15 @@ it('locks only an unresolved row and keeps its edit available for explicit recov
     <QueuedMessages items={items} onEdit={edit} onRemove={remove} onRecover={recover} />
   );
   const { rerender } = render(draw([first, second]));
-  await userEvent.click(row(1).getByRole('button', { name: 'Edit' }));
+  await userEvent.click(row(1).getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(row(1).getByRole('textbox'), { target: { value: 'Recover this edit' } });
   await userEvent.click(row(1).getByRole('button', { name: 'Save' }));
   const pending = { ...first, needsRecovery: true };
   rerender(draw([pending, second]));
   expect(row(1).getByRole('textbox')).toBeDisabled();
   expect(row(1).getByRole('textbox')).toHaveValue('Recover this edit');
-  expect(row(1).getByRole('button', { name: 'Remove' })).toBeDisabled();
-  expect(row(2).getByRole('button', { name: 'Remove' })).toBeEnabled();
+  expect(row(1).getByRole('button', { name: /Remove queued message/ })).toBeDisabled();
+  expect(row(2).getByRole('button', { name: /Remove queued message/ })).toBeEnabled();
   await userEvent.click(row(1).getByRole('button', { name: 'Recover request' }));
   expect(recover).toHaveBeenCalledExactlyOnceWith(pending);
   await waitFor(() => expect(row(1).queryByRole('textbox')).not.toBeInTheDocument());
@@ -125,7 +125,10 @@ it('retains a removed row only as an inert exit frame and disables unavailable a
   );
   const { rerender } = render(draw([first, second]));
   const removed = screen.getByRole('article', { name: 'Queued message 1' }).closest('li')!;
-  expect(row(1).getByRole('button', { name: 'Edit' })).toBeDisabled();
+  expect(row(1).getByRole('button', { name: 'Edit queued message content' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  );
   fireEvent.click(row(1).getByRole('button', { name: 'Edit queued message content' }));
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   rerender(draw([second]));

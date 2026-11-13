@@ -1,32 +1,41 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
-
+use layer2_core::StoreError;
+use mongodb::bson::{doc, Document};
+use mongodb::error::Error;
+use mongodb::{Client, Collection};
 use std::future::Future;
 use std::time::Duration;
-
-use layer2_core::StoreError;
-use mongodb::bson::{doc, Bson, Document};
-use mongodb::error::{
-    Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
-};
-use mongodb::options::{ReadConcern, WriteConcern};
-use mongodb::{Client, ClientSession, Collection, Database};
-use serde::de::DeserializeOwned;
-use serde::Serialize;
 use tokio::sync::Semaphore;
+
+mod records;
+pub(super) use records::{
+    i64_field_matches, nullable, read_record, record_bson, require_version, signed,
+    string_field_matches, unsigned,
+};
 
 use super::MongoCheckpointObjectStore;
 use super::{durability::majority_collection, schema::initialize_collections};
 
+#[path = "sandbox_mongo_transactions.rs"]
+mod transactions;
+pub(super) use transactions::{
+    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+};
+
+pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
+mod topology;
+pub(super) use topology::require_transaction_topology;
+#[cfg(test)]
+use topology::validate_transaction_server;
+
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
-const COMMIT_ATTEMPTS: usize = 5;
-const DUPLICATE_KEY: i32 = 11_000;
-const SNAPSHOT_READ_MIN_WIRE_VERSION: i64 = 13;
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_PENDING_RECONCILIATIONS: usize = 16;
 static RECONCILIATION_SLOTS: Semaphore = Semaphore::const_new(MAX_PENDING_RECONCILIATIONS);
 
 pub(super) const SANDBOXES: &str = "sandboxes";
+pub(super) const SANDBOX_SESSIONS: &str = "sandbox_sessions";
 pub(super) const WORKSPACES: &str = "workspaces";
 pub(super) const WORKTREES: &str = "worktrees";
 pub(super) const AGENTS: &str = "agents";
@@ -53,24 +62,49 @@ pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
 mod collections;
-use collections::{PROFILE_COLLECTIONS, SANDBOX_COLLECTIONS};
+use collections::SANDBOX_COLLECTIONS;
 
 /// One adapter implements every sandbox-model port so cross-port operations
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
+    pub(super) global_sandbox_limit: u16,
+    #[cfg(test)]
+    pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub(super) segment_adoption_enabled: bool,
+    pub(super) bounded_approval_reads: bool,
+    pub(super) runtime_loss_bounded_proof_enabled: bool,
+    pub(super) bounded_close_retries: bool,
+    pub(super) retry_single_marker_enabled: bool,
+    pub(super) retry_audits:
+        std::sync::Arc<super::agent_worker_transaction::retry_audit::RetryAudits>,
+    pub(super) scan_cooperation: super::cooperative_budget::Policy,
+    pub(super) fleet_log_activation: std::sync::Arc<super::agent_log_integrity::fleet::Activation>,
+    pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
+    pub(super) platform_counter_shards: bool,
+    pub(super) bounded_title_reads: bool,
+    pub(super) bounded_transcript_reads: bool,
+    pub(super) bounded_usage_reads: bool,
+    pub(super) access_snapshot_session: bool,
+    pub(super) sandbox_agent_projection: bool,
+    pub(super) sandbox_snapshot_reads: bool,
+    pub(super) sandbox_batched_reads: bool,
+    pub(super) bounded_response_reads: bool,
     pub(crate) writer_policy:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub(super) bindings: super::bindings::BindingCollections,
     pub(super) client: Client,
     pub(super) checkpoint_objects: MongoCheckpointObjectStore,
     pub(super) sandboxes: Collection<Document>,
+    pub(super) sandbox_sessions: Collection<Document>,
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
     pub(crate) agent_ownership: Option<std::sync::Arc<super::agent_ownership::MongoAgentOwnership>>,
     pub(super) agent_manager_instance: Option<String>,
+    pub(super) platform: std::sync::Arc<super::platform_write_coordination::PlatformState>,
     pub(super) agent_access_tools: Collection<Document>,
     pub(super) agent_access_requests: Collection<Document>,
     pub(super) agent_reuse_bindings: Collection<Document>,
@@ -80,6 +114,8 @@ pub struct MongoSandboxStore {
     pub(super) agent_channel_usage: Collection<Document>,
     pub(super) channel_usage_events: Collection<Document>,
     pub(super) agent_commands: Collection<Document>,
+    pub(super) model_budget: Collection<Document>,
+    pub(super) budget_settings: Collection<Document>,
     pub(super) agent_artifacts: Collection<Document>,
     pub(super) media_uploads: Collection<Document>,
     pub(super) sandbox_controls: Collection<Document>,
@@ -108,6 +144,7 @@ pub struct MongoSandboxStore {
     pub(super) managed_machine_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
     // Coalesced process-local hints; durable discovery owns recovery and authority.
     pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) access_admitted: std::sync::Arc<tokio::sync::Notify>,
@@ -143,17 +180,41 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
+            global_sandbox_limit: 0,
+            #[cfg(test)]
+            request_budget_clock: None,
+            bounded_admission_agents: Default::default(),
+            segment_adoption_enabled: false,
+            bounded_approval_reads: false,
+            runtime_loss_bounded_proof_enabled: false,
+            bounded_close_retries: false,
+            retry_single_marker_enabled: false,
+            retry_audits: Default::default(),
+            scan_cooperation: Default::default(),
+            fleet_log_activation: Default::default(),
+            platform_counter_shards: false,
+            bounded_title_reads: false,
+            bounded_transcript_reads: false,
+            bounded_usage_reads: false,
+            access_snapshot_session: false,
+            sandbox_agent_projection: false,
+            sandbox_snapshot_reads: false,
+            sandbox_batched_reads: false,
+            bounded_response_reads: false,
             writer_policy: Default::default(),
             bindings: super::bindings::BindingCollections::open(&database).await?,
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
+            sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
             agent_ownership: None,
             agent_manager_instance: None,
+            platform: Default::default(),
             agent_access_tools: majority_collection(
                 &database,
                 super::agent_access_tools::COLLECTION,
@@ -169,6 +230,8 @@ impl MongoSandboxStore {
             agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
             channel_usage_events: majority_collection(&database, "channel_usage_events"),
             agent_commands: majority_collection(&database, AGENT_COMMANDS),
+            model_budget: majority_collection(&database, super::budget::COLLECTION),
+            budget_settings: majority_collection(&database, "platform_settings"),
             agent_artifacts: majority_collection(&database, AGENT_ARTIFACTS),
             media_uploads: majority_collection(&database, super::media_uploads::COLLECTION),
             sandbox_controls: majority_collection(&database, SANDBOX_CONTROLS),
@@ -200,12 +263,15 @@ impl MongoSandboxStore {
             managed_machine_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
+            native_prepared_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
+        super::budget::initialize_settings(&store).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;
         super::sandbox_billing::ensure_indexes(&store.sandbox_billing).await?;
         super::workspaces::ensure_indexes(&store.workspaces).await?;
@@ -240,157 +306,6 @@ impl MongoSandboxStore {
     }
 }
 
-pub(super) async fn require_transaction_topology(database: &Database) -> Result<(), StoreError> {
-    let reply = database
-        .run_command(doc! { "hello": 1_i32 })
-        .await
-        .map_err(|error| unavailable("inspect Mongo transaction topology", error))?;
-    validate_transaction_server(&reply)
-}
-
-fn validate_transaction_server(reply: &Document) -> Result<(), StoreError> {
-    if reply.get_str("setName").is_err()
-        && !matches!(reply.get_str("msg"), Ok(message) if message == "isdbgrid")
-    {
-        return Err(StoreError::Unavailable(
-            "sandbox-model transactions require a replica set or mongos".into(),
-        ));
-    }
-    let max_wire_version = match reply.get("maxWireVersion") {
-        Some(Bson::Int32(version)) => i64::from(*version),
-        Some(Bson::Int64(version)) => *version,
-        _ => {
-            return Err(StoreError::Unavailable(
-                "MongoDB did not report a usable maxWireVersion".into(),
-            ));
-        }
-    };
-    if max_wire_version < SNAPSHOT_READ_MIN_WIRE_VERSION {
-        return Err(StoreError::Unavailable(format!(
-            "snapshot reads require MongoDB 5.0 or later (maxWireVersion >= {SNAPSHOT_READ_MIN_WIRE_VERSION}); server reported {max_wire_version}"
-        )));
-    }
-    Ok(())
-}
-
-/// Profile drafts and revisions are separate from runtime aggregates, but use
-/// the same Mongo client so publication can resolve references transactionally.
-#[derive(Clone)]
-pub struct MongoProfileStore {
-    pub(super) client: Client,
-    pub(super) agent_profiles: Collection<Document>,
-    pub(super) agent_revisions: Collection<Document>,
-    pub(super) workspace_profiles: Collection<Document>,
-    pub(super) workspace_revisions: Collection<Document>,
-    pub(super) sandbox_profiles: Collection<Document>,
-    pub(super) sandbox_revisions: Collection<Document>,
-}
-
-impl MongoProfileStore {
-    pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
-        let database = client.database(name);
-        initialize_collections(&database, PROFILE_COLLECTIONS).await?;
-        let store = Self {
-            client: client.clone(),
-            agent_profiles: majority_collection(&database, AGENT_PROFILES),
-            agent_revisions: majority_collection(&database, AGENT_PROFILE_REVISIONS),
-            workspace_profiles: majority_collection(&database, WORKSPACE_PROFILES),
-            workspace_revisions: majority_collection(&database, WORKSPACE_PROFILE_REVISIONS),
-            sandbox_profiles: majority_collection(&database, SANDBOX_PROFILES),
-            sandbox_revisions: majority_collection(&database, SANDBOX_PROFILE_REVISIONS),
-        };
-        super::profiles::ensure_indexes(&store).await?;
-        tracing::info!(database = name, "sandbox-profile Mongo store ready");
-        Ok(store)
-    }
-}
-
-pub(super) fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {
-    mongodb::bson::serialize_to_bson(record).map_err(|error| error.to_string())
-}
-
-pub(super) fn read_record<T: DeserializeOwned>(document: &Document) -> Result<T, String> {
-    require_version(document)?;
-    let record = document
-        .get("record")
-        .cloned()
-        .ok_or_else(|| "stored document has no aggregate record".to_string())?;
-    mongodb::bson::deserialize_from_bson(record).map_err(|error| error.to_string())
-}
-
-pub(super) fn require_version(document: &Document) -> Result<(), String> {
-    match document.get("document_schema_version") {
-        Some(Bson::Int32(version)) if i64::from(*version) == DOCUMENT_SCHEMA_VERSION => Ok(()),
-        Some(Bson::Int64(version)) if *version == DOCUMENT_SCHEMA_VERSION => Ok(()),
-        Some(version) => Err(format!("unsupported document schema version {version}")),
-        None => Err("stored document has no schema version".into()),
-    }
-}
-
-pub(super) fn signed(value: u64, field: &str) -> Result<i64, String> {
-    i64::try_from(value).map_err(|_| format!("{field} exceeds the BSON integer range"))
-}
-
-pub(super) fn unsigned(value: i64, field: &str) -> Result<u64, String> {
-    u64::try_from(value).map_err(|_| format!("{field} must not be negative"))
-}
-
-pub(super) fn nullable(value: Option<&String>) -> Bson {
-    value.cloned().map(Bson::String).unwrap_or(Bson::Null)
-}
-
-pub(super) fn string_field_matches(document: &Document, field: &str, expected: &str) -> bool {
-    matches!(document.get_str(field), Ok(actual) if actual == expected)
-}
-
-pub(super) fn i64_field_matches(document: &Document, field: &str, expected: i64) -> bool {
-    matches!(document.get_i64(field), Ok(actual) if actual == expected)
-}
-
-pub(super) fn is_duplicate_key(error: &Error) -> bool {
-    match error.kind.as_ref() {
-        ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == DUPLICATE_KEY,
-        ErrorKind::Command(command) => command.code == DUPLICATE_KEY,
-        _ => false,
-    }
-}
-
-pub(super) fn is_transient(error: &Error) -> bool {
-    error.contains_label(TRANSIENT_TRANSACTION_ERROR)
-}
-
-pub(super) enum CommitOutcome {
-    Committed,
-    Retry(Error),
-    Unknown(Error),
-    Failed(Error),
-}
-
-pub(super) async fn start_transaction(session: &mut ClientSession) -> Result<(), Error> {
-    session
-        .start_transaction()
-        .read_concern(ReadConcern::snapshot())
-        .write_concern(WriteConcern::majority())
-        .await
-}
-
-pub(super) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
-    for attempt in 0..COMMIT_ATTEMPTS {
-        match session.commit_transaction().await {
-            Ok(()) => return CommitOutcome::Committed,
-            Err(error) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
-                if attempt + 1 == COMMIT_ATTEMPTS {
-                    return CommitOutcome::Unknown(error);
-                }
-                tokio::task::yield_now().await;
-            }
-            Err(error) if is_transient(&error) => return CommitOutcome::Retry(error),
-            Err(error) => return CommitOutcome::Failed(error),
-        }
-    }
-    unreachable!("the bounded commit loop always returns")
-}
-
 /// Bound reconciliation without cancelling a Mongo driver future mid-command.
 pub(super) async fn wait_for_reconciliation<F, T>(
     context: &'static str,
@@ -417,10 +332,12 @@ where
             "{context} cannot start while {MAX_PENDING_RECONCILIATIONS} prior reconciliations remain pending"
         )
     })?;
-    let mut task = tokio::spawn(async move {
-        let _permit = permit;
-        future.await
-    });
+    let mut task = tokio::spawn(crate::telemetry::agent_output::inherit_commands(
+        async move {
+            let _permit = permit;
+            future.await
+        },
+    ));
     match tokio::time::timeout(deadline, &mut task).await {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(error)) => {

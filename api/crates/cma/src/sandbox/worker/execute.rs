@@ -6,6 +6,21 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // Re-read before any retirement side effect, including channel teardown.
+        // Admission requires old-worker exclusion; an existing hold never expires.
+        if sandbox.status == layer2_core::sandbox::SandboxStatus::Retiring
+            || sandbox.lifecycle.retirement_archive.is_some()
+        {
+            let current = self
+                .dependencies
+                .store
+                .get_sandbox(&sandbox.id)
+                .await?
+                .ok_or(SandboxStoreError::NotFound)?;
+            if current.retirement_archive_pending() || current.revision != sandbox.revision {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
         // A replacement is funded only after its exact generation and home
         // are durably reserved. Cleanup must remain available without credit.
         if sandbox.runtime.is_some()

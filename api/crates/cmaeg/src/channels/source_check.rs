@@ -125,12 +125,75 @@ pub async fn check(
                 if present { "The configured authentication references are present; caller credentials were not tested." } else { "The configured authentication reference is unavailable." }));
             "custom".into()
         }
-        Source::Github { app_ref, .. } => {
-            let configured = state
-                .github
-                .as_ref()
-                .is_some_and(|gateway| gateway.has_app(app_ref));
-            checks.push(github_webhook_check(app_ref, configured));
+        Source::Github {
+            app_ref,
+            installation_ids,
+            repository_ids,
+            ..
+        } => {
+            match state.github.get() {
+                Some(gateway) => match gateway.read_app(&creator.subject, app_ref).await {
+                    Ok(app) => {
+                        checks.push(item(
+                            "github_integration",
+                            "GitHub integration",
+                            app.status == "verified",
+                            &format!("Integration status: {}.", app.status),
+                        ));
+                        checks.push(item(
+                            "github_webhook_credential",
+                            "Webhook credential",
+                            app.webhook_credential.present,
+                            "Credential presence only; no external delivery is sent.",
+                        ));
+                        let mut approved = std::collections::BTreeSet::new();
+                        for id in installation_ids {
+                            match gateway
+                                .installation_binding(&creator.subject, &app, *id)
+                                .await
+                            {
+                                Ok(binding) => {
+                                    let active = binding.status == "active";
+                                    checks.push(item(
+                                        &format!("github_installation_{id}"),
+                                        "Installation approval",
+                                        active,
+                                        &format!(
+                                            "Binding status: {}; authority revision: {}.",
+                                            binding.status, binding.authority_revision
+                                        ),
+                                    ));
+                                    if active {
+                                        approved.extend(binding.repository_ids.into_iter().filter(
+                                            |id| !binding.excluded_repository_ids.contains(id),
+                                        ));
+                                    }
+                                }
+                                Err(_) => checks.push(item(
+                                    &format!("github_installation_{id}"),
+                                    "Installation approval",
+                                    false,
+                                    "No readable binding is available to this owner.",
+                                )),
+                            }
+                        }
+                        checks.push(item("github_repository_authority", "Repository authority", repository_ids.iter().all(|id| approved.contains(id)), "Every selected repository must be approved and not excluded by an active binding."));
+                    }
+                    Err(_) => checks.push(item(
+                        "github_integration",
+                        "GitHub integration",
+                        false,
+                        "No readable integration is available to this owner.",
+                    )),
+                },
+                None => checks.push(item(
+                    "github_integration",
+                    "GitHub integration",
+                    false,
+                    "GitHub storage is unavailable.",
+                )),
+            }
+            checks.push(item("github_dispatch", "Durable business dispatch", true, "Eligible deliveries commit a receipt before ordinary routed admission; per-channel progress is recoverable after restart."));
             "github".into()
         }
     };
@@ -154,30 +217,5 @@ fn item(id: &str, label: &str, passed: bool, detail: &str) -> SourceCheck {
             SourceCheckStatus::Unavailable
         },
         detail: detail.into(),
-    }
-}
-
-fn github_webhook_check(app_ref: &str, configured: bool) -> SourceCheck {
-    let detail = if configured {
-        format!("App {app_ref} is loaded; signature and installation checks run at delivery.")
-    } else {
-        format!("App {app_ref} is selected by this channel but is not loaded in CMAEG.")
-    };
-    item("webhook", "GitHub native webhook", configured, &detail)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{github_webhook_check, SourceCheckStatus};
-
-    #[test]
-    fn github_source_check_requires_the_selected_app_to_be_loaded() {
-        let unavailable = github_webhook_check("pilot", false);
-        assert!(matches!(unavailable.status, SourceCheckStatus::Unavailable));
-        assert!(unavailable.detail.contains("not loaded"));
-
-        let passed = github_webhook_check("pilot", true);
-        assert!(matches!(passed.status, SourceCheckStatus::Passed));
-        assert!(passed.detail.contains("is loaded"));
     }
 }

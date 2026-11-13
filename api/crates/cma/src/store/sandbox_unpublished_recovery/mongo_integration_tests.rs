@@ -12,7 +12,16 @@ use mongodb::bson::doc;
 
 const NOW: &str = "2026-09-05T00:30:00Z";
 
-async fn fixture(store: &MongoSandboxStore, id: &str) -> SandboxUnpublishedRecoveryRequest {
+#[path = "retained_mongo_tests.rs"]
+mod retained;
+
+#[path = "platform_stop_mongo_tests.rs"]
+mod platform_stop;
+
+pub(in crate::store) async fn fixture(
+    store: &MongoSandboxStore,
+    id: &str,
+) -> SandboxUnpublishedRecoveryRequest {
     let mut sandbox = active_sandbox(id);
     sandbox.status = SandboxStatus::Failed;
     sandbox.failure = Some(TypedFailure {
@@ -417,3 +426,5 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
     );
     client.database(&name).drop().await.unwrap();
 }
+
+mod evidence_tests;

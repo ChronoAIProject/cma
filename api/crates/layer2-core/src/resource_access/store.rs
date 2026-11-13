@@ -233,4 +233,19 @@ pub trait ResourceAccessStore: Send + Sync {
         &self,
         target: &ResourceTarget,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError>;
+
+    /// Read several current snapshots under one store transaction. Implementors
+    /// should keep the reads in one session so inventory release validation does
+    /// not open one connection checkout per row. The default preserves the
+    /// existing behavior for lightweight stores and test doubles.
+    async fn resource_access_snapshots(
+        &self,
+        targets: &[ResourceTarget],
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        let mut snapshots = Vec::with_capacity(targets.len());
+        for target in targets {
+            snapshots.push(self.resource_access_snapshot(target).await?);
+        }
+        Ok(snapshots)
+    }
 }

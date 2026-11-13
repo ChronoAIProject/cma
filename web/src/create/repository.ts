@@ -38,3 +38,32 @@ export function agentNameFor(repositoryUrl: string): string {
     .replace(/\.git$/, '')
     .slice(0, 64);
 }
+
+/** Parse task entry shorthand without URL's dot-segment normalization. */
+export function parseRepository(value: string): string | undefined {
+  const match =
+    /^(?:https:\/\/github\.com\/|github\.com\/)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/?$/.exec(
+      value.trim(),
+    );
+  if (!match) return undefined;
+  const owner = match[1]!;
+  const repo = match[2]!.replace(/\.git$/, '');
+  if ([owner, repo].some((part) => !part || ['.', '..', '.git'].includes(part))) return undefined;
+  return `https://github.com/${owner}/${repo}`;
+}
+
+export function validRepositoryRef(value: string): boolean {
+  return (
+    new TextEncoder().encode(value).length <= 255 &&
+    !value.startsWith('-') &&
+    ![...value].some(
+      (character) =>
+        character.charCodeAt(0) < 33 ||
+        character.charCodeAt(0) === 127 ||
+        /\s/.test(character) ||
+        '~^:?*[\\'.includes(character),
+    ) &&
+    !value.includes('..') &&
+    !value.includes('@{')
+  );
+}

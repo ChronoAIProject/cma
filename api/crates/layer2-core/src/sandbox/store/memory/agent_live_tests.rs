@@ -1,4 +1,5 @@
 use super::*;
+use crate::sandbox::conversation_recorder::live::LIVE_BUFFER_FRAGMENTS;
 use crate::sandbox::AgentLiveFragmentKind;
 use tokio::sync::broadcast::error::TryRecvError;
 
@@ -240,7 +241,7 @@ async fn idle_thoughts_emit_nothing_and_per_agent_lag_is_explicit() {
         .commit_agent_conversation(begin_turn(&store, ready.clone()))
         .await
         .unwrap();
-    for _ in 0..40 {
+    for _ in 0..(LIVE_BUFFER_FRAGMENTS + 8) {
         recorder
             .record_update(
                 &ready.id,
@@ -255,4 +256,101 @@ async fn idle_thoughts_emit_nothing_and_per_agent_lag_is_explicit() {
     assert_eq!(live.try_recv(), Err(TryRecvError::Lagged(8)));
     assert!(live.try_recv().is_ok());
     assert_eq!(unrelated.try_recv(), Err(TryRecvError::Empty));
+}
+
+#[tokio::test]
+async fn budgeted_delivery_shares_source_and_preserves_the_durable_terminal() {
+    let (store, ready) = ready_agent(None).await;
+    let recorder = DurableAgentUpdateRecorder::with_live_budget(
+        Arc::new(store.clone()),
+        Arc::default(),
+        None,
+        true,
+    );
+    let mut first = recorder.subscribe_live(&ready.id).unwrap();
+    let mut second = recorder.subscribe_live(&ready.id).unwrap();
+    let mutation = begin_turn(&store, ready);
+    let working = mutation.agent.clone();
+    store.commit_agent_conversation(mutation).await.unwrap();
+    let mut assembly = AgentMessageAssembly::default();
+    for text in ["first ", "second"] {
+        recorder
+            .record_update(
+                &working.id,
+                1,
+                &mut assembly,
+                message_chunk("reply", text),
+                NOW.into(),
+            )
+            .await
+            .unwrap();
+    }
+    let held = first.try_recv().unwrap();
+    let same = second.try_recv().unwrap();
+    assert!(std::ptr::eq(&*held, &*same));
+    assert_eq!(held.delta, "first ");
+    drop((first, second));
+    let ended = recorder
+        .record_update(&working.id, 1, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .unwrap();
+    assert!(ended.appended.iter().any(|entry| matches!(
+        &entry.kind, AgentLogKind::AgentMessage { content } if content == "first second"
+    )));
+    assert!(ended
+        .appended
+        .iter()
+        .any(|entry| matches!(&entry.kind, AgentLogKind::TurnCompleted { .. })));
+    assert_eq!(held.delta, "first ");
+}
+
+#[tokio::test(start_paused = true)]
+async fn head_hints_follow_successful_durable_commits_only() {
+    let (store, working, recorder) = working_agent().await;
+    let mut heads = recorder.subscribe_head(&working.id).unwrap();
+    let mut assembly = AgentMessageAssembly::default();
+    recorder
+        .record_update(
+            &working.id,
+            1,
+            &mut assembly,
+            message_chunk("reply", "accepted"),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    // Checkpoint-only output does not change the durable event head.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), heads.recv())
+            .await
+            .is_err()
+    );
+    assert!(recorder
+        .record_update(&working.id, 2, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .is_err());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), heads.recv())
+            .await
+            .is_err()
+    );
+    let outcome = recorder
+        .record_update(&working.id, 1, &mut assembly, turn_ended(), NOW.into())
+        .await
+        .unwrap();
+    assert!(outcome.turn_closed && !outcome.appended.is_empty());
+    heads.recv().await.unwrap();
+    assert!(store
+        .get_agent(&working.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .conversation
+        .active_turn
+        .is_none());
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(1), heads.recv())
+            .await
+            .is_err()
+    );
 }

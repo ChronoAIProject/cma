@@ -104,8 +104,8 @@ async fn exact_adoption_reuses_acknowledgement_with_fresh_claim_home_and_pod_pro
         );
     }
     assert!(
-        state.calls.len() <= 8,
-        "cached adoption must avoid repeating the bootstrap chain"
+        state.calls.len() <= 14,
+        "cached adoption keeps pre-bind authority and fresh post-bind exact proof"
     );
     assert_eq!(bound.transport.binds.lock().unwrap().len(), 2);
 }

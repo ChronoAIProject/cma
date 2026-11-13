@@ -49,6 +49,49 @@ without failing it. `triggers.enabled` separately controls new public admission.
 These commands do not invent an idempotency key or
 automatically retry an uncertain result.
 
+Settings reads and successful settings mutations preserve the optional
+`model_budget_writes_available`, `model_request_budget_writes_available` and
+`platform_spend_writes_available` booleans. These describe deployment
+compatibility, separately from policy enablement and operator permissions.
+False or missing means the corresponding save capability is unavailable; saving
+nonempty request-model bounds requires the first two flags to be true, and
+saving platform `cloud` spend fields requires the first and third. Keep this
+read-only metadata outside writable settings.
+The server remains authoritative and can refuse a save if availability changes.
+
+`readAdmission`, `stopAdmission` and `resumeAdmission` require `configure_platform`.
+Admission control has an independent revision and never changes settings revision.
+`readAdmission` also returns `history`, containing at most 20 immutable changes
+newest first. Each retains its operator, time, reason and old/new stop state,
+even after later stop/resume cycles. No-op requests add no history.
+Read its `writes_available` flag before changing the control. Writes stay unavailable
+until every API replica runs a compatible image; reads and enforcement always apply.
+
+```ts
+import { createClient } from '@chronoai/cma-sdk';
+
+const cma = createClient();
+const observed = await cma.admin.readAdmission();
+const stopped = await cma.admin.stopAdmission({
+  reason: 'Contain the incident while existing work finishes',
+  expected_revision: observed.revision,
+});
+// After the operator verifies recovery:
+await cma.admin.resumeAdmission({
+  reason: 'Incident resolved and admission verified',
+  expected_revision: stopped.operator_stop!.revision,
+});
+```
+
+Reasons contain 1–512 UTF-8 bytes without control characters. An already active
+stop returns its original actor, reason and revision. Resume must match the current
+stop's revision; a stale command receives a conflict. Commands do not retry an
+uncertain response automatically: reread control state first. Fresh work receives
+503 `admission_paused` with `Retry-After: 60`; existing admitted work and its control
+and observation paths continue. Registration keeps `registration_closed`. A closed
+writer gate returns 503 `admission_control_writes_unavailable`. Never deploy or roll
+back while stopped; follow the operator runbook before opening the write gate.
+
 Sandbox persistence is owned by Agent Sandbox and its attached PV. CMA exposes
 no public setting for snapshot scheduling or checkpoint archive retention.
 
@@ -112,3 +155,30 @@ authority. Closing new admission preserves exact accepted operations and request
 keys. Browser status/receipt recovery and explicit return remain available while
 new acquire/input/renew is disabled; do not hide a held browser or assume release.
 Replay eligibility affects presentation, not retained authorized history reads.
+
+## Agent capacity recovery
+
+Recovery remains disabled until the service operator completes its activation
+prerequisites. Metadata observation grants no permission to admit work. These
+methods use the existing personal authenticated HTTP boundary and perform no
+automatic retries. They never send or replay Agent input.
+
+Use `client.agents.capacityRecovery(agentId)` to obtain the resource. Its
+`dryRun()` reads current authorized metadata; `status()` reads current recovery
+status; `requestStatus(original)` inspects the unchanged original request.
+`admit(original)` explicitly requests new admission and `resume(original)`
+reconciles one bounded accepted-work attempt. Normal operation timeout and
+cancellation options apply to each method.
+
+The original request contains `agent_id`, `creation_key`,
+`creation_fingerprint`, `failure_seq` and `requested_at`. Obtain them through
+the supported recovery workflow and preserve every field on retry. Never create
+a replacement request to escape uncertainty. An operation key identifies work;
+it grants no authority. Foreign/missing resources remain concealed.
+
+A recorded outcome contains only operation identity, phase, attempt count and
+retry/completion timestamps. An HTTP 202 `unknown` outcome means the commit
+still needs reconciliation. An HTTP 409 `known_abort` is a typed outcome.
+Other conflict problem documents remain typed API errors. Neither outcome proves input was not executed.
+Named admission, authority and service refusals use the SDK's normal API error.
+Native conversation, runtime and home identities are never response fields.

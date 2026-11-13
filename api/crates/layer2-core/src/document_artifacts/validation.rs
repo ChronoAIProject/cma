@@ -23,7 +23,8 @@ impl StoredDocument {
             || self.shares.len() > MAX_GRANTS
             || self.links.len() > MAX_LINKS
             || self.comments.len() > MAX_COMMENTS
-            || self.receipts.len() > MAX_RECEIPTS
+            || self.receipts.len() + self.shares.len() + self.links.len()
+                > MAX_RECEIPTS + MAX_GRANTS + MAX_LINKS
             || crate::seconds_from_rfc3339(&m.created_at).is_none()
             || crate::seconds_from_rfc3339(&m.updated_at).is_none()
         {
@@ -87,15 +88,35 @@ impl StoredDocument {
                 return Err(DocumentError::Corrupt);
             }
         }
-        // Bounds include receipts, preventing a metadata aggregate approaching
-        // the persistence system's hard document limit.
-        if serde_json::to_vec(self)
-            .map_err(|_| DocumentError::Corrupt)?
-            .len()
-            > 12 * 1024 * 1024
-        {
+        // Each removed grant/link releases enough space for its revoke receipt.
+        // The absolute ceiling remains below 13 MiB, including all reserves.
+        let removed = MAX_GRANTS + MAX_LINKS - self.shares.len() - self.links.len();
+        if self.metadata_bytes()? > MAX_METADATA_BYTES + removed * REVOCATION_RECEIPT_BYTES {
             return Err(DocumentError::Capacity);
         }
         Ok(())
+    }
+
+    pub(super) fn metadata_bytes(&self) -> Result<usize, DocumentError> {
+        serde_json::to_vec(self)
+            .map(|bytes| bytes.len())
+            .map_err(|_| DocumentError::Corrupt)
+    }
+}
+
+impl DocumentService {
+    pub(super) fn validate_write(
+        &self,
+        record: &StoredDocument,
+        revocation: bool,
+    ) -> Result<(), DocumentError> {
+        // Reader compatibility must never implicitly activate expanded writes.
+        if !(self.revocation_reserve_enabled && revocation)
+            && (record.receipts.len() > MAX_RECEIPTS
+                || record.metadata_bytes()? > MAX_METADATA_BYTES)
+        {
+            return Err(DocumentError::Capacity);
+        }
+        record.validate()
     }
 }

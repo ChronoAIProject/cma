@@ -75,8 +75,10 @@ pub struct ProviderRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum SourceRequest {
-    /// Requires a separate single-tenant native app; never replace a NyxID webhook.
-    NativeLark(cmaeg_core::channel::NativeLarkSource),
+    // The payload schema carries the separate-app documentation. A variant doc
+    // comment makes the derive wrap its inline payload in another allOf layer.
+    #[schema(value_type = cmaeg_core::schema::NativeLarkSource)]
+    NativeLark(#[schema(inline)] cmaeg_core::channel::NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
         /// Incoming private edits and deletions for WhatsApp Business App coexistence accounts.

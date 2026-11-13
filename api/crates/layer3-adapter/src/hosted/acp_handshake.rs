@@ -1,10 +1,12 @@
-use super::acp::{Bridge, CALL_DEADLINE, PROTOCOL_VERSION, SIGN_IN_DEADLINE};
+use super::acp::{
+    Bridge, CALL_DEADLINE, PROTOCOL_VERSION, RETAINED_HISTORY_IDLE_DEADLINE, SIGN_IN_DEADLINE,
+};
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
 use crate::AdapterError;
 
 enum Greeting {
-    Fresh(serde_json::Value),
+    Fresh(super::retained_json::JsonFrame),
     Existing,
 }
 
@@ -54,7 +56,7 @@ impl Bridge {
                         "jetbrains": { "air": { "version": 1, "capabilities": ["sessionFailure"] } }
                     },
                 },
-            }), settings.already_initialized_error.as_ref())
+            }), settings.already_initialized_error.as_ref(), resume.is_some())
             .await?;
         timing.completed("protocol_initialize");
 
@@ -196,14 +198,11 @@ impl Bridge {
             (Greeting::Fresh(_), Some(conversation)) => {
                 *phase = "session_load";
                 self.activate_session(conversation.clone(), updates).await?;
-                self.call(
-                    "session/load",
-                    serde_json::json!({
-                        "sessionId": conversation,
-                        "cwd": cwd,
-                        "mcpServers": tool_servers,
-                    }),
-                )
+                self.load_retained_session(serde_json::json!({
+                    "sessionId": conversation,
+                    "cwd": cwd,
+                    "mcpServers": tool_servers,
+                }))
                 .await
                 .map_err(|error| error.context("could not resume conversation"))?;
                 conversation
@@ -216,11 +215,8 @@ impl Bridge {
                         serde_json::json!({ "cwd": cwd, "mcpServers": tool_servers }),
                     )
                     .await?;
-                let conversation = started
-                    .get("sessionId")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| AdapterError::Rejected("bridge named no conversation".into()))?
-                    .to_string();
+                let conversation =
+                    super::acp_session_identity::read(&started, self.json_pools.is_some())?;
                 self.activate_session(conversation.clone(), updates).await?;
                 conversation
             }
@@ -255,14 +251,11 @@ impl Bridge {
                     rebinding.completed("prepared_protocol_close");
                     *phase = "prepared_session_load";
                     self.activate_session(conversation.clone(), updates).await?;
-                    self.call(
-                        "session/load",
-                        serde_json::json!({
-                            "sessionId": conversation,
-                            "cwd": cwd,
-                            "mcpServers": tool_servers,
-                        }),
-                    )
+                    self.load_retained_session(serde_json::json!({
+                        "sessionId": conversation,
+                        "cwd": cwd,
+                        "mcpServers": tool_servers,
+                    }))
                     .await
                     .map_err(|error| error.context("could not bind prepared conversation"))?;
                     rebinding.completed("prepared_protocol_load");
@@ -363,9 +356,15 @@ impl Bridge {
         &self,
         params: serde_json::Value,
         already_initialized_error: Option<&serde_json::Value>,
+        resuming: bool,
     ) -> crate::Result<Greeting> {
+        let idle_deadline = if resuming {
+            RETAINED_HISTORY_IDLE_DEADLINE
+        } else {
+            CALL_DEADLINE
+        };
         let frame = self
-            .call_frame_within("initialize", params, CALL_DEADLINE)
+            .call_frame_within("initialize", params, idle_deadline)
             .await?;
         if already_initialized_error.is_some_and(|expected| frame.get("error") == Some(expected)) {
             tracing::info!("runtime bridge was already initialized");
@@ -412,10 +411,14 @@ fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterE
         }
         AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten(detail),
         AdapterError::Unavailable(_) => AdapterError::Unavailable(detail),
-        AdapterError::Rejected(_) => AdapterError::Rejected(detail),
+        guarded @ AdapterError::NativeClaimNotReady(_) => guarded,
+        AdapterError::Rejected(_) | AdapterError::SkillUpgradeRefused(_) => {
+            AdapterError::Rejected(detail)
+        }
         AdapterError::OperationIdentityConflict(_) => {
             AdapterError::OperationIdentityConflict(detail)
         }
+        AdapterError::RuntimeLedgerHold(_) => AdapterError::RuntimeLedgerHold(detail),
         AdapterError::AtCapacity(_) => AdapterError::AtCapacity(detail),
         AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
         AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),

@@ -4,6 +4,7 @@ import { sandboxLifecycle } from './lifecycle.js';
 import { sandboxRuntimeUpdate } from './runtime-update.js';
 export type * from './lifecycle.js';
 export type * from './runtime-update.js';
+export type * from './retained-recovery.js';
 import {
   array,
   boolean,
@@ -67,6 +68,7 @@ const sandboxFields = {
   color: optional(sandboxColor),
   status: sandboxStatus,
   profile: profileReference,
+  always_on: optional(boolean),
   nyxid_services: optional(array(text)),
   limits: object({ max_workspaces: positiveInteger, max_agents_per_workspace: positiveInteger }),
   lifecycle: optional(sandboxLifecycle),
@@ -157,6 +159,7 @@ export const agentTaskStatus = enumeration(
 export type AgentTaskStatus = Output<typeof agentTaskStatus>;
 
 export const hierarchyAgentSummary = object({
+  task_started_at: optional(text),
   task_status: optional(agentTaskStatus),
   owner_title: optional(text),
   runtime_metadata: optional(

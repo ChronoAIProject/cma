@@ -9,6 +9,10 @@ pub const MAX_COMMENTS: usize = 256;
 pub const MAX_RECEIPTS: usize = 1024;
 pub const MAX_GRANTS: usize = 128;
 pub const MAX_LINKS: usize = 32;
+pub(super) const MAX_METADATA_BYTES: usize = 12 * 1024 * 1024;
+// One bounded receipt per live grant/link remains available for owner revocation.
+// Normal writes never consume this reserve, including when metadata fills first.
+pub(super) const REVOCATION_RECEIPT_BYTES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum DocumentError {

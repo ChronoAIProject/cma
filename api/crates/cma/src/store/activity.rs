@@ -7,7 +7,7 @@ use layer2_core::{ActivityAction, ActivityQuery, ActivityRecord, ActivityStore, 
 use mongodb::{
     bson::{doc, Bson, DateTime, Document},
     options::IndexOptions,
-    Client, Collection, Database, IndexModel,
+    Client, Collection, IndexModel,
 };
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +20,7 @@ pub(super) const ACTIVITY: &str = "activity";
 const EXPIRY_INDEX: &str = "activity_expiry";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ActivityDoc {
+pub(super) struct ActivityDoc {
     #[serde(rename = "_id")]
     id: String,
     document_schema_version: i64,
@@ -29,7 +29,7 @@ struct ActivityDoc {
 }
 
 impl ActivityDoc {
-    fn from_record(record: &ActivityRecord) -> Self {
+    pub(super) fn from_record(record: &ActivityRecord) -> Self {
         Self {
             id: record.id.0.clone(),
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
@@ -46,7 +46,6 @@ impl ActivityDoc {
 /// Durable activity adapter with bounded, cursor-based reads.
 pub struct MongoActivityStore {
     entries: Collection<ActivityDoc>,
-    database: Database,
 }
 
 impl MongoActivityStore {
@@ -59,7 +58,6 @@ impl MongoActivityStore {
         schema::initialize_collections(&database, &[ACTIVITY]).await?;
         let store = Self {
             entries: majority_collection(&database, ACTIVITY),
-            database,
         };
         store.ensure_indexes(retention).await?;
         Ok(store)
@@ -84,23 +82,13 @@ impl MongoActivityStore {
                     .build(),
             )
             .build();
-        if let Err(create_error) = self.entries.create_index(expiry).await {
-            self.database
-                .run_command(doc! {
-                    "collMod": ACTIVITY,
-                    "index": {
-                        "name": EXPIRY_INDEX,
-                        "expireAfterSeconds": i64::try_from(retention.as_secs())
-                            .unwrap_or(i64::MAX),
-                    },
-                })
-                .await
-                .map_err(|update_error| {
-                    StoreError::Unavailable(format!(
-                        "activity expiry index could not be created ({create_error}) or updated ({update_error})"
-                    ))
-                })?;
-        }
+        // A retention mismatch requires a reviewed migration. An index error
+        // must never authorize changing TTL policy during ordinary startup.
+        self.entries.create_index(expiry).await.map_err(|error| {
+            StoreError::Unavailable(format!(
+                "activity expiry index is incompatible or unavailable; explicit migration required: {error}"
+            ))
+        })?;
         Ok(())
     }
 }
@@ -113,6 +101,24 @@ impl ActivityStore for MongoActivityStore {
             .await
             .map_err(|error| StoreError::Unavailable(format!("append activity: {error}")))?;
         Ok(())
+    }
+
+    async fn append_many(&self, records: &[ActivityRecord]) -> Result<(), StoreError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        match self
+            .entries
+            .insert_many(records.iter().map(ActivityDoc::from_record))
+            .ordered(false)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) if duplicate_batch(&error) => Ok(()),
+            Err(error) => Err(StoreError::Unavailable(format!(
+                "append activity batch: {error}"
+            ))),
+        }
     }
 
     async fn list(&self, query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
@@ -173,6 +179,20 @@ impl ActivityStore for MongoActivityStore {
     }
 }
 
+fn duplicate_batch(error: &mongodb::error::Error) -> bool {
+    // Unordered retries may contain both already-inserted IDs and new rows.
+    // A write-concern error still means majority durability is unconfirmed.
+    match error.kind.as_ref() {
+        mongodb::error::ErrorKind::InsertMany(failure) => {
+            failure.write_concern_error.is_none()
+                && failure.write_errors.as_ref().is_some_and(|errors| {
+                    !errors.is_empty() && errors.iter().all(|error| error.code == 11000)
+                })
+        }
+        _ => false,
+    }
+}
+
 fn action_bson(action: ActivityAction) -> Result<Bson, StoreError> {
     mongodb::bson::serialize_to_bson(&action)
         .map_err(|error| StoreError::Malformed(format!("activity action: {error}")))
@@ -215,3 +235,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "activity_batch_tests.rs"]
+mod batch_tests;

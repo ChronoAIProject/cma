@@ -1051,7 +1051,8 @@
               }
             },
             "inactivity": {
-              "pause_after_seconds": 900
+              "pause_after_seconds": 900,
+              "auto_pause_enabled": false
             },
             "retention": {
               "agent_log_days": 90

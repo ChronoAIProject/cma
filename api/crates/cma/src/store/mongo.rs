@@ -6,9 +6,10 @@ use layer2_core::StoreError;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 
 use super::{
-    AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
-    MongoPlatformSettingsStore, MongoProfileStore, MongoSandboxCredentialStore, MongoSandboxStore,
-    MongoTriggerDefinitionStore, MongoUserDirectoryStore,
+    AuthEncryptionKey, MongoActivityStore, MongoAdmissionControlStore, MongoAuthStore,
+    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
+    MongoUserDirectoryStore,
 };
 
 pub(crate) struct MongoConnectionPolicy {
@@ -41,6 +42,7 @@ pub struct MongoStores {
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
+    pub admission_control: Arc<MongoAdmissionControlStore>,
     pub operations: Arc<MongoOperationStore>,
     pub(crate) native_warm_pools: Arc<super::native_warm_pools::MongoNativeWarmPools>,
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
@@ -49,6 +51,10 @@ pub struct MongoStores {
 }
 
 impl MongoStores {
+    pub(crate) fn worker_observations(&self) -> super::worker_observations::Observations {
+        super::worker_observations::Observations::new(self.client.database(&self.database))
+    }
+
     pub(crate) fn with_writer_policy(
         mut self,
         policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -113,14 +119,7 @@ impl MongoStores {
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
         policy: MongoConnectionPolicy,
     ) -> Result<Self, StoreError> {
-        let mut options = ClientOptions::parse(uri)
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
-        if policy.agent_manager_replicas {
-            options.max_pool_size = Some(10);
-            options.min_pool_size = Some(0);
-        }
-        super::mongo_latency::observe(&mut options);
+        let options = connection_options(uri).await?;
         let client = Client::with_options(options)
             .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
         super::isolation::replicas::verify(
@@ -177,6 +176,8 @@ impl MongoStores {
             Arc::new(MongoActivityStore::open(&client, database, activity_retention).await?);
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
+        let admission_control =
+            Arc::new(MongoAdmissionControlStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
@@ -224,7 +225,10 @@ impl MongoStores {
         );
         super::schema::initialize_collections(
             &client.database(database),
-            &[crate::document_artifacts::COLLECTION],
+            &[
+                crate::document_artifacts::COLLECTION,
+                crate::document_artifacts::QUOTA_COLLECTION,
+            ],
         )
         .await?;
         let document_artifacts = Arc::new(crate::document_artifacts::MongoDocumentStore::new(
@@ -256,6 +260,7 @@ impl MongoStores {
             activity,
             users,
             settings,
+            admission_control,
             operations,
             agent_lifecycle,
             client,
@@ -274,3 +279,17 @@ impl MongoStores {
         Ok(())
     }
 }
+
+async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
+    let mut options = ClientOptions::parse(uri)
+        .await
+        .map_err(|error| StoreError::Unavailable(format!("connect to MongoDB: {error}")))?;
+    // Replica ownership changes authority, not the deployment's connection
+    // budget. Preserve explicit URI options and driver defaults in both modes.
+    super::mongo_latency::observe(&mut options);
+    Ok(options)
+}
+
+#[cfg(test)]
+#[path = "mongo_options_tests.rs"]
+mod options_tests;

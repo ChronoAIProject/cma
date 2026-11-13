@@ -45,6 +45,9 @@ pub mod seal;
 /// Deterministic identifiers used across CMAEG boundaries.
 pub mod ids;
 
+/// OpenAPI views of protocol serialization shapes.
+pub mod schema;
+
 /// A first validation failure, expressed as a JSON pointer into the value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]

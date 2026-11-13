@@ -65,6 +65,7 @@ impl NativePreparedPlan {
             id: SandboxProfileId("sbp_native_prepared_default".into()),
             revision: 1,
             digest: digest(&sandbox)?,
+            always_on: None,
             content: sandbox,
         };
         reaches.sort();

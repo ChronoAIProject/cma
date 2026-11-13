@@ -231,7 +231,7 @@ async fn artifact_publication_replays_across_replicas_and_revocation_preserves_r
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn corrupt_hidden_artifact_content_refuses_page_and_download_after_reopen() {
+async fn artifact_pages_project_metadata_but_downloads_validate_retained_bytes() {
     let (client, name) = database("agent_artifact_corrupt").await;
     let (store, target) = fixture(&client, &name).await;
     let store = Arc::new(store);
@@ -270,17 +270,37 @@ async fn corrupt_hidden_artifact_content_refuses_page_and_download_after_reopen(
             Arc::new(Authority),
         )),
     );
+    // Metadata listing never fetches/decodes content, even in its lookahead row.
+    // The separately authorized download still checks the retained byte digest.
+    let listed = service
+        .list(&owner.caller, None, None, &agent.id, &page())
+        .await
+        .unwrap();
+    assert_eq!(listed.items.len(), 1);
+    assert!(listed.next.is_some());
+    assert!(!serde_json::to_string(&listed.items)
+        .unwrap()
+        .contains("content_base64"));
     assert!(matches!(
         service
-            .list(&owner.caller, None, None, &agent.id, &page())
+            .read(&owner.caller, None, None, &agent.id, &hidden)
             .await,
         Err(ResourceAccessError::Store(
             ResourceAccessStoreError::Corrupt
         ))
     ));
+    // A metadata-only page still validates every selected record and lookahead.
+    reopened
+        .agent_artifacts
+        .update_one(
+            doc! {"_id":&hidden},
+            doc! {"$set":{"record.metadata.sha256":"invalid"}},
+        )
+        .await
+        .unwrap();
     assert!(matches!(
         service
-            .read(&owner.caller, None, None, &agent.id, &hidden)
+            .list(&owner.caller, None, None, &agent.id, &page())
             .await,
         Err(ResourceAccessError::Store(
             ResourceAccessStoreError::Corrupt

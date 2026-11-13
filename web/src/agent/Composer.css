@@ -86,11 +86,11 @@
  */
 .agent-composer__controls {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   grid-template-areas:
-    'attach steering settings ring send'
-    'settings-panel settings-panel settings-panel settings-panel settings-panel'
-    'status status status status status';
+    'attach steering settings send'
+    'settings-panel settings-panel settings-panel settings-panel'
+    'status status status status';
   align-items: center;
   column-gap: 4px;
   min-width: 0;
@@ -111,11 +111,6 @@
   grid-area: steering;
 }
 
-.agent-composer__ring {
-  grid-area: ring;
-  display: inline-flex;
-}
-
 .agent-composer__actions {
   grid-area: send;
   display: flex;
@@ -125,8 +120,8 @@
 
 .agent-composer .agent-composer__submit {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
 }
 
@@ -146,10 +141,9 @@
 }
 
 .agent-composer .agent-composer__submit--stop {
-  width: auto;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 8px;
+  padding: 0;
+  color: var(--dsw-alias-workspace-control-text);
+  background: var(--dsw-alias-workspace-control-bg);
 }
 
 /* A chip is a quiet control inside the box: no border, a hover wash. */
@@ -229,10 +223,10 @@
 
   .agent-composer__controls {
     grid-template-areas:
-      'settings settings settings settings settings'
-      'attach steering . ring send'
-      'settings-panel settings-panel settings-panel settings-panel settings-panel'
-      'status status status status status';
+      'settings settings settings settings'
+      'attach steering . send'
+      'settings-panel settings-panel settings-panel settings-panel'
+      'status status status status';
   }
 }
 
@@ -257,4 +251,10 @@
   .composer-chip {
     transition: none;
   }
+}
+
+.agent-composer__stop-hint {
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 12px;
+  white-space: nowrap;
 }

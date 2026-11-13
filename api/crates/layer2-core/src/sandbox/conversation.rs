@@ -17,6 +17,8 @@ pub struct AgentMessageAssembly {
     pub(crate) live_thought: Option<super::conversation_recorder::live::AgentLiveMessageIdentity>,
     #[serde(skip)]
     pub(crate) pending_update: Option<Box<PendingAgentUpdate>>,
+    #[serde(skip)]
+    pub(crate) output_state: Option<Box<super::conversation_recorder::coalesce::OutputState>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +51,13 @@ impl AgentUpdateOutcome {
     }
 }
 
+/// Runtime-only commit receipt: only this source is eligible for cumulative ACK.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentOutputCommit {
+    pub outcome: AgentUpdateOutcome,
+    pub committed: Option<layer3_adapter::RuntimeOutputSource>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AgentConversationError {
     #[error("agent not found")]
@@ -67,6 +76,13 @@ pub enum AgentConversationError {
 
 #[async_trait::async_trait]
 pub trait AgentUpdateRecorder: Send + Sync {
+    async fn budget_stop(
+        &self,
+        _id: &AgentId,
+        _runtime_generation: u64,
+    ) -> Result<Option<crate::budget::BudgetStop>, AgentConversationError> {
+        Ok(None)
+    }
     async fn record_reopen_update(
         &self,
         _id: &AgentId,
@@ -84,6 +100,11 @@ pub trait AgentUpdateRecorder: Send + Sync {
         None
     }
 
+    /// A local hint only. Subscribers must read and authorize durable state.
+    fn subscribe_head(&self, _id: &AgentId) -> Option<super::AgentHeadSubscription> {
+        None
+    }
+
     async fn restore_assembly(
         &self,
         _id: &AgentId,
@@ -91,6 +112,38 @@ pub trait AgentUpdateRecorder: Send + Sync {
         _assembly: &mut AgentMessageAssembly,
     ) -> Result<(), AgentConversationError> {
         Ok(())
+    }
+
+    /// Ordered live consumer entry point; implementations may defer only quiet receipts.
+    async fn record_output(
+        &self,
+        id: &AgentId,
+        runtime_generation: u64,
+        assembly: &mut AgentMessageAssembly,
+        update: ConversationUpdate,
+        appended_at: String,
+    ) -> Result<AgentOutputCommit, AgentConversationError> {
+        let source = match &update {
+            ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt.source.clone()),
+            _ => None,
+        };
+        let outcome = self
+            .record_update(id, runtime_generation, assembly, update, appended_at)
+            .await?;
+        Ok(AgentOutputCommit {
+            outcome,
+            committed: source,
+        })
+    }
+
+    async fn flush_output(
+        &self,
+        _id: &AgentId,
+        _runtime_generation: u64,
+        _assembly: &mut AgentMessageAssembly,
+        _appended_at: String,
+    ) -> Result<Option<layer3_adapter::RuntimeOutputSource>, AgentConversationError> {
+        Ok(None)
     }
 
     async fn record_update(

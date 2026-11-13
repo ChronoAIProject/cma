@@ -12,6 +12,7 @@ use std::{collections::BTreeMap, time::Duration};
 pub(crate) enum FrozenSubmission {
     Accepted(String),
     NotAccepted,
+    NotAcceptedWithCode(String),
     Rejected(String),
     Unknown,
 }
@@ -23,6 +24,7 @@ impl ProviderClient {
         idempotency: &IdempotencyKey,
         metadata: &BTreeMap<String, String>,
         credential: &Secret,
+        nyxid_trace: bool,
     ) -> FrozenSubmission {
         if self.record_worker_key(credential).await.is_err() {
             return FrozenSubmission::NotAccepted;
@@ -46,20 +48,44 @@ impl ProviderClient {
         // response headers arrived. Cancellation drops this awaited future.
         let deadline = self.request_timeout.min(Duration::from_secs(20));
         tokio::time::timeout(deadline, async {
+            let mut trace = crate::telemetry::turn_trace::ProviderReader::new(
+                self.turn_trace_enabled,
+                provider.as_str() == "nyxbot" && nyxid_trace,
+                None,
+            );
+            if let Some(trace) = &mut trace {
+                trace.begin_source();
+            }
             let observed = match handle
                 .responses
-                .send(url, credential.as_str(), idempotency.as_str(), bytes, None)
+                .send_with_trace(
+                    url,
+                    credential.as_str(),
+                    idempotency.as_str(),
+                    bytes,
+                    None,
+                    self.turn_trace_enabled && provider.as_str() == "nyxbot" && nyxid_trace,
+                )
                 .await
             {
                 Ok(response) => response,
                 Err(_) => return FrozenSubmission::Unknown,
             };
+            if let Some(trace) = &mut trace {
+                trace.response(
+                    observed.response.headers(),
+                    observed.response.status().as_u16(),
+                );
+            }
             if observed.response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 return if conversation_not_ready(observed.response).await {
-                    FrozenSubmission::NotAccepted
+                    FrozenSubmission::NotAcceptedWithCode("conversation_not_ready".into())
                 } else {
                     FrozenSubmission::Unknown
                 };
+            }
+            if matches!(observed.response.status().as_u16(), 403 | 422 | 503) {
+                return sender_context_refusal(observed.response).await;
             }
             let response = match super::recovery::checked(observed.response).await {
                 Ok(response) => response,
@@ -127,10 +153,55 @@ impl ProviderClient {
             {
                 return FrozenSubmission::Unknown;
             }
+            if let Some(trace) = &mut trace {
+                trace.event(&value);
+            }
             FrozenSubmission::Accepted(response_id)
         })
         .await
         .unwrap_or(FrozenSubmission::Unknown)
+    }
+}
+
+/// Only the documented CMA pre-admission dialect proves that a turn did not start.
+async fn sender_context_refusal(response: reqwest::Response) -> FrozenSubmission {
+    let status = response.status().as_u16();
+    if response.headers().contains_key("x-cma-response-id")
+        || response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.split(';').next())
+            .map(str::trim)
+            != Some("application/json")
+    {
+        return FrozenSubmission::Unknown;
+    }
+    let Ok(body) = super::recovery::bounded_body(response, 64 * 1024).await else {
+        return FrozenSubmission::Unknown;
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&body) else {
+        return FrozenSubmission::Unknown;
+    };
+    if value.as_object().is_none_or(|object| object.len() != 1)
+        || value["error"]["type"]
+            != if status == 503 {
+                "server_error"
+            } else {
+                "invalid_request_error"
+            }
+    {
+        return FrozenSubmission::Unknown;
+    }
+    match (status, value["error"]["code"].as_str()) {
+        (403, Some("verified_sender_context_invalid"))
+        | (422, Some("verified_sender_context_unsupported")) => {
+            FrozenSubmission::Rejected(value["error"]["code"].as_str().unwrap().into())
+        }
+        (503, Some("verified_sender_context_unavailable")) => {
+            FrozenSubmission::NotAcceptedWithCode("verified_sender_context_unavailable".into())
+        }
+        _ => FrozenSubmission::Unknown,
     }
 }
 

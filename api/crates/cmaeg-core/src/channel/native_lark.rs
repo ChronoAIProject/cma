@@ -56,6 +56,7 @@ impl NativeLarkIdentity {
         Ok(())
     }
 }
+/// Requires a separate single-tenant native app; never replace a NyxID webhook.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NativeLarkSource {

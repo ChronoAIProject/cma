@@ -51,6 +51,134 @@ client uses CMA's HttpOnly browser cookie. `GET /auth/login` begins OAuth,
 authenticated subject and capabilities, and `GET /auth/logout` ends browser
 sign-in. Do not put a bearer credential in URLs, local storage or embed markup.
 
+`GET /auth/login?prompt=none` asks NyxID to reuse an existing provider session.
+The server always accepts this protocol, including ignored `error_description`
+and `error_uri` fields. The anonymous session response reports
+`silent_sign_in: true` only when the strict startup boolean
+`CHRONO_SILENT_SIGN_IN_ENABLED` is enabled; its code and ConfigMap defaults are
+`false`. Disabling the hint does not break an already started exchange.
+
+A valid code completes the existing browser-bound, single-use PKCE exchange.
+`login_required` and other provider refusals return to the stored validated
+address without authenticating. `consent_required` can start one fresh state/PKCE
+exchange for NyxID consent, retaining the original logout fence and automatic
+failure behavior. Discovery, token, identity and store failures of a bound
+automatic attempt also return without issuing a session. Invalid/unbound states
+never authenticate or trust a callback-supplied return address. Automatically
+initiated states have a non-authorizing presentation prefix: when state or
+binding cannot be recovered they safely return to `/` without an error page;
+bound failures, including expiry before TTL cleanup, retain the validated target.
+`prompt=none` with `screen=register`, other prompts and duplicate/unknown fields
+are rejected. Cross-site/same-site Fetch Metadata or a foreign Origin cannot
+start silent login. Non-browser clients may call these same public routes.
+
+`GET /auth/logout` revokes browser authority for all callers, preserving its
+existing navigation semantics. It records an automatic-sign-in preference only
+for requests carrying `Sec-Fetch-Site: same-origin` or `none`, or an explicitly
+permitted Origin. Cross-site navigation cannot plant that preference. The
+HttpOnly, host-only, SameSite=Lax cookies use Secure on HTTPS and last 30 days:
+`cma_signed_out` carries the logout time. A successful explicit sign-in sets
+`cma_signed_in` to the attempt's start time plus a non-authenticating binding
+reference. Its exact start is recorded in durable custody for the preference's
+30-day lifetime. Same-origin logout revokes that proof as well as the session,
+even when only the preference cookie remains. The start must be later than the logout marker and its proof must still be active
+before re-enabling silent entry; timestamp comparison alone would be unsafe under
+reordered logout responses or replica clock skew. Missing, malformed, expired,
+revoked or unreadable proofs keep the opt-out in force. Cross-site logout revokes
+authority but preserves preference, so it cannot reactivate an older opt-out.
+Suppressed anonymous sessions report `silent_sign_in: false`, avoiding a wasted
+redirect in each new tab. Preference references never authorize API requests.
+
+The callback always generates a fresh random session token. Its pre-authentication
+binding never authenticates a request. A snapshot/majority Mongo transaction links
+the pending, unexpired binding reservation to the new session digest and inserts
+the session, whose required `subject` remains readable by the predecessor.
+Logout using either the binding or session cookie transactionally revokes both.
+There is no visible half-promoted session. Failed commits or revocations never
+report success; failed logout preserves cookies needed for retry.
+
+New attempts carry additive `custody_reserved: true` and `started_at` fields.
+Unmarked predecessor attempts complete inline with fresh issuance: a new replica
+reserves their binding before provider I/O, unless a logout tombstone forbids it.
+The original single-use state, PKCE, intent and expiry are preserved. Predecessor
+readers ignore the additive fields and continue their existing callback behavior;
+unused reservations retain the existing TTL cleanup.
+
+Binding cookies have `Max-Age=660`: the ten-minute attempt lifetime plus a
+one-minute margin for callback I/O and response processing. The margin does not
+extend attempt validity or session authority. Abandoned attempts therefore leave
+only short-lived browser cookies. Logout tombstones last at least the same
+660 seconds; existing longer durable preference retention is preserved. Consent
+renews only live pending custody and starts the same bounded cookie window.
+
+While a callback response is in flight, logout carrying its binding cookie
+revokes any already-issued session in the same transaction. Success establishes
+the fresh session cookie before clearing the binding cookie; replay never clears
+another in-flight handle, and terminal valid failures revoke before clearing it.
+A response that never reaches the browser discloses no session token to a client.
+No callback or navigation creates resources or submits input. Existing sessions
+still require live authorization and the bounded inspection policy in
+[Identity interruption policy](Identity_Outage_Policy.md).
+
+The web checks once per tab, on the opening identity read or later navigation to
+an eligible SPA page. Focus, visibility and online refreshes never initiate a
+navigation. A stopped/failed navigation returns to the ordinary signed-out view;
+the attempt marker prevents a loop. Authentication uncertainty and signed-out
+presentation retain owner-scoped drafts and command keys; explicit logout or a
+verified different owner clears them before that owner's view mounts.
+
+Return paths remain canonical, percent-encoded ASCII and relative, at most
+256 bytes. One `setup` query on `/bots/new` or one `tab` query on
+`/sandboxes/{id}` can be restored; unknown/duplicate keys, non-ASCII bytes and
+fragments are refused. Values remain untrusted destination input. Share tokens
+in fragments stay in the browser, and public Trigger/Launch/share/document flows
+retain their explicit authority-preserving sign-in. `/` returns to `/`.
+
+The **complete encoded absolute `/auth/login` URL is at most 4,096 ASCII bytes**,
+including origin, `return_to` and `screen`/`prompt`. Its normative budget and
+rationale live in `api/crates/layer1-public/tests/fixtures/browser-auth-limits.json`.
+The independently packaged Rust/API and TypeScript implementations have named
+constants checked against that shared contract; the web imports the TS constant.
+The server measures the actual encoded request against the configured public
+origin; both SDKs reject an oversized fully constructed URL before transport.
+The web instead uses a path-only target for explicit sign-in and skips silent
+sign-in when the real encoded URL exceeds the budget. Bot Father data is retained
+in the current URL and tab sessionStorage before navigation, so its data-size
+limit is never mistaken for a transport limit.
+
+Both routes in `infra/api/httproute.yaml`—Gateway directly to the API and the web
+fallback proxy—stay below the documented limits:
+
+| Hop | Limit and evidence |
+| --- | --- |
+| Cloudflare edge | URI above 32 KB receives 414 ([Cloudflare](https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-414/)). |
+| GKE Gateway / external GCLB | URL plus request headers fit within 60 KiB for the global external ALB or 64 KiB for classic; Google may reserve 6 KiB for internal headers ([GCLB quotas](https://docs.cloud.google.com/load-balancing/docs/quotas#header_size)). The 4 KiB URL budget leaves substantial room for headers; existing independent header limits still apply. |
+| nginx fallback | `web/nginx.conf`, copied by `infra/web/Dockerfile`, explicitly pins `large_client_header_buffers 4 8k`. A request line must fit one buffer ([nginx](https://nginx.org/en/docs/http/ngx_http_core_module.html#large_client_header_buffers)). |
+
+The 4 KiB budget is half the narrowest 8 KiB hop, leaving room for request-line
+syntax and origin/redirect representation differences. This is a conservative
+application contract, not a claimed measurement of production configuration.
+Browser identity/flow responses are no-store; anonymous signup-options retains
+its public five-minute cache.
+
+### Silent sign-in rollout
+
+1. Keep `CHRONO_SILENT_SIGN_IN_ENABLED=false`. Deploy the compatible API image to
+   every serving replica, and deploy its web image. Record image digests, source
+   SHA and config. Pin a compatible API image as the rollback baseline.
+2. Verify every replica serves the new image and `silent_sign_in: false`. Verify old-start/new-callback and new-start/old-callback compatibility with the
+   flag off. Old readers retain their existing callback semantics; enable only
+   after every serving callback/logout handler implements the new fence.
+3. Enable the flag in a separate operator-controlled ConfigMap rollout/restart.
+   Verify `silent_sign_in: true`, then execute the
+   [acceptance matrix](CMA_Silent_Sign_In_Acceptance.md). The flag advertises
+   eligibility only; it grants no authority and creates no resources.
+4. Roll back activation by setting the flag to `false` and restarting the API
+   fleet. Keep the compatible callback/logout implementation so in-flight
+   attempts finish safely. A web rollback is independent. Keep existing sessions,
+   reserved-custody records and user resources; never restore a pre-fence API
+   image as the live rollback target. No database migration or cleanup is needed.
+
 `GET /auth/signup-options` is anonymous and returns exactly
 `email_signup`, `social_providers`, `invite_code_required` and
 `register_available`. It reports availability, not a CMA registration endpoint.

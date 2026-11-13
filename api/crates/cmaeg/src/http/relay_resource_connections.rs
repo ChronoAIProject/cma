@@ -25,8 +25,25 @@ impl CreatorAuthState for ResourceConnections {
 pub fn router(state: ResourceConnections) -> Router {
     Router::new()
         .route("/v1/relay-resource-connections", get(list))
+        .route_layer(axum::middleware::from_fn(reject_selected_owner))
         .with_state(state)
         .layer(axum::middleware::from_fn(super::problems::protocol_headers))
+}
+
+async fn reject_selected_owner(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    // This personal selector rejects organization selection before the shared
+    // creator extractor would make an organization-authority lookup.
+    if request.headers().contains_key("x-cmaeg-owner") {
+        return failure(
+            StatusCode::BAD_REQUEST,
+            ProblemCode::InvalidRequest,
+            "Connection discovery uses the authenticated subject; select other bindings manually.",
+        );
+    }
+    next.run(request).await
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -43,15 +60,6 @@ pub async fn list(
     headers: HeaderMap,
     query: Result<Query<ListQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Response {
-    // This optional selector has no organization-switch surface. Existing
-    // organization bindings and channel APIs retain their original behavior.
-    if headers.contains_key("x-cmaeg-owner") {
-        return failure(
-            StatusCode::BAD_REQUEST,
-            ProblemCode::InvalidRequest,
-            "Connection discovery uses the authenticated subject; select other bindings manually.",
-        );
-    }
     let Ok(Query(query)) = query else {
         return failure(
             StatusCode::BAD_REQUEST,

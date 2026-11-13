@@ -1,6 +1,9 @@
 use super::*;
 use crate::config::RuntimeConfig;
-use layer3_adapter::wire::{AGENT_COMPUTER_STATUS_MEDIA_TYPE, AGENT_RESOURCES_STATUS_MEDIA_TYPE};
+use layer3_adapter::wire::{
+    AGENT_COMPUTER_STATUS_MEDIA_TYPE, AGENT_RESOURCES_STATUS_MEDIA_TYPE,
+    AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
+};
 use layer3_adapter::RuntimeStatusRequest;
 
 #[tokio::test]
@@ -26,13 +29,19 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
     let combined =
         format!("{AGENT_RESOURCES_STATUS_MEDIA_TYPE}, {AGENT_COMPUTER_STATUS_MEDIA_TYPE}");
     let files_supported = crate::agent_attachment::supported(&config);
-    for (accept, resources, computer) in [
-        (None, false, false),
-        (Some(AGENT_RESOURCES_STATUS_MEDIA_TYPE), true, false),
-        (Some(AGENT_COMPUTER_STATUS_MEDIA_TYPE), false, true),
-        (Some(combined.as_str()), true, true),
-        (Some("application/json"), false, false),
-        (None, false, false),
+    for (accept, resources, computer, upgrade) in [
+        (None, false, false, false),
+        (Some(AGENT_RESOURCES_STATUS_MEDIA_TYPE), true, false, false),
+        (Some(AGENT_COMPUTER_STATUS_MEDIA_TYPE), false, true, false),
+        (Some(combined.as_str()), true, true, false),
+        (Some("application/json"), false, false, false),
+        (
+            Some(AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE),
+            false,
+            false,
+            true,
+        ),
+        (None, false, false, false),
     ] {
         let mut http = client
             .post(format!("http://{address}/runtime/control"))
@@ -44,6 +53,7 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
         assert_eq!(value["t"], "runtime_status");
         for (capability, supported) in [
             ("agent_browser", computer),
+            ("agent_skill_upgrade", upgrade),
             ("agent_filesystem", files_supported),
             ("agent_attachment_upload", files_supported),
         ] {
@@ -60,9 +70,14 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
         };
         assert_eq!(status.agent_resource_preparation, resources);
         assert_eq!(status.agent_browser, computer);
+        assert_eq!(status.agent_skill_upgrade, upgrade);
         assert_eq!(status.agent_filesystem, files_supported);
         assert_eq!(status.agent_attachment_upload, files_supported);
-        for capability in ["agent_resource_preparation", "agent_browser"] {
+        for capability in [
+            "agent_resource_preparation",
+            "agent_browser",
+            "agent_skill_upgrade",
+        ] {
             value.as_object_mut().unwrap().remove(capability);
         }
         if let Some(original) = &original {
@@ -76,6 +91,7 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
         "application/json",
         AGENT_RESOURCES_STATUS_MEDIA_TYPE,
         AGENT_COMPUTER_STATUS_MEDIA_TYPE,
+        AGENT_SKILL_UPGRADE_STATUS_MEDIA_TYPE,
         combined.as_str(),
     ] {
         let RequestFrame::RuntimeStatus(identity) = &request else {
@@ -93,6 +109,7 @@ async fn agent_resource_status_extension_is_explicitly_negotiated_per_request() 
             .unwrap();
         assert_eq!(response["t"], "workspace_removal_support");
         assert!(response["runtime"].get("agent_browser").is_none());
+        assert!(response["runtime"].get("agent_skill_upgrade").is_none());
         for capability in ["agent_filesystem", "agent_attachment_upload"] {
             assert_eq!(
                 response["runtime"].get(capability),

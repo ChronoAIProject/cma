@@ -168,8 +168,13 @@ async fn verify_import(
         serde_json::json!({"kind":"interaction","record_id":expired,"owner":"legacy-expired","version":"3","blob":"ZXhwaXJlZA==","expires_at":1}),
     ];
     std::fs::write(&path, rows.map(|row| row.to_string()).join("\n"))?;
+    // Opaque record mechanics only; the GitHub write gate has its own contract.
+    let gate = cmaeg::records::ImportGate::new(true, None);
     for _ in 0..2 {
-        assert_eq!(cmaeg::records::import::import(db, &path).await?, 4);
+        assert_eq!(
+            cmaeg::records::import::import_with(db, &path, &gate).await?,
+            4
+        );
     }
     for (kind, version, blob) in [
         (RecordKind::Channel, 7, b"channel".as_slice()),
@@ -198,7 +203,9 @@ async fn verify_import(
         .for_kind(RecordKind::Connection)
         .put(&id, "legacy-connection", b"changed", Some(8))
         .await?;
-    assert!(cmaeg::records::import::import(db, &path).await.is_err());
+    assert!(cmaeg::records::import::import_with(db, &path, &gate)
+        .await
+        .is_err());
     assert_eq!(
         records
             .for_kind(RecordKind::Connection)
@@ -213,7 +220,9 @@ async fn verify_import(
         serde_json::json!({"kind":"unknown","record_id":id,"owner":"legacy","version":"1","blob":"eA=="}),
     ] {
         std::fs::write(&path, row.to_string())?;
-        assert!(cmaeg::records::import::import(db, &path).await.is_err());
+        assert!(cmaeg::records::import::import_with(db, &path, &gate)
+            .await
+            .is_err());
     }
     std::fs::remove_file(path)?;
     Ok(())

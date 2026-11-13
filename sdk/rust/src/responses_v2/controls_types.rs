@@ -47,7 +47,7 @@ string_enum! { /// Observed runtime delivery; uncertainty remains explicit.
     pub enum CommandDelivery { DispatchFenced => "dispatch_fenced", WriteConfirmed => "write_confirmed", ExecutionObserved => "execution_observed", PreWriteFailed => "pre_write_failed", RecoveryRequired => "recovery_required", RuntimeLost => "runtime_lost" }
 }
 string_enum! { /// Safe durable command failure; no runtime details or credentials.
-    pub enum CommandFailure { QueueTimeout => "queue_timeout", AuthorityRevoked => "authority_revoked", AuthorityUnavailable => "authority_unavailable", AgentUnavailable => "agent_unavailable", TargetTurnChanged => "target_turn_changed", RuntimeUnavailable => "runtime_unavailable", RuntimeLost => "runtime_lost", ExecutionFailed => "execution_failed" }
+    pub enum CommandFailure { QueueTimeout => "queue_timeout", AuthorityRevoked => "authority_revoked", AuthorityUnavailable => "authority_unavailable", CredentialSetupRequired => "credential_setup_required", ConnectionsRequired => "connections_required", AgentUnavailable => "agent_unavailable", TargetTurnChanged => "target_turn_changed", RuntimeUnavailable => "runtime_unavailable", RuntimeLost => "runtime_lost", ExecutionFailed => "execution_failed" }
 }
 string_enum! { /// Safe command document discriminator.
     pub enum CommandObject { Command => "cma.agent.command" }

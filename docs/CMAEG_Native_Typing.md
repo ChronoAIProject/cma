@@ -7,14 +7,20 @@ are unchanged: `{event_ref}` and `{outcome:"sent"|"unsupported"}`. Typing is nev
 a reply, never suppresses the provider's eventual answer, and never runs as an
 automatic status heartbeat.
 
-`CMAEG_NATIVE_TYPING_ENABLED` defaults to `false`, including in the checked-in
-ConfigMap. Enabling it also requires the corresponding existing native writer
-and durable admission/recovery gates; Discord requires its native runtime gate.
-Deploy compatible readers and run contract and isolated Custom-channel release
-checks before activation for owner testing. Connected-platform acceptance is
-recorded separately; local fixtures do not prove that a real recipient saw an
-indicator. Disabling the gate restores `unsupported` and `capabilities.typing:false`
-for these native transports without affecting Telegram's existing behavior.
+When absent, `CMAEG_NATIVE_TYPING_ENABLED` defaults to `false`. The checked-in
+ConfigMap explicitly sets it to `true`: the owner decision relayed on 2026-11-11
+is to preserve production typing indicators and WhatsApp read receipts (#1624,
+separated from the Secret-reference work in #1588). The manifest contract now
+requires this approved activation deliberately.
+
+The corresponding native writer and durable admission/recovery gates still
+apply; Discord also requires its native runtime gate. This does not activate a
+disabled channel or qualify connected-platform acceptance. Local fixtures do
+not prove that a real recipient saw an indicator. Release-train application
+uses the normal ConfigMap/Deployment fences and restart/readback checks.
+Disabling the gate restores `unsupported` and `capabilities.typing:false` for
+these native transports without affecting Telegram's existing behavior. Any
+later behavior change needs a separate decision.
 
 | Source | Native operation | Successful response | Duration and side effect |
 | --- | --- | --- | --- |

@@ -11,6 +11,7 @@ use super::agent_control_lineage::{
     fence_control_lineage, load_control_snapshot, ControlSnapshot, LineageError,
 };
 use super::agent_control_receipt::{ControlOperation, ControlRequest};
+use super::agent_log_integrity::carry_integrity_for_revision;
 use super::agents::agent_replacement_fields;
 use super::sandbox_mongo::{
     commit_transaction, is_transient, signed, start_transaction, wait_for_reconciliation,
@@ -18,6 +19,7 @@ use super::sandbox_mongo::{
 };
 
 const CONTROL_ATTEMPTS: usize = 8;
+mod segmented;
 
 enum ApplyError {
     Domain(AgentControlStoreError),
@@ -63,6 +65,18 @@ async fn schedule_control(
     request: ControlRequest,
 ) -> Result<AgentControlResult, AgentControlStoreError> {
     let operation = ControlOperation::new(request);
+    let row = store
+        .agents
+        .find_one(doc! {"_id":operation.request.target().agent_id.as_str()})
+        .await
+        .map_err(unavailable)?
+        .ok_or(AgentControlStoreError::NotFound)?;
+    if super::agent_log_segments::read_format(&row)
+        .map_err(store_error)?
+        .is_some()
+    {
+        return segmented::schedule(store, &operation).await;
+    }
     let mut last_transient = None;
     let mut last_was_conflict = false;
     for attempt in 0..CONTROL_ATTEMPTS {
@@ -165,7 +179,8 @@ async fn schedule_control(
                         let commit_error = error.to_string();
                         let store = store.clone();
                         return wait_for_reconciliation("agent control commit", async move {
-                            reconcile_control(&store, &operation, &next, snapshot_time, error).await
+                            reconcile_control(&store, &operation, &next, None, snapshot_time, error)
+                                .await
                         })
                         .await
                         .map_err(|deadline| {
@@ -192,6 +207,7 @@ async fn reconcile_control(
     store: &MongoSandboxStore,
     operation: &ControlOperation,
     expected: &Agent,
+    recorded: Option<&super::agent_log_segments::writer_commit::Recorded>,
     snapshot_time: mongodb::bson::Timestamp,
     commit_error: mongodb::error::Error,
 ) -> Result<AgentControlResult, AgentControlStoreError> {
@@ -207,6 +223,16 @@ async fn reconcile_control(
         .map_err(|error| reconciliation_error(error, &commit_error))?;
     if !control_snapshot_matches(operation, expected, &snapshot) {
         return Err(unknown_control(commit_error));
+    }
+    if let Some(recorded) = recorded {
+        if recorded.next != *expected
+            || !recorded
+                .matches(store, &mut session)
+                .await
+                .map_err(store_error)?
+        {
+            return Err(unknown_control(commit_error));
+        }
     }
     Ok(AgentControlResult::Scheduled(snapshot.agent))
 }
@@ -260,6 +286,19 @@ async fn replace_agent(
     };
     filter.insert(operation.receipt_field(), doc! { "$exists": false });
     let mut fields = agent_replacement_fields(next)
+        .map_err(store_error)
+        .map_err(ApplyError::Domain)?;
+    let current_row = store
+        .agents
+        .find_one(doc! { "_id": agent.id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(AgentControlStoreError::NotFound))?;
+    let current_agent = super::agents::read_agent(&current_row)
+        .map_err(store_error)
+        .map_err(ApplyError::Domain)?;
+    carry_integrity_for_revision(&current_row, &current_agent, next, &mut fields)
         .map_err(store_error)
         .map_err(ApplyError::Domain)?;
     fields.extend(operation.receipt_update(next).map_err(ApplyError::Domain)?);

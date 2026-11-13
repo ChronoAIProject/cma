@@ -65,6 +65,7 @@ impl ControlRequest {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct ControlOperation {
     pub(super) request: ControlRequest,
     operation_id: String,

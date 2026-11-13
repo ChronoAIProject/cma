@@ -21,9 +21,17 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let now = if self.config.native_create_retry_enabled {
+            now.max(SystemTime::now())
+        } else {
+            now
+        };
         let mut timing = super::provision_timing::ProvisionTiming::new();
         if let Some(failure) = self.prepare_sandbox_home(&mut sandbox, now).await? {
-            return self.handle_failure(sandbox, failure, now).await;
+            return self
+                .handle_provision_failure(sandbox, failure, now, started)
+                .await;
         }
         timing.completed("home_preparation");
         let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
@@ -110,7 +118,7 @@ impl SandboxWorker {
                 result
             }
             Err(error) => {
-                self.handle_failure(sandbox, adapter_failure(error), now)
+                self.handle_provision_failure(sandbox, adapter_failure(error), now, started)
                     .await
             }
         }

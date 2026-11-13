@@ -148,6 +148,18 @@ module GatewaySourceContract
     validate(expected.keys.to_h { |path| [path, documents(File.join(root, path))] })
     config = documents(File.join(root, "infra/cmaeg/configmap.yaml")).first
     validate_provider_origin(config)
+    validate_browser_origins(documents(File.join(root, "infra/api/configmap.yaml")).first)
+  end
+
+  def self.validate_browser_origins(config)
+    data = config.fetch("data")
+    unless data.fetch("CHRONO_SERVER_PUBLIC_URL") == "https://cma.nyxid.ai"
+      raise "CMA public origin must preserve the canonical production domain"
+    end
+    origins = data.fetch("CHRONO_SERVER_CORS_ORIGIN").split(",").map(&:strip).sort
+    unless origins == %w[https://bot.chrono-ai.fun https://cma.nyxid.ai]
+      raise "CMA browser origins must preserve the exact current and retained app origins"
+    end
   end
 
   def self.validate_provider_origin(config)

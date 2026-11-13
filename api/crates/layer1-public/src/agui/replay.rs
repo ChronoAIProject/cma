@@ -1,3 +1,4 @@
+use crate::stream_telemetry::{self, Kind, Poll};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 
 use axum::{
@@ -8,7 +9,7 @@ use axum::{
 use futures_util::stream;
 use layer2_core::{
     sandbox::{
-        Agent, AgentEventStreamAuthorization, AgentLiveFragment, AgentLiveFragmentKind,
+        Agent, AgentEventStreamAuthorization, AgentLiveDelivery, AgentLiveFragmentKind,
         AgentLiveSubscription, AgentLogEntry, AgentLogKind, AgentStatus, PendingAgentApprovals,
     },
     AgentId, Caller,
@@ -193,11 +194,13 @@ fn response(open: Following) -> Response {
                 .and_then(AgentEventStreamAuthorization::revalidation_deadline)
                 .map_or(wake, |deadline| deadline.min(wake));
             tokio::time::sleep_until(wake).await;
+            let poll = Poll::new(Kind::Agui);
             if let Some(authorization) = &open.authorization {
                 match open.state.reads.event_stream_snapshot(authorization).await {
                     Ok(snapshot) => open.queue_authorized(snapshot),
                     Err(_) => return None,
                 }
+                poll.complete(!open.pending.is_empty());
                 continue;
             }
             match open.state.reads.log_snapshot(&open.caller, &open.id).await {
@@ -208,9 +211,10 @@ fn response(open: Following) -> Response {
                 }
                 Err(_) => return None,
             }
+            poll.complete(!open.pending.is_empty());
         }
     });
-    let mut response = Sse::new(stream)
+    let mut response = Sse::new(stream_telemetry::observe(stream, Kind::Agui))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
     response
@@ -234,7 +238,7 @@ struct Following {
     ended: bool,
     watching: Option<AgentLiveSubscription>,
     committed_message_seq: u64,
-    held: Option<AgentLiveFragment>,
+    held: Option<AgentLiveDelivery>,
     authorization: Option<AgentEventStreamAuthorization>,
 }
 

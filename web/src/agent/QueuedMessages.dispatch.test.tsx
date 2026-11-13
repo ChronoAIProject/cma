@@ -58,7 +58,7 @@ it('keeps a dispatched edit and revised attachments until copied or dismissed wi
     <QueuedMessages items={items} onEdit={edit} onRemove={remove} uploadAttachment={upload} />
   );
   const { rerender } = render(draw([first, second]));
-  await user.click(queued(1).getByRole('button', { name: 'Edit' }));
+  await user.click(queued(1).getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(queued(1).getByRole('textbox'), {
     target: { value: 'Keep my revised request' },
   });
@@ -66,7 +66,7 @@ it('keeps a dispatched edit and revised attachments until copied or dismissed wi
   const file = new File(['revised'], 'revised.txt', { type: 'text/plain' });
   fireEvent.change(queued(1).getByLabelText('Choose attachments'), { target: { files: [file] } });
   await queued(1).findByText('Ready');
-  await user.click(queued(2).getByRole('button', { name: 'Edit' }));
+  await user.click(queued(2).getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(queued(2).getByRole('textbox'), {
     target: { value: 'Independent second draft' },
   });
@@ -138,7 +138,7 @@ it('retains the last editor through dispatch, finishes or retries its existing u
     />
   );
   const { rerender } = render(draw([first]));
-  await user.click(queued(1).getByRole('button', { name: 'Edit' }));
+  await user.click(queued(1).getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(queued(1).getByRole('textbox'), {
     target: { value: 'Retain pending attachment' },
   });
@@ -188,7 +188,7 @@ it('keeps an edit that loses the dispatch race while its save acknowledgment is 
     <QueuedMessages items={items} onEdit={edit} onRemove={vi.fn()} />
   );
   const { rerender } = render(draw([first]));
-  await userEvent.click(queued(1).getByRole('button', { name: 'Edit' }));
+  await userEvent.click(queued(1).getByRole('button', { name: 'Edit queued message content' }));
   fireEvent.change(queued(1).getByRole('textbox'), { target: { value: 'Save lost the race' } });
   await userEvent.click(queued(1).getByRole('button', { name: 'Save' }));
   rerender(draw([]));

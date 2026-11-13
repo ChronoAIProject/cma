@@ -97,3 +97,32 @@ The default-off native context writer exposes bounded data through Activity and
 authenticated context reads. See [native quoted-message context](CMAEG_Native_Quoted_Context.md)
 for exact per-platform fields, reference-only limits, replay compatibility and
 reader-first rollout requirements.
+
+## Verified sender input for an existing Agent
+
+An existing-Agent channel can enable CMA's opaque provider extension
+`profile.environment.verified_sender_context:true`. CMA verifies the full
+original Activity through the gateway before admitting a new turn, then inserts
+the [documented first line](API_REST.md) before user text. Native sources use
+`platform:"feishu"` or `platform:"lark"` from the attested region, the sender's
+app-scoped Open ID, actor kind and `conversation_kind:"private"` or `"group"`.
+No gateway tools or new credentials are installed in the borrowed Agent.
+Non-human events receive an explicit `human_sender:false` form.
+
+Toggle the extension by updating the same channel/profile and binding; its
+Agent, credentials and conversation survive. Exact admission retries keep the
+original input even after a policy toggle. Owner turns without `event_context`
+receive no line. Shared conversation privacy remains the Agent's responsibility.
+
+Verification refusal, unsupported/oversized context and retry expiry produce
+no Feishu reply. Channel Activity displays the named refusal reason. Temporary
+verification outages retry at five-second intervals within original event
+expiry; successful recovery admits once and uses the original chat for the
+normal automatic reply. See the [CMA Responses v2 dialect](CMAEG_Protocol.md#verified-sender-context-cma-responses-v2-dialect).
+
+Exact replay uses the retained command and local Activity rendering, so it works
+while gateway attestation is unavailable or the reference has expired. Only new
+admissions attest. Blank input remains invalid; media-only messages carry the
+gateway's non-empty attachments block. An older CMA binary ignores the policy
+and may deliver new `event_ref` inputs without the line. The Q&A consumer must
+refuse those inputs without reading board data during rollback.

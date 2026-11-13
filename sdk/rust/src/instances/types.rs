@@ -63,6 +63,10 @@ pub struct Sandbox {
     pub status: SandboxStatus,
     /// Immutable source profile.
     pub profile: ProfileReference,
+    /// Explicit automatic-pause exception, when supplied by the server.
+    /// True alone does not establish approval provenance for retained records.
+    #[serde(default)]
+    pub always_on: Option<bool>,
     /// Effective creation and explicitly granted services; absent on older servers.
     pub nyxid_services: Option<Vec<String>>,
     /// Captured admission limits.
@@ -241,6 +245,8 @@ pub struct Worktree {
 pub struct HierarchyAgentSummary {
     #[doc = "Authorized task outcome; absent on older servers."]
     pub task_status: Option<AgentTaskStatus>,
+    /// Recorded start of the current task turn, absent when idle or unreported.
+    pub task_started_at: Option<String>,
     /// Canonical runtime metadata for this owned Agent.
     pub runtime_metadata: Option<crate::agents::AgentRuntimeMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

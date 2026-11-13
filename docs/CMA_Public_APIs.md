@@ -89,7 +89,10 @@ of the public contract.
 | `GET /api/v1/admin/sandboxes` |
 | `GET /api/v1/admin/sandboxes/{id}` |
 | `GET /api/v1/admin/sandboxes/{id}/events` |
+| `POST /api/v1/admin/sandboxes/{id}/always-on` |
 | `POST /api/v1/admin/sandboxes/{id}/retire` |
+| `GET /api/v1/admin/auto-pause/preview` |
+| `POST /api/v1/admin/auto-pause/pause-idle-now` |
 | `GET /api/v1/admin/settings` |
 | `PATCH /api/v1/admin/settings` |
 | `PUT /api/v1/admin/settings` |
@@ -316,7 +319,10 @@ of the public contract.
 | `GET /api/v1/sandboxes/{id}/events` |
 | `POST /api/v1/sandboxes/{id}/pause` |
 | `POST /api/v1/sandboxes/{id}/revive` |
+| `POST /api/v1/sandboxes/{id}/always-on` |
 | `POST /api/v1/sandboxes/{id}/runtime-update` |
+| `GET /api/v1/sandboxes/{id}/runtime-recovery` |
+| `POST /api/v1/sandboxes/{id}/runtime-recovery` |
 | `POST /api/v1/sandboxes/{id}/service-access` |
 
 ### service connections
@@ -411,7 +417,7 @@ and the public Trigger embed routes are already included in the OpenAPI table.
 | --- | --- |
 | `GET /auth/login` | Start browser OAuth sign-in or registration. |
 | `GET /auth/callback` | Complete the browser identity exchange. |
-| `GET /auth/session` | Read the signed-in subject and capabilities. |
+| `GET /auth/session` | Read the signed-in subject and capabilities. `api_commands` reports whether this exact independently verified bearer can admit commands, including provider-verified nonexpiring ordinary Agent Keys. Identity-only OAuth, browser cookies and insufficient RBAC report false; resource ACL and admission still run for each command. Exhausted identity outages return 503 `identity_unavailable` with `Retry-After: 3`; only this browser-cookie read may use bounded recent evidence under [Identity Outage Policy](Identity_Outage_Policy.md). |
 | `GET /auth/logout` | End browser sign-in and redirect through logout. |
 | `POST /auth/connections/check` | Check the owner's selected service connection. |
 | `POST /auth/connections/start` | Start the browser service connection flow. |
@@ -421,7 +427,7 @@ and the public Trigger embed routes are already included in the OpenAPI table.
 | `POST /api/v1/mcp` | Return the explicit unsupported-interface response. |
 | `ANY /api/v1/a2a` | Return the explicit unsupported-interface response. |
 | `GET /livez` | Probe API process liveness. |
-| `GET /ready` | Probe API readiness, including database availability. |
+| `GET /ready` | Probe cached database availability and required local scheduling capability. |
 
 CMAEG's supported native `POST /mcp` belongs to the gateway origin and is a
 separate interface from CMA's unsupported `/api/v1/mcp` route.
@@ -505,3 +511,11 @@ Provider associations expose retained Manager membership under current Agent man
 authority. Reservation timestamps do not represent message usage. The legacy
 `channel-usage` projection does not cover provider admissions; its empty result
 does not prove that an Agent has no provider associations. See `API_REST.md`.
+
+Always on exceptions require administrator approval. The owner Always on route
+only accepts relinquishment (`false`); enabling returns HTTP 403
+`always_on_approval_required`. Administrators approve/revoke through the audited
+admin route and enumerate current exceptions with
+`GET /api/v1/admin/sandboxes?always_on=true`. See
+[CMA automatic pause](CMA_Auto_Pause.md) for revision rules, audit fields and the
+required review of legacy exceptions before enablement.

@@ -4,7 +4,7 @@ set -euo pipefail
 export DISPLAY=:99
 if [[ ${1:-} == --browser ]]; then
   shift
-  exec chromium --user-data-dir="$HOME/.cma/chrome" --no-first-run --disable-gpu --disable-dev-shm-usage "${@:-about:blank}"
+  exec python3 /usr/local/bin/cma-desktop-browser "$@"
 fi
 [[ ${CMA_DESKTOP_TOKEN:-} =~ ^[0-9a-f]{32}$ ]]
 # A web page in Chromium must not bypass CMA by connecting to a loopback
@@ -56,6 +56,7 @@ for name in ('SingletonLock', 'SingletonCookie', 'SingletonSocket'):
 PY
 children=()
 desktop_stage=display
+# shellcheck disable=SC2329 # Invoked by the desktop signal/exit traps.
 stop_desktop() {
   local result=$?
   trap - INT TERM EXIT
@@ -63,10 +64,13 @@ stop_desktop() {
     printf 'desktop stopped during %s (exit %s)\n' "$desktop_stage" "$result" >&2
     tail -c 4000 /tmp/cma-{xvfb,xfce,chromium,x11vnc,websockify}.log >&2 2>/dev/null || true
   fi
-  kill "${children[@]}" 2>/dev/null || true
-  wait "${children[@]}" 2>/dev/null || true
+  kill "${browser_manager:-}" "${children[@]}" 2>/dev/null || true
+  wait "${browser_manager:-}" "${children[@]}" 2>/dev/null || true
 }
 trap stop_desktop INT TERM EXIT
+# Requests from tools and desktop shortcuts share one desktop-owned manager.
+python3 /usr/local/bin/cma-desktop-browser --serve "$$" </dev/null >/tmp/cma-browser-manager.log 2>&1 9>&- &
+browser_manager=$!
 require_process() {
   if ! kill -0 "$1" 2>/dev/null; then
     tail -c 4000 "$2" >&2
@@ -99,22 +103,7 @@ for ((attempt=0; attempt<300; attempt++)); do
 done
 [[ "$wm_ready" == 1 ]]
 desktop_stage=browser
-"$0" --browser >/tmp/cma-chromium.log 2>&1 &
-chrome_pid=$!
-children+=("$chrome_pid")
-chrome_ready=0
-for ((attempt=0; attempt<200; attempt++)); do
-  if xdotool search --onlyvisible --class chromium >/dev/null 2>&1; then
-    chrome_ready=1
-    break
-  fi
-  require_process "$chrome_pid" /tmp/cma-chromium.log
-  sleep 0.1
-done
-# Chromium can replace startup windows between X11 queries. Do not repeat a
-# successful observation outside the retry loop, where BadWindow would tear
-# down an otherwise healthy display under set -e.
-[[ "$chrome_ready" == 1 ]]
+"$0" --browser
 desktop_stage=listeners
 x11vnc -display "$DISPLAY" -rfbport 5900 -localhost -forever -shared -nopw >/tmp/cma-x11vnc.log 2>&1 &
 children+=("$!")
@@ -124,5 +113,5 @@ children+=("$!")
 # reopen applications from the persistent XFCE panel, menu or desktop icons.
 # Display/window-manager/stream failure still tears down the session.
 desktop_stage=running
-wait -n "${children[0]}" "${children[1]}" "${children[3]}" "${children[4]}"
+wait -n "${children[0]}" "${children[1]}" "${children[2]}" "${children[3]}" "$browser_manager"
 exit 1

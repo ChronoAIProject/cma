@@ -1,9 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { CharacterAvatar } from '../character/CharacterAvatar';
-import type { CharacterPose } from '../character/poses';
+import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import { elapsedTime } from './workspaceTime';
+const markHtml = { __html: markMarkup };
 import './Thinking.css';
-import { TurnUsage } from './TurnUsage';
-import type { VisibleText } from './tokenEstimate';
 
 export interface ThinkingActivityBody {
   readonly text: string;
@@ -26,11 +25,6 @@ interface ThinkingProps {
   readonly text?: string;
   readonly activities?: readonly ThinkingActivity[];
   readonly startedAt?: string;
-  readonly usage?: { readonly inputTokens: number; readonly outputTokens: number };
-  readonly visibleText?: readonly VisibleText[];
-  readonly visibleAnchor?: readonly VisibleText[];
-  /** What the turn is doing right now (§28): thinking, working on a tool, or replying. */
-  readonly pose?: CharacterPose;
 }
 
 export function activityDuration(activity: ThinkingActivity): string {
@@ -50,15 +44,7 @@ export function activitySummary(activity: ThinkingActivity): string {
 }
 
 /** Active-turn liveness, with a clock anchored to the public turn record rather than mount. */
-export function Thinking({
-  text = '',
-  activities = [],
-  startedAt,
-  usage,
-  visibleText,
-  visibleAnchor,
-  pose = 'thinking',
-}: ThinkingProps) {
+export function Thinking({ text = '', activities = [], startedAt }: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -86,27 +72,27 @@ export function Thinking({
 
   return (
     <section className="thinking" aria-label="What the agent is working through">
-      <button
-        type="button"
-        className="thinking__key"
-        aria-expanded={open}
-        aria-controls={open ? bodyId : undefined}
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
-      >
-        <CharacterAvatar pose={pose} size={32} className="thinking__character" />
-        <span className="thinking__title">Thinking</span>
-        {seconds === undefined ? null : <span className="thinking__elapsed">for {seconds}s</span>}
-        <span className="thinking__dot" aria-hidden="true" />
-        <span className="thinking__summary">
-          {activities.length > 0
-            ? `${activities.length} ${activities.length === 1 ? 'operation' : 'operations'} in progress`
-            : 'View activity details'}
+      <div className="thinking__key">
+        <span className="thinking__logo" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
+        <span className="thinking__title" role="status">
+          Thinking
         </span>
-        <span className="sr-only">, reasoning not kept after this turn</span>
-      </button>
+        {seconds === undefined ? null : (
+          <span className="thinking__elapsed">{elapsedTime(seconds * 1000)}</span>
+        )}
+        <span aria-hidden="true">·</span>
+        <button
+          type="button"
+          className="thinking__activity-toggle"
+          aria-expanded={open}
+          aria-controls={open ? bodyId : undefined}
+          onClick={() => setOpen((value) => !value)}
+        >
+          View activity
+        </button>
+      </div>
       {open ? (
         <div className="thinking__body" id={bodyId} ref={bodyRef}>
-          <TurnUsage usage={usage} visibleText={visibleText} visibleAnchor={visibleAnchor} />
           {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
           {text === '' && activities.length === 0 ? 'Waiting for the next update.' : null}
           {activities.length === 0 ? null : (

@@ -42,6 +42,7 @@ export const BindingTargetSchema = tagged(
 export type BindingTarget = Output<typeof BindingTargetSchema>;
 
 const binding = object({
+  queue_lifetime_seconds: optional(positiveInteger),
   target: optional(BindingTargetSchema),
   binding_id: text,
   owner: text,

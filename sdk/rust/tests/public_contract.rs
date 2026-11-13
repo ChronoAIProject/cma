@@ -18,6 +18,8 @@ mod documents;
 mod event_workers;
 #[path = "public_contract/experience.rs"]
 mod experience;
+#[path = "public_contract/metrics.rs"]
+mod metrics;
 #[path = "public_contract/operator.rs"]
 mod operator;
 #[path = "public_contract/resources.rs"]
@@ -31,17 +33,24 @@ mod usage;
 #[path = "support/wire.rs"]
 mod wire;
 
+#[path = "public_contract/capacity_recovery.rs"]
+mod capacity_recovery;
+
 use cma_sdk::{Error, Result};
 use context::{Case, Context};
 
 async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
     let op = c.case.operation.as_str();
-    if op.ends_with("/browser/control") && op.contains("/api/v1/agents/") {
+    if op.contains("/capacity-recovery") {
+        capacity_recovery::dispatch(c).await
+    } else if op.ends_with("/browser/control") && op.contains("/api/v1/agents/") {
         browser_control::dispatch(c).await
     } else if op.ends_with("/browser") && op.contains("/api/v1/agents/") {
         agent_browser::dispatch(c).await
     } else if op.contains("/deliverable-references") || op.contains("/deliverables") {
         deliverables::dispatch(c, corpus).await
+    } else if op.contains("/usage/metrics") {
+        metrics::dispatch(c).await
     } else if op.contains("/api/v1/usage") || op.contains("/api/v1/admin/usage") {
         usage::dispatch(c).await
     } else if op.contains("/api/v1/documents") {
@@ -71,6 +80,7 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         || op.contains("/profile-authoring/")
         || [
             "GET /api/v1/conformance",
+            "POST /api/v1/telemetry/browser",
             "GET /api/v1/defaults",
             "GET /openapi.json",
             "POST /api/v1/mcp",
@@ -92,6 +102,20 @@ async fn dispatch(c: &Context<'_>, corpus: &[Case]) -> Result<()> {
         || op.starts_with("GET /auth/")
     {
         experience::dispatch(c).await
+    } else if op == "POST /api/v1/sandboxes/{id}/runtime-recovery" {
+        c.check(
+            c.client
+                .sandboxes()
+                .recover_retained(c.param("id"), &c.body()?, &c.key()?)
+                .await,
+        )
+    } else if op == "GET /api/v1/sandboxes/{id}/runtime-recovery" {
+        c.check(
+            c.client
+                .sandboxes()
+                .inspect_runtime_recovery(c.param("id"))
+                .await,
+        )
     } else {
         resources::dispatch(c).await
     }
@@ -150,7 +174,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
     let mut wire_shape = 0;
     let mut browser_owned = 0;
     if std::env::var_os("CMA_SDK_CONTRACT_FILE").is_none() {
-        for (id, _) in classification::LOCAL_CASES {
+        for (id, _) in classification::local_cases() {
             assert!(
                 corpus.iter().any(|case| case.id == *id),
                 "stale local classification {id}"
@@ -177,7 +201,9 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
             browser_owned += 1;
             continue;
         }
-        if let Some(class) = classification::classify(case) {
+        let retained_key = (case.id == "retained-reopen-missing-key")
+            .then_some(classification::Classification::Local);
+        if let Some(class) = retained_key.or_else(|| classification::classify(case)) {
             if matches!(
                 class,
                 classification::Classification::Local | classification::Classification::TypedShape
@@ -238,6 +264,13 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
                 case.id
             );
         } else if case.response.status >= 400
+            && !(case.response.status == 409
+                && matches!(
+                    case.operation.as_str(),
+                    "POST /api/v1/agents/{id}/capacity-recovery/admit"
+                        | "POST /api/v1/agents/{id}/capacity-recovery/resume"
+                )
+                && case.response.body == serde_json::json!({"outcome": "known_abort"}))
             && !(case.operation == "GET /auth/session" && case.response.status == 401)
         {
             check_error(case, result.expect_err(&case.id));

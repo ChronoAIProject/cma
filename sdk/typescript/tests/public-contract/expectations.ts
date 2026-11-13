@@ -3,6 +3,8 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['admin-admission-stop-invalid', 'invalid_request'],
+  ['admin-admission-resume-invalid', 'invalid_request'],
   ['deliverables-owner-invalid-revision', 'invalid_deliverable_reference'],
   ['deliverables-owner-invalid-answer-list', 'invalid_deliverable_reference'],
   ['deliverables-owner-invalid-answer-read', 'invalid_deliverable_reference'],
@@ -339,6 +341,17 @@ export function expectedProjection(fixture: ContractCase): unknown {
     };
   }
   if (fixture.response.bodyKind === 'empty') return undefined;
+  if (fixture.operation === 'GET /auth/session' && fixture.response.status === 401) {
+    // The wire also advertises silent sign-in for the web client's own
+    // browser flow; the SDK's signed-out projection deliberately omits it.
+    assert.deepStrictEqual(fixture.response.body, {
+      authenticated: false,
+      silent_sign_in:
+        fixture.scenario !== 'auth_anonymous_disabled' &&
+        !['auth-silent-suppressed', 'auth-silent-later-logout'].includes(fixture.id),
+    });
+    return { authenticated: false };
+  }
   if (fixture.response.bodyKind === 'sse')
     return (fixture.response.body as { id?: string; data: Record<string, unknown> }[]).map(
       (frame) => ({

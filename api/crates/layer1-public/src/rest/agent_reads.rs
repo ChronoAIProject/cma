@@ -22,6 +22,14 @@ use layer2_core::{
 };
 use serde::Deserialize;
 const DEFAULT_EVENT_LIMIT: u16 = 200;
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TranscriptParams {
+    turn: Option<u64>,
+    after: Option<u64>,
+    through: Option<u64>,
+    limit: Option<u16>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,10 +72,10 @@ pub(crate) async fn events(
         return Err(InstanceProblem::InvalidQuery);
     }
     let id = AgentId(id);
-    let entries = if let Some(resource) = resource {
+    let (entries, next) = if let Some(resource) = resource {
         state
             .reads
-            .log_authorized(
+            .log_page_authorized(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
                 &id,
@@ -76,10 +84,11 @@ pub(crate) async fn events(
             )
             .await?
     } else {
-        state
+        let (entries, next) = state
             .reads
-            .log(&caller, &id, params.after.unwrap_or(0), limit)
-            .await?
+            .log_page(&caller, &id, params.after.unwrap_or(0), limit)
+            .await?;
+        let entries = entries
             .into_iter()
             .map(|entry| AgentVisibleLogEntry {
                 deferred_failure_detail: None,
@@ -87,11 +96,9 @@ pub(crate) async fn events(
                 appended_at: entry.appended_at,
                 kind: Some(entry.kind),
             })
-            .collect()
+            .collect();
+        (entries, next)
     };
-    let next = (entries.len() == usize::from(limit))
-        .then(|| entries.last().map(|entry| entry.seq))
-        .flatten();
     let items = entries
         .into_iter()
         .map(|mut entry| {
@@ -112,7 +119,13 @@ pub(crate) async fn events(
     get,
     path = "/api/v1/agents/{id}/transcript",
     tag = "agents",
-    params(("id" = String, Path)),
+    params(
+        ("id" = String, Path),
+        ("limit" = Option<u16>, Query, description = "Source rows per page (1..32). Omit all query parameters for complete legacy-compatible output."),
+        ("turn" = Option<u64>, Query, description = "Continuation turn from next."),
+        ("after" = Option<u64>, Query, description = "Continuation source sequence from next."),
+        ("through" = Option<u64>, Query, description = "Fixed source high-water mark from next. Changed histories require a fresh first page.")
+    ),
     responses((status = 200, body = AgentTranscriptView))
 )]
 pub(crate) async fn transcript(
@@ -120,8 +133,42 @@ pub(crate) async fn transcript(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
+    Query(params): Query<TranscriptParams>,
 ) -> Result<Json<AgentTranscriptView>, InstanceProblem> {
     let id = AgentId(id);
+    if params.limit.is_some()
+        || params.turn.is_some()
+        || params.after.is_some()
+        || params.through.is_some()
+    {
+        let request = layer2_core::sandbox::AgentTranscriptPageRequest {
+            turn: params.turn,
+            after: params.after,
+            through: params.through,
+            limit: params.limit.unwrap_or(32),
+        };
+        let page = if let Some(resource) = resource {
+            state
+                .reads
+                .transcript_page_authorized(
+                    &resource.context,
+                    resource.credential.as_ref().map(DelegatedCredential::value),
+                    &id,
+                    &request,
+                )
+                .await
+        } else {
+            state.reads.transcript_page(&caller, &id, &request).await
+        };
+        let page = page.map_err(InstanceProblem::from)?;
+        let mut value = public_transcript(page.transcript)?;
+        value.next = page
+            .next
+            .map(|next| serde_json::to_value(next).map_err(|_| InstanceProblem::Unavailable))
+            .transpose()?;
+        return Ok(Json(value));
+    }
+
     let value = if let Some(resource) = resource {
         state
             .reads
@@ -132,7 +179,7 @@ pub(crate) async fn transcript(
             )
             .await
     } else {
-        state.reads.transcript(&caller, &id).await
+        state.reads.transcript_bounded(&caller, &id).await
     };
     value
         .map_err(InstanceProblem::from)
@@ -140,8 +187,7 @@ pub(crate) async fn transcript(
         .map(Json)
 }
 
-/// Download the runtime's original session JSONL after applying the same
-/// Agent history authorization as the transcript projection.
+/// Download personal native history, retaining authority across the runtime IO.
 pub(crate) async fn history(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -149,32 +195,35 @@ pub(crate) async fn history(
     Path(id): Path<String>,
 ) -> Result<Response, InstanceProblem> {
     let id = AgentId(id);
-    let lineage = if let Some(resource) = resource {
+    let reading = if let Some(resource) = resource {
         state
             .reads
-            .history_lineage_authorized(
+            .begin_history_read_authorized(
                 &resource.context,
                 resource.credential.as_ref().map(DelegatedCredential::value),
                 &id,
             )
             .await
     } else {
-        state.reads.lineage(&caller, &id).await
+        state.reads.begin_history_read(&caller, &id).await
     }
     .map_err(InstanceProblem::from)?;
-    let runtime = lineage
-        .sandbox
-        .runtime
-        .as_ref()
-        .ok_or(InstanceProblem::Unavailable)?;
     let exporter = state
         .history_exporter
         .as_ref()
         .ok_or(InstanceProblem::Unavailable)?;
     let bytes = exporter
-        .export(&runtime.runtime_id, id.as_str())
+        .export(
+            reading.runtime_id().map_err(InstanceProblem::from)?,
+            id.as_str(),
+        )
+        .await;
+    state
+        .reads
+        .finish_history_read(reading)
         .await
-        .map_err(|_| InstanceProblem::Unavailable)?;
+        .map_err(InstanceProblem::from)?;
+    let bytes = bytes.map_err(|_| InstanceProblem::Unavailable)?;
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -320,6 +369,7 @@ fn public_transcript(value: AgentTranscript) -> Result<AgentTranscriptView, Inst
         agent_id: value.agent_id.to_string(),
         through_seq: value.through_seq,
         turns,
+        next: None,
     })
 }
 

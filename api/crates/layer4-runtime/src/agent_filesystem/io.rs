@@ -35,7 +35,7 @@ pub(super) fn parent(root: &File, path: &str, create: bool) -> Result<(File, Str
     let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
     Ok((descend(root, directory, create)?, name.into()))
 }
-pub(super) fn open_at(parent: &File, name: &str, flags: i32, mode: libc::mode_t) -> Result<File> {
+pub(crate) fn open_at(parent: &File, name: &str, flags: i32, mode: libc::mode_t) -> Result<File> {
     let name = cstring(name)?;
     // SAFETY: name is one validated component, and parent is a retained directory descriptor.
     let fd = unsafe {
@@ -53,7 +53,7 @@ pub(super) fn open_at(parent: &File, name: &str, flags: i32, mode: libc::mode_t)
         Ok(unsafe { File::from_raw_fd(fd) })
     }
 }
-pub(super) fn stat(parent: &File, name: &str) -> Result<libc::stat> {
+pub(crate) fn stat(parent: &File, name: &str) -> Result<libc::stat> {
     let name = cstring(name)?;
     let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
     // SAFETY: metadata points to adequate writable storage; path/FD remain live.
@@ -71,7 +71,7 @@ pub(super) fn stat(parent: &File, name: &str) -> Result<libc::stat> {
     // SAFETY: successful fstatat initialized the entire stat structure.
     Ok(unsafe { metadata.assume_init() })
 }
-pub(super) fn names(directory: &File) -> Result<Vec<String>> {
+pub(crate) fn names(directory: &File) -> Result<Vec<String>> {
     use std::os::fd::IntoRawFd as _;
     let fd = directory.try_clone().map_err(io_error)?.into_raw_fd();
     // SAFETY: fdopendir takes ownership of this fresh directory FD on success.
@@ -112,7 +112,7 @@ pub(super) fn names(directory: &File) -> Result<Vec<String>> {
     }
     Ok(out)
 }
-pub(super) fn read_regular(parent: &File, name: &str, limit: u64) -> Result<Vec<u8>> {
+pub(crate) fn read_regular(parent: &File, name: &str, limit: u64) -> Result<Vec<u8>> {
     let file = open_at(parent, name, libc::O_RDONLY, 0)?;
     let metadata = file.metadata().map_err(io_error)?;
     if !metadata.is_file() || metadata.nlink() != 1 {

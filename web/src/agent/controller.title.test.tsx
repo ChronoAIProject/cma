@@ -96,6 +96,7 @@ it('adopts fresh hierarchy provenance without reloading and ignores stale or unr
   const setup = 'Automatic setup preview';
   const readAgent = vi.fn(async () => ({
     ...AGENT_DETAIL,
+    title: undefined,
     runtimeMetadata: { description: setup },
   }));
   const client = agentClient({ readAgent });

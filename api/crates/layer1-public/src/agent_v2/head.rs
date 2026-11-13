@@ -40,6 +40,9 @@ async fn capture(
     id: AgentId,
     raw: Option<String>,
 ) -> Result<EventHead, Error> {
+    if state.single_fence_pages {
+        return super::buffered::head(state, auth, id, raw).await;
+    }
     parse::head(raw)?;
     let authorization = snapshot::authorize(state, auth, &id).await?;
     let header = state.reads.event_stream_header(&authorization).await?;

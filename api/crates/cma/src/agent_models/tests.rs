@@ -3,7 +3,7 @@ use crate::sandbox::{CredentialError, CredentialMaterial};
 use layer2_core::SandboxId;
 use serde_json::json;
 
-struct NoCredentials;
+pub(super) struct NoCredentials;
 #[async_trait::async_trait]
 impl SandboxCredentialController for NoCredentials {
     async fn issue(

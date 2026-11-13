@@ -166,4 +166,26 @@ mod tests {
             .unwrap()
             .contains_key("$literal"));
     }
+
+    #[test]
+    fn disabled_settings_pipeline_keeps_the_predecessor_inactivity_shape() {
+        let mut settings = PlatformSettings::default();
+        settings.inactivity.pause_after_seconds = 1_200;
+        let pipeline = update_pipeline(&settings).unwrap();
+        let literal = pipeline[0]
+            .get_document("$set")
+            .unwrap()
+            .get_document("settings")
+            .unwrap()
+            .get_document("$literal")
+            .unwrap();
+        assert_eq!(
+            literal.get_document("inactivity").unwrap(),
+            &doc! { "pause_after_seconds": 1_200_i64 }
+        );
+        assert_eq!(
+            mongodb::bson::deserialize_from_document::<PlatformSettings>(literal.clone()).unwrap(),
+            settings
+        );
+    }
 }

@@ -52,6 +52,7 @@ pub(super) fn commands(
     dependencies: crate::commands::ProductionCommandDependencies,
     holder: String,
     ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    reconcile_pacing: bool,
 ) -> Result<crate::commands::CommandScheduler, String> {
     let store = dependencies.store.clone();
     let execution: Arc<dyn layer2_core::sandbox::agent_io::AgentCommandExecution> =
@@ -64,7 +65,12 @@ pub(super) fn commands(
             as Arc<dyn layer2_core::sandbox::agent_io::AgentCommandExecution>,
         None => execution,
     };
-    let worker = AgentCommandWorker::new(store, execution, holder)
-        .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
-    Ok(crate::commands::CommandScheduler::new(worker))
+    let worker = AgentCommandWorker::with_recheck_delay(
+        store,
+        execution,
+        holder,
+        std::time::Duration::from_secs(u64::from(reconcile_pacing)),
+    )
+    .map_err(|error| format!("Agent command worker is not usable: {error}"))?;
+    Ok(crate::commands::CommandScheduler::new(worker).with_reconcile_pacing(reconcile_pacing))
 }

@@ -2,8 +2,10 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    AgentWorkMutation, SandboxStoreError, VersionedWorktree, MAX_AGENT_WORK_RECEIPTS,
+    AgentRetryObservation, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
+    MAX_AGENT_WORK_RECEIPTS,
 };
+use layer2_core::sandbox::work_retry::WorkRetryFailure;
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, Sandbox, SandboxEventKind,
     TypedFailure, Workspace, Worktree, WorktreeStatus,
@@ -15,7 +17,14 @@ use super::AgentWorker;
 
 mod context;
 mod effects;
+mod failures;
+pub(super) use failures::{adapter_failure, cleanup_failure, skill_failure};
+use failures::{missing_parent, parent_store_failure};
+#[cfg(test)]
+mod ledger_hold_tests;
 mod mapping;
+mod repeated_failure;
+mod retry_delay;
 pub(super) use crate::sandbox::runtime_mapping::{runtime_capabilities, runtime_options};
 pub(super) use effects::{settle_cleanup_debt, settle_compensated_cleanup_debt};
 pub(super) use mapping::{validate_runtime_skills, validate_skills};
@@ -41,6 +50,8 @@ pub(in crate::sandbox) struct WorkerFailure {
     class: &'static str,
     detail: String,
     retryable: bool,
+    observation: Option<AgentRetryObservation>,
+    retry_kind: WorkRetryFailure,
 }
 
 impl WorkerFailure {
@@ -49,6 +60,12 @@ impl WorkerFailure {
             class,
             detail: detail.into(),
             retryable: true,
+            observation: None,
+            retry_kind: if class == "agent_parent_not_ready" {
+                WorkRetryFailure::Waiting
+            } else {
+                WorkRetryFailure::Transient
+            },
         }
     }
 
@@ -57,7 +74,13 @@ impl WorkerFailure {
             class,
             detail: detail.into(),
             retryable: false,
+            observation: None,
+            retry_kind: WorkRetryFailure::ExternalAction,
         }
+    }
+
+    pub(in crate::sandbox::agent_worker) fn is_ledger_hold(&self) -> bool {
+        self.class == layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD
     }
 
     fn typed(&self) -> TypedFailure {
@@ -122,6 +145,7 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        super::ledger_telemetry::observe(&failure);
         if agent.work.step == AgentWorkStep::PublishConnection {
             self.retry_connection_failure(&agent, failure, now).await
         } else if failure.retryable || agent.status != AgentStatus::Starting {
@@ -137,17 +161,51 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.retry_at(agent, failure, now, now + self.config.retry_delay)
-            .await
+        let delay = self.failure_retry_delay(&agent, &failure);
+        self.retry_at(agent, failure, now, now + delay).await
     }
 
     pub(super) async fn retry_at(
+        &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let telemetry = self.config.work_retry_policy_enabled.then(|| {
+            crate::sandbox::work_retry::RetryTelemetry::agent(
+                &agent,
+                failure.retry_kind(),
+                self.retry_decision(&agent, &failure, self.config.retry_delay),
+                ready_at,
+            )
+        });
+        self.commit_retry_at(agent, failure, now, ready_at).await?;
+        if let Some(telemetry) = telemetry {
+            telemetry.published();
+        }
+        Ok(())
+    }
+
+    async fn commit_retry_at(
         &self,
         mut agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
         ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if failure.is_ledger_hold() {
+            return self.retry_ledger_hold_at(agent, now, ready_at).await;
+        }
+        if self.retry_marked_capacity_at(&agent, now, ready_at).await? {
+            return Ok(());
+        }
+        if self
+            .retry_repeated_failure_at(&agent, &failure, now, ready_at)
+            .await?
+        {
+            return Ok(());
+        }
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let step = agent.work.step;
@@ -159,22 +217,28 @@ impl AgentWorker {
         agent.updated_at = stamp.clone();
         agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
         bump_log_sequence(&mut agent, 1)?;
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent,
-                worktree: None,
-                appended_at: stamp,
-                sandbox_event: None,
-                agent_logs: vec![AgentLogKind::WorkStepFailed {
-                    step,
-                    failure: failure.typed(),
-                }],
-            })
-            .await
+        let mutation = AgentWorkMutation {
+            expected_agent_revision: expected,
+            holder: self.config.holder.clone(),
+            fence,
+            agent,
+            worktree: None,
+            appended_at: stamp,
+            sandbox_event: None,
+            agent_logs: vec![AgentLogKind::WorkStepFailed {
+                step,
+                failure: failure.typed(),
+            }],
+        };
+        match failure.observation {
+            Some(observed) => {
+                self.dependencies
+                    .store
+                    .commit_agent_work_retry(mutation, observed)
+                    .await
+            }
+            None => self.dependencies.store.commit_agent_work(mutation).await,
+        }
     }
 
     async fn fail_startup(
@@ -287,40 +351,6 @@ pub(super) fn bump_log_sequence(agent: &mut Agent, count: usize) -> Result<(), S
     Ok(())
 }
 
-pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
-    match error {
-        AdapterError::InputAuthorityUnavailable(detail)
-        | AdapterError::PromptNotWritten(detail)
-        | AdapterError::Unavailable(detail) => {
-            WorkerFailure::retryable("agent_runtime_unavailable", detail)
-        }
-        AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
-        AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
-            WorkerFailure::terminal("agent_runtime_rejected", detail)
-        }
-        AdapterError::Unsupported(detail) => {
-            WorkerFailure::terminal("agent_runtime_unsupported", detail)
-        }
-        AdapterError::RuntimeContractMismatch(error) => {
-            WorkerFailure::terminal("agent_runtime_contract_mismatch", error.to_string())
-        }
-    }
-}
-
-pub(super) fn skill_failure(error: AgentSkillResolutionError) -> WorkerFailure {
-    match error {
-        AgentSkillResolutionError::Unavailable(detail) => {
-            WorkerFailure::retryable("agent_skill_source_unavailable", detail)
-        }
-        AgentSkillResolutionError::NotFound(detail) => {
-            WorkerFailure::terminal("agent_skill_not_found", detail)
-        }
-        AgentSkillResolutionError::Invalid(detail) => {
-            WorkerFailure::terminal("agent_skill_invalid", detail)
-        }
-    }
-}
-
 pub(super) fn record_receipt(
     agent: &mut Agent,
     evidence: RequestEvidence,
@@ -384,19 +414,6 @@ pub(super) fn validate_lineage(
             "agent parent records do not describe the same runtime resources",
         ))
     }
-}
-
-fn parent_store_failure(error: SandboxStoreError) -> WorkerFailure {
-    match error {
-        SandboxStoreError::Unavailable(detail) => {
-            WorkerFailure::retryable("agent_store_unavailable", detail)
-        }
-        error => WorkerFailure::terminal("agent_parent_corrupt", error.to_string()),
-    }
-}
-
-fn missing_parent() -> WorkerFailure {
-    WorkerFailure::terminal("agent_parent_missing", "an agent parent record is missing")
 }
 
 fn valid_sha256(value: &str) -> bool {

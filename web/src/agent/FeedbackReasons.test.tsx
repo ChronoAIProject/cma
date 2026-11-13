@@ -70,7 +70,7 @@ it('opens immediately but waits for confirmed down, and stays closed when the vo
   );
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
   await act(async () => finish());
-  await screen.findByRole('button', { name: 'Edit reasons' });
+  await screen.findByRole('button', { name: 'Needs improvement' });
   expect(screen.queryByRole('region', { name: 'Reasons for improvement' })).toBeNull();
   await openReasons();
   expect(screen.getByRole('textbox', { name: 'Additional details (optional)' })).toHaveValue(
@@ -159,7 +159,7 @@ function boundary(viewer: string) {
 }
 
 async function openReasons() {
-  await userEvent.click(await screen.findByRole('button', { name: 'Edit reasons' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Needs improvement' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save reasons' })).toBeEnabled());
 }
 
@@ -206,7 +206,7 @@ it('keeps previously saved reasons until an edited replacement is confirmed', as
   expect(server.state().comment).toBe('First saved');
   expect(server.state().reasons).toEqual(['inaccurate']);
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Edit reasons' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Needs improvement' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Retry reasons' })).toBeEnabled());
   expect(screen.getByRole('textbox', { name: 'Additional details (optional)' })).toHaveValue(
     'Edited draft',
@@ -267,7 +267,7 @@ it('recovers an accepted write with a lost receipt through public reread after n
   expect(server.writes).toHaveLength(1);
 });
 
-it.each(['Helpful', 'Needs improvement'])(
+it.each(['Helpful', 'Remove vote'])(
   'never restores delayed reasons after selecting %s',
   async (label) => {
     const viewer = `late-${label}`;
@@ -396,7 +396,7 @@ it('saves down immediately, retains a closed draft, then independently confirms 
     'Please check the source.',
   );
   await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Edit reasons' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Needs improvement' }));
   expect(screen.getByRole('textbox', { name: 'Additional details (optional)' })).toHaveValue(
     'Please check the source.',
   );
@@ -406,7 +406,7 @@ it('saves down immediately, retains a closed draft, then independently confirms 
   expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Unsent question');
   view.unmount();
   render(draw());
-  await userEvent.click(await screen.findByRole('button', { name: 'Edit reasons' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Needs improvement' }));
   await waitFor(() =>
     expect(screen.getByRole('textbox', { name: 'Additional details (optional)' })).toHaveValue(
       'Please check the source.',

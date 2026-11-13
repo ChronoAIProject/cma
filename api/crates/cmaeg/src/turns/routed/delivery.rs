@@ -8,8 +8,8 @@ use super::{
     storage,
     tool_reply_gate::{CancelReply, ReplyGate},
     tool_reply_store::{Admission, Kind, ReplyStore},
-    Authority, CustomCheckpoint, ExecutionError, FrozenTurn, Journal, Lease, Phase,
-    RoutedToolReplies, ToolReplyStatus,
+    Authority, CustomCheckpoint, ExecutionError, Journal, Lease, Phase, RoutedToolReplies,
+    ToolReplyStatus,
 };
 use crate::{
     delivery::{
@@ -17,7 +17,7 @@ use crate::{
         intents::{DeliveryOutcome, IntentReceipt},
     },
     ingress::routing_store::{AdmittedPlan, EventIdentity, PlanStore, StoredTarget},
-    providers::{parse_event, RecoveryEvent, ResponsesEvent, SseFrame},
+    providers::{RecoveryEvent, ResponsesEvent},
 };
 use cmaeg_core::{channel::ReplyChoice, message::OutboundMessage, seal::ReplyAddress};
 use serde::{Deserialize, Serialize};
@@ -68,41 +68,6 @@ impl RoutedDelivery {
         )
     }
 
-    pub async fn tool_reply_status(
-        &self,
-        identity: &EventIdentity,
-        target_id: &str,
-        lease: &Lease,
-        body: &FrozenTurn,
-    ) -> Result<ToolReplyStatus, ExecutionError> {
-        let plan = self
-            .plans
-            .load(identity)
-            .await
-            .map_err(admission_error)?
-            .ok_or(ExecutionError::Invalid)?;
-        let target = plan
-            .targets
-            .iter()
-            .find(|target| target.id == target_id)
-            .ok_or(ExecutionError::Invalid)?;
-        if lease.state.id != target.id
-            || lease.state.root != plan.admission_id
-            || lease.state.owner != plan.identity.owner
-            || lease.state.request_hash != plan.request_hash
-        {
-            return Err(ExecutionError::Invalid);
-        }
-        self.journal.guard(lease).await?;
-        body.validate(&plan, target, &self.journal.keys, (self.journal.clock)())?;
-        current_target(self.authority.as_ref(), &plan, target).await?;
-        let status = ReplyStore(self.journal.clone())
-            .status(&plan, target)
-            .await?;
-        self.journal.guard(lease).await?;
-        Ok(status)
-    }
-
     /// Intent is sealed and CAS-confirmed before enqueue; its actual outcome is
     /// sealed before cursor advancement. An abandoned intent becomes Unknown.
     /// Reusing a settled receipt never sends the same frame twice.
@@ -151,20 +116,18 @@ impl RoutedDelivery {
         {
             return Err(ExecutionError::Invalid);
         }
-        let frame_hash = bounded_hash(&frame.raw)?;
-        if parse_event(&SseFrame {
-            event: None,
-            id: Some(frame.sequence_number.to_string()),
-            data: frame.raw.to_string(),
-            retry: None,
-        })
-        .ok()
-        .as_ref()
-            != Some(&frame.event)
-        {
+        // The SSE decoder bounds raw frames. Persist only their digest, using
+        // the same encoding as ReplayProjection, so every accepted frame can
+        // be acknowledged even when its snapshot exceeds the effect budget.
+        let trace_contract = frame.trace_contract
+            || lease.state.delivery.as_ref().is_some_and(|previous| {
+                previous.cursor == frame.sequence_number && previous.trace_contract
+            });
+        let frame_hash = super::replay_frame::hash(frame, trace_contract)?;
+        if !super::replay_frame::shape_matches(frame) {
             return Err(ExecutionError::Invalid);
         }
-        let effect_hash = bounded_hash(&effect)?;
+        let effect_hash = bounded_effect_hash(&effect)?;
         let produced = matches!(frame.event, ResponsesEvent::OutputTextDone { .. })
             || (matches!(frame.event, ResponsesEvent::Completed { .. })
                 && matches!(
@@ -212,6 +175,7 @@ impl RoutedDelivery {
             return Err(ExecutionError::Unsupported);
         }
         let checkpoint = DeliveryCheckpoint {
+            trace_contract,
             response_id: response_id.clone(),
             cursor: frame.sequence_number,
             frame_hash,
@@ -276,7 +240,7 @@ impl RoutedDelivery {
                     }
                     DeliveryStatus::Intent => {
                         if let Some(effect) = &custom_effect {
-                            body.validate(
+                            body.validate_settlement(
                                 &plan,
                                 target,
                                 &self.journal.keys,
@@ -317,7 +281,8 @@ impl RoutedDelivery {
         {
             return Err(ExecutionError::Invalid);
         }
-        body.validate(&plan, target, &self.journal.keys, (self.journal.clock)())?;
+        let event =
+            body.settlement_event(&plan, target, &self.journal.keys, (self.journal.clock)())?;
         if let Some(effect) = &custom_effect {
             let mut next = lease.state.clone();
             next.delivery = Some(checkpoint);
@@ -375,13 +340,12 @@ impl RoutedDelivery {
             ReplayEffect::NoEffect => None,
             ReplayEffect::Reply(_) if suppressed => None,
             ReplayEffect::Reply(_) if replayed.is_some() => replayed,
+            ReplayEffect::Reply(_) if target.launch.event.expires_at <= (self.journal.clock)() => {
+                Some(receipt_for(DeliveryOutcome::Rejected {
+                    reason: "event_ref_expired".into(),
+                }))
+            }
             ReplayEffect::Reply(message) => {
-                let event = body
-                    .event_context
-                    .event_ref
-                    .open(&self.journal.keys, (self.journal.clock)())
-                    .map_err(|_| ExecutionError::Expired)?
-                    .payload;
                 // Ephemeral Sync waiters have no durable completion receipt.
                 if body.delivery.destination == ReplyChoice::Origin
                     && matches!(event.reply, ReplyAddress::Sync { .. })
@@ -490,8 +454,8 @@ impl RoutedDelivery {
         self.journal.commit(lease, next).await
     }
 }
-fn bounded_hash(value: &impl Serialize) -> Result<String, ExecutionError> {
-    let bytes = storage::bytes(value)?;
+fn bounded_effect_hash(effect: &ReplayEffect) -> Result<String, ExecutionError> {
+    let bytes = storage::bytes(effect)?;
     if bytes.len() > 256 * 1024 {
         return Err(ExecutionError::Invalid);
     }

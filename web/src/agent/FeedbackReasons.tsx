@@ -88,8 +88,8 @@ export function FeedbackReasons({
         >
           {row.draft.pending ? 'Retry reasons' : 'Save reasons'}
         </Button>
-        <Button size="sm" onClick={() => controls.close(id)}>
-          Close
+        <Button size="sm" disabled={vote?.pending} onClick={() => feedback.setVote(id, null)}>
+          Remove vote
         </Button>
         {row.error || (row.details && row.details.vote !== 'down' && !vote?.pending) ? (
           <Button

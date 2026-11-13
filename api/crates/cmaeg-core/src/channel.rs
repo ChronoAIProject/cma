@@ -68,7 +68,8 @@ pub const MAX_PROMPT_TEMPLATE_BYTES: usize = 8 * 1_024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum Source {
-    NativeLark(NativeLarkSource),
+    #[schema(value_type = crate::schema::NativeLarkSource)]
+    NativeLark(#[schema(inline)] NativeLarkSource),
     /// Native Meta WhatsApp Cloud API; independent of NyxID relay sources.
     Whatsapp {
         /// Incoming private edits and deletions for WhatsApp Business App coexistence accounts.

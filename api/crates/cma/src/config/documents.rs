@@ -4,15 +4,26 @@ use super::{required, value_or};
 /// The credential never enters a runtime or browser response.
 #[derive(Clone)]
 pub(crate) struct DocumentStorageConfig {
+    pub resilience_enabled: bool,
     pub platform_origin: String,
     pub bucket: String,
     pub client_id: String,
     pub client_secret: zeroize::Zeroizing<String>,
 }
 impl DocumentStorageConfig {
-    pub(super) fn from_lookup(
+    pub(crate) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Option<Self>, String> {
+        let resilience_enabled =
+            match lookup("CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED")?.as_deref() {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => {
+                    return Err(
+                        "CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED must be true or false".into(),
+                    )
+                }
+            };
         let bucket = value_or(lookup, "CHRONO_DOCUMENT_BUCKET", "")?;
         if bucket.is_empty() {
             return Ok(None);
@@ -34,6 +45,7 @@ impl DocumentStorageConfig {
         let client_id = required(lookup, "CHRONO_STORAGE_CLIENT_ID")?;
         let client_secret = required(lookup, "CHRONO_STORAGE_CLIENT_SECRET")?.into();
         Ok(Some(Self {
+            resilience_enabled,
             platform_origin,
             bucket,
             client_id,
@@ -73,6 +85,26 @@ mod tests {
                 DocumentStorageConfig::from_lookup(&mut |key| Ok(config.get(key).cloned()))
                     .is_err()
             );
+        }
+    }
+    #[test]
+    fn storage_resilience_is_strict_and_defaults_off() {
+        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            let mut config = values();
+            if let Some(value) = value {
+                config.insert("CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED", value.into());
+            }
+            let parsed =
+                DocumentStorageConfig::from_lookup(&mut |key| Ok(config.get(key).cloned()))
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(parsed.resilience_enabled, expected);
+        }
+        for value in ["", "TRUE", "1", " true", "false "] {
+            assert!(DocumentStorageConfig::from_lookup(&mut |key| Ok((key
+                == "CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED")
+                .then(|| value.into())))
+            .is_err());
         }
     }
     #[test]

@@ -17,6 +17,7 @@ export interface ContractCase {
   };
   response: {
     status: number;
+    setCookies?: string[];
     headers: Record<string, string>;
     bodyKind: 'json' | 'empty' | 'text' | 'sse';
     streamPrefix?: boolean;

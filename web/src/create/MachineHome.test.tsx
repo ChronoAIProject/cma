@@ -10,7 +10,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function fixture(browserAvailable = true, refusal?: { code: string; detail: string }) {
+function fixture(refusal?: { code: string; detail: string }) {
   const writes: { body: unknown; key: string | null }[] = [];
   const transport: typeof fetch = async (input, options) => {
     if (options?.method === 'POST') {
@@ -31,20 +31,13 @@ function fixture(browserAvailable = true, refusal?: { code: string; detail: stri
             AgentLifecycleCreateRequest: {
               properties: {
                 initial_message: { type: 'string' },
-                desktop: { type: 'boolean' },
                 machine_included: { type: 'boolean' },
               },
             },
           },
         },
       });
-    return Response.json({
-      state: browserAvailable ? 'available' : 'unsupported',
-      reason: 'Agent browser capability',
-      runtime_contract: 3,
-      min_memory_mib: 2048,
-      min_cpu_millis: 1000,
-    });
+    throw new Error(`Unexpected read: ${String(input)}`);
   };
   vi.stubGlobal('fetch', transport);
   const client = {
@@ -54,45 +47,40 @@ function fixture(browserAvailable = true, refusal?: { code: string; detail: stri
   return { client, writes };
 }
 
-it.each([
-  { machine: false, browser: false },
-  { machine: true, browser: false },
-  { machine: false, browser: true },
-  { machine: true, browser: true },
-])(
-  'freezes independent desktop choices through draft refresh and receipt recovery: %j',
-  async ({ machine, browser }) => {
+it.each([false, true])(
+  'freezes shared desktop choice %s through draft refresh and receipt recovery',
+  async (machine) => {
     const { client, writes } = fixture();
     const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
     const task = '  Original task\nkeep exact text  ';
     const first = render(<TaskHome {...props} />);
-    const machineOption = screen.getByRole('checkbox', { name: 'Include a shared desktop' });
-    const browserOption = screen.getByRole('checkbox', { name: 'Enable desktop' });
-    await waitFor(() => expect(browserOption).toBeEnabled());
+    const machineOption = computerOption('Shared desktop');
+    expect(
+      screen.queryByRole('menuitemcheckbox', { name: 'Agent browser' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole('menuitemcheckbox')).toHaveLength(1);
     expect(machineOption).not.toBeChecked();
-    expect(browserOption).not.toBeChecked();
     if (machine) fireEvent.click(machineOption);
-    if (browser) fireEvent.click(browserOption);
+    expect(screen.getByRole('button', { name: /^Cloud computer/ })).toHaveTextContent(
+      machine ? 'Cloud computer · Shared desktop' : 'Cloud computer',
+    );
     fireEvent.change(screen.getByLabelText('Your task'), { target: { value: task } });
     expect(writes).toHaveLength(0);
     first.unmount();
     const refreshed = render(<TaskHome {...props} />);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
-    expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toHaveProperty(
-      'checked',
-      machine,
-    );
-    expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toHaveProperty(
-      'checked',
-      browser,
-    );
+    expect(computerOption('Shared desktop')).toHaveAttribute('aria-checked', String(machine));
     expect(screen.getByLabelText('Your task')).toHaveValue(task);
     fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-    await screen.findByText('Creation receipt lost');
+    await screen.findByText(
+      "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+    );
     refreshed.unmount();
     render(<TaskHome {...props} />);
-    expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toBeDisabled();
-    expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeDisabled();
+    expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
+    expect(
+      screen.queryByRole('menuitemcheckbox', { name: 'Agent browser' }),
+    ).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Next task draft' } });
     fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(writes).toHaveLength(2));
@@ -102,30 +90,11 @@ it.each([
         name: 'New task',
         initial_message: task,
         ...(machine ? { machine_included: true } : {}),
-        ...(browser ? { desktop: true } : {}),
       },
       key: expect.any(String),
     });
   },
 );
-
-it('keeps shared desktop creation independent when Agent browser capability is absent', async () => {
-  const { client, writes } = fixture(false);
-  render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
-  await screen.findByText('Desktop unavailable: Agent browser capability');
-  expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Include a shared desktop' }));
-  fireEvent.change(screen.getByLabelText('Your task'), {
-    target: { value: 'Use the shared desktop' },
-  });
-  fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Creation receipt lost');
-  expect(writes[0]?.body).toEqual({
-    name: 'New task',
-    initial_message: 'Use the shared desktop',
-    machine_included: true,
-  });
-});
 
 it.each([
   { workspaceId: 'workspace-owned', canCreateSandbox: true },
@@ -139,8 +108,11 @@ it.each([
     await waitFor(() =>
       expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
     );
-    fireEvent.click(screen.getByText('Desktop options', { exact: true }));
-    expect(screen.getByRole('checkbox', { name: 'Include a shared desktop' })).toBeDisabled();
+    computerOption('Shared desktop');
+    expect(
+      screen.queryByRole('menuitemcheckbox', { name: 'Agent browser' }),
+    ).not.toBeInTheDocument();
+    expect(computerOption('Shared desktop')).toHaveAttribute('aria-disabled', 'true');
     expect(screen.getByText(/an existing Sandbox keeps its original setup/)).toBeVisible();
     expect(writes).toHaveLength(0);
   },
@@ -165,12 +137,14 @@ it('lets an unavailable retained shared desktop draft clear its choice without l
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   expect(screen.getByRole('alert')).toHaveTextContent('A shared desktop requires a new Sandbox');
   expect(writes).toHaveLength(0);
-  const option = screen.getByRole('checkbox', { name: 'Include a shared desktop' });
+  const option = computerOption('Shared desktop');
   expect(option).toBeChecked();
-  expect(option).toBeEnabled();
+  expect(option).toHaveAttribute('aria-disabled', 'false');
   fireEvent.click(option);
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  await screen.findByText('Creation receipt lost');
+  await screen.findByText(
+    "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
+  );
   expect(writes[0]?.body).toEqual({
     name: 'New task',
     initial_message: 'Keep my task',
@@ -178,35 +152,30 @@ it('lets an unavailable retained shared desktop draft clear its choice without l
   });
 });
 
-it('retains both options on a typed combination refusal without silently selecting another image', async () => {
+it('retains shared desktop on a typed refusal without silently selecting another image', async () => {
   const refusal = {
     code: 'desktop_unsupported',
     detail: 'This image is not verified for desktop creation.',
   };
-  const { client, writes } = fixture(true, refusal);
+  const { client, writes } = fixture(refusal);
   const props = { client, viewerId: 'owner', canCreateSandbox: true, onCreated: vi.fn() };
   const first = render(<TaskHome {...props} />);
-  const browser = screen.getByRole('checkbox', { name: 'Enable desktop' });
-  await waitFor(() => expect(browser).toBeEnabled());
-  fireEvent.click(browser);
-  fireEvent.click(screen.getByRole('checkbox', { name: 'Include a shared desktop' }));
+  await waitFor(() =>
+    expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
+  );
+  fireEvent.click(computerOption('Shared desktop'));
   fireEvent.change(screen.getByLabelText('Your task'), {
-    target: { value: 'Keep both desktop choices' },
+    target: { value: 'Keep the shared desktop' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByText(refusal.detail);
   expect(props.onCreated).not.toHaveBeenCalled();
   first.unmount();
   render(<TaskHome {...props} />);
-  for (const label of ['Include a shared desktop', 'Enable desktop']) {
-    expect(screen.getByRole('checkbox', { name: label })).toBeChecked();
-  }
+  expect(computerOption('Shared desktop')).toBeChecked();
   expect(writes).toHaveLength(1);
   expect(screen.queryByRole('button', { name: 'Recover original task' })).not.toBeInTheDocument();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
-  await waitFor(() =>
-    expect(screen.getByRole('checkbox', { name: 'Enable desktop' })).toBeEnabled(),
-  );
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   await screen.findByText(refusal.detail);
   expect(writes).toHaveLength(2);
@@ -214,8 +183,13 @@ it('retains both options on a typed combination refusal without silently selecti
   expect(writes[1]?.key).not.toEqual(writes[0]?.key);
   expect(writes[0]?.body).toEqual({
     name: 'New task',
-    initial_message: 'Keep both desktop choices',
+    initial_message: 'Keep the shared desktop',
     machine_included: true,
-    desktop: true,
   });
 });
+
+function computerOption(name: string) {
+  if (!screen.queryByRole('menu', { name: 'Run this task on' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Cloud computer/ }));
+  return screen.getByRole('menuitemcheckbox', { name });
+}

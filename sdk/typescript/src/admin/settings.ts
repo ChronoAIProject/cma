@@ -1,6 +1,15 @@
 import { ProtocolError } from '../errors.js';
 import { profileReference } from '../profiles/types.js';
-import { boolean, integer, object, optional, record, type Output } from '../schema.js';
+import {
+  boolean,
+  integer,
+  nullable,
+  object,
+  optional,
+  record,
+  text,
+  type Output,
+} from '../schema.js';
 
 const u32 = (value: unknown) => {
   const number = integer(value);
@@ -14,12 +23,17 @@ const pauseSeconds = (value: unknown) => {
   return number;
 };
 const sections = {
+  usage_reporting: object({ measured_visible: boolean }),
   defaults: object({
     sandbox_profile: profileReference,
     workspace_profile: profileReference,
     agent_profile: profileReference,
   }),
-  inactivity: object({ pause_after_seconds: pauseSeconds }),
+  inactivity: object({
+    auto_pause_enabled: optional(boolean),
+    pause_after_seconds: pauseSeconds,
+    grace_started_at: optional(nullable(text)),
+  }),
   retention: object({ agent_log_days: u32 }),
   limits: object({
     max_sandboxes_per_user: u32,
@@ -29,7 +43,7 @@ const sections = {
   triggers: object({ enabled: boolean, orchestration_paused: boolean }),
   marketplace: object({ enabled: boolean }),
 };
-const knownSettings = object(sections);
+const knownSettings = object({ ...sections, usage_reporting: optional(sections.usage_reporting) });
 type KnownSettings = Output<typeof knownSettings>;
 export type PlatformSettings = KnownSettings & Readonly<Record<string, unknown>>;
 export function platformSettings(value: unknown): PlatformSettings {
@@ -38,6 +52,9 @@ export function platformSettings(value: unknown): PlatformSettings {
   return {
     ...raw,
     ...known,
+    ...(known.usage_reporting === undefined
+      ? {}
+      : { usage_reporting: { ...record(raw.usage_reporting), ...known.usage_reporting } }),
     defaults: {
       ...record(raw.defaults),
       ...known.defaults,
@@ -61,7 +78,13 @@ export function platformSettings(value: unknown): PlatformSettings {
     marketplace: { ...record(raw.marketplace), ...known.marketplace },
   };
 }
-export const storedPlatformSettings = object({ revision: integer, settings: platformSettings });
+export const storedPlatformSettings = object({
+  revision: integer,
+  settings: platformSettings,
+  model_budget_writes_available: optional(boolean),
+  model_request_budget_writes_available: optional(boolean),
+  platform_spend_writes_available: optional(boolean),
+});
 export type StoredPlatformSettings = Output<typeof storedPlatformSettings>;
 export const replaceSettingsRequest = object({
   expected_revision: integer,
@@ -70,6 +93,7 @@ export const replaceSettingsRequest = object({
 export type ReplaceSettingsRequest = Output<typeof replaceSettingsRequest>;
 
 const patchFields = object({
+  usage_reporting: optional(sections.usage_reporting),
   expected_revision: integer,
   defaults: optional(sections.defaults),
   inactivity: optional(sections.inactivity),

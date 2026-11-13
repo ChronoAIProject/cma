@@ -6,6 +6,54 @@ conversation. Treating every already-initialized response as either a successful
 open or a reason to close the process is unsafe: the former invents authority,
 and the latter can discard an unflushed conversation tail.
 
+## Retained-history deadlines and retry continuity
+
+Recovery `initialize` (with a retained conversation ID) and retained `session/load`
+allow five minutes idle, renewed only by durable output ACK progress, with the
+existing sixteen-minute absolute RPC bound. Legacy sockets without ACKs get a
+fixed five minutes. This covers cold reopen, prepared tool rebinding, managed
+context reload after close, and instructions recovery after native unsubscribe.
+Fresh `initialize` keeps thirty seconds idle; `session/new` and ordinary control
+RPCs keep thirty seconds. Existing shorter optional-probe bounds are unchanged.
+
+Settings/context delivery normally has a fifteen-second idle budget, including
+progress-subscription setup before enqueueing. Context delivery with durable
+progress also has a 120-second absolute bound. Only an admitted retained load
+switches delivery to its five-minute idle and sixteen-minute absolute bounds;
+ordinary budgets restart after loading. Another operation's load/output cannot
+extend a pending authority guard. This prevents an outer waiter from repeatedly
+abandoning a closed session while its history loads.
+
+The fifteen-minute lifecycle lease still bounds the whole sequential reopen
+step. Socket loss stops its relay, while Layer 4 retains the process, in-flight
+load and unacknowledged output. A full journal backpressures stdout until the
+next attachment ACKs it. Retry reuses the bridge and completed loads; retained
+process state does not prove that an unfinished load succeeded.
+
+The shipped patched ACP 1.4.0 bridge dispatches requests concurrently. The pinned
+Codex 0.147.0 regression receives `Already initialized` while a load is blocked
+in required MCP initialization. Before session installation, both mode-setting
+and prompts return JSON-RPC -32603 (`Session … not found`). The normal Codex
+handshake requires the mode acknowledgement before publication. After installation,
+prompts use that native session without waiting for ACP history replay. Required
+tool completion receipts remain separate checks; `Greeting::Existing` alone is
+not a load-completion receipt.
+
+A prompt refusal becomes `FailedForPrompt`, durable `TurnFailed` with class
+`agent_turn_failed`, and AG-UI `RUN_ERROR`. The Agent returns to Ready with its
+active turn cleared; the failed input is neither reported complete nor resent.
+A failed load still requires successful reload/recovery of the same conversation.
+The native regression proves refusal during and after failed loading, then
+successful explicit reload of the original ID.
+
+Revive REST returns HTTP 202 with durable `reviving` state without awaiting the
+worker. REST reads expose the recorded lifecycle purpose, phase and start time;
+the AG-UI sandbox companion exposes status only. The Agent UI polls public REST,
+shows “Reopening your agents”, and never advances phases from elapsed time.
+Ordinary AG-UI input is disabled with a reason; Responses v2 can accept durably
+queued input during revival. The caller therefore has an admitted in-progress
+result while a worker exceeds 120 seconds, not a 120-second completion guarantee.
+
 ## Preventing and recovering lost confirmation
 
 The open runner retains its original channel and immutable binding while retrying
@@ -225,3 +273,65 @@ its files and returns terminal `workspace_prepare_outcome_unknown`; the Workspac
 worker records Failed and clears pending work, rather than retrying indefinitely.
 The Sandbox remains Active. That incomplete Workspace requires explicit recovery;
 it is not marked Ready and does not admit an Agent as a usable workspace.
+
+## Runtime mutation ledger capacity
+
+The API distinguishes a reachable runtime's full mutation ledger from runtime
+loss, owner quota and native HTTP concurrency pressure. Both runtime transports
+recognize only the exact pair `mutation_ledger_capacity` /
+`runtime mutation ledger capacity is exhausted` before generic retryability.
+Details are never trimmed or matched by prefix/suffix. For retained runtimes,
+only these exact legacy code/detail pairs have the same meaning:
+
+| Code | Detail |
+| --- | --- |
+| `mutation_authority_corrupt` | `runtime mutation authority contains too many records` |
+| `mutation_authority_corrupt` | `mutation authority contains too many records` |
+| `mutation_journal_corrupt` | `runtime mutation journal contains too many entries` |
+
+Other corruption, stale/conflicting authority and prefix/suffix near-matches keep
+their existing behavior. A capacity refusal is not evidence that an operation
+completed or that a process, home or Worktree disappeared. It never authorizes
+runtime replacement.
+
+Held Agent startup, connection publication/recovery, first-message attachment,
+skill installation and cleanup keep their original pending work. The existing
+durable attempt count schedules retries at 30, 60, 120, 240 and then 300 seconds
+from the completed failure. A configured base longer than 300 seconds remains
+unchanged. Successful advancement resets attempts. Restart/takeover does not
+reset the schedule. No lease is held while waiting; retries retain operation IDs
+and request digests and claim normally allocated newer fences. Once capacity is
+restored, recovery can be delayed by up to the current retry interval.
+
+A fixed `agent_runtime_ledger_hold` failure records the reason. Consecutive holds
+at the same step reuse the exact retained tail marker, with the full Agent,
+lease, log and parent checks in the existing transaction; they do not append an
+unbounded stream of duplicate diagnostics. At the normal Agent-log limit this
+marker uses existing diagnostic headroom and preserves the active turn, partial
+answer, output receipt and cleanup debt. If even that reserved headroom is
+unavailable, the publication fails closed without settling the Agent as failed
+or cleanup as complete; normal lease expiry controls takeover. This does not
+repair a full Agent log or grant normal startup publication extra log capacity.
+
+The API's structured operational metrics emit `agent runtime ledger hold
+observed`, a fixed `reason=runtime_ledger_capacity`, and a saturating process-local
+`failures_total`. It counts observed refused attempts, not Sandboxes, and resets
+with the API process. It excludes provider error text, resource identifiers and
+caller spans. `occupancy=unknown` and `occupancy_support=unknown` are explicit:
+these failures provide no trustworthy occupancy/free-slot count. RuntimeStatus
+JSON remains unchanged; observation does not scan or mutate runtime ledgers.
+
+| API | Runtime | Capacity behavior |
+| --- | --- | --- |
+| Old | Old | Legacy nonretryable rejection; startup may fail and cleanup follows the old retry path. |
+| New | Old | Exact legacy capacity pairs retain pending work with sparse retries. |
+| New | New | The exact capacity code/detail pair retains pending work with sparse retries. |
+| Old | New | Requires `mutation_ledger_capacity` with `retryable=false`; the old API treats it as nonretryable rejection, not runtime loss or quota. Startup can still fail. |
+
+This is API containment only. Existing runtimes keep their image and ledgers;
+retries can still consume authority on an old runtime, at a reduced rate. It
+neither frees slots nor permanently bounds their growth. Runtime prevention and
+any repair of an exhausted home require their separate release/recovery work.
+No durable schema, operation identity, receipt or fence format changes here.
+An API rollback can read these records but restores its previous failure/retry
+behavior; format compatibility does not retain this containment policy.

@@ -69,7 +69,7 @@ it('preserves the same draft and uploaded attachment through settings disclosure
   });
   await screen.findByText('Ready');
   const summary = await screen.findByRole('button', { name: /^Agent settings:/ });
-  expect(summary).toHaveTextContent('GPT-6 · High · Autonomous');
+  expect(summary).toHaveTextContent('GPT-6 · High');
   expect(summary).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByRole('button', { name: 'Permission mode' })).not.toBeInTheDocument();
   await user.click(summary);
@@ -154,7 +154,7 @@ it('keeps Responses selected after applying compact settings and describes queue
     screen.getByText('Stop the current turn, then start a new turn with this message.'),
   ).toBeVisible();
   await user.keyboard('{Escape}');
-  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   await user.click(screen.getByRole('button', { name: 'Queue message' }));
   await waitFor(() => expect(transport.post).toHaveBeenCalledOnce());
   expect(JSON.parse(String(transport.post.mock.calls[0]![0]?.body)).input).toBe(

@@ -312,6 +312,18 @@ pub enum ProblemCode {
     /// Wire value `github_source_unavailable`.
     #[serde(rename = "github_source_unavailable")]
     GithubSourceUnavailable,
+    /// Wire value `github_dispatch_unavailable`.
+    #[serde(rename = "github_dispatch_unavailable")]
+    GithubDispatchUnavailable,
+    /// Wire value `github_integration_retired`.
+    #[serde(rename = "github_integration_retired")]
+    GithubIntegrationRetired,
+    /// Wire value `github_proof_withdrawn`.
+    #[serde(rename = "github_proof_withdrawn")]
+    GithubProofWithdrawn,
+    /// Wire value `github_delivery_expired`.
+    #[serde(rename = "github_delivery_expired")]
+    GithubDeliveryExpired,
     /// Wire value `attachment_not_found`.
     #[serde(rename = "attachment_not_found")]
     AttachmentNotFound,

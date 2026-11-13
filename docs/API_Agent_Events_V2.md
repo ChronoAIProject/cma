@@ -244,13 +244,32 @@ or when an older server omits it, clients do not invent an unreported live time.
 The server subscribes to live updates before reading the initial head, catches
 up durable history first and validates runtime generation/active turn internally.
 A future-anchored fragment waits for its durable sequence. A committed assistant
-message suppresses superseded text fragments. Live batches are limited to 32
-fragments per iteration. Buffered live text is discarded if durable state
-changes before its release. Reasoning summaries remain ephemeral; snapshots,
-response retrieval and retained receipts cannot reconstruct missed reasoning.
+message suppresses superseded text fragments. Consecutive fragments whose
+message, kind, turn, runtime generation and `after_sequence` agree may be
+coalesced, and each resulting `delta` is capped at 16 KiB (the original
+live-fragment byte bound). A live batch carries at most 128 source fragments.
+Each subscriber's in-memory lane retains 256 source fragments (previously 32),
+so the same short burst can now arrive without a lag gap. These bounds count
+source fragments before coalescing; clients concatenate `delta` values and do
+not infer source-fragment counts from the number of live SSE frames. The frame
+shape is unchanged. The shared lag contract deliberately overflows the lane by
+eight fragments and alternates message/reasoning kinds, preserving its exact
+eight-fragment gap and first retained delta across coalescing.
+Live authorization and head validation happen once per batch; when the durable
+head advances, still-valid buffered fragments wait behind the
+durable catch-up and then resume in their original order. Resuming rechecks the
+Agent identity, runtime generation, active turn, committed assistant message
+and durable head against the retained fragment metadata. Durable completion or
+a superseding assistant message covers obsolete fragments, which are dropped
+without a gap. A runtime-generation change in the same active turn counts the
+invalidated fragments and produces an explicit `lagged` gap. Broadcast lag also
+produces a `lagged` gap, after fragments received before that lag and before any
+later fragments. Reasoning summaries remain ephemeral; snapshots, response
+retrieval and retained receipts cannot reconstruct missed reasoning.
 
-Every request authorizes the actual caller. Every frame revalidates current
-policy and exact resource lineage after waiting under consumer backpressure.
+Every request authorizes the actual caller. Durable and gap frames revalidate
+current policy and exact resource lineage after waiting under consumer
+backpressure; each live batch revalidates before releasing its first fragment.
 Stream membership evidence does not renew through polling. Dependency IO is
 bounded to 15 seconds and to any earlier membership deadline.
 

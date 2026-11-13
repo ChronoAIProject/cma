@@ -126,9 +126,54 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: CommandSubmission,
     ) -> Result<CommandStatusView, CommandAdmissionError> {
+        self.admit_inner(context, credential, source, submission, None)
+            .await
+    }
+
+    /// Fence an interface's independent input-policy observation at reservation.
+    pub async fn admit_at_binding_revision(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: CommandSubmission,
+        binding_revision: Option<u64>,
+    ) -> Result<CommandStatusView, CommandAdmissionError> {
+        self.admit_inner(
+            context,
+            credential,
+            source,
+            submission,
+            Some(binding_revision),
+        )
+        .await
+    }
+
+    async fn admit_inner(
+        &self,
+        context: &CallerContext,
+        credential: &str,
+        source: CommandSubmissionSource,
+        submission: CommandSubmission,
+        binding_policy: Option<Option<u64>>,
+    ) -> Result<CommandStatusView, CommandAdmissionError> {
         let (mut authorized, mut request) = self
             .prepare(context, credential, source, submission.clone())
             .await?;
+        if binding_policy.is_some_and(|revision| match revision {
+            Some(revision) => request
+                .binding
+                .as_ref()
+                .is_none_or(|proof| proof.binding.revision != revision),
+            None => {
+                request.envelope.command.external_event().is_some()
+                    && request.binding.as_ref().is_some_and(|proof| {
+                        proof.binding.profile.verified_sender_context_enabled()
+                    })
+            }
+        }) {
+            return Err(CommandLedgerError::Conflict.into());
+        }
         let target = ResourceTarget::Agent {
             agent_id: request.envelope.agent_id.clone(),
         };
@@ -336,6 +381,17 @@ impl AgentCommandService {
             return Err(CommandAdmissionError::ModelMismatch);
         }
         let command_id = AgentCommandId::generate();
+        let queue_lifetime = if matches!(command, AgentCommand::Message { .. }) {
+            authorized
+                .binding_authority()
+                .map_or(QUEUE_LIFETIME, |authority| {
+                    Duration::from_secs(u64::from(
+                        authority.binding.profile.effective_queue_lifetime_seconds(),
+                    ))
+                })
+        } else {
+            QUEUE_LIFETIME
+        };
         let request = CommandReservation {
             binding: authorized.binding_authority().cloned(),
             envelope: AgentCommandEnvelope {
@@ -361,7 +417,7 @@ impl AgentCommandService {
             response_id: matches!(command, AgentCommand::Message { .. })
                 .then(AgentResponseId::generate),
             admitted_at: rfc3339_at(started_at),
-            queue_deadline: rfc3339_at(started_at + QUEUE_LIFETIME),
+            queue_deadline: rfc3339_at(started_at + queue_lifetime),
             queue_capacity: MAX_COMMAND_QUEUE_CAPACITY,
             expected_agent_revision: submission.expected_agent_revision.unwrap_or(agent.revision),
             parent: SandboxMutationGuard::capture(&authorized.snapshot.lineage.sandbox),

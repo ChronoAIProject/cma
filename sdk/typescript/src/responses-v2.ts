@@ -1,3 +1,5 @@
+import { readOutputPage, type V2OutputPageOptions } from './responses-v2/output-page.js';
+export type { V2OutputPage, V2OutputPageOptions } from './responses-v2/output-page.js';
 import { v2EventContext } from './responses-v2/event-context.js';
 import type { ResolvedConfig } from './config.js';
 import { ProtocolError, ValidationError } from './errors.js';
@@ -117,6 +119,10 @@ export class ResponsesV2 {
       identity(v2ResponseObject, id),
       options,
     );
+  }
+  /** Read one bounded output page using only this response's returned cursor. */
+  readOutputPage(id: string, options: V2OutputPageOptions = {}) {
+    return readOutputPage(this.config, id, options);
   }
   readEventContext(
     binding: string,

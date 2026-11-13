@@ -1,5 +1,5 @@
 use layer2_core::sandbox::{
-    Agent, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
+    Agent, AgentLiveDelivery, AgentLiveFragmentKind, AgentLiveSubscription,
     MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 use serde_json::json;
@@ -15,7 +15,7 @@ const MAX_LIVE_REASONING_BYTES: usize = 64 * 1024;
 
 pub(super) struct LiveState {
     watching: Option<AgentLiveSubscription>,
-    held: Option<AgentLiveFragment>,
+    held: Option<AgentLiveDelivery>,
     pub(super) message_announced: bool,
     pub(super) message_index: usize,
     pub(super) message_text: String,

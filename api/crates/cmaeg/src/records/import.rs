@@ -1,5 +1,5 @@
 //! Explicit offline transfer; the gateway never receives legacy DB credentials.
-use super::{RecordError, RecordKind};
+use super::{ImportGate, RecordError, RecordKind};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
@@ -49,7 +49,17 @@ fn decode(line: &str) -> Result<(RecordKind, Document), RecordError> {
     }
     Ok((record.kind, document))
 }
+/// Import with the deployed channel write policy (`CMAEG_GITHUB_ENABLED`).
 pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, RecordError> {
+    import_with(db, path, &ImportGate::from_environment()?).await
+}
+
+/// Import under an explicit channel write policy.
+pub async fn import_with(
+    db: &Database,
+    path: &std::path::Path,
+    gate: &ImportGate,
+) -> Result<u64, RecordError> {
     let file = std::fs::File::open(path)
         .map_err(|_| RecordError::Rejected("record export is unreadable".into()))?;
     let mut reader = BufReader::new(file);
@@ -81,13 +91,25 @@ pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, Record
             tracking = crate::worker_credentials::WorkerCredentials::from_environment(db).await?;
             tracking_checked = true;
         }
+        let records = db.collection_with_options::<Document>(kind.collection(), options.clone());
+        let query = doc! {"_id":desired.get_str("_id").map_err(|_| RecordError::Rejected("invalid record ID".into()))?};
         if kind == RecordKind::Channel {
+            let blob = desired
+                .get_binary_generic("blob")
+                .map_err(|_| RecordError::Rejected("invalid imported channel blob".into()))?;
+            // A row already stored unchanged is retained; any other row is a
+            // create and must pass the channel write gate before any write.
+            let retained = records
+                .find_one(query.clone())
+                .await
+                .map_err(|_| RecordError::Unavailable("cannot read existing record".into()))?
+                .is_some_and(|stored| stored == desired);
+            if !retained {
+                gate.check_new_channel(blob)?;
+            }
             if let Some(tracking) = &tracking {
                 // Imported consumers can execute without a provider bind: record
                 // every admitted worker hash before the Channel becomes visible.
-                let blob = desired
-                    .get_binary_generic("blob")
-                    .map_err(|_| RecordError::Rejected("invalid imported channel blob".into()))?;
                 tracking.record_blob(blob).await?;
             }
         }
@@ -99,8 +121,6 @@ pub async fn import(db: &Database, path: &std::path::Path) -> Result<u64, Record
             count += 1;
             continue;
         }
-        let records = db.collection_with_options::<Document>(kind.collection(), options.clone());
-        let query = doc! {"_id":desired.get_str("_id").map_err(|_| RecordError::Rejected("invalid record ID".into()))?};
         // Restart-safe insert only. Never overwrite an independently mutated row.
         let result = records
             .update_one(query.clone(), doc! {"$setOnInsert":&desired})

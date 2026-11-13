@@ -1,4 +1,5 @@
 use super::{error, projection, ResponsesV2State, V2ResponseObject};
+use crate::stream_telemetry::{self, Kind, Poll};
 use axum::response::{
     sse::{Event, KeepAlive},
     IntoResponse, Response, Sse,
@@ -13,6 +14,15 @@ pub(super) async fn snapshot(
     authorization: &AgentEventStreamAuthorization,
     receipt: &CommandReceiptView,
 ) -> Result<(V2ResponseObject, bool), Response> {
+    snapshot_mode(state, authorization, receipt, true).await
+}
+
+async fn snapshot_mode(
+    state: &ResponsesV2State,
+    authorization: &AgentEventStreamAuthorization,
+    receipt: &CommandReceiptView,
+    indexed_allowed: bool,
+) -> Result<(V2ResponseObject, bool), Response> {
     let id = receipt
         .response_id
         .as_ref()
@@ -26,9 +36,34 @@ pub(super) async fn snapshot(
         return Err(error::unavailable());
     }
     let bound = reading.command.turn_sequence.is_some();
+    let origin = state.agent_page_origin.clone();
+    let indexed_reading = reading.clone();
+    if let Some(result) = state
+        .reads
+        .with_output_observation(
+            authorization,
+            reading.command.turn_sequence,
+            move |source| {
+                Box::pin(async move {
+                    if !indexed_allowed {
+                        return Err(layer2_core::sandbox::AgentReadError::Unavailable(
+                            "source format changed; reconnect at the same durable cursor".into(),
+                        ));
+                    }
+                    projection::indexed::complete(source, &origin, indexed_reading).await
+                })
+            },
+        )
+        .await
+        .map_err(error::read)?
+    {
+        return result
+            .map(|response| (response, bound))
+            .ok_or_else(pagination_required);
+    }
     let history = state
         .reads
-        .event_stream_snapshot(authorization)
+        .response_event_stream_snapshot(authorization, reading.command.turn_sequence)
         .await
         .map_err(error::read)?;
     projection::project(&state.agent_page_origin, reading, &history)
@@ -42,7 +77,14 @@ pub(super) async fn open(
     receipt: CommandReceiptView,
     after: Option<u64>,
 ) -> Response {
-    let (initial, bound) = match snapshot(&state, &authorization, &receipt).await {
+    let indexed = match state.reads.output_is_indexed(&authorization).await {
+        Ok(indexed) => indexed,
+        Err(value) => return error::read(value),
+    };
+    if state.paged_events || indexed {
+        return super::stream_pages::open(state, authorization, receipt, after).await;
+    }
+    let (initial, bound) = match snapshot_mode(&state, &authorization, &receipt, false).await {
         Ok(value) => value,
         Err(error) => return error,
     };
@@ -97,16 +139,36 @@ pub(super) async fn open(
                 .revalidation_deadline()
                 .map_or(wake, |expires| expires.min(wake));
             tokio::time::sleep_until(wake).await;
-            match snapshot(&open.state, &open.authorization, &open.receipt).await {
+            let poll = Poll::new(Kind::ResponsesV2);
+            match snapshot_mode(&open.state, &open.authorization, &open.receipt, false).await {
                 Ok((response, bound)) => {
                     open.terminal = response.terminal();
                     open.pending = projection::events(&response, bound).into();
+                    // Projection sequences increase monotonically; inspect only the tail.
+                    poll.complete(open.pending.back().is_some_and(|event| {
+                        event["sequence_number"]
+                            .as_u64()
+                            .is_some_and(|seq| seq >= open.next)
+                    }));
                 }
                 Err(_) => return open.fail(),
             }
         }
     });
-    let mut response = Sse::new(body)
+    response(body, &response_id, &command_id)
+}
+
+pub(super) fn pagination_required() -> Response {
+    error::field("output","response_pagination_required",
+        "The complete response exceeds the result budget. Read its /output pages and /events replay; output was not truncated.")
+}
+
+pub(super) fn response(
+    body: impl futures_util::Stream<Item = Result<Event, Infallible>> + Send + 'static,
+    response_id: &str,
+    command_id: &str,
+) -> Response {
+    let mut response = Sse::new(stream_telemetry::observe(body, Kind::ResponsesV2))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
     let headers = response.headers_mut();
@@ -145,7 +207,7 @@ impl Open {
         Some((Ok(sse(event)), self))
     }
 }
-fn sse(event: Value) -> Event {
+pub(super) fn sse(event: Value) -> Event {
     let mut result = Event::default().event(event["type"].as_str().unwrap());
     // Only durable events carry replay IDs. Observation errors are connection
     // events and must never advance the reconnect cursor past future output.

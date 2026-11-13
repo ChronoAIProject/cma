@@ -20,6 +20,9 @@ import {
   type Output,
 } from './schema.js';
 
+/** Complete encoded absolute URL budget; mirrored from the shared browser-auth-limits wire fixture. */
+export const MAX_LOGIN_URL_BYTES = 4096;
+
 const capability = enumeration(
   'create_sandbox',
   'use_own_sandboxes',
@@ -38,6 +41,8 @@ const capability = enumeration(
 );
 export type Capability = Output<typeof capability>;
 const signedIn = object({
+  api_commands: optional(boolean),
+  usage_reporting: optional(object({ measured_visible: boolean })),
   subject: text,
   capabilities: array(capability),
   visitor: boolean,
@@ -105,10 +110,13 @@ export class Authentication {
     if (options.screen !== undefined && options.screen !== 'register')
       throw new ValidationError('screen must be register when supplied');
     if (options.returnTo !== undefined) validateReturnTarget(options.returnTo);
-    return urlOf(
+    const target = urlOf(
       this.config,
       query('/auth/login', { return_to: options.returnTo, screen: options.screen }),
     );
+    if (target.length > MAX_LOGIN_URL_BYTES)
+      throw new ValidationError('encoded login URL exceeds the public navigation budget');
+    return target;
   }
 
   logoutUrl(): string {
@@ -117,15 +125,41 @@ export class Authentication {
 }
 
 function validateReturnTarget(value: string): void {
+  if (typeof value !== 'string')
+    throw new ValidationError('returnTo must be a canonical CMA workflow path');
+  const split = value.indexOf('?');
+  const path = split < 0 ? value : value.slice(0, split);
+  const query = split < 0 ? undefined : value.slice(split + 1);
   const id = '[A-Za-z0-9_.~-]+';
   const workflow = new RegExp(
-    `^/(?:t/${id}(?:/${id})?|triggers/manage(?:/${id}(?:/embed)?)?|agents/${id}|sandboxes/${id}|(?:profiles|marketplace)(?:/(?:agent|workspace|sandbox)/${id})?)$`,
+    `^/(?:agent-manager|event-gateway|image-manager|bots(?:/${id})?|auth/bot-father/link/${id}/complete|t/${id}(?:/${id})?|triggers/manage(?:/${id}(?:/embed)?)?|agents/${id}|sandboxes/${id}|(?:profiles|marketplace)(?:/(?:agent|workspace|sandbox)/${id})?)$`,
   );
+  const keys = new Set<string>();
+  let validQuery = true;
+  for (const [key] of new URLSearchParams(query)) {
+    if (
+      keys.has(key) ||
+      !(
+        (path === '/bots/new' && key === 'setup') ||
+        (path.startsWith('/sandboxes/') && key === 'tab')
+      )
+    )
+      validQuery = false;
+    keys.add(key);
+  }
   if (
-    typeof value !== 'string' ||
-    value.length > 256 ||
-    value.split('/').some((segment) => segment === '.' || segment === '..') ||
-    (value !== '/' && !workflow.test(value))
+    value.length > MAX_LOGIN_URL_BYTES ||
+    path.length > 256 ||
+    Array.from(value).some(
+      (character) =>
+        character.charCodeAt(0) <= 32 ||
+        character.charCodeAt(0) >= 127 ||
+        character === '#' ||
+        character === '\\',
+    ) ||
+    !validQuery ||
+    path.split('/').some((segment) => segment === '.' || segment === '..') ||
+    (path !== '/' && !workflow.test(path))
   )
     throw new ValidationError('returnTo must be a canonical CMA workflow path');
 }

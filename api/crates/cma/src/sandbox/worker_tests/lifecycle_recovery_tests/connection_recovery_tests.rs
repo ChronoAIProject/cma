@@ -152,7 +152,7 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool, pending_skil
             .await
             .unwrap();
     }
-    let recovery_at = now + Duration::from_secs(1);
+    let recovery_at = after_durable_boundary(&active).await;
     let reconciler = SandboxReconciler::new(
         harness.store.clone(),
         adapter.clone(),
@@ -227,7 +227,7 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool, pending_skil
         assert_eq!(waiting.status, SandboxStatus::Reviving);
         assert!(waiting.failure.is_none());
         assert_eq!(waiting.runtime, reopened.runtime);
-        reconciler.initialize(settle_at).await.unwrap();
+        reconciler.initialize(SystemTime::now()).await.unwrap();
         drive_to_reopened(&harness, &worker, &active.id, settle_at).await;
     }
 
@@ -310,6 +310,17 @@ async fn recovery_scenario(retained: bool, interrupt_revival: bool, pending_skil
     assert_eq!(restored.status, SandboxStatus::Active);
     assert_eq!(restored.lifecycle.home, active.lifecycle.home);
     assert_eq!(reconnected.worktree_id, agent.worktree_id);
+}
+
+async fn after_durable_boundary(sandbox: &Sandbox) -> SystemTime {
+    let durable = stamp_time(&sandbox.updated_at);
+    if let Ok(delay) = durable
+        .duration_since(SystemTime::now())
+        .map(|delay| delay + Duration::from_millis(10))
+    {
+        tokio::time::sleep(delay).await;
+    }
+    SystemTime::now()
 }
 
 async fn drive_to_reopened(

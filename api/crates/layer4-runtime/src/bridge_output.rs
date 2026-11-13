@@ -8,6 +8,7 @@ use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use super::BUFFER_BYTES;
+use layer3_adapter::agent_capacity_recovery::RetainedOutputBoundary;
 
 const MAX_RETAINED_FRAMES: usize = 16_384;
 
@@ -144,6 +145,23 @@ impl OutputRetention {
                 .collect(),
             finished_and_acknowledged: journal.finished
                 && journal.acknowledged == journal.last_cursor,
+        })
+    }
+
+    pub(crate) async fn recovery_boundary(&self) -> Option<RetainedOutputBoundary> {
+        let journal = self.journal.lock().await;
+        if journal.lost > 0 || journal.last_cursor == u64::MAX {
+            return None;
+        }
+        let first_retained = journal.held.front().map_or_else(
+            || journal.last_cursor.saturating_add(1),
+            |frame| frame.cursor,
+        );
+        Some(RetainedOutputBoundary {
+            stream_id: self.stream_id.to_string(),
+            acknowledged_through: journal.acknowledged,
+            first_retained,
+            observed_through: journal.last_cursor,
         })
     }
 

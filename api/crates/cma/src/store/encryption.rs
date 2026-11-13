@@ -45,6 +45,14 @@ impl AuthEncryptionKey {
         self.0.as_ref()
     }
 
+    pub(crate) fn metrics_cursor_key(&self, deployment: &str) -> Zeroizing<Vec<u8>> {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.usage.metrics.cursor.v1\0");
+        context.update(deployment.as_bytes());
+        Zeroizing::new(context.sign().as_ref().to_vec())
+    }
+
     /// Derive a separate signing key without exposing the encryption key bytes.
     pub(super) fn agent_access_signing_key(&self, namespace: &str) -> ring::hmac::Key {
         let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());

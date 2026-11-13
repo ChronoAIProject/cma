@@ -38,6 +38,12 @@ pub(in crate::store) async fn ensure_indexes(
     let mut indexes = Vec::new();
     for (name, keys, unique, partial) in [
         (
+            "sandbox_control_observations",
+            doc! { "queued": 1, "record.admitted_at": 1, "queue_deadline": 1 },
+            false,
+            None,
+        ),
+        (
             "sandbox_control_idempotency",
             doc! { "scope": 1, "key_sha256": 1 },
             true,

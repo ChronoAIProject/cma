@@ -149,7 +149,7 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     "required":["_id","owner","blob","version","schema_version","expires_at"],"properties":{
     "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},
     "blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},
-    "schema_version":{"enum":[1]},"expires_at":{"bsonType":"date"}}}};
+    "schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0},"expires_at":{"bsonType":"date"}}}};
     match db.run_command(doc! {"create":MEDIA_CONTINUATIONS,"validator":validator.clone(),"validationLevel":"strict","validationAction":"error"}).await {
         Ok(_) => {},
         Err(error) if matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(command) if command.code == 48) => {

@@ -96,7 +96,7 @@ impl SuggestionStore for MongoSandboxStore {
             return Err(AgentReadError::NotFound);
         }
         Ok(work.reading(
-            context::current(self, &work, &mut session).await?,
+            context::current(self, &work, &mut session, true).await?,
             unix_millis(),
         ))
     }
@@ -131,7 +131,7 @@ impl SuggestionStore for MongoSandboxStore {
             return Ok(None);
         };
         let mut work = decode(&row)?;
-        let current = context::current(self, &work, &mut session).await?;
+        let current = context::current(self, &work, &mut session, false).await?;
         let claimed = work.claim(current, now_ms);
         self.suggestions
             .replace_one(doc! {"_id": &work.id}, document(&work)?)
@@ -161,7 +161,7 @@ impl SuggestionStore for MongoSandboxStore {
             session.abort_transaction().await.map_err(unavailable)?;
             return Ok(());
         }
-        let current = context::current(self, &work, &mut session).await?;
+        let current = context::current(self, &work, &mut session, false).await?;
         self.agents
             .update_one(
                 doc! {"_id":work.agent_id.as_str()},

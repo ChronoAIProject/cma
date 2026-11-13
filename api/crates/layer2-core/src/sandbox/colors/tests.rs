@@ -118,6 +118,7 @@ fn sandbox(id: &str, owner: &str, created_at: &str, status: SandboxStatus) -> Sa
             id: SandboxProfileId("sbp_colors".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

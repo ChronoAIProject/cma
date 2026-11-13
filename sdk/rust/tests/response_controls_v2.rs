@@ -377,3 +377,14 @@ async fn malformed_foreign_or_missing_nullable_output_is_never_accepted() {
     ));
     server.assert_drained();
 }
+
+#[test]
+fn preserves_typed_revival_failures_in_command_status() {
+    for failure in ["credential_setup_required", "connections_required"] {
+        let mut value = fixture("queued-observe")["response"].clone();
+        value["status"] = json!("failed");
+        value["failure"] = json!(failure);
+        let status: cma_sdk::responses_v2::CommandStatus = serde_json::from_value(value).unwrap();
+        assert_eq!(status.failure.unwrap().as_str(), failure);
+    }
+}

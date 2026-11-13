@@ -200,7 +200,12 @@ impl ProviderHostedControlTransport {
         slot: Arc<NativeHttpSlot>,
     ) -> crate::Result<NativeLease> {
         let waiting = std::time::Instant::now();
-        let mut checkout = slot.connection.clone().lock_owned().await;
+        let mut checkout = crate::binding_diagnostics::measure(
+            crate::binding_diagnostics::Stage::TransportWait,
+            slot.connection.clone().lock_owned(),
+            |_| crate::binding_diagnostics::Outcome::Complete,
+        )
+        .await;
         let wait_ms = u64::try_from(waiting.elapsed().as_millis()).unwrap_or(u64::MAX);
         slot.idle_timer.lock().unwrap().take();
         let lease = NativeLease {

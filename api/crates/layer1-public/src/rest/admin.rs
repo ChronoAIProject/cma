@@ -9,7 +9,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use layer2_core::sandbox::{OperatorError, SandboxOperatorService};
+use layer2_core::sandbox::{OperatorError, SandboxMaintenanceStore, SandboxOperatorService};
 use layer2_core::{
     ActivityAction, ActivityQuery, ActivityRecord, ActivityService, ActivityTarget, Capability,
     CoreError, PlatformSettingsService, RuntimeInventory, RuntimeStatus, SubjectId,
@@ -22,10 +22,13 @@ use crate::AuthenticatedCaller;
 
 use super::{problem_document, problem_response};
 
+pub(super) mod admission;
+pub(super) mod auto_pause;
 pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
 pub(super) mod settings;
+pub(super) mod spend;
 pub(super) mod triggers;
 pub mod warm_pools;
 
@@ -39,6 +42,9 @@ pub struct AdminState {
     pub(super) activity: Arc<ActivityService>,
     pub(super) runtime_inventory: Option<Arc<dyn RuntimeInventory>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
+    pub(super) maintenance: Option<Arc<dyn SandboxMaintenanceStore>>,
+    pub(super) spend: Option<Arc<layer2_core::budget::PlatformSpendService>>,
+    pub(super) admission_control: Option<Arc<layer2_core::admission::AdmissionControlService>>,
 }
 
 impl AdminState {
@@ -55,6 +61,9 @@ impl AdminState {
             activity,
             runtime_inventory: None,
             runtime_updates: None,
+            maintenance: None,
+            spend: None,
+            admission_control: None,
         }
     }
 
@@ -81,12 +90,28 @@ impl AdminState {
         self.runtime_inventory = Some(inventory);
         self
     }
+
+    pub fn with_maintenance(mut self, maintenance: Arc<dyn SandboxMaintenanceStore>) -> Self {
+        self.maintenance = Some(maintenance);
+        self
+    }
+
+    pub fn with_platform_spend(
+        mut self,
+        service: Arc<layer2_core::budget::PlatformSpendService>,
+    ) -> Self {
+        self.spend = Some(service);
+        self
+    }
 }
 
 /// Compose every route beneath the deliberately isolated admin path segment.
 pub fn router(state: AdminState) -> Router {
     Router::new()
         .merge(settings::routes())
+        .merge(spend::routes())
+        .merge(admission::routes())
+        .merge(auto_pause::routes())
         .merge(sandboxes::routes())
         .merge(runtime_update::routes())
         .merge(profiles::routes())
@@ -115,6 +140,8 @@ impl IntoResponse for NotAnOperator {
 }
 
 pub(crate) enum CollectionProblem {
+    AdmissionPaused,
+    AdmissionWritesUnavailable,
     NotAnOperator,
     InvalidRequest,
     Conflict,
@@ -125,12 +152,15 @@ pub(crate) enum CollectionProblem {
 impl From<CoreError> for CollectionProblem {
     fn from(error: CoreError) -> Self {
         match error {
+            CoreError::AdmissionPaused => Self::AdmissionPaused,
+            CoreError::AdmissionControlWritesUnavailable => Self::AdmissionWritesUnavailable,
             CoreError::Forbidden => Self::NotAnOperator,
             CoreError::InvalidRequest(_) | CoreError::InvalidPressurePolicy(_) => {
                 Self::InvalidRequest
             }
             CoreError::InvalidState(_) => Self::Conflict,
-            CoreError::RuntimeUnavailable(_)
+            CoreError::ModelBudgetWritesUnavailable
+            | CoreError::RuntimeUnavailable(_)
             | CoreError::RuntimeRefused(_)
             | CoreError::ServiceCatalogUnavailable(_)
             | CoreError::SkillCatalogUnavailable(_) => Self::Unavailable,
@@ -157,6 +187,10 @@ impl IntoResponse for CollectionProblem {
             return NotAnOperator.into_response();
         }
         let (status, slug, detail, code) = match self {
+            Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::AdmissionWritesUnavailable => {
+                return super::admission_problem::writes_unavailable()
+            }
             Self::InvalidRequest => (
                 StatusCode::BAD_REQUEST,
                 "invalid-admin-request",

@@ -56,7 +56,8 @@ async fn session_verifies_once_per_request_and_observes_changed_permissions_and_
         assert_eq!(
             body,
             json!({
-                "authenticated": true, "subject": "owner", "visitor": false,
+                "authenticated": true, "api_commands": false, "subject": "owner", "visitor": false,
+                "usage_reporting": {"measured_visible": false},
                 "capabilities": ["use_own_sandboxes"], "display_name": "Live Owner",
             })
         );
@@ -74,15 +75,11 @@ async fn session_verifies_once_per_request_and_observes_changed_permissions_and_
 
         *fixture.control.introspection.write().await = Reply::json(json!({"active": false}));
         let (status, body) = session(&app, &headers).await;
-        if cookie {
-            // A retained browser identity may remain visible without grants.
-            assert_eq!(status, StatusCode::OK);
-            assert_eq!(body["authenticated"], true);
-            assert_eq!(body["capabilities"], json!([]));
-        } else {
-            assert_eq!(status, StatusCode::UNAUTHORIZED);
-            assert_eq!(body, json!({"authenticated": false}));
-        }
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body,
+            json!({"authenticated": false, "silent_sign_in": false})
+        );
         assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 6);
         fixture.assert_unchanged(&retained).await;
     }
@@ -149,7 +146,10 @@ async fn session_without_credentials_or_after_browser_logout_stays_unauthenticat
     let app = application(&fixture);
     assert_eq!(
         session(&app, &HeaderMap::new()).await,
-        (StatusCode::UNAUTHORIZED, json!({"authenticated": false}))
+        (
+            StatusCode::UNAUTHORIZED,
+            json!({"authenticated": false, "silent_sign_in": false})
+        )
     );
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 0);
 
@@ -161,7 +161,10 @@ async fn session_without_credentials_or_after_browser_logout_stays_unauthenticat
     let before = fixture.control.requests.load(Ordering::SeqCst);
     assert_eq!(
         session(&app, &headers).await,
-        (StatusCode::UNAUTHORIZED, json!({"authenticated": false}))
+        (
+            StatusCode::UNAUTHORIZED,
+            json!({"authenticated": false, "silent_sign_in": false})
+        )
     );
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
 }

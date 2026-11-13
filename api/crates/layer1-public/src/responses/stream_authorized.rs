@@ -21,13 +21,19 @@ pub(in crate::responses) async fn open(
         Ok(value) => value,
         Err(error) => return read_failure(error, "response_not_found"),
     };
-    let snapshot = match state.reads.event_stream_snapshot(&authorization).await {
+    let indexed = match state.reads.output_is_indexed(&authorization).await {
         Ok(value) => value,
         Err(error) => return read_failure(error, "response_not_found"),
     };
-    if !snapshot.history.iter().any(|entry| entry.seq == turn
+    if !indexed {
+        let snapshot = match state.reads.event_stream_snapshot(&authorization).await {
+            Ok(value) => value,
+            Err(error) => return read_failure(error, "response_not_found"),
+        };
+        if !snapshot.history.iter().any(|entry| entry.seq == turn
         && matches!(entry.kind, Some(AgentLogKind::TurnStarted { turn_sequence, .. }) if turn_sequence == turn)) {
         return crate::rest::instance_problem::InstanceProblem::Unavailable.into_response();
+    }
     }
     open_inner(
         state,
@@ -36,6 +42,7 @@ pub(in crate::responses) async fn open(
         turn,
         watching,
         Some(authorization),
+        indexed,
     )
 }
 

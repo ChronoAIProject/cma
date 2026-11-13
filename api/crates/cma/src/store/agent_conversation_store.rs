@@ -1,5 +1,6 @@
 //! Atomic Mongo persistence for runtime conversation updates.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, SandboxStoreError,
@@ -9,31 +10,34 @@ use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{
-    log_document, scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
-};
+use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
 use super::agent_log_integrity::{
-    ensure_append_batch_size, ensure_append_capacity, AppendCapacity, TransactionLogError,
+    ensure_append_batch_size, prepare_append, trusted_summary, AppendCapacity, TransactionLogError,
 };
 use super::agents::{agent_replacement_fields, read_agent};
+use super::contention;
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
+    CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
+
+#[cfg(test)]
+use super::sandbox_mongo::start_transaction;
 
 mod admission;
 #[cfg(test)]
 mod admission_tests;
-mod checkpoint;
+pub(in crate::store) mod capacity_prefix;
+pub(in crate::store) mod checkpoint;
 #[cfg(test)]
 mod checkpoint_tests;
 mod cleanup_admission;
-mod contention;
 mod implementation;
-mod reopen;
-mod snapshot;
-use snapshot::{snapshot_error, snapshot_session};
+pub(in crate::store) mod publication;
+use super::agent_log_segments::{conversation as scoped, transaction_scope::TransactionScope};
+#[cfg(test)]
+use publication::apply_mutation;
+pub(in crate::store) mod reopen;
 #[cfg(test)]
 mod reopen_tests;
 
@@ -41,11 +45,13 @@ pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
 
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
+    pub(super) segmented: Option<super::agent_log_segments::writer_commit::Recorded>,
     pub(super) command_dispatch: Option<layer2_core::sandbox::agent_io::CommandDispatch>,
     pub(super) agent: Agent,
     pub(super) logs: Vec<AgentLogEntry>,
 }
 
+#[derive(Debug)]
 pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -65,7 +71,10 @@ async fn commit_conversation(
     mutation: AgentConversationMutation,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
+    store.prepare_fleet_log(&mutation.agent.id).await;
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
+    let _platform = store.conversation_platform_guard(&mutation).await;
+    let adoption = scoped::adoption::prepare(store, &mutation, None).await?;
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         contention::backoff(attempt).await;
@@ -77,14 +86,26 @@ async fn commit_conversation(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
+        let mut scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => {
                 last_transient = Some(error.to_string());
                 continue;
             }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let receipt = match apply_mutation(store, &mutation, &mut session).await {
+            Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
+        };
+        let applied = scoped::apply(
+            ScanCaller::ConversationPublication,
+            store,
+            &mutation,
+            None,
+            None,
+            adoption.as_ref(),
+            &mut scope,
+        )
+        .await;
+        scope.release();
+        let receipt = match applied {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -102,7 +123,10 @@ async fn commit_conversation(
         };
         admission::require_current(&mutation, &mut session).await?;
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(receipt.logs),
+            CommitOutcome::Committed => {
+                crate::telemetry::work::published(&receipt.logs, "committed");
+                return Ok(receipt.logs);
+            }
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
@@ -115,6 +139,7 @@ async fn commit_conversation(
                 let store = store.clone();
                 return wait_for_reconciliation("agent conversation commit", async move {
                     if reconcile_conversation_after_commit(&store, &receipt, snapshot_time).await? {
+                        crate::telemetry::work::published(&receipt.logs, "reconciled");
                         Ok(receipt.logs)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
@@ -135,78 +160,6 @@ async fn commit_conversation(
         }
     }
     Err(contention::exhausted(last_transient))
-}
-
-async fn apply_mutation(
-    store: &MongoSandboxStore,
-    mutation: &AgentConversationMutation,
-    session: &mut mongodb::ClientSession,
-) -> Result<ConversationReceipt, ApplyError> {
-    store
-        .fence_agent_effect(&mutation.agent.id, session)
-        .await
-        .map_err(ApplyError::Domain)?;
-    let current_row = store
-        .agents
-        .find_one(doc! { "_id": mutation.agent.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-    let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
-    // Command reservation also writes this Agent, so this transaction cannot
-    // miss a concurrently admitted message and then take its idle boundary.
-    if mutation.is_managed_context_admission() && store.agent_commands.find_one(doc! {
-        "agent_id": mutation.agent.id.as_str(), "status": {"$nin": ["completed", "failed", "cancelled"]}
-    }).session(&mut *session).await.map_err(ApplyError::Driver)?.is_some() {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    super::trigger_first_messages::require_mutation(store, &current, mutation, session)
-        .await
-        .map_err(ApplyError::Domain)?;
-    let mut actual_last_seq = 0;
-    let mut latest_turn = None;
-    let log_summary = scan_complete_log_with_session(
-        store,
-        &mutation.agent.id,
-        current.conversation.last_seq,
-        session,
-        |entry| {
-            actual_last_seq = entry.seq;
-            if let layer2_core::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } =
-                entry.kind
-            {
-                latest_turn = Some(turn_sequence);
-            }
-            Ok(())
-        },
-    )
-    .await?;
-    validate_mutation(&current, actual_last_seq, mutation).map_err(ApplyError::Domain)?;
-    cleanup_admission::require(&current_row, &current, mutation).map_err(ApplyError::Domain)?;
-    let logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
-    ensure_append_capacity(&log_summary, &logs, AppendCapacity::Normal)
-        .map_err(ApplyError::Domain)?;
-
-    admission::validate_and_fence(store, &current, mutation, session).await?;
-    let command_dispatch =
-        super::agent_commands::binding::bind(store, &current, latest_turn, mutation, session)
-            .await
-            .map_err(|error| match error {
-                super::agent_commands::ApplyError::Domain(error) => {
-                    ApplyError::Domain(super::agent_commands::binding::domain_error(error))
-                }
-                super::agent_commands::ApplyError::Driver(error) => ApplyError::Driver(error),
-            })?;
-    replace_agent(store, &current, mutation, session).await?;
-    checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;
-    insert_logs(store, &logs, session).await?;
-    super::suggestions::enqueue(store, &mutation.agent, &logs, session).await?;
-    Ok(ConversationReceipt {
-        command_dispatch,
-        agent: mutation.agent.clone(),
-        logs,
-    })
 }
 
 pub(super) fn validate_mutation(
@@ -269,7 +222,7 @@ fn immutable_fields_changed(current: &Agent, next: &Agent) -> bool {
         || current.origin != next.origin
 }
 
-fn conversation_logs(
+pub(super) fn conversation_logs(
     mutation: &AgentConversationMutation,
 ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
     let mut seq = mutation.expected_last_seq;
@@ -292,9 +245,11 @@ async fn replace_agent(
     store: &MongoSandboxStore,
     current: &Agent,
     mutation: &AgentConversationMutation,
+    integrity: mongodb::bson::Document,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
+    fields.insert("agent_log_integrity_v1", integrity);
     fields.insert(
         "last_seq",
         signed(mutation.agent.conversation.last_seq, "agent log sequence")
@@ -331,13 +286,14 @@ async fn replace_agent(
 
 async fn insert_logs(
     store: &MongoSandboxStore,
-    logs: &[AgentLogEntry],
+    logs: &[mongodb::bson::RawDocumentBuf],
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
     for entry in logs {
         store
             .agent_log
-            .insert_one(log_document(entry).map_err(ApplyError::Domain)?)
+            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+            .insert_one(entry)
             .session(&mut *session)
             .await
             .map_err(|error| {
@@ -392,7 +348,7 @@ pub(super) async fn reconcile_conversation_snapshot(
         .as_ref()
         .map(read_agent)
         .transpose()?;
-    if agent.as_ref() != Some(&receipt.agent) {
+    if receipt.segmented.is_none() && agent.as_ref() != Some(&receipt.agent) {
         return Ok(false);
     }
     if let Some(dispatch) = &receipt.command_dispatch {
@@ -400,11 +356,18 @@ pub(super) async fn reconcile_conversation_snapshot(
             return Ok(false);
         }
     }
+    if let Some(recorded) = &receipt.segmented {
+        if recorded.next != receipt.agent || recorded.logs != receipt.logs {
+            return Ok(false);
+        }
+        return recorded.matches(store, session).await;
+    }
     let Some(first_receipt_seq) = receipt.logs.first().map(|entry| entry.seq) else {
         return Ok(false);
     };
     let mut logs = Vec::with_capacity(receipt.logs.len());
     scan_complete_log_with_snapshot_session(
+        ScanCaller::UnknownCommitProof,
         store,
         &receipt.agent.id,
         receipt.agent.conversation.last_seq,
@@ -450,34 +413,5 @@ async fn pending_approvals(
     pending_approvals_snapshot(store, id, &mut session).await
 }
 
-async fn pending_approvals_snapshot(
-    store: &MongoSandboxStore,
-    id: &AgentId,
-    session: &mut mongodb::ClientSession,
-) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
-    let agent = store
-        .agents
-        .find_one(doc! { "_id": id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut *session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_agent)
-        .transpose()?
-        .ok_or(SandboxStoreError::NotFound)?;
-    let mut pending = PendingAgentApprovals::default();
-    scan_complete_log_with_snapshot_session(
-        store,
-        id,
-        agent.conversation.last_seq,
-        session,
-        |entry| {
-            pending.observe(&entry);
-            Ok(())
-        },
-    )
-    .await
-    .map_err(|error| snapshot_error(error.into()))?;
-    Ok(pending.into_entries())
-}
+pub(super) mod reads;
+use reads::{pending_approvals_snapshot, snapshot_error, snapshot_session};

@@ -396,5 +396,8 @@ pub(crate) fn headers_contain(headers: &HeaderMap, credential: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[path = "upstream_nyxid_contract_tests.rs"]
+mod nyxid_contract_tests;
+#[cfg(test)]
 #[path = "upstream_tests.rs"]
 mod tests;

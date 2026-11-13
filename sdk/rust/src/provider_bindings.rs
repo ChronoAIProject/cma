@@ -26,6 +26,9 @@ pub enum BindingTarget {
 /// Safe provider binding metadata without credentials.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ProviderBinding {
+    /// Effective queue wait for newly admitted binding messages, when supported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_lifetime_seconds: Option<u32>,
     /// Provider resource target; omitted for profile provisioning.
     #[serde(default)]
     pub target: Option<BindingTarget>,

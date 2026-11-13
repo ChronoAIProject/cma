@@ -4,7 +4,7 @@ use mongodb::{bson::doc, ClientSession};
 
 use super::{ApplyError, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
-pub(super) async fn validate_and_fence(
+pub(in crate::store) async fn validate_and_fence(
     store: &MongoSandboxStore,
     agent: &Agent,
     guard: &AgentReopenGuard,

@@ -94,6 +94,8 @@ spec:
           name: cma-agent-manager
           port: 80
           weight: 1
+    # /api/v1/telemetry/browser follows this public API prefix: anonymous,
+    # <=256-byte fixed categories, in-process budget; never expose /metrics here.
     # Keep the browser on one origin without placing the web pod in the API's
     # trusted-proxy chain. API, auth, and exact discovery matches win over `/`,
     # so GFE forwards the original client chain straight to the control plane.
@@ -230,6 +232,8 @@ spec:
           name: cma-agent-manager
           port: 80
           weight: 1
+    # /api/v1/telemetry/browser follows this public API prefix: anonymous,
+    # <=256-byte fixed categories, in-process budget; never expose /metrics here.
     # Keep the browser on one origin without placing the web pod in the API's
     # trusted-proxy chain. API, auth, and exact discovery matches win over `/`,
     # so GFE forwards the original client chain straight to the control plane.

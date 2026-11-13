@@ -45,7 +45,20 @@ pub(super) async fn save(
             record_bson(&agent.work.live_skills).map_err(SandboxStoreError::Corrupt)?
         },
     };
-    let fields = agent_replacement_fields(&agent)?;
+    let current_row = store
+        .agents
+        .find_one(doc! { "_id": agent.id.as_str() })
+        .await
+        .map_err(driver)?
+        .ok_or(SandboxStoreError::Conflict)?;
+    let current = read_agent(&current_row)?;
+    let mut fields = agent_replacement_fields(&agent)?;
+    super::super::agent_log_integrity::carry_integrity_for_revision(
+        &current_row,
+        &current,
+        &agent,
+        &mut fields,
+    )?;
     let result = update(store, &agent.id, filter, fields).await?;
     if result.matched_count == 1 {
         Ok(())

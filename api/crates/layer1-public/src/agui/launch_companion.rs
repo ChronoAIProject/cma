@@ -1,4 +1,5 @@
 //! Owner-only SSE replay of one Launch's durable events.
+use crate::stream_telemetry::{self, Kind, Poll};
 
 use std::{collections::VecDeque, convert::Infallible, sync::Arc, time::Duration};
 
@@ -102,13 +103,16 @@ async fn events(
         page_was_full: first_page.len() == usize::from(input.limit),
         buffered: first_page.into_iter().map(Into::into).collect(),
     };
-    Sse::new(replay_stream(replay))
-        .keep_alive(
-            KeepAlive::new()
-                .interval(KEEPALIVE_INTERVAL)
-                .text("keepalive"),
-        )
-        .into_response()
+    Sse::new(stream_telemetry::observe(
+        replay_stream(replay),
+        Kind::LaunchEvents,
+    ))
+    .keep_alive(
+        KeepAlive::new()
+            .interval(KEEPALIVE_INTERVAL)
+            .text("keepalive"),
+    )
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -252,6 +256,7 @@ fn replay_stream(replay: Replay) -> impl Stream<Item = Result<Event, Infallible>
                 tokio::time::sleep(POLL_INTERVAL).await;
             }
             replay.page_was_full = false;
+            let poll = Poll::new(Kind::LaunchEvents);
             let launch = match replay.launches.launch(&replay.id, &replay.owner).await {
                 Ok(Some(launch)) => launch,
                 Ok(None) | Err(_) => return None,
@@ -270,6 +275,7 @@ fn replay_stream(replay: Replay) -> impl Stream<Item = Result<Event, Infallible>
             if !valid_page(&events, &replay.id, replay.after, replay.limit) {
                 return None;
             }
+            poll.complete(!events.is_empty());
             replay.page_was_full = events.len() == usize::from(replay.limit);
             replay.buffered = events.into_iter().map(Into::into).collect();
         }

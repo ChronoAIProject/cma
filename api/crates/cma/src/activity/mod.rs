@@ -13,13 +13,29 @@ use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget,
 };
 
+pub(crate) mod queue;
+
 pub struct ActivityRecorder {
     activity: Arc<ActivityService>,
+    sink: Option<Arc<dyn queue::ActivitySink>>,
 }
 
 impl ActivityRecorder {
     pub fn new(activity: Arc<ActivityService>) -> Arc<Self> {
-        Arc::new(Self { activity })
+        Arc::new(Self {
+            activity,
+            sink: None,
+        })
+    }
+
+    pub(crate) fn with_sink(
+        activity: Arc<ActivityService>,
+        sink: Arc<dyn queue::ActivitySink>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            activity,
+            sink: Some(sink),
+        })
     }
 }
 
@@ -47,6 +63,10 @@ pub async fn record(
     let mut activity =
         ActivityRecord::new(action, outcome(response.status())).on(ActivityTarget::Resource(path));
     activity.actor = actor;
+    if let Some(sink) = &recorder.sink {
+        sink.try_enqueue(activity);
+        return response;
+    }
     if let Err(error) = recorder.activity.record(&activity).await {
         tracing::warn!(error = %error, "could not persist request activity");
     }
@@ -57,7 +77,13 @@ fn classify(method: &Method, path: &str) -> ActivityAction {
     if path.starts_with("/auth/") && path != "/auth/session" {
         return ActivityAction::Authenticate;
     }
-    if method == Method::POST && path == "/api/v1/profile-authoring/repositories/resolve" {
+    if method == Method::POST
+        && matches!(
+            path,
+            "/api/v1/profile-authoring/repositories/resolve"
+                | "/api/v1/admin/usage/metrics/options"
+        )
+    {
         return ActivityAction::Read;
     }
     match *method {
@@ -102,6 +128,10 @@ mod tests {
             ),
             ActivityAction::Read
         );
+        assert_eq!(
+            classify(&Method::POST, "/api/v1/admin/usage/metrics/options"),
+            ActivityAction::Read
+        );
     }
 
     #[test]
@@ -117,3 +147,8 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod audit_contract_tests;
+#[cfg(test)]
+mod http_tests;

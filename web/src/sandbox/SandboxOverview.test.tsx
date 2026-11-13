@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { ApiError, createClient } from '@chronoai/cma-sdk';
 import { expect, it, vi } from 'vitest';
 import { createRestWebClient } from '../api/rest';
@@ -7,6 +7,7 @@ import type { CmaWebClient } from '../api/client';
 import type { SandboxDetail } from '../api/types';
 import { SandboxOverview } from './SandboxOverview';
 import { useSandboxContents } from './useSandboxContents';
+import { sandboxFixture } from '../test/hierarchy';
 
 /** The Overview tab as the Sandbox page feeds it: from the shared contents read. */
 function Overview({
@@ -98,4 +99,76 @@ it('retains the pinned revision fallback for older Sandbox detail responses', as
   expect(await screen.findByText('Your ChatGPT subscription')).toBeInTheDocument();
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fetch.mock.calls[0]?.[0]).toBe('/api/v1/sandbox-profiles/profile-1/revisions/1');
+});
+
+it.each([undefined, false])('offers no enable action when Always on is %s', (alwaysOn) => {
+  const change = vi.fn();
+  render(
+    <SandboxOverview
+      sandbox={{ ...sandboxFixture(), alwaysOn }}
+      settingsLoaded
+      busy={false}
+      onRetry={vi.fn()}
+      onAlwaysOnChange={change}
+    />,
+  );
+  expect(
+    screen.getByText(/Always on is off. Only an administrator can approve an exception/),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Always on/ })).not.toBeInTheDocument();
+  expect(change).not.toHaveBeenCalled();
+});
+
+it('only relinquishes an existing exception and shows the resulting state', async () => {
+  const change = vi.fn(async () => {});
+  const props = { settingsLoaded: true, busy: false, onRetry: vi.fn(), onAlwaysOnChange: change };
+  const view = render(
+    <SandboxOverview {...props} sandbox={{ ...sandboxFixture(), alwaysOn: true }} />,
+  );
+  expect(
+    screen.getByText(/An administrator approved Always on, so automatic pause skips this Sandbox/),
+  ).toBeInTheDocument();
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off Always on' })),
+  );
+  expect(change).toHaveBeenCalledExactlyOnceWith(false);
+  view.rerender(<SandboxOverview {...props} sandbox={{ ...sandboxFixture(), alwaysOn: false }} />);
+  expect(screen.queryByRole('button', { name: /Always on/ })).not.toBeInTheDocument();
+});
+
+it.each([{ busy: true }, { stale: true }])(
+  'blocks relinquishment while unavailable: %j',
+  (state) => {
+    render(
+      <SandboxOverview
+        sandbox={{ ...sandboxFixture(), alwaysOn: true }}
+        settingsLoaded
+        busy={false}
+        {...state}
+        onRetry={vi.fn()}
+        onAlwaysOnChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Turn off Always on' })).toBeDisabled();
+  },
+);
+
+it('keeps the exception visible and reports a failed relinquishment', async () => {
+  render(
+    <SandboxOverview
+      sandbox={{ ...sandboxFixture(), alwaysOn: true }}
+      settingsLoaded
+      busy={false}
+      onRetry={vi.fn()}
+      onAlwaysOnChange={async () => {
+        throw new Error('Revision changed');
+      }}
+    />,
+  );
+  await act(async () =>
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off Always on' })),
+  );
+  expect(screen.getByRole('alert')).toHaveTextContent('Revision changed');
+  expect(screen.getByRole('button', { name: 'Turn off Always on' })).toBeEnabled();
 });

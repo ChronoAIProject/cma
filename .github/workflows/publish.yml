@@ -458,6 +458,18 @@ jobs:
         env:
           RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
         run: node .github/scripts/runtime-image-evidence.mjs run "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/runtime-image-evidence.json"
+      - name: Qualify published runtime ledger storage
+        env:
+          RUNTIME_REFERENCE: ${{ steps.runtime.outputs.reference }}
+        run: node .github/scripts/runtime-ledger-evidence.mjs "$RUNTIME_REFERENCE" "$GITHUB_SHA" "$RUNNER_TEMP/ledger-storage.json"
+      - name: Retain ledger storage evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ledger-storage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ledger-storage.json
+          if-no-files-found: error
+          retention-days: 90
       - name: Retain runtime image evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -46,6 +46,8 @@ impl Request {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Response {
     pub status: u16,
+    #[serde(default, rename = "setCookies")]
+    pub set_cookies: Vec<String>,
     pub headers: BTreeMap<String, String>,
     #[serde(rename = "bodyKind")]
     pub body_kind: String,
@@ -346,6 +348,10 @@ pub fn invalid(message: impl Into<String>) -> Error {
 }
 
 pub fn wire(case: &Case) -> Expected {
+    assert!(
+        case.response.set_cookies.is_empty(),
+        "browser cookies must use the browser replay"
+    );
     let stream = case.operation.contains("/agui/")
         && (case.operation.ends_with("/events") || case.operation.ends_with("/run"))
         || case.operation == "POST /api/v1/responses"

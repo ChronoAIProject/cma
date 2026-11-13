@@ -6,25 +6,31 @@ use super::{
     integrations::{
         validate_key, AppOperation, AppVerification, WebhookCredential, WebhookCredentialOverlap,
     },
-    store::NewRecord,
+    store::{NewRecord, RecordUpdate},
     AppIntegration, Error, Gateway,
 };
 
-#[derive(Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateAppRequest {
     pub expected_version: u64,
     pub display_name: String,
 }
 
-#[derive(Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyAppRequest {
     pub expected_version: u64,
     pub evidence_ref: String,
 }
 
-#[derive(Deserialize, ToSchema)]
+#[derive(Clone, Deserialize, Serialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RetireAppRequest {
+    pub expected_version: u64,
+}
+
+#[derive(Clone, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WebhookSecretRequest {
     pub expected_version: u64,
@@ -45,10 +51,14 @@ struct AppIdentity {
     host: String,
     app_id: u64,
     app_ref: String,
+    #[serde(default)]
+    released: bool,
 }
 
+#[derive(Clone)]
 pub(super) enum AppMutation {
     Metadata(UpdateAppRequest),
+    Retirement(RetireAppRequest),
     Verification {
         request: VerifyAppRequest,
         verifier: String,
@@ -60,6 +70,7 @@ impl AppMutation {
     fn kind(&self) -> &'static str {
         match self {
             Self::Metadata(_) => "metadata",
+            Self::Retirement(_) => "retirement",
             Self::Verification { .. } => "verification",
             Self::WebhookSecret(_) => "webhook-secret",
         }
@@ -68,6 +79,7 @@ impl AppMutation {
     fn expected_version(&self) -> u64 {
         match self {
             Self::Metadata(request) => request.expected_version,
+            Self::Retirement(request) => request.expected_version,
             Self::Verification { request, .. } => request.expected_version,
             Self::WebhookSecret(request) => request.expected_version,
         }
@@ -75,6 +87,12 @@ impl AppMutation {
 
     fn input(&self) -> Result<Vec<u8>, Error> {
         match self {
+            Self::Retirement(request) => {
+                if request.expected_version == 0 {
+                    return Err(Error::Invalid);
+                }
+                serde_json::to_vec(request).map_err(|_| Error::Unavailable)
+            }
             Self::Metadata(request) => {
                 if request.expected_version == 0
                     || request.display_name.trim().is_empty()
@@ -121,9 +139,22 @@ impl Gateway {
         key: &str,
         mutation: AppMutation,
     ) -> Result<AppIntegration, Error> {
+        super::retry::run(|| self.mutate_app_once(owner, app_ref, key, mutation.clone())).await
+    }
+
+    async fn mutate_app_once(
+        &self,
+        owner: &str,
+        app_ref: &str,
+        key: &str,
+        mutation: AppMutation,
+    ) -> Result<AppIntegration, Error> {
         validate_key(key)?;
         let input = mutation.input()?;
         let mut app = self.read_app(owner, app_ref).await?;
+        if app.status == "retired" && !matches!(mutation, AppMutation::Retirement(_)) {
+            return Err(Error::Retired);
+        }
         let operation_id =
             super::identity("app-operation", &(owner, app_ref, mutation.kind(), key));
         match self.app_operation(owner, &operation_id, &input).await {
@@ -131,26 +162,58 @@ impl Gateway {
             Err(Error::NotFound) => (),
             Err(error) => return Err(error),
         }
+        if app.status == "retired" {
+            return Err(Error::Retired);
+        }
         let expected_version = mutation.expected_version();
         if app.version != expected_version {
             return Err(Error::VersionConflict(app.version));
         }
         app.version = app.version.checked_add(1).ok_or(Error::Unavailable)?;
         let mut records = Vec::new();
+        let mut updates = Vec::new();
         let verifying = matches!(mutation, AppMutation::Verification { .. });
         match mutation {
             AppMutation::Metadata(request) => app.display_name = request.display_name,
+            AppMutation::Retirement(_) => {
+                app.status = "retired".into();
+                app.retired_at = Some(super::now());
+                if let Some((identity_owner, version, mut identity)) =
+                    self.app_identity(&app).await?
+                {
+                    if identity.app_ref == app.app_ref && !identity.released {
+                        identity.released = true;
+                        updates.push(RecordUpdate::new(
+                            &super::identity("app-identity", &(&app.host, app.app_id)),
+                            &identity_owner,
+                            "app_identity",
+                            version,
+                            &identity,
+                        )?);
+                    }
+                }
+            }
             AppMutation::Verification { request, verifier } => {
-                if !self.check_app_identity(&app).await? {
-                    records.push(NewRecord::new(
-                        &super::identity("app-identity", &(&app.host, app.app_id)),
-                        "app_identity",
-                        &AppIdentity {
-                            host: app.host.clone(),
-                            app_id: app.app_id,
-                            app_ref: app.app_ref.clone(),
-                        },
-                    )?);
+                let identity_id = super::identity("app-identity", &(&app.host, app.app_id));
+                let identity = AppIdentity {
+                    host: app.host.clone(),
+                    app_id: app.app_id,
+                    app_ref: app.app_ref.clone(),
+                    released: false,
+                };
+                match self.app_identity(&app).await? {
+                    None => records.push(NewRecord::new(&identity_id, "app_identity", &identity)?),
+                    Some((stored_owner, version, previous)) if previous.released => {
+                        updates.push(RecordUpdate::new(
+                            &identity_id,
+                            &stored_owner,
+                            "app_identity",
+                            version,
+                            &identity,
+                        )?);
+                    }
+                    Some((_, _, previous)) if previous.app_ref == app.app_ref => (),
+                    Some(_) => return Err(Error::ManagementConflict),
                 }
                 app.status = "verified".into();
                 app.verification = Some(AppVerification {
@@ -201,7 +264,7 @@ impl Gateway {
         records.push(NewRecord::new(&operation_id, "app_operation", &operation)?);
         if let Err(error) = self
             .store
-            .update_integration(owner, expected_version, &app, records)
+            .update_integration(owner, expected_version, &app, records, updates)
             .await
         {
             return match self.app_operation(owner, &operation_id, &input).await {
@@ -217,19 +280,33 @@ impl Gateway {
         Ok(app)
     }
 
-    async fn check_app_identity(&self, app: &AppIntegration) -> Result<bool, Error> {
+    async fn app_identity(
+        &self,
+        app: &AppIntegration,
+    ) -> Result<Option<(String, u64, AppIdentity)>, Error> {
         let id = super::identity("app-identity", &(&app.host, app.app_id));
-        match self.store.read::<AppIdentity>(&id, "app_identity").await {
-            Ok((_, identity))
-                if identity.host == app.host
-                    && identity.app_id == app.app_id
-                    && identity.app_ref == app.app_ref =>
+        match self
+            .store
+            .read_versioned::<AppIdentity>(&id, "app_identity")
+            .await
+        {
+            Ok((owner, version, identity))
+                if identity.host == app.host && identity.app_id == app.app_id =>
             {
-                Ok(true)
+                Ok(Some((owner, version, identity)))
             }
-            Ok(_) => Err(Error::ManagementConflict),
-            Err(Error::NotFound) => Ok(false),
+            Ok(_) => Err(Error::Unavailable),
+            Err(Error::NotFound) => Ok(None),
             Err(error) => Err(error),
+        }
+    }
+    async fn check_app_identity(&self, app: &AppIntegration) -> Result<bool, Error> {
+        match self.app_identity(app).await? {
+            Some((_, _, identity)) if !identity.released && identity.app_ref != app.app_ref => {
+                Err(Error::ManagementConflict)
+            }
+            Some((_, _, identity)) => Ok(!identity.released),
+            None => Ok(false),
         }
     }
 

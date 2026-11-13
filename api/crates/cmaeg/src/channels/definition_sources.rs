@@ -3,12 +3,30 @@
 use std::collections::BTreeSet;
 
 use cmaeg_core::{
-    channel::{ChannelSecrets, Source},
+    channel::{ChannelDefinition, ChannelSecrets, Source},
     ValidationError,
 };
 
 use super::definition::hash_secret;
 use super::requests::{CredentialsRequest, SourceRequest};
+
+/// Refuse a new or changed GitHub source while GitHub writes are disabled.
+/// Management writes and offline import both apply this policy.
+pub(crate) fn check_github_sources(
+    current: Option<&ChannelDefinition>,
+    next: &ChannelDefinition,
+    enabled: bool,
+) -> Result<(), ValidationError> {
+    if !enabled
+        && next.sources.iter().any(|source| {
+            matches!(source, Source::Github { .. })
+                && !current.is_some_and(|old| old.sources.contains(source))
+        })
+    {
+        return Err(ValidationError::new("/sources", "github_writes_disabled"));
+    }
+    Ok(())
+}
 
 pub(super) fn build_sources(sources: &[SourceRequest]) -> Result<Vec<Source>, ValidationError> {
     let mut result = Vec::with_capacity(sources.len());

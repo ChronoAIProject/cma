@@ -17,8 +17,11 @@ impl AgentCommandExecution for UnavailableOnce {
         }
     }
 
-    async fn prepare_queued(&self, command: &AdmittedAgentCommand) {
-        self.inner.prepare_queued(command).await;
+    async fn prepare_queued(
+        &self,
+        command: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError> {
+        self.inner.prepare_queued(command).await
     }
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {

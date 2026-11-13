@@ -34,6 +34,11 @@ CAS. AG-UI and Responses admissions have protocol-specific identities and must
 not be retried blindly. The client never retries automatically or follows redirects.
 
 Durable REST event polling, transcript, usage, and resource reads are supported.
+Administrator usage filters use `client.admin_usage_metrics().options(&query)`
+with `usage_metrics::OptionQuery`. Choices load independently of report readiness,
+with at most 50 entries and a continuation cursor. Present the plain `label`;
+`value` is only the opaque filter selection, and optional `disambiguator` supplies
+context for duplicate choices. Search text is sent in the JSON request body.
 Pull-based AG-UI, Launch companion, and Responses streams are supported. PTY,
 MCP, and A2A are explicit named-refusal probes, not executable interfaces.
 REST acceptance does not prove that provisioning, input execution, or a

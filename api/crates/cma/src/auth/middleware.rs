@@ -12,6 +12,9 @@ use axum::{
 use layer1_public::{AuthenticatedSubject, DelegatedCredential};
 
 use super::AuthState;
+use layer2_core::dependency_diagnostics::{
+    self as diagnostics, Dependency, Failure, Operation, Reason,
+};
 
 pub async fn attach_subject(
     State(auth): State<Arc<AuthState>>,
@@ -28,13 +31,75 @@ pub async fn attach_subject(
         return super::resource_request::attach(&auth, request, next).await;
     }
     if bypasses_ambient_auth(request.uri().path()) {
+        let mut observation = crate::telemetry::request::Resolution::start(&request, "independent");
+        observation.finish("bypassed", crate::telemetry::request::Consumer::Unknown);
+        drop(observation);
         return next.run(request).await;
     }
-    let resolved = match auth.resolve_request(request.headers()).await {
+    let allow_fallback = auth
+        .fallback_policy
+        .permits(request.method(), request.uri().path());
+    let mut observation = crate::telemetry::request::Resolution::start(&request, "ambient");
+    let (resolved, failure) = layer2_core::diagnostic_context::DiagnosticContext::current()
+        .with_phase("identity")
+        .scope(diagnostics::capture(auth.resolve_request_with_policy(
+            request.headers(),
+            allow_fallback,
+        )))
+        .await;
+    let outcome = match &resolved {
+        Ok(Some(_)) => "resolved",
+        Ok(None) => "anonymous",
+        Err(_) => "unavailable",
+    };
+    // The resolver exclusively verifies this path when configured; an accepted
+    // proxy read need not have enrolled renewable owner authority.
+    let verified_proxy =
+        auth.identity_proxy.is_some() && request.headers().contains_key(super::nyxid_proxy::HEADER);
+    let consumer = resolved.as_ref().ok().and_then(Option::as_ref).map_or(
+        crate::telemetry::request::Consumer::Unknown,
+        |request| match request.credential_source {
+            _ if verified_proxy => crate::telemetry::request::Consumer::Nyxid,
+            layer2_core::resource_access::CredentialSource::IdentityProxy { .. } => {
+                crate::telemetry::request::Consumer::Nyxid
+            }
+            layer2_core::resource_access::CredentialSource::Independent { .. }
+            | layer2_core::resource_access::CredentialSource::Binding => {
+                crate::telemetry::request::Consumer::DirectApi
+            }
+            layer2_core::resource_access::CredentialSource::Retained
+                if matches!(auth.mode, super::AuthMode::Provider { .. }) =>
+            {
+                crate::telemetry::request::Consumer::PublicUser
+            }
+            _ => crate::telemetry::request::Consumer::Unknown,
+        },
+    );
+    observation.finish(outcome, consumer);
+    drop(observation);
+    let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
-            tracing::error!(error = %error, "authentication store lookup failed");
-            return store_failure();
+            diagnostics::report(
+                Operation::Authentication,
+                failure.or(Some(Failure::new(
+                    Dependency::AuthenticationAuthority,
+                    Reason::Unknown,
+                ))),
+            );
+            if request.uri().path() == "/auth/session"
+                && matches!(&error, layer2_core::StoreError::Unavailable(detail) if detail == "identity_provider_unavailable")
+            {
+                return identity_failure();
+            }
+            let mut response = store_failure();
+            if request.uri().path().starts_with("/auth/") {
+                response.headers_mut().insert(
+                    axum::http::header::CACHE_CONTROL,
+                    "no-store".parse().unwrap(),
+                );
+            }
+            return response;
         }
     };
     if let Some(resolved) = resolved {
@@ -81,6 +146,25 @@ pub async fn attach_subject(
             .insert(AuthenticatedSubject(resolved.subject));
     }
     next.run(request).await
+}
+
+pub(super) fn identity_failure() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [
+            (axum::http::header::CONTENT_TYPE, "application/problem+json"),
+            (axum::http::header::RETRY_AFTER, "3"),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        Json(serde_json::json!({
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/identity-unavailable",
+            "title": "Identity service temporarily unavailable",
+            "status": 503,
+            "detail": "The identity service is temporarily unavailable. Please retry shortly.",
+            "code": "identity_unavailable",
+        })),
+    )
+        .into_response()
 }
 
 pub(super) fn store_failure() -> Response {

@@ -13,8 +13,12 @@ mod commands;
 mod composition;
 mod config;
 mod connections;
+#[cfg(test)]
+mod dependency_test_support;
+mod diagnostic_request;
 mod document_artifacts;
 mod document_storage;
+mod expensive_reads;
 mod gateway;
 mod health;
 mod media_continuations;
@@ -23,13 +27,20 @@ mod profile_authoring;
 mod profile_policy;
 mod projections;
 mod provider_tool_relay;
+mod public_streams;
 mod rate_limit;
+mod read_telemetry;
+mod readiness_diagnostics;
+mod retirement_archive;
 mod sandbox;
+mod sandbox_metrics;
 mod shutdown;
 mod store;
+mod telemetry;
 mod trigger;
 mod usage_billing;
 mod warm_pools;
+mod worker_supervision;
 
 use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 
@@ -67,6 +78,52 @@ const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 #[tokio::main]
 async fn main() {
+    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if retirement_archive::is_command(&arguments) {
+        match retirement_archive::command(&arguments).await {
+            Ok(summary) => println!("{summary}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if arguments.len() == 3 && arguments[0] == "--ledger-collection-observation" {
+        if let Err(error) = store::ledger_collection::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if arguments.len() == 3 && arguments[0] == "--ledger-census" {
+        if let Err(error) = store::ledger_census::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+    if arguments.len() == 3 && arguments[0] == "--ledger-retirement-snapshot" {
+        if let Err(error) =
+            store::ledger_retirement::command(&arguments[1], std::path::Path::new(&arguments[2]))
+                .await
+        {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
+
     tracing_subscriber::fmt()
         // Keep container text fields stable for the existing log sink's queries.
         .with_ansi(false)
@@ -76,7 +133,36 @@ async fn main() {
         )
         .init();
 
-    let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if document_artifacts::quota_cli::is_command(&arguments) {
+        match document_artifacts::quota_cli::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("document quota command refused: {reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if store::migrations::is_command(&arguments) {
+        match store::migrations::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("migration refused: {reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
+    if store::segment_operations::is_command(&arguments) {
+        match store::segment_operations::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(reason) => {
+                eprintln!("Agent log operation refused: {reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
             Ok(database) => println!(
@@ -93,8 +179,18 @@ async fn main() {
         }
         return;
     }
+    if store::provenance_progress::is_command(&arguments) {
+        match store::provenance_progress::command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(message) => {
+                eprintln!("{message}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
-        eprintln!("usage: cma [--print-runtime-role | --agent-manager-drain]");
+        eprintln!("usage: cma [--print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
@@ -109,6 +205,8 @@ async fn serve() -> Result<(), String> {
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
         return agent_manager::relay::prestop(&config).await;
     }
+    let recorder = telemetry::install()?;
+    let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
     let composition = ControlPlaneComposition::build(&config).await?;
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
@@ -140,6 +238,8 @@ async fn serve() -> Result<(), String> {
         manager.activate()?;
     }
     let mut shutdown = ShutdownCoordinator::new();
+    composition::activity::spawn(composition.activity_worker, &mut shutdown);
+    shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
     shutdown.push(
         composition
             .auth
@@ -153,19 +253,38 @@ async fn serve() -> Result<(), String> {
         shutdown.push(continuations.spawn(shutdown.subscribe()));
     }
     let worker_signal = shutdown.subscribe();
-    shutdown.push(composition.launch_scheduler.spawn(worker_signal));
-    shutdown.push(composition.command_scheduler.spawn(shutdown.subscribe()));
     shutdown.push(
         composition
-            .sandbox_control_scheduler
-            .spawn(shutdown.subscribe()),
+            .launch_scheduler
+            .spawn_supervised(worker_signal, composition.workers.get("launches")),
     );
-    shutdown.push(composition.native_warm_pools.spawn(shutdown.subscribe()));
+    shutdown.push(composition.command_scheduler.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("agent_commands"),
+    ));
+    shutdown.push(composition.sandbox_control_scheduler.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("sandbox_commands"),
+    ));
+    shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
+    shutdown.push(
+        composition
+            .native_warm_pools
+            .clone()
+            .spawn_observations(shutdown.subscribe()),
+    );
+    shutdown.push(composition.native_warm_pools.spawn_supervised(
+        shutdown.subscribe(),
+        composition.workers.get("native_warm_pools"),
+    ));
     shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
     shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
-    composition.sandbox_lifecycle.spawn(&mut shutdown);
+    composition
+        .sandbox_lifecycle
+        .spawn(&mut shutdown, &composition.workers);
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     composition.usage.spawn(&mut shutdown);
+    composition.usage_metrics.spawn(&mut shutdown);
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
         let server = axum::serve(
@@ -346,13 +465,15 @@ fn add_preflight_vary(headers: &mut HeaderMap) {
 
 fn with_request_context(router: Router) -> Router {
     router
+        .layer(axum::middleware::from_fn(telemetry::http::observe))
         .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(request_span)
+                .make_span_with(diagnostic_request::request_span)
                 .on_request(DefaultOnRequest::new().level(Level::INFO))
                 .on_response(DefaultOnResponse::new().level(Level::INFO)),
         )
+        .layer(axum::middleware::from_fn(diagnostic_request::scope))
         .layer(SetRequestIdLayer::new(X_REQUEST_ID, MakeRequestUuid))
         .layer(axum::middleware::from_fn(discard_unusable_request_id))
 }
@@ -365,20 +486,6 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
         request.headers_mut().insert(X_REQUEST_ID, normalized);
     }
     next.run(request).await
-}
-
-fn request_span(request: &Request) -> tracing::Span {
-    let request_id = request
-        .headers()
-        .get(X_REQUEST_ID)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("<non-text request id>");
-    tracing::info_span!(
-        "http.request",
-        request_id = %request_id,
-        method = %request.method(),
-        path = %request.uri().path(),
-    )
 }
 
 async fn shutdown_signal() {

@@ -15,6 +15,7 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
                 .ok_or(SandboxStoreError::Conflict)?;
             fence.require_workspace(binding, &admission.workspace)?;
         }
+        let cause = admission.admission_cause();
         let workspace = admission.workspace;
         let sandbox = state
             .sandboxes
@@ -41,6 +42,7 @@ impl WorkspaceAdmissionStore for InMemorySandboxStore {
                 return Err(SandboxStoreError::WorkspaceOriginConflict);
             }
         }
+        super::admission::require_operator_open(&state, cause)?;
         if state.workspaces.contains_key(&workspace.id) {
             return Err(SandboxStoreError::Duplicate);
         }
