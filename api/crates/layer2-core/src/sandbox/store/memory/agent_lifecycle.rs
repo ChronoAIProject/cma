@@ -1,9 +1,10 @@
 use super::*;
 use crate::sandbox::store::{
-    apply_agent_connection_recovery, apply_agent_sign_in, validate_agent_cleanup_capacity_log,
-    validate_agent_work_mutation_with_sandbox, AgentConnectionRecoveryApplication,
-    AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentWorkMutation, AgentWorkerStore,
+    apply_agent_connection_recovery, apply_agent_sign_in,
+    validate_agent_cleanup_capacity_log_with_retry, validate_agent_work_mutation_with_sandbox,
+    AgentConnectionRecoveryApplication, AgentConnectionRecoveryCandidate,
+    AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkMutation,
+    AgentWorkerStore,
 };
 
 #[async_trait]
@@ -99,12 +100,30 @@ impl AgentWorkerStore for InMemorySandboxStore {
         &self,
         mutation: AgentWorkMutation,
     ) -> Result<(), SandboxStoreError> {
+        self.commit_work(mutation, None)
+    }
+
+    async fn commit_agent_work_repeated_failure(
+        &self,
+        retry: crate::sandbox::store::AgentRepeatedFailure,
+        _observed: Option<crate::sandbox::store::AgentRetryObservation>,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_work(retry.mutation, Some(&retry.marker))
+    }
+}
+
+impl InMemorySandboxStore {
+    fn commit_work(
+        &self,
+        mutation: AgentWorkMutation,
+        marker: Option<&AgentLogEntry>,
+    ) -> Result<(), SandboxStoreError> {
         if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
             return Err(SandboxStoreError::AgentLogCapacityExceeded);
         }
         let mut state = self.lock();
         let mut candidate = state.clone();
-        validate_mutation(&candidate, &mutation)?;
+        validate_mutation(&candidate, &mutation, marker)?;
 
         let current = candidate
             .agents
@@ -164,18 +183,23 @@ impl AgentWorkerStore for InMemorySandboxStore {
     }
 }
 
-fn validate_mutation(state: &State, mutation: &AgentWorkMutation) -> Result<(), SandboxStoreError> {
+fn validate_mutation(
+    state: &State,
+    mutation: &AgentWorkMutation,
+    marker: Option<&AgentLogEntry>,
+) -> Result<(), SandboxStoreError> {
     let current = state
         .agents
         .get(&mutation.agent.id)
         .ok_or(SandboxStoreError::NotFound)?;
-    validate_agent_cleanup_capacity_log(
+    validate_agent_cleanup_capacity_log_with_retry(
         current,
         mutation,
         state
             .agent_logs
             .get(&current.id)
             .and_then(|entries| entries.last()),
+        marker,
     )?;
     let current_worktree = state
         .worktrees
