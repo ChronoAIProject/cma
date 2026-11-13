@@ -98,6 +98,7 @@ impl RelayClient {
             thread_reply: false,
             native_media: false,
             complete_text: false,
+            commonmark: false,
         };
         let result = self
             .send_prepared(super::Credential::ChannelKey(secret), &prepared)
@@ -153,6 +154,7 @@ impl RelayClient {
             thread_reply: false,
             native_media: template.has_media(),
             complete_text: false,
+            commonmark: false,
         })
     }
 }

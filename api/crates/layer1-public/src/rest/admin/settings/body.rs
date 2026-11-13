@@ -234,6 +234,7 @@ pub(crate) struct SettingsView {
     settings: PlatformSettingsBody,
     model_budget_writes_available: bool,
     model_request_budget_writes_available: bool,
+    platform_spend_writes_available: bool,
 }
 
 impl SettingsView {
@@ -243,6 +244,7 @@ impl SettingsView {
             settings: value.settings.into(),
             model_budget_writes_available: service.model_budget_writes_enabled(),
             model_request_budget_writes_available: service.model_request_budget_writes_enabled(),
+            platform_spend_writes_available: service.platform_spend_writes_enabled(),
         }
     }
 }

@@ -90,6 +90,8 @@ pub(super) fn store_error(error: SandboxStoreError) -> AgentServiceError {
         }
         SandboxStoreError::AgentCreationConflict => AgentServiceError::CreationConflict,
         SandboxStoreError::AgentLogCapacityExceeded => AgentServiceError::LogCapacityExceeded,
+        SandboxStoreError::Budget(reason) => AgentServiceError::Budget(reason),
+        SandboxStoreError::AdmissionPaused => AgentServiceError::AdmissionPaused,
         SandboxStoreError::Corrupt(detail) => AgentServiceError::Corrupt(detail),
         SandboxStoreError::InvalidTransaction(detail) => AgentServiceError::Corrupt(detail.into()),
         other => AgentServiceError::Unavailable(other.to_string()),

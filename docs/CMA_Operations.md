@@ -993,6 +993,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_V2_UI_TRANSPORT_ENABLED` | Eligibility for the integrated v2 browser transport; false code default, true in the production ConfigMap for new Agent tabs (including durable Starting input). Existing tabs retain their selected transport. Deploy with the matching API/Web release, ConfigMap compare-and-set, and API rollout; does not disable existing public v2 API routes or change an accepted request protocol |
 | `CHRONO_MODEL_BUDGET_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. Refuses saving any nonempty model budget policy, including disabled drafts, until compatible serving readers and the verified rollback image are established. The release operator enables it in a later fenced rollout; it does not activate budget enforcement or supply policy values. Disabling it retains readable settings and liabilities; it does not restore pre-budget reader compatibility. See CMA_Model_Budget_Controls.md |
 | `CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. A separate reader-before-write gate for nonempty request model policies, including disabled drafts; foundation writes must also be enabled. Enable only after the request settings/reservation reader is the verified serving and rollback baseline. Exposed as read-only admin save availability; does not activate enforcement. See CMA_Model_Request_Reservations.md |
+| `CHRONO_PLATFORM_SPEND_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. Reader-before-write gate for the `cloud` platform policy fields and `POST /api/v1/admin/spend/observations`; the foundation model budget write gate must also be enabled. Exposed as read-only `platform_spend_writes_available`; does not activate enforcement or supply values. See CMA_Platform_Spend_Metering.md |
+| `CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED` | Strict boolean, false by default in code and ConfigMap. Enables atomic conversion of active platform period model balances to sixteen counters and allows independent settlements to bypass the local period queue. Admissions retain the existing settings fence and use the exact sum. Enable only after all serving, rollback and retirement-census readers support the counter layout and reservation bindings. OFF prevents new conversions but retains accounting and settlement for converted periods; it does not restore old-reader compatibility. See CMA_Platform_Spend_Metering.md section 4.1. |
+| `CHRONO_ADMISSION_CONTROL_WRITES_ENABLED` | Exact `true`/`false`, default `false` in code and ConfigMap. Independent gate for operator admission stop/resume writes; closed returns 503 `admission_control_writes_unavailable`. Reads and enforcement always run, including with spend metering off. Open only after every replica runs the compatible image. Never deploy or roll back while stopped; first resume the exact current stop. See [Operator admission stop](#operator-admission-stop). |
 | `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; checked-in manifests disable it; live cohort selection must be observed at delivery. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
@@ -2344,6 +2347,28 @@ web assets needed by open tabs and the batch's compatible reader floor through
 normal deployment procedures. Verify an existing tab continues working and names
 its original bundle. This UI change does not authorize deployment or asset removal.
 
+## Buffered Agent history rollout
+
+`CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED` independently defaults to `false`
+and accepts only exact `true` or `false`. It changes the buffered Agent v2
+snapshot and head routes to entry authorization, one current Agent capture and
+one final authorization fence. Cursor validation uses that current header. Page,
+predecessor and tail proof share a log snapshot; command and message bindings
+remain inside the bounded private read. Success, dependency errors, cursor errors
+and timeout all pass the final fence. SSE polling and frame release retain their
+existing checks. There is no persisted-format or public response change.
+
+Keep this switch off for initial deployment. Enable in staging only after the
+authorization/revocation review, run the race and integrity contracts, and rehearse
+returning to `false` with an API rollout. Production activation is release-owner
+controlled: compare the same image in natural-traffic windows of at least 30
+minutes off/on. Hold the independent authorization-session setting fixed, and
+separate #1648 bounded-history activation from this comparison. Follow the exact
+metrics, coverage caveats and pass criteria in
+[the measurement protocol](operations/perf-measurement/history-auth.md).
+Any authorization or content inconsistency requires immediate rollback to false
+on the same image. Local measurements do not complete production verification.
+
 ## Sandbox detail read rollout
 
 `CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED` defaults to `false` and accepts only
@@ -2399,3 +2424,86 @@ Optional enrichment retains its existing fallback behavior. See
 See [Sandbox detail snapshot reads](CMA_Sandbox_Detail_Read.md) for exact phase
 boundaries, local comparison, security/concurrency tests and the next batching
 proposal. Production flag changes remain part of the approved release process.
+
+## Browser identity reads
+
+`CHRONO_AUTH_BROWSER_SESSION_JOIN_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. With `true`, Cookie authentication joins the browser
+handle and its subject by their indexed keys in one Mongo aggregate. Both
+records retain their existing schema, revocation and token validation. Expired
+logins are rejected before interpreting subject authority. The post-verification
+custody check and the additional `/auth/session` logout check still run.
+
+Ordinary authenticated Cookie requests use two identity commands instead of
+three; `/auth/session` uses three instead of four, plus its settings read.
+No completed NyxID verification is reused on the normal path. The existing
+60-second outage fallback remains limited to `GET /auth/session`.
+
+Rollback by setting the switch to `false` and restarting the API. No persisted
+format changes or data repair are required. Compare both paths using the
+`identity` diagnostic phase described in [Mongo diagnostics](CMA_Mongo_Diagnostics.md);
+handler reads remain outside this phase.
+
+## Operator admission stop
+
+Use the global switch to contain **new** work without interrupting accepted
+work. It covers new subjects, messages, Launches, resource creation and explicit
+revival. Accepted operation steps, queued turns, running work, settlement,
+approvals and cancellation continue. Streams are outside this switch. Existing
+owners can sign in. SpendStop keeps its existing independent effect.
+
+Before opening `CHRONO_ADMISSION_CONTROL_WRITES_ENABLED=true`, verify that
+**every** serving and recovery replica runs the compatible admission image;
+retain the source SHA, immutable image digests, time window and replica receipts.
+Use a later rollout to open the gate only after that reader floor is established.
+Both code and the checked-in ConfigMap default to false. Turning the gate off
+blocks stop **and resume** but continues enforcement of a persisted stop.
+**Never deploy or roll back while stopped**, including a configuration rollout:
+resume with the currently running compatible image first. If a stopped system
+has lost its write gate, retain that image and follow the incident owner's
+compatible recovery procedure; do not restore an older reader that ignores it.
+
+These local commands assume an authorized `ConfigurePlatform` credential in
+`CMA_OPERATOR_TOKEN` and the service origin in `CMA_ORIGIN`. They do not change
+spend policy. Capture request/result timestamps and responses in the incident
+record, without saving credentials.
+
+```sh
+curl --fail-with-body -sS -H "Authorization: Bearer $CMA_OPERATOR_TOKEN" \
+  "$CMA_ORIGIN/api/v1/admin/admission"
+
+# Use the revision from GET; replace the incident reason with the real context.
+curl --fail-with-body -sS -X POST \
+  -H "Authorization: Bearer $CMA_OPERATOR_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"reason":"Contain new work during incident review","expected_revision":0}' \
+  "$CMA_ORIGIN/api/v1/admin/admission/stop"
+
+# Use the revision of the CURRENT stop, rather than a cached earlier incident.
+curl --fail-with-body -sS -X POST \
+  -H "Authorization: Bearer $CMA_OPERATOR_TOKEN" -H 'Content-Type: application/json' \
+  --data '{"reason":"Incident resolved; reopen admission","expected_revision":1}' \
+  "$CMA_ORIGIN/api/v1/admin/admission/resume"
+```
+
+A repeated stop returns the first writer's stop and does not add an audit row.
+A stale resume returns 409 `admission_control_conflict`; reread and verify the
+incident before issuing a new resume. On an uncertain transport result, read
+state, `last_change` and `history` before choosing the next CAS; do not assume
+it failed. Each transition commits control, one activity row and one immutable
+change record together. GET returns the latest 20 changes, newest first, with
+operator, time, reason and old/new stop state. The durable records remain in
+`platform_settings` under `admission_control_change:<revision padded to 20 digits>`
+after later transitions. No-op requests add neither activity nor history.
+Activity retains its existing actor/time/revision/status vocabulary; immutable
+change records supply the full historical audit details.
+
+Verify new admissions receive 503 `admission_paused` and `Retry-After: 60`, new
+subjects receive `registration_closed`, signup options close, existing-owner
+sign-in succeeds, and admitted work and controls continue. The switch has no
+cache TTL: requests use the next existing admission snapshot. Pre-stop
+zero-liability snapshots are read-only and may commit after acknowledgement.
+Current transaction IO has no explicit total deadline; local checks do not
+establish a hard ≤60-second late-commit bound. Record N, flags, source/image,
+environment, exact time window and raw results for the M-OPS-03/M-SCALE-04/TC-100
+drill. Production qualification and the request-arrival/commit-time definition
+remain release-owner work; see [the contract](CMA_Admission_Control.md).

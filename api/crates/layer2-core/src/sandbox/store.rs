@@ -22,6 +22,8 @@ mod agent;
 pub use agent::AgentStore;
 mod agent_log;
 pub use agent_log::AgentLogStore;
+#[cfg(any(test, feature = "test-support"))]
+pub mod agent_log_contract;
 mod agent_response_log;
 pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
@@ -165,6 +167,8 @@ pub struct Page<T> {
 pub enum SandboxStoreError {
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("record not found")]
     NotFound,
     #[error("record already exists")]
@@ -398,6 +402,9 @@ pub struct InMemorySandboxStore {
 
 #[derive(Clone, Default)]
 struct State {
+    admission_control: crate::admission::AdmissionControl,
+    admission_audit: Vec<crate::ActivityRecord>,
+    admission_history: Vec<crate::admission::AdmissionChange>,
     retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,

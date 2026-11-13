@@ -36,6 +36,23 @@ configuration; adding metadata cannot prove that the target has been selected.
 Set a 15-second scrape interval and a bounded timeout. Scrape every pod rather
 than a load-balanced Service. Deduplicate overlapping discovery jobs, not pods.
 
+The collector is the existing vmagent, not new CMA or chrono-probe code. It
+issues read-only HTTP GET requests to each private metrics listener and writes
+samples directly to VictoriaMetrics. Probe exports its own independent
+NyxID-path observations; it does not relay CMA's raw metrics. Grafana queries
+the stored application and probe series when panels are configured. Deferring
+panels does not require deferring collection or dropping detailed CMA metrics.
+
+A read-only check on 2026-11-13 verified live probe series in the platform's
+VictoriaMetrics, with distinct scrape timestamps **20 seconds** apart. This
+confirms the existing collection/storage path for probe, matching chrono-cd's
+documented default, but does not establish CMA's requested 15-second cadence
+or all-replica coverage. Configure any required override in the existing
+collector's authoritative configuration. CMA's pod metadata alone cannot
+change the collector interval. Track the remaining collection checks under
+[CMA #1848](https://github.com/ChronoAIProject/cma/issues/1848); panels are
+currently deferred.
+
 Reuse the platform's cAdvisor/kube-state-metrics collection for CPU, resident
 memory, restarts and desired replicas. There is no second process-resource
 collector in CMA. Application counters add observations the infrastructure
@@ -363,11 +380,15 @@ a logical group result, labelled `webhook_group`, not a per-recipient receipt.
 Existing delivery duration metrics remain in place. EG turn duration buckets
 now include 30s, 120s, 600s, 1800s and 3600s, without imposing a turn deadline.
 
-External journeys and production collection/notification acceptance are tracked
-in [chrono-probe #18](https://github.com/ChronoAIProject/chrono-probe/issues/18).
-It reuses the existing collector and probe checks, and coordinates versioned
-rules/dashboards in the platform repository. Creating it neither closes #1470
-nor implements #1486's complete durable request/terminal accounting.
+External journeys are tracked in
+[CMA #1847](https://github.com/ChronoAIProject/cma/issues/1847), collection and
+notification integration in
+[CMA #1848](https://github.com/ChronoAIProject/cma/issues/1848), and generic
+read-only probe observations in
+[chrono-probe #18](https://github.com/ChronoAIProject/chrono-probe/issues/18).
+They reuse the existing collector and coordinate platform configuration;
+business execution remains outside probe. These implementation items neither
+close #1470 nor implement #1486's complete durable request/terminal accounting.
 
 Worker supervision, progress-aware stall detection, safe recovery and readiness
 are tracked separately in [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740),

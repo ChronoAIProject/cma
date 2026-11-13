@@ -170,6 +170,7 @@ impl Sender {
                 result.delivery = super::gate::expired();
                 break;
             }
+            let upload = matches!(&operation, NativePart::Upload(_));
             let send = async {
                 match operation {
                     NativePart::ReceivedSticker(proved) => self
@@ -201,9 +202,17 @@ impl Sender {
                         .map(Some),
                 }
             };
-            let sent = timeout_at(deadline, send)
-                .await
-                .unwrap_or(Err(Error::Unconfirmed));
+            let sent = super::trace::native::part(
+                confirmed,
+                upload,
+                async {
+                    timeout_at(deadline, send)
+                        .await
+                        .unwrap_or(Err(Error::Unconfirmed))
+                },
+                super::trace::native::lark,
+            )
+            .await;
             drop(permit);
             ctx.gate.progress();
             match sent {
