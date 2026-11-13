@@ -14,7 +14,7 @@ use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
 const RETRY: Duration = Duration::from_secs(5);
-const RENEW: Duration = Duration::from_secs(3);
+const RENEW: Duration = Duration::from_secs(10);
 const GET_BOUND: Duration = Duration::from_secs(15);
 const INVOCATION_BOUND: Duration = Duration::from_secs(60);
 const MAX_FRAMES: usize = 4096;
@@ -37,6 +37,11 @@ impl RoutedTargetExecutor {
         tracker: Arc<TurnTracker>,
         config: &DeliveryConfig,
     ) -> Self {
+        let renew_interval = if port.clone().dispatcher().journal().partitions.is_some() {
+            crate::replicas::config::RENEW
+        } else {
+            RENEW
+        };
         Self {
             port,
             delivery,
@@ -44,7 +49,7 @@ impl RoutedTargetExecutor {
             worker: format!("routed-{}", uuid::Uuid::new_v4()),
             failure_text: config.failure_text.clone(),
             frame_limit: MAX_FRAMES,
-            renew_interval: RENEW,
+            renew_interval,
             invocation_bound: INVOCATION_BOUND,
         }
     }
