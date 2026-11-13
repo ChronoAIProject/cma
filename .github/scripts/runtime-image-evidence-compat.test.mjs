@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { pins, validateEvidence } from './runtime-image-evidence.mjs';
 
 // Reviewer #1742 reproduction: a complete pre-change v1 record bound to its
 // original commit/image, with the eight original artifact fields. This frozen
 // synthetic fixture follows fa292b834; it is not deployment acceptance evidence.
 const historical = JSON.parse(readFileSync(new URL('./fixtures/runtime-image-evidence-v1.json', import.meta.url), 'utf8'));
-const expected = pins(readFileSync(new URL('../../infra/runtime/Dockerfile', import.meta.url), 'utf8'));
+const originalPins = new URL('./fixtures/runtime-image-evidence-v1.Dockerfile', import.meta.url);
+const expected = pins(readFileSync(originalPins, 'utf8'));
 const current = () => {
   const value = structuredClone(historical);
   value.schema = 'cma-runtime-image-v2';
@@ -58,6 +58,7 @@ test('both schema profiles preserve original commit, image, artifact, probe and 
       v => { v.image.Id = `sha256:${'0'.repeat(64)}`; },
       v => { v.image.Config.Labels['org.opencontainers.image.revision'] = '0'.repeat(40); },
       v => { v.proof.artifacts.native = '0'.repeat(64); },
+      v => { v.proof.artifacts.acp = '0'.repeat(64); },
       v => { v.proof.checks.pop(); },
       v => { v.cleanup.containers = 1; },
       v => { v.result = 'fail'; },
@@ -77,7 +78,7 @@ test('both schema profiles preserve original commit, image, artifact, probe and 
 });
 
 test('verify CLI dispatches historical v1 and v2 and refuses incomplete or unknown profiles', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'cma-evidence-compat-'));
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-evidence-compat-')));
   try {
     // Only image inspection is simulated. The real verify entrypoint parses and
     // validates each record; no Docker daemon, container or network is used.
@@ -85,7 +86,17 @@ test('verify CLI dispatches historical v1 and v2 and refuses incomplete or unkno
       `const assert = require('node:assert/strict');\n` +
       `assert.deepEqual(process.argv.slice(2), ['image', 'inspect', 'runtime:historical']);\n` +
       `process.stdout.write(${JSON.stringify(JSON.stringify([historical.image]))});\n`, { mode: 0o700 });
-    const script = fileURLToPath(new URL('./runtime-image-evidence.mjs', import.meta.url));
+    // Run the unchanged current reader beside the historical manifest pins.
+    // A new runtime bundle must not rewrite this frozen v1 evidence.
+    const scripts = join(directory, '.github/scripts');
+    mkdirSync(scripts, { recursive: true });
+    mkdirSync(join(directory, 'infra/runtime'), { recursive: true });
+    copyFileSync(originalPins, join(directory, 'infra/runtime/Dockerfile'));
+    for (const name of ['runtime-image-evidence.mjs', 'runtime-image-probe.mjs',
+      'runtime-bootstrap-probe.mjs', 'runtime-github-probe.mjs']) {
+      copyFileSync(new URL(name, import.meta.url), join(scripts, name));
+    }
+    const script = join(scripts, 'runtime-image-evidence.mjs');
     const missingPs = current();
     delete missingPs.proof.artifacts.psVersion;
     const missingJq = current();
