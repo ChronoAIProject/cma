@@ -1,5 +1,5 @@
 //! Compose CMAEG and drain turns, deliveries and connections on termination.
-use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Instant};
+use std::{future::IntoFuture, net::SocketAddr, sync::Arc};
 use tokio::sync::oneshot;
 use tower_http::{catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer};
 
@@ -350,25 +350,25 @@ pub(crate) async fn serve(
     let connections = connections::ConnectionService::new(state.clone(), tools_state.clone());
     let _connection_worker = connections.start_completion_worker(runner);
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    let mut github_initialization = config
+    let github_initialization = config
         .github_enabled
         .then(|| crate::github::Initialization::start(state.clone(), ingress.clone()));
     let ingress = ingress.with_receipt_observer(Arc::new(connections.clone()));
     let _metrics = http::metrics::MetricsServer::start(config.metrics_listen, metrics).await?;
-    let mut routed_workers = crate::serve_routed::start_workers(routed, state.readiness.clone());
+    let routed_workers = crate::serve_routed::start_workers(routed, state.readiness.clone());
     // Readers and recovery remain active when controls/forms issuance is disabled.
-    let mut native_lark_controls = crate::native_lark::control_recovery::Worker::start(
+    let native_lark_controls = crate::native_lark::control_recovery::Worker::start(
         ingress.clone(),
         state.readiness.clone(),
     );
-    let mut whatsapp_form_worker = whatsapp_forms_ready.then(|| {
+    let whatsapp_form_worker = whatsapp_forms_ready.then(|| {
         crate::whatsapp::forms::worker::Worker::start(
             ingress.clone(),
             whatsapp_forms.provisioner.clone(),
             state.readiness.clone(),
         )
     });
-    let mut native_discord = crate::discord::lifecycle::Worker::start(
+    let native_discord = crate::discord::lifecycle::Worker::start(
         &config.native_discord,
         state.native_discord.clone(),
         native_discord_threads,
@@ -412,63 +412,18 @@ pub(crate) async fn serve(
     )
     .with_graceful_shutdown(async move {
         shutdown::wait_for_shutdown_signal().await;
-        tracker.start_draining();
-        let deadline = Instant::now() + config.turns.drain;
-        native_lark_controls.stop();
-        if let Some(worker) = &whatsapp_form_worker {
-            worker.stop();
+        let deadline = shutdown::Drain {
+            tracker,
+            drain_timeout: config.turns.drain,
+            native_lark_controls,
+            whatsapp_form_worker,
+            native_discord,
+            routed_workers,
+            github_initialization,
+            delivery_engine,
         }
-        if let Some(worker) = &native_discord {
-            worker.stop();
-        }
-        for worker in &routed_workers {
-            worker.stop_scheduling();
-        }
-        if let Some(worker) = &github_initialization {
-            worker.stop();
-        }
-        let (
-            turns_drained,
-            routed_drained,
-            native_drained,
-            lark_controls_drained,
-            whatsapp_forms_drained,
-        ) = tokio::join!(
-            tracker.drain(deadline),
-            async {
-                let mut drained = true;
-                for worker in &mut routed_workers {
-                    drained &= worker.drain(deadline).await;
-                }
-                drained
-            },
-            async {
-                match &mut native_discord {
-                    Some(worker) => worker.drain(deadline).await,
-                    None => true,
-                }
-            },
-            native_lark_controls.drain(deadline),
-            async {
-                match &mut whatsapp_form_worker {
-                    Some(worker) => worker.drain(deadline).await,
-                    None => true,
-                }
-            }
-        );
-        shutdown::log_drain_results(
-            turns_drained,
-            routed_drained,
-            native_drained,
-            lark_controls_drained,
-            whatsapp_forms_drained,
-        );
-        shutdown::drain_github(&mut github_initialization, deadline).await;
-        if !delivery_engine.drain(deadline).await {
-            tracing::warn!(
-                "delivery drain deadline reached; remaining sends cancelled with unknown outcome"
-            );
-        }
+        .run()
+        .await;
         let _ = shutdown_started.send(deadline);
     })
     .into_future();
