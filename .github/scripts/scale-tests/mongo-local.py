@@ -98,7 +98,7 @@ def run(binary, directory, test_name):
         environment["CMA_IM_TEST_MONGODB_URI"] = f"mongodb://contract-admin:{password}@{endpoint}/admin?directConnection=true"
         with tempfile.TemporaryDirectory(prefix="process-fixture-", dir=directory) as temporary:
             environment["TMPDIR"] = temporary
-            process = subprocess.Popen([str(binary), test_name, "--ignored", "--test-threads=1"],
+            process = subprocess.Popen([str(binary), test_name, "--ignored", "--show-output", "--test-threads=1"],
                                        env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
@@ -118,8 +118,16 @@ def run(binary, directory, test_name):
             result["numeric_assertions"] = [int(value) for value in re.findall(rb"(?:left|right):\s+(\d+)", output)]
             result["completed_replica_counts"] = [int(value) for value in re.findall(
                 rb"replica_fixture replicas=([123]) status=PASS", output)]
+            result["completed_ownership_cohorts"] = [{"replicas": int(count), "enabled": enabled == b"true"}
+                for count, enabled in re.findall(
+                    rb"replica_fixture replicas=([123]) status=PASS ownership=(true|false)", output)]
             result["ingress_rejections"] = [value.decode() for value in re.findall(
-                rb"ingress_rejection=(agent_command_key_conflict|event_id_content_conflict|provider_busy|conflict|unclassified)", output)]
+                rb"ingress_rejection=(agent_command_key_conflict|event_id_content_conflict|provider_busy|conflict|routed_admission_unavailable|routed_authority_changed_retry|routed_provider_replay_unavailable|custom_durable_admission_unavailable|provider_unavailable|internal|unclassified)", output)]
+            result["failed_cohort_observations"] = [
+                {"replicas": int(count), "enabled": enabled == b"true", "accepted_responses": int(accepted),
+                 "durable_plan_after_responses": plan == b"true", "targets_present_after_responses": int(targets)}
+                for count, enabled, accepted, plan, targets in re.findall(
+                    rb"replica_failure replicas=([123]) ownership=(true|false) accepted=(\d+) durable_plan=(true|false) target_present=(\d+)", output)]
             result["migration_diagnostics"] = [{"stage": stage.decode(), "code": int(code), "kind": kind.decode()}
                 for stage, code, kind in re.findall(rb"fixture_diagnostic stage=(create|index|validator|marker|other) code=(-?\d+) kind=(field_name|disk_space|index_name|authorization|unclassified|non_command)", output)]
             result["failure_codes"] = [code for text, code in [

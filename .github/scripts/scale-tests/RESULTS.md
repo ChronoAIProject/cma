@@ -5,6 +5,12 @@ passed. This record distinguishes harness validation from real application
 acceptance. Tracking issue: #1957. Base integration source:
 `d6fc953a6cb43f8d9c90337b4e4ce17ecb291fbc`.
 
+Current ownership dependency: `aadd212c2810fb12d443998e3cf75bab2fd670cf`.
+Its first combined OFF/ON process test **FAILS at enabled N=2**, returning
+HTTP 503 instead of 202. N=1 OFF/ON and N=2 OFF completed first; N=3 was not
+reached. This supersedes any suggestion that the historical process pass
+qualifies the ownership candidate. Developer-15 owns the investigation.
+
 ## Executed local gates
 
 | Gate | Result | Evidence and limits |
@@ -15,7 +21,8 @@ acceptance. Tracking issue: #1957. Base integration source:
 | Pinned Rust formatting and touched-crate lint | PASS | Rust 1.96.1 fmt; cmaeg all-target/all-feature Clippy with warnings denied. |
 | Original EG executable control | PASS | Same test-binary hash as replica case; signed ingress and complete streamed response; disposable Mongo cleanup confirmed. |
 | Imported delivery oracle | PASS | Three tests on this checkout; Unknown/Partial/no-effect/rejected/missing cannot qualify confirmed terminal delivery. Exact developer-08 source pins are in peer-provenance.json. |
-| Real routed EG ingress, N=1/2/3 | PASS, scoped | Independent operating-system processes and Mongo clients, same routing selection in all cohorts, one signed event through every ingress, one provider POST, one independently read confirmed terminal receipt/cursor, and one sink observation. |
+| Historical routed EG ingress, N=1/2/3, ownership off | PASS, scoped | Independent operating-system processes and Mongo clients, same routing selection in all cohorts, one signed event through every ingress, one provider POST, one independently read confirmed terminal receipt/cursor, and one sink observation. |
+| Integrated ownership N=1/2/3 OFF/ON | FAIL | Enabled N=2 concurrent ingress 503/202; receipt `evidence/mongo-ownership-aadd212-initial.json`. Original control PASS in `evidence/mongo-control-aadd212.json`. |
 | Shared Kubernetes user journeys | BLOCKED | No usable synthetic auth/runtime/provider/browser fixture or implemented environment driver. |
 
 The routed process run took 10.50 seconds, 2026-11-13T16:51:27Z through
@@ -33,7 +40,12 @@ binary. See `evidence/mongo-routed-3415875.json` and
 `evidence/refresh-3415875.json`. Formatting and strict cmaeg Clippy passed.
 The compiler-path mismatch and two cancelled queued checks are retained;
 no current control/oracle rerun is inferred from the earlier results.
-The newer integrated ownership candidate is the next dependency to test.
+The aadd212 ownership run took 95.28 seconds, 2026-11-13T17:30:08Z through
+17:31:44Z, and confirmed cleanup. Its first rejection was retained as
+`unclassified`; the updated test emits only allowlisted problem detail/code
+and after-response durable-plan/target-presence observations. Those observations
+cannot prove the rejected request committed its partition queue. Transaction
+contention is the implementer's investigation hypothesis, not an established RCA.
 
 ## Required acceptance scenarios
 

@@ -78,14 +78,19 @@ The process test requires an authenticated disposable Mongo replica set via
 `CMA_IM_TEST_MONGODB_URI`; it refuses an ordinary standalone Mongo server. Reuse
 `.github/scripts/image-manager-mongo-contract.{sh,py}` under the environment
 manager's agreed lifecycle, never an existing production database. The process test uses the same routed admission/recovery selection at N=1/2/3,
+with separate OFF controls and ON ownership cohorts. Each cohort has a fresh
+database; ON invokes `--migrate-replicas`, shares one public deployment origin
+and advertises each process's own loopback address. This avoids mode-off reuse
+after the protocol floor is activated. It uses
 independent real EG executables and a separate limited Mongo oracle. It checks a
 single terminal text receipt/cursor against the provider POST ledger and sink
-observations. It is **not** proof of native provider exactly-once, the forthcoming
-replica ownership switch, pod loss or node loss.
+observations. It is **not** proof of native provider exactly-once, the
+full ownership contract, pod loss or node loss.
 
 For a compiled test binary, `mongo-local.py` creates and removes its own Mongo
 container and runs exactly one selected test. It cannot attach to an existing
-cluster. Use `--test-name` for the original executable control; the default selects
+cluster. Passing cohort markers and fixed rejection/after-response custody
+observations are retained; raw response bodies are discarded. Use `--test-name` for the original executable control; the default selects
 the replica test. The fixed 1 GiB database filesystem matches the existing
 repository runner and the oplog is bounded to 64 MiB. A 512 MiB filesystem failed
 index creation with Mongo 14031 and was corrected; this was a runner sizing bug.
