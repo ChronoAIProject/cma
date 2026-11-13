@@ -8,6 +8,8 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub agent_event_stream_wake: bool,
+    pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub coordinated_ingress: bool,
@@ -51,9 +53,11 @@ pub(crate) struct FeatureFlags {
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
     pub retry_single_marker_enabled: bool,
+    pub work_retry_policy_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
+    pub sandbox_reconciliation_reserved_lane: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -70,6 +74,8 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
+            agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(
                 lookup,
                 "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
@@ -109,6 +115,7 @@ impl FeatureFlags {
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retry_single_marker_enabled: flag(lookup, "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED")?,
+            work_retry_policy_enabled: flag(lookup, "CHRONO_WORK_RETRY_POLICY_ENABLED")?,
             agent_log_scan_cooperative_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
@@ -117,6 +124,10 @@ impl FeatureFlags {
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
+            sandbox_reconciliation_reserved_lane: flag(
+                lookup,
+                "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
             )?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
@@ -226,6 +237,9 @@ mod sandbox_enrichment_tests;
 
 #[cfg(test)]
 mod retry_single_marker_tests;
+
+#[cfg(test)]
+mod work_retry_tests;
 
 #[cfg(test)]
 #[path = "scan_cooperation_tests.rs"]

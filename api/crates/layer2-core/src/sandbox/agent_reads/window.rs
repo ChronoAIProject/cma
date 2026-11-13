@@ -46,6 +46,24 @@ pub(super) struct WindowRead {
 }
 
 impl AgentReadService {
+    /// One bounded current authorization snapshot, with no log IO. Callers may
+    /// use it to fence a live batch or detect the need for proved replay.
+    pub async fn current_event_stream_header(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+    ) -> Result<AgentEventStreamHeader, AgentReadError> {
+        authorization
+            .bounded(async {
+                let snapshot = self.current_event_stream_snapshot(authorization).await?;
+                let agent = snapshot
+                    .lineage
+                    .agent
+                    .ok_or_else(|| corrupt("authorized event snapshot has no Agent"))?;
+                header(&agent)
+            })
+            .await
+    }
+
     /// The predecessor was verified in the same page snapshot; no extra source
     /// scan or new authority decision is needed to correlate this projection.
     pub(in crate::sandbox) async fn steering_operation(

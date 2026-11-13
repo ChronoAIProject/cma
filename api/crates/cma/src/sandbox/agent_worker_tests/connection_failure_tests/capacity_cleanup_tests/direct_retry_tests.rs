@@ -12,6 +12,7 @@ use mongodb::{
 
 mod races;
 mod transactions;
+mod work_retry_policy_tests;
 
 struct Fixture {
     client: Client,

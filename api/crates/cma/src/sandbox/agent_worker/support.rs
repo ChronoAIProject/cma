@@ -5,6 +5,7 @@ use layer2_core::sandbox::store::{
     AgentRetryObservation, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
     MAX_AGENT_WORK_RECEIPTS,
 };
+use layer2_core::sandbox::work_retry::WorkRetryFailure;
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, Sandbox, SandboxEventKind,
     TypedFailure, Workspace, Worktree, WorktreeStatus,
@@ -16,6 +17,9 @@ use super::AgentWorker;
 
 mod context;
 mod effects;
+mod failures;
+pub(super) use failures::{adapter_failure, cleanup_failure, skill_failure};
+use failures::{missing_parent, parent_store_failure};
 #[cfg(test)]
 mod ledger_hold_tests;
 mod mapping;
@@ -47,6 +51,7 @@ pub(in crate::sandbox) struct WorkerFailure {
     detail: String,
     retryable: bool,
     observation: Option<AgentRetryObservation>,
+    retry_kind: WorkRetryFailure,
 }
 
 impl WorkerFailure {
@@ -56,6 +61,11 @@ impl WorkerFailure {
             detail: detail.into(),
             retryable: true,
             observation: None,
+            retry_kind: if class == "agent_parent_not_ready" {
+                WorkRetryFailure::Waiting
+            } else {
+                WorkRetryFailure::Transient
+            },
         }
     }
 
@@ -65,6 +75,7 @@ impl WorkerFailure {
             detail: detail.into(),
             retryable: false,
             observation: None,
+            retry_kind: WorkRetryFailure::ExternalAction,
         }
     }
 
@@ -150,11 +161,33 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let delay = self.failure_retry_delay(&agent, failure.is_ledger_hold());
+        let delay = self.failure_retry_delay(&agent, &failure);
         self.retry_at(agent, failure, now, now + delay).await
     }
 
     pub(super) async fn retry_at(
+        &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let telemetry = self.config.work_retry_policy_enabled.then(|| {
+            crate::sandbox::work_retry::RetryTelemetry::agent(
+                &agent,
+                failure.retry_kind(),
+                self.retry_decision(&agent, &failure, self.config.retry_delay),
+                ready_at,
+            )
+        });
+        self.commit_retry_at(agent, failure, now, ready_at).await?;
+        if let Some(telemetry) = telemetry {
+            telemetry.published();
+        }
+        Ok(())
+    }
+
+    async fn commit_retry_at(
         &self,
         mut agent: Agent,
         failure: WorkerFailure,
@@ -318,59 +351,6 @@ pub(super) fn bump_log_sequence(agent: &mut Agent, count: usize) -> Result<(), S
     Ok(())
 }
 
-pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
-    match error {
-        AdapterError::AccessRevoked => WorkerFailure::terminal(
-            "agent_access_revoked",
-            "current runtime authority was revoked",
-        ),
-        AdapterError::InputAuthorityUnavailable(detail)
-        | AdapterError::PromptNotWritten(detail)
-        | AdapterError::Unavailable(detail) => {
-            WorkerFailure::retryable("agent_runtime_unavailable", detail)
-        }
-        AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
-            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
-            layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD_DETAIL,
-        ),
-        AdapterError::SkillUpgradeRefused(reason) => {
-            WorkerFailure::terminal(reason.code(), reason.to_string())
-        }
-        AdapterError::AtCapacity(detail) => WorkerFailure::terminal("agent_resource_quota", detail),
-        AdapterError::Rejected(detail) | AdapterError::OperationIdentityConflict(detail) => {
-            WorkerFailure::terminal("agent_runtime_rejected", detail)
-        }
-        AdapterError::Unsupported(detail) => {
-            WorkerFailure::terminal("agent_runtime_unsupported", detail)
-        }
-        AdapterError::RuntimeContractMismatch(error) => {
-            WorkerFailure::terminal("agent_runtime_contract_mismatch", error.to_string())
-        }
-    }
-}
-
-pub(super) fn cleanup_failure(error: layer3_adapter::AdapterError) -> WorkerFailure {
-    if matches!(error, layer3_adapter::AdapterError::RuntimeLedgerHold(_)) {
-        adapter_failure(error)
-    } else {
-        WorkerFailure::retryable("agent_cleanup_unavailable", error.to_string())
-    }
-}
-
-pub(super) fn skill_failure(error: AgentSkillResolutionError) -> WorkerFailure {
-    match error {
-        AgentSkillResolutionError::Unavailable(detail) => {
-            WorkerFailure::retryable("agent_skill_source_unavailable", detail)
-        }
-        AgentSkillResolutionError::NotFound(detail) => {
-            WorkerFailure::terminal("agent_skill_not_found", detail)
-        }
-        AgentSkillResolutionError::Invalid(detail) => {
-            WorkerFailure::terminal("agent_skill_invalid", detail)
-        }
-    }
-}
-
 pub(super) fn record_receipt(
     agent: &mut Agent,
     evidence: RequestEvidence,
@@ -434,19 +414,6 @@ pub(super) fn validate_lineage(
             "agent parent records do not describe the same runtime resources",
         ))
     }
-}
-
-fn parent_store_failure(error: SandboxStoreError) -> WorkerFailure {
-    match error {
-        SandboxStoreError::Unavailable(detail) => {
-            WorkerFailure::retryable("agent_store_unavailable", detail)
-        }
-        error => WorkerFailure::terminal("agent_parent_corrupt", error.to_string()),
-    }
-}
-
-fn missing_parent() -> WorkerFailure {
-    WorkerFailure::terminal("agent_parent_missing", "an agent parent record is missing")
 }
 
 fn valid_sha256(value: &str) -> bool {
