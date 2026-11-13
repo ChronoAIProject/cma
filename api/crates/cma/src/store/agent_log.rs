@@ -5,8 +5,7 @@ use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{AgentLogStore, SandboxStoreError};
 use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
 use mongodb::bson::{doc, Document};
-use mongodb::options::{IndexOptions, ReadConcern};
-use mongodb::{Collection, IndexModel};
+use mongodb::options::ReadConcern;
 
 pub(super) use super::agent_log_codec::{log_document, log_id, read_entry};
 use super::agent_log_integrity::{
@@ -30,29 +29,10 @@ mod latest_turn;
 #[cfg(test)]
 mod receipt_tests;
 
-pub(super) fn agent_log_indexes() -> Vec<IndexModel> {
-    vec![IndexModel::builder()
-        .keys(doc! { "agent_id": 1, "seq": 1 })
-        .options(
-            IndexOptions::builder()
-                .name("agent_log_sequence".to_string())
-                .unique(true)
-                .build(),
-        )
-        .build()]
-}
-
-pub(super) async fn ensure_indexes(
-    collection: &Collection<Document>,
-) -> Result<(), layer2_core::StoreError> {
-    collection
-        .create_indexes(agent_log_indexes())
-        .await
-        .map(|_| ())
-        .map_err(|error| {
-            layer2_core::StoreError::Unavailable(format!("agent log indexes: {error}"))
-        })
-}
+mod indexes;
+#[cfg(test)]
+pub(super) use indexes::agent_log_indexes;
+pub(super) use indexes::ensure_indexes;
 
 #[cfg(test)]
 pub(super) use super::agent_log_codec::verify_complete_log;
