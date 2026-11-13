@@ -120,6 +120,10 @@ impl BackgroundWork {
         self.budget.foreground()
     }
 
+    pub(crate) fn next_run_at(&self) -> Instant {
+        self.progress.lock().unwrap().next
+    }
+
     fn try_start(&self) -> Option<Attempt> {
         let now = Instant::now();
         let mut progress = self.progress.lock().unwrap();

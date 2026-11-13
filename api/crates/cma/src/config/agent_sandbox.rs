@@ -59,6 +59,7 @@ pub(super) fn from_lookup(
         // Persist this new-pool capability in its immutable policy. Retained
         // pools reconstruct the old policy rather than inheriting this default.
         template_fs_group_change_policy: Some(NativeFsGroupChangePolicy::OnRootMismatch),
+        native_claim_guard_enabled: claim_guard_from_lookup(lookup)?,
         control_key,
     };
     value.validate().map_err(|e| e.to_string())?;
@@ -106,4 +107,31 @@ pub(super) fn connection_from_lookup(
     };
     connection.validate().map_err(|error| error.to_string())?;
     Ok(Some(connection))
+}
+
+fn claim_guard_from_lookup(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<bool, String> {
+    match lookup("CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED")?.as_deref() {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        _ => Err("CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED must be true or false".into()),
+    }
+}
+
+#[cfg(test)]
+mod claim_guard_tests {
+    #[test]
+    fn default_off_and_strict_boolean() {
+        for (input, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+            assert_eq!(
+                super::claim_guard_from_lookup(&mut |_| Ok(input.map(str::to_owned))).unwrap(),
+                expected
+            );
+        }
+        for input in ["", "TRUE", "1", "yes", " true "] {
+            assert!(super::claim_guard_from_lookup(&mut |_| Ok(Some(input.into()))).is_err());
+        }
+        assert!(super::claim_guard_from_lookup(&mut |_| Err("lookup failure".into())).is_err());
+    }
 }

@@ -17,6 +17,7 @@ use super::{
 const MAX_ENTRIES: u64 = 200;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 
+mod boundary;
 mod indexed;
 mod telemetry;
 pub(crate) use telemetry::emit;
@@ -89,6 +90,15 @@ impl AgentResponseLogStore for MongoSandboxStore {
                 return Err(SandboxStoreError::SequenceConflict);
             }
             let through = head.last_seq.min(turn.saturating_add(MAX_ENTRIES - 1));
+            let next_turn =
+                boundary::next_turn(self, &agent.id, turn, through, &mut session).await?;
+            if next_turn.is_none() && through != head.last_seq {
+                attempt.finish(Outcome::Budget);
+                return Ok(None);
+            }
+            // The witness belongs to this response's proof; payloads after it
+            // must not spend this response's budget or force lifetime fallback.
+            let through = next_turn.unwrap_or(through);
             let Some(window) = read_bounded(
                 self,
                 &agent.id,
@@ -113,18 +123,15 @@ impl AgentResponseLogStore for MongoSandboxStore {
                 attempt.finish(Outcome::Model);
                 return Ok(None);
             }
-            let next_turn = window
-                .iter()
-                .skip(1)
-                .position(|entry| matches!(entry.kind, AgentLogKind::TurnStarted { .. }));
-            if next_turn.is_none() && through != head.last_seq {
-                attempt.finish(Outcome::Budget);
-                return Ok(None);
+            if next_turn.is_some()
+                && !window.last().is_some_and(|entry| {
+                    matches!(entry.kind, AgentLogKind::TurnStarted { turn_sequence, .. }
+                        if turn_sequence == through)
+                })
+            {
+                return Err(SandboxStoreError::SequenceConflict);
             }
             entries = window;
-            if let Some(index) = next_turn {
-                entries.truncate(index + 2);
-            }
         }
         attempt.finish(Outcome::Bounded);
         Ok(Some(AgentResponseLogWindow {

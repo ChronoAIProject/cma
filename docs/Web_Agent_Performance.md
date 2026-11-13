@@ -64,14 +64,30 @@ does not establish a statistically significant latency improvement.
 - Independent hierarchy, transcript, usage and first history-page reads already
   overlap. Recent transcript and shell publication must remain independent of
   delayed older history and usage. Cached return must not reread old history.
-- Fresh identity checks surround projections. Authorization reads are not
-  deduplicated across projections whose data finished at different times.
+- Fresh identity checks surround projections. Concurrent callers may share only
+  a request started after every caller asked for its check. A single in-flight
+  request and one queued batch serialize transport identity reads; completed
+  results and failures are never reused. Adjacent checks with no intervening IO
+  may consume a one-use proof within 250ms when `IDENTITY_HANDOFF_ENABLED` is
+  activated. That switch ships disabled. Preparation handoffs and mutations
+  always require a fresh check, and local journal epoch guards remain enforced.
 - The model catalog refreshes across turn transitions because available runtime
   capabilities can change. Its repeated reads have a correctness purpose.
 - Sandbox availability, effective access and service-consent observations have
   their own freshness contracts. Queue pacing does not extend those deadlines.
 - Usage report creation, pending-report retries and 429 backoff keep their
   existing server-scoped behavior. Real failures must remain visible.
+
+Access-request observation uses two seconds for outstanding requests, 2/4/8/15
+seconds for unchanged active turns and thirty seconds while idle. Durable
+conversation cursors hint reads with a two-second minimum; focus, visibility and
+explicit decisions refresh the observation. Failures retain visible requests
+and retry at 2/4/8/10 seconds. The idle fallback is required because runtime
+consent admission validates live lineage without requiring an active turn.
+Hidden personal navigation trees do not fetch badges. A mounted account retains
+only immutable public creation categories across its two trees; unavailable
+categories retry every minute. Unchanged hierarchy reads back off at 15/30/60
+seconds, with changes, explicit refresh and visibility restoring the base delay.
 
 The local checks establish browser behavior. Release acceptance still requires
 the release owner's checks against the exact deployed web artifact, including

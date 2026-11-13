@@ -52,6 +52,7 @@ mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
     AgentWorktreeRecoveryMutation,
@@ -77,7 +78,9 @@ pub use conversation_observation::{
 };
 pub mod agent_ledger_recovery;
 mod conversation_fold_support;
+mod conversation_record_observation;
 mod conversation_recorder;
+pub use conversation_record_observation::{observe_agent_output, AgentOutputCategory};
 mod creation_admission;
 pub mod ledger_census;
 pub mod ledger_collection_artifact;
@@ -254,12 +257,12 @@ pub use checkpoint::{
 };
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
-    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
-    MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    AgentConversationError, AgentMessageAssembly, AgentOutputCommit, AgentUpdateOutcome,
+    AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription,
-    DurableAgentUpdateRecorder,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
+    AgentLiveSubscription, AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -282,13 +285,13 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxDetailPhase, SandboxDetailTimer,
-    SandboxHierarchyReading, SandboxHierarchyRecord, SandboxHierarchySummary, SandboxHierarchyView,
-    SandboxInventoryReading, SandboxInventoryRecord, SandboxSnapshotDownload, SharedHierarchyAgent,
-    SharedSandboxHierarchy, SharedSandboxSummary, SharedWorkspaceHierarchy, SharedWorkspaceSummary,
-    SharedWorktreeSummary, WorkspaceHierarchyReading, WorkspaceHierarchyRecord,
-    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchyReading,
-    WorktreeHierarchySummary,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxAgentLineage, SandboxDetailPhase,
+    SandboxDetailRecord, SandboxDetailTimer, SandboxHierarchyReading, SandboxHierarchyRecord,
+    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
+    SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
+    SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
+    WorkspaceHierarchyReading, WorkspaceHierarchyRecord, WorkspaceHierarchySummary,
+    WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
 pub use inactivity::{

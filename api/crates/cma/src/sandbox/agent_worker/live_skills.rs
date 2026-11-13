@@ -214,6 +214,19 @@ impl AgentWorker {
                 .finish_skill(agent, Some(&format!("{}: {reason}", reason.code())), now)
                 .await;
         }
+        let failure = super::support::WorkerFailure::retryable(
+            "agent_skill_installation_unavailable",
+            "live skill installation requires retry",
+        );
+        let decision = self.retry_decision(&agent, &failure, self.config.retry_delay);
+        let telemetry = self.config.work_retry_policy_enabled.then(|| {
+            crate::sandbox::work_retry::RetryTelemetry::agent(
+                &agent,
+                failure.retry_kind(),
+                decision,
+                now + decision.delay,
+            )
+        });
         let mut next = agent.clone();
         if preparing.is_some() {
             next.work
@@ -224,15 +237,13 @@ impl AgentWorker {
         }
         let fence = claimed_fence(&agent, &self.config.holder)?;
         next.work
-            .retry(
-                &self.config.holder,
-                fence,
-                rfc3339_at(now + self.config.retry_delay),
-            )
+            .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
             .map_err(|_| SandboxStoreError::Conflict)?;
-        self.commit_skill(agent, next, Vec::new(), now)
-            .await
-            .map(|_| ())
+        self.commit_skill(agent, next, Vec::new(), now).await?;
+        if let Some(telemetry) = telemetry {
+            telemetry.published();
+        }
+        Ok(())
     }
     async fn finish_skill(
         &self,

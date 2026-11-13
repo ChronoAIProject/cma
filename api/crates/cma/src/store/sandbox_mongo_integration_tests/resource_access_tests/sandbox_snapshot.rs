@@ -319,3 +319,17 @@ mod batched_tests;
 mod access_fence;
 #[path = "sandbox_snapshot/access_measurement.rs"]
 mod access_measurement;
+#[path = "sandbox_snapshot/access_measurement_trace.rs"]
+mod access_measurement_trace;
+
+#[path = "sandbox_snapshot/agent_projection.rs"]
+mod agent_projection;
+
+#[path = "sandbox_snapshot/agent_projection_races.rs"]
+mod agent_projection_races;
+
+#[path = "sandbox_snapshot/agent_projection_envelopes.rs"]
+mod agent_projection_envelopes;
+
+#[path = "sandbox_snapshot/agent_projection_sizes.rs"]
+mod agent_projection_sizes;
