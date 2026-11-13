@@ -59,9 +59,13 @@ pub(crate) struct FeatureFlags {
     pub bounded_close_retries: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
+    pub native_create_retry_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
+    pub agent_connection_observations: bool,
+    pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
 }
 impl FeatureFlags {
@@ -129,6 +133,14 @@ impl FeatureFlags {
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retry_single_marker_enabled: flag(lookup, "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED")?,
             work_retry_policy_enabled: flag(lookup, "CHRONO_WORK_RETRY_POLICY_ENABLED")?,
+            native_create_retry_enabled: flag(
+                lookup,
+                "CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED",
+            )?,
+            cleanup_continuation_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
+            )?,
             agent_log_scan_cooperative_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
@@ -137,6 +149,11 @@ impl FeatureFlags {
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
+            empty_discovery: flag(lookup, "CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED")?,
+            agent_connection_observations: flag(
+                lookup,
+                "CHRONO_AGENT_RECONCILIATION_VALIDATION_REUSE_ENABLED",
             )?,
             sandbox_reconciliation_reserved_lane: flag(
                 lookup,
@@ -271,6 +288,10 @@ mod runtime_loss_tests;
 #[cfg(test)]
 #[path = "sandbox_projection_tests.rs"]
 mod sandbox_projection_tests;
+
+#[cfg(test)]
+#[path = "features/native_create_retry_tests.rs"]
+mod native_create_retry_tests;
 
 #[cfg(test)]
 mod discovery_tests;

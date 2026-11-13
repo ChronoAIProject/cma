@@ -145,9 +145,44 @@ async fn pending_readiness_and_stalled_api_read_are_bounded() {
         .unwrap_err();
         assert_eq!(
             error,
-            AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut)
+            AdapterError::NativeClaimNotReady(if stalled {
+                NativeClaimGuardReason::TimedOut
+            } else {
+                NativeClaimGuardReason::Pending
+            })
         );
         assert_eq!(start.elapsed(), BUDGET);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn prior_pending_cannot_expedite_a_stalled_or_unavailable_observation() {
+    for prior_pending in [false, true] {
+        for stalled in [false, true] {
+            let reads = std::sync::atomic::AtomicUsize::new(0);
+            let start = tokio::time::Instant::now();
+            let error = wait("bind", || async {
+                let read = reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if prior_pending && read == 0 {
+                    return Ok(observed("pod-uid", 0, false, false));
+                }
+                if stalled {
+                    std::future::pending::<Result<Sample>>().await
+                } else {
+                    Err(AdapterError::Unavailable("transport".into()))
+                }
+            })
+            .await
+            .unwrap_err();
+            assert_eq!(
+                error,
+                AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut)
+            );
+            assert_eq!(start.elapsed(), BUDGET);
+            if prior_pending {
+                assert!(reads.load(std::sync::atomic::Ordering::Relaxed) >= 2);
+            }
+        }
     }
 }
 
