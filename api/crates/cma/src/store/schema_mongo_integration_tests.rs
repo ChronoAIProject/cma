@@ -16,6 +16,7 @@ use super::MongoStores;
 
 mod activity_retention;
 mod auto_pause_compatibility;
+mod document_lifecycle;
 mod session_versions;
 
 async fn database() -> (Client, String) {

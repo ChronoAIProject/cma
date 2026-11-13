@@ -8,6 +8,7 @@ export const requiredPrefixes = [
   'document_artifacts::mongo_integration_tests::',
   'document_artifacts::commit_mongo_tests::',
   'document_artifacts::reclaim_mongo_tests::',
+  'document_artifacts::lifecycle_mongo_tests::',
   'document_artifacts::quota::tests::',
   'agent_access::tests::tenant_isolation::',
   'store::message_feedback::tests::',

@@ -18,6 +18,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "visitor_launch_days",
     crate::document_artifacts::COLLECTION,
     crate::document_artifacts::QUOTA_COLLECTION,
+    crate::document_artifacts::LIFECYCLE_COLLECTION,
     super::native_warm_pools::COLLECTION,
     super::native_prepared::COLLECTION,
     "runtime_backend_routes",
@@ -304,3 +305,37 @@ mod segments;
 mod shared_schema_contract;
 #[cfg(test)]
 mod tests;
+
+#[test]
+fn document_lifecycle_requires_collection_grants_in_both_authority_modes() {
+    const LIFECYCLE: &str = "cma_document_lifecycle";
+    assert!(COLLECTIONS.contains(&LIFECYCLE));
+    let privileges = role("cma").get_array("privileges").unwrap().clone();
+    let lifecycle = privileges
+        .iter()
+        .find(|grant| grant["resource"]["collection"].as_str() == Some(LIFECYCLE))
+        .expect("the runtime role must include document lifecycle authority");
+    assert_eq!(lifecycle["actions"], mongodb::bson::bson!(ACTIONS));
+    let status = |privileges| {
+        doc! {"authInfo": {
+            "authenticatedUsers": [{"user": "agent-manager", "db": "cma"}],
+            "authenticatedUserPrivileges": privileges,
+        }}
+    };
+    let full = status(privileges.clone());
+    validate(&full, "cma").unwrap();
+    cma_service_auth::mongodb_authority::verify_shared_schema(&full, "cma", &role("cma")).unwrap();
+    let missing = status(
+        privileges
+            .into_iter()
+            .filter(|grant| grant["resource"]["collection"].as_str() != Some(LIFECYCLE))
+            .collect::<Vec<_>>(),
+    );
+    assert!(validate(&missing, "cma").is_err());
+    assert!(cma_service_auth::mongodb_authority::verify_shared_schema(
+        &missing,
+        "cma",
+        &role("cma"),
+    )
+    .is_err());
+}

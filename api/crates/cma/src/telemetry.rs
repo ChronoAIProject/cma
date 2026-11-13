@@ -29,6 +29,18 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
         "Document storage receipt integrity mismatches by field"
     );
     metrics::describe_gauge!(
+        "cma_document_purge_oldest_pending_seconds",
+        "Age of the oldest pending document purge in the latest local observation"
+    );
+    metrics::describe_gauge!(
+        "cma_document_purge_blocked",
+        "Whether document purge work was blocked in the latest local observation (1 or 0)"
+    );
+    metrics::describe_counter!(
+        "cma_document_purge_total",
+        "Document purge observations by outcome"
+    );
+    metrics::describe_gauge!(
         "cma_readiness_check_success",
         "Last completed Mongo readiness result; also check its timestamp"
     );
