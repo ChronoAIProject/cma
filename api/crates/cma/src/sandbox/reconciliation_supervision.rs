@@ -44,7 +44,7 @@ impl SandboxReconciler {
                             }
                             result = tasks.join_next(), if !tasks.is_empty() => {
                                 let outcome = match result {
-                                    Some(Ok(Ok(()))) => "ok",
+                                    Some(Ok(Ok(_))) => "ok",
                                     Some(Ok(Err(error))) => {
                                         tracing::error!(%error, "sandbox runtime reconciliation failed");
                                         "error"
@@ -66,7 +66,7 @@ impl SandboxReconciler {
                                         let _phase = activity.reconciliation();
                                         // Retain the existing resumable operation's budget,
                                         // deadline, cursors, binding holds and durable fences.
-                                        crate::background::sandbox_reconciliation(|| reconciler.run_due(SystemTime::now())).await
+                                        reconciler.background_work.run_resumable(|| reconciler.run_due(SystemTime::now())).await
                                     });
                                 }
                             }

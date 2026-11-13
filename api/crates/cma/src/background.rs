@@ -1,9 +1,7 @@
 //! Shared admission for optional Mongo work. Foreground work never waits here.
 use std::sync::{Arc, LazyLock, Mutex};
-use std::time::Duration;
 
 use axum::{extract::Request, middleware::Next, response::Response};
-use layer2_core::sandbox::store::SandboxStoreError;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 mod work;
@@ -11,14 +9,6 @@ pub(crate) use work::BackgroundWork;
 
 const BACKGROUND_CONCURRENCY: usize = 2;
 static SHARED: LazyLock<Arc<BackgroundBudget>> = LazyLock::new(BackgroundBudget::new);
-static SANDBOX_RECONCILIATION: LazyLock<BackgroundWork> = LazyLock::new(|| {
-    BackgroundWork::new(
-        shared(),
-        "sandbox_reconciliation",
-        Duration::from_secs(30),
-        Duration::from_secs(15),
-    )
-});
 
 #[derive(Default)]
 struct Priority {
@@ -70,18 +60,6 @@ pub(crate) async fn interactive_request(request: Request, next: Next) -> Respons
     let _priority = shared().foreground();
     // Release after response construction, not the lifetime of an SSE body.
     next.run(request).await
-}
-
-pub(crate) async fn sandbox_reconciliation<F>(
-    operation: impl FnOnce() -> F,
-) -> Result<(), SandboxStoreError>
-where
-    F: std::future::Future<Output = Result<bool, SandboxStoreError>>,
-{
-    SANDBOX_RECONCILIATION
-        .run_resumable(operation)
-        .await
-        .map(|_| ())
 }
 
 #[cfg(test)]
