@@ -88,6 +88,27 @@ pub(super) async fn live_activities_with_sources(
     Ok(activities)
 }
 
+/// An owner session on a Sandbox without live Agents; with Agents, each
+/// activity row carries it.
+pub(super) async fn open_session(
+    store: &MongoSandboxStore,
+    sandbox: &layer2_core::sandbox::Sandbox,
+    observed_at: &str,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    let leased = store
+        .sandbox_sessions
+        .find_one(doc! {
+            "sandbox_id": sandbox.id.as_str(),
+            "lease_expires_at": { "$gt": observed_at },
+        })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .is_some();
+    Ok(leased || layer2_core::sandbox::has_open_desktop_session(&sandbox.id))
+}
+
 pub(super) async fn fence_live_agents(
     store: &MongoSandboxStore,
     agents: &[Agent],
