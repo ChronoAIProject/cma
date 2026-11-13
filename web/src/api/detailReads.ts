@@ -66,6 +66,11 @@ export function coalesceDetailReads(client: CmaWebClient) {
     readSandbox: wrap(client.readSandbox.bind(client)),
     readWorkspace: wrap(client.readWorkspace.bind(client)),
     readAgent: wrap(client.readAgent.bind(client)),
+    readAgentTranscript: wrap(client.readAgentTranscript.bind(client)),
+    readAgentUsage: wrap(client.readAgentUsage.bind(client)),
+    readAgentResources: wrap(client.readAgentResources.bind(client)),
+    readAgentSource: wrap(client.readAgentSource.bind(client)),
+    readAgentProvenance: wrap(client.readAgentProvenance.bind(client)),
   };
   sources.set(wrapped, detailReadSource(client));
   return {
