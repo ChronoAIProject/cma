@@ -114,8 +114,22 @@ impl RecoverySource for Frontier {
                     .await
                     .map_err(admission_error)?
                     .ok_or(AdmissionError::Expired)?;
-                if item.partition != *id || item.work_id != *target || item.done {
+                if item.partition != *id || item.work_id != *target {
                     return Err(AdmissionError::Corrupt);
+                }
+                if item.done {
+                    // Discovery may retain a head for 100ms while completion
+                    // atomically advances it and marks the item done. Confirm
+                    // advancement before discarding only this obsolete hint.
+                    let (current, _) = self
+                        .partitions
+                        .head(id, &head.owner)
+                        .await
+                        .map_err(admission_error)?;
+                    if current.queue.contains(target) {
+                        return Err(AdmissionError::Corrupt);
+                    }
+                    continue;
                 }
                 let mut plan = self
                     .plans
@@ -142,6 +156,10 @@ impl RecoverySource for Frontier {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "partition_discovery_tests.rs"]
+mod tests;
 
 pub(super) fn admission_error(error: Error) -> AdmissionError {
     match error {
