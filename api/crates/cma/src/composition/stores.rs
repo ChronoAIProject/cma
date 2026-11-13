@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::{config::Config, store::MongoStores};
 
 pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String> {
-    let mut stores = MongoStores::connect_with_authority(
+    let mut stores = MongoStores::connect_with_policy(
         &config.mongodb_uri,
         &config.mongodb_database,
         &config.deployment_id,
@@ -14,7 +14,10 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             &config.runtime.sandbox_image,
             config.runtime.home_policy.as_ref(),
         ),
-        config.mongodb_authority,
+        crate::store::mongo::MongoConnectionPolicy {
+            authority: config.mongodb_authority,
+            agent_manager_replicas: config.agent_manager_replicas.is_some(),
+        },
     )
     .await
     .map_err(|error| format!("durable stores are not usable: {error}"))?;
@@ -46,6 +49,15 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .prepare_bounded_admission(&config.bounded_admission_agents)
             .await?,
     );
+    if config.agent_manager_replicas.is_some() {
+        stores.sandbox_model = Arc::new(
+            (*stores.sandbox_model)
+                .clone()
+                .enable_agent_ownership(uuid::Uuid::new_v4().to_string())
+                .await
+                .map_err(|_| "Agent Manager ownership store is unavailable")?,
+        );
+    }
     Ok(Arc::new(
         stores.with_writer_policy(config.task_experience.clone()),
     ))

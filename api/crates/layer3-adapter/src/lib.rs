@@ -200,6 +200,8 @@ pub use agent_filesystem::{
     AgentFileListReceipt, AgentFileListRequest, AgentFileReadReceipt, AgentFileReadRequest,
     AgentFileWriteReceipt, AgentFileWriteRequest, MAX_AGENT_FILE_BYTES, MAX_AGENT_FILE_ENTRIES,
 };
+pub mod owner_control;
+pub mod owner_protocol;
 pub mod sandbox_metrics;
 
 // Shared immutable archive locator; core persistence and runtime use one shape.
