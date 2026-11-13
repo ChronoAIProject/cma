@@ -231,9 +231,39 @@ async fn launch_repair_replays_only_post_install_progress_and_active_completion(
 
 #[tokio::test]
 async fn launch_revive_binds_created_and_reused_origins_and_uses_trigger_cause() {
+    run_launch_revival(false).await;
+}
+
+#[tokio::test]
+async fn operator_stop_refuses_owner_revival_but_allows_admitted_launch_revival_once() {
+    run_launch_revival(true).await;
+}
+
+async fn run_launch_revival(stopped: bool) {
     let (service, store) = fixture();
-    let owner = caller("owner", [Capability::CreateSandbox]);
+    let owner = caller(
+        "owner",
+        [Capability::CreateSandbox, Capability::UseOwnSandboxes],
+    );
     let created = admit_paused(&store, "created", "launch-created").await;
+    if stopped {
+        use crate::admission::AdmissionControlStore;
+        service.attach_platform_spend(store.clone());
+        store
+            .change(
+                0,
+                &SubjectId::new("operator"),
+                "contain new work",
+                true,
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            service.revive(&owner, &created.id).await,
+            Err(SandboxLifecycleCommandError::AdmissionPaused)
+        );
+    }
     let outcome = service
         .revive_for_launch(&owner, &created.id, "launch-created", false)
         .await
