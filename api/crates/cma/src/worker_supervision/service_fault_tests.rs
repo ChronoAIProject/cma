@@ -7,6 +7,7 @@ pub(super) enum Fault {
     Panic,
     Exit,
     Stall,
+    ExitThenStartupStall,
 }
 
 fn activities() -> &'static Mutex<HashMap<&'static str, Activity>> {
@@ -24,6 +25,10 @@ pub(super) async fn inject(activity: Activity, future: impl Future<Output = ()>)
         match fault {
             Some(Fault::Panic) => panic!("injected scheduling panic: {name}"),
             Some(Fault::Exit) => return Poll::Ready(()),
+            Some(Fault::ExitThenStartupStall) => {
+                activity.0.lock().unwrap().fault = Some(Fault::Stall);
+                return Poll::Ready(());
+            }
             Some(Fault::Stall) => stalled = true,
             None => {}
         }
@@ -141,6 +146,7 @@ async fn whole_service_worker_failures_recover_over_http() {
     }
     results.push(exercise(&probe, "agent_commands", Fault::Exit).await);
     results.push(exercise(&probe, "agent_commands", Fault::Stall).await);
+    results.push(exercise(&probe, "launches", Fault::ExitThenStartupStall).await);
     println!(
         "SERVICE_WORKER_FAULT_RESULTS={}",
         serde_json::to_string(&results).unwrap()
@@ -163,7 +169,7 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
     let reason = match fault {
         Fault::Panic => "panic",
         Fault::Exit => "exit",
-        Fault::Stall => "stall",
+        Fault::Stall | Fault::ExitThenStartupStall => "stall",
     };
     let exits = counter(
         &before,
@@ -175,7 +181,14 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
     let activity = activities().lock().unwrap().get(worker).unwrap().clone();
     activity.0.lock().unwrap().fault = Some(fault);
     let mut unavailable_at = None;
-    let mut recovery_seen = false;
+    let expected_restarts = if matches!(fault, Fault::ExitThenStartupStall) {
+        2
+    } else {
+        1
+    };
+    let mut recoveries = 0;
+    let mut previous_state = String::new();
+    let mut startup_seen = false;
     let mut samples = Vec::new();
     tokio::time::timeout(Duration::from_secs(25), async {
         loop {
@@ -195,12 +208,17 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
                 } else {
                     assert_eq!(code, 200, "optional capacity must not fail readiness");
                 }
-                if state == "backoff" { recovery_seen = true; }
+                if state == "backoff" && previous_state != "backoff" { recoveries += 1; }
+                if state == "starting" && matches!(fault, Fault::ExitThenStartupStall) {
+                    startup_seen = true;
+                    assert_eq!(target["waiting"], "startup");
+                }
             }
             let live = probe.client.get(format!("{}/livez", probe.http)).send().await.unwrap();
             assert_eq!(live.status().as_u16(), 200);
             samples.push(serde_json::json!({"seconds": started.elapsed().as_secs_f64(), "ready": code, "state": state}));
-            if recovery_seen && state == "running" { assert_eq!(code, 200); break; }
+            previous_state = state.to_owned();
+            if recoveries >= expected_restarts && state == "running" { assert_eq!(code, 200); break; }
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }).await.expect("worker must fail and recover without restarting the service");
@@ -208,8 +226,14 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
     let after = probe.metrics().await;
     assert_eq!(
         counter(&after, "cma_worker_restarts_total", worker, None),
-        restarts + 1
+        restarts + expected_restarts
     );
+    if matches!(fault, Fault::ExitThenStartupStall) {
+        assert!(
+            startup_seen,
+            "replacement must remain unready until its first real activity"
+        );
+    }
     assert_eq!(
         counter(
             &after,
@@ -245,9 +269,9 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
         .await
         .unwrap();
     assert_eq!(response.status().as_u16(), 200);
-    let result = serde_json::json!({"worker":worker,"fault":reason,"unavailable_seconds":unavailable_at,"recovered_seconds":recovered_at,"restart_delta":1,"pid":std::process::id(),"samples":samples});
+    let result = serde_json::json!({"worker":worker,"fault":reason,"before_activity":matches!(fault, Fault::ExitThenStartupStall),"unavailable_seconds":unavailable_at,"recovered_seconds":recovered_at,"restart_delta":expected_restarts,"pid":std::process::id(),"samples":samples});
     println!(
-        "worker={worker} fault={reason} unavailable={:.3}s recovered={recovered_at:.3}s restart_delta=1",
+        "worker={worker} fault={fault:?} unavailable={:.3}s recovered={recovered_at:.3}s restart_delta={expected_restarts}",
         unavailable_at.unwrap()
     );
     result
