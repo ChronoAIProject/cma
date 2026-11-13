@@ -1,4 +1,4 @@
-# Account erasure catalog ownership evidence (C1)
+# Account erasure catalog ownership evidence (C2)
 
 This audit names every collection in `store/isolation.rs` exactly once. Source
 paths are relative to `api/crates/cma/src/store/` unless another crate is named.
@@ -25,11 +25,13 @@ events remain under their existing retention contract. Mixed global controls
 are preserved; only matching diagnostic bindings are removed. Supported foreign
 document references and global model-budget overrides use exact revision checks.
 
-C1 conservatively refuses owned Profile/Trigger publisher roots with permanent
-`RetainedReferencePending { collection }` before discovery or mutation. This
-includes apparently unreferenced publishers: no fence/drain/retention guarantee
-is asserted until C2. Publisher fixture rows retain independent refusal coverage
-rather than being silently omitted from the ownership audit.
+C2 implements publisher majority fences, the durable transaction cleanup drain,
+checkpointed exact reference discovery, immutable Profile retention, canonical
+Trigger publisher tombstones, and their strict readers/admission checks.
+Required retained Profile revisions preserve exact transitive pins; unused
+publisher data is removed. New manual references refuse fences, while proven
+surviving exact declarations may finish after canonical retention. These are
+pending product-policy decisions and do not establish a complete deletion job.
 
 Surviving foreign/organization identity, actor, channel, Bot custody and explicit
 share-recipient references permanently refuse with
@@ -81,8 +83,8 @@ delegation debt handoff are delivered together in C3.
 | `agent_capacity_recovery_work` | `Linked(Agents, &["agent_id"])` | yes | agent_capacity_recovery/records.rs Row; format2.indexes.json agent_id-leading index |
 | `agent_message_feedback` | `Owner(&["owner"])` | yes | message_feedback.rs Record + owner/agent/sequence index |
 | `agent_lifecycle_operations` | `Owner(&["owner"])`; `Reference(Identities)` | yes; no | agent_lifecycle_operations.rs LifecycleRecord + owner/key index |
-| `agent_profile_revisions` | `Reference(Profiles)` | no | profile_documents.rs immutable revision and parent-owner projections; C1 permanently refuses owned publisher roots with RetainedReferencePending before mutation; C2 supplies fences, drain, retention and readers |
-| `agent_profiles` | `Reference(Profiles)` | no | profile_documents.rs immutable revision and parent-owner projections; C1 permanently refuses owned publisher roots with RetainedReferencePending before mutation; C2 supplies fences, drain, retention and readers |
+| `agent_profile_revisions` | `Reference(Profiles)` | no | profile_documents.rs revision_document and profiles.rs immutable revision has no owner; shared scan retains referenced content and deletes unreferenced revisions after fencing the aggregate |
+| `agent_profiles` | `Reference(Profiles)` | no | profile_documents.rs profile_document and profiles.rs owner projection; one shared reference scan retains private retired anonymous aggregates without authoring drafts and exact child pins |
 | `agent_reuse_bindings` | `Owner(&["owner"])` | no | agent_admission_reuse.rs insert owner,agent_id,sandbox_id; no owner index |
 | `agents` | `Linked(Sandboxes, &["sandbox_id"])` | yes | agents.rs agent_document + sandbox_id index; include retired and late-created Agents |
 | `auth_api_bearers` | `Custody(&["subject"])` | no | auth_api_bearers.rs ApiBearerDoc; immutable encrypted access_token, no subject index |
@@ -178,22 +180,22 @@ delegation debt handoff are delivered together in C3.
 | `sandbox_events` | `Linked(Sandboxes, &["sandbox_id"])` | yes | sandbox_events.rs event_document + sandbox_id/seq index |
 | `sandbox_usage` | `Owner(&["owner"])` | yes | sandbox_usage.rs state_document owner projection + owner/_id index |
 | `sandbox_usage_events` | `Owner(&["owner"])` | yes | sandbox_usage.rs event_document owner projection + owner/ended_at index; delivery guard before delete |
-| `sandbox_profile_revisions` | `Reference(Profiles)` | no | profile_documents.rs immutable revision and parent-owner projections; C1 permanently refuses owned publisher roots with RetainedReferencePending before mutation; C2 supplies fences, drain, retention and readers |
-| `sandbox_profiles` | `Reference(Profiles)` | no | profile_documents.rs immutable revision and parent-owner projections; C1 permanently refuses owned publisher roots with RetainedReferencePending before mutation; C2 supplies fences, drain, retention and readers |
+| `sandbox_profile_revisions` | `Reference(Profiles)` | no | profile_documents.rs revision_document and profiles.rs immutable revision has no owner; shared scan retains referenced content and deletes unreferenced revisions after fencing the aggregate |
+| `sandbox_profiles` | `Reference(Profiles)` | no | profile_documents.rs profile_document and profiles.rs owner projection; one shared reference scan retains private retired anonymous aggregates without authoring drafts and exact child pins |
 | `sandbox_retained_availability` | `Linked(Sandboxes, &["_id"])` | yes | sandbox_maintenance/retained_availability.rs and maintenance record writer bind _id = sandbox id |
 | `sandbox_sessions` | `Linked(Sandboxes, &["sandbox_id"])` | yes | sandbox_sessions.rs insert projection + sandbox_id/lease_expires_at index |
 | `sandboxes` | `Linked(Sandboxes, &["_id"])` | yes | sandboxes.rs sandbox_document; execution additionally requires retired status, expired/absent lease and exact revision |
 | `service_connection_handoffs` | `Owner(&["owner"])` | yes | trigger_definitions/launches/documents.rs handoff_document + launches/indexes.rs owner/_id index |
-| `trigger_definition_revisions` | `Reference(TriggerRevisions)` | no | trigger_definitions/documents.rs definition-owner and immutable revision projections; C1 permanently refuses publisher erasure before mutation; tombstones and compatible Launch readers belong to C2 |
-| `trigger_definitions` | `Owner(&["owner"])` | yes | trigger_definitions/documents.rs definition-owner and immutable revision projections; C1 permanently refuses publisher erasure before mutation; tombstones and compatible Launch readers belong to C2 |
+| `trigger_definition_revisions` | `Reference(TriggerRevisions)` | no | trigger_definitions/documents.rs revision_document owner projection; revision indexes begin trigger_id/profile ids, not owner; definition deletion precedes canonical publisher tombstone rewrite; all intermediate public reads return typed unavailable |
+| `trigger_definitions` | `Owner(&["owner"])` | yes | trigger_definitions/documents.rs trigger_document + indexes.rs owner/_id index |
 | `trigger_first_message_bindings` | `Linked(Agents, &["agent_id"])` | yes | trigger_first_messages.rs document and unique agent_id index |
 | `trigger_launch_events` | `Linked(Launches, &["launch_id"])` | yes | trigger_definitions/launches/documents.rs event_document + indexes.rs launch_id/seq index |
 | `trigger_launch_input_protocols` | `Linked(Launches, &["_id"])` | yes | trigger_definitions/launches/input_protocol.rs _id = launch id |
 | `trigger_launches` | `Owner(&["owner"])` | yes | trigger_definitions/launches/documents.rs launch_document + indexes.rs owner/_id index; publisher identity does not own visitor Launch |
 | `users` | `OwnerKey(Subject)` | yes | directory.rs UserDoc _id = identity subject |
 | `warm_sandboxes` | `Linked(Sandboxes, &["_id"])` | yes | warm_sandboxes.rs document and layer2-core/sandbox/warmup.rs claim: reservation id becomes adopted Sandbox id; _id index |
-| `workspace_profile_revisions` | `Reference(Profiles)` | no | profile_documents.rs immutable revision and parent-owner projections; C1 permanently refuses owned publisher roots with RetainedReferencePending before mutation; C2 supplies fences, drain, retention and readers |
-| `workspace_profiles` | `Reference(Profiles)` | no | profile_documents.rs immutable revision and parent-owner projections; C1 permanently refuses owned publisher roots with RetainedReferencePending before mutation; C2 supplies fences, drain, retention and readers |
+| `workspace_profile_revisions` | `Reference(Profiles)` | no | profile_documents.rs revision_document and profiles.rs immutable revision has no owner; shared scan retains referenced content and deletes unreferenced revisions after fencing the aggregate |
+| `workspace_profiles` | `Reference(Profiles)` | no | profile_documents.rs profile_document and profiles.rs owner projection; one shared reference scan retains private retired anonymous aggregates without authoring drafts and exact child pins |
 | `workspaces` | `Linked(Sandboxes, &["sandbox_id"])` | yes | workspaces.rs workspace_document + nonpartial sandbox_id index |
 | `worktrees` | `Linked(Sandboxes, &["sandbox_id"])` | yes | worktrees.rs worktree_document + sandbox_id index |
 
@@ -232,7 +234,7 @@ corruption is a permanent cohort block; clock/driver failure remains retryable.
 This catalog is a reviewable persistence implementation, not evidence of a
 production census, completed account deletion, remote revocation, or zero
 residue. Worker scheduling and the full pipeline remain later deliveries. See
-the C1 migration/reader-floor section in
+the C2 migration/reader-floor section in
 [CMA Account Deletion](CMA_Account_Deletion.md). Preserve exact compatible
 executables, indexes, markers, cursors and cleanup authority during recovery.
-No downgrade below the recorded C1 floor is certified after its writes.
+No downgrade below the recorded C2 floor is certified after its writes.

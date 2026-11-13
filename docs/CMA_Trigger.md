@@ -146,6 +146,104 @@ timestamp. Existing records without that field remain readable. Once any
 archive is written, rollback binaries must retain this reader and owner-list
 filter; an older strict reader cannot safely interpret archived aggregates.
 
+## Publisher account erasure
+
+Publisher account erasure is a pending product decision. It physically removes
+the definition and replaces each immutable published revision with a sanitized
+tombstone. The tombstone retains the Trigger/public identifiers, original
+revision number, original content digest and publication time. Publisher
+identity becomes `deleted-account`; presentation title, description and signup
+hint, first and quick messages, and target configuration are removed.
+
+The original digest identifies the previously admitted revision; it does not
+claim that the empty tombstone content hashes to that digest. An explicit
+`publisher_deleted` marker permits only the canonical empty tombstone content.
+Unmarked revisions retain the existing content validation and digest check.
+The storage mutation uses a separate incrementing `mutation_version` compare
+and exchange because the immutable revision number is also part of its key and
+lookup index. The first rewrite checks the absent mutation counter together
+with the original revision and record, so it cannot overwrite a concurrent
+rewrite. Later rewrites compare the counter.
+
+Publisher erasure first majority-writes durable erasure flags and server
+timestamps on the definition and exact revisions, then drains transactions beyond
+the server transaction lifetime before reference discovery. Admission reads these
+flags without shared counter writes. It then removes the definition before
+sanitizing its immutable revisions. Public lookup and preview return unavailable throughout that
+transition, including the compatibility state where a canonical tombstone is
+visible before its definition disappears. Invalid ordinary revisions still
+report corruption. Missing mappings, definitions or exact revisions are not
+erasure proof by themselves: Draft and worker paths return retired only for a
+validated canonical tombstone, a well-formed exact revision erasure marker, or a
+validated account-deletion record that has reached record erasure. Unexplained
+absence and inconsistent evidence remain Corrupt.
+
+Visitor Launch history retains its owner, identifiers, consent and recorded
+resource resolution. A Draft Launch cannot Start after publisher erasure and
+returns the existing typed `trigger_retired` refusal. An admitted Launch that
+has not created an Agent settles with `trigger_retired` and asks the visitor to
+choose another Trigger. A missing Profile read rechecks the exact publisher
+revision so an erasure race also yields `trigger_retired`, while an ordinary
+missing Profile retains its strict failure. A Launch whose Agent already exists
+continues using that visitor's validated Sandbox, Workspace and Agent pins; its
+first-message receipt and completed history remain authoritative. This
+continuity guarantee does not allow a deleted publisher's empty target to admit
+new resources.
+Missing publisher statistics do not block an existing Agent's Ready transition;
+ordinary retained definition or revision corruption still fails validation.
+Successful scheduled work reuses its frozen inputs. A terminal catalogue
+creation refusal rechecks the publisher before settling; ordinary refusals keep
+their own code, and temporary uncertainty retains its retry/recovery path.
+If admission committed before its Launch resolution checkpoint, recovery uses
+the exact owner and creation key, or the exact durable reuse receipt. It checks
+the Agent identity and lineage before reconciling the existing effect; it never
+creates another Agent from the tombstone's empty target.
+These state boundaries are a pending product decision.
+
+Profile aggregates and immutable revisions referenced by surviving resources,
+other publishers' Triggers, or saved Event Worker Profile revisions remain
+available. The aggregate owner becomes
+`deleted-account`; the aggregate becomes private and retired, names and
+descriptions are emptied, and unpublished drafts and fork identity are removed.
+Only exact revisions required by existing pins and their transitive pins survive;
+their content and digest stay unchanged. The inactivity policy remains readable.
+The retained aggregate stays fenced against new references and forks. Unreferenced
+Profile trees and unused revisions are physically removed. The retention policy is a pending product decision.
+
+Erasing a Profile author is distinct from erasing a surviving Trigger publisher.
+A surviving publisher's existing exact revision remains an admitted reference to
+its frozen Profile tree. Its accepted Launch effects may continue after the tree
+has become a canonical retained aggregate. During the drain and retention window,
+new Trigger effects create no resources and use the existing temporary retry path.
+Already durable Sandbox and Workspace Profile declarations may finish their exact
+children during that window and after retirement, including the Agent declarations
+of a frozen Trigger Workspace. Their transactional parent/snapshot/index/lineage
+proof authorizes completion; a manual new reference is still refused.
+Each new Trigger effect continuation verifies the durable visitor Launch, exact
+effect and live lease, input receipt, surviving definition and exact non-tombstone revision,
+requested pin and resource lineage inside the admission transaction. The retained
+revisions and their digests are validated recursively. A missing or mismatched
+Launch, another visitor, a manual reference, or an erased Trigger publisher does
+not authorize this path. Erasing the Trigger publisher itself keeps the retired
+boundaries above; an already created Agent remains usable.
+
+Trust review uses fixed `Sandbox` and `Workspace` disclosure labels only for
+strictly validated anonymous retired metadata. It preserves the exact revision's
+commands, environment variables, digests and required consent. Existing Drafts
+retain their recorded trust manifest when they Start after Profile-author erasure;
+the labels do not restore erased names or authorize a new catalogue reference.
+
+Deploy these compatible readers and catalogue admission fences to all serving
+and rollback images before enabling erasure. Older strict revision readers
+reject the tombstones, and older admission writers do not serialize new Profile
+pins with erasure. The drain uses `max(ceil(1.5 * transactionLifetimeLimitSeconds) + 10 seconds,
+CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS)` when the parameter is readable.
+The configured floor defaults to 120 seconds and is also the fallback when the
+parameter is unavailable. The formula covers periodic expired-transaction cleanup
+plus ten seconds of scheduling margin. The fallback must cover the same bound
+on every participating server; operators must not raise
+the lifetime during an active drain. See the account-deletion migration record.
+
 ## Host Snippets
 
 The authoritative descriptor includes `public_url`, `badge_url`,

@@ -205,76 +205,75 @@ operators must preserve durable state rather than claim that deletion failed.
 | Verification and completion                          | Run guarded `cargo nextest run -p layer2-core -p layer1-public -p cma` for model, HTTP and gate checks. With `CHRONO_TEST_MONGODB_URI` set, use `--run-ignored only -E 'test(store::account_deletions::tests::)'` and separately `--run-ignored only -E 'test(auth::account_standing::mongo_tests::)'` for real transaction and snapshot checks. `shared_public_contract_matches_real_backend` compares the public corpus; `every_documented_operation_and_named_problem_has_exact_contract_coverage` checks inventory. Run `npm test` and `npm run docs:check` in `sdk/typescript`, and guarded `cargo test` in `sdk/rust`. Pending: staging drill, released digest, end-to-end erasure and operator sign-off.                                                           |
 
 
-## Record erasure core delivery (C1)
+## Publisher erasure delivery (C2)
 
-This section records the additional persistence primitive delivered after the
-request and access-gate release described above. The preceding release text is
-preserved as its original migration record. C1 adds a callable, bounded
-`EraseRecords` executor; it does not add worker scheduling, a complete deletion
-pipeline, object deletion, remote credential revocation, independent residue
-verification, operator routes, restore execution, or production activation.
-An accepted deletion request still does not prove that data was erased.
+This section records the additional record-executor capabilities delivered after
+the request/access-gate release whose original text remains above. C2 includes
+the C1 catalog, bounded executor, personal/organization ownership separation,
+historical inventory acknowledgement, billing guards, cursor/index budgets,
+and supported base reference cleanup. It adds publisher Profile/Trigger
+erasure and its admission/reader compatibility. No background deletion worker,
+object deletion, external credential revocation, residue verification, operator
+route, restore execution, or production activation is introduced here.
 
-The executable catalog classifies every registered collection once. Personal
-ownership comes from exact typed live and historical lineage, including durable
-sidecars after their live root disappears. Organization-owned roots and their
-descendants are protected before personal ownership, capacity, or destructive
-selection is evaluated. An audit actor or activity target does not establish
-personal ownership. Unknown legacy ownership produces a typed permanent
-`UnsupportedResidue { collection }` block instead of authorizing deletion.
+Before discovering publisher references, erasure majority-writes the Profile
+and Trigger aggregate/revision fences with server timestamps. It waits
+`max(ceil(1.5 * transactionLifetimeLimitSeconds) + 10 seconds, configured floor)`
+to cover expired transaction cleanup and scheduling jitter. The floor is
+`CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS`, default 120 seconds. If the
+server lifetime cannot be read, the configured fallback must still cover that
+bound on every server. Do not increase transaction lifetime during an active
+drain. Unsupported configuration or invalid readable lifetime is a permanent
+cohort intervention block; a failed server command remains retryable.
 
-The core removes supported personal records and supports exact revision-fenced
-document-reference and global-policy cleanup. It protects settled billing
-authority, copies Sandbox key revocation debt before deleting its source, and
-returns discovered inventory for durable acknowledgement before consuming its
-historical evidence. Each call consumes at most one nonempty page of 500 effect
-rows. Indexed pages retain an exact selector with a scalar identity or the native
-Agent log tuple; unindexed scans are shared across at most 64 cohort subjects.
-Capacity limits bound each person's resource closure, serialized member state,
-and the serialized cohort cursor. Partial effects accompany a later error.
+Reference discovery scans one ordered page of at most 500 rows per call and
+persists its stage and scalar position. No record effects run before the complete
+closure is validated. A late catalog insert restarts the barrier and discovery.
+Admission transactions read committed catalog fences without incrementing or
+upserting publisher catalog counters. B's Launch admission contract remains:
+only the visitor serializes through its Sandbox admission fence, while a
+different publisher's deletion standing is read in the same snapshot.
 
-Profile and Trigger publisher erasure is not executable in C1. An owned
-publisher catalog root, including an apparently unused Profile, produces the
-attributed permanent `RetainedReferencePending { collection }` block before
-context loading or mutation. C1 does not install publisher erasure markers,
-drain older transactions, anonymize retained Profiles, delete immutable Profile
-revisions, or rewrite Trigger publisher tombstones. A consumer must not treat
-this block as transient unavailability, a completed step, an empty result, or a
-successful deletion. C2 replaces this transitional refusal with the publisher
-implementation and its compatible readers and admission checks.
+Unreferenced publisher Profile trees are removed. Referenced Profiles preserve
+only required immutable revisions and exact transitive pins. Retained aggregates
+use the canonical `deleted-account` owner, private visibility, permanent
+retirement, empty display metadata, and no authoring draft or fork identity.
+Strict retained readers recognize only the canonical representation. Manual new
+references, publication, forks, and draft/default pins refuse committed erasure
+fences. Already admitted exact Sandbox/Workspace declarations and surviving
+Trigger Launch effects may continue only after the required pins are canonically
+retained, with transactional proof of their durable parent, exact index/digest,
+effect, input receipt, and resource lineage. A deleting personal parent waits;
+verified organization ownership takes precedence over subject-string overlap.
 
-Identity rewriting on surviving foreign or organization records is also not
-executable in C1. An affected retained actor, policy/audit reference, channel or
-Bot custody record, or explicit share-recipient reference produces the
-attributed permanent `IdentityRedactionPending { collection }` block. Detection
-precedes erasure effects and does not weaken organization ownership protection.
-The executor and public reference facade preserve the source rather than run
-only part of a required identity rewrite. C3 replaces that block. In particular,
-generic share/receipt recipient rewrites remain unavailable through the facade
-until C3, even where the lower-level content transformation exists in C1.
+An erased Trigger publisher leaves canonical revision tombstones and durable
+erasure evidence. Completed visitor Launches and accepted Launches with an
+already committed Agent retain their recorded resource path. Draft and
+Agent-less accepted Launches return typed retired/unavailable. New resource
+effects cannot use a retained anonymous Profile to bypass an erased Trigger
+publisher. Missing-input recovery preserves published confirmation evidence
+without treating malformed records as erased publishers. This retention policy
+remains subject to product approval.
 
-Unsettled billing or undelivered claims block usage deletion. Billing-enabled
-callers also block on unclaimed, undelivered usage; the disabled billing pilot
-may remove unclaimed events. A stopped billing state with no pending request or
-retained settlement window is settled even if its confirmed `current` receipt
-remains. Driver and clock failures remain retryable without assigning a false
-personal cause. Deterministic corruption with no attributable owner produces
-typed permanent `CohortBlocked`, and repair may resume the same step.
+C2 replaces C1's `RetainedReferencePending { collection }` transitional block.
+Identity rewriting on surviving foreign/organization audits, policies, channels,
+Bot custody, and explicit share recipients remains unavailable until C3. The
+executor and reference facade return the attributed permanent
+`IdentityRedactionPending { collection }` before mutation. A block cannot become
+a completed step or successful empty result. Generic share/receipt recipient
+rewrites remain blocked through that facade even where a lower-level content
+helper already exists. C3 supplies the identity rewrites and delegation debt
+handoff together with the readers that recognize their canonical output.
 
-## C1 migration and recovery record
+## C2 migration and recovery record
 
 | Required field | Evidence |
 | --- | --- |
-| Identity and delivery boundary | Issue #1500 C1, catalog/executor core. The source commit containing this section identifies the implementation. Release owner and immutable image digest remain deployment evidence to be recorded. |
-| Stores and triggers | The callable record executor reads the audited collections and may delete supported personally owned rows or rewrite supported references. It creates no collection and starts no worker. Existing B request, standing, admission, and publisher Launch fence behavior remains the earlier migration contract. |
-| Index changes | Discovery installs full owner/lineage indexes needed for orphan recovery; effect preparation uses full selector/identity coverage. Partial indexes do not certify historical rows. Agent log carriers reuse frozen native indexes; absent carriers remain absent, and partial explicit log migrations remain restartable. The catalog names writer/index evidence for every namespace. |
-| Cursor format | Cursor state binds subject set, catalog digest, collection, indexed mode, and billing mode. A mismatched binding restarts safely. Position is a scalar key or native tuple within its exact selector; bounded probes and one nonempty page prevent unbounded work. Publisher-drain, retained-profile-graph, and identity-delegation checkpoints are later formats and are not written by C1. |
-| Reader floor | Every process permitted to execute C1 must understand the core cursor and typed permanent pending/cohort failures. Record the exact immutable C1 image digest as the rollback floor before invoking the executor. No older reader or executable is certified to continue these effects. C2 and C3 establish their own higher floors before writing their additional markers or retained formats. |
-| Transitional blocks | `RetainedReferencePending { collection }` and `IdentityRedactionPending { collection }` are permanent typed blocks with the responsible subject hash. They retain source records and cannot complete `EraseRecords`. C2/C3 remove only the block each slice implements. |
-| Activation and rollback | Keep `CHRONO_ACCOUNT_DELETION_ENABLED=false` for production activation purposes until the complete pipeline and drills exist. Disabling requests does not undo active records or access gates. Preserve catalog data, indexes, cursors, custody and audit authority; never downgrade below the recorded compatible executor/reader floor after effects begin. |
-| Validation and completion evidence | Review the catalog fixture split: supported writer-shaped rows erase, each pending publisher fixture separately refuses without mutation, organization rows remain protected, and billing/cursor/index boundaries are exercised on an isolated replica set. Branch-specific verification results are external review evidence; this document does not assert production deletion, zero residue, or rollback qualification. |
-
-Pending product decisions still govern retention policy, billing retention,
-cross-owner document comments, and treatment of organization audit identity.
-The conservative C1 blocks do not decide those policies or claim external
-platform capabilities.
+| Identity and dependency | Issue #1500 C2 follows the C1 executor floor. Source identity is the commit containing this section; release owner records its immutable image digest before execution. The original B migration record above remains intact. |
+| Writer triggers | Publisher executor calls write additive `account_erasure_fenced` and server-date markers on Profile/Trigger catalog rows, then canonical retained/tombstone representations or physical removal. Draft/default/fork/publication and resource-admission writers validate exact catalog pins in their existing snapshot transaction. |
+| Drain configuration | `CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS` is strictly validated, defaults to 120, and must cover transaction lifetime cleanup plus safety margin. Unsupported values require permanent intervention; never shorten a durable deadline or increase server lifetime during drain. |
+| Format and preservation | Cursor adds durable drain/reference-discovery and retained-pin state under bounded serialized budgets. Canonical retained Profile and Trigger records preserve immutable execution content/digests required by existing foreign resources while removing publisher authoring identity. No identity-delegation checkpoint or canonical foreign audit-actor rewrite is written before C3. |
+| Reader floor | Deploy the C2 retained Profile/Trigger readers and admission fence checks to every relevant API/executor process before any publisher erasure writes. Pin the exact C2 image digest as the minimum rollback artifact. An older binary can misread retained/tombstone rows or admit new pins; C1 is not a valid rollback executable after those writes. |
+| Remaining permanent block | `IdentityRedactionPending { collection }` preserves affected foreign/organization sources and blocks completion until C3. No successful identity redaction, share facade rewrite, delegation handoff, or organization audit rewrite is claimed here. |
+| Recovery | Retain marker timestamps, durable cursor, exact immutable revisions, erasure evidence, and all key/delegation custody. Resume discovery/retention from the C2-compatible cursor. Disabling new requests leaves active denials and stored authority intact; it does not authorize a downgrade or reverse completed effects. |
+| Validation and release evidence | The C2 test slice restores complete publisher admission, draft/fork/default, barrier, exact-continuation, retained-reader and corruption tests from immutable FINAL. Identity-specific tests remain assigned to C3, with explicit C2 permanent-refusal tests supplied by the transitional suite. Record actual guarded checks and isolated Mongo results separately. Production activation, zero residue, and rollback qualification remain unproven. |
