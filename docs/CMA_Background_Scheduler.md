@@ -145,3 +145,32 @@ errors, or existing checkout/readiness/circuit-breaker gate failures. There are
 no persistent fields, indexes or migrations. API rollout does not stop Sandbox
 runtimes or interrupt a turn that its owner has not stopped. Production rollout
 and the full-hour evidence in #1785 remain release-owner gates.
+
+## Fresh discovery observations
+
+`CHRONO_AGENT_RECONCILIATION_VALIDATION_REUSE_ENABLED` is a strict boolean,
+default `false`. When enabled, the live-Agent query still reads every complete
+candidate document and the hidden lookahead row. It can reuse the parsed
+connection candidate only when the **entire fresh BSON byte sequence** equals a
+previously fully validated row. Revision equality alone is insufficient because
+trigger admission can update a hydration sidecar without advancing the revision.
+The reader, hydration and candidate parser are pure functions of that document;
+adding an external dependency to these functions requires revisiting this reuse.
+
+The process retains at most 1,024 entries, 256 KiB per row, and 16 MiB of charged
+row/candidate/key storage including a conservative fixed reservation for the
+preallocated map and string-allocation overhead. Entries expire 30 seconds after validation; hits never extend expiry. Oversize, saturation,
+changed bytes, expiry and restart take the complete parser path. Query/validation
+failure or cancellation clears reusable observations. No borrowed cursor batch
+is retained. Local attachment is checked on every sweep; parent/runtime checks,
+maintenance admission and recovery claims/CAS retain their existing authority.
+This saves decoding/validation work; Mongo scan frequency and consumed bytes stay
+unchanged. `cma_agent_discovery_validation_total` and
+`cma_agent_discovery_validation_seconds` use fixed outcomes; cache bytes and
+entries are exposed as gauges. No Agent IDs or document contents are metric labels.
+
+Activation requires a separate owner decision. Compare validation counters,
+charged memory, CPU, checkout tails, foreground latency and durable completion.
+Disable the switch if recovery, readiness or latency regresses; no data migration
+or persisted-format rollback is needed. Local measurements do not complete
+#1421 production or multi-replica acceptance.

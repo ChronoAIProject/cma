@@ -13,6 +13,7 @@ pub(crate) mod agent_capacity_recovery;
 mod agent_capacity_recovery_presence;
 mod agent_channel_usage;
 mod agent_commands;
+mod agent_connection_observations;
 mod agent_control_lineage;
 mod agent_control_receipt;
 mod agent_control_store;

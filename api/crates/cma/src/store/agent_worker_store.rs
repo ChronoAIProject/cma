@@ -115,6 +115,10 @@ impl AgentWorkerStore for MongoSandboxStore {
             filter.insert("_id", doc! { "$gt": cursor });
         }
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
+        let mut pass = self
+            .agent_connection_observations
+            .as_ref()
+            .map(|cache| cache.pass());
         let mut cursor = self
             .agents
             .find(filter)
@@ -123,18 +127,27 @@ impl AgentWorkerStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
-        while let Some(document) = read
-            .next(&mut cursor)
+        while cursor
+            .advance()
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
-            let agent = super::agents::read_agent(&document)?;
-            let candidate =
+            read.document(cursor.current().as_bytes().len());
+            let validate = || {
+                let document = cursor
+                    .deserialize_current()
+                    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+                let agent = super::agents::read_agent(&document)?;
                 AgentConnectionRecoveryCandidate::from_agent(&agent).ok_or_else(|| {
                     SandboxStoreError::Corrupt(
                         "agent connection query returned an invalid candidate".into(),
                     )
-                })?;
+                })
+            };
+            let candidate = match &self.agent_connection_observations {
+                Some(cache) => cache.resolve(cursor.current(), validate)?,
+                None => validate()?,
+            };
             items.push(candidate);
         }
         let has_more = items.len() > usize::from(page.limit);
@@ -149,6 +162,9 @@ impl AgentWorkerStore for MongoSandboxStore {
                 .to_string()
         });
         read.complete();
+        if let Some(pass) = pass.as_mut() {
+            pass.complete = true;
+        }
         Ok(Page { items, next })
     }
 
