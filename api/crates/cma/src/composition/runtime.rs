@@ -3,6 +3,15 @@ use std::sync::Arc;
 
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
+pub(super) fn worker_observations(
+    config: &Config,
+    stores: &MongoStores,
+) -> crate::store::worker_observations::Observations {
+    stores
+        .worker_observations()
+        .with_work_retry_policy(config.features.work_retry_policy_enabled)
+}
+
 pub(super) struct RuntimeServices {
     pub warm_pools: Arc<NativeWarmPools>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
@@ -83,6 +92,7 @@ pub(super) fn lifecycle_config(
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
+        work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
         access_transport_migration: config.agent_access_transport_migration.clone(),
