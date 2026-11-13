@@ -52,6 +52,23 @@ export interface DocumentMutation {
   readonly comment?: DocumentComment;
   readonly link?: DocumentLink;
 }
+export interface DocumentUsageCounter {
+  readonly used: number;
+  readonly limit: number;
+}
+export interface DocumentUsage {
+  readonly enforcement: 'enforced' | 'not_enforced';
+  readonly documents: DocumentUsageCounter | null;
+  readonly bytes: DocumentUsageCounter | null;
+  readonly objects: DocumentUsageCounter | null;
+  readonly pending_deletions: number | null;
+}
+export interface DocumentDeletion {
+  readonly id: string;
+  readonly revision: number;
+  readonly deleted_at: string;
+  readonly purge: 'pending' | 'complete' | 'blocked';
+}
 export interface DocumentReadOptions extends ReadOptions {
   readonly shareToken?: string;
 }
@@ -60,6 +77,11 @@ export interface DocumentPageOptions extends DocumentReadOptions {
   readonly limit?: number;
 }
 export interface DocumentsClient {
+  documentUsage(options?: ReadOptions): Promise<DocumentUsage>;
+  deleteDocument(
+    id: string,
+    options: CommandOptions & { readonly expectedRevision: number },
+  ): Promise<DocumentDeletion>;
   list(
     options?: DocumentPageOptions & {
       readonly scope?: 'all' | 'owned' | 'shared';
@@ -129,13 +151,19 @@ export interface DocumentsClient {
 }
 
 export class DocumentError extends Error {
+  readonly limit?: number;
+  readonly live?: number;
+
   constructor(
     message: string,
     readonly status: number,
     readonly code?: string,
+    details?: { readonly limit?: number; readonly live?: number },
   ) {
     super(message);
     this.name = 'DocumentError';
+    this.limit = details?.limit;
+    this.live = details?.live;
   }
 }
 
