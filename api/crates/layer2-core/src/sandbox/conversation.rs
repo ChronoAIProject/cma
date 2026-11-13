@@ -91,6 +91,11 @@ pub trait AgentUpdateRecorder: Send + Sync {
         None
     }
 
+    /// A local hint only. Subscribers must read and authorize durable state.
+    fn subscribe_head(&self, _id: &AgentId) -> Option<super::AgentHeadSubscription> {
+        None
+    }
+
     async fn restore_assembly(
         &self,
         _id: &AgentId,

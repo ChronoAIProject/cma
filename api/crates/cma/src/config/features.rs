@@ -8,6 +8,8 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub agent_event_stream_wake: bool,
+    pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub coordinated_ingress: bool,
@@ -72,6 +74,8 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
+            agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(
                 lookup,
                 "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
