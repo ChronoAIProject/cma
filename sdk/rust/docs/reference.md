@@ -39,8 +39,10 @@ authenticated current owner. `cma_sdk::usage::DocumentUsage` contains the closed
 `DocumentUsageEnforcement` enum (`Enforced` or `NotEnforced`) and the `documents`,
 `bytes` and `objects` counters. Each counter is an `Option<DocumentUsageQuota>`
 with `u64` fields `used` and `limit`. When enforcement is disabled or its ledger
-is not ready, all counters are `None`; unknown usage does not imply zero or an
+is not ready, all three quota counters are `None`; unknown usage does not imply zero or an
 available allowance.
+The separate `pending_deletions: Option<u64>` field counts deleting documents
+while deletion is enabled, independently of quota enforcement.
 
 Owner quota exhaustion remains an `Error::Api` with HTTP 429 and code
 `document_limit_reached`, `document_bytes_limit_reached` or
@@ -424,7 +426,7 @@ the configured Bot Father binding; they never accept or return user credentials.
 
 ## Persistent documents
 
-`client.documents()` exposes `list`, `create`, `read`, `update`, `source`,
+`client.documents()` exposes `list`, `create`, `read`, `update`, `delete`, `source`,
 `revisions`, `shares`, `grant`, `revoke`, `links`, `create_link`, `revoke_link`,
 `comments`, `comment`, and `remove_comment`. Types live in `cma_sdk::documents`.
 The registry is independent of Agent and Sandbox lifetimes. `DocumentListOptions`
@@ -438,6 +440,22 @@ The optional token on read/comment calls goes only in
 `create_link` accepts a caller-generated random 256-bit lowercase hex token;
 returned metadata never includes it. Keep share tokens out of logs and URL
 queries. Link access alone never exposes a user's registry inventory.
+
+### Terminal document deletion
+
+Owner deletion requires an observed aggregate revision and the original
+idempotency key. A successful `DocumentDeletion` contains the document ID,
+deletion revision/time and `purge` (`pending`, `complete` or `blocked`). All access
+ends immediately and the ID is never reused. Exact retries preserve the deletion
+receipt while reflecting current cleanup progress. Quota remains charged until
+purge releases it; `DocumentUsage.pending_deletions` is a nullable count that is
+null while deletion is disabled and is independent of quota enforcement.
+A closed deletion switch returns 503 `document_deletion_unavailable`; unsupported
+physical cleanup returns a successful logical deletion with `purge: blocked`.
+
+Use `client.documents().delete(id, &DeleteDocument { expected_revision: 3 }, &key).await`.
+`DeleteDocument`, `DocumentDeletion` and the closed `DocumentPurgeState` enum live
+in `cma_sdk::documents`; `pending_deletions` is `Option<u64>`.
 
 ## Gateway native cards and relay authoring
 

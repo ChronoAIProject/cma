@@ -1,5 +1,35 @@
 //! Wire types for independent durable documents.
 use serde::{Deserialize, Serialize};
+/// Owner's terminal document deletion command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteDocument {
+    /// Last-observed aggregate revision.
+    pub expected_revision: u64,
+}
+/// Current physical cleanup status of a logically deleted document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentPurgeState {
+    /// Cleanup is pending; charged quota has not been released.
+    Pending,
+    /// Cleanup and quota release have completed.
+    Complete,
+    /// Cleanup is blocked; completion is not claimed.
+    Blocked,
+}
+/// Durable logical deletion receipt with current cleanup status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocumentDeletion {
+    /// Permanently retired document identity.
+    pub id: String,
+    /// Deletion revision, following the last live metadata revision.
+    pub revision: u64,
+    /// Original deletion timestamp, preserved by exact retries.
+    pub deleted_at: String,
+    /// Current cleanup status; this may change between exact retries.
+    pub purge: DocumentPurgeState,
+}
 /// Effective document permission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

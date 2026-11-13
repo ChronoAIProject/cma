@@ -19,12 +19,13 @@ async fn document_usage_reads_authenticated_owner_quotas() {
         json!({
             "enforcement":"enforced", "documents":{"used":2,"limit":100},
             "bytes":{"used":1024,"limit":1073741824},
-            "objects":{"used":3,"limit":32768}
+            "objects":{"used":3,"limit":32768}, "pending_deletions":2
         }),
         true,
     ));
     let result: DocumentUsage = server.client.usage().documents().await.unwrap();
     assert_eq!(result.enforcement, DocumentUsageEnforcement::Enforced);
+    assert_eq!(result.pending_deletions, Some(2));
     assert_eq!(
         result.documents,
         Some(DocumentUsageQuota {
@@ -55,6 +56,7 @@ async fn document_usage_preserves_unknown_counters_when_not_enforced() {
     assert_eq!(result.documents, None);
     assert_eq!(result.bytes, None);
     assert_eq!(result.objects, None);
+    assert_eq!(result.pending_deletions, None);
     let _ = (&server.anonymous, &server.base_url);
     server.assert_drained();
 }

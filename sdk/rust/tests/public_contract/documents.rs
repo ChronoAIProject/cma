@@ -23,6 +23,9 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
         "PATCH /api/v1/documents/{id}" => {
             c.check(api.update(c.param("id"), &c.body()?, &c.key()?).await)
         }
+        "DELETE /api/v1/documents/{id}" => {
+            c.check(api.delete(c.param("id"), &c.body()?, &c.key()?).await)
+        }
         "GET /api/v1/documents/{id}/source" => c.check(
             api.source(c.param("id"), c.number("revision")?, token)
                 .await,

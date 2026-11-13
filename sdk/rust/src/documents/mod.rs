@@ -52,6 +52,19 @@ impl Documents<'_> {
         self.write(Method::PATCH, &["documents", id], body, key, None)
             .await
     }
+    /// Permanently delete an owned document; exact retries retain the original receipt.
+    pub async fn delete(
+        &self,
+        id: &str,
+        body: &DeleteDocument,
+        key: &IdempotencyKey,
+    ) -> Result<DocumentDeletion> {
+        if body.expected_revision == 0 {
+            return Err(Error::validation("expected_revision must be positive"));
+        }
+        self.write(Method::DELETE, &["documents", id], body, key, None)
+            .await
+    }
     /// Read one immutable source; omission selects the current source revision.
     pub async fn source(
         &self,

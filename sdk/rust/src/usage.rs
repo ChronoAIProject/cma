@@ -32,6 +32,8 @@ pub struct DocumentUsage {
     pub bytes: Option<DocumentUsageQuota>,
     /// Charged source objects and limit, absent when authoritative usage is unavailable.
     pub objects: Option<DocumentUsageQuota>,
+    /// Deleting owner documents; absent while document deletion is disabled.
+    pub pending_deletions: Option<u64>,
 }
 
 /// Integer allocation-time quantities and display-unit conversions.
