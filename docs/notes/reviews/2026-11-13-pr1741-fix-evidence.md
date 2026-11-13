@@ -1,7 +1,9 @@
 # PR #1741 correction evidence
 
 Evidence checkpoint: 2026-11-13. This is a correction record, not the final GO
-verdict. The completed [original-head primary review](2026-11-13-pr1741-primary-review.md)
+verdict. Completed integration results and the qualified source verdict are in
+the [candidate review](2026-11-13-pr1741-candidate-review.md).
+The completed [original-head primary review](2026-11-13-pr1741-primary-review.md)
 records eight blockers after reviewing all 126 changed files. The original PR head is
 `821790b422b336684256abbf2b00d30386f40e99`.
 
@@ -43,8 +45,9 @@ commands run under the shared build-slot wrapper, from `api/`, with
 The baseline method adds the new regression tests while retaining the previous
 production implementation, then exercises the same persistence or provider
 boundary after the fix. Intermediate runs use instrumented working trees;
-they are not represented as complete exact-commit qualification. Final gates
-will be rerun at the final candidate head.
+they are not represented as complete exact-commit qualification. Final gate
+results and their exact source boundaries are recorded in the candidate review
+linked above.
 
 Representative commands inside the disposable fixture:
 
@@ -89,7 +92,9 @@ expected prefix list had not yet been updated. After aligning the expected list,
 all four failed selection checks passed. No assertion was loosened. The file-size
 gate passed across 6,483 files; formatting and whitespace checks passed at this
 checkpoint. `cargo clippy -p cma -p layer2-core --all-targets --all-features
---locked -- -D warnings` passed. The full repository Mongo script remains pending.
+--locked -- -D warnings` passed. The full repository Mongo script was pending at
+this intermediate checkpoint; its completed 1,092/1,092 run is recorded in the
+candidate review.
 
 ## Exact-key Revive recovery decision (B8)
 
@@ -164,8 +169,9 @@ can delay the loss report and abrupt exit loses queued diagnostic output.
 The original PR's failed Mongo job was the terminal-settlement transaction-count
 contract; the backend aggregate failed because that job failed. Merging develop
 includes the default-off adoption-dispatch correction. The same settlement
-contract passed in the 27-test local run. Final CI and exact-head status still
-need to be checked after all corrections.
+contract passed in the 27-test local run and the complete integrated Mongo run.
+The candidate review records the exact source verdict and separates the old
+remote CI status from the unpublished corrections.
 
 ## Inclusive correction checkpoint
 
@@ -206,7 +212,8 @@ from a shared development host are not production performance claims.
 | `b12345-after.log` | `88013a9d4d8213eedf9780f1f4c0d2e4588171e261d57b5ca97da247abccf4fb` |
 | `security-clippy.log` | `eb33ec76e6b5ee850f3c391da14393fd4679e20fe895adeb394cf09fc1ad9253` |
 
-The original full-diff review and first counter measurements are complete.
-Final integrated verification and the new candidate exact-head verdict remain
-outstanding. PR #1816 remains stacked until #1741
-has a reviewed and authorized merge.
+The original full-diff review, correction evidence and integrated qualification
+are complete. The candidate review records the GO verdict at
+`095cbab547eeec8e29a97f69822cd1e1f96c3817`, the complete backend checkpoint and
+final integration gate. PR #1816 remains stacked until #1741 has an authorized
+merge. Production activation and release qualification are separate decisions.
