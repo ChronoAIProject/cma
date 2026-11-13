@@ -8,6 +8,7 @@ async fn native_create_retry_observation_failure_keeps_ordinary_delay_even_after
             let created = h.create().await;
             let pools = pools(&h, &[]);
             pools.pending_claim.store(true, Ordering::SeqCst);
+            pools.observation.set_delay(Duration::from_millis(100));
             let fail_read = || {
                 if stalled {
                     pools.stall_observe.store(true, Ordering::SeqCst);
@@ -165,5 +166,33 @@ async fn native_create_retry_home_observation_outcomes_publish_due_time_without_
         assert_eq!(authority.pvc_uid, "pvc-uid");
         assert_eq!(call_count(&pools, "claim"), 1);
         assert_eq!(call_count(&pools, "adopt"), 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn native_create_retry_delayed_assignment_keeps_deadline_provenance() {
+    for (read_ms, due_seconds) in [(100, 6), (400, 30)] {
+        let h = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+        let created = h.create().await;
+        let pools = pools(&h, &[]);
+        pools.pending_claim.store(true, Ordering::SeqCst);
+        pools.observation.set_delay(Duration::from_millis(read_ms));
+        let worker = cold_worker(&h, pools.clone(), true);
+        let now = start_time(&created);
+        let started = Instant::now();
+        assert!(worker.run_one(&created.id, now).await.unwrap());
+        assert_eq!(started.elapsed(), Duration::from_secs(5));
+        let stored = h.stored(&created.id).await;
+        // 100 ms responses finish before the last interval's deadline. A 400 ms
+        // response is still in flight at expiry and must use ordinary scheduling.
+        assert_eq!(stored.work.ready_at, rfc3339_at(now + Duration::from_secs(due_seconds)));
+        assert_eq!(stored.work.attempts, 1);
+        let home = stored.lifecycle.home.as_deref().unwrap();
+        let native = home.native_pool.as_ref().unwrap();
+        assert_eq!(native.claim.as_ref(), pools.claim.lock().unwrap().as_ref());
+        assert!(home.receipt.is_none() && !home.released && native.cleanup.is_none());
+        assert_eq!(call_count(&pools, "claim"), 1);
+        assert_eq!(call_count(&pools, "adopt"), 0);
+        assert_eq!(call_count(&pools, "reclaim"), 0);
     }
 }
