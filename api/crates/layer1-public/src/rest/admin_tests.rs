@@ -357,3 +357,6 @@ mod route_contract_1;
 
 #[path = "admin/route_contract_2_tests.rs"]
 mod route_contract_2;
+
+#[path = "admin/spend_test_support.rs"]
+pub(crate) mod spend_test_support;
