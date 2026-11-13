@@ -370,3 +370,35 @@ async fn every_single_flight_waiter_keeps_its_final_failure_reason() {
     }
     assert_eq!(f.control.introspection_calls.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn waiters_receive_the_same_immutable_receipt_but_later_calls_verify_again() {
+    let f = Fixture::new().await;
+    let gate = f.block().await;
+    let requests: Vec<_> = (0..9).map(|_| f.verify("fixture-access")).collect();
+    f.arrived(1).await;
+    f.callers("fixture-access", 9).await;
+    gate.release.add_permits(9);
+    let mut receipts = Vec::new();
+    for request in requests {
+        receipts.push(request.await.unwrap().unwrap());
+    }
+    assert!(receipts
+        .iter()
+        .all(|receipt| Arc::ptr_eq(receipt, &receipts[0])));
+    assert_eq!(f.control.userinfo_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(f.control.introspection_calls.load(Ordering::SeqCst), 1);
+    *f.control.gate.write().await = None;
+    let later = f.verify("fixture-access").await.unwrap().unwrap();
+    assert!(!Arc::ptr_eq(&later, &receipts[0]));
+    assert!(!crate::auth::identity_lifetime::current(
+        &f.auth,
+        &receipts[0]
+    ));
+    assert!(crate::auth::identity_lifetime::current(&f.auth, &later));
+    assert_eq!(f.control.userinfo_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(f.control.introspection_calls.load(Ordering::SeqCst), 2);
+    drop(receipts);
+    drop(later);
+    assert_eq!(f.auth.identity_store.active_receipts(), 0);
+}

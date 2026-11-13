@@ -23,11 +23,11 @@ pub mod deferred_commands;
 pub mod entitlements;
 pub mod flow;
 mod identity;
-mod identity_fallback;
+mod identity_flight;
 mod identity_http;
+mod identity_lifetime;
 mod identity_observations;
 mod identity_retry;
-mod identity_reuse;
 mod identity_throttle;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
@@ -138,10 +138,8 @@ pub struct AuthState {
     browser_origins: Vec<String>,
     pub(super) http: reqwest::Client,
     pub(super) metadata: RwLock<Option<ProviderMetadata>>,
-    identity_store: Arc<dyn identity_fallback::IdentityStore>,
-    identity_reuse_age: Duration,
+    identity_store: Arc<dyn identity_flight::IdentityStore>,
     verification_slots: tokio::sync::Semaphore,
-    fallback_policy: Arc<dyn identity_fallback::FallbackPolicy>,
     cookie_verifications: cookie_authorization::VerificationFlights,
     bearer_verifications: bearer_authorization::VerificationFlights,
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
@@ -222,10 +220,8 @@ impl AuthState {
                 .build()
                 .expect("the rustls HTTP client builds"),
             metadata: RwLock::new(None),
-            identity_store: Arc::new(identity_fallback::MemoryIdentityStore::default()),
-            identity_reuse_age: Duration::ZERO,
+            identity_store: Arc::new(identity_flight::MemoryIdentityStore::default()),
             verification_slots: tokio::sync::Semaphore::new(64),
-            fallback_policy: Arc::new(identity_fallback::SessionReadOnly),
             cookie_verifications: cookie_authorization::VerificationFlights::default(),
             bearer_verifications: bearer_authorization::VerificationFlights::default(),
             signup_options_cache: signup_options::SignupOptionsCache::default(),
@@ -285,14 +281,6 @@ impl AuthState {
     pub(super) async fn resolve_request(
         &self,
         headers: &HeaderMap,
-    ) -> Result<Option<RequestAuth>, StoreError> {
-        self.resolve_request_with_policy(headers, false).await
-    }
-
-    pub(super) async fn resolve_request_with_policy(
-        &self,
-        headers: &HeaderMap,
-        allow_fallback: bool,
     ) -> Result<Option<RequestAuth>, StoreError> {
         if self.identity_proxy.is_some() && headers.contains_key(nyxid_proxy::HEADER) {
             return self.proxy_request(headers).await;
@@ -356,25 +344,18 @@ impl AuthState {
                         if had_tokens && state.tokens.is_none() {
                             return Ok(None);
                         }
-                        let resolved = if allow_fallback {
-                            cookie_authorization::request_for_session(self, &login.subject, state)
-                                .await?
-                        } else {
-                            cookie_authorization::request_for_browser_cookie(
-                                self,
-                                &login.subject,
-                                state,
-                            )
-                            .await?
-                        };
-                        // Cached authority and outage fallback both recheck logout
-                        // after IO, including logout committed by another replica.
-                        if (allow_fallback || identity_reuse::used())
-                            && !self.store.browser_login(&id).await?.is_some_and(|current| {
-                                current.subject == login.subject
-                                    && current.expires_at > SystemTime::now()
-                            })
-                        {
+                        let resolved = cookie_authorization::request_for_browser_cookie(
+                            self,
+                            &login.subject,
+                            state,
+                        )
+                        .await?;
+                        // Every browser verification rechecks logout after IO,
+                        // including logout committed by another replica.
+                        if !self.store.browser_login(&id).await?.is_some_and(|current| {
+                            current.subject == login.subject
+                                && current.expires_at > SystemTime::now()
+                        }) {
                             return Ok(None);
                         }
                         return Ok(resolved);

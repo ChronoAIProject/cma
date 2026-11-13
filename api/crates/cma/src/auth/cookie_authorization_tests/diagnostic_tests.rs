@@ -2,7 +2,7 @@ use super::*;
 use layer2_core::dependency_diagnostics::{capture, Dependency, Failure, Reason};
 
 #[tokio::test]
-async fn cookie_and_bearer_keep_final_reasons_but_not_successful_fallbacks() {
+async fn cookie_and_bearer_keep_final_reasons_after_prior_success() {
     for cookie in [false, true] {
         for (status, reason) in [
             (502, Reason::BadGateway),
@@ -29,7 +29,7 @@ async fn cookie_and_bearer_keep_final_reasons_but_not_successful_fallbacks() {
                 Some(Failure::new(Dependency::IdentityProvider, reason))
             );
             fixture.control.introspection.write().await.status = StatusCode::OK;
-            let (result, failure) = capture(request_for_session(
+            let (result, failure) = capture(request_for_browser_cookie(
                 &fixture.auth,
                 &retained.subject,
                 retained.clone(),
@@ -38,14 +38,20 @@ async fn cookie_and_bearer_keep_final_reasons_but_not_successful_fallbacks() {
             assert!(result.unwrap().is_some());
             assert_eq!(failure, None);
             fixture.control.introspection.write().await.status = StatusCode::SERVICE_UNAVAILABLE;
-            let (result, failure) = capture(request_for_session(
+            let (result, failure) = capture(request_for_browser_cookie(
                 &fixture.auth,
                 &retained.subject,
                 retained.clone(),
             ))
             .await;
-            assert!(result.unwrap().is_some());
-            assert_eq!(failure, None, "successful cached fallback is not a failure");
+            assert!(result.is_err());
+            assert_eq!(
+                failure,
+                Some(Failure::new(
+                    Dependency::IdentityProvider,
+                    Reason::UpstreamUnavailable
+                ))
+            );
         }
     }
 }

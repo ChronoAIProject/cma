@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
 
 use super::{
-    identity::VerifiedSubject, identity_fallback::CredentialPurpose, persistence::SecretDigest,
+    identity::VerifiedSubject, persistence::SecretDigest,
     verification_error::ProviderVerificationError, AuthState, ProviderMetadata,
 };
 
@@ -77,15 +77,6 @@ async fn verify_optional_metadata(
     credential: &str,
     timeout: Duration,
 ) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
-    let purpose = if super::agent_keys::is_agent_key(credential) {
-        CredentialPurpose::AgentKey
-    } else {
-        CredentialPurpose::IndependentBearer
-    };
-    if let Some(cached) = super::identity_reuse::lookup(auth, purpose, credential) {
-        super::identity_observations::resolution("reused");
-        return Ok(cached);
-    }
     let key = SecretDigest::identify("independent-bearer-verification", credential);
     let flight = auth.bearer_verifications.acquire(&key).await;
     let led = std::sync::atomic::AtomicBool::new(false);
@@ -93,19 +84,13 @@ async fn verify_optional_metadata(
         timeout,
         flight.get_or_init(|| {
             led.store(true, std::sync::atomic::Ordering::Relaxed);
-            let purpose = if super::agent_keys::is_agent_key(credential) {
-                CredentialPurpose::AgentKey
-            } else {
-                CredentialPurpose::IndependentBearer
-            };
-            super::identity_retry::verify(auth, metadata, credential, purpose, None, None, timeout)
+            super::identity_retry::verify(auth, metadata, credential, None, None, timeout)
         }),
     )
     .await
     {
         Ok(result) => result.clone(),
         Err(_) => {
-            auth.identity_store.discard_token(credential);
             let error =
                 ProviderVerificationError::Unavailable("identity caller deadline elapsed".into());
             use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
@@ -127,7 +112,15 @@ async fn verify_optional_metadata(
     if flight.initialized() {
         auth.bearer_verifications.release(&key, &flight).await;
     }
-    verified
+    verified.and_then(|evidence| {
+        if !super::identity_lifetime::current(auth, &evidence) {
+            return Err(ProviderVerificationError::Unavailable(
+                "identity evidence changed before consumption".into(),
+            ));
+        }
+        super::identity_lifetime::retain(&evidence);
+        Ok(evidence)
+    })
 }
 
 #[cfg(test)]

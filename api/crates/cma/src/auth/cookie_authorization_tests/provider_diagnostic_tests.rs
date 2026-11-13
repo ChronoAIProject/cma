@@ -352,7 +352,6 @@ async fn caller_and_verification_deadlines_are_observed_and_release_capacity() {
                 &f.auth,
                 None,
                 "must-not-leak-access-token",
-                CredentialPurpose::BrowserCookie,
                 None,
                 Some("owner"),
                 Duration::from_millis(100),

@@ -8,8 +8,6 @@ use tokio::time::{timeout, Instant};
 
 use super::{
     identity::{self, VerifiedSubject},
-    identity_fallback::CredentialPurpose,
-    permissions::PermissionEvidence,
     verification_error::ProviderVerificationError as Error,
     AuthState, ProviderMetadata,
 };
@@ -22,7 +20,6 @@ pub(super) async fn verify(
     auth: &AuthState,
     metadata: Option<&ProviderMetadata>,
     token: &str,
-    purpose: CredentialPurpose,
     expiry: Option<SystemTime>,
     expected_subject: Option<&str>,
     budget: Duration,
@@ -43,9 +40,18 @@ pub(super) async fn verify(
                 error,
             )
         })?;
-    let key = auth.identity_store.key(purpose, token);
-    let epoch = auth.identity_store.epoch();
-    let token_epoch = auth.identity_store.token_epoch(&key);
+    let live_key = auth.identity_store.key(token);
+    let token_epoch = auth.identity_store.token_epoch(&live_key).ok_or_else(|| {
+        let error = Error::Unavailable("identity verification fence capacity exhausted".into());
+        record(
+            Endpoint::Verification,
+            Stage::Admission,
+            Reason::Capacity,
+            None,
+            &error,
+        );
+        error
+    })?;
     let stop = Instant::now() + budget.min(DEADLINE);
     let result = timeout(budget.min(DEADLINE), async {
         let mut last = Error::Transient("deadline");
@@ -109,28 +115,28 @@ pub(super) async fn verify(
             &error,
         );
         Err(error)
-    })
-    .map(Arc::new);
-    if result.is_ok() && !auth.identity_store.token_current(&key, &token_epoch) {
-        return Err(Error::Unavailable(
-            "identity evidence invalidated during verification".into(),
-        ));
-    }
-    match &result {
-        Ok(evidence) if matches!(evidence.permissions, PermissionEvidence::Active(_)) => {
-            let expiry = match (expiry, evidence.token_expires_at) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
-            if let Some(expiry) = expiry {
-                auth.identity_store
-                    .remember(key, &epoch, evidence.clone(), expiry);
-            } else {
-                auth.identity_store.invalidate(&key);
-            }
+    });
+    let result = match result {
+        Ok(mut evidence) => {
+            let completed = auth
+                .identity_store
+                .finish_verification(&live_key, &token_epoch)
+                .ok_or_else(|| {
+                    Error::Unavailable("identity evidence invalidated during verification".into())
+                })?;
+            let lifetime = [expiry, evidence.token_expires_at, evidence.api_expires_at]
+                .into_iter()
+                .flatten()
+                .min();
+            evidence.verification = Some(super::identity_lifetime::VerificationLifetime::new(
+                live_key, completed, lifetime,
+            )?);
+            Ok(Arc::new(evidence))
         }
-        Err(Error::Transient(_) | Error::RateLimited(_)) => {}
-        _ => auth.identity_store.invalidate_token(token),
+        Err(error) => Err(error),
+    };
+    if matches!(&result, Err(Error::Rejected(_) | Error::Unavailable(_))) {
+        auth.identity_store.invalidate_token(token);
     }
     result
 }

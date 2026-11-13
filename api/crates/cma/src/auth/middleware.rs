@@ -36,21 +36,13 @@ pub async fn attach_subject(
         drop(observation);
         return next.run(request).await;
     }
-    let allow_fallback = auth
-        .fallback_policy
-        .permits(request.method(), request.uri().path());
     let mut observation = crate::telemetry::request::Resolution::start(&request, "ambient");
     let ((resolved, failure), retry_after) = super::identity_throttle::capture(
         layer2_core::diagnostic_context::DiagnosticContext::current()
             .with_phase("identity")
-            .scope(diagnostics::capture(super::identity_reuse::scope(
+            .scope(diagnostics::capture(super::identity_lifetime::scope(
                 &auth,
-                request.method(),
-                request
-                    .extensions()
-                    .get::<axum::extract::MatchedPath>()
-                    .map_or("unmatched", axum::extract::MatchedPath::as_str),
-                auth.resolve_request_with_policy(request.headers(), allow_fallback),
+                auth.resolve_request(request.headers()),
             ))),
     )
     .await;
