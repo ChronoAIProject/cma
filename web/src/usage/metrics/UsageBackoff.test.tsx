@@ -30,6 +30,7 @@ it('preserves the report cooldown across filters, hide/show and explicit refresh
   expect(result.current.report).toBeUndefined();
   await act(async () => vi.advanceTimersByTimeAsync(25000));
   expect(api.create).toHaveBeenCalledTimes(1);
+  await act(async () => vi.advanceTimersByTimeAsync(Math.max(0, deadline! - Date.now())));
   act(() => result.current.refresh());
   await act(async () => {});
   expect(api.create).toHaveBeenCalledTimes(2);
@@ -38,7 +39,7 @@ it('preserves the report cooldown across filters, hide/show and explicit refresh
   expect(result.current.report).toBeDefined();
 });
 
-it('retains the previous report honestly when a new selection hits backoff', async () => {
+it('does not show a report from another selection during backoff', async () => {
   vi.useFakeTimers();
   const api = metricsClient();
   const { result, rerender } = renderHook(
@@ -53,8 +54,8 @@ it('retains the previous report honestly when a new selection hits backoff', asy
   await act(async () => {});
   expect(api.create).toHaveBeenCalledTimes(2);
   expect(result.current.error?.title).toBe('Usage reporting is busy');
-  expect(result.current.report?.report_id).toBe('report-one');
-  expect(result.current.stale).toBe(true);
+  expect(result.current.report).toBeUndefined();
+  expect(result.current.stale).toBe(false);
 });
 
 it('shares a failed member read with discovery, including remounts and rapid retries', async () => {
