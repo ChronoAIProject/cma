@@ -5,6 +5,17 @@ use super::{Sandbox, SandboxId, SandboxStoreError};
 /// Durable lifecycle work discovery, lease fencing and terminal purge.
 #[async_trait]
 pub trait SandboxWorkerStore: Send + Sync {
+    /// Carry the persistence adapter's publication context into dependent stores.
+    /// The captured claim and monotonic validity remain in WorkAuthority.
+    async fn scope_sandbox_publication<'a>(
+        &'a self,
+        work: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, SandboxStoreError>> + Send + 'a>,
+        >,
+    ) -> Result<bool, SandboxStoreError> {
+        work.await
+    }
+
     /// Completed installation attached to this exact ownership and runtime.
     /// The worker must match the current request digest and inspect the live
     /// process before advancing; this proof never authorizes runtime dispatch.
@@ -36,6 +47,16 @@ pub trait SandboxWorkerStore: Send + Sync {
         now: &str,
         requested_until: &str,
     ) -> Result<Option<String>, SandboxStoreError>;
+    /// Short-lease execution requires a store-clock receipt. Implementations
+    /// without one must refuse, rather than infer validity from a caller clock.
+    async fn renew_sandbox_authority(
+        &self,
+        _claimed: &Sandbox,
+        _now: &str,
+        _requested_until: &str,
+    ) -> Result<Option<super::WorkLeaseGrant>, SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
     async fn purge_sandbox(
         &self,
         id: &SandboxId,

@@ -151,6 +151,18 @@ impl SandboxWorkerStore for InMemorySandboxStore {
         Ok(Some(claimed))
     }
 
+    async fn renew_sandbox_authority(
+        &self,
+        claimed: &Sandbox,
+        now: &str,
+        requested_until: &str,
+    ) -> Result<Option<super::super::WorkLeaseGrant>, SandboxStoreError> {
+        self.renew_sandbox_work(claimed, now, requested_until)
+            .await?
+            .map(|until| super::super::WorkLeaseGrant::at(until, now))
+            .transpose()
+    }
+
     async fn renew_sandbox_work(
         &self,
         claimed: &Sandbox,
