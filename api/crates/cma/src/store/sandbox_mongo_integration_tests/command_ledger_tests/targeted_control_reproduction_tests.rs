@@ -131,10 +131,16 @@ async fn response_control_queued_cancellation_reproduction() {
     reproduce(writers::Kind::QueuedCancellation).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn response_control_active_reconciliation_reproduction() {
+    reproduce(writers::Kind::ActiveReconciliation).await;
+}
+
 async fn reproduce(kind: writers::Kind) {
     for hz in [5, 10, 20] {
         let (client, name) = database("control_checkpoint_reproduction").await;
-        let (writer, agent, mut template, _) = composed(&name, &client).await;
+        let (writer, agent, mut template, source) = composed(&name, &client).await;
         let agent = writers::attach_output(&writer, &agent).await;
         template.command.expected_agent_revision = agent.revision;
         template.observed_agent_revision = agent.revision;
@@ -157,7 +163,22 @@ async fn reproduce(kind: writers::Kind) {
         let stopped = Arc::new(AtomicBool::new(false));
         let commits = Arc::new(AtomicU64::new(0));
         let failures = Arc::new(Mutex::new(BTreeMap::new()));
-        let competing = writers::Writer::new(kind, writer.clone(), agent.clone(), &template).await;
+        let mut competing = writers::Writer::new(
+            kind,
+            writer.clone(),
+            agent.clone(),
+            &template,
+            source.receipt.envelope.command_id,
+        )
+        .await;
+        if matches!(kind, writers::Kind::ActiveReconciliation) {
+            // With no deferred evidence, the active-command observer must not
+            // manufacture Agent writes just to resemble a competing writer.
+            let filter = doc! { "_id": agent.id.as_str() };
+            let before = writer.agents.find_one(filter.clone()).await.unwrap();
+            competing.tick(0).await.unwrap();
+            assert_eq!(writer.agents.find_one(filter).await.unwrap(), before);
+        }
         let task = {
             let stopped = stopped.clone();
             let commits = commits.clone();

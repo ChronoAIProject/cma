@@ -6,6 +6,7 @@ pub(super) enum Kind {
     Checkpoint,
     Admission,
     QueuedCancellation,
+    ActiveReconciliation,
 }
 
 fn chunk() -> ConversationUpdate {
@@ -38,6 +39,7 @@ pub(super) struct Writer {
     recorder: Arc<DurableAgentUpdateRecorder>,
     assembly: AgentMessageAssembly,
     cancellation: Option<QueuedCancellationReservation>,
+    source_id: AgentCommandId,
 }
 
 impl Writer {
@@ -46,6 +48,7 @@ impl Writer {
         store: MongoSandboxStore,
         agent: Agent,
         template: &TargetedControlReservation,
+        source_id: AgentCommandId,
     ) -> Self {
         let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
         let cancellation = if matches!(kind, Kind::QueuedCancellation) {
@@ -80,6 +83,7 @@ impl Writer {
             agent,
             parent,
             cancellation,
+            source_id,
             assembly: AgentMessageAssembly::default(),
         }
     }
@@ -127,6 +131,17 @@ impl Writer {
                     .cancel_queued_response(self.cancellation.clone().unwrap())
                     .await
                     .map_err(|error| error.code())?;
+            }
+            Kind::ActiveReconciliation => {
+                // Observe the real active dispatch repeatedly. A completed
+                // deferred source must not be reset to manufacture a hot loop.
+                let command = self
+                    .store
+                    .reconcile_command(&self.source_id)
+                    .await
+                    .map_err(|error| error.code())?;
+                assert!(command.work.dispatch.is_some());
+                assert!(!command.status.is_terminal());
             }
         }
         Ok(())
