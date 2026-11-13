@@ -221,7 +221,8 @@ fn unavailable() -> SandboxStoreError {
 // This internal classification never changes the persisted failure diagnostic.
 fn recovery_failure(error: AdapterError) -> SandboxStoreError {
     match error {
-        AdapterError::Unavailable(_)
+        AdapterError::NativeClaimNotReady(_)
+        | AdapterError::Unavailable(_)
         | AdapterError::AtCapacity(_)
         | AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
