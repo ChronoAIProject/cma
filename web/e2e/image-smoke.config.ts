@@ -24,7 +24,9 @@ export default defineConfig({
   retries: 0,
   forbidOnly: true,
   timeout: 60_000,
-  reporter: 'list',
+  // The Python watchdog sends SIGINT with a separate teardown allowance. A
+  // Playwright globalTimeout also expires teardown and can lose failure traces.
+  reporter: [['list'], ['./image-smoke-reporter.ts']],
   outputDir:
     process.env.CMA_WEB_IMAGE_EVIDENCE_DIR ?? mkdtempSync(join(tmpdir(), 'cma-web-image-')),
   use: {
