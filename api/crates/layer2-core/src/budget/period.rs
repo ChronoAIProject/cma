@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{BudgetError, PlatformBudgetPolicy};
+use super::{BudgetError, PlatformAdmissionState, PlatformBudgetPolicy};
 
 const SAFE_TOTAL: u64 = i64::MAX as u64;
 const SECONDS_PER_DAY: u128 = 86_400;
@@ -79,6 +79,25 @@ impl Evaluation {
 }
 
 impl PlatformPeriodLedger {
+    /// Read decisions cannot depend on an evaluator successfully persisting its
+    /// latest result. Derive new closures from current evidence, but leave lifts
+    /// to the authoritative evaluator so a read never reopens a persisted stop.
+    pub fn admission_state(
+        &self,
+        policy: &PlatformBudgetPolicy,
+        settings_revision: u64,
+        now: u64,
+    ) -> Result<PlatformAdmissionState, BudgetError> {
+        let evaluation = self.clone().evaluate(policy, settings_revision, now)?;
+        let mut closures = self.closures.clone();
+        closures.extend(evaluation.entered);
+        Ok(PlatformAdmissionState {
+            configured: true,
+            closures,
+            operator_control: Default::default(),
+        })
+    }
+
     pub fn open(
         policy: &PlatformBudgetPolicy,
         settings_revision: u64,

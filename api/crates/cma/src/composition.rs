@@ -45,7 +45,10 @@ impl ControlPlaneComposition {
     pub(crate) async fn build(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
         let activity = ActivityService::new(stores.activity.clone());
-        let documents = documents::compose(config, &stores)?;
+        let documents::DocumentComposition {
+            service: documents,
+            maintenance: document_blob_maintenance,
+        } = documents::compose(config, &stores)?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -194,12 +197,7 @@ impl ControlPlaneComposition {
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
-        .with_admission_ceilings(Arc::new(
-            layer2_core::admission::AdmissionCeilingsService::new(
-                stores.admission_ceilings.clone(),
-            )
-            .with_writes_enabled(config.features.admission_ceilings_writes_enabled),
-        ))
+        .with_admission_ceilings(stores::admission_ceilings(&stores, config))
         .with_admission_control(Arc::new(
             layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
                 .with_writes_enabled(config.features.admission_control_writes_enabled),
@@ -217,6 +215,7 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_concurrent_detail_enrichment(config.features.concurrent_sandbox_detail_enrichment)
         .with_runtime_updates(runtime.updates)
         .with_retained_recovery(runtime.recovery)
         .with_retained_reopening(runtime.reopen)
@@ -312,6 +311,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
+            config.features.command_reconcile_pacing,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -458,6 +458,8 @@ impl ControlPlaneComposition {
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = stores.worker_observations();
+        let workers = crate::worker_supervision::Workers::new();
+        let health = crate::health::router_with_workers(stores, workers.clone());
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -467,13 +469,15 @@ impl ControlPlaneComposition {
                 limits,
                 crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
             ),
-            stores,
+            health,
             tool_routes.merge(service_portal::router(
                 auth.clone(),
                 config.gateway.as_ref(),
             )?),
         );
         Ok(Self {
+            workers,
+            document_blob_maintenance,
             worker_observations,
             router,
             auth,

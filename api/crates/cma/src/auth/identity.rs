@@ -182,7 +182,13 @@ async fn verify_subject_once(
     )?;
     let (body, subject) = userinfo?;
     let (permissions, api_expires_at, token_expires_at) = match introspection?
-        .map(|response| response.verify(&subject))
+        .map(|response| {
+            response.verify(
+                &subject,
+                auth.oauth_api_resource.as_deref(),
+                super::oauth_commands::requires_resource(access_token),
+            )
+        })
         .transpose()?
     {
         Some(evidence) => (

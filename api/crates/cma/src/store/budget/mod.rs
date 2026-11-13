@@ -11,10 +11,17 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
 mod baseline;
 mod cancellation;
+mod counter_accounting;
+#[cfg(test)]
+mod counter_tests;
+mod counters;
 mod period;
+mod period_storage;
 mod requests;
 mod source;
 mod spend_ledger;
+mod stop_authority;
+mod transitions;
 pub(super) use cancellation::release_unexecuted;
 pub(super) use period::require_open_with_ceilings;
 pub(super) use period::require_open_with_collections_and_ceilings;
@@ -22,6 +29,7 @@ pub(super) use period::{now_seconds, require_open};
 #[cfg(test)]
 pub(super) use period::{period_key, require_open_with};
 pub(super) use source::PlatformStopCache;
+pub(super) use stop_authority::fence_stop;
 
 pub(super) const COLLECTION: &str = "model_budget_reservations";
 
@@ -37,6 +45,8 @@ struct TurnRecord {
     /// reservations made before a platform policy was enabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     period_start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    period_shard: Option<u16>,
 }
 
 fn domain(reason: BudgetError) -> ApplyError {
@@ -137,9 +147,7 @@ pub(super) async fn reserve_command(
 ) -> Result<(), ApplyError> {
     let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
     let Some(policy) = snapshot.owner.clone() else {
-        // An owner without a budget policy reserves nothing, but a new
-        // commitment still meets the platform state (decision 24).
-        period::require_snapshot_open(&store.model_budget, &snapshot, now, cause, session).await?;
+        period::require_unbudgeted(store, &snapshot, now, cause, session).await?;
         return require_command_capacity(
             store,
             agent,
@@ -211,8 +219,15 @@ async fn reserve(
     }
     let mut owner = owner_budget(store, agent, &policy, now, session).await?;
     owner.reserve(&policy, now).map_err(domain)?;
-    let period_start =
-        period::admit_liability(store, snapshot, policy.turn_limit, now, session).await?;
+    let charge = period::admit_liability(
+        store,
+        snapshot,
+        &agent.owner,
+        policy.turn_limit,
+        now,
+        session,
+    )
+    .await?;
     save(store, &owner_key(agent), &owner, session).await?;
     save(
         store,
@@ -223,7 +238,8 @@ async fn reserve(
             turn_sequence: None,
             runtime_generation: None,
             reservation: TurnReservation::new(policy, now),
-            period_start,
+            period_start: charge.map(|charge| charge.start),
+            period_shard: charge.and_then(|charge| charge.shard),
         },
         session,
     )
@@ -322,13 +338,17 @@ pub(super) async fn apply(
                 record.reservation.reserved_units,
                 record.reservation.settlement_debit(),
             );
-            period::mirror(store, record.period_start, session, |ledger| {
-                ledger.retain(extra)?;
-                if ended {
-                    ledger.settle(reserved, debit)?;
-                }
-                Ok(())
-            })
+            counter_accounting::mirror(
+                store,
+                record.period_start,
+                record.period_shard,
+                counters::Change {
+                    retained: extra,
+                    released: if ended { reserved } else { 0 },
+                    debit: if ended { debit } else { 0 },
+                },
+                session,
+            )
             .await?;
         }
         save(store, &owner_key(current), &owner, session).await?;
@@ -370,10 +390,11 @@ async fn start_turn(
         Some(record) => record,
         None => {
             let Some(policy) = live_policy.clone() else {
-                // Queued or not, an unbudgeted owner's turn reserved nothing;
-                // a stop entered since its command still refuses starting it.
-                period::require_open(
+                // Activation after command admission still requires a valued
+                // reservation before the first upstream turn is dispatched.
+                period::require_unbudgeted(
                     store,
+                    &snapshot,
                     now,
                     layer2_core::admission::AdmissionCause::Continuation,
                     session,
@@ -410,18 +431,18 @@ async fn start_turn(
         return Err(domain(BudgetError::Unavailable));
     }
     require_runtime(agent)?;
+    if prior.is_some() {
+        // The admitted hold remains valued if its owner policy is removed;
+        // current platform STOP authority still applies before dispatch.
+        period::require_open(
+            store,
+            now,
+            layer2_core::admission::AdmissionCause::Continuation,
+            session,
+        )
+        .await?;
+    }
     if let Some(policy) = &live_policy {
-        if prior.is_some() {
-            // A queued turn's liability was admitted with its command; a stop
-            // entered since then still refuses starting it.
-            period::require_open(
-                store,
-                now,
-                layer2_core::admission::AdmissionCause::Continuation,
-                session,
-            )
-            .await?;
-        }
         record.reservation.revalidate(policy).map_err(domain)?;
         let mut owner = owner_budget(store, agent, policy, now, session).await?;
         owner.advance(policy, now).map_err(domain)?;
