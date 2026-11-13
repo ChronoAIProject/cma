@@ -16,6 +16,16 @@ struct State {
 pub(crate) struct DrainTimeout;
 
 impl TaskScope {
+    #[cfg(test)]
+    pub(crate) fn fixture(capacity: usize) -> Self {
+        Self::new(capacity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spawn_fixture(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
+        self.spawn(task)
+    }
+
     pub(super) fn new(capacity: usize) -> Self {
         Self(Arc::new(State {
             tasks: Mutex::new(Some(JoinSet::new())),

@@ -63,6 +63,32 @@ impl ShutdownCoordinator {
         Ok(())
     }
 
+    pub(crate) async fn drain_agent_manager(
+        &self,
+        manager: Option<&crate::agent_manager::AgentManager>,
+    ) -> Result<(), String> {
+        let Some(manager) = manager else {
+            return Ok(());
+        };
+        manager.stop_admission();
+        let draining = async {
+            self.drain_lifecycles(Duration::from_secs(5))
+                .await
+                .map_err(|error| error.to_string())?;
+            manager.drain().await
+        };
+        match tokio::time::timeout(Duration::from_secs(23), draining).await {
+            Ok(Ok(())) => Ok(()),
+            result => {
+                manager.coordinator.fail().await;
+                Err(match result {
+                    Ok(Err(reason)) => reason,
+                    _ => "Agent Manager shutdown did not confirm drain before its deadline".into(),
+                })
+            }
+        }
+    }
+
     pub(crate) fn signal(&self) {
         for lifecycle in &self.lifecycles {
             lifecycle.close();
