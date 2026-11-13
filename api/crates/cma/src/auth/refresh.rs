@@ -37,6 +37,10 @@ pub(super) async fn refresh_if_needed(
     if !due(state) || !auth.requires_credential() {
         return Ok(());
     }
+    if let Some(tokens) = &state.tokens {
+        auth.identity_store
+            .invalidate_token(tokens.access_token.expose());
+    }
     let (claim, observed) = match lease::acquire(auth, state).await? {
         lease::Acquisition::Current(current) => {
             *state = current;
