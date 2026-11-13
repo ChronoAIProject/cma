@@ -68,9 +68,10 @@ spec:
     spec:
       serviceAccountName: cmaeg-ksa
       automountServiceAccountToken: false
-      # Up to 25s authenticated early drain, 30s routing propagation,
-      # 660s application drain and 45s process/kubelet teardown.
-      # Requires the compatible EG image integrated through #1370.
+      # Native preStop waits 30s for routing propagation; SIGTERM then starts
+      # the 660s application drain, leaving 70s for process/kubelet teardown.
+      # An exec hook exposes inherited credentials to same-uid media jobs.
+      # Secure early owned drain remains pending #1370/S2 integration.
       terminationGracePeriodSeconds: 760
       # Honor taints so dedicated sandbox nodes do not count as placement domains.
       # Keep zone spread soft: a zone outage must not block replacement capacity.
@@ -219,8 +220,8 @@ spec:
             timeoutSeconds: 2
           lifecycle:
             preStop:
-              exec:
-                command: ["/bin/sh", "-c", "/usr/local/bin/cmaeg --replica-drain; status=$?; /bin/sleep 30; exit $status"]
+              sleep:
+                seconds: 30
       volumes:
         - name: media-jobs
           emptyDir:
