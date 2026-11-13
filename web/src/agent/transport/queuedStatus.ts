@@ -1,3 +1,5 @@
+import { observeRead } from './readObserver';
+import { retrySchedule } from './readRetry';
 import { useEffect, useRef, useState } from 'react';
 import {
   ApiError,
@@ -53,25 +55,23 @@ export function useQueuedMessage(
   useEffect(() => {
     if (session === undefined || responseId === undefined || commandId === undefined || !enabled)
       return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let retry = 1000;
-    const poll = async () => {
+    let failures = 0;
+    const observer = observeRead(async (signal) => {
       try {
-        await session.authorize(request.signal);
+        await session.authorize(signal);
         const value = await session.responses.observeQueuedCancellation(
           session.journal.agentId,
           responseId,
-          { signal: request.signal },
+          { signal: signal },
         );
-        await session.authorize(request.signal);
+        await session.authorize(signal);
         if (value.response.receipt.command_id !== commandId)
           throw new Error('The message observation changed its original request.');
         setObserved({ session, responseId, value });
         if (commandIsTerminal(value.response)) return;
-        retry = 1000;
+        failures = 0;
       } catch (cause) {
-        if (request.signal.aborted || onIdentityChange(cause)) return;
+        if (signal.aborted || onIdentityChange(cause)) return;
         // An older server cannot offer this optional operation.
         if (cause instanceof ApiError && cause.status === 404) {
           setObserved({ session, responseId });
@@ -79,15 +79,11 @@ export function useQueuedMessage(
         }
         setObserved({ session, responseId, error: 'Your latest message status is unavailable.' });
         if (!transientReadFailure(cause)) return;
-        retry = Math.min(retry * 2, 10000);
+        return retrySchedule(cause, ++failures);
       }
-      timer = setTimeout(() => void poll(), retry);
-    };
-    void poll();
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
+      return { next: 1000, cooldown: 1000 };
+    });
+    return () => observer.dispose();
   }, [session, responseId, commandId, enabled, revision, onIdentityChange]);
 
   const current =

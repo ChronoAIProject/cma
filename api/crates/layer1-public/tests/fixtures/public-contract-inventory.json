@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 289,
+  "openapi_operations": 291,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3960,6 +3960,32 @@
         "admission_control_writes_unavailable",
         "invalid_request",
         "admission_control_conflict"
+      ]
+    },
+    "GET /api/v1/usage/metrics/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_view_disabled"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_view_disabled"
       ]
     }
   }

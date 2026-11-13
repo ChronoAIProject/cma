@@ -1,5 +1,10 @@
 use super::*;
-use axum::{body::Body, http::StatusCode, routing::get, Router};
+use axum::{
+    body::Body,
+    http::{Method, StatusCode},
+    routing::get,
+    Router,
+};
 use futures_util::{stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -10,6 +15,8 @@ const URL: &str = "/api/v1/agents/a/history";
 
 fn budget(slots: usize, bytes: usize) -> Arc<ReadBudget> {
     Arc::new(ReadBudget {
+        observations: Arc::new(Semaphore::new(2)),
+        reports: Arc::new(Semaphore::new(2)),
         retain_frames: false,
         slots: Arc::new(Semaphore::new(slots)),
         response_bytes: bytes,
@@ -153,7 +160,15 @@ async fn actual_route_matching_covers_get_and_head_with_encoded_ids() {
         ),
     ] {
         let budget = budget(1, 32);
-        let permit = budget.slots.clone().try_acquire_owned().unwrap();
+        let slots = if template.ends_with("/usage") || template.ends_with("/resources") {
+            &budget.observations
+        } else {
+            &budget.slots
+        };
+        let permit = slots
+            .clone()
+            .try_acquire_many_owned(slots.available_permits() as u32)
+            .unwrap();
         let router = protected(
             Router::new().route(template, get(|| async { "ok" })),
             budget,
@@ -350,3 +365,12 @@ async fn cancellation_during_body_collection_releases_the_slot() {
 
 #[path = "frame_lifetime_tests.rs"]
 mod frame_lifetime;
+
+#[path = "desktop_budget_tests.rs"]
+mod desktop_budget;
+
+#[path = "lane_tests.rs"]
+mod lanes;
+
+#[path = "descriptor_tests.rs"]
+mod descriptor;

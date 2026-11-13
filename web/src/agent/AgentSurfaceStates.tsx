@@ -1,3 +1,4 @@
+import { RetryNotice } from './RetryNotice';
 import type { Ref } from 'react';
 import { SkeletonRows } from '../ui/Skeleton';
 import { Button } from '../ui/Button';
@@ -60,10 +61,12 @@ export function AgentOpening({ headingRef }: { readonly headingRef: Ref<HTMLHead
 /** The Agent surface when its Agent could not be read, with one way to retry. */
 export function AgentUnavailable({
   message,
+  retryAt,
   headingRef,
   onRetry,
 }: {
   readonly message: string;
+  readonly retryAt?: number;
   readonly headingRef: Ref<HTMLHeadingElement>;
   readonly onRetry: () => void;
 }) {
@@ -72,10 +75,10 @@ export function AgentUnavailable({
       <div>
         <p className="eyebrow">Agent</p>
         <h1 ref={headingRef} tabIndex={-1}>
-          Agent unavailable
+          {retryAt ? 'Opening Agent' : 'Agent unavailable'}
         </h1>
-        <p>{message}</p>
-        <Button variant="outline" onClick={onRetry}>
+        <>{retryAt ? <RetryNotice at={retryAt} /> : <p>{message}</p>}</>
+        <Button variant="outline" onClick={onRetry} disabled={retryAt !== undefined}>
           Try again
         </Button>
       </div>

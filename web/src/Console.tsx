@@ -1,9 +1,10 @@
+import { AgentAccessPending } from './agent/AgentAccessPending';
 import { ComputerContext } from './agent/environment/context';
 import { SkeletonRows } from './ui/Skeleton';
 import { Documents, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
+import { CmaReadScope, useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
@@ -32,7 +33,7 @@ import { ConsoleLanding } from './ConsoleLanding';
 import { consoleCreationAccess } from './ConsoleCreationAccess';
 import { useDocumentTitle } from './ui/useDocumentTitle';
 import './Console.css';
-import { useAgentAccess } from './resources/agentAccess';
+import { useConsoleAgentAccess } from './resources/consoleAgentAccess';
 import { SharedAgent } from './resources/SharedAgent';
 import { AgentSharePage } from './resources/AgentSharePage';
 import { AgentInventory } from './resources/AgentInventory';
@@ -42,7 +43,7 @@ import { WorkspaceAccessPage } from './resources/WorkspaceAccessPage';
 import { scopeValue } from './resources/scope';
 import { useNavigationScope } from './resources/NavigationScope';
 import { useConsoleScope } from './resources/useConsoleScope';
-import { OwnerViewsProvider, useOwnerViews } from './resources/retainedOwnerViews';
+import { OwnerViewsProvider } from './resources/retainedOwnerViews';
 import { coalesceDetailReads } from './api/detailReads';
 import { DocsPage } from './services/DocsPage';
 import { useReportOwner } from './usage/metrics/reportOwner';
@@ -87,7 +88,6 @@ function ConsoleContent({
       ),
     [client, user.id, selectedAgent, setPanel],
   );
-  const ownerViews = useOwnerViews();
   const scopeClient = user.visitor ? undefined : client.resourceViews;
   const {
     value: navigationScope,
@@ -97,32 +97,13 @@ function ConsoleContent({
   const scopeChoices = useNavigationScope(scopeClient, navigationScope);
   const draft = useAgentDraft(client, user.id, route.kind === 'agent' ? route.agentId : undefined);
   const sandboxCommandScope = useMemo(() => ({ client, viewerId: user.id }), [client, user.id]);
-  const agentAccess = useAgentAccess(
-    client.resourceViews,
-    route.kind === 'agent' ? route.agentId : undefined,
-    user.id,
+  const { agentAccess, accessUncertain, shared, personalAgentId } = useConsoleAgentAccess(
     client,
+    selectedAgent,
+    user.id,
   );
-  const accessUncertain = agentAccess.personalReadOnly;
-  useEffect(() => {
-    if (
-      route.kind === 'agent' &&
-      ((agentAccess.state.status === 'error' && !agentAccess.state.transient) ||
-        (agentAccess.state.status === 'ready' &&
-          agentAccess.state.value.detail.access === 'shared'))
-    )
-      ownerViews?.origins.delete(route.agentId);
-  }, [route, agentAccess.state, ownerViews]);
-  const shared =
-    agentAccess.state.status === 'ready' && agentAccess.state.value.detail.access === 'shared'
-      ? agentAccess.state.value.detail
-      : undefined;
-  const personalAgentId =
-    route.kind === 'agent' && (client.resourceViews === undefined || agentAccess.personalReady)
-      ? route.agentId
-      : undefined;
-  const operator = useOperatorClient(),
-    publisher = usePublisherClient();
+  const operator = useOperatorClient();
+  const publisher = usePublisherClient();
   const usagePrincipal = useReportOwner(user.id, user.capabilities, authEpoch);
   const navigation = useNavigation(client);
   const refreshNavigation = navigation.refresh;
@@ -228,20 +209,7 @@ function ConsoleContent({
     ) : route.kind === 'agent' &&
       client.resourceViews !== undefined &&
       personalAgentId === undefined ? (
-      <section
-        className="console__empty"
-        role={agentAccess.state.status === 'error' ? 'alert' : undefined}
-      >
-        <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
-        {agentAccess.state.status === 'error' ? (
-          <>
-            <p>{agentAccess.state.message}</p>
-            <Button onClick={agentAccess.reload}>Check access again</Button>
-          </>
-        ) : (
-          <SkeletonRows rows={3} label="Opening Agent" />
-        )}
-      </section>
+      <AgentAccessPending state={agentAccess.state} onRetry={agentAccess.reload} />
     ) : route.kind === 'agent' ? (
       <CharacterColorContext value={located?.sandbox.color}>
         <AgentSurface
@@ -354,7 +322,7 @@ function ConsoleContent({
         }}
       />
     );
-  return (
+  const frame = (
     <ComputerContext value={computerObservation}>
       <AppFrame
         previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
@@ -489,4 +457,5 @@ function ConsoleContent({
       />
     </ComputerContext>
   );
+  return <CmaReadScope client={client}>{frame}</CmaReadScope>;
 }
