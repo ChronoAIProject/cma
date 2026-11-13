@@ -2184,18 +2184,21 @@ readers and all three reachable bases for links and webhooks already issued.
 Replica mode uses the existing Mongo replica set, runtime control authentication
 and deployment encryption secret. It adds no broker or cache service. Every
 process registers a random incarnation in `cma_agent_manager_members`; its
-30-second expiry is renewed every five seconds. TTL removes old membership
+15-second expiry is nominally renewed every three seconds. TTL removes old membership
 records but never decides whether a member is live. `/ready` requires a healthy
 cached store probe, current membership and completed startup, and becomes false
 as soon as draining or ownership renewal fails. `/livez` remains a process probe.
 A failed incarnation exits; it cannot renew itself back into authority.
 
-`cma_agent_manager_owners` stores each Agent's permanent epoch, owner and 30-second lease.
+`cma_agent_manager_owners` stores each Agent's permanent epoch, owner and 15-second lease.
 Never delete these rows or install a TTL index: that would reset fencing history.
 Majority writes and transaction fences protect transport-dependent publication;
 receiving runtimes also enforce the epoch for input, control effects and output
-ACKs. Their challenge/confirm lease expires before the corresponding Mongo lease
-without depending on synchronized wall clocks. A stale provider response cannot
+ACKs. Their challenge/confirm lease lasts at most 10 seconds from the original
+challenge and expires before the corresponding Mongo lease without depending on
+synchronized wall clocks. These constants do not establish a 30-second recovery
+bound: loaded renewal scheduling, receiver expiry, takeover and client recovery
+must be qualified together. A stale provider response cannot
 publish a conversation mutation or checkpoint. Missing a local connection does
 not permit taking another live instance's ownership.
 
@@ -2245,18 +2248,28 @@ slot until completion and have a total 60-second deadline.
 Desktop WebSockets already use a durable Sandbox route and the runtime's desktop
 connection lease; they do not use the conversation fragment hub.
 
-Replica mode shares one Mongo client between application stores and runtime
-routing and explicitly caps its application pool at **10 per server per process**.
-For primary-directed traffic, N managers therefore permit N × 10 application
-connections to the primary. With the observed three-member Atlas set, reserve up
-to N × 6 monitoring connections as well. At N=2/3/5 this is respectively 20/30/50
-primary application connections and approximately 32/48/80 connections across the
-set including monitors. Budget surge and terminating processes separately:
-`N + 1 + terminating`, plus Event Gateway, Image Manager and other consumers.
-Failover/secondary reads can retain application pools on additional servers;
-the conservative full-set maximum is N × (3 × 10 + 6), before other consumers.
-Server headroom and historical outage cause have not been established by the
-available Mongo diagnostics. Do not increase the pool to compensate for scaling.
+Application stores and runtime routing use independent Mongo clients in both
+replica modes. Both preserve the URI's explicit pool options, or the driver's
+defaults when omitted. Reporting uses a third, separately bounded client (default
+maximum 4). Enabling replicas does not impose a new 10-connection cap or share
+these pools. Budget the effective limits of every client, including monitoring
+sockets, using the deployed URI and reporting configuration.
+
+For main/routing/reporting maxima M/R/P, N live manager processes permit up to
+`N × (M + R + P)` application connections to one server. With explicit limits
+30/30/4, N=2/3/5 gives 128/192/320 application connections to the primary. For a
+three-member set, conservatively reserve up to 18 monitoring connections per
+process across the three clients as well. The corresponding totals across the
+set for primary-only application pools are 164/246/410. Failover or secondary
+reads can retain application pools on other servers; a conservative full-set
+bound is `N × (3 × (M + R + P) + 18)`, or 420/630/1050 with those example limits.
+These are budget bounds, not observed connection counts or capacity approval.
+
+Count surge and terminating processes in N while their clients remain alive,
+then add Event Gateway, Image Manager, migration and other consumers. Preserve
+at least 30% Mongo headroom under the qualified failure/load scenario. Explicit
+pool changes require a separate measured capacity decision; server headroom and
+historical outage cause are not established by these formulas.
 
 The PDB uses `maxUnavailable: 1` and `unhealthyPodEvictionPolicy: AlwaysAllow` so
 an already-unready manager cannot block node drain. Hostname spread is required
