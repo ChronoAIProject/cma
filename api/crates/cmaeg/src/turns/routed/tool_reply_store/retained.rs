@@ -35,6 +35,7 @@ impl ReplyStore {
             retained_until: plan.retained_until,
             confirmed_tool: false,
             operation_keys: BTreeSet::new(),
+            legacy_confirmation: None,
             closed: false,
             tool: None,
             automatic: None,
@@ -51,7 +52,11 @@ impl ReplyStore {
             || record.request_hash != expected.request_hash
             || record.retained_until != expected.retained_until
             || storage::bytes(&record)?.len() > 40 * 1024
-            || record.operation_keys.len() > 64
+            || record.operation_keys.len() + usize::from(record.legacy_confirmation.is_some()) > 64
+            || record
+                .legacy_confirmation
+                .as_ref()
+                .is_some_and(|id| !valid_hash(id) || record.operation_keys.contains(id))
             || record.operation_keys.iter().any(|key| !valid_hash(key))
             || [&record.tool, &record.automatic]
                 .into_iter()

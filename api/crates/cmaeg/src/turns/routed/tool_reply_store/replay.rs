@@ -60,14 +60,14 @@ impl ReplyStore {
         let Some(attempt) = record.tool.as_ref().filter(|attempt| {
             attempt.operation == operation && (!legacy_only || attempt.content_hash.is_none())
         }) else {
-            return Ok(None);
+            return self.legacy_confirmation(record, operation).await;
         };
         let Some(receipt) = attempt
             .receipt
             .as_ref()
             .filter(|receipt| matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. }))
         else {
-            return Ok(None);
+            return self.legacy_confirmation(record, operation).await;
         };
         self.0
             .receipts(operation, &record.owner, record.retained_until)
