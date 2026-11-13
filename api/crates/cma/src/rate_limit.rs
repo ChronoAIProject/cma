@@ -413,3 +413,7 @@ mod input_tests;
 #[cfg(test)]
 #[path = "rate_limit_control_tests.rs"]
 mod control_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/desktop_tests.rs"]
+mod desktop_tests;

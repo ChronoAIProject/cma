@@ -1,9 +1,10 @@
+import { AgentAccessPending } from './agent/AgentAccessPending';
 import { ComputerContext } from './agent/environment/context';
 import { SkeletonRows } from './ui/Skeleton';
 import { Documents, Operations, TriggerPublisherPage } from './ConsolePages';
 import { BotManagement, isBotRoute } from './BotManagement';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
+import { CmaReadScope, useCmaClient, useOperatorClient, usePublisherClient } from './api/context';
 import { canOpenOperations } from './operator/capabilities';
 import { AgentSurface } from './agent/AgentSurface';
 import { AgentViewPositions } from './agent/viewPosition';
@@ -224,20 +225,7 @@ function ConsoleContent({
     ) : route.kind === 'agent' &&
       client.resourceViews !== undefined &&
       personalAgentId === undefined ? (
-      <section
-        className="console__empty"
-        role={agentAccess.state.status === 'error' ? 'alert' : undefined}
-      >
-        <h1>{agentAccess.state.status === 'error' ? 'Agent unavailable' : 'Opening Agent'}</h1>
-        {agentAccess.state.status === 'error' ? (
-          <>
-            <p>{agentAccess.state.message}</p>
-            <Button onClick={agentAccess.reload}>Check access again</Button>
-          </>
-        ) : (
-          <SkeletonRows rows={3} label="Opening Agent" />
-        )}
-      </section>
+      <AgentAccessPending state={agentAccess.state} onRetry={agentAccess.reload} />
     ) : route.kind === 'agent' ? (
       <CharacterColorContext value={located?.sandbox.color}>
         <AgentSurface
@@ -361,7 +349,7 @@ function ConsoleContent({
         }}
       />
     );
-  return (
+  const frame = (
     <ComputerContext value={computerObservation}>
       <AppFrame
         previewScope={`${user.id}:${selectedAgent}:${accessUncertain}`}
@@ -496,4 +484,5 @@ function ConsoleContent({
       />
     </ComputerContext>
   );
+  return <CmaReadScope client={client}>{frame}</CmaReadScope>;
 }
