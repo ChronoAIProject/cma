@@ -139,11 +139,12 @@ pub(super) async fn reserve_command(
     agent: &Agent,
     command: &str,
     now: u64,
+    cause: layer2_core::admission::AdmissionCause,
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
     let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
     let Some(policy) = snapshot.owner.clone() else {
-        return period::require_unbudgeted(store, &snapshot, now, session).await;
+        return period::require_unbudgeted(store, &snapshot, now, cause, session).await;
     };
     reserve(
         store,
@@ -154,7 +155,8 @@ pub(super) async fn reserve_command(
         now,
         session,
     )
-    .await
+    .await?;
+    period::require_operator_open(&snapshot, cause)
 }
 
 async fn reserve(
@@ -349,7 +351,14 @@ async fn start_turn(
             let Some(policy) = live_policy.clone() else {
                 // Activation after command admission still requires a valued
                 // reservation before the first upstream turn is dispatched.
-                return period::require_unbudgeted(store, &snapshot, now, session).await;
+                return period::require_unbudgeted(
+                    store,
+                    &snapshot,
+                    now,
+                    layer2_core::admission::AdmissionCause::Continuation,
+                    session,
+                )
+                .await;
             };
             reserve(store, agent, key.clone(), policy, &snapshot, now, session).await?;
             let document = store
@@ -375,7 +384,13 @@ async fn start_turn(
     if prior.is_some() {
         // The admitted hold remains valued if its owner policy is removed;
         // current platform STOP authority still applies before dispatch.
-        period::require_open(store, now, session).await?;
+        period::require_open(
+            store,
+            now,
+            layer2_core::admission::AdmissionCause::Continuation,
+            session,
+        )
+        .await?;
     }
     if let Some(policy) = &live_policy {
         record.reservation.revalidate(policy).map_err(domain)?;

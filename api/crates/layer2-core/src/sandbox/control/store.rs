@@ -17,7 +17,7 @@ pub trait SandboxControlStore: Send + Sync {
         &self,
         record: SandboxControlRecord,
         authorization: Arc<SandboxControlAuthorization>,
-        new_commitment: Result<(), crate::budget::BudgetError>,
+        new_commitment: Result<(), crate::admission::AdmissionRefusal>,
     ) -> Result<SandboxControlRecord, SandboxControlError>;
     async fn sandbox_control(
         &self,
