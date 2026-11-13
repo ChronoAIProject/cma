@@ -88,3 +88,52 @@ impl DocumentBlobStore for MemoryDocumentBlobs {
             .ok_or(DocumentError::Unavailable)
     }
 }
+
+#[async_trait::async_trait]
+impl DocumentBlobMaintenance for MemoryDocumentBlobs {
+    async fn delete(&self, key: &str) -> Result<BlobDeletion, BlobMaintenanceError> {
+        let valid = key.rsplit_once('/').is_some_and(|(prefix, file)| {
+            valid_document_blob_prefix(&format!("{prefix}/"))
+                && prefix.split('/').count() == 3
+                && file.strip_suffix(".md").is_some_and(valid_digest)
+        });
+        if !valid {
+            return Err(DocumentError::Invalid.into());
+        }
+        Ok(if self.0.lock().await.remove(key).is_some() {
+            BlobDeletion::Deleted
+        } else {
+            BlobDeletion::Absent
+        })
+    }
+    async fn list(
+        &self,
+        prefix: &str,
+        cursor: Option<&str>,
+    ) -> Result<BlobPage, BlobMaintenanceError> {
+        if !valid_document_blob_prefix(prefix)
+            || cursor.is_some_and(|value| value.len() > MAX_BLOB_CURSOR_BYTES)
+        {
+            return Err(DocumentError::Invalid.into());
+        }
+        let rows = self.0.lock().await;
+        let mut keys = rows
+            .keys()
+            .filter(|key| {
+                key.starts_with(prefix) && cursor.is_none_or(|cursor| key.as_str() > cursor)
+            })
+            .take(MAX_BLOB_PAGE_KEYS + 1)
+            .cloned()
+            .collect::<Vec<_>>();
+        let next = if keys.len() > MAX_BLOB_PAGE_KEYS {
+            keys.pop();
+            keys.last().cloned()
+        } else {
+            None
+        };
+        Ok(BlobPage { keys, next })
+    }
+    fn deletion_supported(&self) -> bool {
+        true
+    }
+}
