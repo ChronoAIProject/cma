@@ -1,9 +1,14 @@
 //! Runtime finality precedes funding settlement and terminal retirement.
-use std::time::SystemTime;
+use super::{
+    support::{adapter_failure, funding_failure},
+    SandboxWorker,
+};
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Sandbox, SandboxEventKind, SandboxWorkStep};
 use layer3_adapter::RuntimeHandle;
-use super::{support::{adapter_failure, funding_failure}, SandboxWorker};
+use std::time::SystemTime;
+
+use super::teardown_timing::{adapter_outcome, funding_outcome, Phase, TeardownTiming};
 
 impl SandboxWorker {
     pub(super) async fn teardown(
@@ -11,6 +16,7 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let timing = TeardownTiming::new(&sandbox.id, sandbox.work.attempts);
         // Suspension may have reached Kubernetes before its database acknowledgement.
         // Native deletion proves CRD and Pod absence without a running process.
         let retained = sandbox.lifecycle.suspended_runtime.as_deref().or_else(|| {
@@ -20,19 +26,32 @@ impl SandboxWorker {
         });
         if let Some(binding) = retained {
             if let Some(home) = &sandbox.lifecycle.home {
-                if let Err(error) = self.dependencies.adapter.verify_retained_home_route(
-                    &RuntimeHandle::new(&binding.runtime_id),
-                    &home.request,
-                ) {
+                if let Err(error) = timing
+                    .observe(
+                        Phase::RetainedHomeRoute,
+                        async {
+                            self.dependencies.adapter.verify_retained_home_route(
+                                &RuntimeHandle::new(&binding.runtime_id),
+                                &home.request,
+                            )
+                        },
+                        adapter_outcome,
+                    )
+                    .await
+                {
                     return self
                         .retry_failure(sandbox, adapter_failure(error), now)
                         .await;
                 }
             }
-            if let Err(error) = self
-                .dependencies
-                .adapter
-                .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id))
+            if let Err(error) = timing
+                .observe(
+                    Phase::RetainedRuntime,
+                    self.dependencies
+                        .adapter
+                        .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id)),
+                    adapter_outcome,
+                )
                 .await
             {
                 return self
@@ -43,17 +62,24 @@ impl SandboxWorker {
             sandbox.runtime = None;
         }
         if let Some(binding) = &sandbox.runtime {
-            if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
-                self.dependencies.adapter.as_ref(),
-                &sandbox,
-                &self.config.deployment_id,
-            )
-            .await
+            if let Err(error) = timing
+                .observe(
+                    Phase::AdoptRuntime,
+                    crate::sandbox::runtime_attachment::adopt_bound_runtime(
+                        self.dependencies.adapter.as_ref(),
+                        &sandbox,
+                        &self.config.deployment_id,
+                    ),
+                    adapter_outcome,
+                )
+                .await
             {
-                let absent = self
-                    .dependencies
-                    .adapter
-                    .runtime_inventory()
+                let absent = timing
+                    .observe(
+                        Phase::RuntimeInventory,
+                        self.dependencies.adapter.runtime_inventory(),
+                        adapter_outcome,
+                    )
                     .await
                     .is_ok_and(|inventory| {
                         inventory
@@ -69,10 +95,14 @@ impl SandboxWorker {
             }
         }
         if let Some(binding) = &sandbox.runtime {
-            if let Err(error) = self
-                .dependencies
-                .adapter
-                .teardown(&RuntimeHandle(binding.runtime_id.clone()))
+            if let Err(error) = timing
+                .observe(
+                    Phase::Runtime,
+                    self.dependencies
+                        .adapter
+                        .teardown(&RuntimeHandle(binding.runtime_id.clone())),
+                    adapter_outcome,
+                )
                 .await
             {
                 return self
@@ -80,21 +110,32 @@ impl SandboxWorker {
                     .await;
             }
         }
-        if let Err(error) = self.funding.settle(&sandbox, now).await {
+        if let Err(error) = timing
+            .observe(
+                Phase::Funding,
+                self.funding.settle(&sandbox, now),
+                funding_outcome,
+            )
+            .await
+        {
             return self
                 .retry_failure(sandbox, funding_failure(error), now)
                 .await;
         }
         sandbox.runtime = None;
-        self.advance(
-            sandbox,
-            SandboxWorkStep::MarkRetired,
-            now,
-            SandboxEventKind::WorkStepCompleted {
-                step: SandboxWorkStep::TeardownRuntime,
-            },
-        )
-        .await
+        timing
+            .observe(
+                Phase::Publication,
+                self.advance(
+                    sandbox,
+                    SandboxWorkStep::MarkRetired,
+                    now,
+                    SandboxEventKind::WorkStepCompleted {
+                        step: SandboxWorkStep::TeardownRuntime,
+                    },
+                ),
+                |_| "store_error",
+            )
+            .await
     }
-
 }
