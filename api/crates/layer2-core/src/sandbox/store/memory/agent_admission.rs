@@ -133,6 +133,7 @@ impl InMemorySandboxStore {
         if !bootstrap && !sandbox.accepts_creation_admission() {
             return Err(SandboxStoreError::SandboxNotReady);
         }
+        super::admission::require_operator_open(&state, admission.admission_cause())?;
         if let Some(mut agent) = state
             .agents
             .values()
