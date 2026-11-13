@@ -158,7 +158,7 @@ async fn failed_starts_log_the_final_provider_call_once_inside_the_turn_span() {
             "gateway_status=502",
             "provider_error=\"rejected\"",
             "upstream_status=403",
-            "upstream_code=\"guest_denied\"",
+            "upstream_code=\"unrecognized\"",
         ] {
             assert!(line.contains(expected), "missing {expected}: {line}");
         }
@@ -168,6 +168,7 @@ async fn failed_starts_log_the_final_provider_call_once_inside_the_turn_span() {
             "runtime-test-provider-bearer",
             "private message content",
             "private provider diagnostic",
+            "guest_denied",
         ] {
             assert!(!line.contains(forbidden), "{line}");
         }
