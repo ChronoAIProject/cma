@@ -1,5 +1,5 @@
 //! A worker adopts only a validated, retained provider association.
-use super::{runtime, scope, Operation, Outcome, Stage};
+use super::{runtime, scope, Association, Context, Operation, Outcome, Stage, Writer};
 use std::future::Future;
 use tracing::{Instrument, Span};
 
@@ -9,6 +9,17 @@ pub(crate) struct BoundOperation {
 }
 
 impl BoundOperation {
+    pub(crate) fn start(association: Option<Association>, stage: Stage) -> Option<Self> {
+        let writer = runtime::writer()?;
+        Some(Self::with_writer(writer, association?, stage))
+    }
+
+    pub(super) fn with_writer(writer: Writer, association: Association, stage: Stage) -> Self {
+        let operation = Operation::bound(writer, stage, association);
+        operation.link();
+        Self::from_operation(operation)
+    }
+
     pub(crate) fn child_of(parent: &Span, stage: Stage) -> Option<Self> {
         let writer = runtime::writer()?;
         let parent = scope::context(parent)?;
@@ -28,6 +39,10 @@ impl BoundOperation {
 
     pub(crate) async fn within<T>(&self, future: impl Future<Output = T>) -> T {
         future.instrument(self.span.clone()).await
+    }
+
+    pub(crate) fn context(&self) -> Context {
+        self.operation.context()
     }
 
     pub(crate) fn finish(self, outcome: Outcome) {

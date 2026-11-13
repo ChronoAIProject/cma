@@ -1,4 +1,4 @@
-//! Existing provider binding exchange.
+//! Existing binding exchange negotiates optional diagnostics without a retry.
 use super::client::{acquire, transport_error};
 use super::{BindingRequest, BindingResponse, ProviderClient, ProviderError};
 use cmaeg_core::{
@@ -32,6 +32,10 @@ impl ProviderClient {
             body["target"] = serde_json::to_value(&request.target)
                 .map_err(|error| ProviderError::InvalidRequest(error.to_string()))?;
         }
+        let requested_trace = self.turn_trace_enabled && provider.as_str() == "nyxbot";
+        if requested_trace {
+            body["capabilities"] = json!([super::trace_contract::CAPABILITY]);
+        }
         let bearer = self
             .management_bearer(provider, &url, &request.agent_key)
             .await?;
@@ -48,9 +52,21 @@ impl ProviderClient {
             .await
             .map_err(transport_error)?;
         let response = self.success_or_error(response).await?;
-        response
+        let mut binding = response
             .json::<BindingResponse>()
             .await
-            .map_err(|error| ProviderError::ResponseMalformed(error.to_string()))
+            .map_err(|_| ProviderError::ResponseMalformed("invalid binding response".into()))?;
+        if binding.binding_id != *binding_id {
+            return Err(ProviderError::ResponseMalformed(
+                "binding response identity mismatch".into(),
+            ));
+        }
+        if !requested_trace {
+            binding.capabilities.clear();
+        }
+        Ok(binding)
     }
 }
+
+#[cfg(test)]
+mod tests;

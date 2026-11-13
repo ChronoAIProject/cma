@@ -244,6 +244,7 @@ impl TurnRunner {
         })?;
         let rendered = preparation::render(turn, media, audience, None);
         let request = TurnRequest {
+            nyxid_trace: self.providers.nyxid_trace_contract(consumer.provider),
             timing: turn.timing.clone(),
             conversation_id: turn.conversation_id.clone(),
             input: rendered.input,
@@ -360,7 +361,16 @@ impl TurnRunner {
                 Ok(None) => {}
             }
             let deadline = request.received_at + self.config.accept_budget;
-            request.trace = tracing::Span::current();
+            request.trace = if crate::telemetry::turn_trace::enabled()
+                && request
+                    .channel
+                    .consumer(request.consumer.as_ref())
+                    .is_some_and(|consumer| self.providers.nyxid_trace_contract(consumer.provider))
+            {
+                crate::telemetry::turn_trace::scope::span()
+            } else {
+                tracing::Span::current()
+            };
             let turn = Arc::new(request);
             let (sender, accepted) = oneshot::channel();
             let runner = self.clone();

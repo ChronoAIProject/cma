@@ -35,6 +35,21 @@ impl Operation {
         Self::with_context(writer, stage, context, part_index)
     }
 
+    pub(super) fn bound(writer: Writer, stage: Stage, association: super::Association) -> Self {
+        Self::with_context(
+            writer,
+            stage,
+            Context {
+                turn_id: Some(association.turn_id),
+                span_id: SpanId::fresh(),
+                parent_span_id: association.parent_span_id,
+                request_id: Uuid::new_v4(),
+                ingress_request_id: Some(association.ingress_request_id),
+            },
+            None,
+        )
+    }
+
     fn with_context(
         writer: Writer,
         stage: Stage,
@@ -57,6 +72,10 @@ impl Operation {
         self.context
     }
 
+    pub(super) fn link(&self) {
+        self.emit(Phase::Link, None, None, None);
+    }
+
     /// Only tracing-enabled callers construct an operation. Headers remain
     /// outside request bodies and all execution identity/signature inputs.
     pub(crate) fn headers(&self, headers: &mut HeaderMap) {
@@ -76,6 +95,11 @@ impl Operation {
 
     pub(crate) fn finish(mut self, outcome: Outcome, http_status: Option<u16>) {
         self.end(outcome, http_status);
+    }
+
+    pub(super) fn source_response(mut self, ingress_request_id: Option<Uuid>, status: u16) {
+        self.context.ingress_request_id = ingress_request_id;
+        self.end(Outcome::Completed, Some(status));
     }
 
     fn end(&mut self, outcome: Outcome, http_status: Option<u16>) {

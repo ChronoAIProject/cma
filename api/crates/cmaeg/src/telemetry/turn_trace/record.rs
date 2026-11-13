@@ -10,9 +10,11 @@ pub(super) const MAX_RECORD_BYTES: usize = 2048;
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Stage {
+    Ingress,
     Gateway,
     Channel,
     ChannelPart,
+    Replay,
     Platform,
 }
 
@@ -21,6 +23,7 @@ pub(crate) enum Stage {
 pub(crate) enum Outcome {
     Completed,
     Unknown,
+    Streamed,
     Silent,
     Confirmed,
     Rejected,
@@ -32,6 +35,7 @@ pub(crate) enum Outcome {
 pub(super) enum Phase {
     Start,
     End,
+    Link,
     Milestone,
 }
 

@@ -129,6 +129,7 @@ impl ResponseTransport {
             }
         }
     }
+    #[cfg(test)]
     pub async fn send(
         &self,
         url: url::Url,
@@ -136,6 +137,19 @@ impl ResponseTransport {
         idempotency: &str,
         json: Vec<u8>,
         timing: Option<IngressTiming>,
+    ) -> Result<Response, ProviderError> {
+        self.send_with_trace(url, key, idempotency, json, timing, false)
+            .await
+    }
+
+    pub async fn send_with_trace(
+        &self,
+        url: url::Url,
+        key: &str,
+        idempotency: &str,
+        json: Vec<u8>,
+        timing: Option<IngressTiming>,
+        nyxid_trace: bool,
     ) -> Result<Response, ProviderError> {
         // The registry builds the URL. Keep an additional origin fence at the socket layer.
         if url.origin() != self.origin.origin() {
@@ -149,7 +163,7 @@ impl ResponseTransport {
         let mut authorization = axum::http::HeaderValue::from_str(&format!("Bearer {key}"))
             .map_err(|_| ProviderError::InvalidRequest("invalid provider authorization".into()))?;
         authorization.set_sensitive(true);
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method("POST")
             .uri(url.as_str())
             .header(header::AUTHORIZATION, authorization)
@@ -161,6 +175,9 @@ impl ResponseTransport {
                 concat!("cmaeg/", env!("CARGO_PKG_VERSION")),
             )
             .header("idempotency-key", idempotency);
+        if nyxid_trace {
+            request = request.header("x-nyxid-turn-trace-contract", "1");
+        }
         let response = match self.acquire().await? {
             Connection::H1(mut connection) => {
                 let _keep_alive = &connection.driver;

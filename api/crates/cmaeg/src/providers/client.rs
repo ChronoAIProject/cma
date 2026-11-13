@@ -33,6 +33,7 @@ pub struct ProviderClient {
     pub(super) management_auth: Option<super::management_auth::CmaManagementAuth>,
     worker_credentials: Option<crate::worker_credentials::WorkerCredentials>,
     tracking_required: bool,
+    pub(super) turn_trace_enabled: bool,
 }
 
 impl ProviderClient {
@@ -87,6 +88,7 @@ impl ProviderClient {
             management_auth: None,
             worker_credentials: None,
             tracking_required: false,
+            turn_trace_enabled: false,
         })
     }
 
@@ -97,6 +99,10 @@ impl ProviderClient {
             config.provider_request_timeout,
             config.provider_max_inflight,
         )?;
+        client.turn_trace_enabled =
+            crate::telemetry::turn_trace::config::enabled().map_err(|_| {
+                ProviderError::InvalidRequest("invalid turn trace configuration".into())
+            })?;
         client.management_auth = Some(super::management_auth::CmaManagementAuth::new(
             &config.management.cma_base_url,
             config.management.cma_service_token.clone(),
@@ -279,31 +285,50 @@ impl ProviderClient {
         }
         // Binding and turn requests share the original recursively sorted wire form.
         let bytes = canonical_json(body).into_bytes();
+        let negotiated = self.turn_trace_enabled
+            && handle.entry.slug.as_str() == "nyxbot"
+            && request.nyxid_trace;
+        let mut trace = crate::telemetry::turn_trace::ProviderReader::new(
+            self.turn_trace_enabled,
+            negotiated,
+            None,
+        );
+        if let Some(trace) = &mut trace {
+            trace.begin_source();
+        }
         let observed = tokio::time::timeout(
             self.request_timeout,
-            handle.responses.send(
+            handle.responses.send_with_trace(
                 url,
                 request.agent_key.as_str(),
                 request.idempotency_key.as_str(),
                 bytes,
                 request.timing,
+                negotiated,
             ),
         )
         .await
         .map_err(|_| ProviderError::Unavailable("provider request timed out".into()))??;
         let request_started = observed.written_at;
         let response = observed.response;
+        if let Some(trace) = &mut trace {
+            trace.response(response.headers(), response.status().as_u16());
+        }
         let response = self.success_or_error(response).await?;
         let (accepted_tx, accepted) = oneshot::channel();
         let (events_tx, events) = mpsc::channel(64);
+        let association = trace.as_ref().map(|_| Arc::new(std::sync::OnceLock::new()));
         tokio::spawn(forward_turn(
             response,
             accepted_tx,
             events_tx,
             permit,
             observed.complete,
+            trace,
+            association.clone(),
         ));
         Ok(TurnStream {
+            trace: association,
             accepted,
             events,
             request_started,
