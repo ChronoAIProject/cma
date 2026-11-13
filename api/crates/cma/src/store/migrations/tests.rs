@@ -2,9 +2,11 @@ use super::*;
 use cma_service_auth::mongodb_authority::MongoAuthorityMode;
 use mongodb::bson::{DateTime, Document};
 
+mod activity_page;
 mod collection;
 mod failpoints;
 mod key_order;
+mod opening;
 mod segments;
 mod segments_runtime;
 

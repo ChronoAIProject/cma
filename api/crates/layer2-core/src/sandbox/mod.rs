@@ -40,6 +40,7 @@ mod agent_log_projection;
 mod agent_reads_fold;
 mod agent_reads_transcript;
 mod agent_reads_usage;
+mod agent_transcript_window;
 pub use agent_log_projection::{
     AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
     AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
@@ -47,6 +48,7 @@ pub use agent_log_projection::{
 pub use agent_reads_transcript::{
     AgentTranscriptFold, AgentTranscriptPage, AgentTranscriptPageRequest,
 };
+pub use agent_transcript_window::AgentTranscriptWindow;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
