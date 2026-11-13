@@ -2717,6 +2717,24 @@ member is already beyond the release boundary. Safe fresh-Claim replacement
 requires a separate fenced allocation-retirement transition or controller
 selection support; the external controller patch is tracked in #1887.
 
+During native preparation, guard failures in `Preparing` or `Installing`
+preserve the entire original reservation and workspace completion proof and use
+the existing five-second retry delay. They cannot schedule home retirement.
+The existing `Ready` maintenance policy for unhealthy unclaimed spares remains
+separate. Ordinary SandboxWorker retries default to 30 seconds; a two-second
+guard yield can therefore delay a normally starting cold runtime until a later
+attempt. Assignment observation still allows five seconds. Initial-create
+recovery with an already persisted runtime and no completed-installation proof
+can reach `bind_adopted`, whose readiness wait remains 180 seconds. That path
+requires a separate explicit create-context policy; retained/resume waits must
+not be shortened globally.
+
+The guard polls every 100 ms, up to roughly 20 observations per attempt. Each
+home observation uses three Kubernetes reads and each bind observation uses
+two. Activation evidence must include API read load, plain and desktop recovery
+to the next worker attempt, and cold-start completion time as well as guard
+duration. The stage deadline is not an end-to-end create deadline.
+
 `cma_native_claim_guard_total` and `cma_native_claim_guard_seconds` use only
 `stage` (`home`, `home_authority`, `bind`) and `outcome` (`ready`, `timeout`, `crash_loop`,
 `restarting`, `error`, `cancelled`). They measure guard attempts, including worker
