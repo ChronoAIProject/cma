@@ -240,36 +240,39 @@ backend health source in the lead-approved packet. Console/legacy-console are
 reachable EG routes. GCP backendServices list permission was denied to the
 engineer: obtain an authorized observer get-health receipt, not a permission bypass.
 
-Candidate path with deployment-engineer-01: HPA absent, exclusive release writer,
-pause canonical Deployment while legacy RS remains1; install the final template
-at canonical desired1; create the exact owned candidate RS at0; verify old1/new0
-through real controller reconciliation; scale canonical to0; after all legacy
-effects cease, unpause at0 and start2. **This candidate is not yet proven.**
-Pausing prevents template rollout, not all scaling. No manual RS hash, arbitrary
-ownerReference or assumed adoption is accepted. Engineer's exact reviewed tool
-must prepare the RS from the approved template using Kubernetes-compatible
-selector/hash/collision/revision semantics and the actual parent UID. Reject
-foreign/stale owner, selector overlap, wrong image/config, template drift,
-nonzero candidate replicas, concurrent scale writers or orphan adoption. Never
-persist Secret values or a whole raw live Deployment to obtain the template.
+Architect-proposed supported-controller variant, **pending lead approval of a
+change to A2's literal pre-created-RS0 order**: no HPA/concurrent release; pause
+canonical Deployment at1 and verify stable old1; install the final template at
+canonical desired1 with replica mode confined to new pod-template env. Pre-pull
+immutable images and qualify nodes before the outage. Then old1->0; prove every
+legacy effect stopped; unpause at desired0 so the Deployment controller creates
+the exact owned newRS0; verify it before scaling canonical desired2. RS0 therefore
+appears **after** old shutdown. Prepared template/cache is not prepared RS0 or
+a running warm application. Do not claim the literal earlier order is satisfied.
 
-Before any production preparation, isolated actual Deployment-controller tests
-must prove pause/template/RS0 reconciliation, stale UID/RV/collision refusal,
-controller restart, concurrent scale refusal, old1->0, unpause-at0 and candidate
-reuse on new0->2. Prove no legacy pod can reappear and no candidate can start
-before the no-legacy-effects gate. A mock/API dry-run cannot prove reconciliation.
-If this path fails, HOLD for a reviewed alternative; a separate candidate
-Deployment would change routing/HPA ownership and requires a new packet.
+Do not manufacture ReplicaSets, pod-template-hash, ownerReferences or revisions.
+The actual Deployment controller must create/own/select the new RS; verify exact
+parent UID, selector, template, image/configuration and desired0 with no legacy
+restart or orphan adoption. Pausing prevents template rollout, not all scaling.
+A separate candidate Deployment changes routing/HPA ownership and needs its own
+review. If literal pre-existing RS0 remains mandatory, HOLD for separately
+reviewed controller tooling/proof; none is supplied here.
 
-The following narrow payloads apply to **either** S1 AM or S2 EG after that proof.
-The reviewed controller must bind UID/resourceVersion/expected spec at every
-write, stage grants, blackout duration and rollback. They are not an executable
-unattended script or permission to create a candidate RS by hand.
+Before production preparation, isolated actual-controller tests must prove
+pause/template reconciliation at old1, stale UID/RV/concurrent-writer refusal,
+controller restart, old1->0, unpause-at0/newRS0 and new0->2. Prove no legacy pod
+can reappear and no candidate starts before the no-legacy-effects gate. API
+server dry-run alone cannot prove this. Capture only narrow nonsecret fields;
+never persist a whole raw Deployment/Secret to construct a template.
+
+The following are **proposed payloads**, pending lead route/order approval and
+exact-version architect review with actual-controller evidence. The execution
+controller must bind UID/resourceVersion/expected spec, stage grants, blackout
+duration and rollback at every write. They are not an approved unattended script.
 
 ```bash
 : "${stage_service:?cma-agent-manager or cma-event-gateway}"
 : "${stage_patch:?reviewed am-stage.json or eg-stage.json}"
-: "${candidate_rs_zero:?reviewed exact owned ReplicaSet manifest at zero}"
 case "$stage_service" in cma-agent-manager|cma-event-gateway) ;; *) exit 1 ;; esac
 # HPA absent, legacy desired1/Ready1; capture exact rollback and parent UID first.
 outside_blackout
@@ -286,21 +289,19 @@ fence_patch "$stage_service" "$scale_receipts/prepare.json"
 k patch deployment "$stage_service" --type=strategic --patch-file "$scale_receipts/prepare.json" --dry-run=server -o name
 outside_blackout
 k patch deployment "$stage_service" --type=strategic --patch-file "$scale_receipts/prepare.json" -o name
-# Exact tool-produced candidate must match the now-reviewed parent/template.
-k create --dry-run=server -f "$candidate_rs_zero" -o name
-outside_blackout
-k create -f "$candidate_rs_zero" -o name
-# STOP: prove paused controller holds old1/new0; image-cache/node/rollback ready.
+# STOP: prove paused controller holds only old1; no new pod or shared mode change.
+# Final pod-template/cache/node/rollback receipts ready; no prepared RS0 claim.
 ```
 
-## S1/S2: approved old1->0, prepared new0->2
+## S1/S2: proposed controller-owned old1->0, new0->2
 
 S1 requires the complete retained-receiver exact image/challenge-duration floor
 and negative tests **before** zeroing AM; EG stays at its proven state. S2 needs
 S1 PASS plus every enabled provider/partition/console path's custody, shared
 session/CSRF/refresh/logout and close-before-release proof. Both require explicit
 owner outage approval (proposed03:15/04:15), source/image/cache/node readiness and
-an exact compatible recovery branch. RS0 contains no running warm application.
+an exact compatible recovery branch. The pending order exception above must be
+approved first; a zero-sized RS contains no running warm application.
 
 ```bash
 # Individually approved payloads, with fresh controller identity/spec fences.
@@ -311,7 +312,8 @@ k scale "deployment/$stage_service" --current-replicas=1 --replicas=0
 # Only the qualified no-legacy-effects receipt permits the next operation.
 outside_blackout
 k patch deployment "$stage_service" --type=merge -p '{"spec":{"paused":false}}'
-# Read back exact candidate reused at0; no legacy ReplicaSet may restart.
+# Let the Deployment controller create newRS0, then verify exact owned template
+# and both old/new desired0; no legacy ReplicaSet may restart.
 outside_blackout
 k scale "deployment/$stage_service" --current-replicas=0 --replicas=2
 # Observe both exact-image pods independently serving, membership, Ready,
