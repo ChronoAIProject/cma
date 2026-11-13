@@ -152,11 +152,13 @@ impl Sender {
                 Ok(p) => p,
                 Err(e) => return (refused(rendering, e.outcome()), effects),
             };
-            let uploaded = self
-                .relay
-                .native_lark
-                .upload_media(&token, reply, upload)
-                .await;
+            let uploaded = super::trace::native::part(
+                confirmed.len(),
+                true,
+                self.relay.native_lark.upload_media(&token, reply, upload),
+                super::trace::native::lark_write,
+            )
+            .await;
             drop(permit);
             ctx.gate.progress();
             let uploaded = match uploaded {
@@ -194,11 +196,15 @@ impl Sender {
             Ok(p) => p,
             Err(e) => return (refused(rendering, e.outcome()), effects),
         };
-        let sent = self
-            .relay
-            .native_lark
-            .send_card(&token, reply, &prepared.markup)
-            .await;
+        let sent = super::trace::native::part(
+            0,
+            false,
+            self.relay
+                .native_lark
+                .send_card(&token, reply, &prepared.markup),
+            super::trace::native::lark_write,
+        )
+        .await;
         drop(permit);
         ctx.gate.progress();
         let id = match sent {
