@@ -1,6 +1,7 @@
 use super::*;
 use crate::agent_lifecycle::{ImageManagerResolver, InlineAgentLifecycle};
 use crate::store::{MongoAgentLifecycleStore, MongoProfileStore, MongoSandboxStore};
+use authority::PersonalAuthority;
 use axum::body::{to_bytes, Body};
 use layer2_core::profiles::ProfileCapacityBounds;
 use layer2_core::resource_access::{
@@ -9,6 +10,7 @@ use layer2_core::resource_access::{
 };
 use tower::ServiceExt;
 
+mod authority;
 mod desktop;
 mod desktop_native;
 mod environment;
@@ -18,28 +20,6 @@ mod restart;
 mod subprocess;
 
 struct UnusedCompatibilityLedger;
-
-struct PersonalAuthority;
-
-#[async_trait::async_trait]
-impl OrganizationAuthority for PersonalAuthority {
-    async fn organization_context(
-        &self,
-        _: &layer2_core::Caller,
-        _: &str,
-        _: &SubjectId,
-    ) -> Result<CallerContext, MembershipError> {
-        Err(MembershipError::NotMember)
-    }
-
-    async fn organization_choices(
-        &self,
-        _: &layer2_core::Caller,
-        _: &str,
-    ) -> Result<Vec<OrganizationChoice>, MembershipError> {
-        Ok(vec![])
-    }
-}
 
 #[async_trait::async_trait]
 impl layer2_core::OperationStore for UnusedCompatibilityLedger {
