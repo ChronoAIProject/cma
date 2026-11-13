@@ -29,7 +29,7 @@ impl SandboxWorker {
             return self
                 .handle_lifecycle_failure(
                     sandbox,
-                    WorkerFailure::retryable("pause cancellation is waiting for writer resumption"),
+                    WorkerFailure::waiting("pause cancellation is waiting for writer resumption"),
                     now,
                 )
                 .await;
