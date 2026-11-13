@@ -106,6 +106,17 @@ def parse_line(line):
     requests = [value for name, value in spans if name == "cmaeg.request"]
     if len(attempts) > 1 or len(requests) > 1:
         raise ValueError("ambiguous admission identity")
+    if attempts:
+        attempt_position = next(
+            index
+            for index, (name, _) in enumerate(spans)
+            if name == "eg_admission_attempt"
+        )
+        for index, (name, _) in enumerate(spans):
+            if name == "eg_admission_operation" and index < attempt_position:
+                raise ValueError("operation cannot be an ancestor of its admission")
+            if name == "cmaeg.request" and index > attempt_position:
+                raise ValueError("HTTP request cannot be a descendant of its admission")
     identity_fields = ("attempt_sha256", "process_sha256", "admission_sha256")
     attempt = dict.fromkeys(identity_fields)
     if attempts:

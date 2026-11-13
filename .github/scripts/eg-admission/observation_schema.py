@@ -113,9 +113,22 @@ def validate_event(event):
         integer(event["transaction_attempt"], 0, 5)
         integer(event["record_operation_sequence"], 1, 2**64 - 1)
         integer(event["elapsed_ms"], 0, 86_400_000)
+        if event["record_operation"] == "admission_index":
+            if event["transaction_attempt"] != 0 or event["phase"] not in (
+                "validate",
+                "index_update",
+                "index_legacy_read",
+            ):
+                raise ValueError("invalid standalone index operation")
+        elif event["phase"] in ("index_update", "index_legacy_read"):
+            raise ValueError("index phase cannot belong to a transaction")
+        elif event["transaction_attempt"] == 0 and event["phase"] != "validate":
+            raise ValueError("transaction phase precedes its first attempt")
         if event["io_class"] != IO_CLASS[event["phase"]]:
             raise ValueError("inconsistent client I/O classification")
         boundary = event["boundary"]
+        if event["mongo_labels_observed"] != (boundary == "error"):
+            raise ValueError("error boundary must retain observed Mongo labels")
         expected_outcome = {
             "start": "pending",
             "error": "error",
@@ -146,11 +159,7 @@ def validate_event(event):
                 if event["transient_transaction_label"]
                 else "unlabelled_mongo"
             )
-            if (
-                event["boundary"] != "error"
-                or event["label_class"] != label
-                or event["error_class"] != label
-            ):
+            if event["label_class"] != label or event["error_class"] != label:
                 raise ValueError("inconsistent observed labels")
             if event["unknown_commit_label"] and event["commit_class"] != "unknown":
                 raise ValueError("unknown commit was downgraded")
