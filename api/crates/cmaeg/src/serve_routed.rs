@@ -46,6 +46,7 @@ pub(crate) struct Deps {
     pub delivery: Arc<dyn DeliverySink>,
     pub tracker: Arc<TurnTracker>,
     pub custom: CustomDelivery,
+    pub partitions: Option<crate::replicas::partition::Partitions>,
 }
 
 pub(crate) async fn compose(
@@ -66,9 +67,21 @@ pub(crate) async fn compose(
             "binding preparation requires exact configured CMA management authority".into(),
         );
     }
-    let plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
-    let journal = Journal::new((*state.records).clone(), state.master_keys.clone())
+    let mut plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
+    let mut journal = Journal::new((*state.records).clone(), state.master_keys.clone())
         .with_activity(state.activity.clone());
+    if let Some(partitions) = &deps.partitions {
+        plans = plans.with_admission_queue(Arc::new(partitions.clone()));
+        journal = journal.with_partitions(partitions.clone());
+    }
+    let recovery: Arc<dyn crate::turns::routed::scheduler::RecoverySource> = match &deps.partitions
+    {
+        Some(partitions) => Arc::new(crate::replicas::partition_discovery::Frontier {
+            partitions: partitions.clone(),
+            plans: plans.clone(),
+        }),
+        None => Arc::new(plans.clone()),
+    };
     let authority: Arc<dyn Authority> = Arc::new(state.resolver.clone());
     let media_ready = state.records.media_continuations_ready().await;
     if config.routing.media_continuations_enabled && (!media_ready || deps.media.is_none()) {
@@ -151,10 +164,15 @@ pub(crate) async fn compose(
         &config.delivery,
     ));
     let (scheduler, schedule) = Scheduler::new(
-        Arc::new(plans.clone()),
+        recovery,
         executor,
         ScheduleConfig {
             drain_timeout: config.turns.drain,
+            sweep_delay: if deps.partitions.is_some() {
+                std::time::Duration::from_millis(100)
+            } else {
+                ScheduleConfig::default().sweep_delay
+            },
             ..Default::default()
         },
     )?;
