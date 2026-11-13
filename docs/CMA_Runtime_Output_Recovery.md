@@ -50,7 +50,8 @@ transactions reuse their already validated Agent row for the checkpoint write,
 preserving the revision, log sequence, log format and history-seal predicates.
 A log append can change that envelope, so its checkpoint write still validates
 the resulting row. Checkpoint version 1 and the persistence-before-display/ACK
-ordering are unchanged. Quiet receipts continue to commit individually.
+ordering are unchanged. With quiet receipt coalescing disabled (the default),
+quiet receipts continue to commit individually.
 
 | Process metric | Meaning |
 | --- | --- |
@@ -65,9 +66,13 @@ contain Agent/user identifiers, message content, database addresses or errors.
 The Mongo observer uses metadata-only driver spans with query text disabled,
 including when detailed Mongo diagnostics are disabled.
 
-For frame mix and arrival-rate estimates, select `outcome="recorded"` and the
-first three categories; inspect replay and failure rates separately. A retry
-after storage unavailability is another attempt. The command histogram is
+Only with quiet receipt coalescing disabled, estimate frame mix and arrival rate
+by selecting `outcome="recorded"` and the first three categories; inspect replay
+and failure rates separately. With coalescing enabled, flushes also count as
+recorder attempts: one quiet input followed by its idle flush contributes two
+recorded `quiet_receipt` attempts. Enabled-mode attempt counts therefore cannot
+serve as an input-frame denominator. A retry after storage unavailability is
+another attempt. The command histogram is
 emitted when all inherited reconciliation work finishes, which can follow the
 attempt-duration observation. These are process observations, not durable
 accounting or proof that a runtime has received an ACK.
@@ -75,7 +80,8 @@ accounting or proof that a runtime has received an ACK.
 The isolated `output_frame_replay_measurement` test replays a fixed 60% reasoning,
 30% text and 10% tool mix at 10/30/60 frames per second against a disposable real
 Mongo replica set. It reports every latency/command/lag sample and checks four
-commands for ordinary quiet/text frames. Use `RUST_MIN_STACK=16777216` for the
+commands for ordinary quiet/text frames with coalescing disabled. Use
+`RUST_MIN_STACK=16777216` for the
 existing deeply nested tool transaction path. The snapshot and replay tests also
 cover corruption, history-seal refusal and uncertain commits.
 
