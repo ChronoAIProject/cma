@@ -15,6 +15,7 @@ pub mod admin;
 pub use account_deletion::{account_deletion_problem, account_deletion_router};
 #[cfg(test)]
 mod account_deletion_tests;
+pub(crate) mod admission_problem;
 mod bot_setups;
 mod bots;
 pub use bot_setups::bot_setup_router;

@@ -30,12 +30,15 @@ pub struct RecoveryIdentity {
 pub struct RecoverySnapshot {
     pub native_agent_id: String,
     pub response: Value,
+    pub(crate) trace: Option<crate::telemetry::turn_trace::Association>,
 }
 
 /// Only a durable frame has this shape. Persist its cursor only after the
 /// journal's fenced delivery/checkpoint succeeds, never merely on receipt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecoveryEvent {
+    pub(crate) trace_contract: bool,
+    pub(crate) trace: Option<crate::telemetry::turn_trace::Association>,
     pub response_id: String,
     pub sequence_number: u64,
     pub event: ResponsesEvent,
@@ -60,6 +63,17 @@ impl ProviderClient {
         identity: &RecoveryIdentity,
         agent_key: &Secret,
     ) -> Result<RecoverySnapshot, ProviderError> {
+        self.response_snapshot_with_trace(provider, identity, agent_key, false)
+            .await
+    }
+
+    pub(crate) async fn response_snapshot_with_trace(
+        &self,
+        provider: &ProviderSlug,
+        identity: &RecoveryIdentity,
+        agent_key: &Secret,
+        negotiated: bool,
+    ) -> Result<RecoverySnapshot, ProviderError> {
         self.record_worker_key(agent_key).await?;
         identity.validate()?;
         let handle = self.handle(provider)?;
@@ -73,20 +87,34 @@ impl ProviderClient {
         let _permit = acquire(&handle.inflight).await?;
         let timeout = self.request_timeout.min(MAX_RECOVERY_TIME);
         tokio::time::timeout(timeout, async {
-            let response = handle
+            let mut request = handle
                 .client
                 .get(url)
                 .bearer_auth(agent_key.as_str())
                 .header(reqwest::header::ACCEPT, "application/json")
-                .timeout(timeout)
-                .send()
-                .await
-                .map_err(transport_error)?;
+                .timeout(timeout);
+            let mut trace = crate::telemetry::turn_trace::ProviderReader::new(
+                self.turn_trace_enabled,
+                negotiated && provider.as_str() == "nyxbot",
+                Some(&identity.response_id),
+            );
+            if trace.is_some() {
+                request = request.header("x-nyxid-turn-trace-contract", "1");
+            }
+            let response = request.send().await.map_err(transport_error)?;
             let response = checked(response).await?;
+            if let Some(trace) = &mut trace {
+                trace.headers(response.headers());
+            }
             let bytes = bounded_body(response, MAX_SNAPSHOT_BYTES).await?;
             let value = serde_json::from_slice(&bytes)
                 .map_err(|_| malformed("invalid response snapshot JSON"))?;
-            identity.snapshot(value)
+            let mut snapshot = identity.snapshot(value)?;
+            if let Some(trace) = &mut trace {
+                trace.snapshot(&snapshot.response);
+                snapshot.trace = trace.association();
+            }
+            Ok(snapshot)
         })
         .await
         .map_err(|_| timeout_error())?
@@ -100,6 +128,18 @@ impl ProviderClient {
         identity: &RecoveryIdentity,
         starting_after: Option<u64>,
         agent_key: &Secret,
+    ) -> Result<RecoveryStream, ProviderError> {
+        self.replay_response_with_trace(provider, identity, starting_after, agent_key, false)
+            .await
+    }
+
+    pub(crate) async fn replay_response_with_trace(
+        &self,
+        provider: &ProviderSlug,
+        identity: &RecoveryIdentity,
+        starting_after: Option<u64>,
+        agent_key: &Secret,
+        negotiated: bool,
     ) -> Result<RecoveryStream, ProviderError> {
         self.record_worker_key(agent_key).await?;
         identity.validate()?;
@@ -120,16 +160,22 @@ impl ProviderClient {
         let permit = acquire(&handle.inflight).await?;
         let timeout = self.request_timeout.min(MAX_RECOVERY_TIME);
         let deadline = tokio::time::Instant::now() + timeout;
+        let mut trace = crate::telemetry::turn_trace::ProviderReader::new(
+            self.turn_trace_enabled,
+            negotiated && provider.as_str() == "nyxbot",
+            Some(&identity.response_id),
+        );
         let response = tokio::time::timeout_at(deadline, async {
-            let response = handle
+            let mut request = handle
                 .client
                 .get(url)
                 .bearer_auth(agent_key.as_str())
                 .header(reqwest::header::ACCEPT, "text/event-stream")
-                .timeout(timeout)
-                .send()
-                .await
-                .map_err(transport_error)?;
+                .timeout(timeout);
+            if trace.is_some() {
+                request = request.header("x-nyxid-turn-trace-contract", "1");
+            }
+            let response = request.send().await.map_err(transport_error)?;
             checked(response).await
         })
         .await
@@ -153,6 +199,9 @@ impl ProviderClient {
             return Err(malformed("replay response is not an event stream"));
         }
         let (sender, events) = mpsc::channel(16);
+        if let Some(trace) = &mut trace {
+            trace.headers(headers);
+        }
         tokio::spawn(stream::forward(
             response,
             identity.clone(),
@@ -160,6 +209,7 @@ impl ProviderClient {
             sender,
             permit,
             deadline,
+            trace,
         ));
         Ok(RecoveryStream { events })
     }
@@ -212,6 +262,7 @@ impl RecoveryIdentity {
             ));
         }
         Ok(RecoverySnapshot {
+            trace: None,
             native_agent_id: native_agent_id.to_owned(),
             response,
         })

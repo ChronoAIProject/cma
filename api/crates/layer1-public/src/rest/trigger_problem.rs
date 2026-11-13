@@ -71,6 +71,9 @@ impl IntoResponse for TriggerProblem {
                 vec![("head", serde_json::json!(head))],
             ),
         };
+        if code == "admission_paused" {
+            return super::admission_problem::paused();
+        }
         let slug = code.replace('_', "-");
         let mut body = problem_document(status, &slug, detail, code);
         if let Some(object) = body.as_object_mut() {
@@ -219,6 +222,12 @@ fn launch_problem(error: LaunchServiceError) -> ProblemParts {
             StatusCode::BAD_REQUEST,
             "invalid_launch_cursor",
             "The Launch cursor is invalid for this query.",
+            Vec::new(),
+        ),
+        LaunchServiceError::AdmissionPaused => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "admission_paused",
+            layer2_core::admission::ADMISSION_PAUSED_GUIDANCE,
             Vec::new(),
         ),
         LaunchServiceError::Budget(reason) => (

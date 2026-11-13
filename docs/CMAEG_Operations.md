@@ -374,6 +374,8 @@ applies with all media flags off.**
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
+| `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED` | boolean | `false` | Preserves original CommonMark for Telegram NyxID relay replies, keyboard replies, media captions and edits using explicit CommonMark routes. Requires verified deployed NyxID support; never falls back to legacy after submission. Only exact `true`/`false` are accepted; see [CommonMark relay rollout](#commonmark-relay-rollout). |
+| `CMAEG_NYXID_TURN_TRACE_ENABLED` | boolean | `false` | The enabled gateway interprets bounded, single-value W3C `traceparent` headers only after the existing reply or edit authority checks. Both the process switch and this binding's retained acknowledgement are required before native response, snapshot or replay requests send `X-NyxID-Turn-Trace-Contract: 1`. Missing, null, unknown or malformed echoes leave the binding unnegotiated. With the switch disabled, capability requests and trace headers are absent and existing wire bodies are unchanged. See [authenticated delivery traces](CMAEG_Protocol.md#authenticated-delivery-traces) and [optional NyxID turn correlation](CMAEG_Protocol.md#optional-nyxid-turn-correlation). |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s non-routed tool deadline; legacy text keeps its configured timeout and 8 s tool deadline. Complete ordinary replies use 15 s/18 s. Compatible runtime tool proxies wait 70 s; retained older Sandbox images may still cut off at 10 s. Routed sends retain their independent 20 s window. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
 | `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; one mixed native upload requires `CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED`, and interactive edits have a separate gate. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
@@ -1417,18 +1419,29 @@ chunk. They are expected, not a fault, and need no repair.
 
 #### Media download links
 
-A media link is redeemed in a per-replica set before the download is checked
-any further. The set keeps a redeemed link's jti for ten minutes, the longest
-a link can live, and holds up to 16,384 entries (about 2 MiB). A replica
-mints at most 600 links per minute, so at most 6,000 of its links are live at
-once and the set never evicts one that is still live: a second use on the same
-replica is always refused with `410 media_link_used`. The set is not shared and does not survive a
-restart, so during a rollout surge, or after a restart, a link can be redeemed
-once more on another replica before it expires. That is the accepted bound:
-links expire within minutes and every request re-validates the channel, the
-binding, the agent key and the source, so rotating the agent key, switching
-the binding to guarded, or removing the source revokes every outstanding link
-at once on every replica.
+A media link is consumed by an atomic create in shared encrypted interaction
+storage before authority checks or source fetch. The record survives gateway
+restart and replica replacement and expires at the sealed link's deadline.
+Conflicts return `410 media_link_used`; storage failures or lost acknowledgements
+return `503 media_redemption_unavailable` without fetching or releasing bytes.
+The existing record transport uses create-only CAS; Gateway Mongo uses its
+unique record ID and majority write concern. No additional collection or index
+is required. A local cache retains up to 16,384 refusals (about 2 MiB) for ten
+minutes, but an empty or evicted cache never authorizes consumption.
+
+Each fresh attempt adds one indexed record create, retained for at most ten
+minutes, and one uncached channel authority read. At the existing maximum mint
+rate, each replica contributes at most 6,000 live redemption rows. Refused
+authority checks also consume their links. Changing the binding, agent key or
+source is checked from the backing channel record even when the serving
+replica's channel cache remains warm. An unreadable authority fails closed.
+No token, filename, source locator or bytes enter diagnostics.
+
+Before enabling native download issuance, drain serving binaries that only keep
+process-local redemption state and let their outstanding links expire (at most
+600 seconds). Keep the existing issuance switches off until the entire serving
+and rollback set understands the shared claim. Older binaries can ignore these
+rows, so a mixed fleet cannot provide the shared single-use guarantee.
 
 ### Media turn preparation
 
@@ -2730,6 +2743,44 @@ bounds and canonical replay rules. Local tests do not establish regional live
 rendering or callback acceptance.
 
 ## Coordinated complete-reply rollout
+
+### CommonMark relay rollout
+
+Keep `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED=false` until every serving NyxID
+replica supports `/api/v1/channel-relay/reply/commonmark`,
+`/api/v1/channel-relay/thread-reply/commonmark`, and
+`/api/v1/channel-relay/reply/update/commonmark`. This is an independent switch:
+Telegram relay replies use one original CommonMark request when enabled, even
+with `CMAEG_NYXID_COMPLETE_REPLIES=false`. Native Telegram and other platforms
+retain their existing rendering. Initiated `/send` messages retain their existing
+contract. Enabling the switch attests to deployed support; a 404 does not trigger
+a legacy retry.
+
+The counterpart source inspected at NyxID
+`da70dddc9ad9a8de7026b4319909a6927cd2d3e1` marks these requests as CommonMark,
+preserves keyboard/attachment metadata for single-part output, and refuses
+multipart output with keyboards or attachments before platform sends. Source
+inspection is not deployment evidence. Before activation, verify on the intended
+builds the multilingual control from #1602, literal brackets/backslashes, inline
+and fenced code, astral/combining characters, and at least 11k characters in
+ordered ordinary and thread replies. Verify keyboard callbacks and updates,
+media captions, and the one-part refusal boundary after CommonMark conversion.
+Exercise a formatting failure with NyxID's plain fallback, then failed/lost
+fallback and an accepted multipart prefix; confirm terminal outcomes and no
+replay of accepted or uncertain parts. Record exact serving build IDs and safe
+receipt evidence. No production rendering or root cause is proved by local mocks.
+
+Ordinary CommonMark exchanges use 15 s and Telegram reply tools wait 18 s;
+media uses the existing 60 s/65 s budgets. Keyboards and edits retain the configured
+exchange timeout. Routed 20 s windows, leases and retained runtime proxy budgets
+remain as described below. Timeout, malformed receipt, non-200 response and
+possibly delivered multipart prefixes remain unknown. Neither 502 nor an absent
+receipt proves that nothing was delivered. NyxID owns per-part fallback and
+receipts; CMAEG submits each logical reply once and never changes endpoints after
+submission. Disable the switch for future operations to roll back; do not replay
+uncertain sends.
+
+### Complete ordinary reply activation
 
 Keep `CMAEG_NYXID_COMPLETE_REPLIES=false` until the NyxID dependency is ready.
 This default preserves existing short and long reply behavior and its known

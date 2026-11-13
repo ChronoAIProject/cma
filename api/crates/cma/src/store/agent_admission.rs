@@ -271,7 +271,13 @@ async fn apply_admission(
     }
     // Before reuse too: reusing a profile Agent revives a Paused Sandbox, and
     // revival is refused under a platform stop (contract section 5.1).
-    super::budget::require_open(store, super::budget::now_seconds(), session).await?;
+    super::budget::require_open(
+        store,
+        super::budget::now_seconds(),
+        admission.admission_cause(),
+        session,
+    )
+    .await?;
     if let Some(creation) = reuse_profile_agent(
         store,
         admission,
