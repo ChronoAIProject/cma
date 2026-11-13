@@ -2,10 +2,11 @@ use super::*;
 
 #[async_trait::async_trait]
 impl AgentConversationStore for LostCommitReply {
-    async fn agent_message_checkpoint(
+    async fn agent_message_snapshot(
         &self,
         id: &AgentId,
-    ) -> Result<Option<AgentMessageCheckpoint>, SandboxStoreError> {
+    ) -> Result<Option<crate::sandbox::store::AgentMessageSnapshot>, SandboxStoreError> {
+        let snapshot = self.store.agent_message_snapshot(id).await?;
         if self.advance_on_read.swap(false, Ordering::SeqCst) {
             let current = self.store.get_agent(id).await?.unwrap();
             let mut next = current.clone();
@@ -27,6 +28,12 @@ impl AgentConversationStore for LostCommitReply {
                 })
                 .await?;
         }
+        Ok(snapshot)
+    }
+    async fn agent_message_checkpoint(
+        &self,
+        id: &AgentId,
+    ) -> Result<Option<AgentMessageCheckpoint>, SandboxStoreError> {
         self.store.agent_message_checkpoint(id).await
     }
     async fn commit_agent_message_update(

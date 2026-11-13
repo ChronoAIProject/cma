@@ -10,8 +10,12 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixtu
 mod anchor;
 #[path = "checkpoint_failpoint_tests.rs"]
 mod failpoints;
+#[path = "checkpoint_measurement_tests.rs"]
+mod measurement;
 #[path = "checkpoint_recorder_tests.rs"]
 mod recorder;
+#[path = "checkpoint_snapshot_tests.rs"]
+mod snapshot;
 
 const NOW: &str = "2026-09-17T00:00:00Z";
 

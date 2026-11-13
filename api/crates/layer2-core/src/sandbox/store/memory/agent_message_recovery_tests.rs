@@ -434,7 +434,7 @@ async fn uncertain_checkpoint_and_terminal_retries_recover_exact_original_outcom
 }
 
 #[tokio::test]
-async fn semantic_write_between_agent_and_checkpoint_reads_retries_without_losing_prefix() {
+async fn semantic_write_after_message_snapshot_retries_without_losing_prefix() {
     let (store, working, recorder) = working_agent().await;
     recorder
         .record_update(
@@ -477,3 +477,6 @@ async fn semantic_write_between_agent_and_checkpoint_reads_retries_without_losin
         1
     );
 }
+
+#[path = "agent_message_snapshot_tests.rs"]
+mod message_snapshot_tests;

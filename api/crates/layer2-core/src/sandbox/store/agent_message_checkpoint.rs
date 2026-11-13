@@ -135,3 +135,11 @@ impl AgentMessageCheckpoint {
         Some(checkpoint)
     }
 }
+
+/// Agent and private checkpoint from one storage snapshot. Callers must still
+/// use the commit CAS: semantic history can advance after this read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentMessageSnapshot {
+    pub agent: Agent,
+    pub checkpoint: Option<AgentMessageCheckpoint>,
+}
