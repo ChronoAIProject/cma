@@ -6365,6 +6365,31 @@
       "status": 1,
       "title": "fixture",
       "type": "fixture"
+    },
+    {
+      "code": "provider_rejected",
+      "detail": "fixture",
+      "instance": "fixture",
+      "status": 502,
+      "title": "fixture",
+      "type": "fixture",
+      "upstream": {
+        "operation": "responses",
+        "status": 403,
+        "code": "media_source_refused"
+      }
+    }
+  ],
+  "UpstreamRefusal": [
+    {
+      "operation": "responses",
+      "status": 403,
+      "code": "media_source_refused"
+    },
+    {
+      "operation": "conversation",
+      "status": 503,
+      "code": "unrecognized"
     }
   ],
   "ProblemCode": [

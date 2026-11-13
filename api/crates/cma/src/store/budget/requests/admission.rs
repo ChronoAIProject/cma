@@ -31,7 +31,10 @@ pub(super) async fn reserve(
     if agent.status == AgentStatus::Deleted || scope.turn_sequence > agent.conversation.last_seq {
         return Err(domain(BudgetError::Unavailable));
     }
-    let Some(policy) = super::super::policy(store, &agent.owner, session).await? else {
+    let snapshot = super::super::period::fenced_snapshot(store, &agent.owner, session).await?;
+    let Some(policy) = snapshot.owner.clone() else {
+        let timestamp = now(store).map_err(domain)?;
+        super::super::period::require_unbudgeted(store, &snapshot, timestamp, session).await?;
         return Ok(None);
     };
     let settings = store
@@ -131,6 +134,15 @@ pub(super) async fn reserve(
     owner
         .reserve_liability(&policy, liability, timestamp)
         .map_err(domain)?;
+    let charge = super::super::period::admit_liability(
+        store,
+        &snapshot,
+        &agent.owner,
+        liability,
+        timestamp,
+        session,
+    )
+    .await?;
     ledger.reserved = next_reserved;
     // Every granted permit counts, including uncertain dispatch and settlement.
     ledger.calls = next_calls;
@@ -145,6 +157,8 @@ pub(super) async fn reserve(
         policy,
         reserved: liability,
         settled: None,
+        period_start: charge.map(|charge| charge.start),
+        period_shard: charge.and_then(|charge| charge.shard),
     };
     save(store, &super::super::owner_key(&agent), &owner, session).await?;
     save(store, &ledger_key, &ledger, session).await?;
