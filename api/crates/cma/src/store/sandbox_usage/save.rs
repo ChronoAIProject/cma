@@ -10,12 +10,13 @@ pub(in crate::store) async fn save(
     store: &MongoSandboxStore,
     expected: u64,
     sandbox: &Sandbox,
+    acquisition: Option<&Document>,
 ) -> Result<(), SandboxStoreError> {
     let at = sandbox.updated_at.clone();
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store.client.start_session().await.map_err(unavailable)?;
         start_transaction(&mut session).await.map_err(unavailable)?;
-        match apply(store, &mut session, expected, sandbox, &at).await {
+        match apply(store, &mut session, expected, sandbox, &at, acquisition).await {
             Ok(()) => {}
             Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;
@@ -49,6 +50,7 @@ async fn apply(
     expected: u64,
     sandbox: &Sandbox,
     at: &str,
+    acquisition: Option<&Document>,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
     let current = store
@@ -75,13 +77,20 @@ async fn apply(
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;
     let (origin_type, launch_id, operation_id) =
         crate::store::sandboxes::sandbox_origin_fields(sandbox).map_err(Domain)?;
-    let updated = store.sandboxes.update_one(doc! {
+    let mut filter = doc! {
         "_id": sandbox.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "revision": expected, "origin_type": origin_type, "origin_launch_id": launch_id,
         "origin_operation_id": operation_id,
         "channel_reuse_cleanup_execution": { "$exists": false },
         "channel_retirement_finalization": { "$exists": false },
-    }, doc! { "$set": crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)? })
+    };
+    if let Some(acquisition) = acquisition {
+        // The authority predicate and metering remain in this exact write's
+        // transaction. A pre-read cannot authorize delayed claim delivery.
+        filter = doc! {"$and":[filter, acquisition.clone()]};
+    }
+    let updated = store.sandboxes.update_one(filter,
+        doc! { "$set": crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)? })
         .session(&mut *session).await.map_err(Driver)?;
     if updated.matched_count != 1 {
         return Err(Domain(SandboxStoreError::Conflict));
