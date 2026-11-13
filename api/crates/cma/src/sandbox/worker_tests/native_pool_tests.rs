@@ -20,6 +20,7 @@ pub(super) struct Pools {
     pending_claim: AtomicBool,
     stall_observe: AtomicBool,
     observe_error: Mutex<Option<AdapterError>>,
+    adopt_error: Mutex<Option<AdapterError>>,
     observed: Notify,
     entered: Notify,
     resume: Notify,
@@ -202,6 +203,9 @@ impl NativePoolControl for Pools {
             "persist assigned Sandbox before physical adoption"
         );
         assert!(original.sandbox_name.is_some());
+        if let Some(error) = self.adopt_error.lock().unwrap().take() {
+            return Err(error);
+        }
         let disk = HomeVolumeAttachment {
             request: original.request.home.clone(),
             receipt: HomeVolumeReceipt {
@@ -442,6 +446,7 @@ pub(super) fn pools(harness: &Harness, failures: &[&'static str]) -> Arc<Pools> 
         pending_claim: AtomicBool::new(false),
         stall_observe: AtomicBool::new(false),
         observe_error: Mutex::new(None),
+        adopt_error: Mutex::new(None),
         observed: Notify::new(),
         entered: Notify::new(),
         resume: Notify::new(),
