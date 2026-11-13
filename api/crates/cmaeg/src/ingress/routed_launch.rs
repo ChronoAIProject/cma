@@ -101,7 +101,7 @@ impl IngressState {
     pub async fn launch_verified(
         &self,
         request: LaunchRequest,
-        source: Option<VerifiedIngress>,
+        mut source: Option<VerifiedIngress>,
         hold: OwnedSemaphorePermit,
     ) -> LaunchOutcome {
         if let Some(routing) = self
@@ -109,7 +109,12 @@ impl IngressState {
             .as_ref()
             .filter(|routing| routing.selected_request(&request) && ordinary(&request))
         {
-            let Some(source) = source.clone() else {
+            let selected_source = if routing.plans.replicas_enabled() {
+                source.clone()
+            } else {
+                source.take()
+            };
+            let Some(source) = selected_source else {
                 return LaunchOutcome::Refused(Problem::new(
                     ProblemCode::Internal,
                     503,
