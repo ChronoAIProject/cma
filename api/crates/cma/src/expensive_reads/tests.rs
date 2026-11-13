@@ -350,3 +350,6 @@ async fn cancellation_during_body_collection_releases_the_slot() {
 
 #[path = "frame_lifetime_tests.rs"]
 mod frame_lifetime;
+
+#[path = "desktop_budget_tests.rs"]
+mod desktop_budget;

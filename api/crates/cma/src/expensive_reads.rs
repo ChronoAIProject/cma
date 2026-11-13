@@ -49,12 +49,17 @@ pub(crate) async fn enforce(
         return next.run(request).await;
     }
     let Ok(permit) = budget.slots.clone().try_acquire_owned() else {
-        return private(
-            HttpProblem::RateLimited {
-                retry_after_seconds: 1,
-            }
-            .into_response(),
-        );
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static REFUSALS: AtomicU64 = AtomicU64::new(0);
+        let refused = REFUSALS.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
+        if refused.is_power_of_two() {
+            tracing::warn!(
+                guard = "buffered_reads",
+                refused,
+                "shared read capacity is busy"
+            );
+        }
+        return private(HttpProblem::BufferedReadCapacityExhausted.into_response());
     };
     let metadata = request
         .extensions()
