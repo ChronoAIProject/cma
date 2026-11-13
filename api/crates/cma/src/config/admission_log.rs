@@ -103,6 +103,7 @@ mod fleet_tests {
                 let mut settings = std::collections::BTreeMap::from([
                     ("CHRONO_AGENT_LOG_ADMISSION_AGENTS", "agt_old".to_owned()),
                     ("CHRONO_AGENT_LOG_FLEET_PERCENT", "50".to_owned()),
+                    ("UNRELATED_SETTING", "unchanged".to_owned()),
                     (
                         "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED",
                         adoption.to_string(),
@@ -122,6 +123,7 @@ mod fleet_tests {
                 let mut lookup = |key: &str| Ok(settings.get(key).cloned());
                 let explicit = from_lookup(&mut lookup).unwrap();
                 assert!(explicit.is_empty());
+                assert_eq!(settings["UNRELATED_SETTING"], "unchanged");
                 assert_eq!(fleet_percent(&mut lookup, &explicit).unwrap(), expected);
                 let flags = super::super::features::FeatureFlags::from_lookup(&mut lookup).unwrap();
                 assert_eq!(flags.segment_adoption_enabled, adoption);
