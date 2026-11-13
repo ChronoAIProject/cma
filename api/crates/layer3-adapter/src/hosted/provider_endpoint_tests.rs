@@ -26,6 +26,17 @@ fn proxy_prefix_and_configured_schemes_are_preserved() {
         "https://runtime.example:9443/proxy/9090/runtime/checkpoints/home-a.cma"
     );
     assert_eq!(secure.conversation("agent").unwrap().scheme(), "wss");
+    assert_eq!(
+        secure.capacity_recovery("agent").unwrap().as_str(),
+        "https://runtime.example:9443/proxy/9090/runtime/agents/agent/capacity-recovery"
+    );
+    assert_eq!(
+        secure
+            .conversation_for_capacity_recovery("agent", "a".repeat(32).as_str())
+            .unwrap()
+            .as_str(),
+        "wss://runtime.example:9443/proxy/9090/runtime/agents/agent/conversation?capacityRecoveryChallenge=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
 }
 
 #[test]
