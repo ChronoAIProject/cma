@@ -8,6 +8,7 @@ use mongodb::{
     options::{Collation, Hint},
 };
 
+use super::observations::{Observation, Phase};
 use super::records;
 mod agent;
 use crate::store::sandbox_mongo::MongoSandboxStore;
@@ -52,8 +53,13 @@ pub(super) async fn page(
     after: Option<&Cursor>,
     now: &str,
 ) -> Result<Page, RecoveryError> {
+    let query_phase = match stream {
+        Stream::Admitted => Phase::AdmittedQuery,
+        Stream::ExpiredLease => Phase::ExpiredQuery,
+    };
+    let mut observed = Observation::new(query_phase);
     let (phase, field, hint) = stream.fields();
-    let filter = filter(stream, after, now)?;
+    let filter = filter(stream, after, now).inspect_err(|_| observed.invalid())?;
     let mut rows = records::collection(store)
         .find(filter)
         .sort(doc! {field: 1, "_id": 1})
@@ -69,22 +75,31 @@ pub(super) async fn page(
         .batch_size(PAGE_SIZE)
         .max_time(Duration::from_millis(1000))
         .await
-        .map_err(|_| RecoveryError::Unavailable)?;
+        .map_err(|error| observed.driver(&error))?;
     let mut requests = Vec::with_capacity(PAGE_SIZE as usize);
     let mut next = None;
-    while let Some(row) = rows
-        .try_next()
-        .await
-        .map_err(|_| RecoveryError::Unavailable)?
-    {
+    loop {
+        observed.phase(query_phase);
+        let Some(row) = rows
+            .try_next()
+            .await
+            .map_err(|error| observed.driver(&error))?
+        else {
+            break;
+        };
+        observed.row();
+        observed.phase(Phase::CandidateValidation);
         if requests.len() == PAGE_SIZE as usize {
+            observed.invalid();
             return Err(RecoveryError::InvalidEvidence);
         }
-        let (request, cursor) = candidate(&row, stream, phase, now)?;
+        let (request, cursor) =
+            candidate(&row, stream, phase, now).inspect_err(|_| observed.invalid())?;
         if next.as_ref().or(after).is_some_and(|previous: &Cursor| {
             (cursor.at.as_str(), cursor.key.as_str())
                 <= (previous.at.as_str(), previous.key.as_str())
         }) {
+            observed.invalid();
             return Err(RecoveryError::InvalidEvidence);
         }
         requests.push(request);
@@ -93,6 +108,7 @@ pub(super) async fn page(
     if requests.len() < PAGE_SIZE as usize {
         next = None;
     }
+    observed.complete();
     Ok(Page { requests, next })
 }
 

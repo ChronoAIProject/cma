@@ -58,6 +58,21 @@ and completed-status routes remain separate acceptance work.
 
 ## Reuse and code boundaries
 
+Accepted-work discovery reports bounded diagnostics independently of the new
+admission switch. `cma_capacity_recovery_discovery_total{phase,outcome}` counts
+one outcome per polled presence probe or discovery page, including dropped
+operations. Phases are `presence`, `admitted_query`, `expired_query` and
+`candidate_validation`; outcomes are `success`, `absent`, `deadline`, `driver`,
+`invalid_evidence` and `cancelled` (at most 24 counter series per process).
+`cma_capacity_recovery_discovery_seconds{phase}` records elapsed attempt time in
+four phase series; a validation failure includes the preceding page query time.
+The failure log retains fixed phase/reason, numeric Mongo code, transient and
+unknown-commit label booleans, actual rows seen and monotonic elapsed milliseconds.
+It omits driver messages, candidate content and resource identifiers. Queue delay
+is not measured by this instrumentation. The existing scheduler error still
+propagates: a missing index or invalid candidate is never treated as absence.
+Presence deadlines, polling, cursors and recovery authority are unchanged.
+
 The current storage checkpoint uses recovery carrier BSON format 2. Its strict
 `result` witness records the original Agent result hash, log-batch hash, Agent
 revision, global through sequence and publication timestamp. S4's immutable
