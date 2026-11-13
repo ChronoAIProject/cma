@@ -68,6 +68,8 @@ pub(crate) struct SandboxReconciler {
     binding_holds: binding_holds::BindingHolds,
     platform_spend: Option<Arc<dyn platform::PlatformSpendSweep>>,
     platform_schedule: platform::PlatformSpendSchedule,
+    background_work: crate::background::BackgroundWork,
+    resume_background: bool,
     runtime_loss_bounded_proof_enabled: bool,
 }
 
@@ -96,8 +98,25 @@ impl SandboxReconciler {
             binding_holds: Default::default(),
             platform_spend: None,
             platform_schedule: Default::default(),
+            background_work: crate::background::BackgroundWork::new(
+                crate::background::shared(),
+                "sandbox_reconciliation",
+                Duration::from_secs(30),
+                Duration::from_secs(15),
+            ),
+            resume_background: false,
             runtime_loss_bounded_proof_enabled: false,
         }
+    }
+
+    pub(crate) fn with_background_work(mut self, work: crate::background::BackgroundWork) -> Self {
+        self.background_work = work;
+        self
+    }
+
+    pub(crate) fn with_background_resumption(mut self, enabled: bool) -> Self {
+        self.resume_background = enabled;
+        self
     }
 
     pub(crate) fn with_profile_agents(mut self, agents: Arc<AgentService>) -> Self {

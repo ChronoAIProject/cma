@@ -1045,6 +1045,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_SANDBOX_HOME_CAPACITY_GIB` | Native home capacity, canonical integer 1-1024 GiB |
 | `CHRONO_AGENT_SANDBOX_HOME_TEMPLATE` | Legacy snapshot mode only: ready, initialized seed VolumeSnapshot in the native namespace and cluster. Must be empty for both native VCT modes. |
 | `CHRONO_AGENT_SANDBOX_HOME_TEMPLATE_UID` | Legacy snapshot mode only: exact native seed UID. Historical retained allocations keep their recorded seed identity; empty-VCT homes require no snapshot. |
+| `CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED` | Strict boolean, default `false`. Reserves one of the two background permits for Sandbox reconciliation while retaining one for shared workers, and resumes from the work's existing busy/yield/backoff deadline instead of waiting for another 15-second tick. Existing deadlines, recovery and cleanup authority checks remain mandatory. Disable and restart the API for rollback; no data migration. See [Background scheduler](CMA_Background_Scheduler.md). |
 | `CHRONO_SANDBOX_HOME_STORAGE_CLASS` | Durable home StorageClass; configure all four home fields together, or omit all for legacy ephemeral operation |
 | `CHRONO_SANDBOX_HOME_CAPACITY_GIB` | Home disk capacity, integer 1-1024 GiB; production 64 |
 | `CHRONO_SANDBOX_HOME_TEMPLATE` | Ready, credential-free seed VolumeSnapshot in the Sandbox namespace; initialized with `infra/storage/home-seed.yaml` and `home-template.yaml` |
