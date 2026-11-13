@@ -141,9 +141,13 @@ codes as each response arrives, before waiting for other replicas. A202 header i
 not proof of durable admission or delivery. No identities, bodies, credentials or
 free-form errors enter these new fields. Earlier receipts remain unchanged.
 
-The instrumentation is compiled and locally tested, but has not been exercised
-against Mongo/EG. Its exact-source review and the next authorized candidate/window
-remain prerequisites; no extra diagnostic or deadline increase is implied.
+The final newline-framed parser at 0dd2db929 received scoped architect and peer
+GO. One owner-operated invocation exercised these markers on original application
+aadd212 and failed N2 ON ingress with 503/202; see RESULTS and the 0dd evidence
+packet. Its after-response plan/target snapshot is not terminal delivery or the
+failed request's queue-commit proof. The older censored c08 phase remains unknown.
+Every future invocation still needs its applicable source, binary, environment
+and execution scope; these reviews supply no new allowance or deadline increase.
 
 ## Run
 

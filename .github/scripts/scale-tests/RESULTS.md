@@ -5,11 +5,15 @@ passed. This record distinguishes harness validation from real application
 acceptance. Tracking issue: #1957. Base integration source:
 `d6fc953a6cb43f8d9c90337b4e4ce17ecb291fbc`.
 
-Current ownership dependency: `aadd212c2810fb12d443998e3cf75bab2fd670cf`.
+Investigated ownership dependency: `aadd212c2810fb12d443998e3cf75bab2fd670cf`.
 Its first combined OFF/ON process test **FAILS at enabled N=2**, returning
 HTTP 503 instead of 202. N=1 OFF/ON and N=2 OFF completed first; N=3 was not
 reached. This supersedes any suggestion that the historical process pass
 qualifies the ownership candidate. Developer-15 owns the investigation.
+The reviewed `0dd2db929` diagnostic reproduced this acceptance disagreement on
+that same application, retaining `routed_admission_unavailable` and fixture stage
+observations through the rejection check. Newer corrective candidates have
+not been exercised by this process fixture.
 
 ## Executed local gates
 
@@ -17,12 +21,13 @@ qualifies the ownership candidate. Developer-15 owns the investigation.
 |---|---|---|
 | New JavaScript harness | PASS | 28 tests; 99.66% lines, 97.85% branches, 97.84% functions for lib/scenarios; ESLint and syntax checks pass. |
 | N=1-only selection | PASS, implementation only | Three windows, no fault/scale/cross-replica calls; all 43 rows retained; missing/failed/unrendered cases and cleanup tested. Live driver still absent. |
-| Disposable Mongo runner | PASS, implementation only | 24 tests; runner93.78% and custody helper87.74% executable-line coverage. Includes real local descendants and full runner with mocked Docker. Real invocation awaits exact-source review. |
+| Disposable Mongo runner | PASS, implementation only | Final 28 Python tests; three focused parser cases cover 23/23 executable lines. Prior c08 coverage: runner 93.78%, custody 87.74%. Includes real local descendants and full runner with mocked Docker; counts are separate. |
 | Pinned Rust formatting and touched-crate lint | PASS | Rust 1.96.1 fmt; cmaeg all-target/all-feature Clippy with warnings denied. |
 | Original EG executable control | PASS | Same test-binary hash as replica case; signed ingress and complete streamed response; disposable Mongo removal reported; historical descendant exit was not independently observed. |
 | Imported delivery oracle | PASS | Three tests on this checkout; Unknown/Partial/no-effect/rejected/missing cannot qualify confirmed terminal delivery. Exact developer-08 source pins are in peer-provenance.json. |
 | Historical routed EG ingress, N=1/2/3, ownership off | PASS, scoped | Independent operating-system processes and Mongo clients, same routing selection in all cohorts, one signed event through every ingress, one provider POST, one independently read confirmed terminal receipt/cursor, and one sink observation. |
 | Integrated ownership N=1/2/3 OFF/ON | FAIL | Enabled N=2 concurrent ingress 503/202; receipt `evidence/mongo-ownership-aadd212-initial.json`. Original control PASS in `evidence/mongo-control-aadd212.json`. |
+| Instrumented original-application diagnostic | FAIL | Tooling 0dd, application aadd212; N2 ON 503/202, public detail retained, uncensored exit 101. N1 OFF/ON and N2 OFF completed. Parent/group/container cleanup confirmed; see `evidence/mongo-diagnostic-0dd.json`. |
 | Shared Kubernetes user journeys | BLOCKED | No usable synthetic auth/runtime/provider/browser fixture or implemented environment driver. |
 
 The routed process run took 10.50 seconds, 2026-11-13T16:51:27Z through
@@ -62,7 +67,8 @@ before cleanup. It emits markers during execution into its private capture and
 never saves raw stdout. Setup failures and test deadlines remain separate; the
 14-test retention gate did not cover a surviving descendant. Exact-source review
 of be5a8a46b found F1/EG-005: direct-parent exit incorrectly certified process
-cleanup. The real diagnostic remains blocked pending corrected-source review.
+cleanup. That runner remains NO-GO; the c08 correction and its later execution
+are recorded separately below.
 The application N=2 rejection remains unresolved, with developer-15 testing
 transaction contention and concurrent retained-item handling.
 
@@ -89,8 +95,9 @@ and uses real local processes to check removal ordering.
 Architect F2 corrects pod deletion to send DeleteOptions.preconditions.uid in
 the actual raw API request. The name-reuse regression returns conflict and
 preserves the replacement. This is a mocked API test; no cluster deletion or
-process-death observation is inferred. Both corrections received exact-source c08c55341 GO; the later phase
-instrumentation remains separately subject to review. They do not resolve the original N2 503 or any acceptance matrix row.
+process-death observation is inferred. Both corrections received exact-source
+c08c55341 GO. The later instrumentation received its own scoped verdicts below.
+These tooling verdicts do not resolve the original N2 503 or an acceptance row.
 Developer-15's published ab546c contention fix is a separate tested dependency;
 no new process execution against it is claimed here.
 
@@ -122,9 +129,64 @@ scoped architect GO. A final parser correction discards unterminated records to
 avoid interpreting a truncated numeric field.28 Python tests and lint pass; its
 three focused parser tests cover23/23 executable lines. Rust/emitter bytes remain
 unchanged from the passing pinned fmt/strict cmaeg Clippy and diagnostic unit
-gates. See evidence/marker-cutoff-gates.json for this additive correction. No new Mongo invocation has
-exercised these markers. Exact-source review and a separate authorized next
-candidate/window remain required; the deadline is unchanged.
+gates. See `evidence/marker-cutoff-gates.json` for this additive correction.
+Architect and scoped peer source GO at 0dd2db929 preceded the separately bound
+original-application invocation below. The 120-second test deadline is unchanged.
+
+## Instrumented original-application diagnostic at 0dd
+
+The owner invocation ran 2026-11-13T18:49:42.409622Z–18:49:52.374197Z under the
+standing local-verification assignment and normal resource slot. It used tooling
+0dd2db929, the 6f580ea84 compiled fixture, and the original aadd212 application.
+Test binary SHA256 starts `e81f4e57`; application SHA256 starts `54cbd773`.
+Full bindings are in `evidence/diagnostic-source-binding-0dd.json`.
+
+Result: **FAIL / cross_ingress_not_accepted**, exit 101, no timeout or censoring.
+Reported 9.991006 s includes fixture setup/cleanup and is not an application
+latency, drain or recovery measurement. N1 OFF, N1 ON and N2 OFF completed their
+workload checks and explicit teardown/cohort-end boundaries. N3 was not entered.
+
+| N2 ON observation | Cohort-local monotonic milliseconds |
+|---|---:|
+| Migration start/end | 2 / 133 |
+| Process 1 ready start/end | 133 / 490 |
+| Process 2 ready start/end | 490 / 842 |
+| Independent oracle open start/end | 844 / 903 |
+| Ingress 1 / ingress 2 start | 903 / 904 |
+| Process 1 HTTP 503 header | 932 |
+| Process 2 HTTP 202 header | 935 |
+| Both bodies parsed, in input order after request barrier | 935 |
+| After-response oracle start/end | 935 / 939 |
+
+The two calls replay one identical synthetic event. The rejected response has
+public detail `routed_admission_unavailable`; one response passes the accepted
+body check. The independent after-response read finds a durable plan and zero
+existing target-state records. This does not identify which caller created the
+plan or prove that the rejected call committed its queue entry. The assertion
+ends the test before terminal-delivery waiting and provider/sink reconciliation.
+No terminal accepted-event accounting, loss, duplicate or late-delivery finding
+follows from this snapshot.
+
+The public detail does not select an internal admission error or transaction
+phase. No matching typed per-request application warning was retained. The
+reviewed runner discarded raw capture after hashing and allowlist extraction.
+Developer-15 owns the application RCA. This run does not recover the original
+discarded exception, locate the c08 timeout phase or qualify newer corrective
+source. No fault, cluster, HPA, load or external-provider acceptance occurred.
+
+Parent/group/container cleanup are independently true; no TERM/KILL was needed
+and no fixture directory was retained. A later inventory found zero owned
+anchors, application/test processes, fixture directories or labelled containers.
+`evidence/diagnostic-outcome-0dd.json` and `cleanup-0dd.json` retain the result
+interpretation and inventory. `diagnostic-publication-0dd.json` binds all files.
+The original raw result SHA256 is
+`99f2033c552ea9a8613288b7d74d6f19ad4a13d0168f1a48f3bc7676ea72bf8d`.
+The published `mongo-diagnostic-0dd.json` compacts observation rows for review;
+decoded data is identical and the manifest records exact raw reconstruction.
+The published pre-run binding renames its compiled-source metadata key to
+`compiled_fixture_source`; the original bytes remain retained and reconstructable.
+This avoids a scanner false positive on the Git revision without an exemption.
+All historical receipts remain unchanged. Full acceptance remains BLOCKED.
 
 ## Required acceptance scenarios
 
