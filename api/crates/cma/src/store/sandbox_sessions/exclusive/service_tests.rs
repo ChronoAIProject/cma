@@ -10,6 +10,7 @@ mod fixture;
 mod receiver;
 use fixture::Services;
 
+mod latency_tests;
 mod recovery_tests;
 mod router_tests;
 
