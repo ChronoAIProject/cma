@@ -52,7 +52,9 @@ async fn admission_reconciliation_rejects_an_above_high_water_orphan() {
     let receipt =
         match super::super::apply_admission(&store, &admission, false, None, &mut scope).await {
             Ok(AdmissionReceipt::Created(receipt)) => receipt,
-            Ok(AdmissionReceipt::Existing(_)) => panic!("fresh admission unexpectedly replayed"),
+            Ok(AdmissionReceipt::Existing(_) | AdmissionReceipt::Reused(_)) => {
+                panic!("fresh admission unexpectedly replayed")
+            }
             Err(_) => panic!("fresh admission transaction failed"),
         };
     scope.release().commit_transaction().await.unwrap();

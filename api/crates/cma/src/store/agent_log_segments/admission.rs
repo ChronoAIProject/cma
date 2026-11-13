@@ -22,6 +22,8 @@ use layer2_core::sandbox::{
     AgentOrigin, SandboxEventKind, SandboxReviveCause, WorkspaceStatus,
 };
 use mongodb::bson::doc;
+mod history;
+pub(in crate::store) mod replay;
 mod reuse;
 use reuse::reuse_profile_agent;
 
@@ -119,7 +121,8 @@ pub(in crate::store) async fn apply(
         scope.session(),
     )
     .await?;
-    if let Some(creation) = reuse_profile_agent(
+    // Keep the bounded publication future off the admission caller stack.
+    if let Some(creation) = Box::pin(reuse_profile_agent(
         store,
         admission,
         &workspace,
@@ -127,10 +130,10 @@ pub(in crate::store) async fn apply(
         reuse_existing,
         common_launch.as_ref(),
         scope,
-    )
+    ))
     .await?
     {
-        return Ok(AdmissionReceipt::Existing(Box::new(creation)));
+        return Ok(creation);
     }
     if matches!(admission.origin, AgentOrigin::WorkspaceProfile { .. })
         && sandbox.status != layer2_core::sandbox::SandboxStatus::Active
@@ -160,24 +163,24 @@ pub(in crate::store) async fn apply(
         }));
     }
 
-    let mut creation = match crate::store::native_prepared::adopt_agent(
+    let mut creation = match Box::pin(crate::store::native_prepared::adopt_agent(
         store,
         &sandbox,
         &workspace,
         admission,
         scope.session(),
-    )
+    ))
     .await
     .map_err(ApplyError::Domain)?
     {
         Some(creation) => creation,
-        None => crate::store::warm_sandboxes::adopt_agent(
+        None => Box::pin(crate::store::warm_sandboxes::adopt_agent(
             store,
             &sandbox,
             &workspace,
             admission,
             scope.session(),
-        )
+        ))
         .await
         .map_err(ApplyError::Domain)?,
     };
@@ -255,13 +258,13 @@ pub(in crate::store) async fn apply(
         .map_err(classify_log_insert)?;
 
     if let Some(launch) = &common_launch {
-        crate::store::trigger_first_messages::attach(
+        Box::pin(crate::store::trigger_first_messages::attach(
             store,
             launch,
             admission,
             &mut creation.agent,
             scope.session(),
-        )
+        ))
         .await
         .map_err(ApplyError::from)?;
     }
