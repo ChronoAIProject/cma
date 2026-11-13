@@ -27,6 +27,10 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             .endpoint(&request.target.runtime)
             .await
             .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
+        let ownership = self
+            .receiver_lease(&endpoint)
+            .await
+            .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)?;
         let proof = self.capacity_recovery_proof(&endpoint, request).await?;
         proof
             .confirmation
@@ -103,7 +107,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             opened.relay.abort();
             return Err(crate::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict);
         }
-        self.register_link(key, epochs, opened)
+        self.register_link(key, epochs, opened, ownership)
             .await
             .map_err(|_| crate::agent_capacity_recovery::CapacityRecoveryError::Unavailable)
             .map(|channel| (channel, proof.confirmation))
@@ -168,6 +172,11 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame> {
+        if let Some(router) = &self.owner_router {
+            if let Some(response) = router.route(handle, &request).await {
+                return response;
+            }
+        }
         self.require_supported_operation(&request)?;
         #[cfg(test)]
         let status_request = matches!(&request, RequestFrame::RuntimeStatus(_));
@@ -227,6 +236,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         let epochs = self.open_epochs(&key).await;
         let endpoint = self.endpoint(handle).await?;
         timing.completed("transport_endpoint");
+        let ownership = self.receiver_lease(&endpoint).await?;
         let (mut receipt, socket) = self
             .open_and_connect(handle, &endpoint, &launch, &mut timing)
             .await?;
@@ -257,7 +267,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         )
         .await?;
         timing.completed("conversation_handshake");
-        let channel = self.register_link(key, epochs, opened).await?;
+        let channel = self.register_link(key, epochs, opened, ownership).await?;
         receipt.receipt.conversation_id = channel.conversation_id.clone();
         Ok((channel, receipt))
     }

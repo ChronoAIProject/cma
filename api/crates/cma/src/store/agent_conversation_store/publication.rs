@@ -149,6 +149,10 @@ pub(in crate::store) async fn before(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
+    store
+        .fence_agent_effect(&mutation.agent.id, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     // Command reservation also writes this Agent, so this transaction cannot
     // miss a concurrently admitted message and then take its idle boundary.
     if mutation.is_managed_context_admission() && store.agent_commands.find_one(doc! {

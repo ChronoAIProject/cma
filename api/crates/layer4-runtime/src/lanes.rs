@@ -16,6 +16,8 @@ pub(crate) struct Ready<'a> {
     pub agent_id: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_acknowledgement: Option<OutputAcknowledgement>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manager_ownership: Option<layer3_adapter::owner_protocol::OwnerAcknowledgement>,
 }
 
 #[derive(Serialize)]
@@ -33,6 +35,7 @@ impl<'a> Ready<'a> {
             lanes: ["ctl", "conv"],
             agent_id,
             output_acknowledgement: None,
+            manager_ownership: None,
         }
     }
 
@@ -41,6 +44,20 @@ impl<'a> Ready<'a> {
             version: 1,
             stream_id,
         });
+        self
+    }
+
+    pub(crate) fn with_owner(
+        mut self,
+        owner: Option<layer3_adapter::owner_protocol::TransportOwner>,
+    ) -> Self {
+        self.manager_ownership =
+            owner.map(
+                |owner| layer3_adapter::owner_protocol::OwnerAcknowledgement {
+                    owner,
+                    protocol: layer3_adapter::owner_protocol::OWNER_PROTOCOL_VERSION,
+                },
+            );
         self
     }
 }

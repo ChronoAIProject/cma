@@ -163,6 +163,12 @@ pub(crate) struct SandboxWorker {
     dependencies: SandboxWorkerDependencies,
     config: SandboxWorkerConfig,
     funding: Arc<dyn SandboxFundingAdapter>,
+    reopen_relay: std::sync::OnceLock<std::sync::Weak<crate::agent_manager::relay::Relay>>,
+    reopen_agents: std::sync::OnceLock<Arc<dyn layer2_core::sandbox::store::AgentStore>>,
+    reopen_gate: tokio::sync::Mutex<()>,
+    pending_reopens: std::sync::Mutex<
+        std::collections::BTreeMap<layer2_core::AgentId, lifecycle::PendingReopen>,
+    >,
 }
 
 impl SandboxWorker {
@@ -184,7 +190,20 @@ impl SandboxWorker {
             dependencies,
             config,
             funding,
+            reopen_relay: std::sync::OnceLock::new(),
+            reopen_agents: std::sync::OnceLock::new(),
+            reopen_gate: tokio::sync::Mutex::new(()),
+            pending_reopens: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         })
+    }
+
+    pub(crate) fn install_reopen_relay(
+        &self,
+        relay: &Arc<crate::agent_manager::relay::Relay>,
+        agents: Arc<dyn layer2_core::sandbox::store::AgentStore>,
+    ) {
+        assert!(self.reopen_agents.set(agents).is_ok());
+        assert!(self.reopen_relay.set(Arc::downgrade(relay)).is_ok());
     }
 
     pub async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
@@ -225,7 +244,10 @@ impl SandboxWorker {
             return Ok(false);
         };
         let claim_ms = claiming.elapsed().as_millis() as u64;
-        self.run_claimed(sandbox, now, claim_ms).await
+        layer2_core::agent_ownership::transport_observation_scope(
+            self.run_claimed(sandbox, now, claim_ms),
+        )
+        .await
     }
 
     async fn run_claimed(
