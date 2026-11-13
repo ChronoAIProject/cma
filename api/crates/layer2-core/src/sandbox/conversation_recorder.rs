@@ -36,16 +36,22 @@ pub(super) mod live;
 #[path = "conversation_live_budget.rs"]
 mod live_budget;
 pub use live::AgentHeadSubscription;
-pub use live::{AgentLiveFragment, AgentLiveFragmentKind, AgentLiveSubscription};
+pub use live::{
+    AgentLiveFragment, AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource,
+    AgentLiveSubscription,
+};
 pub use live_budget::AgentLiveDelivery;
 
 pub struct DurableAgentUpdateRecorder {
     store: Arc<dyn AgentConversationUpdateStore>,
     live: live::AgentLiveHub,
+    live_source: std::sync::OnceLock<Arc<dyn AgentLiveSource>>,
     writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
     spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
     coalesce_policy: Option<AgentOutputCoalescePolicy>,
 }
+
+mod configuration;
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
@@ -57,7 +63,10 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         budget::stop(self.spend_source.as_deref(), id, runtime_generation).await
     }
     fn subscribe_live(&self, id: &AgentId) -> Option<AgentLiveSubscription> {
-        Some(self.live.subscribe(id))
+        match self.live_source.get() {
+            Some(source) => source.subscribe(id),
+            None => Some(self.subscribe_local(id)),
+        }
     }
     fn subscribe_head(&self, id: &AgentId) -> Option<AgentHeadSubscription> {
         Some(self.live.subscribe_head(id))

@@ -32,6 +32,7 @@ pub(crate) mod agent_log_telemetry;
 mod agent_log_transcript;
 mod agent_log_usage;
 mod agent_opening_reads;
+pub(crate) mod agent_ownership;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;
@@ -137,7 +138,7 @@ pub(crate) mod sandbox_colors;
 mod sandbox_controls;
 mod sandbox_credentials;
 mod sandbox_events;
-mod sandbox_maintenance;
+pub(crate) mod sandbox_maintenance;
 mod sandbox_mongo;
 #[cfg(test)]
 mod sandbox_mongo_integration_tests;

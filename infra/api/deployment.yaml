@@ -186,6 +186,12 @@ spec:
             - secretRef:
                 name: cma-agent-manager
           env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: CHRONO_AGENT_MANAGER_RELAY_ADDRESS
+              value: "http://$(POD_IP):8080"
             # Keep interactive IO schedulable alongside reconciliation and BSON
             # decoding. Derive workers from this container's CPU limit.
             - name: TOKIO_WORKER_THREADS

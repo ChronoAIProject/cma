@@ -164,6 +164,7 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            authority: crate::owner_protocol::current_authority(),
             json_pools: json_pools.clone(),
             bounded_raw_output: settings.bounded_raw_output,
             shared_runtime_output: settings.shared_runtime_output,

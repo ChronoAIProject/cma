@@ -61,40 +61,8 @@ pub(super) const SANDBOX_PROFILE_REVISIONS: &str = "sandbox_profile_revisions";
 pub(super) const WARM_SANDBOXES: &str = "warm_sandboxes";
 pub(super) const SANDBOX_BILLING: &str = "sandbox_billing_state";
 
-const SANDBOX_COLLECTIONS: &[&str] = &[
-    super::settings::SETTINGS,
-    super::budget::COLLECTION,
-    "sandbox_retained_availability",
-    SANDBOXES,
-    SANDBOX_SESSIONS,
-    WORKSPACES,
-    WORKTREES,
-    AGENTS,
-    super::agent_access_tools::COLLECTION,
-    super::agent_access_requests::COLLECTION,
-    AGENT_REUSE_BINDINGS,
-    super::trigger_first_messages::COLLECTION,
-    AGENT_LOG,
-    "agent_suggestions",
-    "agent_channel_usage",
-    "channel_usage_events",
-    AGENT_COMMANDS,
-    AGENT_ARTIFACTS,
-    super::media_uploads::COLLECTION,
-    SANDBOX_CONTROLS,
-    AGENT_COMMAND_ORDERS,
-    RESOURCE_POLICIES,
-    RESOURCE_SHARES,
-    RESOURCE_SHARE_COMMANDS,
-    SANDBOX_EVENTS,
-    super::sandbox_usage::STATES,
-    super::sandbox_usage::EVENTS,
-    SANDBOX_BILLING,
-    SANDBOX_ADMISSIONS,
-    CHECKPOINTS,
-    WARM_SANDBOXES,
-    super::native_prepared::COLLECTION,
-];
+mod collections;
+use collections::SANDBOX_COLLECTIONS;
 
 /// One adapter implements every sandbox-model port so cross-port operations
 /// share a client session and therefore a real Mongo transaction.
@@ -137,6 +105,8 @@ pub struct MongoSandboxStore {
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
+    pub(crate) agent_ownership: Option<std::sync::Arc<super::agent_ownership::MongoAgentOwnership>>,
+    pub(super) agent_manager_instance: Option<String>,
     pub(super) platform: std::sync::Arc<super::platform_write_coordination::PlatformState>,
     pub(super) agent_access_tools: Collection<Document>,
     pub(super) agent_access_requests: Collection<Document>,
@@ -247,6 +217,8 @@ impl MongoSandboxStore {
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
+            agent_ownership: None,
+            agent_manager_instance: None,
             platform: Default::default(),
             agent_access_tools: majority_collection(
                 &database,
