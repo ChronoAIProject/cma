@@ -89,9 +89,11 @@ impl Sweep {
 
     fn reserved_binding_due(&self, reconciler: &SandboxReconciler) -> bool {
         self.phase == Phase::Bindings
-            && self
-                .next_binding()
-                .is_some_and(|id| reconciler.binding_holds.reserved_retry_due(&id))
+            && self.next_binding().is_some_and(|id| {
+                reconciler
+                    .binding_holds
+                    .reserved_retry_due(&id, reconciler.runtime_loss_bounded_proof_enabled)
+            })
     }
 
     fn is_binding_phase(&self) -> bool {
