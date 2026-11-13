@@ -8,6 +8,7 @@ import { foldV2Item } from './projection';
 import type { AgentV2Session } from './client';
 import { conversationFromHead } from './liveHead';
 import { createIdentityHandoff, IDENTITY_HANDOFF_ENABLED } from './identityGate';
+import { createProjectionPublication } from './publication';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -89,44 +90,53 @@ export async function loadV2Agent(
   };
   // Input authority and the latest transcript do not depend on rich event pages.
   // Observe every parallel failure even if another read or early callback fails.
-  // Independent projections depend on the raw hierarchy, not on another
-  // projection's publication check. Each still starts its own fresh identity
-  // check only after all of the data it will expose has finished loading.
+  // Projections that finish before metadata can share one publication check.
+  // A later completion never joins a check that has already started.
   const hierarchy = readHierarchy();
-  const hierarchyPublished = hierarchy.then(async (value) => {
-    if (onInputReady !== undefined) await v2.authorize(signal);
-    onInputReady?.({
-      ...value,
-      v2,
-      v2Items: [],
-      conversation: conversationFromTranscript({ agentId, turns: [], throughSeq: 0 }),
-      historyLoading: true,
-    });
-    return value;
-  });
-  const projections = Promise.all([hierarchy, readTranscript()]).then(
-    async ([metadata, transcript]) => {
-      if (onInputReady !== undefined) await v2.authorize(signal);
-      const preview = transcript === undefined ? undefined : conversationFromTranscript(transcript);
-      if (preview !== undefined)
-        onInputReady?.({
+  const publish = createProjectionPublication(
+    hierarchy,
+    () => v2.authorize(signal),
+    () => v2.journal.read(),
+    signal,
+  );
+  const hierarchyPublished =
+    onInputReady === undefined
+      ? hierarchy
+      : publish((metadata) => {
+          onInputReady({
+            ...metadata,
+            v2,
+            v2Items: [],
+            conversation: conversationFromTranscript({ agentId, turns: [], throughSeq: 0 }),
+            historyLoading: true,
+          });
+        });
+  const transcriptPublished = readTranscript().then(async (transcript) => {
+    const preview = transcript === undefined ? undefined : conversationFromTranscript(transcript);
+    if (preview !== undefined && onInputReady !== undefined)
+      await publish((metadata) => {
+        onInputReady({
           ...metadata,
           v2,
           v2Items: [],
           conversation: preview,
           historyLoading: true,
         });
-      return { ...metadata, preview };
-    },
-  );
+      });
+    return preview;
+  });
+  const projections = Promise.all([hierarchy, transcriptPublished]).then(([metadata, preview]) => ({
+    ...metadata,
+    preview,
+  }));
   const liveHead = (async () => {
     if (onInputReady === undefined) return undefined;
     try {
       const head = await v2.events.head(agentId, { signal });
-      const metadata = await hierarchy;
-      await v2.authorize(signal);
       const conversation = conversationFromHead(head);
-      onInputReady({ ...metadata, v2, v2Items: [], conversation, historyLoading: true });
+      await publish((metadata) => {
+        onInputReady({ ...metadata, v2, v2Items: [], conversation, historyLoading: true });
+      });
       return conversation;
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
@@ -139,7 +149,7 @@ export async function loadV2Agent(
     readPage(),
     liveHead,
     hierarchyPublished,
-  ]);
+  ]).finally(() => publish.dispose());
   // Preserve the final fresh check after every early publication callback.
   await v2.authorize(signal);
   pageHandoff = createIdentityHandoff(IDENTITY_HANDOFF_ENABLED);
