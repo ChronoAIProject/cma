@@ -1,0 +1,10 @@
+{
+  "recorded_at_utc": "2026-11-13T18:27:09.912719+00:00",
+  "counts": {
+    "anchors": 0,
+    "application_processes": 0,
+    "private_fixture_directories": 0,
+    "labelled_scale_fixture_containers": 0
+  },
+  "scope": "post-run inventory; robust current-run cleanup is in its receipt; historical receipts unchanged"
+}

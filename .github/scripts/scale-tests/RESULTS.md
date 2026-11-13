@@ -94,6 +94,30 @@ review. They do not resolve the original N2 503 or any acceptance matrix row.
 Developer-15's published ab546c contention fix is a separate tested dependency;
 no new process execution against it is claimed here.
 
+## Reviewed original-candidate diagnostic at c08
+
+The architect and scoped reviewers cleared the c08c55341 tooling correction.
+The next already-authorized run retained the original aadd212 application and
+643461b compiled fixture, with both executable hashes checked before execution.
+It ran 2026-11-13T18:24:08.997431Z–18:26:13.614117Z and ended
+**BLOCKED / process_test_deadline**, with the unchanged120s test wait and124.643s
+total elapsed including setup/cleanup. This is not a recovery or drain timing.
+
+Completed markers were N1OFF, N1ON, N2OFF, N2ON and N3OFF. No ingress rejection
+or assertion marker was retained. The N3OFF PASS marker precedes function-local
+teardown; even entry to N3ON is unobserved. The aggregate test is censored and
+has zero completed test cases. This run does not explain or close the original
+N2ON503 and does not qualify the newer ab546c/23f6a application source.
+
+The reviewed runner retained the output hash, partial markers and fixed timeout
+phase. Parent/group/container cleanup are independently true; TERM was needed,
+KILL was not. Post-run inventory found zero anchors, application processes,
+private fixture directories or labelled scale containers. See
+`evidence/mongo-diagnostic-c08.json`, `diagnostic-source-binding-c08.json`,
+`diagnostic-outcome-c08.json` and `cleanup-c08.json`. Earlier receipts remain
+unchanged. Stage instrumentation is required to locate the unfinished region
+without increasing the diagnostic deadline or interpreting missing telemetry.
+
 ## Required acceptance scenarios
 
 | Scenario | Status | Remaining evidence |
