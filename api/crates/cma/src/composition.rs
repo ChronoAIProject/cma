@@ -43,7 +43,7 @@ use layer2_core::{
 mod state;
 pub(crate) use state::ControlPlaneComposition;
 impl ControlPlaneComposition {
-    pub(crate) async fn build(config: &Config) -> Result<Self, String> {
+    async fn assemble(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());
