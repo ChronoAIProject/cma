@@ -6,6 +6,7 @@ use layer2_core::{AgentId, Caller};
 use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 
+mod endpoint_tests;
 mod fixture;
 mod ingress;
 mod receiver;

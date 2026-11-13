@@ -47,6 +47,14 @@ impl Ingress {
     }
 
     pub(super) async fn discovery(&self, id: &AgentId, headers: &HeaderMap) -> reqwest::Response {
+        self.discovery_result(id, headers).await.unwrap()
+    }
+
+    pub(super) async fn discovery_result(
+        &self,
+        id: &AgentId,
+        headers: &HeaderMap,
+    ) -> reqwest::Result<reqwest::Response> {
         reqwest::Client::new()
             .get(format!(
                 "http://{}/api/v1/agents/{id}/desktop",
@@ -55,7 +63,6 @@ impl Ingress {
             .headers(headers.clone())
             .send()
             .await
-            .unwrap()
     }
 
     pub(super) async fn stop(mut self) {
