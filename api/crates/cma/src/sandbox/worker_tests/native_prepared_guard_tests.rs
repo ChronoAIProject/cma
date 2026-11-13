@@ -36,8 +36,9 @@ async fn completed(
     panic!("native preparation did not finish");
 }
 
-fn guarded_errors() -> [AdapterError; 3] {
+fn guarded_errors() -> [AdapterError; 4] {
     [
+        NativeClaimGuardReason::Pending,
         NativeClaimGuardReason::TimedOut,
         NativeClaimGuardReason::CrashLoop,
         NativeClaimGuardReason::Restarting,

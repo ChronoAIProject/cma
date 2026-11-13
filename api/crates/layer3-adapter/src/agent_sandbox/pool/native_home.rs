@@ -69,20 +69,24 @@ impl AgentSandboxPools {
         // Publication acknowledgements remain outside this read-only deadline.
         // Start one phase before its first GET so a slow initial read cannot
         // escape the budget or grant subsequent polling a fresh two seconds.
+        let readiness = super::super::NativeReadinessObservation::default();
         let observe = async {
-            if let Some(home) = self.observe_native_home(&origin).await? {
+            if let Some(home) = readiness.observe(self.observe_native_home(&origin)).await? {
                 return Ok(home);
             }
             if self.config.native_claim_guard_enabled {
-                self.wait_native_home(&origin).await
+                self.wait_native_home(&origin, &readiness).await
             } else {
-                tokio::time::timeout(Duration::from_secs(5), self.wait_native_home(&origin))
-                    .await
-                    .map_err(|_| unavailable("native home initialization is still pending"))?
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    self.wait_native_home(&origin, &readiness),
+                )
+                .await
+                .map_err(|_| readiness.timeout())?
             }
         };
         if self.config.native_claim_guard_enabled {
-            super::super::claim_guard::bounded("home_authority", observe).await
+            super::super::claim_guard::bounded("home_authority", &readiness, observe).await
         } else {
             observe.await
         }
@@ -140,12 +144,13 @@ impl AgentSandboxPools {
     async fn wait_native_home(
         &self,
         origin: &NativePoolHomeOrigin,
+        readiness: &super::super::NativeReadinessObservation,
     ) -> Result<HomeVolumeAttachment> {
         // Only the original published authority may be observed here. Never
         // replay adoption writes or claim allocation while waiting for Ready.
         loop {
             tokio::time::sleep(Duration::from_millis(250)).await;
-            if let Some(home) = self.observe_native_home(origin).await? {
+            if let Some(home) = readiness.observe(self.observe_native_home(origin)).await? {
                 return Ok(home);
             }
         }
