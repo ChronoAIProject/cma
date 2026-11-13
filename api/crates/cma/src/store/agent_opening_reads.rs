@@ -16,6 +16,12 @@ async fn eligible(
     agent: &Agent,
     session: &mut ClientSession,
 ) -> Result<bool, SandboxStoreError> {
+    // Cohort exclusion leaves validation to the established compatibility
+    // reader; optional lookup must not add proof work for the rest of a fleet.
+    if !store.bounded_log_enabled(&agent.id) {
+        decision("cohort_excluded");
+        return Ok(false);
+    }
     let (actual, trusted) =
         super::agent_log_integrity::read::read_proven_agent(store, &agent.id, session)
             .await?
