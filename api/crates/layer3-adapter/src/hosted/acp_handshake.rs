@@ -215,11 +215,8 @@ impl Bridge {
                         serde_json::json!({ "cwd": cwd, "mcpServers": tool_servers }),
                     )
                     .await?;
-                let conversation = started
-                    .get("sessionId")
-                    .and_then(serde_json::Value::as_str)
-                    .ok_or_else(|| AdapterError::Rejected("bridge named no conversation".into()))?
-                    .to_string();
+                let conversation =
+                    super::acp_session_identity::read(&started, self.json_pools.is_some())?;
                 self.activate_session(conversation.clone(), updates).await?;
                 conversation
             }

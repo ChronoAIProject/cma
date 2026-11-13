@@ -76,7 +76,8 @@ pub(super) fn unbound_failure(command: &AgentCommand, status: &CommandStatusView
         Some(
             code @ (CommandFailureCode::OwnerBudgetExhausted
             | CommandFailureCode::TurnBudgetExhausted
-            | CommandFailureCode::BudgetUnavailable),
+            | CommandFailureCode::BudgetUnavailable
+            | CommandFailureCode::PlatformBudgetExhausted),
         ) => {
             let reason = code.budget_error().expect("budget failure variant");
             (

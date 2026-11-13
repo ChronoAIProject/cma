@@ -1,6 +1,6 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
 pub(super) mod retry;
-use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
+use super::sandbox_events::{append_in_transaction, reconcile_event};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
@@ -37,15 +37,6 @@ impl AdmissionReceipt {
         match self {
             Self::Created { workspace, .. } => WorkspaceAdmissionResult::Created(workspace.clone()),
             Self::Existing(workspace) => WorkspaceAdmissionResult::Existing(workspace.clone()),
-        }
-    }
-}
-
-impl From<TransactionEventError> for ApplyError {
-    fn from(error: TransactionEventError) -> Self {
-        match error {
-            TransactionEventError::Domain(error) => Self::Domain(error),
-            TransactionEventError::Driver(error) => Self::Driver(error),
         }
     }
 }
@@ -301,6 +292,7 @@ async fn apply_admission(
             },
         ));
     }
+    super::budget::require_open(store, super::budget::now_seconds(), session).await?;
     let prepared =
         match super::native_prepared::adopt_workspace(store, &sandbox, candidate, session)
             .await

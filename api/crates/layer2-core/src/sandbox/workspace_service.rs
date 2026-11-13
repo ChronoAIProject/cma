@@ -61,6 +61,8 @@ pub enum WorkspaceServiceError {
     RecoveryConflict,
     #[error("workspace launch origin is invalid")]
     InvalidOrigin,
+    #[error("model budget refused the commitment: {0}")]
+    Budget(crate::budget::BudgetError),
     #[error("workspace data is not usable: {0}")]
     Corrupt(String),
     #[error("workspace dependency is unavailable: {0}")]
@@ -71,6 +73,7 @@ impl WorkspaceServiceError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Connection(error) => error.code(),
+            Self::Budget(reason) => reason.code(),
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "workspace_profile_not_found",
             Self::NotFound => "workspace_not_found",

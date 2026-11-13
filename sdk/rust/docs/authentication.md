@@ -101,3 +101,8 @@ plus a one-minute callback-processing margin. Attempt expiry is unchanged.
 Predecessor attempts complete inline after reservation, and logout tombstones
 last at least as long as the binding cookie. Neither SDK handles the OAuth code
 exchange; browser cookies remain server-owned.
+
+`api_commands` is optional on authenticated session responses for compatibility
+with older CMA servers. Only `true` advertises command authority for the exact
+verified bearer; false or absence grants nothing. It does not replace per-command
+resource ACL, live provider verification or Sandbox owner credential setup.

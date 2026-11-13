@@ -1013,7 +1013,7 @@ jobs:
       # GitHub's current-ref/default-branch cache isolation; PR merge-ref caches
       # cannot seed develop or another PR. Fork requests do not use this bridge.
       - name: Prepare API Cargo cache identity
-        if: matrix.component == 'api' && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
         id: api-cargo-cache
         run: python3 .github/scripts/api-cargo-cache.py prepare
       - name: Restore API Cargo cache archive
