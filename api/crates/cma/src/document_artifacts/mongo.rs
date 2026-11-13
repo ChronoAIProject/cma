@@ -6,8 +6,11 @@ use mongodb::{
 };
 
 pub(crate) const COLLECTION: &str = "cma_document_artifacts";
+#[derive(Clone)]
 pub struct MongoDocumentStore {
     pub(super) rows: Collection<Document>,
+    pub(super) deletion_enabled: bool,
+    pub(super) deletion_supported: bool,
 }
 impl MongoDocumentStore {
     pub(crate) fn reclaim(&self, enabled: bool) -> super::MongoDocumentReclaimStore {
@@ -38,6 +41,8 @@ impl MongoDocumentStore {
     }
     pub fn new(database: Database) -> Self {
         Self {
+            deletion_enabled: false,
+            deletion_supported: false,
             rows: database.collection_with_options(
                 COLLECTION,
                 mongodb::options::CollectionOptions::builder()
@@ -48,6 +53,12 @@ impl MongoDocumentStore {
         }
     }
     pub async fn ensure_indexes(&self) -> Result<(), DocumentError> {
+        for keys in [doc! {"state":1,"purge.next_at":1}, doc! {"owner_hash":1}] {
+            self.lifecycle_rows()
+                .create_index(IndexModel::builder().keys(keys).build())
+                .await
+                .map_err(|_| DocumentError::Unavailable)?;
+        }
         for keys in [
             doc! {"owner_subject": 1, "_id": 1},
             doc! {"recipient_subjects": 1, "_id": 1},
@@ -82,21 +93,56 @@ impl DocumentStore for MongoDocumentStore {
         &self,
         record: &StoredDocument,
         source: Option<(&DocumentSourceReservation, SourceTicket)>,
-    ) -> Result<bool, DocumentError> {
+    ) -> Result<InsertOutcome, DocumentError> {
+        if self.deletion_enabled {
+            let ledgered = source
+                .and_then(|(source, ticket)| (ticket == SourceTicket::Ledgered).then_some(source));
+            return super::lifecycle_create::insert(self, record, ledgered).await;
+        }
+        // Rollout must drain old creates before enabling deletion admission.
+        // This compatibility point read deliberately preserves the plain write path.
+        if self.read_tombstone(&record.metadata.id).await?.is_some() {
+            return Ok(InsertOutcome::Deleted);
+        }
         if let Some((source, SourceTicket::Ledgered)) = source {
-            return super::commit::insert(self, record, source).await;
+            return super::commit::insert(self, record, source)
+                .await
+                .map(|inserted| {
+                    if inserted {
+                        InsertOutcome::Inserted
+                    } else {
+                        InsertOutcome::Exists
+                    }
+                });
         }
         match self.rows.insert_one(encode(record)?).await {
-            Ok(_) => Ok(true),
-            Err(error) => {
-                let duplicate = matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(e)) if e.code == 11000);
-                if duplicate {
-                    Ok(false)
-                } else {
-                    Err(DocumentError::Unavailable)
-                }
-            }
+            Ok(_) => Ok(InsertOutcome::Inserted),
+            Err(error) if crate::store::is_duplicate_key(&error) => Ok(InsertOutcome::Exists),
+            Err(_) => Err(DocumentError::Unavailable),
         }
+    }
+    async fn delete(
+        &self,
+        expected: u64,
+        tombstone: &DocumentTombstone,
+    ) -> Result<DeleteOutcome, DocumentError> {
+        self.delete_document(expected, tombstone).await
+    }
+    async fn tombstone(&self, id: &str) -> Result<Option<DocumentTombstone>, DocumentError> {
+        self.read_tombstone(id).await
+    }
+    async fn purge_state(&self, id: &str) -> Result<Option<DocumentPurgeState>, DocumentError> {
+        self.deletion_state(id).await
+    }
+    async fn pending_deletions(&self, owner_hash: &str) -> Result<u64, DocumentError> {
+        if !valid_digest(owner_hash) {
+            return Err(DocumentError::Invalid);
+        }
+        self.lifecycle_rows()
+            .count_documents(doc! {"owner_hash":owner_hash,"state":"deleting"})
+            .max_time(super::quota::IO)
+            .await
+            .map_err(super::quota::unavailable)
     }
     async fn compare_exchange(
         &self,

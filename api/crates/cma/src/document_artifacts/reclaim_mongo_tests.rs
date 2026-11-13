@@ -120,10 +120,13 @@ async fn document_reclaim_writer_commit_and_judgement_serialize_without_dangling
     quota.reserve(&reservation).await.unwrap();
     age(&quota, &reservation).await;
     let c = candidate(&reclaim).await;
-    assert!(store
-        .insert(&metadata, Some((&reservation, SourceTicket::Ledgered)))
-        .await
-        .unwrap());
+    assert_eq!(
+        store
+            .insert(&metadata, Some((&reservation, SourceTicket::Ledgered)))
+            .await
+            .unwrap(),
+        InsertOutcome::Inserted
+    );
     assert!(matches!(
         reclaim.judge(&c).await.unwrap(),
         Judgement::Skipped | Judgement::Committed

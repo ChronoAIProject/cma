@@ -100,10 +100,13 @@ async fn document_commit_marks_reserved_object_committed_atomically_with_metadat
     let metadata = record().await;
     let source = source(&metadata.metadata.id, b"source");
     assert_eq!(quota.reserve(&source).await, Ok(SourceTicket::Ledgered));
-    assert!(store
-        .insert(&metadata, Some((&source, SourceTicket::Ledgered)))
-        .await
-        .unwrap());
+    assert_eq!(
+        store
+            .insert(&metadata, Some((&source, SourceTicket::Ledgered)))
+            .await
+            .unwrap(),
+        InsertOutcome::Inserted
+    );
     let object = quota
         .rows
         .find_one(doc! {"_id": format!("object:{}:{}:{}", source.owner_hash, source.document_id, source.sha256)})
@@ -188,10 +191,13 @@ async fn document_commit_unledgered_ticket_keeps_plain_insert_and_cas() {
     let store = MongoDocumentStore::new(database.clone());
     let metadata = record().await;
     let source = source(&metadata.metadata.id, b"source");
-    assert!(store
-        .insert(&metadata, Some((&source, SourceTicket::Unledgered)))
-        .await
-        .unwrap());
+    assert_eq!(
+        store
+            .insert(&metadata, Some((&source, SourceTicket::Unledgered)))
+            .await
+            .unwrap(),
+        InsertOutcome::Inserted
+    );
     let updated = updated_record().await;
     assert!(store
         .compare_exchange(1, &updated, Some((&source, SourceTicket::Unledgered)))

@@ -29,8 +29,18 @@ pub(super) fn compose(
         Some(config) => StorageDocuments::new(config)?,
         None => Arc::new(UnavailableDocuments),
     };
-    let service = DocumentService::with_storage_quota(
-        stores.document_artifacts.clone(),
+    let deletion_supported = maintenance
+        .as_ref()
+        .is_some_and(|blobs| blobs.deletion_supported());
+    let metadata = Arc::new(
+        stores
+            .document_artifacts
+            .as_ref()
+            .clone()
+            .deletion(config.features.document_deletion, deletion_supported),
+    );
+    let service = DocumentService::with_deletion(
+        metadata,
         blobs,
         config.features.document_revocation_reserve,
         Some(Arc::new(
@@ -38,6 +48,7 @@ pub(super) fn compose(
                 .document_artifacts
                 .quota(config.features.document_quotas),
         )),
+        config.features.document_deletion,
     );
     Ok(DocumentComposition {
         service,
@@ -47,13 +58,30 @@ pub(super) fn compose(
 
 pub(super) fn worker(
     config: &Config,
-    reclaim: Arc<dyn layer2_core::document_artifacts::DocumentReclaimStore>,
+    reclaim: Arc<crate::document_artifacts::MongoDocumentReclaimStore>,
     blobs: Option<Arc<dyn DocumentBlobMaintenance>>,
 ) -> crate::document_artifacts::worker::DocumentMaintenanceWorker {
+    let supported = blobs
+        .as_ref()
+        .is_some_and(|blobs| blobs.deletion_supported());
+    let purge = Arc::new(reclaim.purge());
     let maintenance = blobs
-        .filter(|_| config.features.document_reclaim)
+        .filter(|_| config.features.document_reclaim || config.features.document_deletion)
         .map(|blobs| {
-            layer2_core::document_artifacts::DocumentMaintenance::new(reclaim, blobs, true)
+            layer2_core::document_artifacts::DocumentMaintenance::new(
+                reclaim,
+                blobs,
+                config.features.document_reclaim,
+            )
+            .with_purge(
+                purge.clone(),
+                config.features.document_deletion && supported,
+            )
         });
-    crate::document_artifacts::worker::DocumentMaintenanceWorker::new(maintenance)
+    let worker = crate::document_artifacts::worker::DocumentMaintenanceWorker::new(maintenance);
+    if config.features.document_deletion {
+        worker.with_purge(purge, supported)
+    } else {
+        worker
+    }
 }
