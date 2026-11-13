@@ -390,6 +390,17 @@ impl AgentLogStore for MongoSandboxStore {
         super::agent_log_store::visit_page(self, agent_id, after, through, limit, true, visit).await
     }
 
+    async fn visit_agent_log_page_with_tail(
+        &self,
+        agent_id: &AgentId,
+        after: u64,
+        through: u64,
+        limit: u16,
+        visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_log_store::visit_page(self, agent_id, after, through, limit, true, visit).await
+    }
+
     async fn agent_log_prefix(
         &self,
         agent_id: &AgentId,

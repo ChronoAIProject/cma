@@ -218,14 +218,14 @@ export function createNyxidAuthProvider(): AuthProvider {
   // one would refuse the request, so the client never assumes it.
   let silentSignInOffered = false;
   return {
-    async current(): Promise<AuthState> {
+    async current(signal?: AbortSignal): Promise<AuthState> {
       silentSignInOffered = false;
       let response: Response;
       const timeout = AbortSignal.timeout(IDENTITY_TIMEOUT_MS);
       try {
         response = await fetch(IDENTITY_ENDPOINT, {
           credentials: 'include',
-          signal: timeout,
+          signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
         });
       } catch {
         // Unreachable is not anonymous. Saying "signed out" here would invite
