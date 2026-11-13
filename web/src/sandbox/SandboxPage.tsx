@@ -3,6 +3,7 @@ import { SkeletonRows } from '../ui/Skeleton';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
+import { detailReadSource } from '../api/detailReads';
 import { createPagePollDelay, sandboxPollKey } from './pollDelay';
 import type { SandboxDetail } from '../api/types';
 import { routePath, type AppRoute } from '../routing/routes';
@@ -70,7 +71,7 @@ export function SandboxPage({
     pollError: boolean;
   }>();
   const retained =
-    views?.client === client && views.viewerId === viewerId
+    views?.client === detailReadSource(client) && views.viewerId === viewerId
       ? views.sandboxes.get(sandboxId)
       : undefined;
   const state: State =
@@ -127,7 +128,7 @@ export function SandboxPage({
             throw new Error('Sandbox projection referred to another resource.');
           const value = { sandbox, observedAt: new Date().toISOString() };
           if (
-            views?.client === client &&
+            views?.client === detailReadSource(client) &&
             sandbox.owner === views.viewerId &&
             !['retiring', 'retired'].includes(sandbox.status)
           ) {
@@ -165,7 +166,7 @@ export function SandboxPage({
           setStored((previous) => {
             const current = previous?.request === request ? previous.state : undefined;
             const cached =
-              views?.client === client && views.viewerId === viewerId
+              views?.client === detailReadSource(client) && views.viewerId === viewerId
                 ? views.sandboxes.get(sandboxId)
                 : undefined;
             return {
