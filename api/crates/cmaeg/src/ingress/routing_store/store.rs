@@ -1,4 +1,5 @@
 use super::{codec, types::*, Candidate};
+use crate::ingress::admission_trace::{self as trace, Stage};
 use crate::records::{AuthorityGuard, RecordClient, RecordError};
 use cmaeg_core::{
     ids::RecordId,
@@ -166,17 +167,24 @@ impl PlanStore {
         for (index, chunk) in candidate.bytes.chunks(CHUNK_BYTES).enumerate() {
             candidate.live((self.clock)())?;
             let bytes = codec::chunk_bytes(&candidate.manifest, index, chunk)?;
-            self.create_immutable(
-                &candidate.manifest.chunk_id(index),
-                &candidate.manifest,
-                &bytes,
+            trace::admission(
+                Stage::ChunkWrite,
+                self.create_immutable(
+                    &candidate.manifest.chunk_id(index),
+                    &candidate.manifest,
+                    &bytes,
+                ),
             )
             .await?;
         }
         candidate.live((self.clock)())?;
         let manifest = &candidate.manifest;
         let bytes = codec::encode(manifest)?;
-        let result = self.create_root(manifest, &bytes, github_guard).await;
+        let result = trace::record(
+            Stage::RootWrite,
+            self.create_root(manifest, &bytes, github_guard),
+        )
+        .await;
         if matches!(&result, Err(RecordError::GuardConflict { .. })) {
             return Err(AdmissionError::GuardConflict);
         }
@@ -184,7 +192,7 @@ impl PlanStore {
             Ok(()) | Err(RecordError::Conflict { .. }) | Err(RecordError::Unavailable(_)) => {
                 // A lost response is resolved by reading the immutable root. A
                 // competing same-body candidate may have a different routing plan.
-                match self.load(&manifest.identity).await {
+                match trace::admission(Stage::RootReadback, self.load(&manifest.identity)).await {
                     Ok(Some(plan)) => self.queue_committed(same_request(candidate, plan)?).await,
                     Ok(None) if matches!(result, Err(RecordError::Conflict { .. })) => {
                         Err(AdmissionError::ExpiredOrUnavailable)
@@ -200,6 +208,13 @@ impl PlanStore {
     /// A retained record can be read after event authority expires. This never
     /// renews its event references or authorizes a new provider turn.
     pub async fn load(
+        &self,
+        identity: &EventIdentity,
+    ) -> Result<Option<AdmittedPlan>, AdmissionError> {
+        trace::admission(Stage::RootLookup, self.load_observed(identity)).await
+    }
+
+    async fn load_observed(
         &self,
         identity: &EventIdentity,
     ) -> Result<Option<AdmittedPlan>, AdmissionError> {
@@ -263,8 +278,7 @@ impl PlanStore {
     ) -> Result<AdmittedPlan, AdmissionError> {
         let mut payload = Vec::with_capacity(manifest.payload_len);
         for index in 0..manifest.chunk_hashes.len() {
-            let bytes = self
-                .read(&manifest.chunk_id(index))
+            let bytes = trace::admission(Stage::ChunkRead, self.read(&manifest.chunk_id(index)))
                 .await?
                 .ok_or(AdmissionError::MissingChunk)?;
             payload.extend(codec::open_chunk(manifest, index, &bytes)?);
