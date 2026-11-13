@@ -317,8 +317,8 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         agent_id: &AgentSlot,
     ) -> crate::Result<Socket> {
-        self.connect_with_prepared_stream(endpoint, agent_id, None)
-            .await
+        let url = endpoint.conversation(agent_id.as_str())?;
+        self.connect_url(endpoint, agent_id, url, None).await
     }
 
     async fn connect_with_prepared_stream(
@@ -327,7 +327,17 @@ impl ProviderHostedControlTransport {
         agent_id: &AgentSlot,
         prepared: Option<crate::agent_sandbox::RuntimeStream>,
     ) -> crate::Result<Socket> {
-        let mut url = endpoint.conversation(agent_id.as_str())?;
+        let url = endpoint.conversation(agent_id.as_str())?;
+        self.connect_url(endpoint, agent_id, url, prepared).await
+    }
+
+    pub(super) async fn connect_url(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        _agent_id: &AgentSlot,
+        mut url: url::Url,
+        prepared: Option<crate::agent_sandbox::RuntimeStream>,
+    ) -> crate::Result<Socket> {
         url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
             .as_str()
@@ -412,3 +422,6 @@ mod history;
 
 #[path = "provider_binding.rs"]
 mod binding;
+
+#[path = "provider_capacity_proof.rs"]
+mod capacity_proof;
