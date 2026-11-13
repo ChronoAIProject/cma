@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod wire;
+
 /// Authenticated receiver control, independent of desktop frame backpressure.
 #[async_trait::async_trait]
 pub trait DesktopOwnershipControl: Send + Sync {

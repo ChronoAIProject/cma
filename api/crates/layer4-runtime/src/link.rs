@@ -1,5 +1,6 @@
 mod conversation;
 mod desktop;
+mod desktop_control;
 mod ownership;
 mod upload;
 use conversation::conversation;
@@ -61,6 +62,18 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             post(capacity_recovery),
         )
         .route("/runtime/desktop", get(desktop::websocket))
+        .route(
+            "/runtime/desktop/ownership/challenge",
+            post(desktop_control::challenge).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route(
+            "/runtime/desktop/ownership/confirm",
+            post(desktop_control::confirm).layer(DefaultBodyLimit::max(8192)),
+        )
+        .route(
+            "/runtime/desktop/ownership/revoke",
+            post(desktop_control::revoke).layer(DefaultBodyLimit::max(8192)),
+        )
         .route("/runtime/agents/{agent_id}/history", get(history))
         .route(
             "/runtime/checkpoints/{reference}",
