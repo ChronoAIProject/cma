@@ -284,3 +284,24 @@ async fn changed_head_keeps_tail_integrity_failure_visible() {
 
 #[path = "stream_wake_race_tests.rs"]
 mod races;
+
+#[tokio::test(start_paused = true)]
+async fn buffered_gap_resumes_immediately_after_durable_catchup() {
+    let (mut open, f, _) = prepared(true).await;
+    open.discarded_fragments = 3;
+    open.watching = None;
+    append(
+        &f.store,
+        AgentLogKind::OwnerMessage {
+            content: "before gap".into(),
+        },
+    )
+    .await;
+    open.fill().await.unwrap();
+    let start = Instant::now();
+    let mut body = response(open).into_body().into_data_stream();
+    assert!(next_wire(&mut body).await.contains("before gap"));
+    let wire = next_wire(&mut body).await;
+    assert!(wire.contains("cma.agent.live_gap") && wire.contains("\"frames\":3"));
+    assert_eq!(start.elapsed(), Duration::ZERO);
+}
