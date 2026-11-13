@@ -312,15 +312,15 @@ jobs:
           # this repository never declares a Deployment or Service for it.
           expected=$(printf '%s\n' \
             infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
-            infra/api/secret.yaml infra/api/service.yaml infra/api/pdb.yaml \
+            infra/api/secret.yaml infra/api/service.yaml \
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
-            infra/api/gcpbackendpolicy.yaml \
+            infra/api/gcpbackendpolicy.yaml infra/api/hpa.yaml infra/api/pdb.yaml \
             infra/cmaeg/Dockerfile infra/cmaeg/configmap.yaml infra/cmaeg/deployment.yaml \
             infra/cmaeg/secret.yaml infra/cmaeg/service.yaml \
             infra/cmaeg/serviceaccount.yaml \
             infra/cmaeg/httproute.yaml infra/cmaeg/healthcheckpolicy.yaml \
-            infra/cmaeg/gcpbackendpolicy.yaml \
+            infra/cmaeg/gcpbackendpolicy.yaml infra/cmaeg/hpa.yaml infra/cmaeg/pdb.yaml \
             infra/image-manager/Dockerfile \
             infra/image-manager/configmap.yaml \
             infra/image-manager/deployment.yaml \
@@ -984,6 +984,10 @@ jobs:
           ruby-version: "3.4"
       - name: HTTPRoute ownership
         run: ruby .github/scripts/check-http-route-backends.rb
+      - name: CMA replica and autoscaling contracts
+        run: |
+          ruby .github/scripts/cma-scale-manifest-contract.rb
+          ruby .github/scripts/cma-scale-manifest-tests.rb
       - name: Retained Web asset inventory
         run: |
           ruby .github/scripts/web-asset-retention-contract.rb

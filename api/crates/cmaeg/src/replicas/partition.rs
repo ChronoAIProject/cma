@@ -70,6 +70,10 @@ impl PartitionLease {
 }
 
 impl Partitions {
+    pub(crate) fn membership(&self) -> Membership {
+        self.membership.clone()
+    }
+
     pub(crate) fn clock(&self) -> Arc<dyn Fn() -> i64 + Send + Sync> {
         let membership = self.membership.clone();
         Arc::new(move || membership.now_seconds())
