@@ -1,6 +1,7 @@
 //! Bounded process observations. Durable admission/terminal accounting belongs
 //! to the Mongo ledger; these counters never assert exactly-once work effects.
 pub(crate) mod browser;
+pub(crate) mod command_reconcile;
 pub(crate) mod http;
 pub(crate) mod request;
 pub(crate) mod server;
@@ -24,6 +25,10 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
         "cma_telemetry_sample_timestamp_seconds",
         "Last local diagnostics sample; not scrape time"
     );
+    metrics::describe_counter!(
+        "cma_document_storage_receipt_mismatch_total",
+        "Document storage receipt integrity mismatches by field"
+    );
     metrics::describe_gauge!(
         "cma_readiness_check_success",
         "Last completed Mongo readiness result; also check its timestamp"
@@ -37,6 +42,7 @@ pub(crate) fn install() -> Result<PrometheusHandle, String> {
     work::initialize();
     browser::initialize();
     worker::initialize();
+    command_reconcile::initialize();
     sample();
     Ok(handle)
 }

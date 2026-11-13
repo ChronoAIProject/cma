@@ -135,7 +135,8 @@ Typed domain/prepared updates, derived persistent strings and diagnostic
 formatting, pending RPC bookkeeping, fold/serialization copies, codec fragments,
 desktop output and global assemblies remain separate owners under #1702. The
 component reservations (raw 16 MiB, permission 8 MiB, live fragment 32 MiB,
-parsed tree 32 MiB, scratch 13 MiB and sign-in notices 8 MiB) total 109 MiB; the remaining aggregate
+parsed tree 32 MiB, scratch 13 MiB, sign-in notices 8 MiB and metadata/usage 8 MiB)
+total 117 MiB; the remaining aggregate
 128 MiB envelope must include all other owners and allocation metadata. This
 slice does not establish the final aggregate or 70% RSS acceptance criterion.
 
@@ -159,3 +160,7 @@ for the selected-field allowance, final-owner contract and remaining scope.
 Typed session, permission and terminal decoding also use bounded Serde diagnostic
 construction under this policy. See [typed diagnostics](CMA_Typed_Diagnostics.md)
 for compatibility tests and the remaining typed allocation scope.
+
+Context-goal observations retain the admitted original frame and compare their
+session identifier without copying it. See [context-goal ownership](CMA_Context_Goal_Ownership.md)
+for complete-frame retention, safety behavior and remaining independent copies.
