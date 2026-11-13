@@ -10,7 +10,7 @@ pub(super) async fn forward_turn(
     events_tx: mpsc::Sender<ResponsesEvent>,
     _permit: super::permits::Permit,
     complete: super::transport::Completion,
-    mut trace: Option<crate::telemetry::turn_trace::ProviderReader>,
+    mut trace: Option<Box<crate::telemetry::turn_trace::ProviderReader>>,
     association: Option<
         std::sync::Arc<std::sync::OnceLock<crate::telemetry::turn_trace::Association>>,
     >,
@@ -29,7 +29,7 @@ pub(super) async fn forward_turn(
                 break;
             }
         };
-        let event = match super::responses::parse_event_with_trace(&frame, trace.as_mut()) {
+        let event = match super::responses::parse_event_with_trace(&frame, trace.as_deref_mut()) {
             Ok(event) => event,
             Err(_) => {
                 tracing::warn!("provider response event was rejected");

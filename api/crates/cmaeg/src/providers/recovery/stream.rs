@@ -17,7 +17,7 @@ pub(super) async fn forward(
     sender: mpsc::Sender<Result<RecoveryEvent, ProviderError>>,
     _permit: super::super::permits::Permit,
     deadline: tokio::time::Instant,
-    mut trace: Option<ProviderReader>,
+    mut trace: Option<Box<ProviderReader>>,
 ) {
     let mut bytes = 0usize;
     let wire = response.bytes_stream().map(move |chunk| {
@@ -37,7 +37,7 @@ pub(super) async fn forward(
             frame = frames.next() => frame,
         };
         let event = match frame {
-            Some(Ok(frame)) => decode(&frame, &mut identity, next, trace.as_mut()),
+            Some(Ok(frame)) => decode(&frame, &mut identity, next, trace.as_deref_mut()),
             Some(Err(error)) => Err(ProviderError::Sse(error.to_string())),
             None => Err(ProviderError::Sse(
                 "durable replay ended before completion".into(),

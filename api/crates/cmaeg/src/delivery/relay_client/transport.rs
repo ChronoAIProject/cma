@@ -45,7 +45,9 @@ impl RelayTransport for HttpTransport {
         timeout: Duration,
     ) -> BoxFuture<'_, Result<HttpReply, TransportError>> {
         Box::pin(async move {
-            let trace = turn_trace::start(Stage::ChannelPart);
+            // OFF keeps the transport future compact and performs no allocation
+            // for the larger diagnostic state retained across the HTTP await.
+            let trace = turn_trace::start(Stage::ChannelPart).map(Box::new);
             self.exchange(url, headers, body, timeout, trace).await
         })
     }
@@ -57,7 +59,7 @@ impl HttpTransport {
         mut headers: HeaderMap,
         body: Vec<u8>,
         timeout: Duration,
-        trace: Option<Operation>,
+        trace: Option<Box<Operation>>,
     ) -> Result<HttpReply, TransportError> {
         if let Some(trace) = &trace {
             trace.headers(&mut headers);

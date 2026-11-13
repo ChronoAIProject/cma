@@ -55,7 +55,11 @@ fn turn_trace_producer_and_admission_reader_stay_within_synchronous_budgets() {
         "{}",
         json!({"boundary_p99_ns":boundary_p99_ns,
         "source_reader_p95_ns":admission_p95_ns,"boundaries":boundary.len(),
-        "admissions":admission.len(),"dropped":writer.dropped()})
+        "admissions":admission.len(),"dropped":writer.dropped(),
+        "reader_inline_bytes":std::mem::size_of::<Option<ProviderReader>>(),
+        "reader_slot_bytes":std::mem::size_of::<Option<Box<ProviderReader>>>(),
+        "operation_inline_bytes":std::mem::size_of::<Option<Operation>>(),
+        "operation_slot_bytes":std::mem::size_of::<Option<Box<Operation>>>()})
     );
     assert!(
         boundary_p99_ns < 100_000,
