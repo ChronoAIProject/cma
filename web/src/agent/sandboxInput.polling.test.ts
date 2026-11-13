@@ -47,3 +47,30 @@ it('does not refetch Sandbox detail for rerenders or a focus storm', async () =>
   expect(read).toHaveBeenCalledTimes(1);
   hook.unmount();
 });
+
+it('honors a Sandbox 429 through hide/show cycles without renewing input authority', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  const { ApiError } = await import('@chronoai/cma-sdk');
+  const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+  const read = vi
+    .fn()
+    .mockRejectedValueOnce(new ApiError(429, 'Busy', undefined, undefined, 20_000))
+    .mockResolvedValue(sandboxFixture());
+  const client = agentClient({ readSandbox: read });
+  const hook = renderHook(() => useSandboxInput(client, 'agt_1', 'sbx_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(hook.result.current.inputAvailability.allowed).toBe(false);
+  for (let i = 0; i < 5; i++) {
+    hidden.mockReturnValue(true);
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+    hidden.mockReturnValue(false);
+    act(() => document.dispatchEvent(new Event('visibilitychange')));
+  }
+  await act(() => vi.advanceTimersByTimeAsync(20_499));
+  expect(read).toHaveBeenCalledTimes(1);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.inputAvailability.allowed).toBe(true);
+  hook.unmount();
+});

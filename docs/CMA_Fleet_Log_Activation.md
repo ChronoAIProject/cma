@@ -42,7 +42,7 @@ qualification; percentage 0 is not evidence that the old binary is safe.
 
 ### Checked-in stage controls
 
-`infra/api/agent-log-stages/{off,10,50,100}.json` are explicit ConfigMap merge
+`.github/agent-log-stages/{off,10,50,100}.json` are explicit ConfigMap merge
 patches for the release controller. They are not included by the base deployment;
 the base ConfigMap remains at 0. Each patch clears the old explicit ID cohort,
 sets the fleet percentage, and closes the independent process switches for
