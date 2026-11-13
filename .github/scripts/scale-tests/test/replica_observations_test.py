@@ -34,6 +34,13 @@ class ObservationTests(unittest.TestCase):
             b"replica_http replicas=1 ownership=true ordinal=1 status=999 elapsed_ms=1\n")
         self.assertEqual(result, {'cohort_stage_observations': [], 'ingress_header_observations': []})
 
+    def test_cutoff_mid_record_cannot_invent_a_complete_boundary_or_status(self):
+        for partial in [
+                b"replica_stage replicas=3 ownership=true phase=cohort state=end ordinal=0 elapsed_ms=12",
+                b"replica_http replicas=3 ownership=true ordinal=1 status=202 elapsed_ms=12"]:
+            self.assertEqual(phase_observations(partial), {
+                'cohort_stage_observations': [], 'ingress_header_observations': []})
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -134,7 +134,9 @@ after the inner future returns and its local fixtures have dropped.
 `cohort_stage_observations` retain fixed phase/start/end names, fixture process
 ordinals and monotonic milliseconds relative to that cohort. Values from different
 cohort origins must not be subtracted. An unmatched start remains censored; an
-end means only that boundary returned. `ingress_header_observations` retain status
+end means only that boundary returned. The emitter always ends a record with a
+newline; an unfinished final record is discarded because cutoff may truncate its
+last numeric field. `ingress_header_observations` retain status
 codes as each response arrives, before waiting for other replicas. A202 header is
 not proof of durable admission or delivery. No identities, bodies, credentials or
 free-form errors enter these new fields. Earlier receipts remain unchanged.

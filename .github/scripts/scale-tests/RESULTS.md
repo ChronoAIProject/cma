@@ -117,9 +117,12 @@ private fixture directories or labelled scale containers. See
 `diagnostic-outcome-c08.json` and `cleanup-c08.json`. Earlier receipts remain
 unchanged. The subsequent source-only instrumentation adds fixed stage start/end markers
 and per-replica HTTP header statuses. It preserves cohort-local monotonic times
-and marks completion after local teardown.27 Python tests, pinned fmt/strict
-cmaeg Clippy and the Rust diagnostic unit test pass; the new parser has100%
-executable-line coverage in its two focused tests. No new Mongo invocation has
+and marks completion after local teardown. The6f580ea84 instrumentation received
+scoped architect GO. A final parser correction discards unterminated records to
+avoid interpreting a truncated numeric field.28 Python tests and lint pass; its
+three focused parser tests cover23/23 executable lines. Rust/emitter bytes remain
+unchanged from the passing pinned fmt/strict cmaeg Clippy and diagnostic unit
+gates. See evidence/marker-cutoff-gates.json for this additive correction. No new Mongo invocation has
 exercised these markers. Exact-source review and a separate authorized next
 candidate/window remain required; the deadline is unchanged.
 
