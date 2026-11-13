@@ -381,3 +381,83 @@ that outcome.
   remains blocked on E1/E2/E3, approval of automatic cleanup, qualified backups
   and actual deployed writer/storage evidence. Do not substitute fixture PASS
   for provider or production acceptance.
+
+## 2026-11-13-am-document-lifecycle-and-purge
+
+- **Service, issue and phase:** Agent Manager, #1479 PR-6; additive expansion,
+  default-closed deletion and purge writers. Prerequisites are
+  `2026-11-13-am-document-source-commit-state`,
+  `2026-11-13-am-document-reclaim` and the separately scoped maintenance client.
+  The release owner records source SHA, executable checksum, image digest,
+  writer census and deployment/config receipts before activation.
+- **Stores and writers:** new Agent Manager collection
+  `cma_document_lifecycle`, `document_schema_version: 1`, keyed by document ID;
+  indexes `{state: 1, "purge.next_at": 1}` and `{owner_hash: 1}`. Startup schema
+  creation/version guard, exact isolated grants, shared-schema authority and the
+  retirement census include this collection. Compatible create writes `live` in
+  the metadata/source-commit transaction while deletion is enabled. Owner DELETE
+  removes `cma_document_artifacts` and writes `deleting` plus deletion receipt
+  hashes, revision-object snapshot and purge schedule in one transaction.
+  Existing document quota rows become `deleting`; an existing owner fence
+  advances. Neither deletion nor unledgered purge upserts quota rows.
+- **Formats and privacy:** lifecycle stores `owner_hash`, `state`, `created_at`,
+  `deletion{deleted_at, revision, receipt_key, fingerprint}`, at most 256 `objects`
+  keys and `purge{pass, next_at, attempts, lease{holder, fence, expires_at}, blocked,
+  completed_at}` plus optional `purge.position` for bounded batch/page progress
+  and `purge.last_reserved_at`, the latest reservation timestamp captured under
+  the deletion transaction's owner fence. Persisting that timestamp avoids a
+  complete ledger scan on every four-object wave.
+  Missing position starts the current pass; the position holds only object keys
+  and opaque bounded listing cursors. It contains no source, title, subject, comments, shares or
+  original receipt body. The main document envelope/codec is unchanged; old
+  readers see an absent main row. Tombstones have no TTL and document IDs are
+  never reused.
+- **Reader floor and gates:** before opening
+  `CHRONO_DOCUMENT_DELETION_ENABLED`, **all API processes** must run this version
+  and this version must be the pinned rollback target. An older create writer
+  does not check tombstones and can resurrect a deleted ID with the same
+  idempotency key. Deploy with switches false, prove all-writer convergence and
+  drain, then enable deletion uniformly. Compatible flag-off create performs
+  one tombstone point read before its plain insert. These two operations are not
+  atomic: an OFF create that passed its read can insert after a racing ON delete.
+  Drain every OFF create request before admitting deletion and never mix ON/OFF
+  writers during deletion admission. Flag-on create atomically inserts the
+  unique lifecycle identity. No non-document request gains a database read.
+  Quota, reclaim and storage capability gates remain independent and default-off.
+- **Migration and work bounds:** no backfill or destructive rewrite is needed.
+  Existing documents acquire lifecycle on deletion; only new gated creates write
+  `live`. Each background step handles one document under the shared 30-second
+  work deadline with a 90-second holder/fence lease and at most four deletes in
+  flight. A durable substep lists one page or deletes one wave of at most four
+  keys, then saves its position, preventing repeated timeout from starving later
+  objects in a large document. Every state write checks the unexpired lease. Pass two waits until the
+  last reservation/deletion plus ten minutes and lists again to catch late PUTs.
+  A 429 retains the current step and schedules retry. Storage calls stay outside
+  database transactions. Unsupported deletion persists blocked and never releases
+  accounting or claims completion.
+- **Counter release and recovery:** the purge release transaction serializes with
+  reserve through the existing owner fence, removes all actual document object
+  rows and its document reservation, validates nonnegative counts and decrements
+  only those rows, then marks lifecycle `purged`. Unknown commits reconcile from
+  a snapshot at operation time. Replays and competing stores release once.
+  Reclaim yields lifecycle-owned objects and cannot release a document slot while
+  any lifecycle exists. With no quota rows, purge only completes lifecycle.
+- **Recovery and backup:** retain the private inventory, Mongo/object recovery
+  unit, storage finality/scope evidence, all-writer census, enabled-switch record
+  and qualified rollback image. A backup restore must preserve tombstones and
+  deletion progress so restored metadata cannot revive deleted IDs. A flag cannot
+  restore removed objects. Do not roll back below this reader floor or delete a
+  tombstone to repair a failure. The target is one-hour purge; alert after
+  24 hours and escalate before seven days. E1/E2 absence keeps physical cleanup
+  blocked and prevents production deletion acceptance.
+- **Cross-plan dependency:** `origin/develop` includes #1500's Web design but no
+  account-erasure directory implementation at this change's baseline. #1500 must
+  add `cma_document_lifecycle` to its directory with owner-hash scope and object
+  ledger classification when that directory lands, preserving its CI equality
+  with `isolation::COLLECTIONS`.
+- **Completion:** verify owner-only immediate loss of every access path,
+  stale-revision/idempotency failures, flag-off refusal, late-create rejection
+  with either flag value, reserve/delete serialization, two-pass late-PUT cleanup,
+  exactly-once release across stores, expired-holder refusal, pending usage and
+  old-codec absence against the disposable replica set. Fixture success does not
+  replace storage-owner finality evidence or authorize production activation.

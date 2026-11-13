@@ -23,7 +23,7 @@ exposed under `/event-gateway` on the same origin with its own
 | Bots | Create and manage owner Bots through CMAEG, inspect progress, test, enable, disable, rotate credentials and delete. |
 | Triggers and Launches | Publish visitor entry points, placements and embeds; admit and observe visitor-owned work and service connections. |
 | Provider and gateway | Manage CMAEG provider bindings; admit provider turns and retrieve immutable full event context. |
-| Documents and usage | Manage independent documents and sharing; query owner document, retained-byte and source-object quota usage through `GET /api/v1/usage/documents`. |
+| Documents and usage | Manage independent documents, owner deletion and sharing; query owner document, retained-byte and source-object quota usage through `GET /api/v1/usage/documents`. |
 | Operations | Manage platform settings, defaults and authorized inventory; inspect activity and conformance. |
 | Auth and discovery | Browser sign-in/session/logout, OpenAPI, conformance and Agent-card discovery. |
 
@@ -526,7 +526,10 @@ required review of legacy exceptions before enablement.
 `GET /api/v1/usage/documents` is an authenticated private read. A ready, enabled
 ledger reports `enforcement: enforced` and `used`/`limit` counters for `documents`,
 `bytes` and `objects`. Off or unready accounting reports `not_enforced` with all
-three counters null. The query includes retained reservations for older revisions
+three counters null. `pending_deletions` counts owner deleting lifecycle records
+when deletion is enabled, independently of quota enforcement; it is null while
+deletion is disabled. Charged capacity remains used until purge releases it.
+The query includes retained reservations for older revisions
 and uncertain writes and never includes another owner's documents through a
 share. The typed SDK methods are TypeScript `client.usage.documents(options?)`
 and Rust `client.usage().documents().await`.
@@ -537,3 +540,21 @@ Quota refusal is HTTP 429 `resource-limit-reached`, with dimension-specific
 usage before the refused reservation; no `Retry-After` is supplied. Per-document
 metadata bounds continue to use `document_capacity`. See
 [document quotas](CMA_Document_Quotas.md) for activation gates and examples.
+
+## Owner document deletion
+
+`DELETE /api/v1/documents/{id}` is an owner-only terminal command, enabled by the
+strict default-off `CHRONO_DOCUMENT_DELETION_ENABLED` switch. Supply
+`Idempotency-Key` and `{"expected_revision": n}`. A 200 `DocumentDeletion` response
+contains `id`, `revision`, `deleted_at` and `purge` (`pending`, `complete` or
+`blocked`). The transaction removes the main record and writes a minimal durable
+tombstone. All document access and discoverability end immediately; IDs never
+become live again. An exact retry returns the original deletion and current
+cleanup state. Changed-body retries or stale revisions conflict with 409;
+non-owners see 404. A closed switch returns 503
+`document_deletion_unavailable`; unavailable persistence returns
+`document_unavailable`. Physical cleanup is blocked until storage capability is
+proved. The SDKs expose typed deletion methods; TypeScript accepts
+`client.documents.delete(id, { expectedRevision, idempotencyKey })`. See
+[document artifacts](Document_Artifacts.md) for tombstone privacy and purge
+deadlines and [document quotas](CMA_Document_Quotas.md) for accounting release.

@@ -26,8 +26,35 @@ update only documents actually authored through that Agent's capability. A
 REST-supplied origin label grants no runtime authority.
 
 Documents remain after their originating Sandbox or Agent is removed. Deleting
-a Sandbox does not delete this independent registry. This release provides no
-document deletion API; document sources and revision references are retained.
+a Sandbox does not delete this independent registry. With
+`CHRONO_DOCUMENT_DELETION_ENABLED=true`, an owner can explicitly delete a document
+through `DELETE /api/v1/documents/{id}` with an `Idempotency-Key` and
+`{"expected_revision": n}`. The transaction removes the main record immediately:
+owner, direct-share, secret-link, comment, list/search and runtime-publication
+access then return not found. A stale revision conflicts; a non-owner sees not
+found. The document ID is terminal and is never reused, including by a late
+create retry with the original key, under the required uniform deletion-enabled
+writer deployment. Before enabling deletion, drain all in-flight creates from
+processes with deletion disabled. Their compatibility tombstone point read and
+plain insert are separate operations; mixed ON/OFF overlap cannot provide the
+same atomic identity fence. See the activation requirements in
+[Document quotas](CMA_Document_Quotas.md).
+
+The independent `cma_document_lifecycle` tombstone retains only the document ID,
+owner hash, deletion time/revision, hashed receipt identity, request fingerprint
+and at most 256 revision object keys. It retains no title, source, subject,
+comments, shares or original receipt body. An exact deletion retry replays its
+original deletion time/revision with the current `pending`, `complete` or
+`blocked` purge state. Reusing the deletion key with a different body conflicts.
+The default-off deletion switch returns 503 `document_deletion_unavailable`.
+
+Background purge deletes known objects twice, with the second pass after the
+last reservation or deletion plus a ten-minute writer lease. Quota remains
+charged until a fenced transaction proves cleanup and releases actual ledger
+rows. The target is completion within one hour, with an alert after 24 hours and
+escalation before the seven-day live-data limit. Unproved storage deletion or
+listing support leaves `blocked: storage_deletion_unsupported`; immediate access
+revocation still succeeds, and physical deletion is never claimed complete.
 
 ## Storage deployment contract
 

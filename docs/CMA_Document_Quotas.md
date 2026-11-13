@@ -26,8 +26,10 @@ existing storage-unavailable response.
 Reads, history, title-only changes, sharing and owner grant/link revocation do not
 reserve source storage. Exact committed metadata retries precede quota admission.
 Runtime publication revalidates authority before reservation and after upload.
-Document deletion and the separate #1480 retained-data deletion acceptance remain
-separate work. The gated reclaim worker below handles ledgered orphan sources.
+Owner document deletion is separately gated and immediately removes access.
+Its purge workflow below releases charged capacity only after object cleanup.
+The gated reclaim worker handles ledgered orphan sources. Account-wide deletion
+and the separate #1480 retained-data deletion acceptance remain separate work.
 
 ## Quota refusals and owner usage
 
@@ -59,7 +61,8 @@ With the quota switch enabled and a ready activation marker, it returns:
   "enforcement": "enforced",
   "documents": {"used": 12, "limit": 100},
   "bytes": {"used": 4096, "limit": 1073741824},
-  "objects": {"used": 18, "limit": 32768}
+  "objects": {"used": 18, "limit": 32768},
+  "pending_deletions": 1
 }
 ```
 
@@ -71,13 +74,89 @@ TypeScript exposes `client.usage.documents(options?)`; Rust exposes
 `client.usage().documents().await`.
 
 When the switch is off, the marker is absent or the ledger is not ready, the
-response is `{"enforcement":"not_enforced","documents":null,"bytes":null,"objects":null}`.
+response has `"enforcement":"not_enforced"` and null `documents`, `bytes` and
+`objects` counters.
 No usage or remaining capacity is inferred from document metadata or object
 listing. An unauthenticated request returns 401 `not_authenticated`; a principal
 without document authority returns 404 `document_not_found`. Failed reads or
 invalid owner counters return 503 `document_unavailable`. Marker and owner reads
 use majority concern, point lookups and a three-second total query budget.
-Reclaiming and pending-deletion counters are not exposed in this increment.
+`pending_deletions` counts this owner's `deleting` lifecycle rows through the
+`owner_hash` index with a bounded query, independently of quota activation.
+It is null while document deletion is disabled. A pending deletion continues to
+consume its document, bytes and object reservations until purge completes; do not
+show capacity as restored merely because DELETE returned success.
+
+## Owner deletion and two-pass purge
+
+`CHRONO_DOCUMENT_DELETION_ENABLED` is a strict boolean, default `false`. It
+enables owner DELETE independently of quota enforcement. DELETE checks the
+expected metadata revision, removes the main record and writes a minimal
+`cma_document_lifecycle` tombstone in one transaction. Existing document ledger
+rows become `deleting`; an existing owner fence advances without upserting any
+quota rows. Future reservations for that document return not found before upload,
+including exact object retries. Deleted document IDs never become live again.
+
+The shared worker runs purge before reclaim with its own deletion/capability
+gate. One step claims one due document for 90 seconds using a holder and
+monotonic fence. Every write also checks strict lease validity. Pass one merges
+revision snapshot keys, all object ledger rows for that owner/document and the
+maintenance client's bounded prefix listing, deduplicates them and deletes with
+at most four operations in flight. Absent objects count as successful deletion.
+Each completed substep saves `purge.position`: one bounded list page or one wave
+of at most four deletes. Cancellation can replay that wave without repeatedly
+starting a large document from its first object. Each short step claims a fresh
+90-second lease and relinquishes it when progress is saved, so no heartbeat
+renewal is needed within the 30-second worker deadline. Storage activation must
+prove that opaque listing cursors survive page deletion and durable replay.
+An invalid or expired cursor currently fails closed and retains its position;
+there is no typed cursor-reset protocol that can guarantee eventual recovery.
+A storage 429 retains the step
+and respects its retry delay. Pass two becomes due
+at `max(deleted_at, last_reserved_at) + 10 minutes`, enumerates again, deletes late
+PUTs and verifies the prefix is empty before release. Storage operations never
+run inside a database transaction.
+
+Release increments the existing owner fence, deletes every remaining object row
+regardless of state and the document reservation, and subtracts only the rows
+actually removed in that same transaction. Negative counters abort. The lifecycle
+becomes `purged` atomically with release. A second worker or replay cannot release
+the counters again. With no ledger, cleanup uses the snapshot and listing and
+marks the lifecycle purged without creating or modifying quota rows.
+
+Reclaim judgement reads lifecycle inside its transaction and leaves `deleting`
+and `purged` documents to purge. Reclaim finalization can release a document slot
+only if there is no main document, no lifecycle row and no other object row.
+Already claimed reclaim deletes can overlap purge safely: deletion is idempotent
+and actual row removal determines the single accounting release.
+
+Unproved maintenance deletion records
+`purge.blocked: storage_deletion_unsupported`, preserving the tombstone and all
+charges without advancing or reporting completion. The API reports
+`purge: blocked`. E1/E2 remain prerequisites for claiming physical cleanup.
+The operational goal is purge within one hour. Alert when
+`cma_document_purge_oldest_pending_seconds` exceeds 24 hours; escalate as the
+seven-day live-data deletion limit approaches. Monitor
+`cma_document_purge_blocked` and `cma_document_purge_total{outcome}` alongside
+reclaim backlog. The blocked gauge is 1 when the latest local observation found
+blocked purge work and 0 otherwise; it is not a count of blocked lifecycle rows.
+When deletion is enabled but storage deletion is unsupported, a bounded read-only
+background observation still reports pending age and whether any pending work
+is blocked, without claiming a purge lease or issuing object operations.
+Metrics describe observed work, not durable release receipts.
+
+Before enabling deletion, deploy this release with all new switches off to
+**every API process** and pin it as the rollback target. Older binaries do not
+check tombstones and can recreate an ID through the original create key.
+Compatible flag-off writers still point-read tombstones before insertion. That
+check refuses a tombstone already committed when it reads, but it is not atomic
+with the subsequent plain insert. An OFF create that passed its check can race
+an ON deletion and insert after it. Drain all OFF create requests before admitting
+deletion; do not run mixed ON/OFF writers while deletion is admitted. The gated
+create transaction supplies the permanent identity fence. Closing deletion does
+not reverse a tombstone or refund pending charges. See migration
+`2026-11-13-am-document-lifecycle-and-purge` and
+[document artifacts](Document_Artifacts.md) for the public access contract.
 
 ## Durable format and bounds
 
