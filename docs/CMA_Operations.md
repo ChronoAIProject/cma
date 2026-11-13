@@ -1060,6 +1060,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_MS` / `CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_FRAMES` | Strict unsigned integers; defaults `250` ms / `64` frames, bounds `1..=1000` / `1..=128`. Invalid values fail startup even when disabled. Idle timers, count bounds and semantic frames flush cumulatively. Roll back by setting the switch to `false` and rolling the API; retained runtimes replay unacknowledged frames. |
 | `CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED` | Strict boolean, default `false`. Before owned decoding, validates Ready and retained ACP JSON against 4 MiB, 8,192 nodes and 64 container levels. Requires retained-output capability; refused output is never ACKed. See [Hosted output JSON budget](CMA_Runtime_Output_JSON_Budget.md) for recovery and accounting limits. |
 | `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
+| `CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED` | Strict boolean, default `false`. Follows immediately due successful Agent stop/delete steps within the existing seven-attempt scheduled burst. Each step acquires a fresh durable claim; persisted retries, held claims, archive gates and terminal state yield normally. Does not shorten provider/funding/ledger failure backoff or change terminal proof. Disable and restart for rollback; no durable format change. |
 | `CHRONO_WORK_RETRY_POLICY_ENABLED` | Strict boolean, default `false` in code and infra. Applies durable step retry backoff and slow maintenance probes without changing work records, leases or terminal semantics. Interactive work never parks. Disable and restart to restore legacy delays for new failures; already published probes remain due within 30 minutes at the default base. See [Work-step retry policy](#work-step-retry-policy). |
 | `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` | Strict boolean, default `false`. Repeated failures of the same step/class retain one diagnostic row and update attempts/ready time under the existing lease and revision fences. First/class-changed failures and success still append. Capacity/ledger markers retain priority. Rollback resumes ordinary appends without data repair. |
 | `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication and zero-entry repeated failures within the shared cohort. Repeated retries fully audit on first use after restart and at least hourly; identical conflict snapshots can reuse history within one invocation. First markers, capacity state changes, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
@@ -2577,6 +2578,15 @@ remain release-owner work; see [the contract](CMA_Admission_Control.md).
 
 
 ### Work-step retry policy
+
+`Sandbox teardown phase observed` records a hashed Sandbox identity, persisted
+attempt count, fixed phase/outcome labels and elapsed wall milliseconds. It
+separates retained-home verification, retained runtime deletion, adoption,
+inventory, ordinary teardown, funding settlement and publication. An `ok` outcome
+means that phase returned successfully; it is not terminal deletion or CPU time.
+Use phase failures alongside the next persisted work deadline to distinguish
+execution from retry waiting. A worker's `published=true` can include a persisted
+failure and must not be counted as successful cleanup.
 
 `CHRONO_WORK_RETRY_POLICY_ENABLED` ships disabled. With it enabled, retry delays
 use the persisted attempt count before the failed attempt is published. Maintenance
