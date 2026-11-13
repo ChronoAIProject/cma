@@ -1,11 +1,23 @@
 //! Service-boundary measurements; the receiver is a fixture, not a provider.
 use super::*;
+use tracing::Instrument;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn repeated_desktop_connect_windows() {
     let mode = std::env::var("CMA_DESKTOP_LATENCY_MODE").unwrap_or_else(|_| "one".into());
     assert!(["legacy", "one", "two"].contains(&mode.as_str()));
+    // Phase-enabled runs diagnose orchestration; log formatting is part of their
+    // elapsed time, so keep them separate from the no-regression measurements.
+    let subscriber =
+        (std::env::var("CMA_DESKTOP_LATENCY_PHASES").as_deref() == Ok("1")).then(|| {
+            tracing_subscriber::fmt()
+                .json()
+                .without_time()
+                .with_env_filter("cma::desktop::connect=debug")
+                .finish()
+        });
+    let _scope = subscriber.map(tracing::subscriber::set_default);
     let f = Services::new(mode != "legacy").await;
     let mut windows = Vec::new();
     for window in 0..3 {
@@ -17,6 +29,10 @@ async fn repeated_desktop_connect_windows() {
             let started = std::time::Instant::now();
             let mut connection = service
                 .open_authorized(&f.caller, agent, f.authority())
+                .instrument(tracing::info_span!(
+                    target: "cma::desktop::connect", "desktop_connect_sample",
+                    mode = %mode, window, sample,
+                ))
                 .await
                 .unwrap();
             // Include a completed first frame so acquisition alone is not
@@ -42,6 +58,7 @@ async fn repeated_desktop_connect_windows() {
             "mongo": "real disposable replica set",
             "receiver": "in-process protocol fixture",
             "credential_proof": "trusted test proof, no provider IO",
+            "phase_diagnostics": _scope.is_some(),
             "samples": 300,
             "errors": 0,
             "windows": windows,
