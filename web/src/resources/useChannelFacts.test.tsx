@@ -73,3 +73,23 @@ it('stops a slow batch before the view timeout with four requests at most and le
   expect(requested).toHaveLength(stoppedAt);
   expect(result.current.get(ids[0]!)).toEqual(summary);
 });
+
+it('makes no hidden-tree requests and refreshes immediately when the tree becomes active', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn(async () => Response.json({ agent_id: 'agt_one', channel_usage: summary }));
+  const client = createClient({ baseUrl: 'https://fixture.invalid', fetch });
+  const { result, rerender } = renderHook(
+    ({ active }) => useChannelFacts(client, ['agt_one'], active, 'viewer'),
+    { initialProps: { active: false } },
+  );
+  await act(() => vi.advanceTimersByTimeAsync(60000));
+  expect(fetch).not.toHaveBeenCalled();
+  rerender({ active: true });
+  await act(async () => {});
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(result.current.get('agt_one')).toEqual(summary);
+  rerender({ active: false });
+  await act(() => vi.advanceTimersByTimeAsync(60000));
+  expect(fetch).toHaveBeenCalledOnce();
+  expect(result.current.size).toBe(0);
+});

@@ -6,6 +6,13 @@ import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle
 import { bootstrapInputAllowed, revivalInputAllowed } from './bootstrap';
 import { createPollDelay, sandboxPollKey } from '../sandbox/pollDelay';
 
+// Refresh at the existing cadence, leaving a full request timeout before expiry.
+// Server admission still fences checkpoint, lifecycle and current authority.
+const READ_TIMEOUT_MS = 10_000;
+const FAILURE_LIMIT = 2;
+type StaleReason = 'revalidating' | 'unavailable';
+class InvalidObservation extends Error {}
+
 export interface SandboxInputAvailability {
   readonly allowed: boolean;
   readonly notice?: string;
@@ -32,6 +39,7 @@ interface Observation {
   readonly sandboxId: string;
   readonly sandbox?: SandboxDetail;
   readonly stale: boolean;
+  readonly staleReason?: StaleReason;
   readonly observedAt?: string;
   readonly bootstrapAllowed?: boolean;
   readonly revivalAllowed?: boolean;
@@ -82,7 +90,9 @@ export function useSandboxInput(
     let visibilityEpoch = 0;
     let pollInterval = 5000;
     const readiness = createPollDelay();
-    const markStale = () => {
+    let validUntil = 0;
+    let failures = 0;
+    const markStale = (staleReason: StaleReason) => {
       if (controller.signal.aborted) return;
       setObservation((current) => ({
         scope,
@@ -90,8 +100,15 @@ export function useSandboxInput(
         sandboxId,
         sandbox: current?.scope === scope ? current.sandbox : undefined,
         stale: true,
+        staleReason,
         observedAt: current?.scope === scope ? current.observedAt : undefined,
       }));
+    };
+    const readFailed = () => {
+      failures += 1;
+      if (failures >= FAILURE_LIMIT || performance.now() >= validUntil) {
+        markStale(validUntil === 0 && failures < FAILURE_LIMIT ? 'revalidating' : 'unavailable');
+      }
     };
     const poll = () => {
       if (controller.signal.aborted || pending !== undefined || document.hidden) return;
@@ -103,9 +120,9 @@ export function useSandboxInput(
         if (controller.signal.aborted || pending !== request) return;
         request.abort();
         pending = undefined;
-        markStale();
+        readFailed();
         timer = setTimeout(poll, pollInterval);
-      }, 10_000);
+      }, READ_TIMEOUT_MS);
       deadline = timeout;
       const signal = AbortSignal.any([controller.signal, request.signal]);
       const parentRead = (async () => client.readSandbox(sandboxId, { signal }))();
@@ -126,14 +143,14 @@ export function useSandboxInput(
         .then(([sandbox, agent]) => {
           if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
           if (sandbox.id !== sandboxId)
-            throw new Error('Sandbox identity did not match the Agent.');
+            throw new InvalidObservation('Sandbox identity did not match the Agent.');
           if (
             agent !== undefined &&
             (agent.id !== agentId ||
               agent.sandbox.id !== sandboxId ||
               (workspaceId !== undefined && agent.workspace.id !== workspaceId))
           )
-            throw new Error('Bootstrap Agent identity did not match its parent.');
+            throw new InvalidObservation('Bootstrap Agent identity did not match its parent.');
           if (requestEpoch !== visibilityEpoch || document.hidden) {
             timer = setTimeout(poll, 0);
             return;
@@ -155,18 +172,33 @@ export function useSandboxInput(
               agent !== undefined &&
               revivalInputAllowed(agent, sandbox, owner),
           });
-          clearTimeout(expiry);
-          expiry = setTimeout(markStale, 10000);
           // The readiness cadence ends on a settled state. Keep the separate
           // five-second lifecycle check: Agent SSE has no full lifecycle fence.
           pollInterval = readiness.next(sandboxPollKey(sandbox), sandboxRefreshDelay(sandbox));
+          failures = 0;
+          const observedAtMs = performance.now();
+          validUntil = observedAtMs + pollInterval + READ_TIMEOUT_MS;
+          clearTimeout(expiry);
+          expiry = setTimeout(
+            () =>
+              markStale(
+                pending !== undefined && failures < FAILURE_LIMIT ? 'revalidating' : 'unavailable',
+              ),
+            validUntil - performance.now(),
+          );
           timer = setTimeout(poll, pollInterval);
         })
         .catch((error: unknown) => {
           if (controller.signal.aborted || request.signal.aborted || pending !== request) return;
-          if (error instanceof ApiError && [401, 403, 404].includes(error.status))
-            setObservation({ scope, agentId, sandboxId, stale: true });
-          else markStale();
+          if (
+            error instanceof InvalidObservation ||
+            (error instanceof ApiError && [401, 403, 404].includes(error.status))
+          ) {
+            validUntil = 0;
+            failures = FAILURE_LIMIT;
+            clearTimeout(expiry);
+            setObservation({ scope, agentId, sandboxId, stale: true, staleReason: 'unavailable' });
+          } else readFailed();
           timer = setTimeout(poll, requestEpoch === visibilityEpoch ? pollInterval : 0);
         })
         .finally(() => {
@@ -177,7 +209,13 @@ export function useSandboxInput(
     const visibilityChanged = () => {
       visibilityEpoch += 1;
       clearTimeout(timer);
-      markStale();
+      // An old visibility epoch must neither refresh authority nor block a new
+      // foreground request, even when its transport ignores cancellation.
+      pending?.abort();
+      pending = undefined;
+      clearTimeout(deadline);
+      if (document.hidden) return;
+      if (performance.now() >= validUntil) markStale('revalidating');
       poll();
     };
     document.addEventListener('visibilitychange', visibilityChanged);
@@ -214,7 +252,7 @@ export function useSandboxInput(
 }
 
 function resourceAvailability(observation: Observation | undefined): SandboxResourceAvailability {
-  if (observation === undefined)
+  if (observation === undefined || observation.staleReason === 'revalidating')
     return { state: 'checking', notice: 'Checking Sandbox resources.' };
   if (observation.stale || observation.sandbox?.lifecycle === undefined)
     return {
@@ -245,7 +283,10 @@ function inputAvailability(
   if (stale)
     return {
       allowed: false,
-      notice: 'Sandbox status is unavailable. Reconnecting.',
+      notice:
+        observation.staleReason === 'revalidating'
+          ? 'Checking Sandbox status.'
+          : 'Sandbox status is unavailable. Reconnecting.',
       savingStartedAt,
     };
   if (sandbox?.lifecycle === undefined)
