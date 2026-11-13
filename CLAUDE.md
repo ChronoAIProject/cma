@@ -15,7 +15,7 @@ their own Layer 3 directory and evidence against pinned versions.
 
 | Pod | Contains | Responsibility |
 |---|---|---|
-| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. One API replica with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. |
+| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. Staged, ownership-qualified two-replica floor with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. Activation follows `docs/CMA_Scale_Apply.md`. |
 | **Sandbox pod** | Layer 4 | One isolated CMA Sandbox containing Workspaces, Worktrees, and Agents. Many, provisioned by the sandbox provider. |
 
 The control plane never executes agent code. Sandbox pods never serve public
@@ -129,6 +129,8 @@ infra/web/service.yaml
 infra/web/gcpbackendpolicy.yaml
 infra/api/Dockerfile
 infra/api/deployment.yaml
+infra/api/hpa.yaml
+infra/api/pdb.yaml
 infra/api/configmap.yaml
 infra/api/secret.yaml
 infra/api/service.yaml
@@ -139,6 +141,8 @@ infra/api/healthcheckpolicy.yaml
 infra/api/gcpbackendpolicy.yaml
 infra/cmaeg/Dockerfile
 infra/cmaeg/deployment.yaml
+infra/cmaeg/hpa.yaml
+infra/cmaeg/pdb.yaml
 infra/cmaeg/configmap.yaml
 infra/cmaeg/secret.yaml
 infra/cmaeg/service.yaml
@@ -198,7 +202,9 @@ infrastructure this repository consumes rather than owns.
 `infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record schema in the shared `chrono-bot`
 database and Kubernetes namespace. The explicit `shared-schema` deployment mode
 uses the existing database credential; service collection ownership, validators
-and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG each run one replica. Kubernetes Secrets inject
+and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG declare two replicas and separate staged CPU HPAs (two through five).
+Activation requires the compatible ownership images, capacity gates and approved
+stages in `docs/CMA_Scale_Apply.md`; merging manifests does not apply them. Kubernetes Secrets inject
 the gateway's master keys and CMA service credential as environment variables.
 
 ### `docs/`
