@@ -1197,6 +1197,12 @@ jobs:
         env:
           CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
         run: python3 .github/scripts/web-image-watchdog-tests.py
+      - name: Browser finalization phase regression
+        if: matrix.component == 'web'
+        timeout-minutes: 2
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+        run: python3 .github/scripts/web-image-phase-tests.py
       - name: Render exact web image with stale retained assets
         if: matrix.component == 'web'
         # Includes image startup, the 240s suite and bounded evidence/cleanup time.
