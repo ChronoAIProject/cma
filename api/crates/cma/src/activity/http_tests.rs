@@ -252,3 +252,87 @@ async fn async_mode_preserves_event_time_status_actor_and_health_exclusions() {
     );
     assert!(records[0].at >= start && records[0].at <= end);
 }
+
+#[tokio::test]
+async fn configured_audit_sampling_preserves_default_reads_and_all_refusals_mutations_domain_audits(
+) {
+    use axum::http::Method;
+    use layer2_core::{ActivityAction, ActivityOutcome, SubjectId};
+    for sampling in [false, true] {
+        let store = Arc::new(Store::default());
+        let service = ActivityService::new(store.clone());
+        let router = Router::new()
+            .route(
+                "/api/v1/sandboxes/{id}",
+                get(|| async { StatusCode::OK }).post(|| async { StatusCode::CREATED }),
+            )
+            .route(
+                "/api/v1/workspaces/{id}",
+                get(|| async { StatusCode::FORBIDDEN }),
+            )
+            .route("/api/v1/admin/activity", get(|| async { StatusCode::OK }))
+            .layer(middleware::from_fn_with_state(
+                ActivityRecorder::configured(service.clone(), None, sampling),
+                super::record,
+            ));
+        let cases = [
+            (
+                Method::POST,
+                "/api/v1/sandboxes/fixture",
+                StatusCode::CREATED,
+            ),
+            (
+                Method::GET,
+                "/api/v1/workspaces/fixture",
+                StatusCode::FORBIDDEN,
+            ),
+            (Method::GET, "/api/v1/admin/activity", StatusCode::OK),
+        ];
+        for (method, path, status) in cases {
+            let mut request = Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap();
+            request
+                .extensions_mut()
+                .insert(layer1_public::AuthenticatedSubject(SubjectId::new(
+                    "fixture",
+                )));
+            assert_eq!(
+                router.clone().oneshot(request).await.unwrap().status(),
+                status
+            );
+        }
+        assert_eq!(store.records.lock().unwrap().len(), 3);
+        if !sampling {
+            for method in [Method::GET, Method::HEAD] {
+                let mut request = Request::builder()
+                    .method(method)
+                    .uri("/api/v1/sandboxes/fixture")
+                    .body(Body::empty())
+                    .unwrap();
+                request
+                    .extensions_mut()
+                    .insert(layer1_public::AuthenticatedSubject(SubjectId::new(
+                        "fixture",
+                    )));
+                assert_eq!(
+                    router.clone().oneshot(request).await.unwrap().status(),
+                    StatusCode::OK
+                );
+            }
+            assert_eq!(store.records.lock().unwrap().len(), 5);
+        }
+        // Domain/security writers continue to use the unfiltered durable port.
+        let before = store.records.lock().unwrap().len();
+        service
+            .record(&ActivityRecord::new(
+                ActivityAction::Authenticate,
+                ActivityOutcome::Succeeded,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(store.records.lock().unwrap().len(), before + 1);
+    }
+}
