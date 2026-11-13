@@ -385,6 +385,24 @@ retaining exact root/Agent incarnations and ancestry; recipient grant revision
 changes therefore do not break the independent owner stream. No read path sends
 input, changes the Agent, renews a credential or adopts another target.
 
+For buffered v2 `events/snapshot` and `events/head`, the default-off
+`CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED` path performs entry authorization,
+one current Agent snapshot, and exactly one final `validate_event_stream` call.
+The current header precedes transport cursor selection. The complete page,
+predecessor, committed-tail proof and durable bindings stay inside one
+`authorization.bounded` operation. Successful results, selector errors, dependency
+failures and timeouts all pass the final fence before returning to the transport.
+Original nonrenewing membership deadlines, owner/scope/incarnation comparisons
+and the 15-second IO bound remain authoritative.
+
+The removed intermediate checks previously released no data outside the process.
+Private reads performed before a revocation becomes visible do not authorize
+release: both their results and errors are discarded if the final fence fails.
+Page projection/serialization follows that fence synchronously, without another
+private dependency read. Public stepwise binding/read methods and SSE fill/frame
+release retain their existing bounded operations and fences. Independent security
+review of revocation and error paths is required before production activation.
+
 AG-UI run, Responses creation/streams, companions, files and attachment tickets
 still require their separately documented scopes. Shared event access alone
 cannot authorize any of them.

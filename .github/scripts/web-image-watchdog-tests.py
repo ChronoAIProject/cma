@@ -17,6 +17,10 @@ spec = importlib.util.spec_from_file_location(
 smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 ROOT = Path(__file__).resolve().parents[2]
+# #1858 measured 17.236s launch + 4.043s page creation and readiness at 25.296s.
+# 60s allows over twice that complete startup, independently of fault execution.
+STARTUP_SECONDS = 60
+SUPERVISOR_SECONDS = STARTUP_SECONDS + 30 + 30 + 20
 
 
 def supervise(directory, mode):
@@ -28,8 +32,8 @@ def supervise(directory, mode):
              "CMA_WEB_WATCHDOG_READY": str(directory / "ready.json"),
              "CMA_WEB_WATCHDOG_STARTUP": str(directory / "fixture-startup.jsonl"),
              "CMA_WEB_WATCHDOG_MODE": mode},
-        # Leave cold CI browser startup room; the full production 30s grace is used.
-        evidence=directory / "evidence", timeout=30)
+        evidence=directory / "evidence", timeout=30,
+        ready_file=directory / "ready.json", startup_timeout=STARTUP_SECONDS)
 
 
 def regression(mode, *, evidence_root=None):
@@ -47,28 +51,29 @@ def regression(mode, *, evidence_root=None):
                 "at": datetime.now(timezone.utc).isoformat(),
                 "elapsed_seconds": round(time.monotonic() - started, 3), **fields}) + "\n")
 
-    record("regression-start", readiness_seconds=25, execution_seconds=30, grace_seconds=30)
+    record("regression-start", readiness_seconds=STARTUP_SECONDS, execution_seconds=30, grace_seconds=30)
     print(f"Watchdog regression evidence: {directory}", flush=True)
     console = (directory / "runner.log").open("w")
     try:
         # This sibling is deliberately outside the supervised tree, even with a
         # separate session of its own. Ownership-based cleanup must leave it alone.
-        control = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"],
+        control = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(200)"],
                                    start_new_session=True)
         driver = subprocess.Popen([sys.executable, __file__, "--supervise", str(directory), mode],
                                   stdout=console, stderr=subprocess.STDOUT)
-        supervisor_deadline = time.monotonic() + 80
+        supervisor_deadline = time.monotonic() + SUPERVISOR_SECONDS
         record("driver-started", driver_pid=driver.pid, control_pid=control.pid)
         owned = OwnedProcesses(driver.pid)
-        deadline = time.monotonic() + 25
-        while not (directory / "ready.json").exists():
+        # The supervisor owns startup, SIGINT grace and cleanup. The observer only
+        # has a final emergency bound; it cannot reject a valid late handshake.
+        while not (directory / "ready.armed.json").exists():
             owned.capture()
-            if driver.poll() is not None or time.monotonic() >= deadline:
+            if driver.poll() is not None or time.monotonic() >= supervisor_deadline:
                 record("readiness-failed", driver_returncode=driver.returncode,
-                       deadline_expired=time.monotonic() >= deadline)
+                       deadline_expired=time.monotonic() >= supervisor_deadline)
                 raise AssertionError("Browser fixture did not reach its real-page assertion")
             time.sleep(.05)
-        record("fixture-ready")
+        record("execution-armed", **json.loads((directory / "ready.armed.json").read_text()))
         worker = json.loads((directory / "ready.json").read_text())["worker"]
         before = owned.capture()
         assert worker in before, "worker missing from owned tree"
@@ -76,19 +81,25 @@ def regression(mode, *, evidence_root=None):
                     if p.pid != driver.pid and p.pid == p.group and p.parent == worker]
         assert detached, "probe must exercise Playwright's detached browser group"
         browsers = {p.pid for p in detached}
-        if mode == "crashed":
-            os.kill(worker, signal.SIGKILL)
-        assert driver.wait(timeout=80) != 0, "worker failure must fail supervision"
+        os.kill(worker, signal.SIGSTOP if mode == "stopped" else signal.SIGKILL)
+        record("fault-injected", worker=worker)
+        assert driver.wait(timeout=max(.001, supervisor_deadline - time.monotonic())) != 0, \
+            "worker failure must fail supervision"
         evidence = directory / "evidence"
         result = json.loads((evidence / "browser-process.json").read_text())
         if mode == "stopped":
             assert result["timed_out"] and result["forced_kill"]
             assert result["returncode"] < 0
-            assert 60 <= result["elapsed_seconds"] < 80, result
+            assert result["timeout_phase"] == "execution"
+            assert 60 <= result["execution_elapsed_seconds"] < 80, result
         else:
             assert not result["timed_out"] and not result["forced_kill"]
             assert result["returncode"] != 0
-            assert result["elapsed_seconds"] < 30, result
+            assert result["execution_elapsed_seconds"] < 30, result
+        assert result["startup_timeout_seconds"] == STARTUP_SECONDS
+        assert 0 < result["startup_seconds"] < STARTUP_SECONDS, result
+        if mode == "slow-start":
+            assert result["startup_seconds"] >= 27, result
         assert result["interrupt_grace_seconds"] == 30
         assert result["cleanup_complete"], result
         assert not result["process_cleanup"]["remaining"], result
@@ -118,6 +129,8 @@ def regression(mode, *, evidence_root=None):
         print(json.dumps({"real_browser_watchdog": "passed", "mode": mode, "browser_groups": len(browsers),
                           "owned_processes": len(recorded),
                           "elapsed_seconds": result["elapsed_seconds"],
+                          "startup_seconds": result["startup_seconds"],
+                          "execution_seconds": result["execution_elapsed_seconds"],
                           "grace_seconds": result["interrupt_grace_seconds"],
                           "diagnostic_events": len(events), "remaining_processes": 0,
                           "unrelated_control_alive": True}), flush=True)
@@ -127,9 +140,8 @@ def regression(mode, *, evidence_root=None):
     finally:
         try:
             if driver is not None:
-                # The 25s readiness assertion still fails at 25s. Let the existing
-                # 30s execution + 30s grace supervisor retain evidence and clean up
-                # before the same bounded emergency fallback removes its tree.
+                # Let the bounded supervisor retain evidence and clean up before
+                # the emergency fallback removes its tree, including during startup.
                 if driver.poll() is None:
                     record("await-supervisor")
                 while driver.poll() is None and time.monotonic() < supervisor_deadline:

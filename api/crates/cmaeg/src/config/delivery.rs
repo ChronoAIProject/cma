@@ -1,6 +1,7 @@
 use super::{positive_duration, ConfigError};
 use std::{env, time::Duration};
 pub const CMAEG_NYXID_REPLY_TIMEOUT_MS: &str = "CMAEG_NYXID_REPLY_TIMEOUT_MS";
+pub const CMAEG_NYXID_COMMONMARK_RELAY_ENABLED: &str = "CMAEG_NYXID_COMMONMARK_RELAY_ENABLED";
 pub const CMAEG_NYXID_COMPLETE_REPLIES: &str = "CMAEG_NYXID_COMPLETE_REPLIES";
 pub const CMAEG_NYXID_NATIVE_MEDIA_ENABLED: &str = "CMAEG_NYXID_NATIVE_MEDIA_ENABLED";
 pub const CMAEG_RELAY_TEXT_EDITS_ENABLED: &str = "CMAEG_RELAY_TEXT_EDITS_ENABLED";
@@ -55,6 +56,10 @@ impl DeliveryConfig {
         })
     }
 }
+pub(crate) fn nyxid_commonmark_relay_from_env() -> Result<bool, ConfigError> {
+    super::routing::write_flag(CMAEG_NYXID_COMMONMARK_RELAY_ENABLED)
+}
+
 pub(crate) fn nyxid_complete_replies_from_env() -> Result<bool, ConfigError> {
     complete_replies(env::var(CMAEG_NYXID_COMPLETE_REPLIES))
 }

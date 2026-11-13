@@ -7,6 +7,8 @@ metadata:
     app.kubernetes.io/name: cma-event-gateway
     app.kubernetes.io/part-of: cma
 data:
+  # Metadata-only diagnostics; enable after reader/counterpart acceptance.
+  CMAEG_NYXID_TURN_TRACE_ENABLED: "false"
   CMAEG_GITHUB_ENABLED: "true"
   # Recorded production state after the verified 2026-11-10 release.
   # These gates were already live; this change records their existing values.
@@ -167,7 +169,7 @@ data:
   # Recovery reads do not enable the durable dispatcher or retry a turn POST.
   CMAEG_PROVIDERS: >-
     [{"slug":"cma_codex","base_url":"http://example-host-01.example-namespace.svc","kind":"responses_http","paths":{"agent_card":"/.well-known/agent-card.json","binding":"/api/v1/cmaeg/bindings/{binding_id}","conversation":"/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v2/responses","recovery":{"response":"/api/v2/responses/{response_id}","events":"/api/v2/responses/{response_id}/events"},"preparation":{"inspection":"/api/v1/cmaeg/bindings/{binding_id}/preparation-inspections","reservation":"/api/v1/cmaeg/bindings/{binding_id}/preparations"}},"max_inflight":256},{"slug":"nyxbot","base_url":"https://nyx-api.chrono-ai.fun","kind":"responses_http","paths":{"agent_card":"/api/v1/nyxbot/agent-card","binding":"/api/v1/nyxbot/bindings/{binding_id}","conversation":"/api/v1/nyxbot/bindings/{binding_id}/conversations/{conversation_id}","responses":"/api/v1/nyxbot/responses","recovery":{"response":"/api/v1/nyxbot/responses/{response_id}","events":"/api/v1/nyxbot/responses/{response_id}/events"}},"max_inflight":256}]
-  CMAEG_MEDIA_TOOL_PROVIDERS: "cma_codex"
+  CMAEG_MEDIA_TOOL_PROVIDERS: "cma_codex,nyxbot"
   CMAEG_NON_HUMAN_PROVIDERS: "cma_codex"
   CMAEG_MEDIA_ENABLED: "true"
   CMAEG_MEDIA_MAX_BYTES: "20971520"
@@ -177,6 +179,8 @@ data:
   CMAEG_MEDIA_CACHE_BYTES: "33554432"
   CMAEG_MEDIA_RATE_PER_MINUTE: "60"
   CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR: "268435456"
+  # Downloads require shared record CAS before fetch and a fresh authority read.
+  # Retain claims through this TTL; drain older writers before native activation.
   CMAEG_MEDIA_LINK_TTL_SECONDS: "120"
   CMAEG_MEDIA_PREPARE_BUDGET_MS: "15000"
   CMAEG_MEDIA_FFMPEG_DIR: "/opt/ffmpeg/bin"
@@ -210,6 +214,8 @@ data:
   # Keep complete replies off until retained runtime proxy compatibility is verified.
   # Complete ordinary exchanges: 15 s; non-routed tool wait: 18 s. Routed window stays 20 s.
   CMAEG_NYXID_COMPLETE_REPLIES: "false"
+  # Enable only after NyxID CommonMark reply/thread/update routes are deployed and verified.
+  CMAEG_NYXID_COMMONMARK_RELAY_ENABLED: "false"
   CMAEG_NYXID_NATIVE_MEDIA_ENABLED: "true"
   # Enable only after all gateway replicas can read enriched relay message references.
   CMAEG_RELAY_TEXT_EDITS_ENABLED: "true"

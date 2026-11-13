@@ -1,5 +1,5 @@
 //! Stream ownership ends when its consumer leaves, including while the socket is idle.
-use super::{parse_event, parse_sse, response_id_from_frame, Accepted, ResponsesEvent};
+use super::{parse_sse, response_id_from_frame, Accepted, ResponsesEvent};
 use futures_util::StreamExt;
 use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
@@ -10,6 +10,10 @@ pub(super) async fn forward_turn(
     events_tx: mpsc::Sender<ResponsesEvent>,
     _permit: super::permits::Permit,
     complete: super::transport::Completion,
+    mut trace: Option<Box<crate::telemetry::turn_trace::ProviderReader>>,
+    association: Option<
+        std::sync::Arc<std::sync::OnceLock<crate::telemetry::turn_trace::Association>>,
+    >,
 ) {
     let mut accepted_tx = Some(accepted_tx);
     let mut stream = Box::pin(parse_sse(response.bytes_stream()));
@@ -25,13 +29,20 @@ pub(super) async fn forward_turn(
                 break;
             }
         };
-        let event = match parse_event(&frame) {
+        let event = match super::responses::parse_event_with_trace(&frame, trace.as_deref_mut()) {
             Ok(event) => event,
             Err(_) => {
                 tracing::warn!("provider response event was rejected");
                 break;
             }
         };
+        if let Some(slot) = &association {
+            if slot.get().is_none() {
+                if let Some(value) = trace.as_ref().and_then(|reader| reader.association()) {
+                    let _ = slot.set(value);
+                }
+            }
+        }
         if let Some(sender) = accepted_tx.take() {
             match &event {
                 ResponsesEvent::Created {
