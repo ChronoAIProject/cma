@@ -47,6 +47,17 @@ impl Harness {
         );
         Self::with_request(request, false).await
     }
+    pub async fn compatibility() -> Self {
+        let request = fixture::request(
+            |v| {
+                v["routing"] = serde_json::Value::Null;
+                v["secrets"]["consumer_keys"] = serde_json::json!([]);
+                v["secrets"]["telegram_bot_token"] = serde_json::json!("77:fixture-only");
+            },
+            fixture::message("replica compatibility fixture"),
+        );
+        Self::with_request(request, false).await
+    }
     pub async fn media() -> Self {
         let mut activity = fixture::message("replica media fixture");
         let cmaeg_core::activity::ActivityKind::Message { attachments, .. } = &mut activity.kind
@@ -85,21 +96,24 @@ impl Harness {
             ConversationId::derive(&keys, &request.channel.id, 1, &event.partition_key);
         request.conversation_id = event.conversation_id.clone();
         request.event_ref = EventRef::seal(&event, &keys).unwrap();
-        let OrdinaryPlan::Routed(plan) = routing_plan::plan(
-            &request,
-            &keys,
-            now,
-            RoutingOptions {
-                enabled: true,
-                attributes_signed: true,
-                non_human_providers: &BTreeSet::from(["cma_codex".into()]),
-            },
-        )
-        .unwrap() else {
-            panic!("routed fixture required")
+        let candidate = if request.channel.definition.routing.is_none() {
+            Candidate::prepare_compatibility(&request, b"replica-tool-event", &keys, now).unwrap()
+        } else {
+            let OrdinaryPlan::Routed(plan) = routing_plan::plan(
+                &request,
+                &keys,
+                now,
+                RoutingOptions {
+                    enabled: true,
+                    attributes_signed: true,
+                    non_human_providers: &BTreeSet::from(["cma_codex".into()]),
+                },
+            )
+            .unwrap() else {
+                panic!("routed fixture required")
+            };
+            Candidate::prepare(&request, &plan, b"replica-tool-event", &keys, now).unwrap()
         };
-        let candidate =
-            Candidate::prepare(&request, &plan, b"replica-tool-event", &keys, now).unwrap();
         let nodes = vec![database.node(21).await, database.node(22).await];
         let plan = nodes[0].plans().admit(&candidate).await.unwrap();
         Arc::get_mut(&mut request.channel).unwrap().agent_key_hash = [9; 32];

@@ -69,8 +69,10 @@ impl IngressState {
     ) -> Option<VerifiedIngress> {
         self.routed
             .as_ref()
-            .filter(|routing| routing.selected_request(request))
-            .filter(|_| ordinary(request))
+            .filter(|routing| {
+                routing.plans.replicas_enabled()
+                    || (routing.selected_request(request) && ordinary(request))
+            })
             .map(|_| VerifiedIngress {
                 quote: if matches!(
                     request.activity.source,
@@ -107,7 +109,7 @@ impl IngressState {
             .as_ref()
             .filter(|routing| routing.selected_request(&request) && ordinary(&request))
         {
-            let Some(source) = source else {
+            let Some(source) = source.clone() else {
                 return LaunchOutcome::Refused(Problem::new(
                     ProblemCode::Internal,
                     503,
@@ -122,6 +124,19 @@ impl IngressState {
                 Ok(None) => {}
                 Err(error) => return LaunchOutcome::Refused(error),
             }
+        }
+        if let Some(routing) = self.routed.as_ref().filter(|r| r.plans.replicas_enabled()) {
+            let Some(source) = source else {
+                return LaunchOutcome::Refused(Problem::new(
+                    ProblemCode::Internal,
+                    503,
+                    "verified_ingress_bytes_unavailable",
+                ));
+            };
+            return routing
+                .admit_compatibility(&request, source, self.activity.as_ref())
+                .await
+                .unwrap_or_else(LaunchOutcome::Refused);
         }
         if ordinary(&request) && telegram::opted_in(&request) {
             return LaunchOutcome::Refused(Problem::new(
