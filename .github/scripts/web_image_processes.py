@@ -69,7 +69,8 @@ def child_subreaper():
 
 
 class OwnedProcesses:
-    def __init__(self, pid):
+    def __init__(self, pid, *, adopter=None):
+        self.adopter = adopter
         self.root = pid
         self.owned = {}
         self.killed = []
@@ -82,7 +83,12 @@ class OwnedProcesses:
         table = snapshot()
         live = {pid: table[pid] for pid, process in self.owned.items()
                 if pid in table and table[pid].identity == process.identity}
-        # Keep identities after reparenting; only add processes linked to an owned parent.
+        # Only an isolated Linux supervisor may supply adopter: every direct child
+        # is either its runner or an orphan from that runner, even if never sampled.
+        adopted = {pid: p for pid, p in table.items() if p.parent == self.adopter}
+        live.update(adopted)
+        self.owned.update(adopted)
+        # Keep identities after reparenting; follow descendants across sessions.
         while True:
             children = {pid: process for pid, process in table.items()
                         if process.parent in live and pid not in live}
@@ -116,14 +122,25 @@ class OwnedProcesses:
 
     @staticmethod
     def send(process, number):
-        current = snapshot().get(process.pid)
-        if not current or current.identity != process.identity:
-            return False  # An exited/reused PID is no longer ours.
+        descriptor = None
         try:
-            os.kill(process.pid, number)
+            # Pin the Linux identity before checking it, closing the check/signal
+            # PID-reuse race. macOS has no pidfd and remains best effort.
+            if sys.platform == "linux":
+                descriptor = os.pidfd_open(process.pid)
+            current = snapshot().get(process.pid)
+            if not current or current.identity != process.identity:
+                return False
+            if descriptor is not None:
+                signal.pidfd_send_signal(descriptor, number)
+            else:
+                os.kill(process.pid, number)
             return True
         except ProcessLookupError:
-            return False  # Exit between identity check and signal.
+            return False
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
 
     def reap(self, timeout=5):
         deadline = time.monotonic() + timeout
@@ -144,5 +161,6 @@ class OwnedProcesses:
             time.sleep(.05)
 
     def evidence(self):
-        return {"owned": [vars(p) for p in self.owned.values()],
+        return {"ownership": "linux-subreaper" if self.adopter else "periodic-snapshot-best-effort",
+                "owned": [vars(p) for p in self.owned.values()],
                 "killed": self.killed, "remaining": self.remaining}
