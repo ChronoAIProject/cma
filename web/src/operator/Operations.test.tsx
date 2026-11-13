@@ -37,7 +37,7 @@ describe('operator capabilities and record views', () => {
 
   it('uses explicit unavailable names for unknown Activity users without exposing their IDs', async () => {
     const client = operatorClient();
-    client.admin.listActivity.mockResolvedValue({
+    client.admin.listActivitySummary.mockResolvedValue({
       items: [
         {
           id: 'act-test',
@@ -48,7 +48,6 @@ describe('operator capabilities and record views', () => {
           target: { kind: 'subject', id: 'unknown-target-id' },
           target_name: null,
           outcome: { status: 'succeeded' },
-          detail: {},
         },
       ],
       next: null,
@@ -194,17 +193,17 @@ describe('operator capabilities and record views', () => {
   it('filters and pages activity without exposing raw detail', async () => {
     const client = operatorClient();
     const user = userEvent.setup();
-    client.admin.listActivity.mockResolvedValueOnce({ items: [], next: 'page-2' });
+    client.admin.listActivitySummary.mockResolvedValueOnce({ items: [], next: 'page-2' });
     render(<Operations client={client} capabilities={['read_activity_log']} />);
     await screen.findByText('No records match these filters.');
     await user.click(screen.getByRole('button', { name: 'Next page' }));
     await screen.findByRole('cell', { name: 'Morgan Park' });
-    expect(client.admin.listActivity).toHaveBeenLastCalledWith(
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: 'page-2' }),
     );
     await user.click(screen.getByRole('button', { name: 'Previous page' }));
     await waitFor(() =>
-      expect(client.admin.listActivity).toHaveBeenLastCalledWith(
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
         expect.objectContaining({ cursor: undefined }),
       ),
     );
@@ -214,7 +213,7 @@ describe('operator capabilities and record views', () => {
     await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'delete');
     await user.click(screen.getByRole('button', { name: 'Apply filters' }));
     await waitFor(() =>
-      expect(client.admin.listActivity).toHaveBeenLastCalledWith(
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
         expect.objectContaining({ actor: 'operator-1', action: 'delete' }),
       ),
     );
@@ -256,8 +255,8 @@ describe('operator record tables', () => {
 
   it('draws each Activity outcome in its own tone under an SGT time column', async () => {
     const client = operatorClient();
-    const base = (await client.admin.listActivity({})).items[0]!;
-    client.admin.listActivity.mockResolvedValue({
+    const base = (await client.admin.listActivitySummary({})).items[0]!;
+    client.admin.listActivitySummary.mockResolvedValue({
       items: [
         base,
         { ...base, id: 'act-2', outcome: { status: 'refused', code: 'quota_exceeded' } },

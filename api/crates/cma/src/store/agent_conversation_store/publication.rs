@@ -27,47 +27,57 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
     before(store, &current, mutation, session).await?;
-    let (actual_last_seq, latest_turn, log_summary, semantic) =
-        match trusted_summary(store, &current, &current_row, caller, session, false).await? {
-            Some(summary) => {
-                let semantic = summary.semantic().cloned().ok_or_else(|| {
-                    ApplyError::Domain(SandboxStoreError::Corrupt(
-                        "trusted Agent log metadata has no semantic checkpoint".into(),
-                    ))
-                })?;
-                (
-                    summary.entry_count(),
-                    semantic.latest_turn(),
-                    summary,
-                    semantic,
-                )
-            }
-            None => {
-                let mut entries = Vec::new();
-                let summary = scan_complete_log_with_session(
-                    caller,
-                    store,
-                    &mutation.agent.id,
-                    current.conversation.last_seq,
-                    session,
-                    |entry| {
-                        entries.push(entry);
-                        Ok(())
-                    },
-                )
-                .await?;
-                let semantic = crate::store::agent_log_integrity::audit_checkpoint(
-                    store, &current, &entries, session,
-                )
-                .await?;
-                (
-                    summary.entry_count(),
-                    semantic.latest_turn(),
-                    summary,
-                    semantic,
-                )
-            }
-        };
+    // These alternative proof futures are large in debug builds. Keep their
+    // state off the nested Trigger/conversation publication stack.
+    let (actual_last_seq, latest_turn, log_summary, semantic) = match Box::pin(trusted_summary(
+        store,
+        &current,
+        &current_row,
+        caller,
+        session,
+        false,
+    ))
+    .await?
+    {
+        Some(summary) => {
+            let semantic = summary.semantic().cloned().ok_or_else(|| {
+                ApplyError::Domain(SandboxStoreError::Corrupt(
+                    "trusted Agent log metadata has no semantic checkpoint".into(),
+                ))
+            })?;
+            (
+                summary.entry_count(),
+                semantic.latest_turn(),
+                summary,
+                semantic,
+            )
+        }
+        None => {
+            let mut entries = Vec::new();
+            let summary = Box::pin(scan_complete_log_with_session(
+                caller,
+                store,
+                &mutation.agent.id,
+                current.conversation.last_seq,
+                session,
+                |entry| {
+                    entries.push(entry);
+                    Ok(())
+                },
+            ))
+            .await?;
+            let semantic = Box::pin(crate::store::agent_log_integrity::audit_checkpoint(
+                store, &current, &entries, session,
+            ))
+            .await?;
+            (
+                summary.entry_count(),
+                semantic.latest_turn(),
+                summary,
+                semantic,
+            )
+        }
+    };
     if let Some(proof) = capacity {
         proof
             .validate_snapshot(
@@ -120,14 +130,14 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
     )
     .map_err(ApplyError::Domain)?;
 
-    let command_dispatch = bind_domain(
+    let command_dispatch = Box::pin(bind_domain(
         store,
         &current,
         latest_turn,
         mutation,
         capacity.is_some(),
         session,
-    )
+    ))
     .await?;
     replace_agent(store, &current, mutation, integrity.integrity, session).await?;
     checkpoint::carry(store, &current_row, &current, &mutation.agent, session).await?;

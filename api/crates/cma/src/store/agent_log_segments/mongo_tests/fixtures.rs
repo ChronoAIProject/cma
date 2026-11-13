@@ -229,7 +229,11 @@ pub(in crate::store) async fn install(
     (agent, entries)
 }
 
-pub(super) async fn certify(store: &MongoSandboxStore, agent: &Agent, entries: &[AgentLogEntry]) {
+pub(in crate::store) async fn certify(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    entries: &[AgentLogEntry],
+) {
     let head = Head::read(
         collection(store, HEADS)
             .find_one(doc! {"_id":agent.id.as_str()})
