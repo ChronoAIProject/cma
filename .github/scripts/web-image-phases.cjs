@@ -63,7 +63,10 @@ const hooks = new Map(
     ],
     [
       "playwright/lib/runner/processHost.js",
-      (m) => wrap(m.ProcessHost.prototype, "stop", "worker-host-stop"),
+      (m) => {
+        wrap(m.ProcessHost.prototype, "startRunner", "worker-start");
+        wrap(m.ProcessHost.prototype, "stop", "worker-host-stop");
+      },
     ],
     [
       "playwright/lib/worker/workerMain.js",
@@ -76,7 +79,18 @@ const hooks = new Map(
     ],
     [
       "playwright-core/lib/server/browser.js",
-      (m) => wrap(m.Browser.prototype, "close", "browser-close"),
+      (m) => {
+        wrap(m.Browser.prototype, "newContext", "context-create");
+        wrap(m.Browser.prototype, "close", "browser-close");
+      },
+    ],
+    [
+      "playwright-core/lib/server/browserType.js",
+      (m) => wrap(m.BrowserType.prototype, "launch", "browser-launch"),
+    ],
+    [
+      "playwright-core/lib/server/browserContext.js",
+      (m) => wrap(m.BrowserContext.prototype, "newPage", "page-create"),
     ],
     [
       "playwright-core/lib/zipBundle.js",
@@ -126,7 +140,9 @@ Module._load = function (request, parent, isMain) {
   const filename = Module._resolveFilename(request, parent, isMain);
   const result = load.apply(this, arguments);
   const hook = hooks.get(filename);
-  if (hook) {
+  // Cyclic imports expose getters before class initialization; patch only after
+  // the module finishes loading, before its first caller can use the methods.
+  if (hook && Module._cache[filename]?.loaded) {
     hooks.delete(filename);
     hook(result);
   }
