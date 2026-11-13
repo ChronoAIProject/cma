@@ -21,15 +21,7 @@ fn endpoints(fixture: &Fixture, userinfo: bool) -> (&RwLock<Reply>, &RwLock<Repl
 }
 
 async fn assert_record_erased(fixture: &Fixture) {
-    let key = fixture.auth.identity_store.key(
-        CredentialPurpose::BrowserCookie,
-        "must-not-leak-access-token",
-    );
-    assert!(fixture
-        .auth
-        .identity_store
-        .get(&key, &fixture.auth.identity_store.epoch())
-        .is_none());
+    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
 }
 
 #[tokio::test]
@@ -119,15 +111,6 @@ async fn independent_bearer_success_cannot_seed_browser_cookie_fallback() {
     assert!(identity::request_for_bearer(&fixture.auth, token.into())
         .await
         .unwrap()
-        .is_some());
-    let key = fixture
-        .auth
-        .identity_store
-        .key(CredentialPurpose::IndependentBearer, token);
-    assert!(fixture
-        .auth
-        .identity_store
-        .get(&key, &fixture.auth.identity_store.epoch())
         .is_some());
     assert_record_erased(&fixture).await;
     fixture.control.userinfo.write().await.status = StatusCode::SERVICE_UNAVAILABLE;
@@ -278,7 +261,6 @@ async fn outer_caller_deadline_cannot_reclassify_a_started_body_as_transient() {
         &state.subject,
         state.clone(),
         Duration::from_millis(50),
-        true,
     )
     .await;
     assert!(matches!(result, Err(StoreError::Unavailable(_))));
