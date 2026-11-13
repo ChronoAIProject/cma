@@ -58,14 +58,21 @@ impl SandboxReconciler {
                                 crate::telemetry::worker::completed("sandbox_reconciliation", "reconciliation", outcome);
                             }
                             _ = scheduling.tick() => {}
-                            _ = batches.tick() => {
+                            _ = async {
+                                if reconciler.resume_background {
+                                    tokio::time::sleep_until(reconciler.background_work.next_run_at()).await;
+                                } else {
+                                    batches.tick().await;
+                                }
+                            }, if !reconciler.resume_background || tasks.is_empty() => {
                                 if tasks.is_empty() {
                                     let reconciler = Arc::clone(reconciler);
                                     let activity = activity.clone();
                                     tasks.spawn(async move {
                                         let _phase = activity.reconciliation();
-                                        // Retain the existing resumable operation's budget,
-                                        // deadline, cursors, binding holds and durable fences.
+                                        // The owned child runs outside the cancellable wait.
+                                        // Busy/yield/backoff timing comes from BackgroundWork;
+                                        // shutdown still drains its bounded durable operation.
                                         reconciler.background_work.run_resumable(|| reconciler.run_due(SystemTime::now())).await
                                     });
                                 }
