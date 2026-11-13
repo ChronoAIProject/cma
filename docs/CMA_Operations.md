@@ -2452,6 +2452,20 @@ strings or inherited request spans. Keep it enabled for the diagnostic compariso
 Optional enrichment retains its existing fallback behavior. See
 [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
+`CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED` defaults to `false`. When enabled,
+successful model catalogues can be reused for up to 30 seconds and exact-runtime
+support observations for up to 3 seconds, with 256-entry bounds. Each request
+still validates current credential custody and runtime eligibility; the cache
+does not retain bearer material or replace current authorization checks.
+
+`CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED` defaults to `false`. When enabled,
+environment discovery returns current local capabilities with conservative
+pending optional browser/control observations. At most 16 background probes run,
+with a 2-second deadline bounded by held authority; observations expire after
+5 seconds. Pending responses request a bounded 2–4 second retry. Disable the
+switch to restore synchronous optional discovery. Both switches require separate
+owner activation and retain current permission and release-fence checks.
+
 `CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED` defaults to `false` and accepts only
 exact `true` or `false`. It adds request-correlated file-content/download phase
 timings for authorization, runtime status, mounted-home verification, endpoint
@@ -2777,6 +2791,22 @@ retries, not unique user creates. Kubernetes Ready is bootstrap readiness, not
 proof that an Agent or desktop is usable. No pool size, resources or concurrency
 change accompanies this switch. Activation and end-to-end production acceptance
 remain separate from merging the default-off implementation.
+
+### Native runtime inspection phase evidence
+
+The existing `Native runtime inspection phase ended` events now split
+post-response verification into `post_status_graph` and `post_status_policy`.
+The graph finishes before the policy read starts. A policy success obtained
+before a later graph observation cannot authorize a definition that changed in
+between; the final home check does not re-read Template/Pool policy.
+
+Both phases are inside `native_observation`; `post_status_home` follows it.
+Pre-response `native_authority_graph` and `native_runtime_policy` run concurrently.
+Do not add these nested or overlapping timers. Each phase records `elapsed_ms`,
+`completed` and `succeeded`; cancellation leaves `completed=false`. A policy
+phase skipped after graph refusal or cancellation emits no event. These timings
+preserve all authority checks, read order, retained-upgrade exemptions and
+existing deadlines. They establish no end-to-end improvement on their own.
 
 ### Initial native readiness retry
 
