@@ -406,3 +406,8 @@ work can leave gaps; missing phase records do not establish zero work. Errors an
 outcome. Timings are elapsed waits, not CPU attribution. Native assignment
 validation remains inside runtime status, outside its control exchange.
 
+The browser bounds an optional file preview (headers and body) to four seconds
+and offers an explicit retry. Navigation remains usable during the read.
+Downloads and writes retain their existing limits; no file or authority cache
+is introduced. Production attribution requires enabling the timing switch
+through the normal owner/release process and observing the resulting phases.
