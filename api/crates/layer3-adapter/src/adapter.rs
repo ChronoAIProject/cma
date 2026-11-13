@@ -3,6 +3,7 @@
 use tokio::sync::mpsc;
 
 mod runtime_inspection;
+mod runtime_provision;
 
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
@@ -129,20 +130,7 @@ pub trait SandboxAdapter: Send + Sync {
     }
     /// Provision an exact non-zero runtime generation.
     async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
-        if request.funded_until.is_some() {
-            return Err(unsupported("funded provider creation is unavailable"));
-        }
-        if request.generation == 0 {
-            return Err(crate::AdapterError::Rejected(
-                "runtime generation must be non-zero".into(),
-            ));
-        }
-        if request.generation == 1 {
-            return self.provision(&request.spec).await;
-        }
-        Err(unsupported(
-            "generation-specific provisioning is not supported",
-        ))
+        runtime_provision::provision(self, request).await
     }
     /// Optional exact termination evidence. Queried only after runtime loss is confirmed.
     async fn runtime_termination(
