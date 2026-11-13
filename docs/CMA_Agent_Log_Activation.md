@@ -30,8 +30,9 @@ The release owner must request approval for any such canary action separately.
 | --- | --- | --- |
 | #1648 explicit Agent cohort | `CHRONO_AGENT_LOG_ADMISSION_AGENTS` prepares the selected histories serially during store startup, then selects bounded admission/public windows. Fleet percentage stays `0`. | Owner-approved test Agent IDs, at most 16; qualify startup/readiness, retained history, exact command receipts, quarantine and read-only readers. Keep adoption/recovery false. |
 | #1648 fleet 10%, then 50%, then 100% | Apply the corresponding JSON merge patch to ConfigMap `chrono-bot/cma-agent-manager`, then a reviewed rollout of the same API image. Each stage is a separate approval. Patches change only the two legacy selector keys. Initial stages require unchanged adoption/recovery switches to be false; the release controller must refuse the stage if that readback precondition fails. | Explicit owner canary passes first. Percentage buckets are stable but are **not owner-scoped**; even 10% can include other users. Owner approval must explicitly cover fleet exposure before switching from the explicit canary. |
-| #1666 title reader | `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED=true` enables the proven first-turn prefix on the shared selected cohort. | After #1648 prerequisite 100% plus one stable hour, approve an owner-test cohort check and the actual consumer exposure separately. |
-| #1666 approval reader | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED=true` enables the proven pending-approval suffix on the shared selected cohort. | Approve independently from title reads; preserve the exact pending set, original locators and command authority. |
+| #1666 title reader — **HOLD** | `CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED=true` enables the proven first-turn prefix on the shared selected cohort. | The required fleet 100% plus one stable hour does not provide an owner-only exposure fence. Require the reviewed scope evidence below before requesting this switch's approval. |
+| #1666 approval reader — **HOLD** | `CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED=true` enables the proven pending-approval suffix. Its eligible segmented branch is independent of the legacy selector. | Require an enforceable owner-only scope covering both formats before requesting approval; preserve the exact pending set, original locators and command authority. |
+| #1790 runtime-loss bounded proof — **HOLD** | `CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED=true` enables row prechecks, terminal head proofs and bounded reserved scheduling globally. The admission cohort restricts only live legacy trusted-summary reuse. | A probe on an owner Agent does not restrict exposure to that Agent or its Sandbox. Require a reviewed owner-test scope mechanism or an explicit owner-approved alternative before enabling this switch. |
 | #1350 segment adoption | `CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED=true` enables discovery; durable `agent_log_segments_v1` CAS admission separately authorizes v2 adoption/rollover. These are two approvals. | One eligible owner test Agent first; complete schema, compatible readers/writers/recovery image, old-writer exclusion and backup/restore evidence. Keep the durable policy explicit initially. |
 | #1351 runtime proof | `CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=true` enables retained native-state observation in a qualified runtime. | Owner test runtime with original home/conversation authority and supported proof. An already-running runtime cannot gain historical proof merely from an API switch; any retained runtime change needs its own approved continuity procedure. |
 | #1351 capacity recovery | `CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED=true` permits new admission only when both durable writer and explicit `agent_log_capacity_recovery_v1` gates agree. Approve the process switch, gate revision and each recovery operation separately. | One currently eligible capacity-only failed owner test Agent; fresh dry-run, expired prior lease, exact original native/home/input evidence and completed writer canary. No percentage/owner-wide recovery policy. |
@@ -39,12 +40,32 @@ The release owner must request approval for any such canary action separately.
 | #1461 held-import release | Authenticated durable release of one held imported home, allowing only its explicitly approved pending effects. | One owner test home, both platform-owner and affected-user consent, verified backup/restore, exact source/provider/home identity, exclusion of all old writers/descendants and accepted preserve/export/delete dispositions. A local file/Boolean/DB edit is never a release command. |
 | New Mongo indexes / segment schema | Explicit additive migration installs its reviewed validators/indexes and records the exact migration checksum. | Approve the exact collection/index definitions, resource budget and migration unit separately. Database-wide indexes cannot be scoped to a test Agent; qualify on a disposable representative replica set before the approved production DDL. No new index is introduced by these stage patches or the commit-retry fix. |
 
-The title and approval booleans share the admission selector. They do not have
-independent percentage controls. Changing the shared percentage to stage a reader
-also changes admission/public-window exposure. Do not claim a title-only 10%
-stage while the shared selector remains 100%. The #1666 release owner must submit
-the exact combined configuration and obtain approval for every changed switch;
-an incompatible proposed stage remains held.
+The title and approval booleans have no independent percentage controls. Their
+legacy eligibility shares the admission selector; enabling one at fleet 100%
+exposes every eligible legacy Agent. In addition, the approval suffix condition
+in `agent_conversation_store/reads.rs` accepts a segmented head independently of
+that selector. Retained format-compatible readers must remain available when an
+optional optimization is off. A test performed only on an owner Agent is not an
+exposure fence for either format.
+
+Both #1666 switches remain **HOLD** until a reviewed independent selector exists,
+or a separately approved shared-selector transition provides an enforceable
+owner-only scope. Such a transition must enumerate changed admission/public-window
+exposure, prove that no non-canary segmented Agent can enter the optional approval
+path, and explicitly preserve or restore #1666's fleet-100%-plus-one-stable-hour
+prerequisite. Submit the exact combined configuration and scope/refusal tests for
+each changed switch. Do not silently waive that prerequisite or claim a title-only
+percentage stage while the shared selector stays at 100%. This packet supplies no
+new selector or traffic-isolation mechanism and does not resolve those HOLDs.
+
+For #1790, collect always-on phase evidence before an approved ON window. The
+enabled reserved deadline includes awaited locks/platform evaluation in its 25 s
+budget below the 30 s outer limit; this timing fix does not establish an owner-only
+scope. Bind that separate scope decision, exact source/image/configuration and
+matched OFF/ON windows before approval. Turning this switch alone back to `false`
+through the approved rollout preserves the existing recovery settlement path and
+all retained records; do not alter eligibility, holds, operation identities or
+independent adoption/recovery switches.
 
 The repository's ledger release runbook currently identifies an unqualified
 real-home maintenance/release boundary. #1668 and #1461 remain **HOLD** until their
@@ -118,6 +139,13 @@ process restarts without accounting for resets.
   held/recovered/unknown counts. #1668 requires at least three actually recovered
   eligible Agents and 30 stable minutes after approved expansion; refusals and
   preserved retirement do not count toward that criterion.
+- Runtime-loss proof: whole-transaction Mongo commands/round trips, full scans and
+  bytes, fallback share, phase/transaction p95, success/refusal/error/cancellation
+  counts and retained original-state continuity. Keep first failures and an exact
+  nonzero matched OFF/ON sample count. Event-validation p95 above one second is a
+  separate follow-up; local head-proof savings do not establish production recovery
+  or the complete-request targets above. Abort on state/receipt/hold mismatches,
+  authority changes, unexpected writes or the common health/performance triggers.
 - Index/schema: exact plan/checksum, postcondition readback, migration lease and
   resumability, index build duration/resource use, replication lag, checkout wait
   and serving latency. A source declaration is not proof the index is installed.
