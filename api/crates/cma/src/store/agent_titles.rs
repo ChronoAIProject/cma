@@ -167,6 +167,7 @@ async fn title_transcript(
     transcript_at_snapshot_with_format(store, &agent, &mut session, segmented).await
 }
 
+#[cfg(test)]
 pub(super) async fn transcript_at_snapshot(
     store: &MongoSandboxStore,
     agent: &Agent,
@@ -178,7 +179,7 @@ pub(super) async fn transcript_at_snapshot(
     transcript_at_snapshot_with_format(store, agent, session, segmented).await
 }
 
-async fn transcript_at_snapshot_with_format(
+pub(super) async fn transcript_at_snapshot_with_format(
     store: &MongoSandboxStore,
     agent: &Agent,
     session: &mut mongodb::ClientSession,
