@@ -17,7 +17,7 @@ qualifies the ownership candidate. Developer-15 owns the investigation.
 |---|---|---|
 | New JavaScript harness | PASS | 26 tests; 99.65% lines, 97.84% branches, 98.54% functions for lib/scenarios; ESLint and syntax checks pass. |
 | N=1-only selection | PASS, implementation only | Three windows, no fault/scale/cross-replica calls; all 43 rows retained; missing/failed/unrendered cases and cleanup tested. Live driver still absent. |
-| Disposable Mongo runner | PASS | Nine unit tests; Python trace reports 90% executable-line coverage. Cleanup, wrong ownership, timeout, endpoint and evidence-overwrite failure paths included. |
+| Disposable Mongo runner | PASS | 14 current unit tests; Python trace reports 94% executable-line coverage. Cleanup, wrong ownership, timeout, endpoint and evidence-overwrite failure paths included. |
 | Pinned Rust formatting and touched-crate lint | PASS | Rust 1.96.1 fmt; cmaeg all-target/all-feature Clippy with warnings denied. |
 | Original EG executable control | PASS | Same test-binary hash as replica case; signed ingress and complete streamed response; disposable Mongo cleanup confirmed. |
 | Imported delivery oracle | PASS | Three tests on this checkout; Unknown/Partial/no-effect/rejected/missing cannot qualify confirmed terminal delivery. Exact developer-08 source pins are in peer-provenance.json. |
@@ -46,6 +46,24 @@ The aadd212 ownership run took 95.28 seconds, 2026-11-13T17:30:08Z through
 and after-response durable-plan/target-presence observations. Those observations
 cannot prove the rejected request committed its partition queue. Transaction
 contention is the implementer's investigation hypothesis, not an established RCA.
+
+## Diagnostic retention correction
+
+The source-frozen `643461b` diagnostic run ended BLOCKED after 124.62 seconds
+with cleanup confirmed; `evidence/mongo-diagnostic-643461b.json` retains the
+original receipt. Its broad exception handler lost the failure phase and partial
+observations. The elapsed time does not establish a specific exception or the
+application rejection reason. Debugger-02 tracked this as EG-002.
+
+The corrected runner retains fixed failure phase/class, timeout and censoring
+flags, child exit/signal, output SHA-256 and allowlisted partial observations
+before cleanup. It emits markers during execution into its private capture and
+never saves raw stdout. Setup failures and test deadlines remain separate; an
+unconfirmed child exit cannot claim complete cleanup. All 14 runner tests pass
+with 94% executable-line coverage. This correction has not been exercised in a
+new real run; exact-source tooling review is requested before the next run.
+The application N=2 rejection remains unresolved, with developer-15 testing
+transaction contention and concurrent retained-item handling.
 
 ## Required acceptance scenarios
 

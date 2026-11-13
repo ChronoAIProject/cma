@@ -23,10 +23,44 @@ import time
 IMAGE = "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c"
 
 
+class FixtureError(RuntimeError):
+    """A fixed runner code; never derive this value from external exception text."""
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+def observations(output):
+    result = {"output_sha256": hashlib.sha256(output).hexdigest(), "tests_expected": 1,
+              "tests_passed": int(re.search(rb"test result: ok\. 1 passed; 0 failed;", output) is not None)}
+    result["numeric_assertions"] = [int(value) for value in re.findall(rb"(?:left|right):\s+(\d+)", output)]
+    result["completed_replica_counts"] = [int(value) for value in re.findall(
+        rb"replica_fixture replicas=([123]) status=PASS", output)]
+    result["completed_ownership_cohorts"] = [{"replicas": int(count), "enabled": enabled == b"true"}
+        for count, enabled in re.findall(
+            rb"replica_fixture replicas=([123]) status=PASS ownership=(true|false)", output)]
+    result["ingress_rejections"] = [value.decode() for value in re.findall(
+        rb"ingress_rejection=(agent_command_key_conflict|event_id_content_conflict|provider_busy|conflict|routed_admission_unavailable|routed_authority_changed_retry|routed_provider_replay_unavailable|custom_durable_admission_unavailable|provider_unavailable|internal|unclassified)", output)]
+    result["failed_cohort_observations"] = [
+        {"replicas": int(count), "enabled": enabled == b"true", "accepted_responses": int(accepted),
+         "durable_plan_after_responses": plan == b"true", "targets_present_after_responses": int(targets)}
+        for count, enabled, accepted, plan, targets in re.findall(
+            rb"replica_failure replicas=([123]) ownership=(true|false) accepted=(\d+) durable_plan=(true|false) target_present=(\d+)", output)]
+    result["migration_diagnostics"] = [{"stage": stage.decode(), "code": int(code), "kind": kind.decode()}
+        for stage, code, kind in re.findall(rb"fixture_diagnostic stage=(create|index|validator|marker|other) code=(-?\d+) kind=(field_name|disk_space|index_name|authorization|unclassified|non_command)", output)]
+    result["failure_codes"] = [code for text, code in [
+        (b"same admitted event must remain accepted", "cross_ingress_not_accepted"),
+        (b"one provider command identity survives", "provider_admission_not_unique"),
+        (b"gateway fixture migration failed", "fixture_migration_failed"),
+        (b"Elapsed(())", "gateway_start_or_shutdown_deadline")
+    ] if text in output]
+    return result
+
+
 def command(arguments, environment=None, timeout=30):
     result = subprocess.run(arguments, env=environment, capture_output=True, timeout=timeout)
     if result.returncode:
-        raise RuntimeError("local_fixture_command_failed")
+        raise FixtureError("local_fixture_command_failed")
     return result.stdout.decode().strip()
 
 
@@ -37,9 +71,9 @@ def cleanup_container(container, label, suffix):
     if probe.returncode:
         if b"No such object:" in probe.stderr or b"No such container:" in probe.stderr:
             return
-        raise RuntimeError("container_cleanup_unconfirmed")
+        raise FixtureError("container_cleanup_unconfirmed")
     if probe.stdout.decode().strip() != suffix:
-        raise RuntimeError("cleanup_ownership_mismatch")
+        raise FixtureError("cleanup_ownership_mismatch")
     command(["docker", "rm", "--force", "--volumes", container])
 
 
@@ -47,7 +81,7 @@ def run(binary, directory, test_name):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     target = directory / "mongo-process-results.json"
     if target.exists():
-        raise RuntimeError("existing_evidence_refused")
+        raise FixtureError("existing_evidence_refused")
     suffix = secrets.token_hex(12)
     container = f"cma-scale-test-{suffix}"
     label = "dev.chrono.cma.scale-test"
@@ -65,6 +99,11 @@ def run(binary, directory, test_name):
               "mongo_image": IMAGE, "started_at": datetime.now(timezone.utc).isoformat(),
               "mongo_limits": {"cpus": 1, "memory_mib": 1024, "db_tmpfs_mib": 1024, "oplog_mib": 64}}
     attempted = False
+    phase = "container_create"
+    process = None
+    output = None
+    result.update(timed_out=False, censored=True, failure_phase=None, error_class=None,
+                  exit_code=None, termination_signal=None, output_sha256=None)
     try:
         # A failed/timed-out docker run may still have created the named container.
         attempted = True
@@ -79,6 +118,7 @@ def run(binary, directory, test_name):
                  '--replSet cma-im-contract --keyFile /tmp/replica-key '
                  '--wiredTigerCacheSizeGB 0.25 --oplogSize 64'],
                 environment, timeout=60)
+        phase = "mongo_initialize"
         initializer = Path(__file__).resolve().parent.parent / "authenticated-mongo-readiness.js"
         script = initializer.read_text()
         for _ in range(60):
@@ -89,62 +129,72 @@ def run(binary, directory, test_name):
                 break
             time.sleep(1)
         else:
-            raise RuntimeError("mongo_readiness_deadline")
+            raise FixtureError("mongo_readiness_deadline")
+        phase = "endpoint_discovery"
         endpoint = command(["docker", "port", container, "27017/tcp"])
         host, port = endpoint.split(":")
         if host != "127.0.0.1" or not port.isdigit():
-            raise RuntimeError("nonlocal_mongo_refused")
+            raise FixtureError("nonlocal_mongo_refused")
         password = environment["MONGO_INITDB_ROOT_PASSWORD"]
         environment["CMA_IM_TEST_MONGODB_URI"] = f"mongodb://contract-admin:{password}@{endpoint}/admin?directConnection=true"
+        phase = "test_spawn"
         with tempfile.TemporaryDirectory(prefix="process-fixture-", dir=directory) as temporary:
             environment["TMPDIR"] = temporary
-            process = subprocess.Popen([str(binary), test_name, "--ignored", "--show-output", "--test-threads=1"],
+            process = subprocess.Popen([str(binary), test_name, "--ignored", "--nocapture", "--test-threads=1"],
                                        env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                        start_new_session=True)
+            phase = "test_wait"
             try:
                 output, _ = process.communicate(timeout=120)
-            except subprocess.TimeoutExpired:
+            except subprocess.TimeoutExpired as error:
+                result.update(timed_out=True, code="process_test_deadline")
+                output = error.output or b""
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
-                    output, _ = process.communicate(timeout=10)
-                except subprocess.TimeoutExpired:
+                    final_output, _ = process.communicate(timeout=10)
+                    output = final_output or output
+                except subprocess.TimeoutExpired as error:
+                    output = error.output or output
                     os.killpg(process.pid, signal.SIGKILL)
-                    output, _ = process.communicate(timeout=10)
-                raise RuntimeError("process_test_deadline") from None
-            passed = re.search(rb"test result: ok\. 1 passed; 0 failed;", output) is not None
-            result.update(status="PASS" if process.returncode == 0 and passed else "FAIL",
-                          exit_code=process.returncode, output_sha256=hashlib.sha256(output).hexdigest(),
-                          tests_expected=1, tests_passed=1 if passed else 0)
-            result["numeric_assertions"] = [int(value) for value in re.findall(rb"(?:left|right):\s+(\d+)", output)]
-            result["completed_replica_counts"] = [int(value) for value in re.findall(
-                rb"replica_fixture replicas=([123]) status=PASS", output)]
-            result["completed_ownership_cohorts"] = [{"replicas": int(count), "enabled": enabled == b"true"}
-                for count, enabled in re.findall(
-                    rb"replica_fixture replicas=([123]) status=PASS ownership=(true|false)", output)]
-            result["ingress_rejections"] = [value.decode() for value in re.findall(
-                rb"ingress_rejection=(agent_command_key_conflict|event_id_content_conflict|provider_busy|conflict|routed_admission_unavailable|routed_authority_changed_retry|routed_provider_replay_unavailable|custom_durable_admission_unavailable|provider_unavailable|internal|unclassified)", output)]
-            result["failed_cohort_observations"] = [
-                {"replicas": int(count), "enabled": enabled == b"true", "accepted_responses": int(accepted),
-                 "durable_plan_after_responses": plan == b"true", "targets_present_after_responses": int(targets)}
-                for count, enabled, accepted, plan, targets in re.findall(
-                    rb"replica_failure replicas=([123]) ownership=(true|false) accepted=(\d+) durable_plan=(true|false) target_present=(\d+)", output)]
-            result["migration_diagnostics"] = [{"stage": stage.decode(), "code": int(code), "kind": kind.decode()}
-                for stage, code, kind in re.findall(rb"fixture_diagnostic stage=(create|index|validator|marker|other) code=(-?\d+) kind=(field_name|disk_space|index_name|authorization|unclassified|non_command)", output)]
-            result["failure_codes"] = [code for text, code in [
-                (b"same admitted event must remain accepted", "cross_ingress_not_accepted"),
-                (b"one provider command identity survives", "provider_admission_not_unique"),
-                (b"gateway fixture migration failed", "fixture_migration_failed"),
-                (b"Elapsed(())", "gateway_start_or_shutdown_deadline")
-            ] if text in output]
-    except (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError):
-        result.update(status="BLOCKED", code="local_fixture_execution_incomplete")
+                    try:
+                        final_output, _ = process.communicate(timeout=10)
+                        output = final_output or output
+                    except subprocess.TimeoutExpired as error:
+                        output = error.output or output
+                        raise
+                raise FixtureError("process_test_deadline") from None
+            result.update(status="PASS" if process.returncode == 0 and observations(output)["tests_passed"] == 1 else "FAIL",
+                          censored=False)
+            if result["status"] == "FAIL":
+                result.update(failure_phase="test_result", error_class="test_failure")
+    except (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError) as error:
+        error_class = ("command_timeout" if isinstance(error, subprocess.TimeoutExpired) else
+                       "os_error" if isinstance(error, OSError) else
+                       "value_error" if isinstance(error, ValueError) else "fixture_error")
+        result.update(status="BLOCKED", failure_phase=phase, error_class=error_class,
+                      code=error.code if isinstance(error, FixtureError) else
+                      result.get("code", "local_fixture_execution_incomplete"))
+        if isinstance(error, subprocess.TimeoutExpired) or (isinstance(error, FixtureError) and
+                error.code in {"process_test_deadline", "mongo_readiness_deadline"}):
+            result["timed_out"] = True
     finally:
+        if output is not None:
+            result.update(observations(output))
+        result["process_cleanup"] = process is None or process.returncode is not None
+        if process is not None:
+            result["exit_code"] = process.returncode
+            result["termination_signal"] = -process.returncode if process.returncode is not None and process.returncode < 0 else None
         try:
             if attempted:
                 cleanup_container(container, label, suffix)
-            result["cleanup"] = True
-        except (RuntimeError, subprocess.TimeoutExpired, OSError):
-            result.update(status="BLOCKED", cleanup=False, code="container_cleanup_unconfirmed")
+            result["container_cleanup"] = True
+            result["cleanup"] = result["process_cleanup"]
+            if not result["process_cleanup"]:
+                result["cleanup_failure_phase"] = "process_termination"
+        except (RuntimeError, subprocess.TimeoutExpired, OSError) as error:
+            result.update(status="BLOCKED", cleanup=False, container_cleanup=False, primary_code=result.get("code"),
+                          code="container_cleanup_unconfirmed", cleanup_failure_phase="container_cleanup",
+                          cleanup_timed_out=isinstance(error, subprocess.TimeoutExpired))
         result["elapsed_seconds"] = time.monotonic() - started
         result["finished_at"] = datetime.now(timezone.utc).isoformat()
         target.write_text(json.dumps(result, indent=2) + "\n")
