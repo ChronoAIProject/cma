@@ -34,6 +34,14 @@ the response source change. Other default-off switches, Mongo indexes, recovery
 operations and held-import release each retain their separate owner approval.
 The response change adds no index, stored field, migration or data-changing read.
 
+These stages also inherit the [complete-operation acceptance limits and evidence
+requirements](CMA_Agent_Log_Activation.md#measurements-and-expansion-criteria).
+Measure the full client tab-open/send/interrupt flow when claiming improvement to
+those targets; a response endpoint span or admission ACK alone cannot qualify it.
+Retain all limit exceedances and first-use/error/cancellation samples. New-Agent
+readiness and the admin Sandbox report remain separately measured controls or
+explicitly unverified; source-read savings cannot establish either target.
+
 Capture a matched off baseline and at least 30 minutes per approved canary stage.
 Retain nonzero successful response GET, replay and initial POST observation counts
 separately, source bounded/fallback/failure deltas, consumed BSON/rows, Mongo query
