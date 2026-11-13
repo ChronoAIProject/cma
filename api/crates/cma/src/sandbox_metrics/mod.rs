@@ -3,6 +3,7 @@ mod diagnostics;
 mod observer;
 mod projection;
 mod report;
+mod report_trace;
 mod source;
 mod summary;
 use crate::{config::Config, store::usage_reports::ReportingStore};
@@ -113,7 +114,7 @@ impl MetricsWorkers {
                     "observer" => self.observe(&holder).await,
                     "rollups" => self.collect(&holder, false).await,
                     "replay" => self.collect(&holder, true).await,
-                    _ => self.diagnostics().await,
+                    _ => self.diagnostics(&holder).await,
                 }
             })
             .await
@@ -132,6 +133,19 @@ impl MetricsWorkers {
             }
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) async fn reports_fixture(store: Arc<ReportingStore>) {
+    MetricsWorkers {
+        store,
+        source: None,
+        native: None,
+        cluster: "fixture".into(),
+        enabled: false,
+    }
+    .reports(0)
+    .await;
 }
 
 #[cfg(test)]

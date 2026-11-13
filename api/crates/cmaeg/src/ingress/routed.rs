@@ -1,7 +1,13 @@
+#[path = "routed_compatibility.rs"]
+mod compatibility;
 #[path = "routed_custom.rs"]
 mod custom;
 #[path = "routed_github.rs"]
 pub(crate) mod github;
+#[path = "routed_launch.rs"]
+mod launch;
+#[path = "routed_observe.rs"]
+mod observe;
 #[path = "routed_problem.rs"]
 mod problem;
 use problem::admission_problem;
@@ -301,195 +307,11 @@ impl RoutedIngress {
             }
             Err(error) => return Err(admission_problem(error)),
         };
-        if !matches!(source.quote, super::quoted_context::Intake::Legacy) {
-            self.observe_quote_receipt(request, &source, observer, Some(&committed.activity))
-                .await?;
-        }
-        let primary = committed.targets.first().ok_or_else(|| {
-            Problem::new(ProblemCode::Internal, 503, "routed_admission_unavailable")
-        })?;
-        // Admission can restore a previous winner, including a concurrent
-        // request with another local waiter. Never promise an unattached SSE
-        // stream or rewrite the winning plan to the retry's ephemeral waiter.
-        let sync_waiter_attached = request.event_ref.open(&self.keys, (self.clock)())
-            .ok().is_some_and(|opened| matches!(
-                (&opened.payload.reply, &primary.launch.event.reply),
-                (cmaeg_core::seal::ReplyAddress::Sync { waiter: incoming },
-                 cmaeg_core::seal::ReplyAddress::Sync { waiter: retained }) if incoming == retained
-            ));
-        observer.admitted(&committed.identity.record_id, &committed.activity);
-        for target in &committed.targets {
-            let mut change = crate::activity::Change::state(
-                target.launch.consumer.as_str(),
-                crate::activity::ConsumerState::Queued,
-                None,
-            );
-            change.provider = Some(target.launch.provider.slug.to_string());
-            change.conversation_id = Some(target.launch.event.conversation_id.to_string());
-            change.display_name = request
-                .channel
-                .definition
-                .consumer(Some(&target.launch.consumer))
-                .map(|c| c.label.to_owned());
-            observer
-                .checkpoint(
-                    &committed.identity.record_id,
-                    &committed.identity.event_id,
-                    change,
-                )
-                .await;
-            observer.launched(
-                &committed.identity.record_id,
-                &committed.identity.event_id,
-                &target.launch.consumer,
-                LaunchClass::Deferred,
-                request.received_at.elapsed(),
-            );
-        }
-        // A full hint queue leaves the manifest authoritative for recovery.
-        self.schedule.notify(&committed);
-        Ok(Some(LaunchOutcome::Admitted {
-            admission_id: committed.admission_id,
-            conversation_id: primary.launch.event.conversation_id.clone(),
-            sync_waiter_attached,
-        }))
-    }
-}
-impl IngressState {
-    /// Native inbox work is acknowledged only by durable routed admission.
-    /// In particular, missing/disabled routing must never reach the legacy launcher.
-    pub(crate) async fn launch_native_verified(
-        &self,
-        verified: crate::discord::VerifiedInboxLaunch,
-        _hold: OwnedSemaphorePermit,
-    ) -> LaunchOutcome {
-        let request = verified.request;
-        let native_interaction = super::native_interaction::shape(&request.activity);
-        if !matches!(
-            request.activity.source,
-            cmaeg_core::activity::SourceKind::Discord { .. }
-        ) {
-            return LaunchOutcome::Refused(Problem::new(
-                ProblemCode::InvalidRequest,
-                400,
-                "native_discord_source_required",
-            ));
-        }
-        let Some(routing) = self.routed.as_ref().filter(|routing| {
-            (routing.selected(&request.channel.definition.record_id)
-                || (routing.native_discovery.discovery_enabled()
-                    && routing
-                        .native_discovery
-                        .contains(request.channel.definition.record_id.as_str())))
-                && (ordinary(&request) || native_interaction)
-        }) else {
-            return LaunchOutcome::Refused(Problem::new(
-                ProblemCode::ProviderUnavailable,
-                503,
-                "native_discord_durable_admission_unavailable",
-            ));
-        };
-        let source = VerifiedIngress {
-            quote: super::quoted_context::Intake::Pinned(verified.quote_projection),
-            oversized: verified.source_bytes.len() > MAX_SOURCE_BYTES,
-            body: verified.source_bytes,
-            attributes_signed: true,
-            received_at: Some(verified.received_at),
-        };
-        match routing
-            .admit(
-                &request,
-                source,
-                self.activity.as_ref(),
-                native_interaction,
-                None,
-            )
+        self.report_admitted(request, &source, observer, committed)
             .await
-        {
-            Ok(Some(outcome @ LaunchOutcome::Admitted { .. })) => outcome,
-            Ok(_) => LaunchOutcome::Refused(Problem::new(
-                ProblemCode::AdmissionRefused,
-                422,
-                "native_discord_routing_required",
-            )),
-            Err(problem) => LaunchOutcome::Refused(problem),
-        }
-    }
-    pub fn capture_routed(
-        &self,
-        request: &LaunchRequest,
-        body: &[u8],
-        attributes_signed: bool,
-    ) -> Option<VerifiedIngress> {
-        self.routed
-            .as_ref()
-            .filter(|routing| routing.selected_request(request))
-            .filter(|_| ordinary(request))
-            .map(|_| VerifiedIngress {
-                quote: if matches!(
-                    request.activity.source,
-                    cmaeg_core::activity::SourceKind::Telegram { .. }
-                ) {
-                    super::quoted_context::Intake::Candidate(
-                        serde_json::from_slice(body).ok().and_then(|raw| {
-                            super::quoted_context::telegram(&raw, &request.activity)
-                        }),
-                    )
-                } else {
-                    super::quoted_context::Intake::Legacy
-                },
-                body: if body.len() <= MAX_SOURCE_BYTES {
-                    body.to_vec()
-                } else {
-                    Vec::new()
-                },
-                oversized: body.len() > MAX_SOURCE_BYTES,
-                attributes_signed,
-                received_at: None,
-            })
-    }
-    /// Holds bounded ingress capacity until durable admission is confirmed.
-    /// It never acknowledges a partial upload or starts a detached provider call.
-    pub async fn launch_verified(
-        &self,
-        request: LaunchRequest,
-        source: Option<VerifiedIngress>,
-        hold: OwnedSemaphorePermit,
-    ) -> LaunchOutcome {
-        if let Some(routing) = self
-            .routed
-            .as_ref()
-            .filter(|routing| routing.selected_request(&request) && ordinary(&request))
-        {
-            let Some(source) = source else {
-                return LaunchOutcome::Refused(Problem::new(
-                    ProblemCode::Internal,
-                    503,
-                    "verified_ingress_bytes_unavailable",
-                ));
-            };
-            match routing
-                .admit(&request, source, self.activity.as_ref(), false, None)
-                .await
-            {
-                Ok(Some(outcome)) => return outcome,
-                Ok(None) => {}
-                Err(error) => return LaunchOutcome::Refused(error),
-            }
-        }
-        if ordinary(&request) && telegram::opted_in(&request) {
-            return LaunchOutcome::Refused(Problem::new(
-                ProblemCode::ProviderUnavailable,
-                503,
-                "telegram_message_events_durable_admission_unavailable",
-            ));
-        }
-        if let Some(refusal) = custom::refusal(&request) {
-            return refusal;
-        }
-        self.launcher.launch_holding(request, hold).await
     }
 }
+
 fn ordinary(request: &LaunchRequest) -> bool {
     request.consumer.is_none()
         && request.activity.routing.is_none()

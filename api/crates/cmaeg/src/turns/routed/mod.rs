@@ -52,7 +52,9 @@ mod replay_frame;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
+mod tool_effects;
 mod tool_operation;
+mod tool_relay;
 mod tool_replies;
 mod tool_reply_gate;
 mod tool_reply_index;
@@ -174,3 +176,19 @@ mod telegram_structured_tests;
 
 #[cfg(test)]
 mod whatsapp_structured_tests;
+
+#[cfg(test)]
+mod replica_test_fixture;
+#[cfg(test)]
+mod replica_tool_tests;
+
+mod media_effects;
+
+#[cfg(test)]
+mod replica_legacy_tool_tests;
+
+#[cfg(test)]
+mod compatibility_execution_tests;
+
+#[cfg(test)]
+mod compatibility_mongo_tests;
