@@ -11,8 +11,8 @@ use axum::{
 };
 use layer2_core::sandbox::{OperatorError, SandboxMaintenanceStore, SandboxOperatorService};
 use layer2_core::{
-    ActivityService, Capability, CoreError, PlatformSettingsService, RuntimeInventory, RuntimeStatus,
-    SubjectId,
+    ActivityService, Capability, CoreError, PlatformSettingsService, RuntimeInventory,
+    RuntimeStatus, SubjectId,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -22,7 +22,7 @@ use crate::AuthenticatedCaller;
 use super::{problem_document, problem_response};
 
 mod activity;
-pub(crate) use activity::{activity, ActivityPageView, ActivityView, __path_activity};
+pub(crate) use activity::{__path_activity, activity, ActivityPageView, ActivityView};
 
 pub(super) mod admission;
 pub(super) mod auto_pause;
