@@ -7,6 +7,7 @@ use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 
 mod fixture;
+mod ingress;
 mod receiver;
 use fixture::Services;
 
