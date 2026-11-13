@@ -33,48 +33,6 @@ fn owner() -> DesktopOwnership {
     }
 }
 
-// Exercise direct native I/O at an ephemeral local port while retaining the
-// captured production Pod/assignment checks and its per-runtime credential.
-pub(in crate::hosted::provider_transport) async fn direct_challenge_at(
-    transport: &ProviderHostedControlTransport,
-    handle: &RuntimeHandle,
-    address: std::net::SocketAddr,
-) -> DesktopOwnershipChallenge {
-    let started = Instant::now();
-    let mut captured = transport.capture_desktop(handle).await.unwrap();
-    assert_eq!(transport.native_transport, NativeRuntimeTransport::Direct);
-    assert!(captured.pod.is_some());
-    assert!(captured.endpoint.native_binding().is_none());
-    assert_eq!(
-        captured.endpoint.desktop().unwrap().port(),
-        Some(SUPERVISOR_PORT)
-    );
-    let credential = captured.endpoint.control_token().unwrap().to_owned();
-    captured.endpoint =
-        RuntimeEndpoint::parse("http://runtime.invalid", &format!("http://{address}"))
-            .unwrap()
-            .with_control_token(credential);
-    let request = DesktopChallengeRequest {
-        sandbox_id: captured.identity.sandbox_id.clone().unwrap(),
-        runtime_id: handle.as_str().into(),
-        previous: None,
-    };
-    let challenge: DesktopOwnershipChallenge = captured
-        .exchange(transport, "challenge", &request)
-        .await
-        .unwrap();
-    let until = deadline(started, &challenge).unwrap();
-    transport.state.lock().await.desktop_challenges.insert(
-        challenge.nonce.clone(),
-        Pending {
-            captured,
-            challenge: challenge.clone(),
-            deadline: until,
-        },
-    );
-    challenge
-}
-
 struct Routes;
 #[async_trait::async_trait]
 impl crate::hosted::RuntimeRoutingStore for Routes {

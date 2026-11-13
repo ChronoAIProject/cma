@@ -72,16 +72,21 @@ Codex, hosted backend and runtime-provider routing forward an optional owned
 desktop port. Missing ports refuse; there is no fallback to legacy after an owned
 request. Before a challenge, the concrete transport captures its retained logical
 Sandbox binding, external handle, assignment revision and endpoint. Native paths
-also capture and freshly compare the complete Pod/container incarnation. Direct,
-Kubernetes exec and port-forward modes keep that capture through confirmation,
-the WebSocket handshake, renewal and revocation. Provider endpoint discovery is
+also capture and freshly compare the complete Pod/container incarnation.
+Kubernetes exec and port-forward modes revalidate the assignment after preparing
+the retained stream and before sending runtime credentials, with retirement
+cancellation active through the handshake. They keep that capture through
+confirmation, renewal and revocation. Owned native Direct is unsupported because
+its current connection API cannot check the captured Pod before sending headers;
+it refuses before discovery or credential-bearing I/O and never falls back to
+legacy desktop. Provider endpoint discovery is
 not repeated during that sequence. Native pool assignment is not performed by
 desktop negotiation.
 
 The independent control handle uses its original monotonic lifetime and consumes
 each retained challenge once. Late acknowledgements cannot revive expired local
 authority. HTTP mutation retries and redirects are disabled on the dedicated
-direct control client; Kubernetes control preserves its existing no-replay
+provider-proxy control client; Kubernetes control preserves its existing no-replay
 transport contract. Ambiguous open or revoke leaves durable claim release to
 expiry. Local transport fixtures and a synthetic display do not qualify retained
 production images, real Kubernetes/provider behavior or the desktop latency gate.

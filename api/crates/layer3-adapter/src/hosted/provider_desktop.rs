@@ -109,6 +109,13 @@ impl DesktopOwnedRuntime for ProviderHostedControlTransport {
 
 impl ProviderHostedControlTransport {
     async fn capture_desktop(&self, handle: &RuntimeHandle) -> crate::Result<Captured> {
+        if matches!(self.client, RuntimeDiscovery::AgentSandbox(_))
+            && self.native_transport == NativeRuntimeTransport::Direct
+        {
+            return Err(AdapterError::Unsupported(
+                "owned desktop requires a fenced Kubernetes stream".into(),
+            ));
+        }
         let (identity, _) = self.native_endpoint_state(handle).await;
         if identity.sandbox_id.is_none() {
             return Err(refused());
@@ -129,14 +136,11 @@ impl ProviderHostedControlTransport {
                     return Err(refused());
                 }
                 let address = std::net::SocketAddr::new(pod.pod_ip, SUPERVISOR_PORT);
-                let mut endpoint =
+                let endpoint =
                     RuntimeEndpoint::parse("http://runtime.invalid", &format!("http://{address}"))?
-                        .with_control_token(client.control_token(&pod.sandbox_name));
-                if self.native_transport != NativeRuntimeTransport::Direct {
-                    endpoint = endpoint
+                        .with_control_token(client.control_token(&pod.sandbox_name))
                         .with_native_binding(handle.clone(), pod.clone())
                         .with_native_identity(identity.clone());
-                }
                 (endpoint, Some(pod))
             }
         };

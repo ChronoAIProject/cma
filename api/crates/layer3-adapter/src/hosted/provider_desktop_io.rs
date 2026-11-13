@@ -103,13 +103,23 @@ impl Captured {
         };
         let connection: crate::DesktopConnectionHandle = if self.endpoint.native_binding().is_some()
         {
-            let stream = transport
-                .native_stream(&self.endpoint, RuntimeStreamKind::Desktop)
-                .await?;
-            let (socket, _) =
+            let slot = transport.native_slot(&self.endpoint).await?;
+            let mut cancelled = slot.cancellation();
+            let handshake = async {
+                let stream = transport
+                    .native_stream(&self.endpoint, RuntimeStreamKind::Desktop)
+                    .await?;
+                // Preparation can await Kubernetes while the assignment changes.
+                // Keep this exact stream and revalidate before sending credentials.
+                self.current(transport).await?;
                 tokio_tungstenite::client_async_with_config(request, stream, Some(config))
                     .await
-                    .map_err(|_| refused())?;
+                    .map_err(|_| refused())
+            };
+            let (socket, _) = tokio::select! { biased;
+                _ = cancelled.wait_for(|cancelled| *cancelled) => return Err(refused()),
+                result = handshake => result?,
+            };
             Box::new(Connection { socket, control })
         } else {
             let (socket, _) =

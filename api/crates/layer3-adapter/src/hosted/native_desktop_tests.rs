@@ -15,60 +15,85 @@ fn owner() -> crate::DesktopOwnership {
 }
 
 #[tokio::test]
-async fn native_direct_socket_and_control_keep_pod_fencing_at_an_ephemeral_fixture_port() {
+async fn owned_native_direct_is_unsupported_before_discovery_or_credentials() {
     let fixture = Fixture::start(Mode::Persistent, NativeRuntimeTransport::Direct).await;
     fixture
         .transport
         .bind_native_runtime(&handle(), "logical-sandbox", &"a".repeat(64))
         .await
         .unwrap();
-    let runtime = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = runtime.local_addr().unwrap();
-    let state = fixture.state.clone();
-    let token = state.runtimes.lock().unwrap()["claimed"].clone();
-    let serving = tokio::spawn(async move {
-        let mut tasks = tokio::task::JoinSet::new();
-        loop {
-            let (stream, _) = runtime.accept().await.unwrap();
-            let (state, token) = (state.clone(), token.clone());
-            tasks.spawn(async move {
-                serve_runtime(stream, Mode::Persistent, state, token).await;
+    assert!(matches!(
+        DesktopOwnedRuntime::challenge(&*fixture.transport, &handle()).await,
+        Err(AdapterError::Unsupported(_))
+    ));
+    assert_eq!(fixture.state.pod_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.state.runtime_bytes.load(Ordering::SeqCst), 0);
+    assert!(fixture.state.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn changed_authority_during_desktop_preparation_sends_no_credentials() {
+    for mode in [
+        NativeRuntimeTransport::KubernetesExec,
+        NativeRuntimeTransport::KubernetesPortforward,
+    ] {
+        for fault in ["assignment", "retire", "pod", "container", "cancel"] {
+            let fixture = Fixture::start(Mode::Persistent, mode).await;
+            fixture
+                .transport
+                .bind_native_runtime(&handle(), "logical-sandbox", &"a".repeat(64))
+                .await
+                .unwrap();
+            let challenge = DesktopOwnedRuntime::challenge(&*fixture.transport, &handle())
+                .await
+                .unwrap();
+            fixture
+                .state
+                .hold_next_upgrade
+                .store(true, Ordering::SeqCst);
+            let transport = fixture.transport.clone();
+            let opening = tokio::spawn(async move {
+                DesktopOwnedRuntime::open(&*transport, &handle(), &owner(), &challenge).await
             });
-            while tasks.try_join_next().is_some() {}
-        }
-    });
-    let challenge = super::super::super::desktop::tests::direct_challenge_at(
-        &fixture.transport,
-        &handle(),
-        address,
-    )
-    .await;
-    let mut connection =
-        DesktopOwnedRuntime::open(&*fixture.transport, &handle(), &owner(), &challenge)
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                fixture.state.preparation_entered.notified(),
+            )
             .await
-            .unwrap();
-    connection
-        .send(crate::DesktopFrame::Binary(vec![9]))
-        .await
-        .unwrap();
-    assert_eq!(
-        connection.recv().await.unwrap(),
-        Some(crate::DesktopFrame::Binary(vec![9]))
-    );
-    let control = connection.ownership_control().unwrap();
-    let challenge = control.ownership_challenge().await.unwrap();
-    control.renew_ownership(&owner(), &challenge).await.unwrap();
-    fixture.state.replaced.store(true, Ordering::SeqCst);
-    let before = fixture.state.requests.lock().unwrap().len();
-    assert!(control.ownership_challenge().await.is_err());
-    assert!(control.revoke_ownership(&owner()).await.is_err());
-    assert_eq!(fixture.state.requests.lock().unwrap().len(), before);
-    drop(control);
-    drop(connection);
-    serving.abort();
-    let _ = serving.await;
-    fixture.transport.retire(&handle()).await.unwrap();
-    fixture.drained().await;
+            .expect("WebSocket preparation follows completed confirmation");
+            assert_eq!(fixture.state.requests.lock().unwrap().len(), 2);
+            let bytes = fixture.state.runtime_bytes.load(Ordering::SeqCst);
+            match fault {
+                "assignment" => fixture
+                    .transport
+                    .bind_native_runtime(&handle(), "logical-sandbox", &"b".repeat(64))
+                    .await
+                    .unwrap(),
+                "retire" => fixture.transport.retire(&handle()).await.unwrap(),
+                "pod" => fixture.state.replaced.store(true, Ordering::SeqCst),
+                "container" => fixture.state.restarted.store(true, Ordering::SeqCst),
+                _ => opening.abort(),
+            }
+            fixture.state.preparation_release.notify_one();
+            let result = tokio::time::timeout(Duration::from_secs(2), opening)
+                .await
+                .unwrap();
+            if fault == "cancel" {
+                assert!(result.is_err_and(|error| error.is_cancelled()));
+            } else {
+                assert!(result.is_ok_and(|result| result.is_err()));
+            }
+            fixture.transport.retire(&handle()).await.unwrap();
+            fixture.drained().await;
+            assert_eq!(
+                fixture.state.runtime_bytes.load(Ordering::SeqCst),
+                bytes,
+                "no authenticated bytes after {fault} during {mode:?} preparation"
+            );
+            assert_eq!(fixture.state.requests.lock().unwrap().len(), 2);
+        }
+    }
 }
 
 #[tokio::test]
@@ -167,4 +192,15 @@ async fn missing_native_assignment_is_refused_before_challenge_io() {
     );
     assert_eq!(fixture.state.requests.lock().unwrap().len(), 0);
     assert_eq!(fixture.state.opened.load(Ordering::SeqCst), 0);
+}
+
+pub(super) async fn pause_preparation(state: &Arc<State>) -> Option<Active> {
+    if !state.hold_next_upgrade.swap(false, Ordering::SeqCst) {
+        return None;
+    }
+    state.active.fetch_add(1, Ordering::SeqCst);
+    let guard = Active(state.clone());
+    state.preparation_entered.notify_one();
+    state.preparation_release.notified().await;
+    Some(guard)
 }
