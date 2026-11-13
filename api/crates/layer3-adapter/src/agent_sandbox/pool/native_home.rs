@@ -129,16 +129,21 @@ impl AgentSandboxPools {
     ) -> Result<HomeVolumeAttachment> {
         // Only the original published authority may be observed here. Never
         // replay adoption writes or claim allocation while waiting for Ready.
-        tokio::time::timeout(Duration::from_secs(5), async {
+        let observe = async {
             loop {
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 if let NativeHomeAdoption::Ready(home) = self.observe_native_home(&origin).await? {
                     return Ok(*home);
                 }
             }
-        })
-        .await
-        .map_err(|_| unavailable("native home initialization is still pending"))?
+        };
+        if self.config.native_claim_guard_enabled {
+            super::super::claim_guard::bounded("home_authority", observe).await
+        } else {
+            tokio::time::timeout(Duration::from_secs(5), observe)
+                .await
+                .map_err(|_| unavailable("native home initialization is still pending"))?
+        }
     }
 
     async fn observe_native_home(
