@@ -917,6 +917,9 @@ limit with completed reports, and expired descriptors cannot be resumed. A
 pending refresh retains its absolute retry deadline across hide/show; returning
 to a tab resumes that refresh after the remaining server floor even when the
 displayed snapshot was generated recently.
+Opening Sandboxes & usage transfers the prefetch to the dashboard. Its selected
+filters then own polling; hovering the already active tab does not restart the
+default report alongside a different selected report.
 
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
@@ -6380,3 +6383,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-13 | Define retained Operations usage reports: exact-key stale-while-revalidate, server-generated As-of and refresh-deferred states, stable child reads during refresh, default/tab prefetch, hidden-tab pause, and Retry-After jitter (#1947). |
 
 | 2026-11-14 | Preserve opaque usage principals, invalidate every mounted report after authority refusal, bound abandoned pending descriptors, and resume pending refreshes with their original retry deadlines (#1947, #1979). |
+
+| 2026-11-14 | Transfer Operations prefetch ownership to the active usage dashboard so filter changes cancel abandoned default polling (#1947). |
