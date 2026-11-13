@@ -55,6 +55,19 @@ fn writes_once(fixture: &Fixture, floor: usize, claim: &NativePoolClaim) {
 }
 
 #[tokio::test]
+async fn native_home_readiness_deadline_has_typed_timeout_without_replaying_effects() {
+    let (fixture, claim, floor) = pending_fixture().await;
+    let error = fixture.client.adopt_home(&claim).await.unwrap_err();
+    assert!(matches!(
+        error,
+        crate::AdapterError::NativeClaimNotReady(
+            crate::agent_sandbox::NativeClaimGuardReason::Pending
+        )
+    ));
+    writes_once(&fixture, floor, &claim);
+}
+
+#[tokio::test]
 async fn native_home_waits_for_annotation_generation_in_one_adoption_without_replaying_writes() {
     let (fixture, claim, floor) = pending_fixture().await;
     let client = fixture.client.clone();
@@ -164,4 +177,33 @@ async fn native_home_pending_observation_propagates_dependency_errors_immediatel
         .to_string()
         .contains("initialization is still pending"));
     writes_once(&fixture, floor, &claim);
+}
+
+#[tokio::test]
+async fn native_home_requires_initializer_ready_before_returning_attachment() {
+    let fixture = Fixture::new().await;
+    let claim = assigned_spec(&fixture, &spec()).await;
+    fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
+        ["status"] = json!("False");
+    let started = tokio::time::Instant::now();
+    assert!(matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_secs(6),
+            fixture.client.adopt_home(&claim)
+        )
+        .await
+        .unwrap(),
+        Err(crate::AdapterError::NativeClaimNotReady(
+            crate::agent_sandbox::NativeClaimGuardReason::Pending
+        ))
+    ));
+    assert!(started.elapsed() >= std::time::Duration::from_secs(5));
+    fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["status"]["conditions"][0]
+        ["status"] = json!("True");
+    let home = fixture.client.adopt_home(&claim).await.unwrap();
+    assert!(homes(&fixture)
+        .prepare_receipted(&home.request, "operation-one")
+        .await
+        .is_err());
+    no_storage_effects(&fixture);
 }

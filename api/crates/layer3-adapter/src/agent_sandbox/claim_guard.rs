@@ -10,6 +10,8 @@ const POLL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum NativeClaimGuardReason {
+    #[error("readiness deadline reached after a validated pending observation")]
+    Pending,
     #[error("readiness deadline reached")]
     TimedOut,
     #[error("runtime container is in CrashLoopBackOff")]
@@ -72,32 +74,41 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<Sample>>,
 {
-    bounded(stage, async {
+    let readiness = super::NativeReadinessObservation::default();
+    bounded(stage, &readiness, async {
         let mut previous: Option<(String, i32)> = None;
         loop {
-            match observe().await {
-                Ok(observed) => {
-                    if observed.crash_loop {
-                        return Err(AdapterError::NativeClaimNotReady(
-                            NativeClaimGuardReason::CrashLoop,
-                        ));
-                    }
-                    if let Some(count) = observed.restart_count {
-                        if previous
-                            .as_ref()
-                            .is_some_and(|(uid, prior)| uid == &observed.pod_uid && count > *prior)
-                        {
-                            return Err(AdapterError::NativeClaimNotReady(
-                                NativeClaimGuardReason::Restarting,
-                            ));
+            match readiness
+                .observe(async {
+                    match observe().await {
+                        Ok(observed) => {
+                            if observed.crash_loop {
+                                return Err(AdapterError::NativeClaimNotReady(
+                                    NativeClaimGuardReason::CrashLoop,
+                                ));
+                            }
+                            if let Some(count) = observed.restart_count {
+                                if previous.as_ref().is_some_and(|(uid, prior)| {
+                                    uid == &observed.pod_uid && count > *prior
+                                }) {
+                                    return Err(AdapterError::NativeClaimNotReady(
+                                        NativeClaimGuardReason::Restarting,
+                                    ));
+                                }
+                                previous = Some((observed.pod_uid, count));
+                            }
+                            if let Some(binding) = observed.binding {
+                                return Ok(Some(binding));
+                            }
+                            Ok(None)
                         }
-                        previous = Some((observed.pod_uid, count));
+                        Err(error) => Err(error),
                     }
-                    if let Some(binding) = observed.binding {
-                        return Ok(binding);
-                    }
-                }
-                Err(AdapterError::Unavailable(_)) => {}
+                })
+                .await
+            {
+                Ok(Some(binding)) => return Ok(binding),
+                Ok(None) | Err(AdapterError::Unavailable(_)) => {}
                 Err(error) => return Err(error),
             }
             tokio::time::sleep(POLL).await;
@@ -109,14 +120,16 @@ where
 /// Read-only waits can be cancelled without losing an effect acknowledgement.
 pub(super) async fn bounded<T>(
     stage: &'static str,
+    readiness: &super::NativeReadinessObservation,
     observe: impl Future<Output = Result<T>>,
 ) -> Result<T> {
     let mut metric = ObservationMetric::new(stage);
-    let result = tokio::time::timeout(BUDGET, observe).await.unwrap_or(Err(
-        AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut),
-    ));
+    let result = tokio::time::timeout(BUDGET, observe)
+        .await
+        .unwrap_or_else(|_| Err(readiness.timeout()));
     metric.outcome = match &result {
         Ok(_) => "ready",
+        Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Pending)) => "pending",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut)) => "timeout",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::CrashLoop)) => "crash_loop",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Restarting)) => "restarting",
