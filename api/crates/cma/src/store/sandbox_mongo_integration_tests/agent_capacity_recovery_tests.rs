@@ -4,6 +4,7 @@ use super::*;
 mod composition;
 mod discovery;
 mod fixture;
+mod observations;
 mod pacing;
 mod records;
 mod restart;
