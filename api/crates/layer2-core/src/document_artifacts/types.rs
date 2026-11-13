@@ -258,7 +258,10 @@ impl DocumentListing {
 #[async_trait::async_trait]
 pub trait DocumentStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError>;
-    /// Insert exactly once, atomically refusing every tombstoned identity.
+    /// Insert exactly once, returning Deleted when a tombstone fences the identity.
+    /// Deletion-enabled writers must serialize insertion with lifecycle state.
+    /// Disabled writers check immediately before inserting; admitting deletion
+    /// requires a uniform deployment with earlier source writers drained first.
     async fn insert(
         &self,
         record: &StoredDocument,

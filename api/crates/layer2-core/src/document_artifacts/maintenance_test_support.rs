@@ -22,6 +22,7 @@ struct Data {
     rows: BTreeMap<String, Row>,
     references: BTreeSet<String>,
     documents: BTreeSet<String>,
+    deleting: BTreeSet<String>,
     counters: [i64; 3],
 }
 pub struct Store {
@@ -78,6 +79,9 @@ impl Store {
             .unwrap()
             .state = state;
     }
+    pub async fn mark_deleting(&self, document: &str) {
+        self.data.lock().await.deleting.insert(document.into());
+    }
     pub async fn state(&self, source: &DocumentSourceReservation) -> Option<State> {
         self.data
             .lock()
@@ -130,6 +134,9 @@ impl DocumentReclaimStore for Store {
         self.judgements.fetch_add(1, Ordering::SeqCst);
         let mut data = self.data.lock().await;
         let key = candidate.source.object_key();
+        if data.deleting.contains(&candidate.source.document_id) {
+            return Ok(Judgement::OwnedByPurge);
+        }
         let referenced = data.references.contains(&key);
         let Some(row) = data.rows.get_mut(&key) else {
             return Ok(Judgement::Skipped);
@@ -161,6 +168,9 @@ impl DocumentReclaimStore for Store {
         }
         let claim = {
             let mut data = self.data.lock().await;
+            if data.deleting.contains(&candidate.source.document_id) {
+                return Ok(None);
+            }
             let Some(row) = data.rows.get_mut(&candidate.source.object_key()) else {
                 return Ok(None);
             };
@@ -191,6 +201,9 @@ impl DocumentReclaimStore for Store {
         let candidate = &claim.candidate;
         let mut data = self.data.lock().await;
         let key = candidate.source.object_key();
+        if data.deleting.contains(&candidate.source.document_id) {
+            return Ok(false);
+        }
         let Some(row) = data.rows.get(&key) else {
             return Ok(false);
         };
@@ -247,9 +260,11 @@ pub struct Blobs {
     inner: memory::MemoryDocumentBlobs,
     supported: bool,
     failure: Mutex<Option<BlobMaintenanceError>>,
+    list_failure: Mutex<Option<BlobMaintenanceError>>,
     pub calls: AtomicUsize,
     active: AtomicUsize,
     pub maximum: AtomicUsize,
+    pub delete_delay_ms: AtomicU64,
     paused: AtomicBool,
     changed: Notify,
     permits: Semaphore,
@@ -260,9 +275,11 @@ impl Blobs {
             inner: Default::default(),
             supported,
             failure: Mutex::new(None),
+            list_failure: Mutex::new(None),
             calls: 0.into(),
             active: 0.into(),
             maximum: 0.into(),
+            delete_delay_ms: 0.into(),
             paused: false.into(),
             changed: Notify::new(),
             permits: Semaphore::new(0),
@@ -279,6 +296,9 @@ impl Blobs {
     }
     pub async fn fail(&self, error: BlobMaintenanceError) {
         *self.failure.lock().await = Some(error);
+    }
+    pub async fn fail_list(&self, error: BlobMaintenanceError) {
+        *self.list_failure.lock().await = Some(error);
     }
     pub fn pause(&self) {
         self.paused.store(true, Ordering::SeqCst);
@@ -306,6 +326,10 @@ impl DocumentBlobMaintenance for Blobs {
         if self.paused.load(Ordering::SeqCst) {
             self.permits.acquire().await.unwrap().forget();
         }
+        let delay = self.delete_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
         let result = match self.failure.lock().await.take() {
             Some(error) => Err(error),
             None => self.inner.delete(key).await,
@@ -318,6 +342,9 @@ impl DocumentBlobMaintenance for Blobs {
         prefix: &str,
         cursor: Option<&str>,
     ) -> Result<BlobPage, BlobMaintenanceError> {
+        if let Some(error) = self.list_failure.lock().await.take() {
+            return Err(error);
+        }
         self.inner.list(prefix, cursor).await
     }
     fn deletion_supported(&self) -> bool {

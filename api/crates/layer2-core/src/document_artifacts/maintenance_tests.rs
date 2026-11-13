@@ -3,8 +3,25 @@ use std::sync::{atomic::Ordering, Arc};
 use std::time::Duration;
 
 #[path = "maintenance_test_support.rs"]
-mod support;
+pub(super) mod support;
 use support::*;
+
+#[tokio::test]
+async fn reclaim_leaves_deleting_document_objects_to_purge() {
+    for state in [State::Reserved, State::Condemned] {
+        let (store, blobs, maintenance) = fixture();
+        store.reserve(source(1), 0).await;
+        store.set_state(&source(1), state).await;
+        store.mark_deleting(&source(1).document_id).await;
+        blobs.put(&source(1)).await;
+        let result = maintenance.reclaim_step(NOW).await.unwrap();
+        assert_eq!(result.deleted, 0);
+        assert_eq!(result.released, 0);
+        assert_eq!(store.state(&source(1)).await, Some(state));
+        assert_eq!(blobs.calls.load(Ordering::SeqCst), 0);
+        assert!(blobs.contains(&source(1)).await);
+    }
+}
 
 #[tokio::test(start_paused = true)]
 async fn reclaim_deletes_only_after_exclusive_claim() {
