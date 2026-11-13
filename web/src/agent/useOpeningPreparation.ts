@@ -3,6 +3,7 @@ import type { CmaWebClient } from '../api/client';
 import type { AgentOpeningPreparation } from './transport/preparation';
 import type { AgentLoadLineage } from './loadAgent';
 import { prepareOpeningReads } from './transport/openingReads';
+import { readCooldown } from './readCooldown';
 
 /** Only classified personal routes admit protected reads while selection finishes. */
 export function useOpeningPreparation(
@@ -17,6 +18,9 @@ export function useOpeningPreparation(
   const active = useRef<AgentOpeningPreparation | undefined>(undefined);
   useEffect(() => {
     if (!transport || !agentId || refused) return;
+    // A remounted route must not bypass the controller's retained server floor.
+    // Its existing retry owner starts the normal load once that deadline expires.
+    if (readCooldown(client, owner, agentId) > Date.now()) return;
     const preparation = transport.prepareOpening(agentId, owner);
     active.current = preparation;
     return () => {
