@@ -29,10 +29,20 @@ pub(super) async fn verify(
 ) -> Result<Arc<VerifiedSubject>, Error> {
     // No queue of distinct-token verifications accumulates during an outage.
     // Local overload is not evidence of provider unavailability and cannot fall back.
+    use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
     let _slot = auth
         .verification_slots
         .try_acquire()
-        .map_err(|_| Error::Unavailable("identity verification capacity exhausted".into()))?;
+        .map_err(|_| Error::Unavailable("identity verification capacity exhausted".into()))
+        .inspect_err(|error| {
+            record(
+                Endpoint::Verification,
+                Stage::Admission,
+                Reason::Capacity,
+                None,
+                error,
+            )
+        })?;
     let key = auth.identity_store.key(purpose, token);
     let epoch = auth.identity_store.epoch();
     let result = timeout(budget.min(DEADLINE), async {
@@ -76,9 +86,17 @@ pub(super) async fn verify(
     .await
     // An outer cancellation has no trustworthy endpoint phase. Only the
     // provider reader can classify a pre-response timeout as transient.
-    .unwrap_or(Err(Error::Unavailable(
-        "identity verification deadline elapsed".into(),
-    )))
+    .unwrap_or_else(|_| {
+        let error = Error::Unavailable("identity verification deadline elapsed".into());
+        record(
+            Endpoint::Verification,
+            Stage::Deadline,
+            Reason::VerificationDeadline,
+            None,
+            &error,
+        );
+        Err(error)
+    })
     .map(Arc::new);
     match &result {
         Ok(evidence) if matches!(evidence.permissions, PermissionEvidence::Active(_)) => {
