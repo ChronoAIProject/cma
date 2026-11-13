@@ -16,7 +16,7 @@ const scanTest = 'store::agent_log_telemetry::tests::cooperation::benchmark::loc
 // Five isolated fixtures start many mock subprocesses before ordinary work.
 // Bound that setup separately from the signal-to-cleanup deadline below.
 const runnerSetupTimeoutMs = 30_000;
-const fixturePredicate = 'not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child)';
+const fixturePredicate = 'not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows)';
 const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}))`;
 
 function fixture(scenario, reuse = false) {
