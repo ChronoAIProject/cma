@@ -161,6 +161,10 @@ impl RuntimeEndpoint {
         self.with_path(&["runtime", "desktop"], true)
     }
 
+    pub(super) fn desktop_ownership(&self, action: &str) -> crate::Result<Url> {
+        self.with_path(&["runtime", "desktop", "ownership", action], false)
+    }
+
     pub(super) fn checkpoint(&self, reference: &str) -> crate::Result<Url> {
         self.with_path(&["runtime", "checkpoints", reference], false)
     }

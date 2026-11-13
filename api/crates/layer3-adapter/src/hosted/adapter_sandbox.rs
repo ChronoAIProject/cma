@@ -2,6 +2,12 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn desktop_ownership(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.backend.desktop_ownership(handle)
+    }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
         Some(self)
     }

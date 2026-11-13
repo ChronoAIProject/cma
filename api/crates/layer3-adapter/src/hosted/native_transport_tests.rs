@@ -48,6 +48,10 @@ struct State {
     restarted: AtomicBool,
     missing_incarnation: AtomicBool,
     hold_response: AtomicBool,
+    hold_next_upgrade: AtomicBool,
+    preparation_entered: tokio::sync::Notify,
+    preparation_release: tokio::sync::Notify,
+    runtime_bytes: AtomicUsize,
     reject_next_upgrade: AtomicBool,
     fault: AtomicUsize,
     pod_reads: AtomicUsize,
@@ -259,6 +263,7 @@ async fn api_request(
             );
         }
         state.opened.fetch_add(1, Ordering::SeqCst);
+        let preparing = desktop_tests::pause_preparation(&state).await;
         if matches!(mode, Mode::Forbidden | Mode::Throttled)
             || state.reject_next_upgrade.swap(false, Ordering::SeqCst)
         {
@@ -282,8 +287,11 @@ async fn api_request(
             );
             Ok(response)
         })
-        .await
-        .unwrap();
+        .await;
+        let Ok(ws) = ws else {
+            assert!(preparing.is_some(), "unexpected upgrade failure");
+            return;
+        };
         state.active.fetch_add(1, Ordering::SeqCst);
         let _active = Active(state.clone());
         serve_forwarder(ws, mode, is_exec, state, token).await;
@@ -413,6 +421,7 @@ async fn serve_forwarder(
                     };
                     if bytes[0] == 255 { return; }
                     assert_eq!(bytes[0], 0);
+                    state.runtime_bytes.fetch_add(bytes.len() - 1, Ordering::SeqCst);
                     if sink.write_all(&bytes[1..]).await.is_err() { return; }
                 }
                 read = source.read(&mut buffer) => {
@@ -429,7 +438,7 @@ async fn serve_forwarder(
         }
     };
     // Runtime completion still lets the bridge drain its final response bytes.
-    let runtime = serve_runtime(runtime, mode, state, token);
+    let runtime = serve_runtime(runtime, mode, state.clone(), token);
     tokio::pin!(bridge, runtime);
     tokio::select! {
         _ = &mut bridge => {},
@@ -473,6 +482,9 @@ use runtime_fixture::serve_runtime;
 mod open_overlap_tests;
 #[path = "native_http_reuse_tests.rs"]
 mod reuse_tests;
+
+#[path = "native_desktop_tests.rs"]
+mod desktop_tests;
 
 #[path = "native_transport_cases.rs"]
 mod cases;

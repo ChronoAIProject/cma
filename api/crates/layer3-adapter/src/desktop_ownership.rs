@@ -2,6 +2,48 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod wire;
+
+/// Concrete transport reached through the existing adapter/backend selection.
+/// Absence is unsupported; it must never select a legacy stream as a fallback.
+#[async_trait::async_trait]
+pub trait DesktopOwnedRuntime: Send + Sync {
+    async fn challenge(
+        &self,
+        handle: &crate::RuntimeHandle,
+    ) -> crate::Result<DesktopOwnershipChallenge>;
+    async fn open(
+        &self,
+        handle: &crate::RuntimeHandle,
+        owner: &DesktopOwnership,
+        challenge: &DesktopOwnershipChallenge,
+    ) -> crate::Result<crate::DesktopConnectionHandle>;
+}
+
+pub(crate) fn required(
+    port: Option<&dyn DesktopOwnedRuntime>,
+) -> crate::Result<&dyn DesktopOwnedRuntime> {
+    port.ok_or_else(|| {
+        crate::AdapterError::Unsupported("runtime desktop ownership is unavailable".into())
+    })
+}
+
+pub(crate) async fn challenge(
+    port: Option<&dyn DesktopOwnedRuntime>,
+    handle: &crate::RuntimeHandle,
+) -> crate::Result<DesktopOwnershipChallenge> {
+    required(port)?.challenge(handle).await
+}
+
+pub(crate) async fn open(
+    port: Option<&dyn DesktopOwnedRuntime>,
+    handle: &crate::RuntimeHandle,
+    owner: &DesktopOwnership,
+    challenge: &DesktopOwnershipChallenge,
+) -> crate::Result<crate::DesktopConnectionHandle> {
+    required(port)?.open(handle, owner, challenge).await
+}
+
 /// Authenticated receiver control, independent of desktop frame backpressure.
 #[async_trait::async_trait]
 pub trait DesktopOwnershipControl: Send + Sync {
