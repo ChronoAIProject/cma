@@ -82,6 +82,12 @@ impl DesktopReceiver {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) async fn stop_fixture(&self) {
+        self.poison(&mut self.state.lock().unwrap());
+        while self.tasks.lock().await.join_next().await.is_some() {}
+    }
+
     fn verify(&self, state: &mut State) -> Result<()> {
         if state.poisoned {
             return Err(unavailable());
