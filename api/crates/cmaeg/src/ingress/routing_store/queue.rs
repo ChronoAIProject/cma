@@ -8,6 +8,12 @@ use std::sync::Arc;
 /// A partial enqueue is recoverable from the immutable admission root and must
 /// return an error until every target has durable scheduling custody.
 pub trait AdmissionQueue: Send + Sync {
+    /// Only the participating writer supplies a deployment-scoped recovery index.
+    /// Test queues and legacy writers keep the original record format.
+    fn index_deployment(&self) -> Option<&str> {
+        None
+    }
+
     fn enqueue<'a>(&'a self, plan: &'a AdmittedPlan) -> BoxFuture<'a, Result<(), AdmissionError>>;
 }
 
@@ -24,7 +30,24 @@ impl PlanStore {
         plan: AdmittedPlan,
     ) -> Result<AdmittedPlan, AdmissionError> {
         if let Some(queue) = &self.admission_queue {
-            let result = queue.enqueue(&plan).await;
+            let result = async {
+                queue.enqueue(&plan).await?;
+                if let Some(deployment) = queue.index_deployment() {
+                    // Queue custody already exists. Clearing this hint never
+                    // changes the immutable root or its version-one reader contract.
+                    self.records
+                        .finish_admission_index(
+                            &plan.admission_id,
+                            &plan.identity.owner,
+                            1,
+                            deployment,
+                        )
+                        .await
+                        .map_err(|_| AdmissionError::Unavailable)?;
+                }
+                Ok::<_, AdmissionError>(())
+            }
+            .await;
             metrics::counter!(
                 "cmaeg_replica_admission_queue_total",
                 "outcome" => if result.is_ok() { "ready" } else { "unavailable" }

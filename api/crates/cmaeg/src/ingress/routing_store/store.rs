@@ -173,20 +173,7 @@ impl PlanStore {
         candidate.live((self.clock)())?;
         let manifest = &candidate.manifest;
         let bytes = codec::encode(manifest)?;
-        let result = match github_guard {
-            Some((record_id, version, authority_guards)) => {
-                self.create_guarded(
-                    &manifest.id,
-                    manifest,
-                    &bytes,
-                    &record_id,
-                    version,
-                    &authority_guards,
-                )
-                .await
-            }
-            None => self.create(&manifest.id, manifest, &bytes).await,
-        };
+        let result = self.create_root(manifest, &bytes, github_guard).await;
         if matches!(&result, Err(RecordError::GuardConflict { .. })) {
             return Err(AdmissionError::GuardConflict);
         }
@@ -338,7 +325,12 @@ impl PlanStore {
         }
     }
 
-    async fn create(&self, id: &str, manifest: &Manifest, bytes: &[u8]) -> Result<(), RecordError> {
+    pub(super) async fn create(
+        &self,
+        id: &str,
+        manifest: &Manifest,
+        bytes: &[u8],
+    ) -> Result<(), RecordError> {
         let blob = seal_interaction(&self.keys, id, bytes)
             .map_err(|_| RecordError::Rejected("routed record encryption failed".into()))?;
         self.records
@@ -360,7 +352,7 @@ impl PlanStore {
             })
     }
 
-    async fn create_guarded(
+    pub(super) async fn create_guarded(
         &self,
         id: &str,
         manifest: &Manifest,
