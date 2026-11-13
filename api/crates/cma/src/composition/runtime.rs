@@ -3,6 +3,15 @@ use std::sync::Arc;
 
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
+pub(super) fn worker_observations(
+    config: &Config,
+    stores: &MongoStores,
+) -> crate::store::worker_observations::Observations {
+    stores
+        .worker_observations()
+        .with_work_retry_policy(config.features.work_retry_policy_enabled)
+}
+
 pub(super) struct RuntimeServices {
     pub warm_pools: Arc<NativeWarmPools>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
