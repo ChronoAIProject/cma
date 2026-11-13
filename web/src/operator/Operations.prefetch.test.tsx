@@ -30,18 +30,18 @@ it.each([false, true])(
     await flush();
     expect(client.adminUsageMetrics.create).toHaveBeenCalledTimes(1);
     if (prefetched) {
-      fireEvent.click(screen.getByRole('tab', { name: 'Sandboxes & usage', exact: true }));
+      fireEvent.click(screen.getByRole('tab', { name: 'Sandboxes & usage' }));
       await flush();
       expect(client.adminUsageMetrics.create).toHaveBeenCalledTimes(1);
     }
     const initialSignal = client.adminUsageMetrics.create.mock.calls[0]![1].signal as AbortSignal;
     fireEvent.click(screen.getByRole('button', { name: 'Usage time range' }));
-    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 7 days', exact: true }));
+    fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 7 days' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply usage filters' }));
     await flush();
     expect(initialSignal.aborted).toBe(true);
     expect(client.adminUsageMetrics.create).toHaveBeenCalledTimes(2);
-    const tab = screen.getByRole('tab', { name: 'Sandboxes & usage', exact: true });
+    const tab = screen.getByRole('tab', { name: 'Sandboxes & usage' });
     fireEvent.mouseEnter(tab);
     fireEvent.focus(tab);
     await flush();
@@ -67,7 +67,7 @@ it('adopts an in-flight prefetch when the usage dashboard opens', async () => {
   );
   await flush();
   const signal = client.adminUsageMetrics.create.mock.calls[0]![1].signal as AbortSignal;
-  fireEvent.click(screen.getByRole('tab', { name: 'Sandboxes & usage', exact: true }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Sandboxes & usage' }));
   await flush();
   expect(signal.aborted).toBe(false);
   expect(client.adminUsageMetrics.create).toHaveBeenCalledTimes(1);
