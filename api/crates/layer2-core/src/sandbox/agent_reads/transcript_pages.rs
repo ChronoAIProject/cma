@@ -3,6 +3,26 @@ use crate::resource_access::CallerContext;
 use crate::sandbox::{AgentTranscriptPage, AgentTranscriptPageRequest};
 
 impl AgentReadService {
+    pub async fn transcript(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+    ) -> Result<AgentTranscript, AgentReadError> {
+        let (lineage, held) = self
+            .owner_projection_authority(caller, id, crate::RuntimeCapability::Conversation)
+            .await?;
+        let transcript = self.read_transcript(&lineage.agent).await?;
+        self.finish_owner_projection(
+            caller,
+            id,
+            &lineage,
+            held,
+            crate::RuntimeCapability::Conversation,
+        )
+        .await?;
+        Ok(transcript)
+    }
+
     pub async fn transcript_page(
         &self,
         caller: &Caller,

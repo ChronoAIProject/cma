@@ -4,6 +4,12 @@ use super::*;
 #[cfg(test)]
 use crate::sandbox::{AgentOperationDelivery, AgentOperationKind};
 
+/// A certified completed-turn answer, bound to its original durable message.
+pub struct AgentLogFinalAnswer {
+    pub turn_sequence: u64,
+    pub message: crate::sandbox::AgentTranscriptMessage,
+}
+
 #[async_trait]
 pub trait AgentLogStore: Send + Sync {
     /// Publish one exact durable operation. Implementations without keyed
@@ -212,6 +218,10 @@ pub trait AgentLogStore: Send + Sync {
             let entries = self
                 .agent_log_prefix(&agent.id, agent.conversation.last_seq)
                 .await?;
+            // Omitted events still need semantic proof. Otherwise, for example,
+            // malformed usage outside a conversation could become invisible.
+            crate::sandbox::agent_reads_fold::fold_agent_log(agent, &entries)
+                .map_err(SandboxStoreError::Corrupt)?;
             return Ok(Some(
                 entries
                     .into_iter()
@@ -252,6 +262,29 @@ pub trait AgentLogStore: Send + Sync {
         _agent: &Agent,
         _request: &crate::sandbox::AgentTranscriptPageRequest,
     ) -> Result<Option<crate::sandbox::AgentTranscriptPage>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// Resolve one final answer from certified message/turn evidence. `None`
+    /// selects legacy compatibility; a certified non-answer returns NotFound.
+    /// A missing or stale proof must fail, never select a lifetime fallback.
+    async fn agent_log_final_answer(
+        &self,
+        _agent: &Agent,
+        _sequence: u64,
+    ) -> Result<Option<AgentLogFinalAnswer>, SandboxStoreError> {
+        Ok(None)
+    }
+
+    /// A certified public log page, bounded by rows and serialized bytes.
+    /// Nonempty short pages may have a continuation. Only legacy stores return
+    /// `None`; invalid segmented proofs are errors, never full-log fallbacks.
+    async fn agent_log_page_projection(
+        &self,
+        _agent: &Agent,
+        _after: u64,
+        _limit: u16,
+    ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
         Ok(None)
     }
 

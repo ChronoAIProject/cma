@@ -11,8 +11,10 @@ use sha2::{Digest, Sha256};
 
 use super::{domain, load, unavailable, ApplyError, MongoSandboxStore, FIELD};
 use crate::store::{
+    agent_log_segments::transaction_scope::TransactionScope,
     sandbox_events::{append_in_transaction, reconcile_event_with_snapshot_session},
     sandbox_mongo::{record_bson, signed, DOCUMENT_SCHEMA_VERSION},
+    sandbox_unpublished_recovery::transaction::NativeFacts,
     sandboxes::{read_sandbox, sandbox_replacement_fields},
 };
 
@@ -64,6 +66,33 @@ pub(super) async fn apply(
     request: &RetainedReopenRequest,
     session: &mut ClientSession,
 ) -> Result<Applied, ApplyError> {
+    apply_with_sources(store, request, session, None).await
+}
+
+pub(super) async fn apply_scoped(
+    store: &MongoSandboxStore,
+    request: &RetainedReopenRequest,
+    mut scope: TransactionScope<'_>,
+) -> Result<Applied, ApplyError> {
+    let id = &request.snapshot.retained.sandbox.id;
+    let row = scope
+        .find_one(&store.sandboxes, doc! {"_id":id.as_str()})
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    if read_receipt(&row).map_err(ApplyError::Domain)?.is_some() {
+        return apply(store, request, scope.release()).await;
+    }
+    let facts = NativeFacts::capture_reopen(store, id, &mut scope).await?;
+    apply_with_sources(store, request, scope.release(), Some(&facts)).await
+}
+
+async fn apply_with_sources(
+    store: &MongoSandboxStore,
+    request: &RetainedReopenRequest,
+    session: &mut ClientSession,
+    sources: Option<&NativeFacts>,
+) -> Result<Applied, ApplyError> {
     let expected = &request.snapshot.retained.sandbox;
     let row = store
         .sandboxes
@@ -83,17 +112,22 @@ pub(super) async fn apply(
         }
         return Ok(Applied::Replay(receipt.accepted));
     }
-    let (current, last_seq) = load::snapshot(store, &expected.id, session).await?;
+    let (current, last_seq) = match sources {
+        Some(sources) => {
+            load::snapshot_with_sources(store, &expected.id, session, Some(sources)).await?
+        }
+        None => load::snapshot(store, &expected.id, session).await?,
+    };
     let (next, receipt, event) =
         apply_retained_reopen(&current, request).map_err(ApplyError::Domain)?;
     for agent in &current.retained.agents {
-        let written = store.agents.update_one(doc! {
-            "_id": agent.id.as_str(), "sandbox_id": expected.id.as_str(),
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "revision": number(agent.revision)?, "last_seq": number(agent.conversation.last_seq)?,
-        }, doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
-            .session(&mut *session).await.map_err(ApplyError::Driver)?;
-        require_one(written.matched_count)?;
+        crate::store::agent_capacity_recovery::source::fence_agent(
+            store,
+            agent,
+            "sandbox_recovery_fence",
+            session,
+        )
+        .await?;
     }
     for workspace in &current.retained.workspaces {
         let written = store.workspaces.update_one(doc! {
