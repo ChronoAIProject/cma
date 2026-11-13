@@ -77,12 +77,11 @@ async fn empty_and_released_claims_skip_reclamation_with_one_transaction() {
             .acquire_exclusive_sandbox_session(&f.request)
             .await
             .unwrap();
-        commands.lock().unwrap().take().assert(&[
-            "findAndModify",
-            "find",
-            "insert",
-            "commitTransaction",
-        ]);
+        commands
+            .lock()
+            .unwrap()
+            .take()
+            .assert(&["findAndModify", "update", "commitTransaction"]);
         let renewed = f
             .left
             .renew_exclusive_sandbox_session(&f.request, &owner)
@@ -120,11 +119,12 @@ async fn indexed_latest_session_preserves_legacy_exclusion_and_expired_reclamati
         f.left.acquire_exclusive_sandbox_session(&f.request).await,
         Err(SandboxStoreError::Conflict)
     ));
-    commands
-        .lock()
-        .unwrap()
-        .take()
-        .assert(&["findAndModify", "find", "abortTransaction"]);
+    commands.lock().unwrap().take().assert(&[
+        "findAndModify",
+        "update",
+        "find",
+        "abortTransaction",
+    ]);
     assert_eq!(
         f.db.collection::<Document>("sandbox_sessions")
             .count_documents(doc! {})
@@ -144,6 +144,7 @@ async fn indexed_latest_session_preserves_legacy_exclusion_and_expired_reclamati
         .unwrap();
     commands.lock().unwrap().take().assert(&[
         "findAndModify",
+        "update",
         "find",
         "delete",
         "insert",
@@ -212,11 +213,12 @@ async fn malformed_latest_lease_refuses_without_reclamation_or_epoch_change() {
             f.left.acquire_exclusive_sandbox_session(&f.request).await,
             Err(SandboxStoreError::Unavailable(_))
         ));
-        commands
-            .lock()
-            .unwrap()
-            .take()
-            .assert(&["findAndModify", "find", "abortTransaction"]);
+        commands.lock().unwrap().take().assert(&[
+            "findAndModify",
+            "update",
+            "find",
+            "abortTransaction",
+        ]);
         assert_eq!(
             f.right
                 .sandbox_sessions
@@ -239,6 +241,100 @@ async fn malformed_latest_lease_refuses_without_reclamation_or_epoch_change() {
     assert_eq!(
         owner.epoch, 1,
         "refused transactions must not advance the fence"
+    );
+    f.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn expired_reused_session_id_is_reclaimed_without_accepting_stale_release() {
+    let (f, commands) = observed().await;
+    let prior = f
+        .right
+        .acquire_exclusive_sandbox_session(&f.request)
+        .await
+        .unwrap();
+    f.right
+        .sandbox_sessions
+        .update_one(
+            exact(&prior),
+            doc! { "$set": {
+                "lease_expires_at": "2000-01-01T00:00:00Z", "expires_at_ms": 0_i64,
+            }},
+        )
+        .await
+        .unwrap();
+    commands.lock().unwrap().take();
+    let next = f
+        .left
+        .acquire_exclusive_sandbox_session(&f.request)
+        .await
+        .unwrap();
+    assert!(next.epoch > prior.epoch);
+    commands.lock().unwrap().take().assert(&[
+        "findAndModify",
+        "update",
+        "find",
+        "delete",
+        "insert",
+        "commitTransaction",
+    ]);
+    f.right
+        .release_exclusive_sandbox_session(&prior)
+        .await
+        .unwrap();
+    assert!(f
+        .right
+        .has_open_sandbox_session(&f.request.sandbox_id, &stamp(next.issued_at_ms))
+        .await
+        .unwrap());
+    f.right
+        .renew_exclusive_sandbox_session(&f.request, &next)
+        .await
+        .unwrap();
+    f.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn foreign_session_id_collision_cannot_commit_a_partial_parent_fence() {
+    let (f, commands) = observed().await;
+    let foreign = doc! {
+        "_id": &f.request.session_id, "sandbox_id": "another-sandbox",
+        "lease_expires_at": "9999-01-01T00:00:00Z",
+    };
+    f.right
+        .sandbox_sessions
+        .insert_one(foreign.clone())
+        .await
+        .unwrap();
+    commands.lock().unwrap().take();
+    assert!(matches!(
+        f.left.acquire_exclusive_sandbox_session(&f.request).await,
+        Err(SandboxStoreError::Unavailable(_))
+    ));
+    commands
+        .lock()
+        .unwrap()
+        .take()
+        .assert(&["findAndModify", "update", "abortTransaction"]);
+    assert_eq!(
+        f.right.sandbox_sessions.find_one(doc! {}).await.unwrap(),
+        Some(foreign)
+    );
+    f.right
+        .sandbox_sessions
+        .delete_one(doc! {"_id": &f.request.session_id})
+        .await
+        .unwrap();
+    let owner = f
+        .right
+        .acquire_exclusive_sandbox_session(&f.request)
+        .await
+        .unwrap();
+    assert_eq!(
+        owner.epoch, 1,
+        "failed insertion must roll back its parent write"
     );
     f.db.drop().await.unwrap();
 }
