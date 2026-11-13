@@ -1,7 +1,9 @@
-#[path = "routed_policy_tests.rs"]
-mod policy_tests;
+#[path = "routed_compatibility_tests.rs"]
+mod compatibility_tests;
 #[path = "routed_custom_tests.rs"]
 mod custom_tests;
+#[path = "routed_policy_tests.rs"]
+mod policy_tests;
 #[path = "routed_quote_tests.rs"]
 mod quote_tests;
 use super::*;
@@ -434,4 +436,3 @@ async fn selected_but_unrouted_channel_retains_legacy_launch_until_a_plan_is_com
     assert_eq!(setup.legacy.0.load(Ordering::SeqCst), 1);
     assert_eq!(setup.server.memory.writes.load(Ordering::SeqCst), 0);
 }
-

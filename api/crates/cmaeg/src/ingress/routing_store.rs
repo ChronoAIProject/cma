@@ -10,6 +10,7 @@
 //! merely loading a retained plan never schedules it or authorizes effects.
 mod candidate;
 mod codec;
+mod compatibility;
 mod preparation_source;
 mod queue;
 mod recovery;

@@ -186,3 +186,9 @@ mod media_effects;
 
 #[cfg(test)]
 mod replica_legacy_tool_tests;
+
+#[cfg(test)]
+mod compatibility_execution_tests;
+
+#[cfg(test)]
+mod compatibility_mongo_tests;
