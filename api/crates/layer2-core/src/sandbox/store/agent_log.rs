@@ -218,6 +218,10 @@ pub trait AgentLogStore: Send + Sync {
             let entries = self
                 .agent_log_prefix(&agent.id, agent.conversation.last_seq)
                 .await?;
+            // Omitted events still need semantic proof. Otherwise, for example,
+            // malformed usage outside a conversation could become invisible.
+            crate::sandbox::agent_reads_fold::fold_agent_log(agent, &entries)
+                .map_err(SandboxStoreError::Corrupt)?;
             return Ok(Some(
                 entries
                     .into_iter()
