@@ -106,6 +106,7 @@ pub struct MongoSandboxStore {
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
+    pub(super) runtime_loss_bounded_proof_enabled: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) retry_single_marker_enabled: bool,
     pub(super) retry_audits:
@@ -215,6 +216,7 @@ impl MongoSandboxStore {
             bounded_admission_agents: Default::default(),
             segment_adoption_enabled: false,
             bounded_approval_reads: false,
+            runtime_loss_bounded_proof_enabled: false,
             bounded_close_retries: false,
             retry_single_marker_enabled: false,
             retry_audits: Default::default(),
