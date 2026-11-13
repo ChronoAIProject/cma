@@ -214,6 +214,8 @@ data:
   # Keep complete replies off until retained runtime proxy compatibility is verified.
   # Complete ordinary exchanges: 15 s; non-routed tool wait: 18 s. Routed window stays 20 s.
   CMAEG_NYXID_COMPLETE_REPLIES: "false"
+  # Enable only after NyxID CommonMark reply/thread/update routes are deployed and verified.
+  CMAEG_NYXID_COMMONMARK_RELAY_ENABLED: "false"
   CMAEG_NYXID_NATIVE_MEDIA_ENABLED: "true"
   # Enable only after all gateway replicas can read enriched relay message references.
   CMAEG_RELAY_TEXT_EDITS_ENABLED: "true"

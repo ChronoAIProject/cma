@@ -1,4 +1,5 @@
-use super::{RelayTransport, RECEIPT_MAX_BYTES};
+//! HTTP transport for bounded NyxID relay exchanges.
+use super::RECEIPT_MAX_BYTES;
 use crate::{
     net::exchange::{HttpReply, TransportError},
     telemetry::turn_trace::{self, Operation, Outcome, Stage},
@@ -7,6 +8,18 @@ use futures_util::future::BoxFuture;
 use reqwest::{header::HeaderMap, Client, StatusCode, Url};
 use std::time::Duration;
 
+/// Replaceable IO boundary of the relay client, mirroring `WebhookTransport`:
+/// URL building, status mapping, `Retry-After` and receipt parsing stay in the
+/// client. An implementation honours `timeout` for the whole exchange.
+pub trait RelayTransport: Send + Sync {
+    fn post(
+        &self,
+        url: Url,
+        headers: HeaderMap,
+        body: Vec<u8>,
+        timeout: Duration,
+    ) -> BoxFuture<'_, Result<HttpReply, TransportError>>;
+}
 /// The production relay transport: one reqwest request per call.
 pub struct HttpTransport {
     http: Client,
