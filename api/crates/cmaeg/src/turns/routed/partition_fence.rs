@@ -7,6 +7,16 @@ use crate::{
 use serde::Serialize;
 
 impl Journal {
+    /// Renew only this live captured generation between completed stages. An
+    /// in-flight stage retains its own immutable snapshot through every await.
+    pub async fn renew_partition(&self, token: &mut PartitionLease) -> Result<(), ExecutionError> {
+        self.partitions
+            .as_ref()
+            .ok_or(ExecutionError::Unsupported)?
+            .renew(token)
+            .await
+            .map_err(Into::into)
+    }
     pub(crate) fn with_partitions(mut self, partitions: Partitions) -> Self {
         self.clock = partitions.clock();
         self.partitions = Some(partitions);
