@@ -9,13 +9,13 @@ export interface ReadSchedule {
 /** Coalesce read hints without postponing an existing timer or overlapping reads. */
 export function observeRead(
   read: (signal: AbortSignal) => Promise<ReadSchedule | undefined>,
-  options: { readonly immediateForeground?: boolean } = {},
+  options: { readonly initialDelay?: number; readonly immediateForeground?: boolean } = {},
 ) {
   const request = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let scheduledAt = Infinity;
-  let hintAt = 0;
-  let retryAt = 0;
+  let hintAt = options.initialDelay ? Date.now() + options.initialDelay : 0;
+  let retryAt = hintAt;
   let reading = false;
   let stopped = false;
   let hinted = false;
@@ -32,7 +32,7 @@ export function observeRead(
   const run = async () => {
     clearTimeout(timer);
     scheduledAt = Infinity;
-    if (stopped || request.signal.aborted || hidden()) return;
+    if (stopped || reading || request.signal.aborted || hidden()) return;
     reading = true;
     hinted = false;
     refreshed = false;
@@ -72,7 +72,8 @@ export function observeRead(
   };
   document.addEventListener('visibilitychange', visibility);
   window.addEventListener('focus', foreground);
-  void run();
+  if (options.initialDelay) schedule(Date.now() + options.initialDelay);
+  else void run();
   return {
     hint,
     refresh,
