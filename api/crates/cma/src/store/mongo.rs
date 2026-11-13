@@ -192,6 +192,7 @@ impl MongoStores {
             &[
                 crate::document_artifacts::COLLECTION,
                 crate::document_artifacts::QUOTA_COLLECTION,
+                crate::document_artifacts::LIFECYCLE_COLLECTION,
             ],
         )
         .await?;

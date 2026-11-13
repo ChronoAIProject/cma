@@ -25,6 +25,7 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("visitor_launch_days", Independent),
     ("cma_document_artifacts", Documents),
     ("cma_document_quotas", Independent),
+    ("cma_document_lifecycle", Independent),
     ("native_warm_pool_targets", Independent),
     ("native_prepared_sandboxes", Empty),
     ("runtime_backend_routes", Sandbox(&["sandbox_id"])),
