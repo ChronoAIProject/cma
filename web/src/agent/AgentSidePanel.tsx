@@ -399,7 +399,9 @@ export function AgentSidePanel({
           hidden={panel !== 'browser'}
         >
           <>
-            {machineAvailable && !agentBrowserActive ? (
+            {!shared && detail === undefined && features?.browser.state === 'unsupported' ? (
+              <p role="status">Checking Agent desktop availability…</p>
+            ) : machineAvailable && !agentBrowserActive ? (
               panel === 'browser' ? (
                 <DesktopPanel
                   key={`${agentId}:${connectionRevision}`}
