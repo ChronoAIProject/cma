@@ -70,8 +70,10 @@ does not establish a statistically significant latency improvement.
   Cancel submission and recovery use a separate gate shared across all Agent
   sessions, also bounded to one request and one queued batch. A slow background
   check cannot delay Cancel's fresh checks before observation, before submission
-  or after its receipt. At most two transport identity reads run concurrently;
-  account comparison, journal epoch guards and invalidation apply to both gates.
+  or after its receipt. Ordinary Send, admission-conflict retries and input
+  recovery use their own shared gate with the same bounds, including the fresh
+  check after a receipt. At most three transport identity reads run concurrently;
+  account comparison, journal epoch guards and invalidation apply to all gates.
   Completed results and failures are never reused. Adjacent checks with no intervening IO
   may consume a one-use proof within 250ms when `IDENTITY_HANDOFF_ENABLED` is
   activated. That switch ships disabled. Preparation handoffs and mutations
