@@ -136,6 +136,7 @@ async fn metrics_bindings_preserve_independent_home_and_fence_conflicts_and_expi
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn metrics_rollup_replay_is_idempotent_keeps_success_and_has_no_raw_samples() {
     let store = fixture().await;
+    assert!(store.lease("rollups", "fixture-rollups", 70).await.unwrap());
     let hour = now() / 3600 * 3600 - 3600;
     let mut rollup = MetricRollup {
         schema_version: 1,
@@ -163,11 +164,20 @@ async fn metrics_rollup_replay_is_idempotent_keeps_success_and_has_no_raw_sample
             ],
         }],
     };
-    store.save_metric_rollups(&[rollup.clone()]).await.unwrap();
-    store.save_metric_rollups(&[rollup.clone()]).await.unwrap();
+    store
+        .save_metric_rollups("rollups", "fixture-rollups", &[rollup.clone()])
+        .await
+        .unwrap();
+    store
+        .save_metric_rollups("rollups", "fixture-rollups", &[rollup.clone()])
+        .await
+        .unwrap();
     rollup.source_complete = false;
     rollup.minutes.clear();
-    store.save_metric_rollups(&[rollup]).await.unwrap();
+    store
+        .save_metric_rollups("rollups", "fixture-rollups", &[rollup])
+        .await
+        .unwrap();
     let collection = store.collection(super::super::super::sandbox_metric_rollups::COLLECTION);
     assert_eq!(collection.count_documents(doc! {}).await.unwrap(), 1);
     let d = collection.find_one(doc! {}).await.unwrap().unwrap();
@@ -243,6 +253,10 @@ async fn metrics_diagnostics_exclude_assigned_resources_and_reset_changed_incarn
         .lease("observer", "fixture-observer", 70)
         .await
         .unwrap());
+    assert!(store
+        .lease("diagnostics", "fixture-diagnostics", 70)
+        .await
+        .unwrap());
     let at = now() - 600;
     let home = binding("owner-sandbox", BindingKind::Home, at);
     store
@@ -253,20 +267,20 @@ async fn metrics_diagnostics_exclude_assigned_resources_and_reset_changed_incarn
     diagnostic.sandbox_id.clear();
     diagnostic.owner_subject = "unassigned_pool".into();
     assert!(store
-        .diagnostic_bindings(vec![diagnostic.clone()])
+        .diagnostic_bindings("fixture-diagnostics", vec![diagnostic.clone()])
         .await
         .unwrap()
         .is_empty());
     diagnostic.kind = BindingKind::Compute;
     let first = store
-        .diagnostic_bindings(vec![diagnostic.clone()])
+        .diagnostic_bindings("fixture-diagnostics", vec![diagnostic.clone()])
         .await
         .unwrap();
     assert_eq!(first[0].valid_from, at);
     diagnostic.valid_from = at + 60;
     diagnostic.observed_at = at + 60;
     let second = store
-        .diagnostic_bindings(vec![diagnostic.clone()])
+        .diagnostic_bindings("fixture-diagnostics", vec![diagnostic.clone()])
         .await
         .unwrap();
     assert_eq!(second[0].valid_from, at);
@@ -275,14 +289,17 @@ async fn metrics_diagnostics_exclude_assigned_resources_and_reset_changed_incarn
     diagnostic.valid_from = at + 90;
     diagnostic.observed_at = at + 90;
     let restarted = store
-        .diagnostic_bindings(vec![diagnostic.clone()])
+        .diagnostic_bindings("fixture-diagnostics", vec![diagnostic.clone()])
         .await
         .unwrap();
     assert_eq!(restarted[0].valid_from, at + 90);
     diagnostic.owner_subject = "unattributed".into();
     diagnostic.valid_from = at + 120;
     diagnostic.observed_at = at + 120;
-    let assigned = store.diagnostic_bindings(vec![diagnostic]).await.unwrap();
+    let assigned = store
+        .diagnostic_bindings("fixture-diagnostics", vec![diagnostic])
+        .await
+        .unwrap();
     assert_eq!(assigned[0].valid_from, at + 120);
     store.db.drop().await.unwrap();
 }

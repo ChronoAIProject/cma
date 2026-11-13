@@ -3,6 +3,7 @@ mod admission;
 mod budget;
 mod charts;
 mod control;
+mod controlled_updates;
 mod diagnostics;
 pub(crate) mod inventory;
 mod options;
@@ -54,16 +55,27 @@ impl ReportingStore {
         collection: &str,
         updates: Vec<Document>,
     ) -> Result<()> {
+        self.bulk_updates_in_session(collection, updates, None)
+            .await
+    }
+
+    pub(super) async fn bulk_updates_in_session(
+        &self,
+        collection: &str,
+        updates: Vec<Document>,
+        session: Option<&mut mongodb::ClientSession>,
+    ) -> Result<()> {
         if updates.len() > 200 {
             return Err(MetricsError::Busy);
         }
-        let result = self
-            .db
-            .run_command(
-                doc! {"update":collection,"updates":updates,"ordered":false,"maxTimeMS":2000_i64},
-            )
-            .await
-            .map_err(unavailable)?;
+        let command = self.db.run_command(
+            doc! {"update":collection,"updates":updates,"ordered":false,"maxTimeMS":2000_i64},
+        );
+        let result = match session {
+            Some(session) => command.session(session).await,
+            None => command.await,
+        }
+        .map_err(unavailable)?;
         if result
             .get_array("writeErrors")
             .is_ok_and(|errors| !errors.is_empty())
