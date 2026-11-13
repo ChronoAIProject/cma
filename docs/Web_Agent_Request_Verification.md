@@ -11,6 +11,15 @@ and zero retries. The baseline is `112b09c6b`. New transport selections retain
 the post-eligibility identity check because eligibility crosses a network boundary.
 The independent application-startup identity read is unchanged.
 
+The affected local Vitest run passed 479 tests across 47 files. Coverage for the
+new identity gate, access observation/hook and creation-scope modules was 98.34%
+statements, 90.9% branches, 97.22% functions and 100% lines. Web lint, typecheck
+and E2E typecheck passed. These are the owner's fast local gates; they do not
+represent a full CI run or production acceptance.
+The whole-file Prettier check for `Web_Style.md` has existing upstream failures;
+the candidate introduces no additional formatting changes, and its changelog
+remains append-only.
+
 `IDENTITY_HANDOFF_ENABLED` ships **false** under the owner's default-off directive.
 Fresh-check batching is enabled independently. Switching that constant to true
 requires owner activation; deployment alone does not enable proof reuse. The
