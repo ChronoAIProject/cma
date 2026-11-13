@@ -3,6 +3,7 @@ mod diagnostics;
 mod observer;
 mod projection;
 mod report;
+mod report_trace;
 mod source;
 mod summary;
 use crate::{config::Config, store::usage_reports::ReportingStore};
