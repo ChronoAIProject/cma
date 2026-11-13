@@ -57,6 +57,10 @@ prerequisite. Submit the exact combined configuration and scope/refusal tests fo
 each changed switch. Do not silently waive that prerequisite or claim a title-only
 percentage stage while the shared selector stays at 100%. This packet supplies no
 new selector or traffic-isolation mechanism and does not resolve those HOLDs.
+The selected/unselected legacy/v2 execution matrix (exact title inputs, pending
+sets, locators, authority, optional-path entry and unchanged admission/windows)
+is explicitly **deferred** to that future reviewed scope implementation. It must
+also prove the mandatory v2 reader floor for unselected Agents.
 
 For #1790, collect always-on phase evidence before an approved ON window. The
 enabled reserved deadline includes awaited locks/platform evaluation in its 25 s
@@ -149,6 +153,24 @@ process restarts without accounting for resets.
 - Index/schema: exact plan/checksum, postcondition readback, migration lease and
   resumability, index build duration/resource use, replication lag, checkout wait
   and serving latency. A source declaration is not proof the index is installed.
+
+## Offline packet checks
+
+`.github/scripts/agent-log-activation-evidence.mjs` is an import-only, pure
+packet checker; it has no network, process, configuration-write or activation
+entrypoint. Its tests run with
+`node --test .github/scripts/agent-log-activation-evidence.test.mjs`.
+`QUALIFIED` applies only to the complete-operation evidence subsection; it is
+never a GO, owner approval or production acceptance receipt. The title/approval
+disposition remains HOLD even if a caller supplies purported scope/approval
+fields, because no scope fence has been implemented/reviewed in this change.
+
+The checker also previews selector patches against explicit adoption/recovery
+readback. A missing or non-false initial-stage readback returns HOLD and no patch;
+rollback preserves independent controls. The release-controller owner must
+integrate and review these executable preconditions against the live before-state
+through the lead before using a stage. This offline checker does not modify the
+sealed controller or qualify deployment, evidence collection or rollout.
 
 ## Abort criteria
 
