@@ -65,7 +65,11 @@ pub(super) async fn monitored(seed: &Seeded) -> (MongoTriggerDefinitionStore, Ar
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
             if event.database_name == database {
-                observed.commands.lock().unwrap().push(event.command.clone());
+                observed
+                    .commands
+                    .lock()
+                    .unwrap()
+                    .push(event.command.clone());
                 if observed.should_pause(&event.command) {
                     observed.entered.notify_one();
                     let released = observed

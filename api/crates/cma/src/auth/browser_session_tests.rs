@@ -167,7 +167,11 @@ async fn both_browser_readers_preserve_deletion_gating_and_fail_closed() {
     for joined in [false, true] {
         for (standing, expected, code) in [
             (Ok(false), StatusCode::NO_CONTENT, ""),
-            (Ok(true), StatusCode::FORBIDDEN, "account_deletion_in_progress"),
+            (
+                Ok(true),
+                StatusCode::FORBIDDEN,
+                "account_deletion_in_progress",
+            ),
             (
                 Err(AccountDeletionError::Unavailable),
                 StatusCode::SERVICE_UNAVAILABLE,
