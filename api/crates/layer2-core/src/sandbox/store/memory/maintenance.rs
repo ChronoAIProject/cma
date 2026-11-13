@@ -47,6 +47,17 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .get(&request.sandbox_id)
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
+        if !request.cause.honours_keep_alive() {
+            let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
+            if platform_stop_busy(&state, &current, &request.requested_at, &activities)? {
+                return Ok(SandboxMaintenanceOutcome::NotEligible);
+            }
+            return persist_application(
+                &mut state,
+                apply_inactivity_pause(&current, &activities, &request)?,
+                request.requested_at,
+            );
+        }
         if current.profile.always_on == Some(true) {
             return Ok(SandboxMaintenanceOutcome::NotEligible);
         }
@@ -102,6 +113,13 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             .get(&request.sandbox_id)
             .cloned()
             .ok_or(SandboxStoreError::NotFound)?;
+        if !request.cause.honours_keep_alive() {
+            let activities = live_agent_activities(&state, &current.id, &request.requested_at)?;
+            if platform_stop_busy(&state, &current, &request.requested_at, &activities)? {
+                return Ok(SandboxMaintenanceOutcome::NotEligible);
+            }
+            return preview_application(&current, &activities, &request);
+        }
         if current.profile.always_on == Some(true) {
             return Ok(SandboxMaintenanceOutcome::NotEligible);
         }
@@ -193,6 +211,31 @@ impl SandboxMaintenanceStore for InMemorySandboxStore {
             request.requested_at,
         )
     }
+}
+
+/// Store evidence a platform-stop pause needs beyond the live Agents: no
+/// Workspace has pending or leased work, and a Sandbox without live Agents has
+/// no open owner session.
+fn platform_stop_busy(
+    state: &State,
+    sandbox: &Sandbox,
+    observed_at: &str,
+    activities: &[SandboxAgentActivity],
+) -> Result<bool, SandboxStoreError> {
+    let workspace_busy = state.workspaces.values().any(|workspace| {
+        workspace.sandbox_id == sandbox.id
+            && (workspace.work.step.is_pending() || workspace.work.lease.is_some())
+    });
+    if workspace_busy || !activities.is_empty() {
+        return Ok(workspace_busy);
+    }
+    let observed = crate::seconds_from_rfc3339(observed_at).ok_or(
+        SandboxStoreError::InvalidTransaction("sandbox session observation is invalid"),
+    )?;
+    Ok(state.sandbox_sessions.iter().any(|((id, _), expires_at)| {
+        id == &sandbox.id
+            && crate::seconds_from_rfc3339(expires_at).is_some_and(|expires| expires > observed)
+    }) || crate::sandbox::has_open_desktop_session(&sandbox.id))
 }
 
 pub(super) fn live_agent_activities(

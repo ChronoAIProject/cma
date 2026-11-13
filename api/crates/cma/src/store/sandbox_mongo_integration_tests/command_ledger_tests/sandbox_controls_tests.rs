@@ -3,6 +3,9 @@ use layer2_core::resource_access::*;
 use layer2_core::sandbox::control::*;
 use std::time::{Duration, SystemTime};
 
+#[path = "sandbox_control_platform_tests.rs"]
+mod platform;
+
 fn context(subject: &str) -> CallerContext {
     CallerContext {
         credential_source: layer2_core::resource_access::CredentialSource::Retained,
@@ -348,7 +351,7 @@ async fn sandbox_controls_index_record_disagreement_and_forged_reservation_fail_
     let mut forged = record.clone();
     forged.admission_audit.policy_revision += 1;
     assert_eq!(
-        f.store.reserve_sandbox_control(forged, proof).await,
+        f.store.reserve_sandbox_control(forged, proof, Ok(())).await,
         Err(SandboxControlError::Conflict)
     );
     f.store
