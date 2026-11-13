@@ -7,6 +7,19 @@ impl RoutedIngress {
     pub(super) async fn admit_compatibility(
         &self,
         request: &LaunchRequest,
+        source: VerifiedIngress,
+        observer: &dyn ActivityObserver,
+    ) -> Result<LaunchOutcome, Problem> {
+        crate::ingress::admission_trace::attempt(
+            request,
+            self.admit_compatibility_observed(request, source, observer),
+        )
+        .await
+    }
+
+    async fn admit_compatibility_observed(
+        &self,
+        request: &LaunchRequest,
         mut source: VerifiedIngress,
         observer: &dyn ActivityObserver,
     ) -> Result<LaunchOutcome, Problem> {
