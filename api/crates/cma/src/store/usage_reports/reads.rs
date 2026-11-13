@@ -224,8 +224,11 @@ impl MetricsStore for ReportingStore {
         } else {
             None
         };
+        let mut items: Vec<Row> = docs.iter().map(decode).collect::<Result<_>>()?;
+        self.hydrate_owner_names(items.iter_mut().map(|row| &mut row.owner).collect())
+            .await?;
         Ok(Rows {
-            items: docs.iter().map(decode).collect::<Result<_>>()?,
+            items,
             next,
             report_id: report.report_id.clone(),
             as_of: report.as_of,
@@ -240,7 +243,9 @@ impl MetricsStore for ReportingStore {
             .await
             .map_err(unavailable)?
             .ok_or(MetricsError::NotFound)?;
-        decode(&d)
+        let mut row: Row = decode(&d)?;
+        self.hydrate_owner_names(vec![&mut row.owner]).await?;
+        Ok(row)
     }
     async fn owners(
         &self,
