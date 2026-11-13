@@ -21,7 +21,7 @@ use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRe
 mod consented;
 mod evidence;
 #[cfg(test)]
-pub(super) mod mongo_integration_tests;
+pub(crate) mod mongo_integration_tests;
 mod retained_availability;
 mod transaction;
 
