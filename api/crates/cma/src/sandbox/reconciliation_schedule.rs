@@ -21,7 +21,11 @@ impl SandboxReconciler {
         let (mut progress, recovery) = if self.runtime_loss_bounded_proof_enabled {
             tokio::time::timeout_at(opportunity_deadline, prelude)
                 .await
-                .map_err(|_| {
+                .ok()
+                // timeout_at may poll an already-ready future at its deadline.
+                // Do not dispatch binding work after that boundary either.
+                .filter(|_| tokio::time::Instant::now() < opportunity_deadline)
+                .ok_or_else(|| {
                     tracing::warn!(parent: None, phase = "prelude", outcome = "deadline",
                         "sandbox reconciliation prelude exhausted the reserved opportunity");
                     SandboxStoreError::Unavailable(
