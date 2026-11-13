@@ -1,7 +1,6 @@
 //! Server-clock leases and resumable enumeration for deleted document cleanup.
 use super::{
     lifecycle::{self, object_range},
-    mongo::MongoDocumentStore,
     quota::{number, unavailable, IO, QUOTA_COLLECTION},
 };
 use futures_util::TryStreamExt;
@@ -19,7 +18,8 @@ pub(crate) struct MongoDocumentPurgeStore {
     rows: Collection<Document>,
     quotas: Collection<Document>,
 }
-impl MongoDocumentStore {
+#[cfg(test)]
+impl super::mongo::MongoDocumentStore {
     pub(crate) fn purge(&self) -> MongoDocumentPurgeStore {
         MongoDocumentPurgeStore::new(&self.rows.client().database(&self.rows.namespace().db))
     }

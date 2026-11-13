@@ -87,7 +87,7 @@ impl Operation for Create<'_> {
             .await
             .map_err(unavailable)?;
         if main.as_ref() != Some(&self.encoded)
-            || !lifecycle.is_some_and(|r| r.get_str("state").ok() == Some("live"))
+            || lifecycle.is_none_or(|r| r.get_str("state").ok() != Some("live"))
         {
             return Err(DocumentError::Unavailable);
         }
@@ -102,7 +102,7 @@ impl Operation for Create<'_> {
                 .session(snapshot)
                 .await
                 .map_err(unavailable)?;
-            if !object.is_some_and(|r| r.get_str("state").ok() == Some("committed")) {
+            if object.is_none_or(|r| r.get_str("state").ok() != Some("committed")) {
                 return Err(DocumentError::Unavailable);
             }
         }
