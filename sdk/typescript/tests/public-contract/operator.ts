@@ -9,6 +9,9 @@ export const operatorDispatch: Record<string, Dispatch> = {
   'POST /api/v1/profile-authoring/repositories/resolve': ({ client, body }) =>
     client.profileAuthoring.resolveRepository(body),
   'GET /api/v1/admin/settings': ({ client }) => client.admin.readSettings(),
+  'GET /api/v1/admin/admission': ({ client }) => client.admin.readAdmission(),
+  'POST /api/v1/admin/admission/stop': ({ client, body }) => client.admin.stopAdmission(body),
+  'POST /api/v1/admin/admission/resume': ({ client, body }) => client.admin.resumeAdmission(body),
   'PUT /api/v1/admin/settings': ({ client, body }) => client.admin.replaceSettings(body),
   'PATCH /api/v1/admin/settings': ({ client, body }) => client.admin.patchSettings(body),
   'POST /api/v1/admin/settings/reset': ({ client, body }) => client.admin.resetSettings(body),

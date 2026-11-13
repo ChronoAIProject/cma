@@ -292,8 +292,6 @@ pub enum ClosureReason {
     SpendWarning,          // committed ≥ warning_level     → new registrations refused
     SpendStop,             // committed ≥ disposable        → new commitments refused, running work stopped and paused
     MeteringUnavailable,   // a required source is stale, missing or inconsistent → new commitments refused
-    // Reserved for #1478 on the same type; not produced by this contract:
-    // OperatorStop, CapacityLimit(kind)
 }
 
 pub struct Closure {
@@ -304,10 +302,10 @@ pub struct Closure {
 }
 ```
 
-The set is the **platform admission state**. It is not a budget-private flag:
-#1478 adds operator and capacity reasons to the same set and the same read
-path, so the 60-second switch, the registration ceiling and the spend stop are
-one mechanism with several reasons.
+These closures are the spend component of **platform admission state**.
+#1478 PR-A extends that state with an independent operator control read from
+the same settings snapshot. Operator control is not a spend-period closure;
+see section 10 and [Admission control](CMA_Admission_Control.md).
 
 Admission reads also derive closures from the current policy, clock and period
 evidence. A missing period is an unobserved period, never an open meter. Missing
@@ -578,21 +576,34 @@ late.
 
 **Low model-credit balance.** The balance of the model account is not metered
 by CMA (#1566 EXT-LLM-CREDIT); typed 402 recovery for admitted turns is #1603.
-Until #1478's `OperatorStop` exists, an operator closes admission on a low
-balance by lowering `period_cap` or raising `protected_reserve` in a new
-settings revision, which the next admission honors.
+The independent #1478 PR-A operator switch can pause new admission on a low
+balance without editing spend policy. It requires its own compatible-reader
+rollout and write gate; see [Admission control](CMA_Admission_Control.md).
+Existing spend-policy edits retain their original effect.
 
 ## 10. What #1478 inherits
 
-- `Closure`, `ClosureReason`, the guarded closure write and the in-transaction
-  read of the period row are the admission state. #1478 adds
-  `OperatorStop { since, revision, actor }` and
-  `CapacityLimit { kind: Registrations | RetainedHomes | ActiveSessions }`.
-- The reconciliation-sweep phase and its 15-second tick are the propagation
-  mechanism; #1478 proves the ≤ 60 s bound with its own ceilings.
-- The refusal matrix of section 5.1 gains columns, not new mechanisms.
-- Existing consumer protection stays `protected_reserve` here; #1478's
-  NyxID/direct-API quota protection is a count rule on the same state.
+PR-A uses the existing admission choke points and reads the top-level
+`platform_settings.admission_control` alongside the existing settings document.
+`OperatorStop { since, revision, actor, reason }` is **not** a `ClosureReason`:
+it must work with spend metering off, survive period rotation and policy edits,
+and resume by its own CAS revision without changing `settings.revision`.
+Mixing it into the period ledger would couple those independent authorities.
+
+At existing spend choke points, `SpendStop` retains HTTP 402 precedence over
+the operator's HTTP 503 `admission_paused`. Fresh work meets both; steps of
+already admitted work bypass only the operator stop. The spend evaluator,
+closure writes, running-turn stops, settlement and protected reserve retain
+their existing behavior. New lifecycle/binding operation gates check operator
+control at durable admission; their later resource steps retain the original
+spend checks and timing, rather than introducing a new spend preflight.
+
+The operator switch propagates on the next admission snapshot, independently
+of the reconciliation sweep. Zero-liability admissions keep their read-only
+settings snapshot. Pre-stop snapshots can commit later; the exact ≤60-second
+qualification and transaction-duration gap are recorded in the admission
+contract. Capacity ceilings and the existing-consumer reserve belong to PR-B;
+Control rate limiting belongs to PR-C.
 
 ## 11. Verification (TC-125, TC-126, TC-067 platform clauses)
 

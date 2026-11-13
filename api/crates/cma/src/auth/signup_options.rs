@@ -316,6 +316,7 @@ mod tests {
     fn warning() -> PlatformAdmissionState {
         PlatformAdmissionState {
             configured: true,
+            operator_control: layer2_core::budget::OperatorAdmissionState::Open,
             closures: vec![Closure {
                 reason: ClosureReason::SpendWarning,
                 since: 1,
@@ -323,6 +324,33 @@ mod tests {
                 committed_at_entry: 0,
             }],
         }
+    }
+
+    #[tokio::test]
+    async fn operator_stop_hides_registration_even_with_cached_provider_options_and_metering_off() {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/api/v1/public/config", get(public_config))
+            .with_state(Arc::clone(&requests));
+        let (auth, server) = provider(app).await;
+        let stopped = PlatformAdmissionState {
+            operator_control: layer2_core::budget::OperatorAdmissionState::Stopped(
+                layer2_core::admission::OperatorStop {
+                    since: 1,
+                    revision: 1,
+                    actor: layer2_core::SubjectId::new("operator"),
+                    reason: "contain".into(),
+                },
+            ),
+            ..Default::default()
+        };
+        let spend = Arc::new(Spend(std::sync::Mutex::new(Ok(stopped))));
+        let auth = auth.with_platform_spend(spend.clone());
+        assert!(!current_signup_options(&auth).await.register_available);
+        *spend.0.lock().unwrap() = Ok(PlatformAdmissionState::default());
+        assert!(current_signup_options(&auth).await.register_available);
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 
     #[tokio::test]
@@ -338,6 +366,13 @@ mod tests {
         assert!(!current_signup_options(&auth).await.register_available);
         for (state, expected) in [
             (Ok(PlatformAdmissionState::default()), true),
+            (
+                Ok(PlatformAdmissionState {
+                    operator_control: layer2_core::budget::OperatorAdmissionState::Unreadable,
+                    ..Default::default()
+                }),
+                false,
+            ),
             (Err(BudgetError::Unavailable), true),
             (Ok(warning()), false),
         ] {

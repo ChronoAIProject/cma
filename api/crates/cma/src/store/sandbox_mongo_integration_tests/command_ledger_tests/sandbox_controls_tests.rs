@@ -3,6 +3,8 @@ use layer2_core::resource_access::*;
 use layer2_core::sandbox::control::*;
 use std::time::{Duration, SystemTime};
 
+#[path = "sandbox_control_operator_tests.rs"]
+mod operator;
 #[path = "sandbox_control_platform_tests.rs"]
 mod platform;
 
@@ -70,6 +72,8 @@ impl AgentCommandAdmissionAuthority for Custody {
 struct Fixture {
     store: Arc<MongoSandboxStore>,
     service: Arc<SandboxControlService>,
+    access: Arc<ResourceAccessService>,
+    share: ShareMutationReceipt,
     parent: Sandbox,
     agent: Agent,
 }
@@ -81,7 +85,7 @@ impl Fixture {
             store.clone(),
             Arc::new(Membership(MAX_MEMBERSHIP_AGE)),
         ));
-        access
+        let share = access
             .change_share(
                 &context("owner"),
                 Some("fixture"),
@@ -103,6 +107,8 @@ impl Fixture {
         Self {
             store,
             service,
+            access,
+            share,
             parent,
             agent,
         }

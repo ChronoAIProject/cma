@@ -210,6 +210,9 @@ fn accepted(command: &AgentCommand) -> Response {
 
 fn admission_problem(error: CommandAdmissionError) -> Response {
     match error {
+        CommandAdmissionError::Ledger(CommandLedgerError::AdmissionPaused) => {
+            InstanceProblem::AdmissionPaused.into_response()
+        }
         CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => {
             InstanceProblem::Budget(reason).into_response()
         }
