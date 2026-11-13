@@ -48,6 +48,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
     pub coordinated_ingress: bool,
@@ -185,6 +186,7 @@ impl SandboxLifecycleComposition {
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
+            .with_cleanup_continuation(config.cleanup_continuation_enabled)
             .with_retry_single_marker(config.retry_single_marker_enabled)
             .with_work_retry_policy(config.work_retry_policy_enabled)
             .with_managed_documents(config.managed_documents_enabled)

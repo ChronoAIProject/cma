@@ -107,7 +107,13 @@ pub(super) fn append(
     facts: &AgentLogTurnFacts,
     turn: &mut AgentTranscriptTurn,
     entries: Vec<AgentLogEntry>,
-) -> Result<(), SandboxStoreError> {
+    budget: usize,
+) -> Result<usize, SandboxStoreError> {
+    let mut bytes = serde_json::to_vec(turn).map_err(|_| corrupt())?.len();
+    if bytes > budget {
+        return Err(SandboxStoreError::AgentLogCapacityExceeded);
+    }
+    let mut admitted = 0;
     for entry in entries {
         if entry.seq < facts.turn_sequence || facts.end_sequence.is_some_and(|end| entry.seq > end)
         {
@@ -121,17 +127,34 @@ pub(super) fn append(
             {
                 return Err(corrupt())
             }
-            _ => continue,
+            _ => {
+                admitted += 1;
+                continue;
+            }
         };
-        if role == AgentTranscriptRole::Agent {
-            turn.agent_messages.push(content.clone());
-        }
-        turn.messages.push(AgentTranscriptMessage {
+        let message = AgentTranscriptMessage {
             sequence: entry.seq,
             role,
             content,
             appended_at: entry.appended_at,
-        });
+        };
+        let mut added = serde_json::to_vec(&message).map_err(|_| corrupt())?.len()
+            + usize::from(!turn.messages.is_empty());
+        if role == AgentTranscriptRole::Agent {
+            added += serde_json::to_vec(&message.content)
+                .map_err(|_| corrupt())?
+                .len()
+                + usize::from(!turn.agent_messages.is_empty());
+        }
+        if bytes + added > budget {
+            break;
+        }
+        bytes += added;
+        if role == AgentTranscriptRole::Agent {
+            turn.agent_messages.push(message.content.clone());
+        }
+        turn.messages.push(message);
+        admitted += 1;
     }
-    Ok(())
+    Ok(admitted)
 }
