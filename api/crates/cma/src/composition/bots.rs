@@ -230,7 +230,8 @@ fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
         AgentLifecycleProvisioningError::Invalid(error)
         | AgentLifecycleProvisioningError::DesktopUnsupported(error)
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),
-        AgentLifecycleProvisioningError::ConnectionRequired { .. }
+        AgentLifecycleProvisioningError::AdmissionPaused
+        | AgentLifecycleProvisioningError::ConnectionRequired { .. }
         | AgentLifecycleProvisioningError::Unavailable => BotError::Unavailable,
     }
 }

@@ -6,6 +6,7 @@ use super::*;
 #[macro_use]
 mod macros;
 
+mod admission;
 mod agent_admission;
 #[cfg(test)]
 mod agent_admission_tests;

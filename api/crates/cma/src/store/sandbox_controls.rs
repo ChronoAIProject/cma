@@ -19,7 +19,7 @@ enum Change<'a> {
     Reserve(
         &'a SandboxControlRecord,
         &'a SandboxControlAuthorization,
-        Result<(), layer2_core::budget::BudgetError>,
+        Result<(), layer2_core::admission::AdmissionRefusal>,
     ),
     Apply(&'a SandboxControlRecord, &'a SandboxControlAuthorization),
     Reject(&'a SandboxControlRecord, SandboxControlFailure),
@@ -70,7 +70,7 @@ impl SandboxControlStore for MongoSandboxStore {
         &self,
         record: SandboxControlRecord,
         authorization: Arc<SandboxControlAuthorization>,
-        new_commitment: Result<(), layer2_core::budget::BudgetError>,
+        new_commitment: Result<(), layer2_core::admission::AdmissionRefusal>,
     ) -> Result<SandboxControlRecord, SandboxControlError> {
         self.change_sandbox_control(Change::Reserve(&record, &authorization, new_commitment))
             .await
