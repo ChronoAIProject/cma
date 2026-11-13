@@ -126,7 +126,17 @@ impl Sender {
                 _ => "custom",
             },
         );
-        let (result, effects) = self.reply_inner(ctx, event, message).await;
+        let platform = !matches!(
+            event.reply,
+            ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None
+        );
+        let (result, effects) = super::trace::observe(
+            ctx.trace,
+            platform,
+            self.reply_inner(ctx, event, message),
+            |(receipt, _)| super::trace::receipt(receipt),
+        )
+        .await;
         observation.finish(result.delivery.kind());
         (result, effects)
     }

@@ -314,6 +314,7 @@ impl App {
             .start_turn(
                 &self.definition.provider.slug,
                 TurnRequest {
+                    nyxid_trace: false,
                     timing: None,
                     conversation_id: conversation_id.clone(),
                     input: vec![],

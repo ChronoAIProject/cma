@@ -236,6 +236,7 @@ pub struct Config {
 impl Config {
     /// Read configuration from the process environment.
     pub fn from_env() -> Result<Self, ConfigError> {
+        crate::telemetry::turn_trace::config::enabled()?;
         let value = env::var(CMAEG_LISTEN).unwrap_or_else(|_| "0.0.0.0:8090".to_owned());
         let listen = value.parse().map_err(|source| ConfigError::InvalidListen {
             name: CMAEG_LISTEN,
