@@ -168,6 +168,7 @@ async fn organization_inventory_rechecks_hidden_lookahead_after_buffered_count_i
         let entered = Arc::new(tokio::sync::Notify::new());
         let resume = Arc::new(tokio::sync::Notify::new());
         let reads = HierarchyReadService::new(Arc::new(BufferedStore {
+            projected: false,
             inner: f.store.clone(),
             sandbox: None,
             dependency_failure: false,
