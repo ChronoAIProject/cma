@@ -23,6 +23,7 @@ mod debug;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
+#[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
 mod agent_manager;
