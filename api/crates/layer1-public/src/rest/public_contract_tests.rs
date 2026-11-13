@@ -60,6 +60,7 @@ mod shared_hierarchy_cases;
 mod shared_source_cases;
 mod shared_stream_cases;
 mod source_cases;
+mod spend_cases;
 mod state_cases;
 mod suggestion_cases;
 mod symbols;
@@ -169,6 +170,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = spend_cases::scenario(name) {
+        return scenario;
+    }
     if let Some(scenario) = capacity_recovery_cases::scenario(name).await {
         return scenario;
     }

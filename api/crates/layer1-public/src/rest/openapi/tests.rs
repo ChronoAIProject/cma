@@ -166,7 +166,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 28);
+    assert_eq!(admin.len(), 30);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -181,7 +181,7 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 31);
+    assert_eq!(operation_ids.len(), 33);
     assert!(document
         .paths
         .paths
@@ -574,5 +574,67 @@ fn usage_presentation_settings_have_a_strict_boolean_admin_contract() {
             schemas[name]["properties"]["usage_reporting"]["$ref"],
             "#/components/schemas/UsageReportingSettingsBody"
         );
+    }
+}
+
+#[test]
+fn platform_spend_operations_publish_exact_wire_schemas_and_problem_statuses() {
+    let document = serde_json::to_value(document()).unwrap();
+    for (method, path, statuses) in [
+        (
+            "get",
+            "/api/v1/admin/spend",
+            vec!["200", "401", "403", "503"],
+        ),
+        (
+            "post",
+            "/api/v1/admin/spend/observations",
+            vec!["200", "401", "403", "422", "503"],
+        ),
+    ] {
+        let operation = &document["paths"][path][method];
+        assert_eq!(operation["tags"], serde_json::json!(["administration"]));
+        assert_eq!(operation["security"].as_array().unwrap().len(), 2);
+        let responses = operation["responses"].as_object().unwrap();
+        assert_eq!(responses.len(), statuses.len());
+        for status in statuses {
+            let content_type = if status == "200" {
+                "application/json"
+            } else {
+                "application/problem+json"
+            };
+            let schema = &responses[status]["content"][content_type]["schema"]["$ref"];
+            assert_eq!(
+                schema,
+                if status == "200" {
+                    "#/components/schemas/SpendView"
+                } else {
+                    "#/components/schemas/ProblemDocument"
+                }
+            );
+        }
+    }
+    assert_eq!(
+        document["paths"]["/api/v1/admin/spend/observations"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"],
+        "#/components/schemas/ObservationRequest"
+    );
+    let schemas = &document["components"]["schemas"];
+    assert_eq!(schemas["ObservationRequest"]["additionalProperties"], false);
+    assert_eq!(
+        schemas["ObservationSource"]["enum"],
+        serde_json::json!(["cloud"])
+    );
+    assert_eq!(
+        schemas["SpendClosureReason"]["enum"],
+        serde_json::json!(["spend_warning", "spend_stop", "metering_unavailable"])
+    );
+    assert_eq!(
+        schemas["ClosureView"]["properties"]["reason"]["$ref"],
+        "#/components/schemas/SpendClosureReason"
+    );
+    let required = schemas["SpendView"]["required"].as_array().unwrap();
+    for optional in ["levels", "committed", "ledger"] {
+        assert!(!required.iter().any(|field| field == optional));
     }
 }
