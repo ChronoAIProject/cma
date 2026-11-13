@@ -49,6 +49,13 @@ this namespace are not compatible rollback targets. There is no desktop legacy
 reset endpoint. Image inventories, old-writer exclusion, activation and any
 retirement procedure require their separate integration and release disposition.
 
+The custody namespace requires one supervisor writer. Its local state lock
+serializes each comparison and write; this is not a filesystem protocol for
+multiple simultaneous supervisor writers. Every persistent transition verifies
+the exact expected retained record, including terminal cleanup, and confirmation
+and revocation recheck it after joining streams. Missing or changed custody is
+preserved as evidence and refused rather than repaired from memory.
+
 This document does not qualify the ordinary Sandbox/Workspace work lease or its
 external effects. Desktop epochs cannot fence provisioning, credential issuance,
 installation or Workspace work. Their short-authority recovery contract remains
