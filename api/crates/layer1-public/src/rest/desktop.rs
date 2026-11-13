@@ -148,7 +148,9 @@ async fn relay(
                     Ok(Some(DesktopFrame::Pong(bytes))) => Message::Pong(bytes.into()),
                     _ => break,
                 };
-                if !matches!(tokio::time::timeout(Duration::from_secs(10), sink.send(message)).await, Ok(Ok(()))) { break; }
+                if !matches!(connection.while_authorized(
+                    tokio::time::timeout(Duration::from_secs(10), sink.send(message))
+                ).await, Ok(Ok(Ok(())))) { break; }
             },
         }
     }
