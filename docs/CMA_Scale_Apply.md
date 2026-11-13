@@ -226,16 +226,18 @@ k apply --dry-run=server -f infra/api/pdb.yaml -o name
 k apply --dry-run=server -f infra/cmaeg/pdb.yaml -o name
 ```
 
-These dry-runs do not execute the CLI or establish membership/capacity. Prove both
-image-contained hooks under non-root/read-only filesystem in local image gates:
-AM `/usr/local/bin/cma --agent-manager-drain`, EG
-`/usr/local/bin/cmaeg --replica-drain`; authenticated loopback, idempotent, <=25s,
-early irreversible readiness withdrawal, close-before-exact-lease-release. Shell
-hooks always wait30s, then return the CLI status so failure is observable. Failed
-preStop does not prevent kubelet termination: SIGTERM must repeat the safe drain
-and failed close must retain authority until safe expiry. Neither grace nor a
-healthy probe proves failover performance. Budget AM25+30+660+30+15=760;
-EG25+30+660+45=760; prove actual sequential/concurrent shutdown fits these sums.
+These dry-runs do not establish membership/capacity. Prove the AM image-contained
+`/usr/local/bin/cma --agent-manager-drain` hook under non-root/read-only filesystem:
+authenticated loopback, idempotent, <=25s, early irreversible readiness withdrawal
+and close-before-exact-lease-release. Its shell waits30s and returns the CLI status.
+EG retains native Kubernetes sleep30 before SIGTERM: an exec hook inherits Secret
+variables in a dumpable process visible to same-uid ffmpeg jobs. S2 remains blocked
+until a reviewed credential-safe early-drain boundary is implemented and qualified;
+do not reintroduce the shell/CLI hook or treat sleep as proof of early owned drain.
+SIGTERM must perform safe drain and failed close must retain authority until expiry.
+Neither grace nor a healthy probe proves failover performance. Budget
+AM25+30+660+30+15=760; EG reserves at least30+660+45 within760. Prove actual shutdown
+fits the grace; these sums are not measured process/client lifetime bounds.
 
 ## Controller and route packet: prepare before the outage
 
