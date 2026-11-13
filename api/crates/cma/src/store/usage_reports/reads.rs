@@ -74,15 +74,7 @@ impl MetricsStore for ReportingStore {
         Ok(())
     }
     async fn submit(&self, scope: Scope, query: ReportQuery, at: u64) -> Result<Report> {
-        // Retry a transaction conflict/coalescing race only a bounded number of
-        // times. The unique hash and admission transaction remain authoritative.
-        for attempt in 0..3 {
-            match self.admit(scope.clone(), query.clone(), at).await {
-                Err(MetricsError::Unavailable) if attempt < 2 => tokio::task::yield_now().await,
-                result => return result,
-            }
-        }
-        Err(MetricsError::Unavailable)
+        self.submit_with_completion(scope, query, at).await
     }
     async fn report(&self, scope: &Scope, id: &str, at: u64) -> Result<Report> {
         let d = self

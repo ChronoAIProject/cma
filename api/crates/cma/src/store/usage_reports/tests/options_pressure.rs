@@ -37,6 +37,7 @@ async fn metrics_options_honor_circuit_without_commands_and_recover_with_polling
         budgets: fixture.budgets.clone(),
         signer: fixture.signer.clone(),
         circuit: fixture.circuit.clone(),
+        notifications: fixture.notifications.clone(),
     });
     let operator = scope("operator", true);
     store.circuit.store(now() + 30, Ordering::SeqCst);
