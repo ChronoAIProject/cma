@@ -173,7 +173,11 @@ async fn buffered_pages_recheck_caller_and_owner_standing_before_releasing_priva
                 if deleting == "unrelated" && !fail {
                     assert_eq!(status, StatusCode::OK, "{route}");
                 } else {
-                    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{route} {deleting}");
+                    assert_eq!(
+                        status,
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "{route} {deleting}"
+                    );
                     let body: Value = serde_json::from_slice(&bytes).unwrap();
                     assert_eq!(body["code"], "agent_read_unavailable");
                     assert!(body.get("items").is_none());

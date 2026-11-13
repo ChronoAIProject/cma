@@ -20,7 +20,7 @@ async fn fresh_launch_fences_only_the_visitor_and_reads_publisher_authority() {
         if existing_publisher_fence {
             fences
                 .insert_one(doc! {"_id":trigger.owner.as_str(),"fence":7_i64,
-                    "document_schema_version":1_i64})
+                "document_schema_version":1_i64})
                 .await
                 .unwrap();
         }
