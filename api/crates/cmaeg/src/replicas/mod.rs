@@ -62,6 +62,6 @@ impl From<Error> for crate::turns::routed::ExecutionError {
 mod partition_tests;
 
 #[cfg(test)]
-mod mongo_fixture;
+pub(crate) mod mongo_fixture;
 #[cfg(test)]
 mod mongo_tests;

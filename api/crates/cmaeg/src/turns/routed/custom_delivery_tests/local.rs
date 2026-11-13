@@ -105,7 +105,7 @@ async fn local_terminal_is_independent_of_auto_final_and_tool_suppression() {
         let receiver = Arc::new(Receiver::default());
         let (delivery, _rx) = lane(&setup, waiters.clone(), receiver.clone());
         if tool_replied {
-            let store = super::super::tool_reply_store::ReplyStore(setup.journal().clone());
+            let store = super::super::tool_reply_store::ReplyStore(setup.journal().clone(), None);
             let super::super::tool_reply_store::Admission::Claimed(claim) = store
                 .admit(
                     &setup.plan,

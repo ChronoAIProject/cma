@@ -76,16 +76,9 @@ impl ReplyStore {
                     record.confirmed_tool |=
                         matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. });
                     record.tool.as_mut().unwrap().receipt = Some(receipt);
-                    record.version = self
-                        .0
-                        .write(
-                            &record.id,
-                            &record.owner,
-                            record.retained_until,
-                            &record,
-                            Some(version),
-                        )
-                        .await?;
+                    // This is a read-only projection of an already durable
+                    // receipt. The next authorized admission/close persists it
+                    // with its captured partition token; a read never gains one.
                 }
             }
         }
