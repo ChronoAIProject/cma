@@ -87,7 +87,7 @@ try:
     selected = []
     for hpa in hpas:
         target = hpa['spec']['scaleTargetRef']
-        if target.get('kind') == 'Deployment' and target.get('name') in names:
+        if target.get('apiVersion') == 'apps/v1' and target.get('kind') == 'Deployment' and target.get('name') in names:
             selected.append({'apiVersion': hpa['apiVersion'], 'kind': 'HorizontalPodAutoscaler',
                              'metadata': identity(hpa), 'spec': hpa['spec']})
     save('hpa-before.json', {**scope, 'captured_at_utc': now(), 'items': selected,

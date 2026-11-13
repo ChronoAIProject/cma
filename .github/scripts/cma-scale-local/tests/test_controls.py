@@ -166,6 +166,11 @@ class FixedModeTests(Fixture):
                              'resourceVersion': '5', 'generation': 1},
                 'spec': {'minReplicas': 2, 'maxReplicas': 5,
                          'scaleTargetRef': {'apiVersion': 'apps/v1', 'kind': kind, 'name': target}}})
+        foreign_group = json.loads(json.dumps(hpas[0]))
+        foreign_group['metadata']['name'] = 'review-other-api'
+        foreign_group['metadata']['uid'] = 'review-other-api-uid'
+        foreign_group['spec']['scaleTargetRef']['apiVersion'] = 'review.invalid/v1'
+        hpas.append(foreign_group)
         self.save_state({'hpas': hpas, 'replicas': dict.fromkeys(self.names, 2)})
 
     def change_state(self, **changes):
@@ -198,7 +203,7 @@ class FixedModeTests(Fixture):
         first_bytes = self.tree_bytes(receipt1)
         hpas = json.loads((receipt1 / 'hpa-before.json').read_text())
         self.assertEqual([h['metadata']['name'] for h in hpas['items']], ['review-am', 'review-eg'])
-        self.assertEqual(hpas['unrelated_count'], 2)
+        self.assertEqual(hpas['unrelated_count'], 3)
         intent = json.loads((receipt1 / 'intent.json').read_text())
         self.assertEqual((intent['context'], intent['namespace'], intent['mode']),
                          ('kind-cma-scale', 'cma-scale', 'fixed-1'))
@@ -210,7 +215,8 @@ class FixedModeTests(Fixture):
         self.assertEqual(self.tree_bytes(receipt1), first_bytes)
         self.assertEqual(json.loads((receipt2 / 'hpa-before.json').read_text())['items'], [])
         state = json.loads(self.state_path.read_text())
-        self.assertEqual([h['metadata']['name'] for h in state['hpas']], ['review-unrelated', 'review-other-kind'])
+        self.assertEqual([h['metadata']['name'] for h in state['hpas']],
+                         ['review-unrelated', 'review-other-kind', 'review-other-api'])
         self.assertEqual(state['replicas'], dict.fromkeys(self.names, 2))
         self.assertFalse((self.root / 'evidence/hpa-before-fixed.json').exists())
 
