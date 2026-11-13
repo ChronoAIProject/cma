@@ -16,6 +16,7 @@ use super::live_agents::LiveAgentRegistry;
 #[cfg(test)]
 use layer2_core::sandbox::SandboxPolicy;
 
+mod delivery;
 mod execute;
 mod home;
 mod initial_runtime;
