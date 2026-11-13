@@ -22,35 +22,40 @@ impl SandboxWorker {
             return self
                 .handle_lifecycle_failure(
                     sandbox,
-                    WorkerFailure::retryable("checkpoint writer resumption is unconfirmed"),
+                    WorkerFailure::waiting("checkpoint writer resumption is unconfirmed"),
                     now,
                 )
                 .await;
         }
         if failure.is_retryable() {
+            let decision = self.retry_decision(&sandbox, &failure, self.config.retry_delay);
+            let telemetry = self.retry_telemetry(&sandbox, &failure, decision, now);
             let stamp = rfc3339_at(now);
             let lease = super::support::lifecycle_lease(&sandbox, &self.config.holder)?;
             let mut next = sandbox.clone();
             next.retry_lifecycle_after_writer_resume(
-                rfc3339_at(now + self.config.retry_delay),
+                rfc3339_at(now + decision.delay),
                 &lease.holder,
                 lease.fence,
                 stamp.clone(),
             )
             .map_err(model_error)?;
-            return self
-                .commit_lifecycle_phase(
-                    &sandbox,
-                    next,
-                    Vec::new(),
-                    layer2_core::sandbox::store::SandboxLifecycleAgentScope::Touched,
-                    stamp,
-                    vec![layer2_core::sandbox::SandboxEventKind::WorkStepFailed {
-                        step: layer2_core::sandbox::SandboxWorkStep::RunLifecycleOperation,
-                        failure: failure.typed(),
-                    }],
-                )
-                .await;
+            self.commit_lifecycle_phase(
+                &sandbox,
+                next,
+                Vec::new(),
+                layer2_core::sandbox::store::SandboxLifecycleAgentScope::Touched,
+                stamp,
+                vec![layer2_core::sandbox::SandboxEventKind::WorkStepFailed {
+                    step: layer2_core::sandbox::SandboxWorkStep::RunLifecycleOperation,
+                    failure: failure.typed(),
+                }],
+            )
+            .await?;
+            if let Some(telemetry) = telemetry {
+                telemetry.published();
+            }
+            return Ok(());
         }
         self.handle_lifecycle_failure(sandbox, failure, now).await
     }

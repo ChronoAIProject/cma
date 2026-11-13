@@ -5,6 +5,7 @@ use layer2_core::sandbox::store::{
     AgentRetryObservation, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
     MAX_AGENT_WORK_RECEIPTS,
 };
+use layer2_core::sandbox::work_retry::WorkRetryFailure;
 use layer2_core::sandbox::{
     Agent, AgentLogKind, AgentStatus, AgentWorkReceipt, AgentWorkStep, Sandbox, SandboxEventKind,
     TypedFailure, Workspace, Worktree, WorktreeStatus,
@@ -17,8 +18,8 @@ use super::AgentWorker;
 mod context;
 mod effects;
 mod failures;
-use failures::{missing_parent, parent_store_failure};
 pub(super) use failures::{adapter_failure, cleanup_failure, skill_failure};
+use failures::{missing_parent, parent_store_failure};
 #[cfg(test)]
 mod ledger_hold_tests;
 mod mapping;
@@ -50,6 +51,7 @@ pub(in crate::sandbox) struct WorkerFailure {
     detail: String,
     retryable: bool,
     observation: Option<AgentRetryObservation>,
+    retry_kind: WorkRetryFailure,
 }
 
 impl WorkerFailure {
@@ -59,6 +61,11 @@ impl WorkerFailure {
             detail: detail.into(),
             retryable: true,
             observation: None,
+            retry_kind: if class == "agent_parent_not_ready" {
+                WorkRetryFailure::Waiting
+            } else {
+                WorkRetryFailure::Transient
+            },
         }
     }
 
@@ -68,6 +75,7 @@ impl WorkerFailure {
             detail: detail.into(),
             retryable: false,
             observation: None,
+            retry_kind: WorkRetryFailure::ExternalAction,
         }
     }
 
@@ -153,11 +161,33 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let delay = self.failure_retry_delay(&agent, failure.is_ledger_hold());
+        let delay = self.failure_retry_delay(&agent, &failure);
         self.retry_at(agent, failure, now, now + delay).await
     }
 
     pub(super) async fn retry_at(
+        &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        ready_at: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let telemetry = self.config.work_retry_policy_enabled.then(|| {
+            crate::sandbox::work_retry::RetryTelemetry::agent(
+                &agent,
+                failure.retry_kind(),
+                self.retry_decision(&agent, &failure, self.config.retry_delay),
+                ready_at,
+            )
+        });
+        self.commit_retry_at(agent, failure, now, ready_at).await?;
+        if let Some(telemetry) = telemetry {
+            telemetry.published();
+        }
+        Ok(())
+    }
+
+    async fn commit_retry_at(
         &self,
         mut agent: Agent,
         failure: WorkerFailure,
