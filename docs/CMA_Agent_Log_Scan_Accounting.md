@@ -205,8 +205,9 @@ The fixture and command observer are the same as above. Every round again reads
 48 scans / 480,048 documents / 262,586,256 BSON bytes, plus 200 point-read pairs,
 with exactly 448 find + 48 getMore commands and at most 7/30 connections in use.
 All scans succeed. The six local Mongo tests also verify full row/summary parity,
-corruption and capacity errors, visitor refusal/quarantine, cancellation with
-killCursors and abortTransaction, and snapshot/transaction visibility while
+later-batch corruption, capacity errors and head-plus-one rejection, visitor
+refusal/quarantine, cancellation before and after getMore with killCursors,
+abortTransaction and exact consumed-byte accounting, and snapshot/transaction visibility while
 another session changes a later-batch row and appends a row.
 
 | Observation | Cooperative owned (rounds 0, 3) | Cooperative raw (rounds 1, 2) |
@@ -246,6 +247,10 @@ raw. Checkout p99 was 1.848/2.492 ms owned and 1.427/1.416 ms raw. Both runs
 support removing the batch-copy cost, but the varying tails and effect size
 reinforce the production and hard-bound limitations. The same artifact retains
 all eight integration-repeat round summaries and their exact source commit.
+Subsequent contract expansion covers later-batch corruption, head-plus-one
+rejection and cancellation with an open cursor after getMore; it does not alter
+the scanner or benchmark implementation. Six scanning tasks do not constitute
+a 200-session workload or replace a realistic bounded-concurrency production study.
 
 Runtime-loss recovery (`CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED`, default
 `false`) rejects stale Sandbox/Agent observations before reading logs. Ineligible

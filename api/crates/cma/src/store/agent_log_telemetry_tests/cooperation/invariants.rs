@@ -73,29 +73,31 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
     let db = database(&client);
     let collection = db.collection::<Document>("agent_log");
     let id = AgentId("agt_scan_corruption_fixture".into());
-    let originals = entries(&id, 16, 32);
-    for case in 0..6 {
+    let originals = entries(&id, 200, 32);
+    // Damage after the default 101-row first batch must retain its error;
+    // an extra terminal row must also fail even when the expected prefix is valid.
+    for case in 0..7 {
         collection.delete_many(doc! {}).await.unwrap();
         insert(&collection, &originals).await;
         match case {
             0 => {
-                collection.delete_one(doc! {"seq": 12_i64}).await.unwrap();
+                collection.delete_one(doc! {"seq": 150_i64}).await.unwrap();
             }
             1 => {
-                let mut duplicate = log_document(&originals[11]).unwrap();
+                let mut duplicate = log_document(&originals[149]).unwrap();
                 duplicate.insert("_id", "conflicting-duplicate-envelope");
                 collection.insert_one(duplicate).await.unwrap();
             }
             2 => {
                 collection
-                    .update_one(doc! {"seq": 12_i64}, doc! {"$set":{"seq": 0_i64}})
+                    .update_one(doc! {"seq": 150_i64}, doc! {"$set":{"seq": 0_i64}})
                     .await
                     .unwrap();
             }
             3 => {
                 collection
                     .update_one(
-                        doc! {"seq": 12_i64},
+                        doc! {"seq": 150_i64},
                         doc! {"$set":{"record": "invalid record"}},
                     )
                     .await
@@ -104,7 +106,7 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
             4 => {
                 collection
                     .update_one(
-                        doc! {"seq": 12_i64},
+                        doc! {"seq": 150_i64},
                         doc! {"$set":{"document_schema_version": -1_i64}},
                     )
                     .await
@@ -112,9 +114,14 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
             }
             5 => {
                 collection
-                    .update_one(doc! {"seq": 12_i64}, doc! {"$set":{"record.seq": 99_i64}})
+                    .update_one(doc! {"seq": 150_i64}, doc! {"$set":{"record.seq": 99_i64}})
                     .await
                     .unwrap();
+            }
+            6 => {
+                let mut extra = originals[199].clone();
+                extra.seq = 201;
+                insert(&collection, &[extra]).await;
             }
             _ => unreachable!(),
         }
@@ -125,14 +132,14 @@ async fn missing_duplicate_disordered_and_corrupt_rows_keep_original_errors() {
                 ScanCaller::Other,
                 &collection,
                 &id,
-                16,
+                200,
                 &mut session,
                 options(enabled).with_raw_batches(raw_batches),
                 |_| Ok(()),
             )
             .await
             .unwrap_err();
-            if case == 0 {
+            if case == 0 || case == 6 {
                 assert!(matches!(
                     error,
                     TransactionLogError::Domain(SandboxStoreError::SequenceConflict)
