@@ -230,6 +230,7 @@ async fn index_failure_preserves_the_refusal_without_rendering_its_detail() {
     assert!(text.contains("class=\"unavailable\""));
     assert!(text.contains("class=\"refused\""));
     assert!(text.contains("public_status=503"));
+    assert!(text.contains("public_code=provider_unavailable"));
     assert!(!text.contains("private-"));
 }
 

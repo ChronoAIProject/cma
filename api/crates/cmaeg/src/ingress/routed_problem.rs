@@ -23,6 +23,7 @@ pub(super) fn admission_problem(error: AdmissionError) -> Problem {
         event = "eg_admission_public_mapping",
         class,
         public_status = status,
+        public_code = %code,
         public_detail = detail,
         "Admission error mapped to public refusal"
     );
