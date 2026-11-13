@@ -46,7 +46,7 @@ async fn completed(store: &MongoSandboxStore, id: &AgentCommandId) -> AdmittedAg
     .unwrap()
 }
 
-async fn recover(stall: bool) {
+async fn recover(stall: bool, waiting_seconds: u64) {
     let mut native = Native::start().await;
     let client = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
@@ -164,7 +164,6 @@ async fn recover(stall: bool) {
     // A native turn remains pending beyond the watchdog (both cases) and
     // the sixty-second failure window (panic case), without another restart.
     let quiet = Instant::now();
-    let waiting_seconds = if stall { 10 } else { 65 };
     while quiet.elapsed() < Duration::from_secs(waiting_seconds) {
         assert_eq!(activity.snapshot().state, "running");
         assert!(!recording.is_finished(), "runtime recorder failed");
@@ -177,7 +176,11 @@ async fn recover(stall: bool) {
     native.release("model").await;
     let done = completed(&store, id).await;
     let work = released_at.elapsed();
+    let work_after_fault = fault.elapsed();
     assert!(work < Duration::from_secs(30));
+    if waiting_seconds == 0 {
+        assert!(work_after_fault < Duration::from_secs(30));
+    }
     assert_eq!(done.receipt, original.receipt);
     assert_eq!(done.work.dispatch, Some(dispatch));
 
@@ -269,7 +272,7 @@ async fn recover(stall: bool) {
     let rendered = serde_json::to_string(&logs).unwrap();
     assert!(rendered.contains("ORIGINAL_RUNTIME_RESULT"));
     assert!(rendered.contains("CONTINUED_SAME_CONVERSATION"));
-    let evidence = serde_json::json!({"passed":true,"stall":stall,"detection_ms":detection.as_millis(),"scheduling_ms":scheduling.as_millis(),"healthy_native_wait_seconds":waiting_seconds,"completion_after_model_release_ms":work.as_millis(),"completion_after_fault_ms":fault.elapsed().as_millis(),"runtime":final_status,"conversation_id":original_conversation,"native_shell_effects":1,"durable_commands":2,"dispatches":2,"state":observed});
+    let evidence = serde_json::json!({"passed":true,"stall":stall,"detection_ms":detection.as_millis(),"scheduling_ms":scheduling.as_millis(),"healthy_native_wait_seconds":waiting_seconds,"completion_after_model_release_ms":work.as_millis(),"completion_after_fault_ms":work_after_fault.as_millis(),"runtime":final_status,"conversation_id":original_conversation,"native_shell_effects":1,"durable_commands":2,"dispatches":2,"state":observed});
     tokio::fs::write(
         std::path::Path::new(native.manifest["root"].as_str().unwrap()).join("result.json"),
         serde_json::to_vec_pretty(&evidence).unwrap(),
@@ -285,7 +288,7 @@ async fn recover(stall: bool) {
 #[tokio::test]
 #[ignore = "requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh"]
 async fn scheduler_panic_preserves_native_task_home_and_conversation() {
-    tokio::time::timeout(Duration::from_secs(240), recover(false))
+    tokio::time::timeout(Duration::from_secs(240), recover(false, 65))
         .await
         .expect("native continuity deadline");
 }
@@ -293,7 +296,23 @@ async fn scheduler_panic_preserves_native_task_home_and_conversation() {
 #[tokio::test]
 #[ignore = "requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh"]
 async fn scheduler_stall_preserves_native_task_home_and_conversation() {
-    tokio::time::timeout(Duration::from_secs(240), recover(true))
+    tokio::time::timeout(Duration::from_secs(240), recover(true, 10))
+        .await
+        .expect("native continuity deadline");
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh"]
+async fn scheduler_panic_completes_native_work_within_thirty_seconds_of_fault() {
+    tokio::time::timeout(Duration::from_secs(240), recover(false, 0))
+        .await
+        .expect("native continuity deadline");
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh"]
+async fn scheduler_stall_completes_native_work_within_thirty_seconds_of_fault() {
+    tokio::time::timeout(Duration::from_secs(240), recover(true, 0))
         .await
         .expect("native continuity deadline");
 }

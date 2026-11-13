@@ -83,6 +83,13 @@ Discovery/reconciliation children additionally expose their monotonic ages. The
 watchdog never refreshes activity. Health requests only inspect this state and the
 existing cached Mongo ping; they issue no additional discovery or Mongo poll.
 
+Before polling each initial or replacement scheduling future, the supervisor sets
+`starting` with a first wake expected in one second. Suspension before the loop
+registers any activity therefore uses the same five-second grace and recovery
+policy. This startup expectation does not refresh last activity or prove a real
+turn; readiness remains unavailable until the loop itself advances. Each attempt
+gets a fresh deadline rather than inheriting a backoff deadline or old activity.
+
 The loop becomes `suspected_stall` five seconds after its expected wake if it has
 not made another turn. Required schedulers tick at most every second, giving a
 six-second suspicion bound, with at most another watchdog interval for the metric.
@@ -105,7 +112,9 @@ introduced. Existing per-operation deadlines/fencing remain authoritative.
 Local cancellation, lease expiry or scheduler replacement does not establish
 whether a provider or Mongo write committed. Unknown outcomes must be reconciled
 against the original durable identity and provider receipts. They must not be
-resent merely because a local task ended. In particular, existing long work leases
+resent merely because a local task ended. A loop restart retains its execution
+children and their claims, so it does not need to wait for lease expiry. Loss of
+an execution child or the entire process is a separate boundary: existing long work leases
 (for example the Launch worker's fifteen-minute default), dependency outages and
 unknown provider outcomes can prevent durable progress within thirty seconds.
 Those are explicit unmet work-recovery dependencies; a faster local restart does
@@ -147,6 +156,10 @@ Record three independent times for each injected fault: observation/suspicion,
 resumed safe scheduling, and a new confirmed durable work result. Unit tests with
 paused monotonic time prove scheduling bounds and ownership invariants; they are
 not measurements of deployed wall-clock recovery or external effects.
+The native continuity suite includes short-turn panic and stall cases asserting
+fault-to-confirmed-completion within thirty seconds, separately from the long
+valid model waits. Its completion timestamp is captured at the first confirmed
+durable completion, before continuation/replay verification and cleanup.
 
 Deployment qualification must attach the exact source SHA plus dirty-tree patch
 and file digests, environment/runtime versions, effective non-secret configuration,

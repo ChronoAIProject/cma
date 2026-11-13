@@ -7,6 +7,92 @@ async fn settle() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn first_attempt_stall_before_activity_registration_recovers_retained_work() {
+    let activity = Workers::new().get("agents");
+    let (stop, signal) = watch::channel(false);
+    let (send, mut receive) = tokio::sync::mpsc::unbounded_channel();
+    let mut children = tokio::task::JoinSet::new();
+    children.spawn(async { 7 });
+    let worker = spawn(
+        (0, children, VecDeque::from([9])),
+        activity.clone(),
+        signal,
+        move |(attempt, children, queue), activity, shutdown| {
+            let send = send.clone();
+            Box::pin(async move {
+                *attempt += 1;
+                if *attempt == 1 {
+                    // Suspension before the loop can register its first wake.
+                    std::future::pending::<()>().await;
+                }
+                assert_eq!(queue.pop_front(), Some(9));
+                send.send(children.join_next().await.unwrap().unwrap())
+                    .unwrap();
+                activity.scheduled();
+                activity.waiting(Duration::from_secs(1), "idle_scan");
+                crate::shutdown::signalled(shutdown).await;
+            })
+        },
+        |_| Box::pin(async {}),
+    );
+    settle().await;
+    assert_eq!(activity.snapshot().state, "starting");
+    assert!(activity.snapshot().activity_age_ms.is_none());
+    tokio::time::advance(Duration::from_millis(5_999)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "starting");
+    tokio::time::advance(Duration::from_millis(1)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "backoff");
+    assert!(!activity.snapshot().available());
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "running");
+    assert_eq!(receive.try_recv().unwrap(), 7);
+    assert!(receive.try_recv().is_err());
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn replacement_waits_for_real_loop_activity_and_gets_a_fresh_startup_deadline() {
+    let activity = Workers::new().get("launches");
+    let (stop, signal) = watch::channel(false);
+    let worker = spawn(
+        0,
+        activity.clone(),
+        signal,
+        |attempt, activity, _| {
+            Box::pin(async move {
+                *attempt += 1;
+                if *attempt == 1 {
+                    activity.scheduled();
+                    activity.waiting(Duration::from_secs(1), "idle_scan");
+                    panic!("previously running scheduler failed");
+                }
+                std::future::pending().await
+            })
+        },
+        |_| Box::pin(async {}),
+    );
+    settle().await;
+    assert_eq!(activity.snapshot().state, "backoff");
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "starting");
+    assert!(!activity.snapshot().available());
+    // Previous-loop activity must neither prove recovery nor shorten this deadline.
+    tokio::time::advance(Duration::from_secs(5)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "starting");
+    tokio::time::advance(Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "backoff");
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
 async fn suspended_scheduling_future_recovers_without_cancelling_or_replaying_children() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     struct Dropped(Arc<AtomicBool>);

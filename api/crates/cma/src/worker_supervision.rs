@@ -257,6 +257,14 @@ where
                 break;
             }
             activity.0.lock().unwrap().observed_turn = false;
+            // Arm before polling: a loop can suspend before registering its
+            // first wake. This is an expectation, never evidence of activity.
+            activity.update(
+                "starting",
+                "starting",
+                "startup",
+                Some(Instant::now() + WATCH_INTERVAL),
+            );
             let mut watch = tokio::time::interval(WATCH_INTERVAL);
             watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             // The unwind/cancellation boundary excludes owned state. Dropping
