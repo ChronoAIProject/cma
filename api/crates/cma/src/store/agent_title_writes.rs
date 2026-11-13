@@ -196,31 +196,8 @@ async fn apply_title(
             TitleMutation::User { .. } => Err(ApplyError::Domain(AgentTitleStoreError::NotFound)),
         };
     };
-    if state
-        .stored
-        .as_ref()
-        .is_some_and(|title| title.source != AgentTitleSource::Fallback)
-        || matches!(mutation, TitleMutation::User { .. }) && state.stored.is_some()
-        || matches!(mutation, TitleMutation::Automatic { claim, .. } if state.completed_by(claim))
-    {
-        return Ok(TitleApply::Settled(match mutation {
-            TitleMutation::Automatic { claim, .. } => {
-                TitleOutcome::Automatic(state.completed_by(claim))
-            }
-            TitleMutation::User { .. } => TitleOutcome::User(SetAgentTitleOutcome::AlreadySet),
-        }));
-    }
-    if let TitleMutation::Automatic { claim, source, .. } = mutation {
-        let exact = state
-            .lease
-            .as_ref()
-            .is_some_and(|lease| lease.matches_claim(claim));
-        if !exact
-            || claim.mode() == AgentTitleClaimMode::FallbackOnly
-                && *source != AgentTitleSource::Fallback
-        {
-            return Ok(TitleApply::Settled(TitleOutcome::Automatic(false)));
-        }
+    if let Some(outcome) = mutation.settled(&state) {
+        return Ok(TitleApply::Settled(outcome));
     }
 
     let summary = transaction_log(store, &current, session).await?;
@@ -336,67 +313,6 @@ fn next_title_state(
     Ok((next, entry, stored))
 }
 
-impl TitleMutation {
-    fn id(&self) -> &AgentId {
-        match self {
-            Self::Automatic { claim, .. } => claim.agent_id(),
-            Self::User { id, .. } => id,
-        }
-    }
-
-    fn title(&self) -> &AgentTitle {
-        match self {
-            Self::Automatic { title, .. } | Self::User { title, .. } => title,
-        }
-    }
-
-    fn source(&self) -> AgentTitleSource {
-        match self {
-            Self::Automatic { source, .. } => *source,
-            Self::User { .. } => AgentTitleSource::User,
-        }
-    }
-
-    fn set_at(&self) -> &str {
-        match self {
-            Self::Automatic { set_at, .. } | Self::User { set_at, .. } => set_at,
-        }
-    }
-
-    fn completion_fields(&self) -> Document {
-        match self {
-            Self::Automatic {
-                claim,
-                title,
-                source,
-                set_at,
-            } => automatic_completion_fields(claim, title, *source, set_at),
-            Self::User {
-                title,
-                set_at,
-                operation_token,
-                ..
-            } => user_completion_fields(title, set_at, operation_token),
-        }
-    }
-
-    fn proof(&self) -> CompletionProof {
-        match self {
-            Self::Automatic { claim, .. } => CompletionProof::Automatic(claim.clone()),
-            Self::User {
-                operation_token, ..
-            } => CompletionProof::User(operation_token.clone()),
-        }
-    }
-
-    fn success_outcome(&self) -> TitleOutcome {
-        match self {
-            Self::Automatic { .. } => TitleOutcome::Automatic(true),
-            Self::User { .. } => TitleOutcome::User(SetAgentTitleOutcome::Set),
-        }
-    }
-}
-
 async fn load_agent(
     store: &MongoSandboxStore,
     id: &AgentId,
@@ -416,61 +332,10 @@ async fn load_agent(
     Ok(Some((agent, state)))
 }
 
-async fn reconcile_title(
-    store: &MongoSandboxStore,
-    receipt: &TitleReceipt,
-    snapshot_time: Timestamp,
-) -> Result<bool, AgentTitleStoreError> {
-    let mut session = snapshot_session(store, Some(snapshot_time)).await?;
-    let document = store
-        .agents
-        .find_one(doc! { "_id": receipt.agent.id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|_| AgentTitleStoreError::Unavailable)?;
-    let Some(document) = document else {
-        return Ok(false);
-    };
-    let agent = read_agent(&document).map_err(map_store_error)?;
-    if agent != receipt.agent {
-        return Ok(false);
-    }
-    let state = read_title_state(&document, &agent)?;
-    if state.stored.as_ref() != Some(&receipt.stored) || !receipt.proof.matches(&state) {
-        return Ok(false);
-    }
-    let mut found = None;
-    scan_complete_log_with_snapshot_session(
-        ScanCaller::UnknownCommitProof,
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        &mut session,
-        |entry| {
-            if entry.seq == receipt.entry.seq {
-                found = Some(entry);
-            }
-            Ok(())
-        },
-    )
-    .await
-    .map_err(map_reconciliation_log)?;
-    match found {
-        Some(entry) if entry == receipt.entry => Ok(true),
-        Some(_) => Err(AgentTitleStoreError::SequenceConflict),
-        None => Ok(false),
-    }
-}
+mod reconcile;
+use reconcile::reconcile_title;
 
-impl CompletionProof {
-    fn matches(&self, state: &TitleState) -> bool {
-        match self {
-            Self::Automatic(claim) => state.completed_by(claim),
-            Self::User(token) => state.user_commit_token.as_ref() == Some(token),
-        }
-    }
-}
+mod mutation;
 
 mod integrity;
 use integrity::transaction_log;
