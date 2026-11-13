@@ -286,20 +286,24 @@ impl MongoAuthStore {
             .find_one(doc! {"_id":binary(*id.as_bytes())})
             .await
             .map_err(unavailable)?
-            .map(|document| {
-                schema::require_current(document.document_schema_version)?;
-                let Some(subject) = document.subject.filter(|_| !document.revoked) else {
-                    return Ok(None);
-                };
-                Ok(Some(BrowserLogin {
-                    id: digest(&document.id, "browser login")?,
-                    subject: SubjectId::new(subject),
-                    expires_at: document.expires_at.to_system_time(),
-                }))
-            })
+            .map(Self::browser_login_from_doc)
             .transpose()
             .map(Option::flatten)
     }
+    pub(super) fn browser_login_from_doc(
+        document: BrowserLoginDoc,
+    ) -> Result<Option<BrowserLogin>, StoreError> {
+        schema::require_current(document.document_schema_version)?;
+        let Some(subject) = document.subject.filter(|_| !document.revoked) else {
+            return Ok(None);
+        };
+        Ok(Some(BrowserLogin {
+            id: digest(&document.id, "browser login")?,
+            subject: SubjectId::new(subject),
+            expires_at: document.expires_at.to_system_time(),
+        }))
+    }
+
     pub(super) async fn delete_browser_login_record(
         &self,
         id: &SecretDigest,
