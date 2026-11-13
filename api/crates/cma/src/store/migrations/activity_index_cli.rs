@@ -1,8 +1,7 @@
 //! Explicit production inspection and online Activity index-build commands.
 //!
-//! These commands are intentionally separate from startup and HTTP reads. The
-//! sizing path is read-only; the build path uses the existing durable migration
-//! lease and manifest, with a longer operator-selected DDL bound.
+//! These commands are separate from startup and HTTP reads. Sizing is read-only;
+//! the build path uses the durable migration lease and manifest with a bounded DDL.
 
 use std::time::{Duration, Instant};
 
@@ -21,6 +20,7 @@ const DEFAULT_BUILD_TIMEOUT_SECONDS: u64 = 2_100;
 const MIN_BUILD_TIMEOUT_SECONDS: u64 = 60;
 const MAX_BUILD_TIMEOUT_SECONDS: u64 = 3_600;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
+const LEASE_RENEWAL_INTERVAL: Duration = Duration::from_secs(5);
 
 enum Operation {
     Size,
@@ -123,8 +123,7 @@ fn validate_database(name: &str) -> Result<()> {
 
 async fn size() -> Result<Value> {
     let (_client, database, mode) = open_database().await?;
-    // Reuse the normal runtime authority contract. It includes only the
-    // Activity collection's metadata read in addition to ordinary reads.
+    // Reuse the normal runtime authority contract, including Activity metadata.
     crate::store::isolation::verify_with_authority(&database, mode)
         .await
         .map_err(|_| "Activity sizing authority is insufficient")?;
@@ -249,6 +248,9 @@ async fn build(checksum: &str, image: &str, timeout_seconds: u64) -> Result<Valu
         .await
         .map_err(|_| "database authority unavailable")?;
     authority::verify_for(&status, database.name(), mode, true, Step::ActivityPage)?;
+    crate::store::sandbox_mongo::require_transaction_topology(&database)
+        .await
+        .map_err(|_| "Activity index build requires a supported replica set or mongos")?;
     let ledger = ledger::Ledger::for_step(client, database.clone(), Step::ActivityPage);
     ledger.preflight().await?;
     ledger.initialize().await?;
@@ -282,8 +284,15 @@ async fn build(checksum: &str, image: &str, timeout_seconds: u64) -> Result<Valu
             timeout_seconds,
             "Activity index online build started"
         );
-        let created =
-            create_online(&database, pending[0].clone(), timeout_seconds, started).await?;
+        let created = create_online(
+            &ledger,
+            &lease,
+            &database,
+            pending[0].clone(),
+            timeout_seconds,
+            started,
+        )
+        .await?;
         let remaining = strict_pending(&database).await?;
         if !remaining.is_empty() {
             return Err("Activity index postcondition unavailable");
@@ -373,6 +382,8 @@ fn same_keys(left: Option<&Document>, right: Option<&Document>) -> bool {
 }
 
 async fn create_online(
+    ledger: &ledger::Ledger,
+    lease: &ledger::Lease,
     database: &Database,
     index: Document,
     timeout_seconds: u64,
@@ -387,16 +398,15 @@ async fn create_online(
                 "indexes":[index],
                 "maxTimeMS":timeout_ms,
                 "writeConcern":{"w":"majority","wtimeout":timeout_ms},
-                // MongoDB 4.2+ performs index builds online; the removed legacy
-                // background flag is deliberately omitted.
+                // Modern MongoDB builds indexes online; omit removed `background`.
                 "comment":"cma-activity-page-index-v1",
             })
             .await
     };
     tokio::pin!(command);
     let mut progress = tokio::time::interval(PROGRESS_INTERVAL);
-    // Skip interval's immediate first tick; progress means the server command
-    // has remained in flight for a meaningful amount of time.
+    let mut renewal = tokio::time::interval(LEASE_RENEWAL_INTERVAL);
+    // Skip the immediate progress tick so heartbeats mean the command is in flight.
     progress.tick().await;
     let result = loop {
         tokio::select! {
@@ -411,6 +421,10 @@ async fn create_online(
                     timeout_seconds,
                     "Activity index online build is still running"
                 );
+            }
+            _ = renewal.tick() => {
+                // Renew long builds so another executor cannot claim the migration.
+                ledger.renew(lease).await?;
             }
         }
     };
