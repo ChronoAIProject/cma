@@ -42,7 +42,6 @@ ordinary backend clients do not load React.
 - [Errors](errors.md): named refusals and uncertain command outcomes.
 - [Reference](reference.md): complete helper inventory and wire contracts.
 
-
 ### Latest retained usage views
 
 The latest-view operation (`SandboxMetrics.latest` in TypeScript,
