@@ -91,6 +91,18 @@ async fn independent_clients_admit_one_sandbox_desktop_and_preserve_epoch_after_
         .release_exclusive_sandbox_session(&first)
         .await
         .unwrap();
+    // Ordinary aggregate updates must preserve the permanent epoch sidecar.
+    // Otherwise maintenance/metadata changes could resurrect an old receiver token.
+    let mut sandbox = f
+        .left
+        .get_sandbox(&f.request.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = sandbox.revision;
+    sandbox.revision += 1;
+    sandbox.name = "Desktop after metadata update".into();
+    f.right.save_sandbox(revision, sandbox).await.unwrap();
     let next = f
         .left
         .acquire_exclusive_sandbox_session(&DesktopSessionRequest {
