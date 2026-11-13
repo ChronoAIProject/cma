@@ -3,14 +3,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { ApiError } from '@chronoai/cma-sdk';
 import {
-  deletionStorageKey,
   deletionTarget,
   observeDeletion,
   requestDeletion,
-  restoreDeletion,
   type DeletionObservation,
   type DeletionRequest,
 } from './deletion';
+import { forgetDeletion, persistDeletion } from './deletionRecovery';
 import { RiskConfirmation } from './ui/RiskConfirmation';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
@@ -26,6 +25,7 @@ export function DeletionDialog({
   restored,
   onChanged,
   onAccepted,
+  backgroundOnAcceptance = false,
   onClose,
 }: {
   readonly client: CmaWebClient;
@@ -34,6 +34,7 @@ export function DeletionDialog({
   readonly restored: boolean;
   readonly onChanged: () => void;
   readonly onAccepted?: (request: DeletionRequest) => void;
+  readonly backgroundOnAcceptance?: boolean;
   readonly onClose: () => void;
 }) {
   const [request, setRequest] = useState(initial);
@@ -44,6 +45,7 @@ export function DeletionDialog({
   const [commandError, setCommandError] = useState<string>();
   const [revision, setRevision] = useState(0);
   const inFlight = useRef(false);
+  const backgrounded = useRef(false);
   const changed = useRef(onChanged);
   const completed = useRef(false);
   useEffect(() => {
@@ -51,14 +53,8 @@ export function DeletionDialog({
   }, [onChanged]);
   const target = deletionTarget(request.action);
   const persist = (value: DeletionRequest | undefined) => {
-    try {
-      if (value === undefined) {
-        if (restoreDeletion(viewerId)?.key === request.key)
-          localStorage.removeItem(deletionStorageKey(viewerId));
-      } else localStorage.setItem(deletionStorageKey(viewerId), JSON.stringify(value));
-    } catch {
-      /* The server still owns the operation when browser storage is unavailable. */
-    }
+    if (value === undefined) forgetDeletion(viewerId, request.key);
+    else persistDeletion(viewerId, value);
   };
 
   useEffect(() => {
@@ -69,7 +65,14 @@ export function DeletionDialog({
     let reading = false;
     const startedAt = Date.now();
     const poll = () => {
-      if (reading || controller.signal.aborted || document.hidden || completed.current) return;
+      if (
+        reading ||
+        controller.signal.aborted ||
+        document.hidden ||
+        completed.current ||
+        backgrounded.current
+      )
+        return;
       clearTimeout(timer);
       reading = true;
       void observeDeletion(
@@ -88,12 +91,7 @@ export function DeletionDialog({
           setReadError(undefined);
           if (next.complete) {
             completed.current = true;
-            try {
-              if (restoreDeletion(viewerId)?.key === request.key)
-                localStorage.removeItem(deletionStorageKey(viewerId));
-            } catch {
-              /* Optional browser recovery. */
-            }
+            forgetDeletion(viewerId, request.key);
             changed.current();
           } else
             timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
@@ -137,9 +135,10 @@ export function DeletionDialog({
       await requestDeletion(client, request);
       const accepted = { ...request, accepted: true };
       persist(accepted);
+      backgrounded.current = backgroundOnAcceptance;
       setRequest(accepted);
-      onAccepted?.(accepted);
       changed.current();
+      onAccepted?.(accepted);
     } catch (error: unknown) {
       setCommandError(
         error instanceof Error ? error.message : 'The delete request could not be confirmed.',
