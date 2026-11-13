@@ -52,6 +52,21 @@ impl Sender {
         reference: &MessageRefPayload,
         message: &OutboundMessage,
     ) -> (IntentReceipt, SendEffects) {
+        super::trace::observe(
+            ctx.trace,
+            true,
+            self.update_inner(ctx, reference, message),
+            |(receipt, _)| super::trace::receipt(receipt),
+        )
+        .await
+    }
+
+    async fn update_inner(
+        &self,
+        ctx: &SendContext<'_>,
+        reference: &MessageRefPayload,
+        message: &OutboundMessage,
+    ) -> (IntentReceipt, SendEffects) {
         if message.structured_content.is_some() {
             return (unsupported(), SendEffects::default());
         }

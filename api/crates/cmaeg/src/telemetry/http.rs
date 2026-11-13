@@ -67,7 +67,7 @@ async fn observe(mut request: Request, next: Next) -> Response {
         );
     async move {
         let started = std::time::Instant::now();
-        let mut response = next.run(request).await;
+        let mut response = super::turn_trace::ingress::observe(request, next).await;
         if let Some(timing) = timing {
             response.headers_mut().insert("server-timing", timing.header().parse().unwrap());
             let outcome = response.extensions().get::<EventOutcome>().map(|value| value.0)

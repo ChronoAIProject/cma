@@ -52,6 +52,17 @@ pub(super) async fn outcome_event(
                     send_text(sender, state, text, DeliveryStep::Answer).await;
                 }
             }
+            if !state.terminal
+                && !state.first_send_done
+                && !state.answer_attempted
+                && !state.tool_replied
+            {
+                crate::telemetry::turn_trace::milestone(
+                    &state.trace,
+                    crate::telemetry::turn_trace::Stage::Channel,
+                    crate::telemetry::turn_trace::Outcome::Silent,
+                );
+            }
             finish(state);
         }
         TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
