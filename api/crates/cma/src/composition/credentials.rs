@@ -93,6 +93,7 @@ pub(super) fn authentication(
     .with_platform_settings(settings)
     .with_browser_origins(&config.cors_origins)
     .with_agent_key_service(config.nyxid_service_id.clone())
+    .with_oauth_api_resource(config.nyxid_oauth_api_resource.clone())
     .with_resource_request_enabled(config.features.nyxid_resource_request)
     .with_silent_sign_in(config.features.silent_sign_in)
     .with_identity_proxy(
@@ -102,6 +103,7 @@ pub(super) fn authentication(
         config.nyxid_proxy_audience.clone(),
     )?
     .with_binding_store(stores.sandbox_model.clone())
+    .with_platform_spend(stores.sandbox_model.clone())
     .with_bot_father_username(
         config
             .bot_father

@@ -1,0 +1,76 @@
+{
+  "schema": "cma-runtime-image-v1",
+  "scope": "local-contract-3-no-provider-or-model",
+  "commit": "fa292b83473aa414a43ab9e23edc14a40e8b0aea",
+  "image": {
+    "Id": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "Os": "linux",
+    "Architecture": "amd64",
+    "Config": {
+      "User": "10001:10001",
+      "Labels": {
+        "org.opencontainers.image.revision": "fa292b83473aa414a43ab9e23edc14a40e8b0aea",
+        "org.opencontainers.image.source": "https://github.com/ChronoAIProject/cma",
+        "dev.chrono.cma.runtime-contract": "3",
+        "dev.chrono.cma.runtime-bootstrap": "1",
+        "dev.chrono.cma.home-layout": "2"
+      }
+    }
+  },
+  "sourceReference": null,
+  "result": "pass",
+  "cleanup": {
+    "containers": 0,
+    "volumes": 0
+  },
+  "proof": {
+    "checks": [
+      "installed-artifacts",
+      "non-root-read-only",
+      "empty-volume-initialization",
+      "credential-before-install-refused",
+      "install-exact-replay",
+      "credential-after-install",
+      "agent-resource-pair-replay",
+      "github-api-proxy",
+      "daemon-writer-active",
+      "agent-home-helper-aliases",
+      "agent-shell-inherited-path",
+      "escaping-helper-refused",
+      "checkpoint-writers-held",
+      "checkpoint-exact-replay",
+      "wrong-resume-token-refused",
+      "mutation-while-held-refused",
+      "checkpoint-download-digest",
+      "writer-resumed",
+      "checkpoint-local-release",
+      "retired-hold-refused",
+      "checkpoint-reimport",
+      "whole-home-restore",
+      "restore-local-release",
+      "bootstrap-native-initialization",
+      "bootstrap-waiting-no-listener",
+      "bootstrap-wrong-pod-refused",
+      "bootstrap-stdin-assignment",
+      "bootstrap-exact-replay",
+      "bootstrap-conflicting-config-refused",
+      "bootstrap-http-auth-status",
+      "bootstrap-agent-resource-capability",
+      "bootstrap-install-once",
+      "bootstrap-fresh-process-waiting",
+      "bootstrap-old-assignment-refused",
+      "bootstrap-retained-installation",
+      "bootstrap-retained-install-replay"
+    ],
+    "artifacts": {
+      "runtime": "2222222222222222222222222222222222222222222222222222222222222222",
+      "launcher": "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477",
+      "native": "cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40",
+      "acp": "ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66",
+      "codexVersion": "codex-cli 0.147.0",
+      "acpVersion": "1.4.0",
+      "gh": "3333333333333333333333333333333333333333333333333333333333333333",
+      "ghVersion": "2.100.0"
+    }
+  }
+}

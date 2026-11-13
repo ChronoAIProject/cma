@@ -7,6 +7,8 @@ mod contextual_suggestions;
 mod discovery_tests;
 pub(in crate::store) mod execution_tests;
 mod observability_tests;
+mod platform_admission_evidence_tests;
+mod platform_commitment_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
 mod refusal_compatibility_tests;
@@ -14,7 +16,7 @@ mod sandbox_controls_tests;
 mod startup_failure_tests;
 mod suggested_reply_tests;
 mod targeted_control_tests;
-mod work_tests;
+pub(in crate::store) mod work_tests;
 use layer2_core::ids::{AgentCommandId, AgentResponseId};
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::store::SandboxMutationGuard;
@@ -78,7 +80,7 @@ async fn fixture(name: &str, client: &Client) -> (MongoSandboxStore, Agent, Sand
     (store, agent, parent)
 }
 
-fn record(result: CommandReservationResult) -> AdmittedAgentCommand {
+pub(in crate::store) fn record(result: CommandReservationResult) -> AdmittedAgentCommand {
     match result {
         CommandReservationResult::Created(value) | CommandReservationResult::Existing(value) => {
             *value

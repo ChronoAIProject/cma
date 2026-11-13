@@ -38,7 +38,7 @@ use layer2_core::{
         AgentContextService, HierarchyReadService, SandboxOperatorService, SandboxService,
         StoredSandboxRetirement, WorkspaceService,
     },
-    ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
+    ActivityService, OperationStore, UserDirectory,
 };
 mod state;
 pub(crate) use state::ControlPlaneComposition;
@@ -47,8 +47,10 @@ impl ControlPlaneComposition {
         let stores = stores::connect(config).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());
-        let documents =
-            documents::compose(config, &stores)?.with_account_standing(standing.clone());
+        let documents::DocumentComposition {
+            service: documents,
+            maintenance: document_blob_maintenance,
+        } = documents::compose(config, &stores, standing.clone())?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -64,13 +66,7 @@ impl ControlPlaneComposition {
             )
             .with_maintenance(stores.sandbox_model.clone()),
         );
-        let settings = Arc::new(
-            PlatformSettingsService::new(stores.settings.clone(), Arc::clone(&activity))
-                .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
-                .with_model_request_budget_writes_enabled(
-                    config.features.model_request_budget_writes_enabled,
-                ),
-        );
+        let settings = stores::platform_settings(&stores, config, &activity);
         let sandbox_policy = Arc::new(LiveSandboxPolicy::new(
             Arc::clone(&settings),
             config.baseline_services.clone(),
@@ -121,6 +117,7 @@ impl ControlPlaneComposition {
             sandbox_policy.clone(),
             connection_prerequisite.clone(),
         );
+        sandbox_service.attach_platform_spend(stores.sandbox_model.clone());
         let workspace_service = WorkspaceService::new(
             stores.sandbox_model.clone(),
             stores.sandbox_profiles.clone(),
@@ -197,7 +194,8 @@ impl ControlPlaneComposition {
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(native_warm_pools.clone());
+        .with_warm_pools(native_warm_pools.clone())
+        .with_platform_spend(stores::platform_spend(&stores, &activity, &settings));
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
@@ -211,6 +209,7 @@ impl ControlPlaneComposition {
             hierarchy,
             Arc::clone(&operations),
         )
+        .with_concurrent_detail_enrichment(config.features.concurrent_sandbox_detail_enrichment)
         .with_runtime_updates(runtime.updates)
         .with_retained_recovery(runtime.recovery)
         .with_retained_reopening(runtime.reopen)
@@ -307,6 +306,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
+            config.features.command_reconcile_pacing,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -321,6 +321,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
         );
+        sandbox_control_service.attach_platform_spend(stores.sandbox_model.clone());
         let deliverables = access::deliverables(
             &stores,
             projections.reads(),
@@ -453,6 +454,8 @@ impl ControlPlaneComposition {
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = stores.worker_observations();
+        let workers = crate::worker_supervision::Workers::new();
+        let health = crate::health::router_with_workers(stores, workers.clone());
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -462,13 +465,15 @@ impl ControlPlaneComposition {
                 limits,
                 crate::expensive_reads::ReadBudget::new(config.features.retain_read_frames),
             ),
-            stores,
+            health,
             tool_routes.merge(service_portal::router(
                 auth.clone(),
                 config.gateway.as_ref(),
             )?),
         );
         Ok(Self {
+            workers,
+            document_blob_maintenance,
             worker_observations,
             router,
             auth,

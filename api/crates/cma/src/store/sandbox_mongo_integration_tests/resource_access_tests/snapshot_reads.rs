@@ -86,10 +86,17 @@ async fn authorization_ancestry_keeps_distinct_record_size_limits() {
             .await
             .unwrap();
     }
-    assert_eq!(
-        store.resource_access_snapshot(&target).await.unwrap(),
-        original
-    );
+    for enabled in [false, true] {
+        assert_eq!(
+            store
+                .clone()
+                .with_access_snapshot_session(enabled)
+                .resource_access_snapshot(&target)
+                .await
+                .unwrap(),
+            original
+        );
+    }
     client.database(&name).drop().await.unwrap();
 }
 
@@ -113,10 +120,16 @@ async fn authorization_ancestry_distinguishes_missing_targets_and_invalid_parent
             sandbox_id: SandboxId("sbx_absent".into()),
         },
     ] {
-        assert_eq!(
-            store.resource_access_snapshot(&missing).await,
-            Err(ResourceAccessStoreError::NotFound)
-        );
+        for enabled in [false, true] {
+            assert_eq!(
+                store
+                    .clone()
+                    .with_access_snapshot_session(enabled)
+                    .resource_access_snapshot(&missing)
+                    .await,
+                Err(ResourceAccessStoreError::NotFound)
+            );
+        }
     }
     let worktree = original.lineage.worktree.as_ref().unwrap();
     store
@@ -127,10 +140,16 @@ async fn authorization_ancestry_distinguishes_missing_targets_and_invalid_parent
         )
         .await
         .unwrap();
-    assert_eq!(
-        store.resource_access_snapshot(&target).await,
-        Err(ResourceAccessStoreError::Corrupt)
-    );
+    for enabled in [false, true] {
+        assert_eq!(
+            store
+                .clone()
+                .with_access_snapshot_session(enabled)
+                .resource_access_snapshot(&target)
+                .await,
+            Err(ResourceAccessStoreError::Corrupt)
+        );
+    }
     store
         .worktrees
         .update_one(
@@ -144,9 +163,15 @@ async fn authorization_ancestry_distinguishes_missing_targets_and_invalid_parent
         .delete_one(doc! {"_id":worktree.workspace_id.as_str()})
         .await
         .unwrap();
-    assert_eq!(
-        store.resource_access_snapshot(&target).await,
-        Err(ResourceAccessStoreError::Corrupt)
-    );
+    for enabled in [false, true] {
+        assert_eq!(
+            store
+                .clone()
+                .with_access_snapshot_session(enabled)
+                .resource_access_snapshot(&target)
+                .await,
+            Err(ResourceAccessStoreError::Corrupt)
+        );
+    }
     client.database(&name).drop().await.unwrap();
 }
