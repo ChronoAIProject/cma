@@ -290,6 +290,10 @@ pub(super) async fn apply_lifecycle(
         logs.extend(batch);
     }
     validate_lifecycle_mutation(&current, &rows, mutation).map_err(ApplyError::Domain)?;
+    store
+        .fence_reopened_owners(mutation, session)
+        .await
+        .map_err(ApplyError::Domain)?;
 
     advance_sandbox(store, &current, &mutation.sandbox, session).await?;
     for change in &mutation.agents {

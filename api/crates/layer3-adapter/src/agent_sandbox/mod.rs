@@ -52,7 +52,7 @@ pub use pool::{
 pub use pool::{NativeFsGroupChangePolicy, NativePoolPodPolicy};
 pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
-pub use pool::{NativePoolConfiguration, NativePoolControl};
+pub use pool::{NativePoolConfiguration, NativePoolControl, NativePoolTarget};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
 pub use runtime_stream::RuntimeStream;
 pub(crate) use runtime_stream::RuntimeStreamKind;
@@ -71,6 +71,7 @@ pub struct AgentSandboxClient {
     native_home_scope: HomeVolumeScope,
     runtime_streams: std::sync::Arc<tokio::sync::Semaphore>,
     runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
+    monotonic_funding_deadlines: bool,
 }
 
 impl AgentSandboxClient {
@@ -78,6 +79,7 @@ impl AgentSandboxClient {
         std::sync::Arc::ptr_eq(&self.pools, &other.pools)
             && self.config == other.config
             && self.native_home_scope == other.native_home_scope
+            && self.monotonic_funding_deadlines == other.monotonic_funding_deadlines
     }
 
     pub async fn infer(config: AgentSandboxConfig) -> Result<Self> {
@@ -108,7 +110,15 @@ impl AgentSandboxClient {
             config,
             runtime_streams: std::sync::Arc::new(tokio::sync::Semaphore::new(64)),
             runtime_requests: std::sync::Arc::new(tokio::sync::Semaphore::new(32)),
+            monotonic_funding_deadlines: false,
         })
+    }
+
+    /// Participating managers must never shorten another caller's confirmed funding.
+    #[must_use]
+    pub fn with_monotonic_funding_deadlines(mut self, enabled: bool) -> Self {
+        self.monotonic_funding_deadlines = enabled;
+        self
     }
 
     pub fn warm_pools(&self) -> &AgentSandboxPools {

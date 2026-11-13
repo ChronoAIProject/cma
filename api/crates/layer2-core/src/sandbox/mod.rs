@@ -266,7 +266,8 @@ pub use conversation::{
 };
 pub use conversation_recorder::{
     AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
-    AgentLiveSubscription, AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
+    AgentLivePublisher, AgentLiveSource, AgentLiveSubscription, AgentOutputCoalescePolicy,
+    DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
