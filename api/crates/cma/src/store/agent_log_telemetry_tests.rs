@@ -58,6 +58,7 @@ fn caller_and_step_inventory_is_closed_unique_and_exhaustive() {
             "conversation_publication",
             "checkpoint",
             "command_admission",
+            "command_reconciliation",
             "unknown_commit_proof",
             "other",
         ])

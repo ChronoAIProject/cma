@@ -81,7 +81,10 @@ pub trait HostedAgentRuntime: Send + Sync {
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
     /// Present only when this backend supplies an independent native proof.
-    fn capacity_recovery_transport(&self) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
+    fn capacity_recovery_transport(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
         None
     }
 
