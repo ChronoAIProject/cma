@@ -42,6 +42,7 @@ pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
+pub(crate) mod report_views;
 mod sandbox_billing;
 pub(crate) mod sandbox_metrics;
 mod usage_billing;
