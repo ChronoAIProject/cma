@@ -42,3 +42,6 @@ mod blob_maintenance_tests;
 
 #[cfg(test)]
 mod maintenance_tests;
+
+#[cfg(test)]
+mod usage_tests;

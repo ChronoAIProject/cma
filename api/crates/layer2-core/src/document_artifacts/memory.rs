@@ -3,6 +3,10 @@ use super::*;
 use std::collections::BTreeMap;
 use tokio::sync::Mutex;
 
+#[path = "memory_quota.rs"]
+mod quota;
+pub use quota::MemoryDocumentQuota;
+
 #[derive(Default)]
 pub struct MemoryDocuments(
     pub Mutex<BTreeMap<String, StoredDocument>>,

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 286,
+  "openapi_operations": 287,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3059,7 +3059,10 @@
         "invalid_json",
         "json_content_type_required",
         "missing_idempotency_key",
-        "not_authenticated"
+        "not_authenticated",
+        "document_limit_reached",
+        "document_bytes_limit_reached",
+        "document_objects_limit_reached"
       ]
     },
     "GET /api/v1/documents/{id}": {
@@ -3086,7 +3089,10 @@
         "invalid_json",
         "json_content_type_required",
         "missing_idempotency_key",
-        "not_authenticated"
+        "not_authenticated",
+        "document_limit_reached",
+        "document_bytes_limit_reached",
+        "document_objects_limit_reached"
       ]
     },
     "GET /api/v1/documents/{id}/source": {
@@ -3925,6 +3931,15 @@
       "non_problem_statuses": {
         "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
       }
+    },
+    "GET /api/v1/usage/documents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/usage.rs# Owner document quota observations require principal authority and refuse failed ledger reads without fabricating counters.",
+      "required_problems": [
+        "not_authenticated",
+        "document_not_found",
+        "document_unavailable"
+      ]
     }
   }
 }

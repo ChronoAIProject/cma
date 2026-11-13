@@ -42,6 +42,7 @@ const OPERATIONS: &[(&str, &[&str])] = &[
         &["get"],
     ),
     ("/api/v1/usage", &["get"]),
+    ("/api/v1/usage/documents", &["get"]),
     ("/api/v1/usage/sandboxes", &["get"]),
     ("/api/v1/usage/sandboxes/{id}", &["get"]),
     ("/api/v1/usage/sandboxes/{id}/events", &["get"]),

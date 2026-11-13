@@ -81,7 +81,11 @@ async fn document_quota_cross_process_races_never_overshoot_and_reopen_preserves
         match result {
             Ok(SourceTicket::Ledgered) => admitted.push(source),
             Ok(SourceTicket::Unledgered) => panic!("activated quota returned an unledgered ticket"),
-            Err(DocumentError::Capacity) => refused += 1,
+            Err(DocumentError::LimitReached {
+                dimension: DocumentLimit::Documents,
+                limit: 3,
+                live: 3,
+            }) => refused += 1,
             other => panic!("unexpected admission: {other:?}"),
         }
     }
@@ -100,7 +104,11 @@ async fn document_quota_cross_process_races_never_overshoot_and_reopen_preserves
     assert_eq!(usage(&reopened, "other-owner").await, [1, 4, 1]);
     assert_eq!(
         reopened.reserve(&source("owner", 98, b"body")).await,
-        Err(DocumentError::Capacity)
+        Err(DocumentError::LimitReached {
+            dimension: DocumentLimit::Documents,
+            limit: 3,
+            live: 3
+        })
     );
     database.drop().await.unwrap();
 }
@@ -117,16 +125,28 @@ async fn document_quota_count_bytes_and_tiny_object_limits_are_independent_and_d
     store.reserve(&original).await.unwrap();
     assert_eq!(
         store.reserve(&source("owner", 2, b"x")).await,
-        Err(DocumentError::Capacity)
+        Err(DocumentError::LimitReached {
+            dimension: DocumentLimit::Documents,
+            limit: 1,
+            live: 1
+        })
     );
     assert_eq!(
         store.reserve(&source("owner", 1, b"new")).await,
-        Err(DocumentError::Capacity)
+        Err(DocumentError::LimitReached {
+            dimension: DocumentLimit::Bytes,
+            limit: 6,
+            live: 4
+        })
     );
     store.reserve(&source("owner", 1, b"y")).await.unwrap();
     assert_eq!(
         store.reserve(&source("owner", 1, b"z")).await,
-        Err(DocumentError::Capacity)
+        Err(DocumentError::LimitReached {
+            dimension: DocumentLimit::Objects,
+            limit: 2,
+            live: 2
+        })
     );
     assert_eq!(usage(&store, "owner").await, [1, 5, 2]);
     assert_eq!(
@@ -257,7 +277,11 @@ async fn document_quota_baseline_retains_over_limit_orphans_and_refuses_changed_
     store.reserve(&orphan).await.unwrap();
     assert_eq!(
         store.reserve(&source("owner", 1, b"new")).await,
-        Err(DocumentError::Capacity)
+        Err(DocumentError::LimitReached {
+            dimension: DocumentLimit::Documents,
+            limit: 1,
+            live: 2
+        })
     );
     let changed = self::inventory(&inventory.activation, &[original]);
     assert_eq!(
@@ -277,3 +301,5 @@ mod baseline;
 mod effects;
 #[path = "quota_recovery_tests.rs"]
 mod recovery;
+#[path = "quota_usage_mongo_tests.rs"]
+mod usage_api;
