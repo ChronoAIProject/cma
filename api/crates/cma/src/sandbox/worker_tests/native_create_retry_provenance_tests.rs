@@ -110,3 +110,60 @@ async fn native_create_retry_publishes_due_time_from_typed_observation_result() 
     }
 }
 
+#[tokio::test(start_paused = true)]
+async fn native_create_retry_home_observation_outcomes_publish_due_time_without_changing_authority()
+{
+    for (error, delay) in [
+        (pending_deadline(), 1),
+        (
+            AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut),
+            30,
+        ),
+        (AdapterError::Unavailable("transport".into()), 30),
+    ] {
+        let h = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+        let created = h.create().await;
+        let pools = pools(&h, &[]);
+        *pools.adopt_error.lock().unwrap() = Some(error);
+        let now = start_time(&created);
+        cold_worker(&h, pools.clone(), true)
+            .run_one(&created.id, now)
+            .await
+            .unwrap();
+        let stored = h.stored(&created.id).await;
+        assert_eq!(
+            stored.work.ready_at,
+            rfc3339_at(now + Duration::from_secs(delay))
+        );
+        let home = stored.lifecycle.home.as_deref().unwrap();
+        let native = home.native_pool.as_ref().unwrap();
+        let original = native.claim.as_ref().unwrap();
+        assert_eq!(Some(original), pools.claim.lock().unwrap().as_ref());
+        assert_eq!(original.sandbox_name.as_deref(), Some("warm-member"));
+        assert!(native.cleanup.is_none() && !native.cleaned && !home.released);
+        assert_eq!(call_count(&pools, "claim"), 1);
+        assert_eq!(call_count(&pools, "adopt"), 0);
+        assert_eq!(call_count(&pools, "reclaim"), 0);
+        cold_worker(&h, pools.clone(), true)
+            .run_one(&created.id, now + Duration::from_secs(delay))
+            .await
+            .unwrap();
+        let recovered = h.stored(&created.id).await;
+        let authority = recovered
+            .lifecycle
+            .home
+            .as_ref()
+            .unwrap()
+            .receipt
+            .as_ref()
+            .unwrap()
+            .native_authority
+            .as_ref()
+            .unwrap();
+        assert_eq!(authority.claim, *original);
+        assert_eq!(authority.sandbox_uid, "member-uid");
+        assert_eq!(authority.pvc_uid, "pvc-uid");
+        assert_eq!(call_count(&pools, "claim"), 1);
+        assert_eq!(call_count(&pools, "adopt"), 1);
+    }
+}

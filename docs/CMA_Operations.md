@@ -2744,7 +2744,7 @@ the existing five-second retry delay. They cannot schedule home retirement.
 The existing `Ready` maintenance policy for unhealthy unclaimed spares remains
 separate. Ordinary SandboxWorker retries default to 30 seconds. The independent,
 default-off `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED` switch shortens only
-validated Pending observation deadlines; without it, a two-second guard yield can
+retry delays after validated Pending observation deadlines; without it, a two-second guard yield can
 delay a normally starting cold runtime until a later attempt. Assignment
 observation still allows five seconds. Initial-create
 recovery with an already persisted runtime and no completed-installation proof
