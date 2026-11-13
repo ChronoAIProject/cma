@@ -292,7 +292,13 @@ async fn apply_admission(
             },
         ));
     }
-    super::budget::require_open(store, super::budget::now_seconds(), session).await?;
+    super::budget::require_open(
+        store,
+        super::budget::now_seconds(),
+        admission.admission_cause(),
+        session,
+    )
+    .await?;
     let prepared =
         match super::native_prepared::adopt_workspace(store, &sandbox, candidate, session)
             .await
