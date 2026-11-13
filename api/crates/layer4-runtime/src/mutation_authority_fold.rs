@@ -55,6 +55,13 @@ pub(super) fn prune(files: Vec<io::AuthorityFile>) -> Result<Vec<io::AuthorityFi
             io_error("sync mutation authority directory before admission", error)
         })?;
     }
+    if keep.len() != files.len() {
+        tracing::info!(
+            before_records = files.len(),
+            retained_records = keep.len(),
+            "runtime mutation authority fold completed"
+        );
+    }
     Ok(files
         .into_iter()
         .enumerate()

@@ -96,6 +96,7 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
+  CHRONO_WORK_RETRY_POLICY_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   # Enable only after runtime and scan measurements support cooperative decoding.
   CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED: "false"
@@ -105,6 +106,9 @@ data:
   CHRONO_AGENT_SKILL_UPGRADE_ENABLED: "false"
   # Reconciliation remains on the existing cadence until a measured rollout.
   CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED: "false"
+  # Bound fresh native readiness; preserves assigned Claim and home identity.
+  CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED: "false"
+  CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED: "false"
   # Keep expensive-read admission charged through final returned frame drop.
   CHRONO_READ_FRAME_BUDGET_ENABLED: "false"
   # Independent fleet mode: 0 disables; stable percentage stages require rollout.
@@ -115,6 +119,8 @@ data:
   CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED: "false"
   CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED: "false"
+  # Separate lineage-only detail projection; production evidence gates activation.
+  CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED: "false"
   CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED: "false"
   CHRONO_SANDBOX_BATCHED_READS_ENABLED: "false"
   CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED: "true"
@@ -256,6 +262,9 @@ data:
   CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED: "false"
   # Per-process public stream lifetimes; zero keeps admission disabled.
   CHRONO_PUBLIC_STREAM_LIMIT: "0"
+  # Local event wakes require a separate activation; other writers use fallback.
+  CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED: "false"
+  CHRONO_AGENT_EVENT_STREAM_FALLBACK_POLL_MS: "1000"
   CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED: "false"
   # GFE appends upstream then forwarding-rule addresses. Trust the chain only
   # from an official GFE TCP peer and skip its rightmost load-balancer token.

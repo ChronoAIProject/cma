@@ -20,6 +20,17 @@ impl Fixture {
         model: Option<&str>,
         bytes: usize,
     ) -> Self {
+        Self::with_later_payload(count, turn, next, model, bytes, 4096).await
+    }
+
+    pub async fn with_later_payload(
+        count: u64,
+        turn: u64,
+        next: Option<u64>,
+        model: Option<&str>,
+        bytes: usize,
+        later_bytes: usize,
+    ) -> Self {
         assert!(turn >= 10 && turn + 3 < count);
         let name = format!("cma_response_window_{}", uuid::Uuid::new_v4().simple());
         let commands = Arc::new(Mutex::new(Vec::new()));
@@ -85,7 +96,13 @@ impl Fixture {
                     }
                 } else {
                     AgentLogKind::AgentMessage {
-                        content: "x".repeat(if seq == turn + 2 { bytes } else { 4096 }),
+                        content: "x".repeat(if seq == turn + 2 {
+                            bytes
+                        } else if next == seq.checked_sub(2) {
+                            later_bytes
+                        } else {
+                            4096
+                        }),
                     }
                 };
                 AgentLogEntry {
