@@ -50,13 +50,19 @@ async fn funding_deadline_is_uid_and_version_fenced_and_retains_home() {
 async fn funding_expired_generation_cannot_be_extended() {
     let (request, mut object) = object();
     object["spec"]["shutdownTime"] = json!("2020-01-01T00:00:00Z");
+    object["spec"]["shutdownPolicy"] = json!("Retain");
     let fixture = Fixture::start(vec![(200, object.clone())]).await;
-    assert!(fixture
+    let error = fixture
         .client
         .set_runtime_deadline(&handle(&object), &request, until())
         .await
-        .is_err());
-    assert_eq!(fixture.calls.lock().unwrap().len(), 1);
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("expired runtime generation cannot be extended"));
+    let calls = fixture.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1);
+    assert!(calls[0].0.starts_with("GET "));
 }
 #[tokio::test]
 async fn funding_conflict_missing_runtime_and_unconfirmed_patch_fail_closed() {
@@ -143,10 +149,10 @@ async fn two_and_three_callers_cannot_shorten_newer_confirmed_funding() {
             .await
             .unwrap();
         for client in &clients[1..] {
-            assert!(client
+            client
                 .set_runtime_deadline(&handle, &request, earlier)
                 .await
-                .is_err());
+                .unwrap();
         }
         clients[1]
             .set_runtime_deadline(&handle, &request, newer)
@@ -178,20 +184,88 @@ async fn two_and_three_callers_cannot_shorten_newer_confirmed_funding() {
 }
 
 #[tokio::test]
-async fn default_client_preserves_existing_deadline_replacement() {
-    let (request, object) = object();
-    let earlier = until();
-    let fixture = Fixture::start(vec![
-        (200, funded_object(object.clone(), earlier + 30, "7")),
-        (200, funded_object(object.clone(), earlier, "8")),
-    ])
-    .await;
+async fn funding_delayed_renewal_preserves_newer_paid_deadline() {
+    let (request, mut object) = object();
+    let older = until();
+    object["spec"]["shutdownTime"] = json!(super::super::funding::deadline(older + 30).unwrap());
+    object["spec"]["shutdownPolicy"] = json!("Retain");
+    object["metadata"]["resourceVersion"] = json!("8");
+    let fixture = Fixture::start(vec![(200, object.clone())]).await;
     fixture
         .client
-        .set_runtime_deadline(&handle(&object), &request, earlier)
+        .set_runtime_deadline(&handle(&object), &request, older)
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture.calls.lock().unwrap().len(),
+        1,
+        "stale renewal must not PATCH"
+    );
+}
+
+#[tokio::test]
+async fn funding_lost_ack_replay_keeps_exact_runtime_coverage() {
+    let (request, object) = object();
+    let until = until();
+    let mut updated = object.clone();
+    updated["spec"]["shutdownTime"] = json!(super::super::funding::deadline(until).unwrap());
+    updated["spec"]["shutdownPolicy"] = json!("Retain");
+    updated["metadata"]["resourceVersion"] = json!("8");
+    let fixture = Fixture::start(vec![
+        (200, object.clone()),
+        (0, Value::Null),
+        (200, updated),
+    ])
+    .await;
+    assert!(fixture
+        .client
+        .set_runtime_deadline(&handle(&object), &request, until)
+        .await
+        .is_err());
+    fixture
+        .client
+        .set_runtime_deadline(&handle(&object), &request, until)
         .await
         .unwrap();
     let calls = fixture.calls.lock().unwrap();
-    assert_eq!(calls.len(), 2);
-    assert!(calls[1].0.starts_with("PATCH "));
+    assert_eq!(calls.len(), 3);
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(line, _)| line.starts_with("PATCH "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn funding_refuses_changed_policy_malformed_expiry_and_recreated_uid() {
+    for mutation in 0..6 {
+        let (request, original) = object();
+        let mut observed = original.clone();
+        observed["spec"]["shutdownTime"] =
+            json!(super::super::funding::deadline(until() + 30).unwrap());
+        observed["spec"]["shutdownPolicy"] = json!("Retain");
+        match mutation {
+            0 => observed["spec"]["shutdownPolicy"] = json!("Delete"),
+            1 => observed["spec"]["shutdownPolicy"] = Value::Null,
+            2 => observed["spec"]["shutdownTime"] = json!(123),
+            3 => observed["spec"]["shutdownTime"] = json!("invalid"),
+            4 => observed["metadata"]["uid"] = json!("replacement-uid"),
+            _ => {
+                observed["spec"]["shutdownTime"] = Value::Null;
+                observed["spec"]["shutdownPolicy"] = json!("Delete");
+            }
+        }
+        let fixture = Fixture::start(vec![(200, observed)]).await;
+        assert!(
+            fixture
+                .client
+                .set_runtime_deadline(&handle(&original), &request, until())
+                .await
+                .is_err(),
+            "mutation {mutation}"
+        );
+        assert_eq!(fixture.calls.lock().unwrap().len(), 1);
+    }
 }

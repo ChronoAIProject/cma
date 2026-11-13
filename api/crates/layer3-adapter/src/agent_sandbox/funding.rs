@@ -48,25 +48,28 @@ impl AgentSandboxClient {
             .validate_request(runtime, request)
             .await?
             .ok_or_else(|| rejected("funded runtime is absent"))?;
-        if let Some(old) = actual.data["spec"]["shutdownTime"].as_str() {
+        let spec = &actual.data["spec"];
+        if !spec["shutdownPolicy"].is_null() && spec["shutdownPolicy"] != "Retain" {
+            return Err(rejected("funded runtime shutdown policy changed"));
+        }
+        if !spec["shutdownTime"].is_null() {
+            let old = spec["shutdownTime"]
+                .as_str()
+                .ok_or_else(|| rejected("runtime expiry is invalid"))?;
             let old = OffsetDateTime::parse(old, &Rfc3339)
                 .map_err(|_| rejected("runtime expiry is invalid"))?;
+            if spec["shutdownPolicy"] != "Retain" {
+                return Err(rejected("funded runtime shutdown policy is absent"));
+            }
             if old.unix_timestamp() <= OffsetDateTime::now_utc().unix_timestamp() {
                 return Err(rejected("expired runtime generation cannot be extended"));
             }
-            // A stale funding worker can read a newer native resourceVersion.
-            // Fence its semantic regression before the version-fenced patch;
-            // a later Mongo revision conflict cannot undo a shortened cutoff.
-            if self.monotonic_funding_deadlines
-                && u64::try_from(old.unix_timestamp()).is_ok_and(|old| old > until)
-            {
-                return Err(rejected("funded deadline would shorten confirmed coverage"));
+            // Another replica may have already published a newer paid window.
+            // Retrying an old renewal must never shorten that exact runtime's
+            // coverage. Explicit suspension and retirement use separate paths.
+            if old.unix_timestamp() >= until as i64 {
+                return Ok(());
             }
-        }
-        if actual.data["spec"]["shutdownTime"] == value
-            && actual.data["spec"]["shutdownPolicy"] == "Retain"
-        {
-            return Ok(());
         }
         let patch = json!({"metadata":{"uid":actual.uid(),"resourceVersion":actual.resource_version()},
             "spec":{"shutdownTime":value,"shutdownPolicy":"Retain"}});

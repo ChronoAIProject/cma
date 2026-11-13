@@ -5,40 +5,56 @@ use super::*;
 async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
     let (client, name, store, _, profile) = fixture(1).await;
     reconcile(&store, &profile).await;
-    let old = store.claim_warmup_work(NOW, LATER).await.unwrap().unwrap();
+    let old = store
+        .claim_warmup_work(stamp(0).as_str(), stamp(60).as_str())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(store
-        .claim_legacy_warm_cleanup(NOW, LATER)
+        .claim_legacy_warm_cleanup(stamp(0).as_str(), stamp(60).as_str())
         .await
         .unwrap()
         .is_none());
-    store.retire_legacy_warmups(NOW).await.unwrap();
+    store
+        .retire_legacy_warmups(stamp(0).as_str())
+        .await
+        .unwrap();
     let retired = store.warm_sandbox(&old.record.id).await.unwrap().unwrap();
     assert_eq!(retired.state, WarmSandboxState::Retiring);
     assert_eq!(retired.revision, old.record.revision + 1);
     assert_eq!(retired.plan, old.record.plan);
     assert!(store
-        .claim_legacy_warm_cleanup(NOW, LATER)
+        .claim_legacy_warm_cleanup(stamp(0).as_str(), stamp(60).as_str())
         .await
         .unwrap()
         .is_none());
     assert!(matches!(
-        store.renew_warmup_work(&old, LATER).await,
+        store.renew_warmup_work(&old, stamp(60).as_str()).await,
         Err(SandboxStoreError::Conflict)
     ));
     assert!(matches!(
         store
-            .finish_warmup_work(&old, old.record.clone(), NOW, NOW)
+            .finish_warmup_work(
+                &old,
+                old.record.clone(),
+                stamp(0).as_str(),
+                stamp(0).as_str()
+            )
             .await,
         Err(SandboxStoreError::Conflict)
     ));
     // A restart/retry neither creates a replacement nor changes authority again.
-    store.retire_legacy_warmups(NOW).await.unwrap();
+    store
+        .retire_legacy_warmups(stamp(0).as_str())
+        .await
+        .unwrap();
     assert_eq!(
         records(&store).await.as_slice(),
         std::slice::from_ref(&retired)
     );
+    expire(&store, &old.record.id).await;
     let cleanup = store
-        .claim_legacy_warm_cleanup(LATER, "2026-09-05T00:02:00Z")
+        .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
         .await
         .unwrap()
         .unwrap();
@@ -46,12 +62,15 @@ async fn legacy_retirement_preserves_live_lease_and_fences_stale_worker() {
     let mut next = cleanup.record.clone();
     next.state = WarmSandboxState::Retired;
     store
-        .finish_warmup_work(&cleanup, next, LATER, LATER)
+        .finish_warmup_work(&cleanup, next, stamp(60).as_str(), stamp(60).as_str())
         .await
         .unwrap();
-    store.retire_legacy_warmups(LATER).await.unwrap();
+    store
+        .retire_legacy_warmups(stamp(60).as_str())
+        .await
+        .unwrap();
     assert!(store
-        .claim_legacy_warm_cleanup(LATER, LATER)
+        .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
         .await
         .unwrap()
         .is_none());
@@ -93,7 +112,10 @@ async fn default_store_admission_never_claims_legacy_ready_rows_and_cleanup_keep
     };
     assert_eq!(fresh.id.as_str(), "sbx_new");
     assert!(fresh.runtime.is_none());
-    store.retire_legacy_warmups(NOW).await.unwrap();
+    store
+        .retire_legacy_warmups(stamp(0).as_str())
+        .await
+        .unwrap();
     assert_eq!(
         store.warm_sandbox(&claimed.id).await.unwrap(),
         Some(original)
@@ -117,8 +139,9 @@ async fn concurrent_legacy_retirement_and_old_admission_never_share_cleanup_auth
     let (client, name, store, _, profile) = fixture(1).await;
     reconcile(&store, &profile).await;
     let id = make_ready(&store).await;
+    let at = stamp(0);
     let (retirement, admission) = tokio::join!(
-        store.retire_legacy_warmups(NOW),
+        store.retire_legacy_warmups(&at),
         store.admit_sandbox(admission("sbx_racing", "race-handoff", 10))
     );
     retirement.unwrap();
@@ -129,7 +152,7 @@ async fn concurrent_legacy_retirement_and_old_admission_never_share_cleanup_auth
     if created.id == id {
         assert_eq!(old.state, WarmSandboxState::Claimed);
         assert!(store
-            .claim_legacy_warm_cleanup(LATER, LATER)
+            .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
             .await
             .unwrap()
             .is_none());
@@ -138,7 +161,7 @@ async fn concurrent_legacy_retirement_and_old_admission_never_share_cleanup_auth
         assert!(store.get_sandbox(&id).await.unwrap().is_none());
         assert_eq!(
             store
-                .claim_legacy_warm_cleanup(LATER, LATER)
+                .claim_legacy_warm_cleanup(stamp(60).as_str(), stamp(120).as_str())
                 .await
                 .unwrap()
                 .unwrap()
