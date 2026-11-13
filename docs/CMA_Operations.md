@@ -1101,6 +1101,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS` | Total ordered-command bound, at least command bound and at most 1800; default 1800 |
 | `CHRONO_CLONE_DEPTH` | Git clone depth 1-1000; default 50 |
 | `CHRONO_ACTIVITY_ASYNC_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Enables bounded asynchronous request telemetry only. Explicit authorization and operations audits still synchronously await majority persistence. See request activity buffering below. |
+| `CHRONO_ACTIVITY_OPERATIONAL_READ_SAMPLING_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Owner approval required before activation. Samples only authenticated generic GET/HEAD HTTP 200 Sandbox/Workspace detail observations at 1/16 using record UUIDs. All other events, explicit domain/security audits and retention are unchanged. Omitted per-request evidence is unrecoverable; `cma_activity_operational_read_policy_total{decision="retained"} / {decision="sampled_out"}` counts decisions with no actor labels. Independent of async buffering; never enable to fix Activity listing. |
 | `CHRONO_ACTIVITY_RETENTION_DAYS` | Activity TTL, 1-3650 days; default 90 |
 | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` | Pre-auth network budget/burst; default 6000 |
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
@@ -2652,6 +2653,20 @@ strings or inherited request spans. Keep it enabled for the diagnostic compariso
 Optional enrichment retains its existing fallback behavior. See
 [Mongo diagnostics](CMA_Mongo_Diagnostics.md) for fields and the kill switch.
 
+`CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED` defaults to `false`. When enabled,
+successful model catalogues can be reused for up to 30 seconds and exact-runtime
+support observations for up to 3 seconds, with 256-entry bounds. Each request
+still validates current credential custody and runtime eligibility; the cache
+does not retain bearer material or replace current authorization checks.
+
+`CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED` defaults to `false`. When enabled,
+environment discovery returns current local capabilities with conservative
+pending optional browser/control observations. At most 16 background probes run,
+with a 2-second deadline bounded by held authority; observations expire after
+5 seconds. Pending responses request a bounded 2–4 second retry. Disable the
+switch to restore synchronous optional discovery. Both switches require separate
+owner activation and retain current permission and release-fence checks.
+
 `CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED` defaults to `false` and accepts only
 exact `true` or `false`. It adds request-correlated file-content/download phase
 timings for authorization, runtime status, mounted-home verification, endpoint
@@ -2858,6 +2873,26 @@ scan bytes, runtime inspections, checkout waits, CPU and route latency. Local
 correctness tests establish no production CPU or latency improvement; profile
 and production measurements remain required for #1421 and the #1786 rollout.
 
+### Activity list reads
+
+Operations uses `GET /api/v1/admin/activity?view=summary&limit=50`. The explicit
+summary view omits `detail`; requests without `view` retain complete records.
+Both require `ReadActivityLog`, use descending `(recorded_at, _id)` keyset
+pagination, fetch at most `limit + 1` rows, and never count or skip. Cursors use
+Mongo insertion time, not displayed event time. Pages are live observations,
+not a snapshot spanning multiple requests. Mongo execution is bounded to five
+seconds and one requested page batch; failures remain explicit.
+
+The nonunique `activity_recorded_at_id_desc` index has keys
+`{recorded_at:-1,_id:-1}`. Its explicit additive migration is
+`am-activity-page-index-v1`; requests and startup do not install it. Production
+builds require a lead-approved migration window and the reviewed release
+controller. Existing actor/action indexes and TTL remain unchanged. The release
+record must include plan, checksum, immutable image, index inventory, resource
+budget, and verified postconditions. See issue #1960 for the build/rollback plan.
+`cma_activity_read_seconds` reports Mongo list elapsed time with fixed `view`
+and `outcome` labels; it excludes HTTP authorization, names and audit append.
+
 ### Request activity buffering
 
 `CHRONO_ACTIVITY_ASYNC_ENABLED=false` preserves the existing awaited request
@@ -2978,7 +3013,31 @@ proof that an Agent or desktop is usable. No pool size, resources or concurrency
 change accompanies this switch. Activation and end-to-end production acceptance
 remain separate from merging the default-off implementation.
 
+### Native runtime inspection phase evidence
+
+The existing `Native runtime inspection phase ended` events now split
+post-response verification into `post_status_graph` and `post_status_policy`.
+The graph finishes before the policy read starts. A policy success obtained
+before a later graph observation cannot authorize a definition that changed in
+between; the final home check does not re-read Template/Pool policy.
+
+Both phases are inside `native_observation`; `post_status_home` follows it.
+Pre-response `native_authority_graph` and `native_runtime_policy` run concurrently.
+Do not add these nested or overlapping timers. Each phase records `elapsed_ms`,
+`completed` and `succeeded`; cancellation leaves `completed=false`. A policy
+phase skipped after graph refusal or cancellation emits no event. These timings
+preserve all authority checks, read order, retained-upgrade exemptions and
+existing deadlines. They establish no end-to-end improvement on their own.
+
 ### Initial native readiness retry
+
+Claim-assignment observation has one five-second deadline. Pending reads start
+at least 250 ms apart, with response time counting toward that interval. Reads
+never overlap or catch up after a slow response, and no new read starts at the
+deadline. This allows up to 20 reads per window; delayed responses can use more
+of that budget than a full 250 ms sleep after each response. Include Kubernetes
+request load when measuring this observation change. It neither changes the
+retry switch nor shortens volume attachment or runtime boot.
 
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
 home readiness or create-bind deadline reached after validated Pending can use a

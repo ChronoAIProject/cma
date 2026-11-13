@@ -15,6 +15,7 @@ mod access_origins;
 mod access_snapshot;
 mod activity;
 mod admission_log;
+mod debug;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
@@ -220,6 +221,7 @@ pub struct Config {
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
     pub activity_async_enabled: bool,
+    pub activity_operational_read_sampling_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
@@ -235,43 +237,6 @@ pub struct Config {
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
-}
-
-impl std::fmt::Debug for Config {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Config")
-            .field("bind", &self.bind)
-            .field("public_url", &self.public_url)
-            .field(
-                "agent_access_retained_origins",
-                &self.agent_access_retained_origins,
-            )
-            .field("image_manager_base_url", &self.image_manager_base_url)
-            .field("nyxid_public_url", &self.nyxid_public_url)
-            .field("cors_origins", &self.cors_origins)
-            .field("rate_limits", &self.rate_limits)
-            .field("public_stream_limit", &self.public_stream_limit)
-            .field("trusted_proxies", &self.trusted_proxies)
-            .field("mongodb_uri", &"<redacted>")
-            .field("mongodb_database", &self.mongodb_database)
-            .field("mongodb_authority", &self.mongodb_authority)
-            .field("deployment_id", &self.deployment_id)
-            .field("runtime", &self.runtime)
-            .field("execution", &self.execution)
-            .field("baseline_services", &self.baseline_services)
-            .field("auth_encryption_key", &self.auth_encryption_key)
-            .field("activity_retention", &self.activity_retention)
-            .field("activity_async_enabled", &self.activity_async_enabled)
-            .field("default_profiles", &self.default_profiles)
-            .field(
-                "agent_manager_sandbox_capacity",
-                &self.agent_manager_sandbox_capacity,
-            )
-            .field("auth_mode", &self.auth_mode)
-            .field("features", &self.features)
-            .finish()
-    }
 }
 
 impl Config {
@@ -463,6 +428,7 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             activity_async_enabled: activity::enabled(&mut lookup)?,
+            activity_operational_read_sampling_enabled: activity::sampling_enabled(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
