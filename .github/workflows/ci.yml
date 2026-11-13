@@ -1196,6 +1196,7 @@ jobs:
         timeout-minutes: 2
         env:
           CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+          CMA_WEB_WATCHDOG_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence/watchdog
         run: python3 .github/scripts/web-image-watchdog-tests.py
       - name: Browser finalization phase regression
         if: matrix.component == 'web'
@@ -1209,7 +1210,8 @@ jobs:
         timeout-minutes: 6
         env:
           CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
-          CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence
+          # Playwright clears outputDir; preserve the preceding regression's evidence.
+          CMA_WEB_IMAGE_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence/suite
         run: python3 .github/scripts/web-image-smoke.py cma-web:ci
       - name: Bound web image browser evidence
         if: always() && matrix.component == 'web'
