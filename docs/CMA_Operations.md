@@ -2721,8 +2721,13 @@ path. When enabled, readiness observations before home adoption and during creat
 binding each have a two-second bound, including Kubernetes read time.
 CrashLoopBackOff exits on the first verified observation; a rising runtime restart count exits on the next
 observation of the same Pod UID. The subsequent read-only home-authority
-acknowledgement wait has its own two-second bound. A replacement Pod starts a new
-observation baseline. A nonzero historical restart count alone is not a failure.
+acknowledgement phase has one two-second bound beginning before its first
+Claim/member/PVC GET and shared with all subsequent polls. Authority publication
+writes precede this phase and are not cancelled by its deadline. With the guard
+OFF, the first acknowledgement observation retains its existing policy and a
+pending result starts the existing five-second polling wait. A replacement Pod
+starts a new observation baseline. A nonzero historical restart count alone is
+not a failure.
 
 The guard retains the exact Claim, assigned Sandbox and PVC authority. A missing
 local receipt does not prove that a preceding provider write had no effect. The
@@ -2746,7 +2751,9 @@ not be shortened globally.
 
 The guard polls every 100 ms, up to roughly 20 observations per attempt. Each
 home observation uses three Kubernetes reads and each bind observation uses
-two. Activation evidence must include API read load, plain and desktop recovery
+two. The separate home-authority phase reads Claim/member/PVC immediately, then
+waits 250 ms between pending observations. Activation evidence must include API
+read load, plain and desktop recovery
 to the next worker attempt, and cold-start completion time as well as guard
 duration. The stage deadline is not an end-to-end create deadline.
 
