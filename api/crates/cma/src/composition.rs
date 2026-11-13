@@ -151,6 +151,7 @@ impl ControlPlaneComposition {
             Some(adapter::desktop_creation(config, adapter.clone())?),
         )
         .with_task_experience(config.task_experience.clone());
+        let lifecycle_drain = inline_lifecycle.drain_handle();
         inline_lifecycle.resume_pending();
         let projections = projections
             .with_lifecycle(inline_lifecycle.clone())
@@ -251,6 +252,7 @@ impl ControlPlaneComposition {
                     .map(|manager| manager.coordinator.clone()),
             ),
         )?;
+        sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
             common_first_messages: config.features.trigger_command_admission,
             agent_reads: projections.reads(),
