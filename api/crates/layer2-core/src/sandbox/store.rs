@@ -275,7 +275,6 @@ pub enum WorkspaceAdmissionResult {
     Created(Workspace),
     Existing(Workspace),
 }
-
 /// Atomic sandbox readiness, lineage/name/limit admission and Created event.
 #[async_trait]
 pub trait WorkspaceAdmissionStore: Send + Sync {
@@ -283,7 +282,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         &self,
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
-
     /// Snapshot-only callers keep the ordinary admission contract.
     async fn admit_catalogue_workspace(
         &self,
@@ -291,7 +289,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError> {
         self.admit_workspace(admission).await
     }
-
     /// Explicitly recover only an original never-ready Workspace; all guards are atomic.
     async fn begin_workspace_prepare_recovery(
         &self,
@@ -300,7 +297,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         operation_id: &str,
         now: String,
     ) -> Result<Workspace, SandboxStoreError>;
-
     /// Fence new child admission and durably schedule removal, including child cleanup.
     async fn begin_workspace_removal(
         &self,
