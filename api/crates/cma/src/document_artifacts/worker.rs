@@ -1,6 +1,9 @@
 //! Bounded document maintenance outside request admission and startup readiness.
 use layer2_core::{
-    document_artifacts::{DocumentMaintenance, ReclaimOutcome, ORPHAN_ALERT_AGE, RECLAIM_INTERVAL},
+    document_artifacts::{
+        DocumentMaintenance, DocumentPurgeStore, PurgeOutcome, ReclaimOutcome, ORPHAN_ALERT_AGE,
+        RECLAIM_INTERVAL,
+    },
     sandbox::store::SandboxStoreError,
 };
 use std::{sync::Arc, time::Duration};
@@ -9,6 +12,7 @@ use tokio::{sync::watch, task::JoinHandle};
 pub(crate) struct DocumentMaintenanceWorker {
     maintenance: Option<DocumentMaintenance>,
     budget: Arc<crate::background::BackgroundBudget>,
+    purge: Option<(Arc<dyn DocumentPurgeStore>, bool)>,
 }
 impl Default for DocumentMaintenanceWorker {
     fn default() -> Self {
@@ -20,7 +24,16 @@ impl DocumentMaintenanceWorker {
         Self {
             maintenance,
             budget: crate::background::shared(),
+            purge: None,
         }
+    }
+    pub(crate) fn with_purge(
+        mut self,
+        store: Arc<dyn DocumentPurgeStore>,
+        supported: bool,
+    ) -> Self {
+        self.purge = Some((store, supported));
+        self
     }
     pub(crate) fn spawn(self, mut shutdown: watch::Receiver<bool>) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -32,64 +45,138 @@ impl DocumentMaintenanceWorker {
         })
     }
     async fn run(&self, shutdown: &mut watch::Receiver<bool>) {
-        let Some(maintenance) = &self.maintenance else {
+        if self.maintenance.is_none() && self.purge.is_none() {
             record_blocked(&mut None, "reclaim_disabled_or_storage_unconfigured");
             return;
-        };
-        // Preserve startup and reconnect capacity for foreground work.
+        }
         tokio::time::sleep(Duration::from_secs(30)).await;
         let reclaim = crate::background::BackgroundWork::new(
             self.budget.clone(),
             "document_reclaim",
             Duration::from_secs(30),
-            RECLAIM_INTERVAL,
+            Duration::ZERO,
         );
+        let purge = crate::background::BackgroundWork::new(
+            self.budget.clone(),
+            "document_purge",
+            Duration::from_secs(30),
+            Duration::ZERO,
+        );
+        let mut next_reclaim = tokio::time::Instant::now();
+        let mut next_purge = next_reclaim;
         let mut blocked_reason = None;
         let mut alerted = false;
         loop {
             if *shutdown.borrow() {
                 return;
             }
-            // Future purge steps share this worker and budget, ahead of reclaim.
-            let result = reclaim
-                .run(|| async {
-                    maintenance
-                        .reclaim_step(mongodb::bson::DateTime::now().timestamp_millis())
-                        .await
-                        .map_err(|_| {
-                            SandboxStoreError::Unavailable("document reclaim unavailable".into())
+            if self.purge.is_some() && tokio::time::Instant::now() >= next_purge {
+                let delay = self.purge_round(&purge).await;
+                next_purge = tokio::time::Instant::now() + delay;
+            } else if self.purge.is_none() {
+                next_purge = tokio::time::Instant::now() + RECLAIM_INTERVAL;
+            }
+            if tokio::time::Instant::now() >= next_reclaim {
+                let mut retry_after = None;
+                if let Some(maintenance) = &self.maintenance {
+                    let result = reclaim
+                        .run(|| async {
+                            maintenance
+                                .reclaim_step(mongodb::bson::DateTime::now().timestamp_millis())
+                                .await
+                                .map_err(|_| {
+                                    SandboxStoreError::Unavailable(
+                                        "document reclaim unavailable".into(),
+                                    )
+                                })
                         })
-                })
-                .await;
-            let mut retry_after = None;
-            match result {
-                Ok(Some(outcome)) => {
-                    emit(&outcome);
-                    retry_after = outcome.retry_after;
-                    if outcome.blocked {
-                        record_blocked(
-                            &mut blocked_reason,
-                            outcome.blocked_reason.unwrap_or("reclaim_blocked"),
-                        );
-                    } else {
-                        blocked_reason = None;
-                        let old = outcome.backlog.oldest_age_seconds >= ORPHAN_ALERT_AGE.as_secs();
-                        if old && !alerted {
-                            tracing::warn!(
-                                age_seconds = outcome.backlog.oldest_age_seconds,
-                                pending_objects = outcome.backlog.pending_objects,
-                                "Document orphan age exceeds the alert threshold"
-                            );
+                        .await;
+                    match result {
+                        Ok(Some(outcome)) => {
+                            emit(&outcome);
+                            retry_after = outcome.retry_after;
+                            if outcome.blocked {
+                                record_blocked(
+                                    &mut blocked_reason,
+                                    outcome.blocked_reason.unwrap_or("reclaim_blocked"),
+                                );
+                            } else {
+                                blocked_reason = None;
+                                let old = outcome.backlog.oldest_age_seconds
+                                    >= ORPHAN_ALERT_AGE.as_secs();
+                                if old && !alerted {
+                                    tracing::warn!(
+                                        age_seconds = outcome.backlog.oldest_age_seconds,
+                                        pending_objects = outcome.backlog.pending_objects,
+                                        "Document orphan age exceeds the alert threshold"
+                                    );
+                                }
+                                alerted = old;
+                            }
                         }
-                        alerted = old;
+                        Ok(None) => record_blocked(&mut blocked_reason, "background_budget_denied"),
+                        Err(_) => record_blocked(&mut blocked_reason, "reclaim_unavailable"),
                     }
                 }
-                Ok(None) => record_blocked(&mut blocked_reason, "background_budget_denied"),
-                Err(_) => record_blocked(&mut blocked_reason, "reclaim_unavailable"),
+                next_reclaim = tokio::time::Instant::now() + next_delay(retry_after);
             }
-            // Denied work is never queued. A dependency's longer minimum delay
-            // also applies after BackgroundWork's own jittered pacing.
-            tokio::time::sleep(next_delay(retry_after)).await;
+            tokio::time::sleep_until(next_purge.min(next_reclaim)).await;
+        }
+    }
+    async fn purge_round(&self, work: &crate::background::BackgroundWork) -> Duration {
+        let Some((store, supported)) = &self.purge else {
+            return RECLAIM_INTERVAL;
+        };
+        let result = work
+            .run(|| async {
+                let now = mongodb::bson::DateTime::now().timestamp_millis();
+                if *supported {
+                    self.maintenance
+                        .as_ref()
+                        .ok_or_else(|| {
+                            SandboxStoreError::Unavailable("document purge unconfigured".into())
+                        })?
+                        .purge_step(now)
+                        .await
+                        .map_err(|_| {
+                            SandboxStoreError::Unavailable("document purge unavailable".into())
+                        })
+                } else {
+                    let backlog = store.backlog(now).await.map_err(|_| {
+                        SandboxStoreError::Unavailable(
+                            "document purge observation unavailable".into(),
+                        )
+                    })?;
+                    Ok(PurgeOutcome {
+                        blocked: backlog.pending_documents > 0,
+                        blocked_reason: Some("storage_deletion_unsupported"),
+                        backlog,
+                        ..Default::default()
+                    })
+                }
+            })
+            .await;
+        match result {
+            Ok(Some(outcome)) => {
+                emit_purge(&outcome);
+                outcome
+                    .retry_after
+                    .unwrap_or(if outcome.claimed > 0 && !outcome.blocked {
+                        Duration::from_millis(100)
+                    } else {
+                        RECLAIM_INTERVAL
+                    })
+            }
+            Ok(None) => {
+                metrics::counter!("cma_document_purge_total","outcome"=>"budget_denied")
+                    .increment(1);
+                Duration::from_secs(1)
+            }
+            Err(_) => {
+                metrics::gauge!("cma_document_purge_blocked").set(1);
+                metrics::counter!("cma_document_purge_total","outcome"=>"unavailable").increment(1);
+                Duration::from_secs(5)
+            }
         }
     }
 }
@@ -122,6 +209,19 @@ fn emit(outcome: &ReclaimOutcome) {
             .increment(count);
     }
 }
+fn emit_purge(outcome: &PurgeOutcome) {
+    metrics::gauge!("cma_document_purge_blocked").set(u8::from(outcome.blocked));
+    metrics::gauge!("cma_document_purge_oldest_pending_seconds")
+        .set(outcome.backlog.oldest_age_seconds as f64);
+    for (label, count) in [
+        ("claimed", outcome.claimed),
+        ("deleted", outcome.deleted),
+        ("released", outcome.released),
+        ("blocked", u64::from(outcome.blocked)),
+    ] {
+        metrics::counter!("cma_document_purge_total","outcome"=>label).increment(count);
+    }
+}
 pub(crate) fn describe_metrics() {
     metrics::describe_gauge!(
         "cma_document_reclaim_pending_objects",
@@ -143,3 +243,7 @@ pub(crate) fn describe_metrics() {
 #[cfg(test)]
 #[path = "worker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "worker_purge_tests.rs"]
+mod purge_tests;

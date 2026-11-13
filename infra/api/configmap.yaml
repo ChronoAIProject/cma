@@ -279,6 +279,8 @@ data:
   CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED: "false"
   # Reclaim also requires enabled ready quotas and proved storage deletion.
   CHRONO_DOCUMENT_RECLAIM_ENABLED: "false"
+  # Requires upgraded readers and drained create requests before a uniform opt-in.
+  CHRONO_DOCUMENT_DELETION_ENABLED: "false"
   # Off until capacity-owner headroom and all admission writers are verified.
   CHRONO_SANDBOX_GLOBAL_LIMIT: "0"
   CHRONO_DOCUMENT_BUCKET: "chrono-platform-bot"

@@ -6,6 +6,9 @@ impl MongoDocumentReclaimStore {
         candidate: &ObjectCandidate,
         session: &mut ClientSession,
     ) -> Result<Judgement, TransactionError> {
+        if self.fence_lifecycle(candidate, session).await? {
+            return Ok(Judgement::OwnedByPurge);
+        }
         // Both the publishing transaction and this transaction write the same
         // object row. Their write conflict closes the snapshot write-skew gap.
         let document = self
@@ -80,6 +83,9 @@ impl MongoDocumentReclaimStore {
         session: &mut ClientSession,
     ) -> Result<bool, TransactionError> {
         let candidate = &claim.candidate;
+        if self.fence_lifecycle(candidate, session).await? {
+            return Ok(false);
+        }
         let owner_id = owner_id(&candidate.source.owner_hash);
         // The same owner fence used by reserve serializes release and admission.
         let fence = self
@@ -150,7 +156,14 @@ impl MongoDocumentReclaimStore {
             .session(&mut *session)
             .await?
             .is_some();
-        if !document_exists && !any_object {
+        let lifecycle_exists = self
+            .lifecycle
+            .find_one(doc! {"_id":&candidate.source.document_id})
+            .projection(doc! {"_id":1})
+            .session(&mut *session)
+            .await?
+            .is_some();
+        if !document_exists && !lifecycle_exists && !any_object {
             let document_id = format!(
                 "document:{}:{}",
                 candidate.source.owner_hash, candidate.source.document_id

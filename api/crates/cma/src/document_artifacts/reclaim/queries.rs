@@ -54,11 +54,40 @@ impl MongoDocumentReclaimStore {
         limit: usize,
         condemned: bool,
     ) -> Result<Vec<ObjectCandidate>, DocumentError> {
+        // Exclude purge-owned rows before limiting either candidate class. An
+        // unchanged handed-off condemned batch must not starve ordinary orphans.
+        // The initial match retains the state index; each foreign lookup uses
+        // the lifecycle primary key. The query deadline bounds rejected scans.
+        // A malformed row must still reach decode_candidate and return Corrupt.
+        // Only a canonical ID is eligible for lifecycle ownership exclusion.
+        let id = doc! {"$cond":[{"$eq":[{"$type":"$_id"},"string"]},"$_id",""]};
+        let document_id = doc! {"$cond":[
+            {"$regexMatch":{"input":id,
+                "regex":r"\Aobject:[0-9a-f]{64}:doc_[0-9a-f]{32}:[0-9a-f]{64}\z"}},
+            {"$arrayElemAt":[{"$split":["$_id",":"]},2]},
+            Bson::Null
+        ]};
+        let pipeline = [
+            doc! {"$match":filter},
+            doc! {"$lookup":{
+                "from":crate::document_artifacts::LIFECYCLE_COLLECTION,
+                "let":{"document_id":document_id},
+                "pipeline":[
+                    {"$match":{"$expr":{"$eq":["$_id","$$document_id"]},
+                        "state":{"$in":["deleting","purged"]}}},
+                    {"$project":{"_id":1}},
+                    {"$limit":1}
+                ],
+                "as":"purge_ownership"
+            }},
+            doc! {"$match":{"purge_ownership.0":{"$exists":false}}},
+            doc! {"$project":{"purge_ownership":0}},
+            doc! {"$limit":limit as i64},
+        ];
         let rows: Vec<Document> = self
             .rows
-            .find(filter)
+            .aggregate(pipeline)
             .hint(Hint::Keys(doc! {"kind":1,"state":1,"reserved_at":1}))
-            .limit(limit as i64)
             .batch_size(limit as u32)
             .max_time(IO)
             .await

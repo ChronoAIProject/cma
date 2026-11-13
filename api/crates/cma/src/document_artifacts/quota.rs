@@ -103,6 +103,30 @@ impl MongoDocumentQuotaStore {
             .await?
             .ok_or(DocumentError::Corrupt)?;
         validate_row(&owner, "owner")?;
+        // Check before exact-object reuse: a committed object is not authority to
+        // publish again after the document's identity has been deleted.
+        let database = self.rows.client().database(&self.rows.namespace().db);
+        let lifecycle = database
+            .collection::<Document>(super::LIFECYCLE_COLLECTION)
+            .find_one(doc! {"_id":&source.document_id})
+            .session(&mut *session)
+            .await?;
+        if lifecycle
+            .as_ref()
+            .is_some_and(|r| matches!(r.get_str("state").ok(), Some("deleting" | "purged")))
+        {
+            return Err(DocumentError::NotFound.into());
+        }
+        let document_id = format!("document:{}:{}", source.owner_hash, source.document_id);
+        if self
+            .rows
+            .find_one(doc! {"_id":document_id,"state":"deleting"})
+            .session(&mut *session)
+            .await?
+            .is_some()
+        {
+            return Err(DocumentError::NotFound.into());
+        }
         let usage = [
             number(&owner, "documents")?,
             number(&owner, "bytes")?,
@@ -231,6 +255,7 @@ impl DocumentQuotaStore for MongoDocumentQuotaStore {
                 documents,
                 bytes,
                 objects,
+                pending_deletions: None,
             })
         })
         .await

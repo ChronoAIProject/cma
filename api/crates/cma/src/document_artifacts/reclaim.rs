@@ -18,6 +18,7 @@ mod transactions;
 pub(crate) struct MongoDocumentReclaimStore {
     pub(super) rows: Collection<Document>,
     pub(super) documents: Collection<Document>,
+    pub(super) lifecycle: Collection<Document>,
     enabled: bool,
 }
 
@@ -29,11 +30,39 @@ impl MongoDocumentReclaimStore {
             .build();
         Self {
             rows: database.collection_with_options(QUOTA_COLLECTION, options.clone()),
-            documents: database.collection_with_options(super::COLLECTION, options),
+            documents: database.collection_with_options(super::COLLECTION, options.clone()),
+            lifecycle: database.collection_with_options(super::LIFECYCLE_COLLECTION, options),
             enabled: quotas_enabled,
         }
     }
 
+    pub(crate) fn purge(&self) -> super::purge::MongoDocumentPurgeStore {
+        super::purge::MongoDocumentPurgeStore::new(
+            &self.rows.client().database(&self.rows.namespace().db),
+        )
+    }
+    async fn fence_lifecycle(
+        &self,
+        candidate: &ObjectCandidate,
+        session: &mut ClientSession,
+    ) -> Result<bool, TransactionError> {
+        // Serialize judgement/claim/finalization with reserve and logical deletion.
+        self.rows
+            .update_one(
+                doc! {"_id":owner_id(&candidate.source.owner_hash)},
+                doc! {"$inc":{"fence":1_i64}},
+            )
+            .session(&mut *session)
+            .await?;
+        let row = self
+            .lifecycle
+            .find_one(doc! {"_id":&candidate.source.document_id})
+            .session(session)
+            .await?;
+        Ok(row
+            .as_ref()
+            .is_some_and(|r| matches!(r.get_str("state").ok(), Some("deleting" | "purged"))))
+    }
     async fn run(
         &self,
         candidate: &ObjectCandidate,

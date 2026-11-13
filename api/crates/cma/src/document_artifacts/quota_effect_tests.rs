@@ -17,11 +17,27 @@ impl DocumentStore for Metadata {
         &self,
         record: &StoredDocument,
         source: Option<(&DocumentSourceReservation, SourceTicket)>,
-    ) -> Result<bool, DocumentError> {
+    ) -> Result<InsertOutcome, DocumentError> {
         if self.fail_insert.load(Ordering::SeqCst) {
             return Err(DocumentError::Unavailable);
         }
         self.rows.insert(record, source).await
+    }
+    async fn delete(
+        &self,
+        expected: u64,
+        tombstone: &DocumentTombstone,
+    ) -> Result<DeleteOutcome, DocumentError> {
+        self.rows.delete(expected, tombstone).await
+    }
+    async fn tombstone(&self, id: &str) -> Result<Option<DocumentTombstone>, DocumentError> {
+        self.rows.tombstone(id).await
+    }
+    async fn purge_state(&self, id: &str) -> Result<Option<DocumentPurgeState>, DocumentError> {
+        self.rows.purge_state(id).await
+    }
+    async fn pending_deletions(&self, owner: &str) -> Result<u64, DocumentError> {
+        self.rows.pending_deletions(owner).await
     }
     async fn compare_exchange(
         &self,

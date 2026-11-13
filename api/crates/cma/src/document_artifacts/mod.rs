@@ -20,3 +20,13 @@ mod mongo_integration_tests;
 
 #[cfg(test)]
 mod reclaim_mongo_tests;
+
+#[cfg(test)]
+mod lifecycle_mongo_tests;
+
+mod lifecycle;
+mod purge;
+mod transaction;
+pub(crate) use lifecycle::LIFECYCLE_COLLECTION;
+
+mod lifecycle_create;

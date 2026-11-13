@@ -5,7 +5,7 @@ use std::sync::{
     Arc,
 };
 
-struct Store(AtomicUsize);
+pub(super) struct Store(pub(super) AtomicUsize);
 #[async_trait::async_trait]
 impl DocumentReclaimStore for Store {
     async fn ready(&self) -> Result<bool, DocumentError> {
@@ -33,7 +33,7 @@ impl DocumentReclaimStore for Store {
         Ok(ReclaimBacklog::default())
     }
 }
-async fn settle() {
+pub(super) async fn settle() {
     for _ in 0..12 {
         tokio::task::yield_now().await;
     }
