@@ -1,5 +1,7 @@
 //! Exact version and server-time lease checks compose with existing sealed journals.
-use super::{failure, MongoRecords, Record, RecordError, CONNECTIONS, INTERACTIONS};
+use super::{
+    replica_retry::AttemptError, MongoRecords, Record, RecordError, CONNECTIONS, INTERACTIONS,
+};
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
     options::{Acknowledgment, ReadConcern, WriteConcern},
@@ -64,20 +66,47 @@ impl MongoRecords {
                 "invalid replica transaction size".into(),
             ));
         }
-        let mut session = self.db.client().start_session().await.map_err(failure)?;
+        for attempt in 0..5 {
+            match self.replica_attempt(writes).await {
+                Ok(versions) => return Ok(versions),
+                Err(AttemptError::Record(error)) => return Err(error),
+                Err(AttemptError::Aborted) => {
+                    if attempt == 4 {
+                        break;
+                    }
+                    metrics::counter!("cmaeg_replica_transaction_retries_total").increment(1);
+                    tokio::time::sleep(std::time::Duration::from_millis(5 << attempt)).await;
+                }
+            }
+        }
+        Err(RecordError::Unavailable(
+            "replica transaction contention budget exhausted".into(),
+        ))
+    }
+
+    async fn replica_attempt(&self, writes: &[ReplicaWrite]) -> Result<Vec<u64>, AttemptError> {
+        let mut session = self
+            .db
+            .client()
+            .start_session()
+            .await
+            .map_err(AttemptError::from)?;
         session
             .start_transaction()
             .read_concern(ReadConcern::snapshot())
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .await
-            .map_err(failure)?;
+            .map_err(AttemptError::from)?;
         let mut versions = Vec::with_capacity(writes.len());
         for write in writes {
             versions.push(self.replica_record(write, &mut session).await?);
         }
         // Ambiguous commits are surfaced; callers retain custody and retry the
         // same admission rather than guessing whether an external effect occurred.
-        session.commit_transaction().await.map_err(failure)?;
+        session
+            .commit_transaction()
+            .await
+            .map_err(AttemptError::from)?;
         Ok(versions)
     }
 
@@ -85,7 +114,7 @@ impl MongoRecords {
         &self,
         write: &ReplicaWrite,
         session: &mut ClientSession,
-    ) -> Result<u64, RecordError> {
+    ) -> Result<u64, AttemptError> {
         if write.id.is_empty()
             || write.id.len() > 512
             || write.owner.is_empty()
@@ -101,9 +130,7 @@ impl MongoRecords {
                         .all(|byte| byte.is_ascii_hexdigit())
             })
         {
-            return Err(RecordError::Rejected(
-                "invalid replica journal write".into(),
-            ));
+            return Err(RecordError::Rejected("invalid replica journal write".into()).into());
         }
         let version = write
             .expected
@@ -140,12 +167,13 @@ impl MongoRecords {
                 )
                 .session(&mut *session)
                 .await
-                .map_err(failure)?;
+                .map_err(AttemptError::from)?;
             if changed.matched_count != 1 {
                 return Err(RecordError::GuardConflict {
                     scope: "channel",
                     expected: *version,
-                });
+                }
+                .into());
             }
         }
         if let Some(guard) = &write.guard {
@@ -159,12 +187,13 @@ impl MongoRecords {
                 .update_one(filter, doc! {"$inc":{"guard_revision":1_i64}})
                 .session(&mut *session)
                 .await
-                .map_err(failure)?;
+                .map_err(AttemptError::from)?;
             if result.matched_count != 1 {
                 return Err(RecordError::GuardConflict {
                     scope: "replica_partition",
                     expected: guard.version,
-                });
+                }
+                .into());
             }
         }
         let record = Record {
@@ -203,19 +232,20 @@ impl MongoRecords {
                 .update_one(filter, doc! {"$set":fields})
                 .session(&mut *session)
                 .await
-                .map_err(failure)?;
+                .map_err(AttemptError::from)?;
             if result.matched_count != 1 {
                 return Err(RecordError::Conflict {
                     expected,
                     actual: None,
-                });
+                }
+                .into());
             }
         } else {
             records.insert_one(record).session(&mut *session).await.map_err(|error| {
                 if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(value)) if value.code == 11000) {
-                    RecordError::Conflict { expected: 0, actual: None }
+                    AttemptError::Record(RecordError::Conflict { expected: 0, actual: None })
                 } else {
-                    failure(error)
+                    AttemptError::from(error)
                 }
             })?;
         }
