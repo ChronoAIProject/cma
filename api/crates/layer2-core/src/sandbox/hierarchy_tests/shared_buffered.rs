@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) struct BufferedStore {
+    pub(super) projected: bool,
     pub(super) inner: Arc<InMemorySandboxStore>,
     pub(super) sandbox: Option<SandboxHierarchyRecord>,
     pub(super) dependency_failure: bool,
@@ -43,6 +44,35 @@ impl HierarchyReadStore for BufferedStore {
         } else {
             result
         }
+    }
+    async fn read_sandbox_detail(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<SandboxDetailRecord>, SandboxStoreError> {
+        self.read_sandbox_hierarchy(id).await.map(|record| {
+            record.map(|record| {
+                if !self.projected {
+                    return SandboxDetailRecord::Complete(record);
+                }
+                SandboxDetailRecord::Projected(SandboxHierarchyRecord {
+                    sandbox: record.sandbox,
+                    workspaces: record.workspaces,
+                    worktrees: record.worktrees,
+                    agents: record
+                        .agents
+                        .into_iter()
+                        .map(|agent| SandboxAgentLineage {
+                            id: agent.id,
+                            sandbox_id: agent.sandbox_id,
+                            workspace_id: agent.workspace_id,
+                            worktree_id: agent.worktree_id,
+                            owner: agent.owner,
+                            revision: agent.revision,
+                        })
+                        .collect(),
+                })
+            })
+        })
     }
     async fn read_workspace_hierarchy(
         &self,
