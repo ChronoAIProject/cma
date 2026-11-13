@@ -44,7 +44,7 @@ impl SandboxReconciler {
                             }
                             result = tasks.join_next(), if !tasks.is_empty() => {
                                 let outcome = match result {
-                                    Some(Ok(Ok(()))) => "ok",
+                                    Some(Ok(Ok(_))) => "ok",
                                     Some(Ok(Err(error))) => {
                                         tracing::error!(%error, "sandbox runtime reconciliation failed");
                                         "error"
@@ -58,15 +58,22 @@ impl SandboxReconciler {
                                 crate::telemetry::worker::completed("sandbox_reconciliation", "reconciliation", outcome);
                             }
                             _ = scheduling.tick() => {}
-                            _ = batches.tick() => {
+                            _ = async {
+                                if reconciler.resume_background {
+                                    tokio::time::sleep_until(reconciler.background_work.next_run_at()).await;
+                                } else {
+                                    batches.tick().await;
+                                }
+                            }, if !reconciler.resume_background || tasks.is_empty() => {
                                 if tasks.is_empty() {
                                     let reconciler = Arc::clone(reconciler);
                                     let activity = activity.clone();
                                     tasks.spawn(async move {
                                         let _phase = activity.reconciliation();
-                                        // Retain the existing resumable operation's budget,
-                                        // deadline, cursors, binding holds and durable fences.
-                                        crate::background::sandbox_reconciliation(|| reconciler.run_due(SystemTime::now())).await
+                                        // The owned child runs outside the cancellable wait.
+                                        // Busy/yield/backoff timing comes from BackgroundWork;
+                                        // shutdown still drains its bounded durable operation.
+                                        reconciler.background_work.run_resumable(|| reconciler.run_due(SystemTime::now())).await
                                     });
                                 }
                             }

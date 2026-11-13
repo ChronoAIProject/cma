@@ -54,6 +54,7 @@ pub(crate) struct FeatureFlags {
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
+    pub sandbox_reconciliation_reserved_lane: bool,
 }
 impl FeatureFlags {
     pub(crate) fn from_lookup(
@@ -117,6 +118,10 @@ impl FeatureFlags {
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
+            )?,
+            sandbox_reconciliation_reserved_lane: flag(
+                lookup,
+                "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
             )?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
