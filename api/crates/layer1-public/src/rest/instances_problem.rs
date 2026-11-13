@@ -7,10 +7,12 @@ use layer2_core::sandbox::{
 use super::{problem_document, problem_response};
 
 pub(crate) enum HierarchyProblem {
+    AdmissionPaused,
     ResourceAccess(layer2_core::resource_access::ResourceAccessError),
     CredentialSetupRequired,
     ConnectionsRequired(Vec<layer2_core::ServiceId>),
     Forbidden,
+    AlwaysOnApprovalRequired,
     SandboxNotFound,
     WorkspaceNotFound,
     WorktreeNotFound,
@@ -26,6 +28,8 @@ pub(crate) enum HierarchyProblem {
     InvalidQuery,
     InvalidPage,
     Unavailable,
+    GlobalCapacityReached,
+    Budget(layer2_core::budget::BudgetError),
     SandboxLifecycleUnavailable(&'static str),
     SandboxLifecycleBusy(SandboxLifecycleBlocker),
 }
@@ -43,11 +47,15 @@ impl HierarchyProblem {
     }
     pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
+            SandboxServiceError::GlobalCapacityReached => Self::GlobalCapacityReached,
+            SandboxServiceError::Budget(reason) => Self::Budget(reason),
+            SandboxServiceError::AdmissionPaused => Self::AdmissionPaused,
             SandboxServiceError::CredentialSetupRequired => Self::CredentialSetupRequired,
             SandboxServiceError::ConnectionsRequired { services } => {
                 Self::ConnectionsRequired(services)
             }
             SandboxServiceError::Forbidden => Self::Forbidden,
+            SandboxServiceError::AlwaysOnApprovalRequired => Self::AlwaysOnApprovalRequired,
             SandboxServiceError::ProfileNotFound => Self::ProfileNotFound("sandbox"),
             SandboxServiceError::NotFound => Self::SandboxNotFound,
             SandboxServiceError::TrustConfirmationRequired { commands_digest } => {
@@ -98,6 +106,8 @@ impl HierarchyProblem {
                 Self::Conflict("workspace_prepare_recovery_conflict")
             }
             WorkspaceServiceError::InvalidOrigin => Self::Invalid("invalid_workspace_origin"),
+            WorkspaceServiceError::Budget(reason) => Self::Budget(reason),
+            WorkspaceServiceError::AdmissionPaused => Self::AdmissionPaused,
             WorkspaceServiceError::Corrupt(_) | WorkspaceServiceError::Unavailable(_) => {
                 Self::Unavailable
             }
@@ -121,6 +131,8 @@ impl HierarchyProblem {
             SandboxLifecycleCommandError::SandboxBusy { reason, .. } => {
                 Self::SandboxLifecycleBusy(reason)
             }
+            SandboxLifecycleCommandError::Budget(reason) => Self::Budget(reason),
+            SandboxLifecycleCommandError::AdmissionPaused => Self::AdmissionPaused,
             SandboxLifecycleCommandError::Corrupt(_) => {
                 Self::SandboxLifecycleUnavailable("stored_sandbox_corrupt")
             }
@@ -158,8 +170,12 @@ impl HierarchyProblem {
 impl IntoResponse for HierarchyProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code, fields) = match self {
+            Self::AdmissionPaused => return super::admission_problem::paused(),
             Self::ResourceAccess(error) => {
                 return super::resource_access_problem::ResourceProblem(error).into_response()
+            }
+            Self::Budget(reason) => {
+                return super::instance_problem::InstanceProblem::Budget(reason).into_response()
             }
             Self::ConnectionsRequired(services) => (
                 StatusCode::CONFLICT,
@@ -173,6 +189,13 @@ impl IntoResponse for HierarchyProblem {
                 "sandbox-credential-setup-required",
                 super::problems::SANDBOX_CREDENTIAL_SETUP_DETAIL,
                 "sandbox_credential_setup_required".to_owned(),
+                vec![],
+            ),
+            Self::AlwaysOnApprovalRequired => (
+                StatusCode::FORBIDDEN,
+                "always-on-approval-required",
+                "Always on requires approval by an administrator. Owners may only turn it off.",
+                "always_on_approval_required".to_owned(),
                 vec![],
             ),
             Self::Forbidden => (
@@ -245,6 +268,13 @@ impl IntoResponse for HierarchyProblem {
                 "hierarchy_service_unavailable".to_owned(),
                 vec![],
             ),
+            Self::GlobalCapacityReached => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sandbox-capacity-unavailable",
+                "Sandbox capacity is temporarily unavailable. Retry the original operation later.",
+                "sandbox_capacity_unavailable".to_owned(),
+                vec![],
+            ),
             Self::SandboxLifecycleUnavailable(code) => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "sandbox-lifecycle-unavailable",
@@ -288,4 +318,64 @@ fn not_found(resource: &'static str) -> ProblemParts {
         format!("{resource}_not_found"),
         vec![],
     )
+}
+
+#[cfg(test)]
+mod global_admission_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn platform_refusals_of_new_resources_share_the_budget_problem() {
+        use layer2_core::budget::BudgetError;
+        for (problem, status, code) in [
+            (
+                HierarchyProblem::sandbox(SandboxServiceError::Budget(
+                    BudgetError::PlatformExhausted,
+                )),
+                StatusCode::PAYMENT_REQUIRED,
+                "platform_budget_exhausted",
+            ),
+            (
+                HierarchyProblem::workspace(WorkspaceServiceError::Budget(
+                    BudgetError::Unavailable,
+                )),
+                StatusCode::PAYMENT_REQUIRED,
+                "budget_unavailable",
+            ),
+            (
+                HierarchyProblem::sandbox_lifecycle(SandboxLifecycleCommandError::Budget(
+                    BudgetError::PlatformExhausted,
+                )),
+                StatusCode::PAYMENT_REQUIRED,
+                "platform_budget_exhausted",
+            ),
+        ] {
+            let response = problem.into_response();
+            assert_eq!(response.status(), status);
+            assert!(response.headers().get("retry-after").is_none());
+            let bytes = axum::body::to_bytes(response.into_body(), 4096)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["code"], code);
+        }
+    }
+
+    #[tokio::test]
+    async fn global_capacity_is_retryable_and_does_not_disclose_fleet_counts() {
+        let response =
+            HierarchyProblem::sandbox(SandboxServiceError::GlobalCapacityReached).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "sandbox_capacity_unavailable");
+        assert!(body.get("limit").is_none());
+        assert!(body.get("live").is_none());
+        assert_eq!(
+            SandboxServiceError::GlobalCapacityReached.code(),
+            body["code"]
+        );
+    }
 }

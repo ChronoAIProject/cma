@@ -18,10 +18,18 @@ use utoipa::ToSchema;
 
 use crate::AuthenticatedCaller;
 
+use super::super::instances_openapi_shapes::SandboxView;
 use super::super::sandbox_runtime_update::SandboxRuntimeUpdateView;
 use super::{AdminState, CollectionProblem, ProtectedKind, ProtectedProblem};
 
 const DEFAULT_EVENT_LIMIT: u16 = 200;
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AdminAlwaysOnRequest {
+    always_on: bool,
+    expected_revision: u64,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,6 +37,7 @@ pub(crate) struct SandboxPageParams {
     owner: Option<String>,
     status: Option<SandboxStatus>,
     runtime_version: Option<String>,
+    always_on: Option<bool>,
     cursor: Option<String>,
     limit: Option<u16>,
 }
@@ -44,6 +53,7 @@ impl SandboxPageParams {
             owner: self.owner.map(SubjectId),
             status: self.status,
             runtime_version: self.runtime_version,
+            always_on: self.always_on,
             page,
         })
     }
@@ -168,8 +178,37 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
     Router::new()
         .route("/api/v1/admin/sandboxes", get(list))
         .route("/api/v1/admin/sandboxes/{id}", get(read))
+        .route("/api/v1/admin/sandboxes/{id}/always-on", post(always_on))
         .route("/api/v1/admin/sandboxes/{id}/events", get(events))
         .route("/api/v1/admin/sandboxes/{id}/retire", post(retire))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/sandboxes/{id}/always-on",
+    tag = "administration",
+    params(("id" = String, Path)),
+    request_body = AdminAlwaysOnRequest,
+    responses((status = 200, body = SandboxView), (status = 403, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument))
+)]
+/// Approve or revoke Always on with a revision check and a configure activity
+/// containing the actor, Sandbox id, new value and resulting revision.
+pub(crate) async fn always_on(
+    State(state): State<Arc<AdminState>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    Json(body): Json<AdminAlwaysOnRequest>,
+) -> Result<Json<SandboxView>, CollectionProblem> {
+    let sandbox = state
+        .sandboxes
+        .set_always_on(
+            &caller,
+            &SandboxId(id),
+            body.expected_revision,
+            body.always_on,
+        )
+        .await?;
+    Ok(Json(SandboxView::from(&sandbox)))
 }
 
 #[utoipa::path(
@@ -180,6 +219,7 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
         ("owner" = Option<String>, Query),
         ("status" = Option<String>, Query),
         ("runtime_version" = Option<String>, Query),
+        ("always_on" = Option<bool>, Query, description = "True selects explicit Always on exceptions; false includes unset preferences."),
         ("cursor" = Option<String>, Query),
         ("limit" = Option<u16>, Query)
     ),
@@ -278,3 +318,7 @@ pub(crate) async fn retire(
         .map(|result| Json(result.sandbox))
         .map_err(ProtectedProblem::sandbox)
 }
+
+#[cfg(test)]
+#[path = "always_on_tests.rs"]
+mod tests;

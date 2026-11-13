@@ -169,6 +169,8 @@ impl SandboxLifecycleOperation {
 pub struct SandboxLifecycleState {
     pub next_authority: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retirement_archive: Option<super::retirement_archive::RetirementArchiveRequirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interruption: Option<super::SandboxInterruption>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<Box<super::SandboxHome>>,
@@ -219,6 +221,7 @@ impl Default for SandboxLifecycleState {
     fn default() -> Self {
         Self {
             next_authority: 1,
+            retirement_archive: None,
             interruption: None,
             home: None,
             home_recovery: None,
@@ -243,6 +246,7 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
+        sandbox.validate_retirement_archive()?;
         sandbox.validate_suspended_runtime()?;
         if let Some(failed) = &self.failed_provision {
             failed.validate_for(sandbox)?;

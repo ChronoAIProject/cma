@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 pub(in crate::hosted) struct Files {
     text: Mutex<String>,
-    status_reads: std::sync::atomic::AtomicUsize,
+    pub(in crate::hosted) status_reads: std::sync::atomic::AtomicUsize,
     pub(in crate::hosted) writes: std::sync::atomic::AtomicUsize,
     pub(in crate::hosted) goal_probes: std::sync::atomic::AtomicUsize,
     fault: u8,
@@ -74,6 +74,7 @@ impl HostedBackend for Files {
                     agent_filesystem: true,
                     agent_attachment_upload: false,
                     agent_skill_install: false,
+                    agent_skill_upgrade: false,
                     agent_model_catalog: false,
                     agent_browser: false,
                     agent_resource_preparation: false,

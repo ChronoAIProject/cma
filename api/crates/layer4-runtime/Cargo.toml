@@ -12,6 +12,7 @@ futures-util = { workspace = true }
 layer3-adapter = { workspace = true }
 libc = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }
+rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = { workspace = true }

@@ -99,3 +99,6 @@ async fn live_skills_routes_require_owner_key_and_supported_runtime_then_replay_
         1
     );
 }
+
+#[path = "skill_upgrade_tests.rs"]
+mod upgrades;

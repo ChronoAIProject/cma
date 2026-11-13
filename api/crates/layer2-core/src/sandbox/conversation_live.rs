@@ -8,8 +8,12 @@ use tokio::sync::broadcast;
 use crate::AgentId;
 
 use super::super::{Agent, AgentMessageAssembly};
+use super::live_budget::{AgentLiveDelivery, LiveBudget};
+#[path = "conversation_head.rs"]
+mod head;
+pub use head::AgentHeadSubscription;
 
-const LIVE_BUFFER_FRAGMENTS: usize = 32;
+pub(crate) const LIVE_BUFFER_FRAGMENTS: usize = 256;
 const LIVE_FRAGMENT_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -52,12 +56,12 @@ pub struct AgentLiveSubscription {
 
 #[derive(Clone)]
 struct LiveFrame {
-    fragment: Option<AgentLiveFragment>,
+    fragment: Option<AgentLiveDelivery>,
     authority: Option<Arc<crate::agent_ownership::Authority>>,
 }
 
 impl LiveFrame {
-    fn current(self) -> Result<AgentLiveFragment, broadcast::error::RecvError> {
+    fn current(self) -> Result<AgentLiveDelivery, broadcast::error::RecvError> {
         if self
             .authority
             .is_some_and(|authority| !authority.is_current())
@@ -79,11 +83,11 @@ pub struct AgentLivePublisher(Arc<broadcast::Sender<LiveFrame>>);
 impl AgentLivePublisher {
     pub fn publish(
         &self,
-        fragment: AgentLiveFragment,
+        fragment: impl Into<AgentLiveDelivery>,
         authority: Arc<crate::agent_ownership::Authority>,
     ) {
         let _ = self.0.send(LiveFrame {
-            fragment: Some(fragment),
+            fragment: Some(fragment.into()),
             authority: Some(authority),
         });
     }
@@ -101,6 +105,7 @@ impl AgentLivePublisher {
 }
 
 impl AgentLiveSubscription {
+    pub const BUFFER_FRAGMENTS: usize = LIVE_BUFFER_FRAGMENTS;
     pub fn channel() -> (AgentLivePublisher, Self) {
         let sender = Arc::new(broadcast::channel(LIVE_BUFFER_FRAGMENTS).0);
         let subscription = Self {
@@ -110,11 +115,11 @@ impl AgentLiveSubscription {
         (AgentLivePublisher(sender), subscription)
     }
 
-    pub async fn recv(&mut self) -> Result<AgentLiveFragment, broadcast::error::RecvError> {
+    pub async fn recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::RecvError> {
         self.receiver.recv().await?.current()
     }
 
-    pub fn try_recv(&mut self) -> Result<AgentLiveFragment, broadcast::error::TryRecvError> {
+    pub fn try_recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::TryRecvError> {
         self.receiver
             .try_recv()?
             .current()
@@ -138,10 +143,26 @@ pub(crate) struct AgentLiveMessageIdentity {
 
 #[derive(Default)]
 pub(super) struct AgentLiveHub {
+    heads: head::AgentHeadHub,
+    budget: Option<Arc<LiveBudget>>,
     lanes: Mutex<BTreeMap<AgentId, Weak<broadcast::Sender<LiveFrame>>>>,
 }
 
 impl AgentLiveHub {
+    pub(super) fn subscribe_head(&self, id: &AgentId) -> AgentHeadSubscription {
+        self.heads.subscribe(id)
+    }
+    pub(super) fn publish_head(&self, id: &AgentId) {
+        self.heads.publish(id);
+    }
+    pub(super) fn with_budget(budget: Arc<LiveBudget>) -> Self {
+        Self {
+            budget: Some(budget),
+            heads: Default::default(),
+            lanes: Mutex::default(),
+        }
+    }
+
     #[cfg(feature = "test-support")]
     pub(super) fn subscriber_count(&self, id: &AgentId) -> usize {
         self.lanes
@@ -183,8 +204,14 @@ impl AgentLiveHub {
                 end -= 1;
             }
             fragment.delta = remaining[..end].into();
+            let delivery = match &self.budget {
+                Some(budget) => budget.retain(fragment.clone()),
+                None => Some(fragment.clone().into()),
+            };
+            // None is an ordered gap, not an acknowledged runtime output. Live
+            // consumers already replay durable history after broadcast lag.
             let _ = sender.send(LiveFrame {
-                fragment: Some(fragment.clone()),
+                fragment: delivery,
                 authority: crate::agent_ownership::execution_authority(),
             });
             remaining = &remaining[end..];

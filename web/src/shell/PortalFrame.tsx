@@ -60,7 +60,7 @@ export function PortalFrame({
                 user={state.user}
                 collapsed={collapsed}
                 onNavigate={(next) => {
-                  closeNavigation();
+                  if (next.kind !== 'usage') closeNavigation();
                   onNavigate(next);
                 }}
                 onSignOut={() => void signOut()}

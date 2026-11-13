@@ -1,5 +1,8 @@
 //! Owner-facing Sandbox routes.
 
+#[path = "sandbox_enrichment.rs"]
+mod enrichment;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -57,8 +60,17 @@ pub(super) fn routes() -> Router<HierarchyState> {
         .route("/api/v1/sandboxes/{id}/pause", post(pause))
         .route("/api/v1/sandboxes/{id}/revive", post(revive))
         .route(
+            "/api/v1/sandboxes/{id}/always-on",
+            post(super::sandbox_always_on::always_on),
+        )
+        .route(
             "/api/v1/sandboxes/{id}/runtime-update",
             post(super::sandbox_runtime_update::update),
+        )
+        .route(
+            "/api/v1/sandboxes/{id}/runtime-recovery",
+            get(super::sandbox_retained_recovery::inspect)
+                .post(super::sandbox_retained_recovery::recover),
         )
         .route(
             "/api/v1/sandboxes/{id}/service-access",
@@ -271,16 +283,7 @@ pub(super) async fn read(
             .map(|value| SandboxHierarchyReading::Personal(Box::new(value))),
     }
     .map_err(HierarchyProblem::sandbox_read)?;
-    // Only the owner's own read assigns or reads a colour, matching the owner
-    // list; shared-grant readers keep their default colour.
-    let color = match &reading {
-        SandboxHierarchyReading::Personal(personal) if personal.sandbox.owner == caller.subject => {
-            super::sandbox_colors::colors(&state, &caller.subject, &[&personal.sandbox])
-                .await
-                .remove(personal.sandbox.id.as_str())
-        }
-        _ => None,
-    };
+    let (color, owner_name) = enrichment::read(&state, &caller, &reading).await;
     let runtime_update = match (&reading, &state.runtime_updates) {
         (SandboxHierarchyReading::Personal(personal), Some(service))
             if personal.sandbox.owner == caller.subject =>
@@ -298,12 +301,7 @@ pub(super) async fn read(
     if let AccessibleSandboxDetailView::Personal(personal) = &mut view {
         personal.sandbox.runtime_update = runtime_update;
         personal.sandbox.color = color;
-        let names = super::public_names::resolve(
-            &state.users,
-            &[layer2_core::SubjectId::new(personal.sandbox.owner.clone())],
-        )
-        .await;
-        personal.sandbox.owner_name = names.get(&personal.sandbox.owner).cloned();
+        personal.sandbox.owner_name = owner_name;
     }
     Ok(Json(view))
 }

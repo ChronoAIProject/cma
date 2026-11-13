@@ -34,6 +34,7 @@ pub enum NativeRuntimeTransport {
 /// Concrete authenticated control and ACP transport for provider-hosted runtimes.
 #[derive(Clone)]
 pub struct ProviderHostedControlTransport {
+    output_json_budget: bool,
     client: RuntimeDiscovery,
     owner_router: Option<Arc<crate::owner_control::OwnerControlRoute>>,
     http: reqwest::Client,
@@ -42,6 +43,12 @@ pub struct ProviderHostedControlTransport {
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
     native_http_budget: Arc<tokio::sync::Semaphore>,
+    coordinated_ingress: bool,
+    retained_json: bool,
+    bounded_raw_output: bool,
+    bounded_permission_state: bool,
+    bounded_update_relay: bool,
+    shared_runtime_output: bool,
 }
 
 #[derive(Clone)]
@@ -90,6 +97,50 @@ impl ProviderHostedControlTransport {
         router: Arc<crate::owner_control::OwnerControlRoute>,
     ) -> Self {
         self.owner_router = Some(router);
+        self
+    }
+
+    fn pin_output_policy(&self, settings: &mut HostedAgentOpenSettings) {
+        settings.coordinated_ingress = self.coordinated_ingress;
+        settings.retained_json = self.retained_json;
+        settings.bounded_raw_output = self.bounded_raw_output;
+        settings.bounded_permission_state = self.bounded_permission_state;
+        settings.output_json_budget = self.output_json_budget;
+        settings.shared_runtime_output = self.shared_runtime_output;
+    }
+
+    pub fn with_coordinated_ingress(mut self, enabled: bool) -> Self {
+        self.coordinated_ingress = enabled;
+        self
+    }
+
+    pub fn with_retained_json(mut self, enabled: bool) -> Self {
+        self.retained_json = enabled;
+        self
+    }
+
+    pub fn with_bounded_raw_output(mut self, enabled: bool) -> Self {
+        self.bounded_raw_output = enabled;
+        self
+    }
+
+    pub fn with_bounded_permission_state(mut self, enabled: bool) -> Self {
+        self.bounded_permission_state = enabled;
+        self
+    }
+
+    pub fn with_bounded_update_relay(mut self, enabled: bool) -> Self {
+        self.bounded_update_relay = enabled;
+        self
+    }
+
+    pub fn with_output_json_budget(mut self, enabled: bool) -> Self {
+        self.output_json_budget = enabled;
+        self
+    }
+
+    pub fn with_shared_runtime_output(mut self, enabled: bool) -> Self {
+        self.shared_runtime_output = enabled;
         self
     }
 
@@ -279,8 +330,8 @@ impl ProviderHostedControlTransport {
         endpoint: &RuntimeEndpoint,
         agent_id: &AgentSlot,
     ) -> crate::Result<Socket> {
-        self.connect_with_prepared_stream(endpoint, agent_id, None)
-            .await
+        let url = endpoint.conversation(agent_id.as_str())?;
+        self.connect_url(endpoint, agent_id, url, None).await
     }
 
     async fn connect_with_prepared_stream(
@@ -289,7 +340,17 @@ impl ProviderHostedControlTransport {
         agent_id: &AgentSlot,
         prepared: Option<crate::agent_sandbox::RuntimeStream>,
     ) -> crate::Result<Socket> {
-        let mut url = endpoint.conversation(agent_id.as_str())?;
+        let url = endpoint.conversation(agent_id.as_str())?;
+        self.connect_url(endpoint, agent_id, url, prepared).await
+    }
+
+    pub(super) async fn connect_url(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        _agent_id: &AgentSlot,
+        mut url: url::Url,
+        prepared: Option<crate::agent_sandbox::RuntimeStream>,
+    ) -> crate::Result<Socket> {
         url.query_pairs_mut().append_pair("outputAck", "1");
         let mut request = url
             .as_str()
@@ -384,3 +445,6 @@ mod history;
 
 #[path = "provider_binding.rs"]
 mod binding;
+
+#[path = "provider_capacity_proof.rs"]
+mod capacity_proof;

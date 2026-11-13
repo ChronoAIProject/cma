@@ -6,6 +6,36 @@ pub(super) enum HoldPurpose {
 }
 
 impl HostedAdapter {
+    pub(super) async fn capture_agent_exact(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> crate::Result<ConversationSnapshot> {
+        self.known_state(handle).await?;
+        match self
+            .exchange(
+                handle,
+                RequestFrame::CaptureAgent(AgentRef {
+                    agent_id: agent.clone(),
+                }),
+            )
+            .await?
+        {
+            ResponseFrame::CaptureAgent(snapshot)
+                if !snapshot.conversation_id.is_empty()
+                    && valid_sha256(&snapshot.archive_sha256)
+                    && format!("{:x}", Sha256::digest(&snapshot.archive))
+                        == snapshot.archive_sha256 =>
+            {
+                Ok(snapshot)
+            }
+            ResponseFrame::CaptureAgent(_) => Err(AdapterError::Rejected(
+                "runtime returned an invalid conversation snapshot".into(),
+            )),
+            _ => unreachable!("exchange verifies response operation"),
+        }
+    }
+
     pub(super) async fn restore_checkpoint(
         &self,
         handle: &RuntimeHandle,

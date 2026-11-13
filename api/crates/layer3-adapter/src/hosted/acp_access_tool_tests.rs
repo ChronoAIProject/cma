@@ -122,6 +122,15 @@ async fn existing_conversation_requires_exact_retained_access_tool_receipt() {
 
 #[tokio::test]
 async fn exclusively_prepared_conversation_installs_owner_tools_without_new_identity() {
+    prepared_conversation(false).await;
+}
+
+#[tokio::test]
+async fn prepared_conversation_load_survives_the_ordinary_rpc_deadline() {
+    prepared_conversation(true).await;
+}
+
+async fn prepared_conversation(slow_load: bool) {
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
     let serving = tokio::spawn(async move {
@@ -136,6 +145,9 @@ async fn exclusively_prepared_conversation_installs_owner_tools_without_new_iden
         assert_eq!(load["params"]["sessionId"], "prepared-conversation");
         assert_eq!(load["params"]["cwd"], "/workspace");
         assert_eq!(load["params"]["mcpServers"][0]["name"], "cma_access");
+        if slow_load {
+            recovery_deadline_tests::elapse_silent_recovery().await;
+        }
         respond(&mut server, &load, serde_json::json!({})).await;
         while let Some(Ok(frame)) = server.next().await {
             assert!(!matches!(frame, Message::Binary(_)));

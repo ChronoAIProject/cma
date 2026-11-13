@@ -210,7 +210,8 @@
         "event_4_at": "/items/3/appended_at",
         "event_5_at": "/items/4/appended_at",
         "event_6_at": "/items/5/appended_at",
-        "event_7_at": "/items/6/appended_at"
+        "event_7_at": "/items/6/appended_at",
+        "event_8_at": "/items/7/appended_at"
       }
     },
     {
@@ -410,7 +411,8 @@
         "event_4_at": "/items/3/appended_at",
         "event_5_at": "/items/4/appended_at",
         "event_6_at": "/items/5/appended_at",
-        "event_7_at": "/items/6/appended_at"
+        "event_7_at": "/items/6/appended_at",
+        "event_8_at": "/items/7/appended_at"
       }
     },
     {

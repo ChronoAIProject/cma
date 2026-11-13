@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createClient, type AnswerDeliverable } from '@chronoai/cma-sdk';
 import { MessageStream } from './MessageStream';
 import { conversationFromTranscript } from './conversation';
+import { answerProse, streamingSafePrefix } from './answerDeliveries';
 
 const first: AnswerDeliverable = {
   id: `delivery_${'a'.repeat(64)}`,
@@ -32,6 +33,40 @@ const json = (value: unknown) =>
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it.each([
+  ['CJK text', '你好，世界。', '你好，世界。'],
+  ['an unclosed link', 'Read [the report](https://example.test/report', 'Read '],
+  ['an unfinished link label', 'Read [the report', 'Read '],
+  [
+    'a complete link',
+    'Read [the report](https://example.test/report)',
+    'Read [the report](https://example.test/report)',
+  ],
+  ['a link label awaiting its URL', 'Read [the report]', 'Read '],
+  ['an unpaired emphasis delimiter', 'Before **the answer', 'Before '],
+  ['an unpaired inline code delimiter', 'Before `the answer', 'Before '],
+  ['emphasis-looking inline code', 'Use `**kwargs` now', 'Use `**kwargs` now'],
+  ['mathematical powers', 'Compute 2 ** 3 now', 'Compute 2 ** 3 now'],
+  [
+    'independent emphasis delimiters',
+    'A **bold** and __underlined__ answer',
+    'A **bold** and __underlined__ answer',
+  ],
+  ['CJK emphasis', '你好 **世界**', '你好 **世界**'],
+  ['an open fenced code block', '```\n** [literal](url) `\n', '```\n** [literal](url) `\n'],
+  ['a partial deliverable marker', 'Answer\n<!--cma-deliverable:v1:eyJ', 'Answer\n'],
+])('renders a safe streaming prefix for %s', (_name, input, expected) => {
+  expect(streamingSafePrefix(input)).toBe(expected);
+  expect(answerProse(input, true).content).toBe(expected);
+});
+
+it('hides complete and partial deliverable markers while streaming', () => {
+  const complete = '<!--cma-deliverable:v1:eyJ0ZXN0Ijp0cnVlfQ-->';
+  expect(answerProse(`Answer\n${complete}`, true).content).toBe('Answer\n');
+  expect(answerProse(`Answer\n${complete}`, false).content).toBe('Answer');
+  expect(answerProse('Answer\n<!--cma-deliverable:v1:eyJ0ZXN0', true).content).toBe('Answer\n');
 });
 
 it('keeps protocol metadata out of streaming prose without creating premature cards', () => {

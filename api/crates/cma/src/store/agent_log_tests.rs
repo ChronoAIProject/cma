@@ -1,5 +1,23 @@
 use super::*;
 
+fn verify_contiguous(
+    after: u64,
+    last_seq: u64,
+    limit: u16,
+    entries: &[AgentLogEntry],
+) -> Result<(), SandboxStoreError> {
+    let expected_len = last_seq.saturating_sub(after).min(u64::from(limit)) as usize;
+    if entries.len() != expected_len {
+        return Err(SandboxStoreError::SequenceConflict);
+    }
+    for (offset, entry) in entries.iter().enumerate() {
+        if entry.seq != after + offset as u64 + 1 {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_log_index_is_unique_and_gap_detection_fails_closed() {
     let index = agent_log_indexes().remove(0);

@@ -13,6 +13,8 @@ use tokio::task::AbortHandle;
 
 mod authority;
 use authority::{accept_authority, fence_authority, validate_authority};
+mod budget;
+mod capacity;
 mod ownership;
 mod publication;
 mod recovery;
@@ -20,6 +22,11 @@ mod updates;
 pub(crate) use recovery::{
     DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity, LiveAgentConnectionLossHandler,
 };
+#[cfg(test)]
+pub(crate) use updates::record_update as record_update_for_test;
+#[cfg(test)]
+pub(crate) use updates::spawn_update_task;
+#[cfg(not(test))]
 use updates::spawn_update_task;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -7,19 +7,21 @@ use super::{
 pub(super) fn metadata(
     current: &Agent,
     assembly: &AgentMessageAssembly,
-    observation: layer3_adapter::ConversationMetadata,
+    observation: &layer3_adapter::ConversationMetadata,
     at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     let mut agent = current.clone();
     let metadata = &mut agent.conversation.observations.metadata;
     if let Some(path) = observation
         .working_directory
+        .as_ref()
         .filter(|p| p.starts_with('/') && p.len() <= 4096 && !p.chars().any(char::is_control))
     {
-        metadata.working_directory = Some(path);
+        metadata.working_directory = Some(path.clone());
     }
     if let Some(description) = observation
         .description
+        .as_ref()
         .filter(|d| !d.trim().is_empty() && d.len() <= 4096 && !d.chars().any(char::is_control))
     {
         let has_task_title = metadata.description_source
@@ -30,7 +32,7 @@ pub(super) fn metadata(
             || observation.description_source == Some(super::AgentDescriptionSource::ProviderTitle)
         {
             let retained_setup = observation.description_input.is_none()
-                && metadata.description.as_ref() == Some(&description)
+                && metadata.description.as_ref() == Some(description)
                 && metadata.description_is_setup_preview;
             metadata.description_is_setup_preview = observation.description_source
                 == Some(super::AgentDescriptionSource::PromptPreview)
@@ -55,7 +57,7 @@ pub(super) fn metadata(
                                     None => false,
                                 }
                         }));
-            metadata.description = Some(description);
+            metadata.description = Some(description.clone());
             metadata.description_source = observation.description_source;
         }
     }
@@ -77,7 +79,7 @@ pub(super) fn metadata(
 pub(super) fn usage(
     current: &Agent,
     assembly: &AgentMessageAssembly,
-    observation: layer3_adapter::ConversationUsage,
+    observation: &layer3_adapter::ConversationUsage,
     at: &str,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     let Some(conversation_id) = current.conversation.conversation_id.as_ref() else {
@@ -149,7 +151,7 @@ pub(super) fn usage(
         }
     }
     next.conversation_id = conversation_id.clone();
-    next.source_turn = observation.turn_id;
+    next.source_turn = observation.turn_id.clone();
     next.source_input = observation.input_tokens;
     next.source_output = observation.output_tokens;
     next.context_used = observation.context_used;

@@ -16,6 +16,13 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 const KEY: &str = "admitted-title-key";
 const MODEL: &str = "deployment-title-model";
 
+struct Budget(std::sync::atomic::AtomicBool);
+#[async_trait::async_trait]
+impl crate::sandbox::title_budget::TitleBudget for Budget {
+    async fn admit(&self) -> Result<bool, AgentTitleServiceError> {
+        Ok(self.0.load(Ordering::SeqCst))
+    }
+}
 struct Credentials(Mutex<Option<CredentialMaterial>>, AtomicUsize);
 
 #[async_trait::async_trait]
@@ -106,6 +113,7 @@ struct Fixture {
     titles: Arc<InMemoryAgentTitleStore>,
     service: Arc<AgentTitleService>,
     worker: Arc<AgentTitleWorker>,
+    budget: Arc<Budget>,
     credentials: Arc<Credentials>,
     runtime: Arc<Runtime>,
     capture: Arc<Capture>,
@@ -162,12 +170,14 @@ impl Fixture {
             calls: AtomicUsize::new(0),
             gate: endpoint_gate,
         });
+        let budget = Arc::new(Budget(std::sync::atomic::AtomicBool::new(true)));
         let worker = AgentTitleWorker::new(
             service.clone(),
             store.clone(),
             credentials.clone(),
             runtime.clone(),
             MODEL.into(),
+            budget.clone(),
         );
         Self {
             id,
@@ -175,6 +185,7 @@ impl Fixture {
             titles,
             service,
             worker,
+            budget,
             credentials,
             runtime,
             capture,
@@ -256,6 +267,7 @@ async fn completed_turn_reaches_scoped_runtime_proxy_once_and_survives_restart()
         fixture.credentials.clone(),
         fixture.runtime.clone(),
         MODEL.into(),
+        fixture.budget.clone(),
     );
     assert_eq!(
         restarted.run_one(&fixture.id).await.unwrap(),
@@ -333,17 +345,53 @@ async fn unavailable_or_mismatched_runtime_authority_is_deferred_without_claimin
 }
 
 #[tokio::test]
-async fn own_account_runtime_uses_fallback_without_model_proxy_or_custody_reads() {
+async fn own_account_runtime_generates_with_scoped_service_custody() {
+    async fn scoped(
+        headers: HeaderMap,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        assert_eq!(headers["authorization"], format!("Bearer {KEY}"));
+        assert!(!headers.contains_key("open-sandbox-api-key"));
+        assert_eq!(body["model"], MODEL);
+        assert_eq!(body["input"][0]["content"], "Own account title");
+        Json(serde_json::json!({"output_text":"Own credential task title"}))
+    }
     let mut sandbox = sandbox();
     sandbox.profile.content.model_access = ModelAccess::OwnCredentials;
-    let fixture = Fixture::with_records(sandbox, agent(), Capture::default(), None).await;
-    fixture.turn(1, "Own account title");
-    assert_eq!(
-        fixture.worker.run_one(&fixture.id).await.unwrap(),
-        AgentTitleOutcome::Fallback
+    let f = Fixture::with_records(sandbox, agent(), Capture::default(), None).await;
+    f.turn(1, "Own account title");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = Arc::new(PlatformTitleEndpoint {
+        platform_base_url: format!("http://{}", listener.local_addr().unwrap()),
+    });
+    let router = Router::new().route("/api/v1/proxy/s/chrono-llm/v1/responses", post(scoped));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    let worker = AgentTitleWorker::new(
+        f.service.clone(),
+        f.store.clone(),
+        f.credentials.clone(),
+        endpoint,
+        MODEL.into(),
+        f.budget.clone(),
     );
-    assert_eq!(fixture.credentials.1.load(Ordering::SeqCst), 0);
-    assert_eq!(fixture.runtime.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        worker.run_one(&f.id).await.unwrap(),
+        AgentTitleOutcome::Generated
+    );
+    assert_eq!(
+        f.service
+            .title(&f.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .title
+            .as_str(),
+        "Own credential task title"
+    );
+    assert_eq!(f.runtime.calls.load(Ordering::SeqCst), 0);
+    server.abort();
 }
 
 #[tokio::test]
@@ -365,7 +413,10 @@ async fn authority_drift_during_endpoint_lookup_prevents_http_disclosure() {
         .authority
         .provider_state_version += 1;
     gate.add_permits(1);
-    assert_eq!(task.await.unwrap().unwrap(), AgentTitleOutcome::Fallback);
+    assert!(matches!(
+        task.await.unwrap(),
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
     assert!(fixture.capture.requests.lock().unwrap().is_empty());
 }
 
@@ -431,14 +482,16 @@ async fn credential_drift_during_http_refuses_the_stale_generated_result() {
         .authority
         .provider_state_version += 1;
     gate.add_permits(1);
-    assert_eq!(task.await.unwrap().unwrap(), AgentTitleOutcome::Fallback);
-    let stored = fixture.service.title(&fixture.id).await.unwrap().unwrap();
-    assert_eq!(stored.title.as_str(), "Current authority fallback");
+    assert!(matches!(
+        task.await.unwrap(),
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
+    assert!(fixture.service.title(&fixture.id).await.unwrap().is_none());
     assert_eq!(fixture.capture.requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
-async fn failed_attempts_use_bounded_fallback_and_expired_claim_never_calls_again() {
+async fn failed_attempts_defer_and_expired_claim_allows_generation() {
     let fixture = Fixture::new(
         Capture {
             malformed: true,
@@ -449,24 +502,12 @@ async fn failed_attempts_use_bounded_fallback_and_expired_claim_never_calls_agai
     .await;
     let owner = "First message ".repeat(10);
     fixture.turn(1, &owner);
-    assert_eq!(
-        fixture.worker.run_one(&fixture.id).await.unwrap(),
-        AgentTitleOutcome::Fallback
-    );
-    assert_eq!(fixture.capture.requests.lock().unwrap().len(), 2);
-    assert!(
-        fixture
-            .service
-            .title(&fixture.id)
-            .await
-            .unwrap()
-            .unwrap()
-            .title
-            .as_str()
-            .chars()
-            .count()
-            <= 48
-    );
+    assert!(matches!(
+        fixture.worker.run_one(&fixture.id).await,
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
+    assert_eq!(fixture.capture.requests.lock().unwrap().len(), 1);
+    assert!(fixture.service.title(&fixture.id).await.unwrap().is_none());
     let crashed = Fixture::new(Capture::default(), None).await;
     crashed.turn(1, "Restart fallback");
     crashed
@@ -480,9 +521,9 @@ async fn failed_attempts_use_bounded_fallback_and_expired_claim_never_calls_agai
         .unwrap();
     assert_eq!(
         crashed.worker.run_one(&crashed.id).await.unwrap(),
-        AgentTitleOutcome::Fallback
+        AgentTitleOutcome::Generated
     );
-    assert_eq!(crashed.runtime.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(crashed.runtime.calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -522,3 +563,76 @@ fn snapshot_identity_binds_owner_lineage_runtime_and_credential() {
 #[path = "title_worker_tests/fixtures.rs"]
 mod fixtures;
 use fixtures::{agent, sandbox};
+
+#[tokio::test]
+async fn native_title_endpoint_uses_the_scoped_public_model_service() {
+    let endpoint = PlatformTitleEndpoint {
+        platform_base_url: "https://identity.example".into(),
+    };
+    let mut sandbox = sandbox();
+    sandbox.runtime.as_mut().unwrap().runtime_id = "agent-sandbox:retained-home".into();
+    sandbox.credential.reaches = vec![ServiceId::new("chrono-llm-public")];
+    let proxy = endpoint.endpoint(&sandbox).await.unwrap();
+    assert_eq!(
+        proxy.endpoint.endpoint,
+        "https://identity.example/api/v1/proxy/s/chrono-llm-public"
+    );
+    assert!(proxy.authorization.is_none());
+    sandbox.credential.reaches.clear();
+    assert!(endpoint.endpoint(&sandbox).await.is_none());
+}
+
+#[tokio::test]
+async fn exhausted_shared_generation_budget_never_calls_the_model_or_spends_a_title_attempt() {
+    let f = Fixture::new(Capture::default(), None).await;
+    f.turn(1, "Budgeted title");
+    f.budget.0.store(false, Ordering::SeqCst);
+    assert_eq!(
+        f.worker.run_one(&f.id).await.unwrap(),
+        AgentTitleOutcome::Skipped
+    );
+    assert_eq!(f.capture.requests.lock().unwrap().len(), 0);
+    f.budget.0.store(true, Ordering::SeqCst);
+    assert_eq!(
+        f.worker.run_one(&f.id).await.unwrap(),
+        AgentTitleOutcome::Generated
+    );
+    assert_eq!(f.capture.requests.lock().unwrap().len(), 1);
+}
+
+#[path = "title_worker_tests/suggestions.rs"]
+mod suggestion_tests;
+
+#[tokio::test]
+async fn missing_scoped_model_access_settles_fallback_without_network_retries() {
+    let mut sandbox = sandbox();
+    sandbox.credential.reaches = vec![ServiceId::new("github")];
+    let f = Fixture::with_records(sandbox, agent(), Capture::default(), None).await;
+    f.turn(1, "An unscoped task");
+    let worker = AgentTitleWorker::new(
+        f.service.clone(),
+        f.store.clone(),
+        f.credentials.clone(),
+        Arc::new(PlatformTitleEndpoint {
+            platform_base_url: "http://127.0.0.1:1".into(),
+        }),
+        MODEL.into(),
+        f.budget.clone(),
+    );
+    assert_eq!(
+        worker.run_one(&f.id).await.unwrap(),
+        AgentTitleOutcome::Fallback
+    );
+    assert_eq!(
+        worker.run_one(&f.id).await.unwrap(),
+        AgentTitleOutcome::Skipped
+    );
+    assert!(f
+        .service
+        .candidates(&PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(f.capture.requests.lock().unwrap().is_empty());
+}

@@ -48,6 +48,7 @@ pub async fn create(
                 state.write_flags(),
             )
             .map_err(ManagementError::Invalid)?;
+            super::github_sources::validate(state, None, &definition).await?;
             super::custom_execution::validate_providers(&state.providers, &definition)?;
             super::custom_execution::validate_media(state, None, &definition)?;
             super::native_discord::initialize(state, &mut definition)?;
@@ -101,6 +102,7 @@ pub async fn create(
     if creation.ready {
         return Ok(completed(current));
     }
+    super::github_sources::validate(state, None, &current.definition).await?;
     super::custom_execution::validate_providers(&state.providers, &current.definition)?;
     // Rebinding is idempotent in the provider contract. The retained record lets
     // the creator recover or delete this exact reservation after any uncertain result.
@@ -114,6 +116,7 @@ pub async fn create(
         .await
         .map_err(ManagementError::Provider)?;
     current.definition.provider.level = binding.level;
+    current.definition.provider.capabilities = binding.capabilities.clone();
     crate::connections::binding::activate(state, &current.definition, &current.channel_id).await?;
     current.definition.creation.as_mut().unwrap().ready = true;
     let blob = seal_definition(&state.master_keys, &current.definition)?;
@@ -160,6 +163,7 @@ pub async fn create(
 
 fn completed(current: LoadedChannel) -> CreatedChannel {
     let binding = BindingResponse {
+        capabilities: current.definition.provider.capabilities.clone(),
         binding_id: current.definition.provider.binding_id.clone(),
         level: current.definition.provider.level,
         honoured: Vec::new(),

@@ -193,7 +193,14 @@ async fn owner_json_is_unchanged_and_shared_documents_contain_only_authorized_fi
         .agent_log(&AgentId("agt_shared_read".into()), 0, 200)
         .await
         .unwrap();
-    for suffix in ["", "/events", "/transcript", "/usage", "/resources"] {
+    for suffix in [
+        "",
+        "/events",
+        "/transcript",
+        "/transcript?limit=2",
+        "/usage",
+        "/resources",
+    ] {
         let path = format!("/api/v1/agents/agt_shared_read{suffix}");
         let mut old = request(&path, "owner-a");
         old.extensions_mut().remove::<CallerContext>();
@@ -263,7 +270,14 @@ async fn revoked_missing_or_unverifiable_membership_hides_all_shared_reads() {
         (Reply::Outage, StatusCode::SERVICE_UNAVAILABLE),
     ] {
         *authority.0.lock().unwrap() = reply;
-        for suffix in ["", "/events", "/transcript", "/usage", "/resources"] {
+        for suffix in [
+            "",
+            "/events",
+            "/transcript",
+            "/transcript?limit=2",
+            "/usage",
+            "/resources",
+        ] {
             let (status, body) = json_response(
                 &fixture.router,
                 request(
@@ -315,7 +329,14 @@ async fn revoked_missing_or_unverifiable_membership_hides_all_shared_reads() {
 #[tokio::test]
 async fn malformed_context_never_falls_back_to_legacy_owner_authority() {
     let (fixture, _, _, _) = fixture(Reply::Member).await;
-    for suffix in ["", "/events", "/transcript", "/usage", "/resources"] {
+    for suffix in [
+        "",
+        "/events",
+        "/transcript",
+        "/transcript?limit=2",
+        "/usage",
+        "/resources",
+    ] {
         let mut request = request(
             &format!("/api/v1/agents/agt_shared_read{suffix}"),
             "owner-a",
@@ -327,4 +348,59 @@ async fn malformed_context_never_falls_back_to_legacy_owner_authority() {
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(body["code"], "not_authenticated");
     }
+}
+
+#[tokio::test]
+async fn transcript_route_validates_queries_and_returns_source_continuations() {
+    let (fixture, _, _, _) = fixture(Reply::Member).await;
+    for suffix in [
+        "?limit=0",
+        "?limit=33",
+        "?turn=3",
+        "?limit=2&turn=3&after=3&through=1",
+    ] {
+        assert_ne!(
+            json_response(
+                &fixture.router,
+                request(
+                    &format!("/api/v1/agents/agt_shared_read/transcript{suffix}"),
+                    "recipient"
+                )
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+    }
+    let (status, page) = json_response(
+        &fixture.router,
+        request(
+            "/api/v1/agents/agt_shared_read/transcript?limit=2",
+            "recipient",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["next"]["turn"], 3);
+    assert_eq!(page["next"]["after"], 4);
+    assert_eq!(page["next"]["through"], page["through_seq"]);
+    let (status, continuation) = json_response(
+        &fixture.router,
+        request(
+            &format!(
+                "/api/v1/agents/agt_shared_read/transcript?limit=2&turn=3&after=4&through={}",
+                page["through_seq"]
+            ),
+            "recipient",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        continuation["turns"][0]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }

@@ -6,8 +6,16 @@ mod connection;
 pub(crate) mod funding;
 mod idle_bootstrap;
 mod lifecycle;
+mod metric_candidates;
+mod metric_observation;
+pub use metric_candidates::{MetricCandidate, MetricCandidates};
 mod model;
+pub use metric_observation::{MetricIdentity, MetricRuntime};
+mod claim_guard;
 mod native_assignment;
+pub use claim_guard::NativeClaimGuardReason;
+mod readiness_observation;
+pub use readiness_observation::NativeReadinessObservation;
 mod native_runtime_proof;
 mod network_policy;
 mod nonexecuting;
@@ -210,6 +218,14 @@ impl AgentSandboxClient {
         if object.metadata.deletion_timestamp.is_some() || !model::ready(object) {
             return Err(unavailable("Sandbox is not ready"));
         }
+        model::pod_binding(object, &self.owned_pod_from_page(object, page)?)
+    }
+
+    fn owned_pod_from_page(
+        &self,
+        object: &DynamicObject,
+        page: kube::api::ObjectList<Pod>,
+    ) -> Result<Pod> {
         let name = object.name_any();
         let uid = object.uid().ok_or_else(|| rejected("Sandbox has no UID"))?;
         if page.metadata.continue_.is_some_and(|s| !s.is_empty()) {
@@ -225,7 +241,7 @@ impl AgentSandboxClient {
         if owned.next().is_some() {
             return Err(unavailable("Sandbox has multiple owned Pods"));
         }
-        model::pod_binding(object, &pod)
+        Ok(pod)
     }
 
     pub(crate) fn control_token(&self, runtime_name: &str) -> String {

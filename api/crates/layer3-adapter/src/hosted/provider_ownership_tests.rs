@@ -121,3 +121,59 @@ async fn switch_off_never_contacts_ownership_endpoint() {
     let endpoint = RuntimeEndpoint::parse("http://fixture.invalid", "http://127.0.0.1:1").unwrap();
     assert!(transport.receiver_lease(&endpoint).await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn retained_receiver_with_incompatible_lifetime_never_renews_or_confirms() {
+    for native in [false, true] {
+        for valid_for_ms in [0_u64, 10_001, 15_000, 20_000, u64::MAX] {
+            let listener = listener().await;
+            let address = listener.local_addr().unwrap();
+            let endpoint =
+                RuntimeEndpoint::parse("http://fixture.invalid", &format!("http://{address}"))
+                    .unwrap();
+            let (transport, endpoint) = if native {
+                (
+                    super::agent_sandbox::native_transport(address),
+                    endpoint.with_control_token("synthetic-control".into()),
+                )
+            } else {
+                (
+                    ProviderHostedControlTransport::for_retained_opensandbox(SandboxClient::new(
+                        "http://unused.invalid",
+                        "fixture-key",
+                    ))
+                    .unwrap(),
+                    endpoint,
+                )
+            };
+            let authority = TestAuthority::new(1);
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = request_text(read_request(&mut stream).await);
+                assert!(request.contains("/manager-ownership/challenge"));
+                stream
+                    .write_all(&json_response(&serde_json::json!({
+                        "protocol": OWNER_PROTOCOL_VERSION,
+                        "nonce": uuid::Uuid::new_v4(),
+                        "valid_for_ms": valid_for_ms,
+                    })))
+                    .await
+                    .unwrap();
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(80), listener.accept())
+                        .await
+                        .is_err()
+                );
+            });
+            assert!(scope(
+                authority.clone(),
+                transport.control(&endpoint, &RequestFrame::Resources)
+            )
+            .await
+            .is_err());
+            assert_eq!(authority.renewals.load(Ordering::SeqCst), 0);
+            assert!(!authority.is_current());
+            server.await.unwrap();
+        }
+    }
+}

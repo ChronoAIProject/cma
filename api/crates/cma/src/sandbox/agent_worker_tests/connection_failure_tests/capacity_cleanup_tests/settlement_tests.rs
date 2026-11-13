@@ -116,6 +116,16 @@ async fn full_history_startup_settles_without_discarding_effect_intent_or_sendin
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn full_history_reconnect_settles_before_lease_expiry_and_retains_native_home() {
+    reconnect_case(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn byte_exhausted_reconnect_settles_before_lease_expiry_and_retains_native_home() {
+    reconnect_case(true).await;
+}
+
+async fn reconnect_case(bytes: bool) {
     let (client, database, harness) = fixture().await;
     let agent = harness
         .admit_with_first_message(
@@ -127,7 +137,9 @@ async fn full_history_reconnect_settles_before_lease_expiry_and_retains_native_h
     for _ in 0..4 {
         harness.run(&agent.id, SystemTime::now()).await;
     }
-    let full = fill_history(&client, &database, &harness, &agent.id).await;
+    let current = harness.stored(&agent.id).await;
+    let full =
+        crate::store::fill_agent_capacity_fixture(harness.store.as_ref(), current, bytes).await;
     assert_eq!(full.work.step, AgentWorkStep::PublishConnection);
     let before = harness.backend.requests().await.len();
     let started = std::time::Instant::now();
@@ -141,7 +153,7 @@ async fn full_history_reconnect_settles_before_lease_expiry_and_retains_native_h
     );
     assert_eq!(failed.work.step, AgentWorkStep::None);
     assert!(failed.work.lease.is_none());
-    assert_eq!(failed.conversation.last_seq, 10_001);
+    assert_eq!(failed.conversation.last_seq, full.conversation.last_seq + 1);
     assert_eq!(
         failed.conversation.conversation_id,
         full.conversation.conversation_id
@@ -177,7 +189,10 @@ async fn full_history_reconnect_settles_before_lease_expiry_and_retains_native_h
         .unwrap());
     let reopened = MongoSandboxStore::open(&client, &database).await.unwrap();
     assert_eq!(reopened.get_agent(&agent.id).await.unwrap(), Some(failed));
-    let tail = reopened.agent_log(&agent.id, 9_999, 20).await.unwrap();
+    let tail = reopened
+        .agent_log(&agent.id, full.conversation.last_seq - 1, 20)
+        .await
+        .unwrap();
     assert_eq!(tail.len(), 2);
     assert!(matches!(
         tail[0].kind,

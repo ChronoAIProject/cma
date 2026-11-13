@@ -4,9 +4,12 @@ import type { CmaWebClient } from '../api/client';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { Button } from '../ui/Button';
 import { lifecycleScopeForAgent, useLifecycleIntent } from './lifecycleIntent';
+import { lifecycleFailureMessage } from './lifecycleFailure';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import './AgentLifecycleCard.css';
 import './AgentLifecycleFollowup.css';
+
+const retrySetupStatus = { label: 'Retry setup status', kind: 'status' } as const;
 
 interface Props {
   readonly client: CmaWebClient;
@@ -56,7 +59,7 @@ function RetainedSetup({
   if (!intent) return null;
   const waiting = matches && operation?.status === 'waiting_for_connection';
   const failed = matches && operation?.status === 'failed';
-  const error = lifecycle.failure ?? connections.error;
+  const error = lifecycleFailureMessage(lifecycle.failure, retrySetupStatus) ?? connections.error;
   return (
     <>
       {matches && intent.receipt ? (
@@ -98,7 +101,7 @@ function RetainedSetup({
           tone="error"
           actions={
             <Button size="sm" onClick={lifecycle.retryStatus}>
-              Retry setup status
+              {retrySetupStatus.label}
             </Button>
           }
         >

@@ -8,14 +8,21 @@ use crate::{
     rate_limit::RateLimiters, store::MongoStores, REQUEST_BODY_LIMIT_BYTES,
 };
 
+pub(super) fn stream_budget(resources: Router, limit: usize) -> Router {
+    resources.layer(axum::middleware::from_fn_with_state(
+        crate::public_streams::StreamBudget::new(limit),
+        crate::public_streams::enforce,
+    ))
+}
+
 pub(super) fn compose(
     resources: Router,
     connections: Arc<BrowserConnections>,
     auth: Arc<AuthState>,
     recorder: Arc<ActivityRecorder>,
-    limits: Arc<RateLimiters>,
-    stores: Arc<MongoStores>,
-    tools: Router,
+    (limits, reads): (Arc<RateLimiters>, Arc<crate::expensive_reads::ReadBudget>),
+    (health, tools): (Router, Router),
+    relay: Option<&Arc<crate::agent_manager::relay::Relay>>,
 ) -> Router {
     let public = crate::rest_router(resources)
         .merge(crate::connections::router(connections))
@@ -29,16 +36,26 @@ pub(super) fn compose(
             crate::rate_limit::enforce,
         ))
         .layer(axum::middleware::from_fn_with_state(
+            reads,
+            crate::expensive_reads::enforce,
+        ));
+    // Routing before operation charging charges a forwarded request only at
+    // its serving owner. Both pods authenticate it behind cheap admission.
+    let public = match relay {
+        Some(relay) => relay.authenticated_routes(public, auth),
+        None => public.layer(axum::middleware::from_fn_with_state(
             auth,
             crate::auth::attach_subject,
-        ));
+        )),
+    };
     Router::new()
         .merge(public)
         .merge(tools)
         .layer(axum::middleware::from_fn(
             crate::background::interactive_request,
         ))
-        .merge(crate::health::router(stores))
+        .merge(health)
+        .merge(crate::telemetry::browser::router())
         .layer(axum::middleware::from_fn_with_state(
             limits,
             crate::rate_limit::admit,
@@ -59,8 +76,12 @@ pub(super) fn models(
         crate::agent_models::ChronoAgentModels::new(
             &config.runtime.platform_base_url,
             credentials,
-        )?,
-        Arc::new(crate::projections::AdapterAgentModelSupport(adapter)),
+        )?
+        .with_cache(config.features.agent_model_discovery_cache),
+        crate::agent_models::CachedModelSupport::wrap(
+            adapter,
+            config.features.agent_model_discovery_cache,
+        ),
     ))
 }
 
@@ -69,7 +90,7 @@ pub(super) fn agent_files(
     store: Arc<dyn layer2_core::sandbox::agent_artifacts::AgentArtifactStore>,
     access: Arc<layer2_core::resource_access::ResourceAccessService>,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
-    policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    config: &crate::config::Config,
 ) -> Router {
     let filesystem_adapter = adapter.clone();
     layer1_public::rest::agent_attachments_router(
@@ -83,7 +104,9 @@ pub(super) fn agent_files(
             access.clone(),
             filesystem_adapter,
         )
-        .with_task_experience(policy),
+        .with_task_experience(config.task_experience.clone())
+        .with_background_environment(config.features.agent_environment_async)
+        .with_read_timings(config.features.agent_file_read_timings),
     ))
     .merge(layer1_public::rest::agent_artifacts_router(
         layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(store, access),
@@ -115,6 +138,11 @@ pub(super) fn agent_metadata(
     .merge(rest::agent_provider_associations_router(
         AgentProviderAssociationService::new(stores.sandbox_model.clone(), access.clone()),
     ))
+    .merge(rest::agent_capacity_recovery_router(Arc::new(
+        layer2_core::sandbox::agent_capacity_recovery::preflight::CapacityRecoveryPreflightService::new(
+            access.clone(),
+        ),
+    )))
     .merge(rest::agent_provenance_router(AgentProvenanceService::new(
         stores.sandbox_model.clone(),
         access,

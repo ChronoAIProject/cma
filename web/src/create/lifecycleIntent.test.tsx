@@ -49,7 +49,7 @@ it('submits for the location chosen last and drops the previous location failure
     { initialProps: {} as { workspaceId?: string } },
   );
   await act(() => result.current.submit({ name: 'New agent' }));
-  expect(result.current.failure).toBe('Lost response');
+  expect(result.current.failure).toEqual({ kind: 'unconfirmed', task: false });
   expect(result.current.intent?.body).toEqual({ name: 'New agent' });
   rerender({ workspaceId: 'wsp_1' });
   expect(result.current.failure).toBeUndefined();

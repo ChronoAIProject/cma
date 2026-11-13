@@ -1,4 +1,5 @@
 import type { PlatformSettings } from '@chronoai/cma-sdk';
+import { budgetChanged, reviewSpendBudget } from './spendBudget';
 
 // Rebase only fields this editor changed; newer server fields and unedited values win.
 export function reviewSettingsDraft(
@@ -25,6 +26,15 @@ export function reviewSettingsDraft(
   };
   return {
     ...current,
+    ...(budgetChanged(base.model_budget, draft.model_budget)
+      ? {
+          model_budget: reviewSpendBudget(
+            base.model_budget,
+            draft.model_budget,
+            current.model_budget,
+          ),
+        }
+      : {}),
     defaults: {
       ...current.defaults,
       sandbox_profile: reference('sandbox_profile'),
@@ -32,8 +42,18 @@ export function reviewSettingsDraft(
       agent_profile: reference('agent_profile'),
     },
     inactivity: merge(base.inactivity, draft.inactivity, current.inactivity, [
+      'auto_pause_enabled',
       'pause_after_seconds',
+      'grace_started_at',
     ]),
+    ...(draft.usage_reporting?.measured_visible !== base.usage_reporting?.measured_visible
+      ? {
+          usage_reporting: {
+            ...current.usage_reporting,
+            measured_visible: draft.usage_reporting?.measured_visible ?? false,
+          },
+        }
+      : {}),
     retention: merge(base.retention, draft.retention, current.retention, ['agent_log_days']),
     limits: merge(base.limits, draft.limits, current.limits, [
       'max_sandboxes_per_user',

@@ -74,6 +74,13 @@ pub struct SandboxPolicy {
 #[async_trait::async_trait]
 pub trait SandboxPolicySource: Send + Sync {
     async fn current_sandbox_policy(&self) -> Result<SandboxPolicy, StoreError>;
+
+    /// Whether the automatic pause reconciler may submit decisions at this
+    /// instant. Fixed test policies retain the historical enabled behavior;
+    /// deployment policy sources can impose a durable enablement grace period.
+    async fn automatic_pause_allowed(&self, _now: &str) -> Result<bool, StoreError> {
+        Ok(true)
+    }
 }
 
 #[async_trait::async_trait]
@@ -104,6 +111,8 @@ pub enum SandboxServiceError {
     ConnectionsRequired { services: Vec<ServiceId> },
     #[error("forbidden")]
     Forbidden,
+    #[error("Always on requires approval by an administrator")]
+    AlwaysOnApprovalRequired,
     #[error("sandbox profile not found")]
     ProfileNotFound,
     #[error("sandbox not found")]
@@ -112,6 +121,12 @@ pub enum SandboxServiceError {
     TrustConfirmationRequired { commands_digest: String },
     #[error("sandbox limit reached: {live} of {limit}")]
     SandboxLimitReached { limit: u16, live: u16 },
+    #[error("global sandbox capacity is unavailable")]
+    GlobalCapacityReached,
+    #[error("model budget refused the commitment: {0}")]
+    Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error("sandbox name is invalid")]
     InvalidName,
     #[error("sandbox name is already in use")]
@@ -138,10 +153,14 @@ impl SandboxServiceError {
             Self::CredentialSetupRequired => "sandbox_credential_setup_required",
             Self::ConnectionsRequired { .. } => "connections_required",
             Self::Forbidden => "forbidden",
+            Self::AlwaysOnApprovalRequired => "always_on_approval_required",
             Self::ProfileNotFound => "sandbox_profile_not_found",
             Self::NotFound => "sandbox_not_found",
             Self::TrustConfirmationRequired { .. } => "trust_confirmation_required",
             Self::SandboxLimitReached { .. } => "sandbox_limit_reached",
+            Self::GlobalCapacityReached => "sandbox_capacity_unavailable",
+            Self::Budget(reason) => reason.code(),
+            Self::AdmissionPaused => "admission_paused",
             Self::InvalidName => "invalid_sandbox_name",
             Self::NameConflict => "sandbox_name_conflict",
             Self::InvalidOrigin => "invalid_sandbox_origin",
@@ -162,6 +181,7 @@ pub struct SandboxService {
     pub(super) profile_uses: Arc<dyn ProfileUseRecorder>,
     pub(super) policy: Arc<dyn SandboxPolicySource>,
     pub(super) credentials: Arc<dyn SandboxCredentialPrerequisite>,
+    pub(super) platform_spend: std::sync::OnceLock<Arc<dyn crate::budget::PlatformSpendLedger>>,
 }
 
 impl SandboxService {
@@ -219,7 +239,33 @@ impl SandboxService {
             profile_uses,
             policy,
             credentials,
+            platform_spend: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Revival reads the platform admission state at the service entry; it
+    /// carries no model liability and the turn admission behind it is exact.
+    pub fn attach_platform_spend(&self, spend: Arc<dyn crate::budget::PlatformSpendLedger>) {
+        let _ = self.platform_spend.set(spend);
+    }
+
+    pub(super) async fn require_platform_open(
+        &self,
+        cause: crate::admission::AdmissionCause,
+    ) -> Result<(), crate::admission::AdmissionRefusal> {
+        let Some(spend) = self.platform_spend.get() else {
+            return Ok(());
+        };
+        let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
+            .ok_or(crate::budget::BudgetError::Unavailable)?;
+        match spend
+            .admission_state(now)
+            .await?
+            .commitment_refusal_for(cause)
+        {
+            Some(reason) => Err(reason),
+            None => Ok(()),
+        }
     }
 
     pub async fn list_own(
@@ -256,6 +302,47 @@ impl SandboxService {
             .sandbox_events(id, after, limit)
             .await
             .map_err(store_error)
+    }
+
+    /// Give up an existing Always on exception. Only administrators may approve
+    /// one; an unset or already disabled preference remains unchanged.
+    pub async fn set_always_on(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+        expected_revision: u64,
+        always_on: bool,
+    ) -> Result<Sandbox, SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        let current = self.owned(caller, id).await?;
+        if always_on {
+            return Err(SandboxServiceError::AlwaysOnApprovalRequired);
+        }
+        if current.revision != expected_revision
+            || matches!(
+                current.status,
+                SandboxStatus::Retiring | SandboxStatus::Retired
+            )
+        {
+            return Err(SandboxServiceError::InvalidState);
+        }
+        if current.profile.always_on != Some(true) {
+            return Ok(current);
+        }
+        let mut next = current.clone();
+        next.profile.always_on = Some(false);
+        next.revision = next
+            .revision
+            .checked_add(1)
+            .ok_or(SandboxServiceError::InvalidState)?;
+        next.updated_at = now_rfc3339();
+        next.validate()
+            .map_err(|_| SandboxServiceError::InvalidState)?;
+        self.store
+            .save_sandbox(expected_revision, next.clone())
+            .await
+            .map_err(store_error)?;
+        Ok(next)
     }
 
     pub async fn delete(
@@ -353,6 +440,9 @@ pub(super) fn store_error(error: SandboxStoreError) -> SandboxServiceError {
         SandboxStoreError::LimitReached { limit, live } => {
             SandboxServiceError::SandboxLimitReached { limit, live }
         }
+        SandboxStoreError::GlobalCapacityReached => SandboxServiceError::GlobalCapacityReached,
+        SandboxStoreError::Budget(reason) => SandboxServiceError::Budget(reason),
+        SandboxStoreError::AdmissionPaused => SandboxServiceError::AdmissionPaused,
         SandboxStoreError::SandboxOriginConflict => SandboxServiceError::SandboxOriginConflict,
         SandboxStoreError::Corrupt(detail) => SandboxServiceError::Corrupt(detail),
         SandboxStoreError::InvalidPage => SandboxServiceError::InvalidState,

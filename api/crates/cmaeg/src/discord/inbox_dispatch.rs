@@ -84,8 +84,22 @@ impl InboxDispatcher {
                 Ok(false)
                 | Err(
                     GatewayError::Unavailable | GatewayError::RateLimited | GatewayError::Authority,
-                ) => report.pending += 1,
-                Err(_) => report.invalid += 1,
+                ) => {
+                    report.pending += 1;
+                    self.selected.status().dispatch(
+                        &entry.inbox.channel_record,
+                        &entry.inbox.source_revision,
+                        "pending",
+                    );
+                }
+                Err(_) => {
+                    report.invalid += 1;
+                    self.selected.status().dispatch(
+                        &entry.inbox.channel_record,
+                        &entry.inbox.source_revision,
+                        "invalid",
+                    );
+                }
             }
         }
         Ok(report)
@@ -227,7 +241,17 @@ impl InboxDispatcher {
         };
         // A lost acknowledgement is read back as the exact immutable value.
         // If it is absent, retry reopens the original routed admission safely.
+        let outcome = match &disposition {
+            Disposition::Admitted { .. } => "admitted",
+            Disposition::Refused { .. } => "refused",
+            Disposition::Expired => "expired",
+        };
         self.store.acknowledge(entry, disposition).await?;
+        self.selected.status().dispatch(
+            &entry.inbox.channel_record,
+            &entry.inbox.source_revision,
+            outcome,
+        );
         Ok(true)
     }
 }

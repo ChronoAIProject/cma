@@ -7,6 +7,7 @@ mod agent;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 pub mod agent_browser_control;
+pub mod agent_capacity_recovery;
 mod agent_context;
 pub mod agent_environment;
 pub mod agent_filesystem;
@@ -14,6 +15,7 @@ pub mod agent_io;
 pub mod agent_live_skills;
 mod agent_managed_context;
 mod agent_operation;
+pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
@@ -25,19 +27,32 @@ pub use agent_settings_authority::{AgentSettingsAuthorization, AgentSettingsFenc
 mod agent_settings_recovery;
 mod agent_settings_validation;
 pub use agent_settings::AgentSettings;
+mod admission;
+mod admission_checkpoint;
 mod agent_operation_dispatch;
 mod agent_operation_queue;
 mod agent_operation_service;
 mod agent_operation_settlement;
 mod agent_read_types;
 mod agent_reads;
+pub use admission_checkpoint::AgentLogCheckpoint;
+mod agent_log_projection;
 mod agent_reads_fold;
+mod agent_reads_transcript;
 mod agent_reads_usage;
+pub use agent_log_projection::{
+    AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
+    AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
+};
+pub use agent_reads_transcript::{
+    AgentTranscriptFold, AgentTranscriptPage, AgentTranscriptPageRequest,
+};
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
 mod agent_worktree_recovery;
 pub mod answer_deliverables;
+pub mod work_retry;
 pub use agent_worktree_recovery::{
     plan_agent_worktree_recovery, AgentWorktreeRecovery, AgentWorktreeRecoveryContext,
     AgentWorktreeRecoveryMutation,
@@ -61,13 +76,21 @@ pub use conversation_observation::{
     AgentDescriptionSource, AgentObservations, AgentRuntimeMetadata, AgentTurnUsage,
     AgentUsageCheckpoint,
 };
+pub mod agent_ledger_recovery;
 mod conversation_fold_support;
+mod conversation_record_observation;
 mod conversation_recorder;
+pub use conversation_record_observation::{observe_agent_output, AgentOutputCategory};
 mod creation_admission;
+pub mod ledger_census;
+pub mod ledger_collection_artifact;
+pub mod ledger_maintenance;
+mod ledger_retirement;
 mod lifecycle_bootstrap;
 mod provenance;
 mod provenance_inventory;
 mod provenance_service;
+pub mod retirement_archive;
 pub use provenance::{AgentCreationCategory, AgentCreationOrigin, AgentCreationProvenance};
 pub use provenance_inventory::{
     AgentProvenanceInventoryQuery, AgentProvenanceInventoryRow, AgentProvenanceInventoryService,
@@ -107,11 +130,26 @@ mod pending_approvals;
 mod provision;
 mod queued_message;
 mod restored_connection;
+mod retained_recovery;
+mod retained_reopen;
+mod retained_reopen_service;
+#[cfg(test)]
+mod retained_reopen_tests;
+pub use retained_reopen::{
+    apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
+    RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+};
+pub use retained_reopen_service::{RetainedReopenError, RetainedReopenService};
 mod revive;
 mod rotate;
 mod runtime_generation;
 mod runtime_health;
 mod runtime_recovery;
+pub use retained_recovery::{
+    RetainedRecoveryAssessment, RetainedRecoveryDisposition, RetainedRecoveryError,
+    RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
+    RetainedRecoverySource,
+};
 mod runtime_update;
 mod runtime_update_resume;
 pub use runtime_update::{
@@ -191,8 +229,9 @@ pub use agent_read_types::{
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
 pub use agent_reads::{
-    AgentConfigurationRead, AgentDetailReading, AgentEventStreamAuthorization,
-    AgentEventStreamHeader, AgentEventStreamSnapshot, AgentReadService, AgentReplayEntry,
+    AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
+    AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
+    AgentHistoryReading, AgentOutputObservation, AgentReadService, AgentReplayEntry,
     AgentReplayWindow, AgentResponseBinding, AgentSourceReadError, AgentSourceReading,
     AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
 };
@@ -218,12 +257,13 @@ pub use checkpoint::{
 };
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
-    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
-    MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    AgentConversationError, AgentMessageAssembly, AgentOutputCommit, AgentUpdateOutcome,
+    AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentLiveFragment, AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource,
-    AgentLiveSubscription, DurableAgentUpdateRecorder,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
+    AgentLivePublisher, AgentLiveSource, AgentLiveSubscription, AgentOutputCoalescePolicy,
+    DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -246,7 +286,8 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxHierarchyReading, SandboxHierarchyRecord,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxAgentLineage, SandboxDetailPhase,
+    SandboxDetailRecord, SandboxDetailTimer, SandboxHierarchyReading, SandboxHierarchyRecord,
     SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
     SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
     SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
@@ -255,8 +296,10 @@ pub use hierarchy::{
 };
 pub use home::SandboxHome;
 pub use inactivity::{
-    inactivity_pause_notice, is_inactivity_pause_candidate, SandboxAgentActivity,
-    SandboxAgentLogActivity,
+    has_open_desktop_session, inactivity_pause_notice, is_inactivity_pause_candidate,
+    is_platform_stop_pause_candidate, is_quiet_pause_candidate, register_open_desktop_session,
+    unregister_open_desktop_session, SandboxAgentActivity, SandboxAgentLogActivity,
+    PLATFORM_SPEND_PAUSE_NOTICE,
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{
@@ -297,7 +340,8 @@ pub use title::{
     AgentTitleGenerationRequest, AgentTitleGenerationResponse, AgentTitleGenerator,
     AgentTitleSource, AgentTitleTranscript, AGENT_TITLE_ATTEMPTS, AGENT_TITLE_CALL_TIMEOUT_SECONDS,
     AGENT_TITLE_CLAIM_SECONDS, AGENT_TITLE_FALLBACK_SCALARS, AGENT_TITLE_INPUT_BYTES,
-    AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_SYSTEM_PROMPT, EMPTY_AGENT_TITLE_FALLBACK,
+    AGENT_TITLE_MAX_ATTEMPTS, AGENT_TITLE_MAX_SCALARS, AGENT_TITLE_RETRY_SECONDS,
+    AGENT_TITLE_SYSTEM_PROMPT, EMPTY_AGENT_TITLE_FALLBACK,
 };
 pub use title_service::{AgentTitleOutcome, AgentTitleService, AgentTitleServiceError};
 pub use title_store::{
@@ -375,3 +419,6 @@ mod runtime_update_tests;
 
 #[cfg(test)]
 mod runtime_update_resume_tests;
+
+#[cfg(test)]
+mod always_on_tests;

@@ -49,6 +49,7 @@ it('releases hidden and closed observation, reconnects without enablement, and w
   const { rerender } = render(view(true));
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(screen.getByAltText('Agent browser page')).toBeInTheDocument();
+  expect(screen.getByLabelText('Browser location')).toHaveTextContent('Local page');
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
   fireEvent(document, new Event('visibilitychange'));
   expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
@@ -95,7 +96,10 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
       });
     if (options?.method === 'DELETE') return Response.json(observation(sequence));
     if (disconnected) throw new TypeError('offline');
-    return Response.json(observation(sequence >= 3 ? sequence++ : sequence));
+    return Response.json({
+      ...observation(sequence >= 3 ? sequence++ : sequence),
+      address: sequence === 1 ? 'http://localhost:5173' : 'https://example.com',
+    });
   });
   const sdk = createClient({ baseUrl: 'https://fixture.invalid', fetch });
   const client = agentClient({
@@ -125,14 +129,16 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
   });
   const first = screen.getByAltText('Agent browser page');
   const initial = first.getAttribute('src');
+  expect(screen.getByLabelText('Browser location')).toHaveTextContent('localhost:5173');
   fireEvent.load(first);
-  expect(screen.getByText('Live')).toBeInTheDocument();
+  expect(screen.getByRole('figure', { name: 'Live browser page' })).toBeInTheDocument();
   sequence = 2;
   await act(async () => {
     await vi.advanceTimersByTimeAsync(1000);
   });
   fireEvent.load(screen.getByAltText('Agent browser page'));
   const second = screen.getByAltText('Agent browser page').getAttribute('src');
+  expect(screen.getByLabelText('Browser location')).toHaveTextContent('example.com');
   expect(second).not.toBe(initial);
   sequence = 1;
   await act(async () => {
@@ -143,7 +149,7 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
   await act(async () => {
     await vi.advanceTimersByTimeAsync(4000);
   });
-  expect(screen.queryByText('Live')).not.toBeInTheDocument();
+  expect(screen.queryByRole('figure', { name: 'Live browser page' })).not.toBeInTheDocument();
   expect(screen.getByText('Last frame · Reconnecting…')).toBeInTheDocument();
   disconnected = false;
   sequence = 3;
@@ -151,7 +157,7 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
     await vi.advanceTimersByTimeAsync(9000);
   });
   fireEvent.load(screen.getByAltText('Agent browser page'));
-  expect(screen.getByText('Live')).toBeInTheDocument();
+  expect(screen.getByRole('figure', { name: 'Live browser page' })).toBeInTheDocument();
   expect(fetch.mock.calls.some(([input]) => String(input).includes('context_id=context'))).toBe(
     true,
   );
@@ -171,7 +177,7 @@ it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resum
   expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
 });
 
-it('enables only after owner action, exposes failure, and defaults an enabled Computer to Browser once', async () => {
+it('enables only after owner action, exposes failure, and preserves the explicitly selected Files tab', async () => {
   vi.useFakeTimers();
   let enabled = false;
   let fail = true;
@@ -228,22 +234,33 @@ it('enables only after owner action, exposes failure, and defaults an enabled Co
   first.unmount();
   render(view('files'));
   await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(onSelect).toHaveBeenCalledExactlyOnceWith('browser');
-  fireEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
+  expect(onSelect).not.toHaveBeenCalled();
+  expect(screen.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.queryByRole('tab', { name: 'Terminal' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Screen' }));
   fireEvent(window, new Event('focus'));
   await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(onSelect.mock.calls).toEqual([['browser'], ['activity']]);
+  expect(onSelect.mock.calls).toEqual([['browser']]);
   expect(fetch.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(2);
 });
 
-it('keeps an explicit operation replay selection when an enabled browser becomes available', async () => {
+it('keeps an explicit Terminal jump when an enabled browser becomes available', async () => {
   vi.useFakeTimers();
   const client = agentClient({
     taskExperience: taskExperience('owner'),
     files: { ...emptyFiles, environment: async () => environment('available') },
   });
   const selected = new AgentComputerObservation({ client, subject: 'owner', agentId: 'agent-a' });
-  selected.selectReplay('turn-1');
+  selected.publish([
+    {
+      id: 'command-1',
+      title: 'printf output',
+      kind: 'execute',
+      status: 'completed',
+      output: { text: 'output', truncated: false },
+    },
+  ]);
+  selected.selectTerminal('command-1');
   const onSelect = vi.fn();
   const view = (panel: 'activity' | 'files' | undefined) => (
     <CmaClientProvider client={client}>
@@ -263,14 +280,14 @@ it('keeps an explicit operation replay selection when an enabled browser becomes
   const { rerender } = render(view('activity'));
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(onSelect).not.toHaveBeenCalledWith('browser');
-  act(() => selected.clearReplaySelection());
   await act(() => vi.advanceTimersByTimeAsync(1));
   rerender(view(undefined));
   await act(() => vi.advanceTimersByTimeAsync(1));
   rerender(view('files'));
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(onSelect).not.toHaveBeenCalledWith('browser');
-  expect(onSelect).toHaveBeenCalledWith('activity');
+  expect(onSelect).not.toHaveBeenCalled();
+  expect(selected.terminalSnapshot()?.id).toBe('command-1');
 });
 
 const feature = (state: AgentEnvironment['browser']['state']): AgentEnvironment['browser'] => ({
@@ -323,3 +340,28 @@ function observation(sequence: number) {
     },
   };
 }
+
+it('returns to Screen when a selected Terminal is unavailable for the next task', async () => {
+  const client = agentClient();
+  const selected = new AgentComputerObservation({ client, subject: 'owner', agentId: 'agent-a' });
+  selected.publish([]);
+  const onSelect = vi.fn();
+  render(
+    <CmaClientProvider client={client}>
+      <AgentSidePanel
+        viewerId="owner"
+        agentId="agent-a"
+        shared={false}
+        panel="activity"
+        observation={selected}
+        onSelect={onSelect}
+        onClose={vi.fn()}
+        onAccessChanged={vi.fn()}
+        publicationScope={new ArtifactPublicationScope()}
+      />
+    </CmaClientProvider>,
+  );
+  await act(async () => {});
+  expect(screen.queryByRole('tab', { name: 'Terminal' })).not.toBeInTheDocument();
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith('browser');
+});

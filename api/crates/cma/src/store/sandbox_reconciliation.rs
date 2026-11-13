@@ -13,12 +13,17 @@ use super::sandbox_mongo::{
     MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::read_sandbox;
+use super::{
+    agent_capacity_recovery::source::sandbox_uses_segments,
+    agent_log_segments::transaction_scope::TransactionScope,
+};
 use transaction::{apply, ApplyError, RecoveryApplication};
 
 mod agents;
 #[cfg(test)]
 mod mongo_integration_tests;
 mod reconciliation;
+mod telemetry;
 mod transaction;
 
 #[async_trait::async_trait]
@@ -158,14 +163,7 @@ async fn recover(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                last_transient = Some(error.to_string());
-                continue;
-            }
-            return Err(SandboxStoreError::Unavailable(error.to_string()));
-        }
-        let receipt = match apply(store, &request, &mut session).await {
+        let receipt = match apply_attempt(store, &request, &mut session).await {
             Ok(RecoveryApplication::Complete(outcome)) => {
                 let _ = session.abort_transaction().await;
                 return Ok(outcome);
@@ -185,7 +183,13 @@ async fn recover(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
-        match commit_transaction(&mut session).await {
+        let commit = {
+            let mut phase = telemetry::Phase::new("commit");
+            let result = commit_transaction(&mut session).await;
+            phase.finish(matches!(&result, CommitOutcome::Committed));
+            result
+        };
+        match commit {
             CommitOutcome::Committed => return Ok(receipt.outcome),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
@@ -222,4 +226,31 @@ async fn recover(
         "runtime-loss recovery exhausted its retry budget: {}",
         last_transient.unwrap_or_else(|| "no driver result".into())
     )))
+}
+
+/// The format hint selects a transaction entry, never proof or adoption.
+/// A conversion racing the legacy entry is rejected by its source validator.
+async fn apply_attempt(
+    store: &MongoSandboxStore,
+    request: &SandboxRuntimeLossRequest,
+    session: &mut mongodb::ClientSession,
+) -> Result<RecoveryApplication, ApplyError> {
+    if sandbox_uses_segments(store, &request.sandbox_id).await? {
+        let scope = TransactionScope::start(session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        transaction::apply_scoped(store, request, scope).await
+    } else {
+        start_transaction(session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        apply(store, request, session).await
+    }
+}
+
+impl MongoSandboxStore {
+    pub(crate) fn with_runtime_loss_bounded_proof(mut self, enabled: bool) -> Self {
+        self.runtime_loss_bounded_proof_enabled = enabled;
+        self
+    }
 }

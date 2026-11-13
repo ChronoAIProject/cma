@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
@@ -10,12 +10,18 @@ use super::agent_skills::AgentSkillResolver;
 use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
 
 mod capacity;
+#[cfg(test)]
+pub(crate) use capacity::reconnect::RecoveryReconnect;
+pub(crate) use capacity::reconnect::{CapacityRecoveryReconnect, ReconnectAction};
 mod cleanup;
+mod cleanup_publication;
 mod connection;
 mod connection_output;
 mod connection_retry;
 mod first_message;
 mod first_message_publication;
+mod ledger_retry;
+mod ledger_telemetry;
 mod live_skills;
 mod prepared_open_ready;
 mod prepared_replay;
@@ -47,6 +53,10 @@ pub(crate) struct AgentWorkerDependencies {
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    pub parent_not_ready_pacing_enabled: bool,
+    pub retry_single_marker_enabled: bool,
+    pub work_retry_policy_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
     pub holder: String,
@@ -62,6 +72,10 @@ impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
             ownership: None,
+            parent_not_ready_pacing_enabled: false,
+            retry_single_marker_enabled: false,
+            work_retry_policy_enabled: false,
+            cleanup_continuation_enabled: false,
             managed_documents_enabled: false,
             access_transport_migration: None,
             holder: holder.into(),
@@ -95,6 +109,21 @@ impl AgentWorkerConfig {
         self
     }
 
+    pub(crate) fn with_retry_single_marker(mut self, enabled: bool) -> Self {
+        self.retry_single_marker_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_work_retry_policy(mut self, enabled: bool) -> Self {
+        self.work_retry_policy_enabled = enabled;
+        self
+    }
+
+    pub(crate) fn with_cleanup_continuation(mut self, enabled: bool) -> Self {
+        self.cleanup_continuation_enabled = enabled;
+        self
+    }
+
     pub(crate) fn with_parent_readiness(mut self, readiness: Arc<tokio::sync::Notify>) -> Self {
         self.parent_readiness = Some(readiness);
         self
@@ -105,17 +134,23 @@ pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
     maintenance: reconcile::MaintenanceChecks,
+    capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
 }
 
 impl AgentWorker {
     pub fn new(dependencies: AgentWorkerDependencies, config: AgentWorkerConfig) -> Arc<Self> {
+        let capacity_restart = Arc::new(OnceLock::new());
         dependencies.registry.install_connection_loss_handler(
-            DurableAgentConnectionLossHandler::new(dependencies.store.clone()),
+            DurableAgentConnectionLossHandler::with_capacity_recovery(
+                dependencies.store.clone(),
+                capacity_restart.clone(),
+            ),
         );
         Arc::new(Self {
             dependencies,
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
+            capacity_restart,
         })
     }
 
@@ -195,7 +230,7 @@ impl AgentWorker {
         Ok(true)
     }
 
-    /// Follow committed startup steps immediately, keeping each durable claim.
+    /// Follow bounded, committed progress immediately, keeping each durable claim.
     pub(crate) async fn run_scheduled(
         &self,
         id: &AgentId,
@@ -210,7 +245,7 @@ impl AgentWorker {
             let Some(agent) = self.dependencies.store.get_agent(id).await? else {
                 break;
             };
-            if !matches!(
+            let startup = matches!(
                 agent.work.step,
                 AgentWorkStep::AddWorktree
                     | AgentWorkStep::MaterializeHome
@@ -218,8 +253,22 @@ impl AgentWorker {
                     | AgentWorkStep::PublishReady
                     | AgentWorkStep::PublishConnection
                     | AgentWorkStep::DispatchFirstMessage
-            ) || !agent.work.is_due(&rfc3339_at(now + started.elapsed()))
-            {
+            );
+            let cleanup = self.config.cleanup_continuation_enabled
+                && agent.work.attempts == 0
+                && matches!(
+                    agent.work.step,
+                    AgentWorkStep::FenceInteraction
+                        | AgentWorkStep::CloseProcess
+                        | AgentWorkStep::PublishStopped
+                        | AgentWorkStep::EnsureProcessClosed
+                        | AgentWorkStep::RemoveHome
+                        | AgentWorkStep::RemoveWorktree
+                        | AgentWorkStep::PublishDeleted
+                );
+            // A published retry is not progress, even when execution exceeded its
+            // deadline. Reclaim only committed successful cleanup transitions.
+            if !(startup || cleanup) || !agent.work.is_due(&rfc3339_at(now + started.elapsed())) {
                 break;
             }
             if !self.run_one(id, now + started.elapsed()).await? {
@@ -230,6 +279,22 @@ impl AgentWorker {
     }
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
+        if matches!(
+            agent.work.step,
+            AgentWorkStep::RemoveHome
+                | AgentWorkStep::RemoveWorktree
+                | AgentWorkStep::EnsureProcessClosed
+        ) {
+            let parent = self
+                .dependencies
+                .store
+                .get_sandbox(&agent.sandbox_id)
+                .await?
+                .ok_or(SandboxStoreError::NotFound)?;
+            if parent.retirement_archive_pending() {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
         let started = tokio::time::Instant::now();
         let claimed = agent.clone();
         let result = match agent.work.step {

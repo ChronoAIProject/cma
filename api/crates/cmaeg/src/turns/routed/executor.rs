@@ -5,7 +5,11 @@ use super::{
     DispatchOutcome, ExecutionError, FrameDelivery, FrozenTurn, HttpExecutionPort, Journal, Lease,
     ReattachError, RoutedDelivery, ToolReplyStatus,
 };
-use crate::{turns::tracker::TurnTracker, DeliveryConfig};
+use crate::{
+    telemetry::turn_trace::{BoundOperation, Outcome, Stage},
+    turns::tracker::TurnTracker,
+    DeliveryConfig,
+};
 use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
@@ -127,6 +131,7 @@ impl RoutedTargetExecutor {
         }
         let started = Instant::now();
         let mut observed = 0;
+        let mut trace = BoundOperation::start(projection.trace.get(), Stage::Replay);
         for _ in 0..MAX_RECONNECTS {
             if started.elapsed() >= self.invocation_bound {
                 break;
@@ -148,6 +153,14 @@ impl RoutedTargetExecutor {
                 Ok(Err(ReattachError::Provider(_))) | Err(_) => continue,
             };
             journal.renew(lease).await?;
+            // Retain the canonical association with the existing projection
+            // writes only. A later snapshot or attempt cannot replace it.
+            if let Some(association) = attached.snapshot.trace {
+                projection.trace.bind(association);
+            }
+            if trace.is_none() {
+                trace = BoundOperation::start(projection.trace.get(), Stage::Replay);
+            }
             if projection.native_agent_id.is_none() {
                 projection.native_agent_id = Some(attached.snapshot.native_agent_id);
                 journal.save_projection(lease, &projection).await?;
@@ -163,7 +176,7 @@ impl RoutedTargetExecutor {
                 if started.elapsed() >= self.invocation_bound || observed >= self.frame_limit {
                     return Ok(Disposition::Retry(RETRY));
                 }
-                let frame =
+                let mut frame =
                     match tokio::time::timeout(self.renew_interval, attached.stream.events.recv())
                         .await
                     {
@@ -175,6 +188,9 @@ impl RoutedTargetExecutor {
                         }
                     };
                 observed += 1;
+                // Preserve the persisted diagnostic hash mode across a flag
+                // rollback, without regenerating IDs or requiring new headers.
+                projection.retain_trace_contract(&mut frame);
                 journal.renew(lease).await?;
                 let effect = if let Some(effect) = projection.pending_effect(&frame)? {
                     effect
@@ -203,11 +219,21 @@ impl RoutedTargetExecutor {
                     journal.save_projection(lease, &projection).await?;
                     effect
                 };
-                match self
-                    .delivery
-                    .deliver_frame(&work.identity, &work.target_id, lease, &frame, effect)
-                    .await?
-                {
+                if trace.is_none() {
+                    trace = BoundOperation::start(projection.trace.get(), Stage::Replay);
+                }
+                let delivery = self.delivery.deliver_frame(
+                    &work.identity,
+                    &work.target_id,
+                    lease,
+                    &frame,
+                    effect,
+                );
+                let delivered = match &trace {
+                    Some(trace) => trace.within(delivery).await,
+                    None => delivery.await,
+                }?;
+                match delivered {
                     FrameDelivery::Unknown => return Ok(Disposition::Settled),
                     FrameDelivery::Settled { .. } => {}
                 }
@@ -222,6 +248,9 @@ impl RoutedTargetExecutor {
                             ),
                         )
                         .await;
+                    if let Some(trace) = trace {
+                        trace.finish(Outcome::Completed);
+                    }
                     return Ok(Disposition::Settled);
                 }
             }

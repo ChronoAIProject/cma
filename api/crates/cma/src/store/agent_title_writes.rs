@@ -1,5 +1,6 @@
-//! Snapshot transactions for agent-title claims and write-once completion.
+//! Snapshot transactions for agent-title claims and durable completion.
 
+use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{
@@ -10,12 +11,9 @@ use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::{doc, Bson, Document, Timestamp};
 use mongodb::options::ReadConcern;
 
-use super::agent_log::{
-    log_document, scan_complete_log_with_session, scan_complete_log_with_snapshot_session,
-};
-use super::agent_log_integrity::{
-    ensure_append_capacity, AppendCapacity, LogSummary, TransactionLogError,
-};
+use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
+use super::agent_log_integrity::{prepare_append, AppendCapacity, LogSummary, TransactionLogError};
+use super::agent_title_claims::current_agent_filter;
 use super::agent_title_state::{
     automatic_completion_fields, lease_filter, read_title_state, user_completion_fields,
     TitleState, TITLE,
@@ -23,9 +21,8 @@ use super::agent_title_state::{
 use super::agent_titles::{map_store_error, snapshot_session};
 use super::agents::{agent_replacement_fields, read_agent};
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, signed, start_transaction,
-    wait_for_reconciliation, CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, signed, wait_for_reconciliation,
+    CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
 };
 
 enum ApplyError {
@@ -46,6 +43,7 @@ enum TitleApply {
 
 #[derive(Clone)]
 struct TitleReceipt {
+    segmented: Option<super::agent_log_segments::writer_commit::Recorded>,
     agent: Agent,
     entry: AgentLogEntry,
     stored: StoredAgentTitle,
@@ -137,13 +135,23 @@ async fn run_title_mutation(
             Err(error) if is_transient(&error) => continue,
             Err(_) => return Err(AgentTitleStoreError::Unavailable),
         };
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                continue;
-            }
-            return Err(AgentTitleStoreError::Unavailable);
-        }
-        let receipt = match apply_title(store, &mutation, &mut session).await {
+        let mut scope = match super::agent_log_segments::transaction_scope::TransactionScope::start(
+            &mut session,
+        )
+        .await
+        {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => continue,
+            Err(_) => return Err(AgentTitleStoreError::Unavailable),
+        };
+        let applied = scoped::apply(store, &mutation, &mut scope).await;
+        let session = scope.release();
+        let applied = match applied {
+            Ok(Some(result)) => Ok(result),
+            Ok(None) => apply_title(store, &mutation, session).await,
+            Err(error) => Err(error),
+        };
+        let receipt = match applied {
             Ok(TitleApply::Settled(outcome)) => {
                 let _ = session.abort_transaction().await;
                 return Ok(outcome);
@@ -162,7 +170,7 @@ async fn run_title_mutation(
                 return Err(AgentTitleStoreError::Unavailable);
             }
         };
-        match commit_transaction(&mut session).await {
+        match commit_transaction(session).await {
             CommitOutcome::Committed => return Ok(receipt.outcome),
             CommitOutcome::Retry(_) => continue,
             CommitOutcome::Unknown(_) => {
@@ -199,36 +207,30 @@ async fn apply_title(
             TitleMutation::User { .. } => Err(ApplyError::Domain(AgentTitleStoreError::NotFound)),
         };
     };
-    if state.stored.is_some() {
-        return Ok(TitleApply::Settled(match mutation {
-            TitleMutation::Automatic { claim, .. } => {
-                TitleOutcome::Automatic(state.completed_by(claim))
-            }
-            TitleMutation::User { .. } => TitleOutcome::User(SetAgentTitleOutcome::AlreadySet),
-        }));
-    }
-    if let TitleMutation::Automatic { claim, source, .. } = mutation {
-        let exact = state
-            .lease
-            .as_ref()
-            .is_some_and(|lease| lease.matches_claim(claim));
-        if !exact
-            || claim.mode() == AgentTitleClaimMode::FallbackOnly
-                && *source != AgentTitleSource::Fallback
-        {
-            return Ok(TitleApply::Settled(TitleOutcome::Automatic(false)));
-        }
+    if let Some(outcome) = mutation.settled(&state) {
+        return Ok(TitleApply::Settled(outcome));
     }
 
     let summary = transaction_log(store, &current, session).await?;
     let (next, entry, stored) = next_title_state(&current, mutation)?;
-    ensure_append_capacity(
+
+    let mut fields = agent_replacement_fields(&next).map_err(map_domain)?;
+    let semantic = summary
+        .semantic()
+        .cloned()
+        .ok_or(ApplyError::Domain(AgentTitleStoreError::Unavailable))?;
+    let integrity = prepare_append(
+        &current,
         &summary,
         std::slice::from_ref(&entry),
+        next.revision,
+        semantic
+            .after_append(std::slice::from_ref(&entry), &next)
+            .map_err(map_domain)?,
         AppendCapacity::Normal,
     )
     .map_err(map_domain)?;
-    let mut fields = agent_replacement_fields(&next).map_err(map_domain)?;
+    fields.insert("agent_log_integrity_v1", integrity.integrity);
     fields.insert(
         "last_seq",
         signed(next.conversation.last_seq, "agent log sequence")
@@ -236,10 +238,24 @@ async fn apply_title(
     );
     fields.extend(mutation.completion_fields());
     let mut filter = current_agent_filter(&current);
-    filter.insert(TITLE, Bson::Null);
-    filter.insert("record.title", Bson::Null);
+    filter.insert(
+        TITLE,
+        current
+            .title
+            .clone()
+            .map(Bson::String)
+            .unwrap_or(Bson::Null),
+    );
+    filter.insert(
+        "record.title",
+        current
+            .title
+            .clone()
+            .map(Bson::String)
+            .unwrap_or(Bson::Null),
+    );
     if let TitleMutation::Automatic { claim, .. } = mutation {
-        filter.extend(lease_filter(claim));
+        filter.extend(lease_filter(claim, state.stored.is_some()));
     }
     let updated = store
         .agents
@@ -252,7 +268,8 @@ async fn apply_title(
     }
     store
         .agent_log
-        .insert_one(log_document(&entry).map_err(map_domain)?)
+        .clone_with_type::<mongodb::bson::RawDocumentBuf>()
+        .insert_one(&integrity.documents[0])
         .session(session)
         .await
         .map_err(|error| {
@@ -265,6 +282,7 @@ async fn apply_title(
     let proof = mutation.proof();
     let outcome = mutation.success_outcome();
     Ok(TitleApply::Written(Box::new(TitleReceipt {
+        segmented: None,
         agent: next,
         entry,
         stored,
@@ -307,67 +325,6 @@ fn next_title_state(
     Ok((next, entry, stored))
 }
 
-impl TitleMutation {
-    fn id(&self) -> &AgentId {
-        match self {
-            Self::Automatic { claim, .. } => claim.agent_id(),
-            Self::User { id, .. } => id,
-        }
-    }
-
-    fn title(&self) -> &AgentTitle {
-        match self {
-            Self::Automatic { title, .. } | Self::User { title, .. } => title,
-        }
-    }
-
-    fn source(&self) -> AgentTitleSource {
-        match self {
-            Self::Automatic { source, .. } => *source,
-            Self::User { .. } => AgentTitleSource::User,
-        }
-    }
-
-    fn set_at(&self) -> &str {
-        match self {
-            Self::Automatic { set_at, .. } | Self::User { set_at, .. } => set_at,
-        }
-    }
-
-    fn completion_fields(&self) -> Document {
-        match self {
-            Self::Automatic {
-                claim,
-                title,
-                source,
-                set_at,
-            } => automatic_completion_fields(claim, title, *source, set_at),
-            Self::User {
-                title,
-                set_at,
-                operation_token,
-                ..
-            } => user_completion_fields(title, set_at, operation_token),
-        }
-    }
-
-    fn proof(&self) -> CompletionProof {
-        match self {
-            Self::Automatic { claim, .. } => CompletionProof::Automatic(claim.clone()),
-            Self::User {
-                operation_token, ..
-            } => CompletionProof::User(operation_token.clone()),
-        }
-    }
-
-    fn success_outcome(&self) -> TitleOutcome {
-        match self {
-            Self::Automatic { .. } => TitleOutcome::Automatic(true),
-            Self::User { .. } => TitleOutcome::User(SetAgentTitleOutcome::Set),
-        }
-    }
-}
-
 async fn load_agent(
     store: &MongoSandboxStore,
     id: &AgentId,
@@ -387,107 +344,14 @@ async fn load_agent(
     Ok(Some((agent, state)))
 }
 
-async fn transaction_log(
-    store: &MongoSandboxStore,
-    agent: &Agent,
-    session: &mut mongodb::ClientSession,
-) -> Result<LogSummary, ApplyError> {
-    let summary = scan_complete_log_with_session(
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        session,
-        |_| Ok(()),
-    )
-    .await
-    .map_err(map_transaction_log)?;
-    Ok(summary)
-}
+mod reconcile;
+use reconcile::reconcile_title;
 
-async fn reconcile_title(
-    store: &MongoSandboxStore,
-    receipt: &TitleReceipt,
-    snapshot_time: Timestamp,
-) -> Result<bool, AgentTitleStoreError> {
-    let mut session = snapshot_session(store, Some(snapshot_time)).await?;
-    let document = store
-        .agents
-        .find_one(doc! { "_id": receipt.agent.id.as_str() })
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .map_err(|_| AgentTitleStoreError::Unavailable)?;
-    let Some(document) = document else {
-        return Ok(false);
-    };
-    let agent = read_agent(&document).map_err(map_store_error)?;
-    if agent != receipt.agent {
-        return Ok(false);
-    }
-    let state = read_title_state(&document, &agent)?;
-    if state.stored.as_ref() != Some(&receipt.stored) || !receipt.proof.matches(&state) {
-        return Ok(false);
-    }
-    let mut found = None;
-    scan_complete_log_with_snapshot_session(
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        &mut session,
-        |entry| {
-            if entry.seq == receipt.entry.seq {
-                found = Some(entry);
-            }
-            Ok(())
-        },
-    )
-    .await
-    .map_err(map_reconciliation_log)?;
-    match found {
-        Some(entry) if entry == receipt.entry => Ok(true),
-        Some(_) => Err(AgentTitleStoreError::SequenceConflict),
-        None => Ok(false),
-    }
-}
+mod mutation;
+mod scoped;
 
-impl CompletionProof {
-    fn matches(&self, state: &TitleState) -> bool {
-        match self {
-            Self::Automatic(claim) => state.completed_by(claim),
-            Self::User(token) => state.user_commit_token.as_ref() == Some(token),
-        }
-    }
-}
+mod integrity;
+use integrity::transaction_log;
 
-fn current_agent_filter(agent: &Agent) -> Document {
-    doc! {
-        "channel_reuse_cleanup_execution": { "$exists": false },
-        "_id": agent.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "revision": signed(agent.revision, "agent revision").unwrap_or(i64::MIN),
-        "last_seq": signed(agent.conversation.last_seq, "agent log sequence")
-            .unwrap_or(i64::MIN),
-        "record.conversation.last_seq": signed(
-            agent.conversation.last_seq,
-            "agent log sequence",
-        ).unwrap_or(i64::MIN),
-    }
-}
-
-fn map_domain(error: SandboxStoreError) -> ApplyError {
-    ApplyError::Domain(map_store_error(error))
-}
-
-fn map_transaction_log(error: TransactionLogError) -> ApplyError {
-    match error {
-        TransactionLogError::Domain(error) => map_domain(error),
-        TransactionLogError::Driver(error) => ApplyError::Driver(error),
-    }
-}
-
-fn map_reconciliation_log(error: TransactionLogError) -> AgentTitleStoreError {
-    match error {
-        TransactionLogError::Domain(error) => map_store_error(error),
-        TransactionLogError::Driver(_) => AgentTitleStoreError::Unavailable,
-    }
-}
+mod errors;
+use errors::{map_domain, map_reconciliation_log, map_transaction_log};

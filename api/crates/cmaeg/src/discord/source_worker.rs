@@ -1,5 +1,8 @@
 //! One source's reconnect loop. A fresh lease is acquired for every attempt.
-use super::{EndReason, GatewayEnd, GatewayError};
+use super::{
+    status::{FailureCode, NativeDiscordConnectionStatus, StatusAttempt, StatusRegistry},
+    EndReason, GatewayEnd, GatewayError,
+};
 use futures_util::future::BoxFuture;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
@@ -11,6 +14,7 @@ pub(super) trait SourcePort: Send + Sync {
         &'a self,
         record: &'a str,
         stop: watch::Receiver<bool>,
+        status: StatusAttempt,
     ) -> BoxFuture<'a, Attempt>;
 }
 pub(super) struct Attempt {
@@ -37,31 +41,55 @@ pub(super) async fn run(
     record: String,
     mut shutdown: watch::Receiver<bool>,
     timing: Timing,
+    statuses: StatusRegistry,
 ) {
-    let mut terminal_revision = None;
+    let mut status = statuses.begin(&record, None);
+    let mut terminal_revision: Option<(String, NativeDiscordConnectionStatus)> = None;
+    let mut status_revision = None;
+    // Resolution failure changes the current attempt, not the revision that
+    // owns its history. Keep that tag until a successful read replaces it.
+    let mut last_known_revision = None;
     let mut failures = 0u32;
     loop {
         if *shutdown.borrow() {
-            return;
+            break;
         }
         let revision = tokio::select! {
-            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { return; } else { continue; } },
+            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break; } else { continue; } },
             revision = port.revision(&record) => revision,
         };
-        let Ok(revision) = revision else {
-            if stopped(&mut shutdown, timing.poll).await {
-                return;
+        let revision = match revision {
+            Ok(revision) => revision,
+            Err(error) => {
+                status = statuses.begin(&record, last_known_revision.as_deref());
+                status_revision = None;
+                status.finish(error.into(), false, timing.poll);
+                if stopped(&mut shutdown, timing.poll).await {
+                    break;
+                }
+                continue;
             }
-            continue;
         };
-        if terminal_revision.as_ref() == Some(&revision) {
+        last_known_revision = Some(revision.clone());
+        if let Some((_, snapshot)) = terminal_revision
+            .as_ref()
+            .filter(|(saved, _)| saved == &revision)
+        {
+            if status_revision.as_ref() != Some(&revision) {
+                status = statuses.begin(&record, Some(&revision));
+                status.restore_terminal(snapshot);
+                status_revision = Some(revision.clone());
+            }
+            status.poll();
             if stopped(&mut shutdown, timing.poll).await {
-                return;
+                break;
             }
             continue;
         }
+        status = statuses.begin(&record, Some(&revision));
+        status_revision = Some(revision.clone());
         let (stop, receiver) = watch::channel(false);
-        let attempt = port.connect(&record, receiver);
+        let attempt = port.connect(&record, receiver, status.clone());
         tokio::pin!(attempt);
         // Polling authority is independent of the socket future; neither blocks
         // the other. Routing removal is also an eligibility revocation.
@@ -69,7 +97,9 @@ pub(super) async fn run(
             loop {
                 tokio::time::sleep(timing.poll).await;
                 match port.revision(&record).await {
-                    Ok(current) if current == revision => {}
+                    Ok(current) if current == revision => {
+                        status.poll();
+                    }
                     _ => return,
                 }
             }
@@ -81,11 +111,16 @@ pub(super) async fn run(
             _ = shutdown.changed() => None,
         };
         let Some(outcome) = outcome else {
+            let shutting_down = *shutdown.borrow() || shutdown.has_changed().is_err();
+            if !shutting_down {
+                status.failure(FailureCode::AuthorityRevoked);
+            }
             let _ = stop.send(true);
             let _ = tokio::time::timeout(timing.stop, &mut attempt).await;
             if *shutdown.borrow() || shutdown.has_changed().is_err() {
-                return;
+                break;
             }
+            status.finish(FailureCode::AuthorityRevoked, false, Duration::ZERO);
             failures = 0;
             continue;
         };
@@ -96,22 +131,34 @@ pub(super) async fn run(
             }
             Err(
                 GatewayError::InvalidConfiguration
+                | GatewayError::Authentication
                 | GatewayError::MissingMessageContentIntent
                 | GatewayError::Protocol,
             ) => true,
             _ => false,
         };
-        if terminal {
-            terminal_revision = Some(revision.clone());
-        }
         failures = failures.saturating_add(1);
         let delay = retry_delay(&outcome, failures, timing.retry);
+        let code = match &outcome.result {
+            Ok(end) => end.reason.into(),
+            Err(error) => (*error).into(),
+        };
+        status.finish(code, terminal, delay);
+        if terminal {
+            let snapshot = statuses.view(&record, Some(&revision));
+            terminal_revision = Some((revision.clone(), snapshot));
+        }
         if stopped(&mut shutdown, delay).await {
-            return;
+            break;
         }
     }
+    status.stopped();
 }
 fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
+    if matches!(attempt.result, Err(GatewayError::SessionLimitUnavailable)) {
+        let jitter = uuid::Uuid::new_v4().as_u128() as u64;
+        return session_limit_delay(failures, jitter).max(attempt.cooldown);
+    }
     let minimum = match &attempt.result {
         Ok(end) => end.retry_after,
         // Lease contention is not permanent revocation. Do not hammer discovery
@@ -124,6 +171,12 @@ fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
         .min(Duration::from_secs(60))
         .max(minimum)
         .max(attempt.cooldown)
+}
+// Positive jitter preserves a minimum delay even when discovery refuses before
+// opening a socket. The plateau retains jitter rather than synchronizing bots.
+fn session_limit_delay(failures: u32, jitter: u64) -> Duration {
+    let floor_ms = 5_000u64 << failures.saturating_sub(1).min(3);
+    Duration::from_millis(floor_ms + jitter % (floor_ms / 2 + 1))
 }
 pub(super) async fn stopped(stop: &mut watch::Receiver<bool>, delay: Duration) -> bool {
     if *stop.borrow() {
@@ -138,3 +191,7 @@ pub(super) async fn stopped(stop: &mut watch::Receiver<bool>, delay: Duration) -
 #[cfg(test)]
 #[path = "source_worker_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "source_discovery_recovery_tests.rs"]
+mod recovery_tests;

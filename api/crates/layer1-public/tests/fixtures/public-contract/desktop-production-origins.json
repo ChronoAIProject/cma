@@ -1,0 +1,309 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "desktop-production-origin-owner",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.nyxid.ai",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-accept": "3SC6TZx4582OZaOogPVxMx5CGS0="
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-production-origin-anonymous",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.nyxid.ai",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-production-origin-foreign-owner",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_other_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.nyxid.ai",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-retained-origin-owner",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://bot.chrono-ai.fun",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-accept": "3SC6TZx4582OZaOogPVxMx5CGS0="
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-retained-origin-anonymous",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://bot.chrono-ai.fun",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-retained-origin-foreign-owner",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_other_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://bot.chrono-ai.fun",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/desktop_unavailable",
+          "title": "desktop_unavailable",
+          "status": 404,
+          "detail": "desktop is unavailable for this Agent",
+          "code": "desktop_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-production-denied-production-lookalike",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.nyxid.ai.evil.invalid",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-production-denied-retained-lookalike",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://bot.chrono-ai.fun.evil.invalid",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-production-denied-insecure",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "http://cma.nyxid.ai",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-production-denied-unexpected-port",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.nyxid.ai:8443",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "desktop-production-denied-path",
+      "operation": "GET /api/v1/agents/{id}/desktop/ws",
+      "scenario": "desktop_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/desktop/ws",
+        "headers": {
+          "connection": "upgrade",
+          "upgrade": "websocket",
+          "sec-websocket-version": "13",
+          "sec-websocket-key": "YWFhYWFhYWFhYWFhYWFhYQ==",
+          "origin": "https://cma.nyxid.ai/path",
+          "cookie": "session=fixture"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {},
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    }
+  ]
+}

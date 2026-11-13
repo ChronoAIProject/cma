@@ -2,6 +2,9 @@
 use super::*;
 
 pub(super) const SANDBOX_COLLECTIONS: &[&str] = &[
+    super::super::settings::SETTINGS,
+    super::super::budget::COLLECTION,
+    SANDBOX_SESSIONS,
     "sandbox_retained_availability",
     SANDBOXES,
     WORKSPACES,
@@ -31,12 +34,4 @@ pub(super) const SANDBOX_COLLECTIONS: &[&str] = &[
     CHECKPOINTS,
     WARM_SANDBOXES,
     super::super::native_prepared::COLLECTION,
-];
-pub(super) const PROFILE_COLLECTIONS: &[&str] = &[
-    AGENT_PROFILES,
-    AGENT_PROFILE_REVISIONS,
-    WORKSPACE_PROFILES,
-    WORKSPACE_PROFILE_REVISIONS,
-    SANDBOX_PROFILES,
-    SANDBOX_PROFILE_REVISIONS,
 ];

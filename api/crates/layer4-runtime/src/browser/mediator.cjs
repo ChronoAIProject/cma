@@ -18,6 +18,7 @@ let control = new BrowserControl();
 let frame;
 let state = 'not_enabled';
 let location = 'Blank page';
+let address = 'about:blank';
 let sequence = 0;
 let captures = 0;
 let bytes = 0;
@@ -37,7 +38,7 @@ function serialized(operation) {
 function status() {
   for (const [observer, deadline] of observers) if (deadline <= Date.now()) observers.delete(observer);
   if (browser?.closed) { state = 'disconnected'; frame = undefined; }
-  return { state: state === 'live' ? 'ready' : state, context_id: context ?? null, location, frame: null,
+  return { state: state === 'live' ? 'ready' : state, context_id: context ?? null, location, address: address ?? null, frame: null,
     observers: observers.size, captures, bytes, min_interval_ms: 1000, fresh_for_ms: 3000,
     max_frame_bytes: 262144, max_observers: 16 };
 }
@@ -54,6 +55,7 @@ async function disable() {
   observers.clear();
   state = 'not_enabled';
   location = 'Blank page';
+  address = 'about:blank';
   return status();
 }
 
@@ -82,8 +84,9 @@ async function enable() {
 }
 
 function safeLocation(value) {
-  if (value === 'about:blank') return 'Blank page';
+  if (value === 'about:blank') { address = value; return 'Blank page'; }
   const parsed = new URL(value);
+  address = ['http:', 'https:'].includes(parsed.protocol) ? parsed.origin : undefined;
   return ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname) ? 'Local page' : 'Web page';
 }
 

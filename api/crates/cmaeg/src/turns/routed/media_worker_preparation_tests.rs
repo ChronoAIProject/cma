@@ -5,6 +5,8 @@ use crate::{
     turns::routed::{FrozenTurnBuilder, ProductionFrozenTurnBuilder},
 };
 use tokio::sync::{Notify, Semaphore};
+#[path = "media_worker_expiry_tests.rs"]
+mod expiry;
 
 const AUDIO: &[u8] = b"RIFF\x10\x00\x00\x00WAVEfmt \x00\x00\x00\x00";
 const WORDS: &str = "Transcript released only after the original response completed.";
@@ -13,6 +15,7 @@ struct HeldTranscript {
     calls: AtomicUsize,
     entered: Notify,
     release: Semaphore,
+    completed: Notify,
 }
 impl Transcriber for HeldTranscript {
     fn enabled(&self) -> bool {
@@ -30,6 +33,7 @@ impl Transcriber for HeldTranscript {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.entered.notify_one();
             self.release.acquire().await.unwrap().forget();
+            self.completed.notify_one();
             Ok(Transcript {
                 text: WORDS.into(),
                 usage_seconds: Some(1),
@@ -120,6 +124,7 @@ async fn real_pending_preparation_delivers_late_transcript_to_same_agent_and_cus
         calls: AtomicUsize::new(0),
         entered: Notify::new(),
         release: Semaphore::new(0),
+        completed: Notify::new(),
     });
     let media = inline_media_with(speech.clone());
     // Only this fixture's wait is short; no production budget or clock changes.

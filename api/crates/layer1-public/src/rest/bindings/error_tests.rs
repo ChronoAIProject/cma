@@ -1,6 +1,22 @@
 use super::*;
 
 #[tokio::test]
+async fn operator_pause_is_safe_and_paces_binding_event_retries() {
+    let response = error(BindingError::AdmissionPaused);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(response.headers()["retry-after"], "60");
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["code"], "admission_paused");
+    assert_eq!(
+        body["detail"],
+        layer2_core::admission::ADMISSION_PAUSED_GUIDANCE
+    );
+}
+
+#[tokio::test]
 async fn unsupported_update_explains_that_retained_work_is_unchanged() {
     let response = error(BindingError::ReconfigurationUnsupported);
     assert_eq!(response.status(), StatusCode::CONFLICT);

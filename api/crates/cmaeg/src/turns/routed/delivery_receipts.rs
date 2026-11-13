@@ -1,16 +1,54 @@
 //! Persist exact delivery receipts before acknowledging a provider cursor.
 use super::{
     delivery_state::DeliveryStatus,
+    dispatcher::{admission_error, current_target},
     storage,
     tool_reply_store::{ReplyClaim, ReplyStore},
-    ExecutionError, Lease, RoutedDelivery,
+    ExecutionError, FrozenTurn, Lease, RoutedDelivery, ToolReplyStatus,
 };
 use crate::delivery::{
     intents::{DeliveryOutcome, IntentReceipt},
     retained_receipt::INLINE_LIMIT,
 };
 
+use crate::ingress::routing_store::EventIdentity;
+
 impl RoutedDelivery {
+    pub async fn tool_reply_status(
+        &self,
+        identity: &EventIdentity,
+        target_id: &str,
+        lease: &Lease,
+        body: &FrozenTurn,
+    ) -> Result<ToolReplyStatus, ExecutionError> {
+        let plan = self
+            .plans
+            .load(identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Invalid)?;
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == target_id)
+            .ok_or(ExecutionError::Invalid)?;
+        if lease.state.id != target.id
+            || lease.state.root != plan.admission_id
+            || lease.state.owner != plan.identity.owner
+            || lease.state.request_hash != plan.request_hash
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        self.journal.guard(lease).await?;
+        body.validate_settlement(&plan, target, &self.journal.keys, (self.journal.clock)())?;
+        current_target(self.authority.as_ref(), &plan, target).await?;
+        let status = ReplyStore(self.journal.clone())
+            .status(&plan, target)
+            .await?;
+        self.journal.guard(lease).await?;
+        Ok(status)
+    }
+
     pub(super) async fn record_receipt(
         &self,
         lease: &mut Lease,

@@ -5,6 +5,23 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn checkpoint_reconciles_ambiguous_quiet_and_boundary_commits_without_duplicate_logs() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _metrics = metrics::set_default_local_recorder(&recorder);
+    let terminal_count = || -> f64 {
+        handle
+            .render()
+            .lines()
+            .filter(|line| line.starts_with("cma_terminal_publications_total{"))
+            .map(|line| {
+                line.split_whitespace()
+                    .last()
+                    .unwrap()
+                    .parse::<f64>()
+                    .unwrap()
+            })
+            .sum()
+    };
     let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
     let suffix = uuid::Uuid::new_v4().simple().to_string();
     let app_name = format!("cma-message-checkpoint-{suffix}");
@@ -51,6 +68,8 @@ async fn checkpoint_reconciles_ambiguous_quiet_and_boundary_commits_without_dupl
             .await
             .expect("disable failpoint before assertions");
         assert_eq!(result.unwrap(), checkpoint.outcome);
+        let before_replay = terminal_count();
+        assert_eq!(before_replay, if quiet { 0. } else { 1. });
         assert_eq!(
             store.agent_message_checkpoint(&current.id).await.unwrap(),
             Some(checkpoint.clone())
@@ -66,6 +85,11 @@ async fn checkpoint_reconciles_ambiguous_quiet_and_boundary_commits_without_dupl
                 .await
                 .unwrap(),
             checkpoint.outcome
+        );
+        assert_eq!(
+            terminal_count(),
+            before_replay,
+            "retained checkpoint terminal was counted twice"
         );
         let expected_agent = mutation
             .map(|value| value.agent)

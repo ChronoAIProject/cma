@@ -2,15 +2,16 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
-import { Input } from '../ui/Input';
-import { IconSendOutline16 } from '../ui/icons';
-import { validRepository } from './repository';
+import { validRepository, validRepositoryRef } from './repository';
 import { useLifecycleIntent } from './lifecycleIntent';
+import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
-import { DesktopOption } from './DesktopOption';
-import { MachineOption } from './MachineOption';
+import { TaskComposer } from './TaskComposer';
+import { RunTargetMenu } from './RunTargetMenu';
+import { RepositoryChip } from './RepositoryChip';
+import { TaskTemplates } from './TaskTemplates';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
@@ -18,23 +19,11 @@ import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
 import './TaskHome.css';
+import './TaskFeedback.css';
 
-const templates = [
-  [
-    'Research a topic',
-    'Compare three tools and summarize their strengths, limitations, and sources.',
-  ],
-  [
-    'Analyze a spreadsheet',
-    'Create a spreadsheet to compare options, with clear columns and formulas.',
-  ],
-  [
-    'Write a document',
-    'Write a concise document explaining the problem, findings, and next steps.',
-  ],
-  ['Build a website', 'Build a responsive website for this idea: '],
-  ['Write code', 'Implement this feature and verify its behavior: '],
-] as const;
+const recoverTask = { label: 'Recover original task', kind: 'recover' } as const;
+const continueTask = { label: 'Continue original task', kind: 'recover' } as const;
+const retryTaskStatus = { label: 'Retry task status', kind: 'status' } as const;
 
 export interface TaskHomeProps {
   readonly client: CmaWebClient;
@@ -56,7 +45,7 @@ export function TaskHome(props: TaskHomeProps) {
   )
     setScope({ client, viewerId, workspaceId, sandboxId, generation: scope.generation + 1 });
   return (
-    <TaskComposer
+    <TaskHomeContent
       key={scope.generation}
       {...props}
       onRefresh={() => setScope((value) => ({ ...value, generation: value.generation + 1 }))}
@@ -64,7 +53,7 @@ export function TaskHome(props: TaskHomeProps) {
   );
 }
 
-function TaskComposer({
+function TaskHomeContent({
   client,
   viewerId,
   workspaceId,
@@ -75,14 +64,15 @@ function TaskComposer({
 }: TaskHomeProps & { readonly onRefresh: () => void }) {
   const policy = useTaskExperience(client, viewerId);
   const [manual, setManual] = useState(false);
-  const inputId = useId();
+  const [recovering, setRecovering] = useState(false);
   const titleId = useId();
   const errorId = useId();
   const draft = useTaskDraft(viewerId, workspaceId, sandboxId);
   const input = useRef<HTMLTextAreaElement>(null);
   const [validation, setValidation] = useState<string>();
-  const [desktopAvailable, setDesktopAvailable] = useState(false);
-  const [repositorySupported, setRepositorySupported] = useState(false);
+  const [repositorySupported, setRepositorySupported] = useState<boolean | undefined>(() =>
+    client.readTaskRepositorySupport ? undefined : false,
+  );
   useEffect(() => {
     const abort = new AbortController();
     void client.readTaskRepositorySupport?.({ signal: abort.signal }).then(
@@ -111,6 +101,7 @@ function TaskComposer({
     );
     return () => abort.abort();
   }, [client]);
+  const contextual = Boolean(workspaceId || sandboxId);
   const canCreate = Boolean(viewerId && (workspaceId || sandboxId || canCreateSandbox));
   const machineIncludedAvailable = Boolean(
     viewerId && !workspaceId && !sandboxId && canCreateSandbox,
@@ -118,6 +109,10 @@ function TaskComposer({
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const connections = useConnectionGate(Boolean(viewerId), client);
   const { intent, operation } = lifecycle;
+  const failure = lifecycleFailureMessage(
+    lifecycle.failure,
+    intent?.receipt ? retryTaskStatus : lifecycle.connection ? continueTask : recoverTask,
+  );
   const agent = useLifecycleAgent(
     client,
     operation,
@@ -141,19 +136,49 @@ function TaskComposer({
     handoff();
     onCreated({ kind: 'agent', agentId: agent.id });
   }, [agent, handoff, lifecycle, onCreated, operation]);
+  const preparationStatus = operation?.status ?? intent?.receipt?.status;
+  const preparing =
+    (!recovering || Boolean(intent?.receipt)) &&
+    !failure &&
+    !lifecycle.connection &&
+    preparationStatus !== 'failed' &&
+    preparationStatus !== 'waiting_for_connection' &&
+    preparationStatus !== 'succeeded' &&
+    (lifecycle.pending || Boolean(intent?.receipt));
   return (
-    <section className="task-home" aria-labelledby={titleId}>
-      <h1 id={titleId}>What should your Agent work on?</h1>
-      <p className="task-home__intro">
-        It gets its own computer, works through the task step by step, and asks you when it needs a
-        decision.
-      </p>
-      {!policy.task_home_admission && !intent ? (
+    <section
+      className="task-home"
+      data-task-home
+      data-contextual={contextual || undefined}
+      aria-labelledby={titleId}
+    >
+      {!contextual ? (
         <>
-          <p role="status">
+          <span className="task-home__label">
+            <span className="task-home__dot" aria-hidden="true" />
+            New agent
+          </span>
+          <h1 id={titleId}>What should your Agent work on?</h1>
+          <p className="task-home__intro">
+            Give it a task. Your Agent works through it on a cloud computer.
+          </p>
+        </>
+      ) : (
+        <h2 className="sr-only" id={titleId}>
+          New task in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}
+        </h2>
+      )}
+      {policy.settled && !policy.task_home_admission && !intent ? (
+        <>
+          <p className="task-home__status" role="status">
             Task creation is unavailable. You can create an Agent and start a conversation.
           </p>
-          <Button disabled={lifecycle.blocked || !canCreate} onClick={() => setManual(true)}>
+          <Button
+            variant="outline"
+            placement="task-home__action"
+            disabled={lifecycle.blocked || !canCreate}
+            onClick={() => setManual(true)}
+          >
             New agent
           </Button>
         </>
@@ -170,7 +195,9 @@ function TaskComposer({
         />
       ) : null}
       {workspaceId || sandboxId ? (
-        <p>Creating in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}</p>
+        <p className="task-home__context">
+          Creating in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}
+        </p>
       ) : null}
       <form
         onSubmit={(event) => {
@@ -185,14 +212,14 @@ function TaskComposer({
             return;
           const invalid =
             draft.machineIncluded && !machineIncludedAvailable
-              ? 'A shared desktop requires a new Sandbox. Keep the task and clear the shared desktop option.'
-              : draft.desktop && (!desktopAvailable || !policy.desktop_enable)
-                ? 'Desktop is unavailable. Keep the task and clear the desktop option, or try again later.'
-                : !draft.text.trim()
-                  ? 'Describe a task before starting.'
-                  : new TextEncoder().encode(draft.text).length > 262144
-                    ? 'Your task exceeds the 262144-byte limit.'
-                    : draft.repositoryUrl && !repositorySupported
+              ? 'A shared desktop requires a new Sandbox. Keep the task and clear Shared desktop in the Cloud computer menu.'
+              : !draft.text.trim()
+                ? 'Describe a task before starting.'
+                : new TextEncoder().encode(draft.text).length > 262144
+                  ? 'Your task exceeds the 262144-byte limit.'
+                  : draft.repositoryUrl && repositorySupported === undefined
+                    ? 'Checking repository support. Wait for the check to finish before starting.'
+                    : draft.repositoryUrl && repositorySupported === false
                       ? 'Repository tasks are unavailable on this service. Clear the repository to start an empty workspace.'
                       : !validRepository(draft.repositoryUrl)
                         ? 'Enter an HTTPS GitHub repository URL.'
@@ -203,10 +230,10 @@ function TaskComposer({
           setValidation(invalid);
           if (invalid) return;
           if (!draft.persist()) return;
+          setRecovering(false);
           void lifecycle.submit({
             name: 'New task',
             initial_message: draft.text,
-            ...(draft.desktop ? { desktop: true } : {}),
             ...(draft.machineIncluded ? { machine_included: true } : {}),
             ...(!workspaceId && !sandboxId && draft.repositoryUrl
               ? {
@@ -221,156 +248,139 @@ function TaskComposer({
           });
         }}
       >
-        <div className="task-home__composer">
-          <textarea
-            className="task-home__input"
-            aria-label="Your task"
-            placeholder="Describe a task, ask a question, or share an idea…"
-            ref={input}
-            id={inputId}
-            value={draft.text}
-            aria-invalid={validation !== undefined}
-            aria-describedby={validation ? errorId : undefined}
-            onChange={(event) => {
-              setValidation(undefined);
-              draft.change(event.target.value);
-            }}
+        <TaskComposer
+          text={draft.text}
+          input={input}
+          validation={validation}
+          errorId={errorId}
+          disabled={
+            !policy.task_home_admission ||
+            lifecycle.pending ||
+            Boolean(intent) ||
+            !canCreate ||
+            supported !== true
+          }
+          onChange={(text) => {
+            setValidation(undefined);
+            draft.change(text);
+          }}
+        >
+          <RunTargetMenu
+            workspaceId={workspaceId}
+            sandboxId={sandboxId}
+            recordedDesktop={intent?.body.desktop === true}
+            machineIncluded={intent ? intent.body.machine_included === true : draft.machineIncluded}
+            machineIncludedAvailable={machineIncludedAvailable}
+            frozen={Boolean(intent)}
+            onMachineChange={draft.changeMachineIncluded}
           />
-          <div className="task-home__options">
-            <details className="task-home__option">
-              <summary>{draft.repositoryUrl ? 'Repository added' : 'Add a GitHub repo'}</summary>
-              <div className="task-home__settings">
-                {!workspaceId &&
-                !sandboxId &&
-                (repositorySupported || draft.repositoryUrl || draft.repositoryRef) ? (
-                  <>
-                    <label className="field__label" htmlFor={`${inputId}-repository`}>
-                      GitHub repository
-                    </label>
-                    <Input
-                      id={`${inputId}-repository`}
-                      type="url"
-                      value={draft.repositoryUrl}
-                      placeholder="Optional · https://github.com/owner/repository"
-                      onChange={(event) =>
-                        draft.changeRepository(event.target.value, draft.repositoryRef)
-                      }
-                    />
-                    <label className="field__label" htmlFor={`${inputId}-ref`}>
-                      Repository ref
-                    </label>
-                    <Input
-                      id={`${inputId}-ref`}
-                      value={draft.repositoryRef}
-                      placeholder="Default branch"
-                      onChange={(event) =>
-                        draft.changeRepository(draft.repositoryUrl, event.target.value)
-                      }
-                    />
-                    <p>The requested ref is verified during preparation.</p>
-                    {draft.repositoryUrl || draft.repositoryRef ? (
-                      <Button onClick={() => draft.changeRepository('', '')}>
-                        Clear repository
-                      </Button>
-                    ) : null}
-                  </>
-                ) : (
-                  <p>
-                    {workspaceId || sandboxId
-                      ? 'Repository context is inherited. Start from Home to choose another repository.'
-                      : 'Repository tasks are unavailable on this service.'}
-                  </p>
-                )}
-              </div>
-            </details>
-            <details className="task-home__option">
-              <summary>
-                {draft.machineIncluded || draft.desktop ? 'Desktop selected' : 'Desktop options'}
-              </summary>
-              <div className="task-home__settings">
-                <MachineOption
-                  available={machineIncludedAvailable}
-                  enabled={intent ? intent.body.machine_included === true : draft.machineIncluded}
-                  frozen={Boolean(intent)}
-                  onChange={draft.changeMachineIncluded}
-                />
-                <DesktopOption
-                  policyAllowed={policy.desktop_enable}
-                  client={client}
-                  workspaceId={workspaceId}
-                  sandboxId={sandboxId}
-                  enabled={intent ? intent.body.desktop === true : draft.desktop}
-                  frozen={Boolean(intent)}
-                  onChange={draft.changeDesktop}
-                  onAvailable={setDesktopAvailable}
-                />
-              </div>
-            </details>
-            <Button
-              type="submit"
-              variant="primary"
-              icon={<IconSendOutline16 />}
-              aria-label="Start task"
-              disabled={
-                !policy.task_home_admission ||
-                lifecycle.pending ||
-                Boolean(intent) ||
-                !canCreate ||
-                supported !== true
+          <span className="task-home__divider" aria-hidden="true" />
+          <div
+            className="task-home__repository-slot"
+            data-has-repository={Boolean(draft.repositoryUrl || draft.repositoryRef) || undefined}
+          >
+            <RepositoryChip
+              url={draft.repositoryUrl}
+              reference={draft.repositoryRef}
+              onChange={draft.changeRepository}
+              checking={!contextual && repositorySupported === undefined}
+              unavailableReason={
+                workspaceId || sandboxId
+                  ? 'Repository context is inherited. Start from Home to choose another repository.'
+                  : repositorySupported === undefined
+                    ? 'Checking repository support…'
+                    : repositorySupported === false
+                      ? 'Repository tasks are unavailable on this service.'
+                      : undefined
               }
             />
           </div>
-        </div>
+        </TaskComposer>
       </form>
-      <div className="task-home__templates" role="group" aria-label="Task templates">
-        {templates.map(([name, text]) => (
-          <Button
-            key={name}
-            variant="outline"
-            onClick={() => {
-              draft.change(text);
-              input.current?.focus();
-            }}
-          >
-            {name}
-          </Button>
-        ))}
-      </div>
-      <p className="task-home__defaults">GPT-6 · High reasoning · Autonomous</p>
-      {supported === undefined ? <p role="status">Checking task creation…</p> : null}
-      {supported === false ? (
-        <p role="status">Task creation is unavailable on this service.</p>
+      {preparing ? (
+        <p className="task-home__preparing" role="status">
+          <span className="task-home__dot" aria-hidden="true" />
+          {contextual ? 'Preparing your Agent…' : 'Preparing a cloud computer for your Agent…'}
+        </p>
       ) : null}
-      {!canCreate ? <p role="alert">You do not have permission to create a new Sandbox.</p> : null}
+      <TaskTemplates
+        onSelect={(text) => {
+          setValidation(undefined);
+          draft.change(text);
+          requestAnimationFrame(() => {
+            input.current?.focus();
+            const placeholder = /\[[^\]]+\]/.exec(text);
+            if (placeholder)
+              input.current?.setSelectionRange(
+                placeholder.index,
+                placeholder.index + placeholder[0].length,
+              );
+          });
+        }}
+      />
+      <p className="task-home__defaults">
+        <span className="task-home__dot" aria-hidden="true" />
+        GPT-6 · High reasoning · Autonomous
+      </p>
+      {supported === undefined ? (
+        <p className="sr-only" role="status">
+          Checking task creation…
+        </p>
+      ) : null}
+      {supported === false ? (
+        <p className="task-home__status" role="status">
+          Task creation is unavailable on this service.
+        </p>
+      ) : null}
+      {!canCreate ? (
+        <p className="task-home__alert" role="alert">
+          You do not have permission to create a new Sandbox.
+        </p>
+      ) : null}
       {validation ? (
-        <p id={errorId} role="alert">
+        <p className="task-home__alert" id={errorId} role="alert">
           {validation}
         </p>
       ) : null}
       {intent ? (
-        <section aria-label="Submitted task">
+        <section className="task-submitted" aria-label="Submitted task">
           <h2>Submitted task</h2>
-          <pre>{intent.body.initial_message}</pre>
+          <p className="task-submitted__text">{intent.body.initial_message}</p>
           {intent.body.repository ? (
             <>
-              <pre>{intent.body.repository.url}</pre>
-              <p>Requested ref: {intent.body.repository.ref ?? 'Default branch'}</p>
-              <p>Checkout commit: {agent?.workspace.resolvedCommit ?? 'Not prepared yet'}</p>
+              <p className="task-submitted__literal">{intent.body.repository.url}</p>
+              <dl>
+                <div>
+                  <dt>Requested ref</dt>
+                  <dd>{intent.body.repository.ref ?? 'Default branch'}</dd>
+                </div>
+                <div>
+                  <dt>Checkout commit</dt>
+                  <dd>{agent?.workspace.resolvedCommit ?? 'Not prepared yet'}</dd>
+                </div>
+              </dl>
             </>
           ) : null}
         </section>
       ) : null}
       {intent && !intent.receipt && !lifecycle.connection ? (
         <Button
+          variant="outline"
+          placement="task-home__action"
           disabled={lifecycle.pending || lifecycle.blocked}
-          onClick={() => void lifecycle.submit()}
+          onClick={() => {
+            setRecovering(true);
+            void lifecycle.submit();
+          }}
         >
-          Recover original task
+          {recoverTask.label}
         </Button>
       ) : null}
       {connections.dialog}
       {lifecycle.connection ? (
         <Button
+          variant="outline"
+          placement="task-home__action"
           disabled={lifecycle.pending || lifecycle.blocked || connections.pending}
           onClick={() => {
             if (viewerId && lifecycle.connection)
@@ -381,26 +391,35 @@ function TaskComposer({
               );
           }}
         >
-          Continue original task
+          {continueTask.label}
         </Button>
       ) : null}
-      {intent?.receipt ? (
-        <p role="status">
-          {operation?.status === 'failed'
+      {intent?.receipt && !preparing && !failure ? (
+        <p className="task-home__status" role="status">
+          {preparationStatus === 'failed'
             ? 'Task accepted, but Agent preparation failed.'
-            : operation?.status === 'waiting_for_connection'
+            : preparationStatus === 'waiting_for_connection'
               ? 'Task accepted. A connection check is required.'
-              : operation?.status === 'succeeded'
+              : preparationStatus === 'succeeded'
                 ? 'Agent prepared. Verifying access to your task.'
-                : 'Task accepted. Preparing your Agent.'}
+                : 'Task accepted. Checking task preparation.'}
         </p>
       ) : null}
-      {intent?.receipt ? <p>Task progress and results appear in the conversation.</p> : null}
+      {intent?.receipt && preparationStatus !== 'failed' ? (
+        <p className="task-home__status">Task progress and results appear in the conversation.</p>
+      ) : null}
       {intent?.receipt ? (
-        <AgentProvisioningProgress receipt={intent.receipt} operation={operation} />
+        <AgentProvisioningProgress
+          receipt={intent.receipt}
+          operation={operation}
+          announce={!preparing}
+          presentation="task"
+        />
       ) : null}
       {intent?.receipt && operation?.status === 'failed' ? (
         <Button
+          variant="outline"
+          placement="task-home__action"
           onClick={() => {
             if (lifecycle.clear()) input.current?.focus();
           }}
@@ -408,28 +427,26 @@ function TaskComposer({
           Start another task
         </Button>
       ) : null}
-      {draft.error ? <p role="alert">{draft.error}</p> : null}
-      {lifecycle.failure ? <p role="alert">{lifecycle.failure}</p> : null}
-      {lifecycle.failure && intent?.receipt ? (
-        <Button onClick={lifecycle.retryStatus}>Retry task status</Button>
+      {draft.error ? (
+        <p className="task-home__alert" role="alert">
+          {draft.error}
+        </p>
       ) : null}
-      {connections.error ? <p role="alert">{connections.error}</p> : null}
+      {failure ? (
+        <p className="task-home__alert" role="alert">
+          {failure}
+        </p>
+      ) : null}
+      {failure && intent?.receipt ? (
+        <Button variant="outline" placement="task-home__action" onClick={lifecycle.retryStatus}>
+          {retryTaskStatus.label}
+        </Button>
+      ) : null}
+      {connections.error ? (
+        <p className="task-home__alert" role="alert">
+          {connections.error}
+        </p>
+      ) : null}
     </section>
-  );
-}
-
-function validRepositoryRef(value: string) {
-  return (
-    new TextEncoder().encode(value).length <= 255 &&
-    !value.startsWith('-') &&
-    ![...value].some(
-      (character) =>
-        character.charCodeAt(0) < 33 ||
-        character.charCodeAt(0) === 127 ||
-        /\s/.test(character) ||
-        '~^:?*[\\'.includes(character),
-    ) &&
-    !value.includes('..') &&
-    !value.includes('@{')
   );
 }

@@ -21,9 +21,13 @@ import {
 export function AgentProvisioningProgress({
   receipt,
   operation,
+  announce = true,
+  presentation,
 }: {
   readonly receipt: AgentLifecycleCreateReceipt;
   readonly operation?: AgentLifecycleOperationView;
+  readonly announce?: boolean;
+  readonly presentation?: 'task';
 }) {
   const status = operation?.status ?? receipt.status ?? 'queued';
   const events = orderedProvisioningEvents(operation);
@@ -66,7 +70,11 @@ export function AgentProvisioningProgress({
     ['In progress', 'Waiting for connection', 'Needs attention'].includes(step.state),
   );
   return (
-    <section className="agent-lifecycle-provisioning" aria-label="Agent provisioning progress">
+    <section
+      className="agent-lifecycle-provisioning"
+      data-presentation={presentation}
+      aria-label="Agent provisioning progress"
+    >
       <h3>
         {status === 'failed'
           ? 'Agent provisioning needs attention'
@@ -74,7 +82,7 @@ export function AgentProvisioningProgress({
             ? 'Agent ready'
             : 'Preparing your Agent'}
       </h3>
-      <p role="status">
+      <p role={announce ? 'status' : undefined}>
         {status === 'failed'
           ? (operation?.error ?? 'Agent provisioning failed.')
           : status === 'waiting_for_connection'

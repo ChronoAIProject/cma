@@ -24,6 +24,9 @@ pub struct ProviderBinding {
     pub target: ProviderTarget,
     pub binding_id: BindingId,
     pub level: ConformanceLevel,
+    /// Server-negotiated capabilities retained with the existing binding write.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
 }
 
 /// Generic provider target. Instance selection and authorization stay with the

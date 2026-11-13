@@ -71,7 +71,10 @@ impl AgentManager {
         // Start renewal during composition: dependency startup may exceed a lease.
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::time::sleep(Duration::from_millis(
+                    layer2_core::agent_ownership::HEARTBEAT_INTERVAL_MS,
+                ))
+                .await;
                 let Some(manager) = weak.upgrade() else {
                     return;
                 };

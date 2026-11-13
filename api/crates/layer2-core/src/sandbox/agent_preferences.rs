@@ -108,6 +108,7 @@ impl AgentOperationService {
         policy: std::sync::Arc<dyn AgentInstructionPolicy>,
     ) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
+            skill_upgrades_enabled: self.skill_upgrades_enabled,
             instruction_policy: policy,
             settings_authority: self.settings_authority.clone(),
             command_claim: self.command_claim.clone(),

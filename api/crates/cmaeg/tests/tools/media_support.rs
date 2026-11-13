@@ -2,6 +2,8 @@
 //! sealed into its event_ref, served by a media service over in-memory
 //! sources, a fake transcriber and a fake visual extractor, or the media
 //! transformer's production adapters over a scripted transformer.
+#[path = "media_native.rs"]
+mod native_fixtures;
 use super::media::fakes::{attachment, FakeSource};
 use bytes::Bytes;
 use cmaeg::{
@@ -28,10 +30,10 @@ use cmaeg::{
 };
 use cmaeg_core::{
     activity::{ActivityKind, Attachment, AttachmentKind, AttachmentSource, SourceKind},
-    channel::Platform,
     seal::{event_ref::activity_digest, EventRef, MasterKeyRing, ReplyAddress},
 };
 use futures_util::future::BoxFuture;
+pub use native_fixtures::NativeMediaPlatform;
 use serde_json::Value;
 use std::{
     num::NonZeroU32,
@@ -183,8 +185,9 @@ pub struct MediaFakes {
 pub struct MediaSetup {
     pub fakes: MediaFakes,
     pub attachments: Vec<Attachment>,
-    /// A natively received Telegram message instead of a relayed one.
-    pub native: bool,
+    /// A natively received message instead of a relayed one, with its exact
+    /// source and reply address retained in the sealed event.
+    pub native: Option<NativeMediaPlatform>,
     /// A custom event instead of a relayed message.
     pub custom: bool,
     /// The providers whose bindings install the gateway tools.
@@ -212,7 +215,7 @@ impl MediaSetup {
         Self {
             fakes: MediaFakes::default(),
             attachments,
-            native: false,
+            native: None,
             custom: false,
             tool_providers: vec!["cma_codex"],
             global_mints: None,
@@ -226,7 +229,22 @@ impl MediaSetup {
     }
 
     pub fn native(mut self) -> Self {
-        self.native = true;
+        self.native = Some(NativeMediaPlatform::Telegram);
+        self
+    }
+
+    pub fn native_discord(mut self) -> Self {
+        self.native = Some(NativeMediaPlatform::Discord);
+        self
+    }
+
+    pub fn native_whatsapp(mut self) -> Self {
+        self.native = Some(NativeMediaPlatform::Whatsapp);
+        self
+    }
+
+    pub fn native_whatsapp_group(mut self) -> Self {
+        self.native = Some(NativeMediaPlatform::WhatsappGroup);
         self
     }
 
@@ -287,11 +305,8 @@ impl MediaSetup {
     /// `request` with this setup's activity, under an event_ref resealed
     /// with that activity's digest (or with none).
     pub fn retarget(&self, mut request: LaunchRequest, keys: &MasterKeyRing) -> LaunchRequest {
-        if self.native {
-            request.activity.source = SourceKind::Telegram {
-                platform: Platform::Telegram,
-                bot_id: "77".into(),
-            };
+        if let Some(native) = self.native {
+            native.retarget(&mut request.activity);
         }
         if self.custom {
             request.activity.source = SourceKind::Custom;
@@ -310,6 +325,9 @@ impl MediaSetup {
             .unwrap()
             .payload;
         payload.activity_sha256 = self.digest.then(|| activity_digest(&request.activity));
+        if let Some(native) = self.native {
+            payload.reply = native.reply(self.edit);
+        }
         if self.custom {
             // A custom event without a result sink has no reply address.
             payload.reply = ReplyAddress::None;

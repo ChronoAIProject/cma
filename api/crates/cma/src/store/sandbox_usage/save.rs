@@ -58,6 +58,10 @@ async fn apply(
         .await
         .map_err(Driver)?
         .ok_or(Domain(SandboxStoreError::NotFound))?;
+    crate::store::sandboxes::read_sandbox(&current)
+        .map_err(Domain)?
+        .validate_retirement_archive_successor(sandbox)
+        .map_err(|_| Domain(SandboxStoreError::Conflict))?;
     let previous_revision = expected;
     let expected = signed(expected, "sandbox revision")
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;

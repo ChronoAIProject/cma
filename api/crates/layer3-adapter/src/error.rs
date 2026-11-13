@@ -20,10 +20,18 @@ pub enum AdapterError {
     InputAuthorityUnavailable(String),
     #[error("runtime unavailable: {0}")]
     Unavailable(String),
+    /// A create readiness observation; it does not prove runtime loss or permit replacement.
+    #[error("native claim is not ready: {0}")]
+    NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    #[error("skill upgrade refused: {0}")]
+    SkillUpgradeRefused(crate::AgentSkillUpgradeRefusal),
     #[error("runtime rejected conflicting operation identity: {0}")]
     OperationIdentityConflict(String),
+    /// Reachable runtime whose retained mutation ledger cannot admit work.
+    #[error("runtime ledger hold: {0}")]
+    RuntimeLedgerHold(String),
     #[error("no capacity for the requested runtime: {0}")]
     AtCapacity(String),
     #[error("runtime capability is not supported: {0}")]
@@ -44,9 +52,14 @@ impl AdapterError {
                 Self::InputAuthorityUnavailable(format!("{context}: {message}"))
             }
             Self::Unavailable(message) => Self::Unavailable(format!("{context}: {message}")),
+            guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => Self::Rejected(format!("{context}: {message}")),
+            refusal @ Self::SkillUpgradeRefused(_) => refusal,
             Self::OperationIdentityConflict(message) => {
                 Self::OperationIdentityConflict(format!("{context}: {message}"))
+            }
+            Self::RuntimeLedgerHold(message) => {
+                Self::RuntimeLedgerHold(format!("{context}: {message}"))
             }
             Self::AtCapacity(message) => Self::AtCapacity(format!("{context}: {message}")),
             Self::Unsupported(message) => Self::Unsupported(format!("{context}: {message}")),

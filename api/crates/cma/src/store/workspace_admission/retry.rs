@@ -27,3 +27,23 @@ pub(in crate::store) enum ApplyError {
     Driver(mongodb::error::Error),
     Retry(mongodb::error::Error),
 }
+
+impl From<super::super::sandbox_events::TransactionEventError> for ApplyError {
+    fn from(error: super::super::sandbox_events::TransactionEventError) -> Self {
+        use super::super::sandbox_events::TransactionEventError;
+        match error {
+            TransactionEventError::Domain(error) => Self::Domain(error),
+            TransactionEventError::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+impl From<super::super::agent_conversation_store::ApplyError> for ApplyError {
+    fn from(error: super::super::agent_conversation_store::ApplyError) -> Self {
+        use super::super::agent_conversation_store::ApplyError as Budget;
+        match error {
+            Budget::Domain(error) => Self::Domain(error),
+            Budget::Driver(error) => Self::Driver(error),
+        }
+    }
+}

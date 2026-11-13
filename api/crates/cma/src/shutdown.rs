@@ -68,6 +68,9 @@ impl ShutdownCoordinator {
         for worker in overdue {
             report(worker.await);
         }
+        // Joined workers have released their read guards, including cancellation
+        // at the drain deadline. Export those final totals before returning.
+        crate::read_telemetry::emit();
         aborted
     }
 }

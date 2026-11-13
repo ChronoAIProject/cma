@@ -14,6 +14,7 @@ pub(crate) fn sandbox(suffix: &str) -> Sandbox {
             id: SandboxProfileId("sbp_admission".into()),
             revision: 1,
             digest: "a".repeat(64),
+            always_on: None,
             content: SandboxProfileContent {
                 runtime_image: None,
                 cpu_millis: 1_000,

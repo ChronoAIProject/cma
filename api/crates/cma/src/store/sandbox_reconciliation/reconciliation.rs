@@ -34,6 +34,18 @@ pub(super) async fn reconcile(
     if sandbox.as_ref() != Some(&receipt.sandbox) {
         return Ok(false);
     }
+    for recorded in &receipt.segmented {
+        let original_logs = receipt
+            .logs
+            .iter()
+            .filter(|entry| entry.agent_id == recorded.next.id);
+        if !receipt.agents.contains(&recorded.next)
+            || !original_logs.eq(recorded.logs.iter())
+            || !recorded.matches(store, &mut session).await?
+        {
+            return Ok(false);
+        }
+    }
     for expected in &receipt.agents {
         let actual = store
             .agents

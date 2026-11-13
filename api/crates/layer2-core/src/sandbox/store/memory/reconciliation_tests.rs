@@ -704,6 +704,111 @@ async fn stale_or_mismatched_runtime_observations_never_mutate_newer_authority()
 }
 
 #[tokio::test]
+async fn delayed_pending_boundary_supersedes_newer_agent_progress_for_retained_home() {
+    use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
+
+    let live = agent("agt_a", "conversation-a", 1);
+    let (store, mut original) = fixture(vec![live.clone()], true);
+    original.runtime.as_mut().unwrap().runtime_id = "agent-sandbox:runtime-old".into();
+    original.lifecycle.runtime_generation_high_water = 1;
+    original.runtime.as_mut().unwrap().provision_generation = Some(1);
+    original.runtime.as_mut().unwrap().boot_id = Some("1".repeat(32));
+    let mut home = SandboxHome::reserve(
+        &original.id,
+        HomeVolumePolicy {
+            mode: Default::default(),
+            storage_class: "storage".into(),
+            capacity_gib: 64,
+            template_name: "empty".into(),
+            template_generation: "seed".into(),
+        },
+    )
+    .unwrap();
+    home.bind(HomeVolumeReceipt {
+        native_authority: None,
+        volume_id: home.request.volume_id.clone(),
+        request_sha256: home.request.computed_sha256(),
+        storage_reference: "original-disk".into(),
+        storage_generation: "disk-generation".into(),
+    })
+    .unwrap();
+    original.lifecycle.home = Some(Box::new(home));
+    original.begin_pause(NOW.into(), None).unwrap();
+    original.validate().unwrap();
+    store
+        .lock()
+        .sandboxes
+        .insert(original.id.clone(), original.clone());
+
+    // The provider's delayed Pending/absence snapshot was taken at IDLE_AT.
+    // Agent progress committed after that boundary must make the CAS a race.
+    let mut newer = store.get_agent(&live.id).await.unwrap().unwrap();
+    newer.updated_at = NOW.into();
+    newer.revision += 1;
+    store.lock().agents.insert(newer.id.clone(), newer.clone());
+    let mut request = loss_request(&original);
+    request.retain_runtime = true;
+    request.observed_at = IDLE_AT.into();
+    assert_eq!(
+        store.recover_runtime_loss(request).await.unwrap(),
+        SandboxRuntimeLossOutcome::NotEligible
+    );
+    assert_eq!(
+        store.get_sandbox(&original.id).await.unwrap(),
+        Some(original)
+    );
+    assert_eq!(store.get_agent(&newer.id).await.unwrap(), Some(newer));
+}
+
+#[tokio::test]
+async fn fresh_retained_home_loss_still_schedules_recovery_after_old_boundary() {
+    use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
+
+    let live = agent("agt_a", "conversation-a", 1);
+    let (store, mut original) = fixture(vec![live], true);
+    original.runtime.as_mut().unwrap().runtime_id = "agent-sandbox:runtime-old".into();
+    original.lifecycle.runtime_generation_high_water = 1;
+    original.runtime.as_mut().unwrap().provision_generation = Some(1);
+    original.runtime.as_mut().unwrap().boot_id = Some("1".repeat(32));
+    let mut home = SandboxHome::reserve(
+        &original.id,
+        HomeVolumePolicy {
+            mode: Default::default(),
+            storage_class: "storage".into(),
+            capacity_gib: 64,
+            template_name: "empty".into(),
+            template_generation: "seed".into(),
+        },
+    )
+    .unwrap();
+    home.bind(HomeVolumeReceipt {
+        native_authority: None,
+        volume_id: home.request.volume_id.clone(),
+        request_sha256: home.request.computed_sha256(),
+        storage_reference: "original-disk".into(),
+        storage_generation: "disk-generation".into(),
+    })
+    .unwrap();
+    original.lifecycle.home = Some(Box::new(home));
+    original.begin_pause(NOW.into(), None).unwrap();
+    original.validate().unwrap();
+    store
+        .lock()
+        .sandboxes
+        .insert(original.id.clone(), original.clone());
+    let mut request = loss_request(&original);
+    request.retain_runtime = true;
+    request.observed_at = NOW.into();
+    assert_eq!(
+        store.recover_runtime_loss(request).await.unwrap(),
+        SandboxRuntimeLossOutcome::RecoveryScheduled
+    );
+    let recovered = store.get_sandbox(&original.id).await.unwrap().unwrap();
+    assert_eq!(recovered.lifecycle.home, original.lifecycle.home);
+    assert!(recovered.lifecycle.suspended_runtime.is_some());
+}
+
+#[tokio::test]
 async fn unbound_recovery_steps_are_intentional_but_active_without_binding_is_lost() {
     for active in [false, true] {
         let (store, mut original) = fixture(vec![], true);

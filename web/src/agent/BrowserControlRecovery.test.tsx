@@ -109,7 +109,7 @@ it('stops new input on policy closure while keeping mounted control and explicit
   fireEvent.keyDown(screen.getByRole('application'), { key: 'X' });
   expect(runtime.requests.filter((request) => request.method === 'POST')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', { name: 'Return to Agent' }));
-  await screen.findByText('Agent is controlling');
+  await screen.findByText('Agent paused · Desktop is idle');
   expect(
     runtime.requests
       .filter((request) => request.method === 'POST')
@@ -259,7 +259,7 @@ it('ignores an old account acquisition response after its panel is removed', asy
   oldPanel.unmount();
   const another = fixture();
   render(panel(another.client, 'owner-b'));
-  await screen.findByText('Agent is controlling');
+  await screen.findByText('Agent paused · Desktop is idle');
   await act(async () => acknowledge?.());
   expect(screen.queryByText('You are controlling')).not.toBeInTheDocument();
   fireEvent.keyDown(screen.getByRole('application'), { key: 'X' });
@@ -275,7 +275,7 @@ it("does not query another account's stored uncertain operation after switching 
   oldPanel.unmount();
   const next = fixture();
   render(panel(next.client, 'owner-b'));
-  await screen.findByText('Agent is controlling');
+  await screen.findByText('Agent paused · Desktop is idle');
   expect(next.requests.at(-1)?.value.operation_id).toBeUndefined();
   expect(next.requests.every((request) => request.method === 'GET')).toBe(true);
 });

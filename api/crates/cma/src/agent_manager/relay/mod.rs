@@ -3,6 +3,7 @@ mod authentication;
 mod control;
 pub(crate) use control::prestop;
 mod http;
+mod ingress;
 mod live;
 mod maintenance;
 mod reopen;
@@ -112,13 +113,39 @@ impl Relay {
         })
     }
 
-    pub(crate) fn router(
+    pub(crate) fn authenticated_routes(
+        self: &Arc<Self>,
+        router: axum::Router,
+        auth: Arc<crate::auth::AuthState>,
+    ) -> axum::Router {
+        router
+            .layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                http::route,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::attach_subject,
+            ))
+            .layer(axum::middleware::from_fn(ingress::capture))
+    }
+
+    pub(crate) fn internal_router(
         self: &Arc<Self>,
         router: axum::Router,
         manager: Arc<crate::agent_manager::AgentManager>,
     ) -> axum::Router {
-        let router = self.routes(router);
+        let router = router.merge(self.routes(axum::Router::new()));
         control::router(router, manager, self.clone())
+    }
+
+    #[cfg(test)]
+    fn router(
+        self: &Arc<Self>,
+        router: axum::Router,
+        manager: Arc<crate::agent_manager::AgentManager>,
+    ) -> axum::Router {
+        control::router(self.routes(router), manager, self.clone())
     }
 
     fn routes(self: &Arc<Self>, router: axum::Router) -> axum::Router {

@@ -66,13 +66,17 @@ impl ProviderHostedControlTransport {
                 ));
             }
             lease.current().await?;
+            #[cfg(test)]
+            Self::test_status_boundary(false);
             let response = inspection_timing::measure(
                 &sandbox_id,
                 "native_status_exchange",
                 self.status_on_native_lease(&endpoint, proof.request(), lease),
             )
             .await?;
-            proof.complete(response).map(Some)
+            #[cfg(test)]
+            Self::test_status_boundary(true);
+            inspection.complete(proof, response).await.map(Some)
         };
         tokio::time::timeout(CONTROL_DEADLINE, async {
             tokio::select! { biased;

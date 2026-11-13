@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { desktopSeccomp } from './desktop-seccomp.mjs';
+import { runtimeToolVersions } from './runtime-image-probe.mjs';
 
 const [imageRef, revision, destination] = process.argv.slice(2);
 assert(imageRef && /^[0-9a-f]{40}$/.test(revision) && destination);
@@ -37,7 +38,10 @@ try {
   const seccomp = resolve(temporary, 'seccomp.json');
   await desktopSeccomp(seccomp);
   const mounts = [
+    ['.github/scripts/desktop-browser-reopen.py', '/opt/desktop-browser-reopen.py'],
     ['.github/scripts/desktop-native-probe.cjs', '/opt/desktop-native-probe.cjs'],
+    ['.github/scripts/desktop-browser-input.py', '/opt/desktop-browser-input.py'],
+    ['.github/scripts/desktop-browser-page.cjs', '/opt/desktop-browser-page.cjs'],
     ['.github/scripts/desktop-vnc-probe.py', '/opt/desktop-vnc-probe.py'],
     ['.github/scripts/desktop-lifecycle-probe.py', '/opt/desktop-lifecycle-probe.py'],
     ['.github/scripts/desktop-shell-probe.py', '/opt/desktop-shell-probe.py'],
@@ -54,6 +58,12 @@ try {
     '--env', `CHRONO_RUNTIME_CONTROL_TOKEN=${token}`, ...mounts, inspected.Id]);
   docker(['start', name]);
   await waitReady();
+  // The desktop variant inherits the default image's repository harness tools.
+  result.tools = runtimeToolVersions((command, args, input = '') => {
+    const { status, stdout, error } = spawnSync('docker', ['exec', '-i', name, command, ...args],
+      { input, encoding: 'utf8', timeout: 30000 });
+    return { status: error ? null : status, stdout: stdout ?? '' };
+  });
   docker(['exec', name, 'python3', '-c',
     'import urllib.request,urllib.error;\ntry: urllib.request.urlopen("http://127.0.0.1:9090/runtime/desktop")\nexcept urllib.error.HTTPError as e: assert e.code==401\nelse: raise AssertionError("desktop was not authenticated")']);
   // No direct desktop listener may accept traffic from the Pod interface.

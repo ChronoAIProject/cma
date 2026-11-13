@@ -58,6 +58,7 @@ impl RoutedIngress {
                     native_interaction,
                     message_plan.clone(),
                     version,
+                    None,
                 )
                 .await
             {

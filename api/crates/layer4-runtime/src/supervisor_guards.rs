@@ -2,6 +2,7 @@ use std::path::Path;
 
 use super::{Phase, Supervisor};
 use crate::failure::{Result, RuntimeError};
+use crate::mutation_store::ProcessFilter;
 use crate::paths::safe_component;
 
 impl Supervisor {
@@ -17,7 +18,7 @@ impl Supervisor {
         if !layer3_adapter::same_runtime_writer(&current, &frame.runtime)
             || self.config.home_identity.is_none()
             || !self.agents.read().await.is_empty()
-            || !crate::mutation_journal::active_agents(&self.config)?.is_empty()
+            || self.mutations.active(ProcessFilter::Any).await?
         {
             return Err(RuntimeError::rejected("workspace_recovery_authority", "Workspace recovery requires the exact current runtime and an empty live and durable Agent inventory"));
         }
@@ -75,9 +76,10 @@ impl Supervisor {
                 "workspace still has an open agent",
             ));
         }
-        if crate::mutation_journal::active_agents(&self.config)?
-            .iter()
-            .any(|agent| Path::new(&agent.cwd).starts_with(&root))
+        if self
+            .mutations
+            .active(ProcessFilter::Workspace(root.to_string_lossy().into()))
+            .await?
         {
             return Err(RuntimeError::rejected(
                 "workspace_agent_open",
@@ -100,9 +102,10 @@ impl Supervisor {
                 "worktree still has an open agent",
             ));
         }
-        if crate::mutation_journal::active_agents(&self.config)?
-            .iter()
-            .any(|agent| Path::new(&agent.cwd) == worktree)
+        if self
+            .mutations
+            .active(ProcessFilter::Worktree(worktree.to_string_lossy().into()))
+            .await?
         {
             return Err(RuntimeError::rejected(
                 "worktree_agent_open",

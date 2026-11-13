@@ -1,7 +1,7 @@
 //! Shared admitted chat dispatch for relay and native transports.
 use super::{
     callbacks::{authenticated_refusal, invalid, CallbackResponse},
-    problems::problem,
+    problems::{problem, problem_document},
 };
 use crate::ingress::{
     admission::Refusal,
@@ -148,11 +148,7 @@ pub(crate) async fn dispatch(
             .into_response(),
         LaunchOutcome::Refused(error) => {
             let retry = error.code == ProblemCode::ProviderBusy;
-            let mut response = problem(
-                StatusCode::from_u16(error.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                error.code,
-                error.detail.unwrap_or_default(),
-            );
+            let mut response = problem_document(error);
             if retry {
                 response
                     .headers_mut()

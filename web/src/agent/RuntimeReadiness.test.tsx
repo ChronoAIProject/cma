@@ -153,8 +153,9 @@ it('selects the available browser without starting a hidden file read', async ()
     ...files(),
     environment: async () => ({ ...environment('available'), browser: feature('available') }),
   };
-  render(panel(agentClient({ files: fileClient }), 'files', onSelect));
-  await waitFor(() => expect(onSelect).toHaveBeenCalledWith('browser'));
+  render(panel(agentClient({ files: fileClient }), 'browser', onSelect));
+  await screen.findByRole('tab', { name: 'Screen' });
+  expect(onSelect).not.toHaveBeenCalled();
   expect(fileClient.list).not.toHaveBeenCalled();
 });
 

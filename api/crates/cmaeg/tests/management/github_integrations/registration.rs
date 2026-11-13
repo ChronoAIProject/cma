@@ -85,7 +85,7 @@ async fn old_schema_waits_for_startup_authority_then_upgrades_without_a_migratio
         )
         .await
         .unwrap();
-    let outdated = fixture.replica().await;
+    let outdated = fixture.replica_with_flag(Some(true)).await;
     let capabilities = fixture
         .read(&outdated, "/v1/github/capabilities", "token-alice")
         .await
@@ -125,7 +125,8 @@ async fn old_schema_waits_for_startup_authority_then_upgrades_without_a_migratio
     assert_eq!(capabilities["store_ready"], true);
     assert_eq!(capabilities["native_app_webhook"], true);
     assert_eq!(capabilities["app_identity_verification"], true);
-    assert_eq!(capabilities["ownership_verification"], false);
+    assert_eq!(capabilities["ownership_verification"], true);
+    assert_eq!(capabilities["durable_dispatch"], true);
     assert_eq!(capabilities["automatic_reconciliation"], false);
     assert_eq!(
         fixture

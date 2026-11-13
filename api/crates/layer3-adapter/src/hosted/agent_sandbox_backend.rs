@@ -1,4 +1,5 @@
 use super::{HostedAgentOpenSettings, HostedBackend, HostedControlTransport};
+use crate::binding_diagnostics::{adapter as timed, Stage};
 use crate::{
     agent_sandbox::AgentSandboxClient,
     provider::ProviderSandboxRequest,
@@ -6,7 +7,7 @@ use crate::{
     *,
 };
 use kube::{api::DynamicObject, ResourceExt};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub struct AgentSandboxBackend {
@@ -19,6 +20,8 @@ pub struct AgentSandboxBackend {
 mod binding;
 #[path = "agent_sandbox_context.rs"]
 mod context;
+#[path = "agent_sandbox_status.rs"]
+mod status;
 use context::observation;
 pub use context::NativeStatusInspection;
 
@@ -38,10 +41,7 @@ impl AgentSandboxBackend {
                 .await?;
         }
         let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
-        let pod = self
-            .client
-            .wait_ready(handle, Duration::from_secs(180))
-            .await?;
+        let pod = self.client.wait_ready_for_create(handle).await?;
         timing.completed("wait_ready");
         if let Some(until) = request.funded_until {
             // Readiness can consume the remaining window; never bind expired work.
@@ -55,6 +55,13 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn capacity_recovery_transport(
+        &self,
+        _handle: &RuntimeHandle,
+    ) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
+        Some(self)
+    }
+
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         self.transport.open_desktop(handle).await
     }
@@ -231,11 +238,23 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeObservation>> {
-        let Some(object) = self.client.validate_request(handle, request).await? else {
+        let Some(object) = timed(
+            Stage::NativeIdentity,
+            self.client.validate_request(handle, request),
+        )
+        .await?
+        else {
             return Ok(None);
         };
         self.bind_adopted(handle, request, &object).await?;
-        Ok(Some(observation(&object)?))
+        // The first object authorized binding, but readiness and assignment can
+        // change while that operation waits. Revalidate the exact provider
+        // object before exposing a current Running observation.
+        timed(
+            Stage::NativeIdentity,
+            self.refreshed_adoption_observation(handle, request),
+        )
+        .await
     }
     async fn inspect_native_runtime(
         &self,
@@ -293,6 +312,9 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> Result<ResponseFrame> {
+        if let RequestFrame::RuntimeStatus(status) = request {
+            return self.exchange_bound_status(handle, status).await;
+        }
         self.transport.exchange(handle, request).await
     }
 
@@ -326,6 +348,22 @@ impl HostedBackend for AgentSandboxBackend {
         self.forget_assignment(handle);
         self.transport.retire(handle).await?;
         self.client.delete(handle).await
+    }
+}
+
+#[async_trait::async_trait]
+impl super::CapacityRecoveryNativeTransport for AgentSandboxBackend {
+    async fn reattach_existing(
+        &self,
+        request: &crate::agent_capacity_recovery::CapacityRecoveryRequest,
+        updates: mpsc::Sender<ConversationUpdate>,
+    ) -> crate::agent_capacity_recovery::CapacityRecoveryResult<(
+        ConversationChannel,
+        crate::agent_capacity_recovery::CapacityRecoveryConfirmation,
+    )> {
+        self.transport
+            .reattach_existing_capacity_recovery(request, updates)
+            .await
     }
 }
 

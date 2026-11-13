@@ -12,7 +12,7 @@ use futures_util::TryStreamExt;
 use layer2_core::{
     sandbox::store::{
         AgentProvenanceBackfillStore, Page, PageRequest, ProvenanceBackfillOutcome,
-        SandboxStoreError,
+        ProvenanceBackfillProgress, SandboxStoreError,
     },
     AgentId,
 };
@@ -20,6 +20,13 @@ use mongodb::{bson::doc, ClientSession};
 
 #[async_trait::async_trait]
 impl AgentProvenanceBackfillStore for MongoSandboxStore {
+    async fn durable_provenance_backfill_step(
+        &self,
+        worker: &str,
+    ) -> Result<Option<ProvenanceBackfillProgress>, SandboxStoreError> {
+        self.provenance_progress_step(worker).await
+    }
+
     async fn scan_agent_provenance_backfill(
         &self,
         page: &PageRequest,

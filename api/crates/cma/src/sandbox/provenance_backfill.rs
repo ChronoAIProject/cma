@@ -1,6 +1,7 @@
 //! Background online provenance capture, outside startup readiness and user work.
 use layer2_core::sandbox::store::{
     AgentProvenanceBackfillStore, PageRequest, ProvenanceBackfillOutcome,
+    ProvenanceBackfillProgress,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, task::JoinHandle};
@@ -47,10 +48,44 @@ impl AgentProvenanceBackfill {
             IO_DEADLINE,
             ITEM_DELAY,
         );
+        let worker = uuid::Uuid::new_v4().to_string();
+        let mut activated = false;
         let mut page = PageRequest::new(PAGE_SIZE, None).expect("fixed bounded page");
         loop {
             if *shutdown.borrow() {
                 return;
+            }
+            match item
+                .run(|| self.store.durable_provenance_backfill_step(&worker))
+                .await
+            {
+                Ok(Some(Some(progress))) => {
+                    activated = true;
+                    page.cursor = None;
+                    match progress {
+                        ProvenanceBackfillProgress::Advanced => (),
+                        ProvenanceBackfillProgress::Busy => {
+                            tokio::time::sleep(Duration::from_secs(5)).await
+                        }
+                        ProvenanceBackfillProgress::SweepFinished => {
+                            tokio::time::sleep(SWEEP_DELAY).await
+                        }
+                    }
+                    continue;
+                }
+                Ok(Some(None)) if !activated => (),
+                Ok(Some(None)) => {
+                    tracing::warn!(
+                        "Activated provenance progress disappeared; maintenance refused"
+                    );
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
+                Ok(None) => continue,
+                Err(_) => {
+                    tracing::warn!("Durable provenance progress unavailable; retrying later");
+                    continue;
+                }
             }
             let batch = match scan
                 .run(|| self.store.scan_agent_provenance_backfill(&page))

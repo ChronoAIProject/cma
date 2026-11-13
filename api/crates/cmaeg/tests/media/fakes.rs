@@ -139,12 +139,11 @@ impl FakeSource {
 
     /// A registry with this source behind every locator type.
     pub fn registry(self: &Arc<Self>) -> Arc<SourceRegistry> {
-        Arc::new(SourceRegistry::new(
-            self.clone(),
-            self.clone(),
-            self.clone(),
-            self.clone(),
-        ))
+        Arc::new(
+            SourceRegistry::new(self.clone(), self.clone(), self.clone(), self.clone())
+                .with_discord(self.clone())
+                .with_whatsapp(self.clone()),
+        )
     }
 }
 

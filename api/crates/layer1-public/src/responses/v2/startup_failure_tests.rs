@@ -143,3 +143,58 @@ async fn starting_fixture() -> Fixture {
         access,
     }
 }
+
+#[tokio::test]
+async fn revival_refusals_keep_legacy_status_and_response_codes() {
+    for failure in [
+        CommandFailureCode::CredentialSetupRequired,
+        CommandFailureCode::ConnectionsRequired,
+    ] {
+        let f = fixture().await;
+        let response = create(&f, false).await;
+        drop(response);
+        let record = f
+            .store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .remove(0);
+        f.store
+            .reject_unclaimed_command(
+                &record.receipt.envelope.command_id,
+                record.revision,
+                failure,
+                layer2_core::now_rfc3339(),
+            )
+            .await
+            .unwrap();
+        let replay = create(&f, false).await;
+        let bytes = axum::body::to_bytes(replay.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let frames = events(&bytes);
+        let terminal = frames.last().unwrap();
+        assert_eq!(terminal["type"], "response.failed");
+        assert_eq!(
+            terminal["response"]["error"]["code"],
+            "agent_command_execution_failed"
+        );
+        assert_eq!(
+            terminal["response"]["error"]["message"],
+            "The admitted Agent command could not complete."
+        );
+        let request = request(
+            Method::GET,
+            &format!("/api/v2/commands/{}", record.receipt.envelope.command_id),
+            "owner-a",
+            None,
+            None,
+        );
+        let (status, body) = fixtures::json_response(&f.router, request).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "failed");
+        assert_eq!(body["failure"], "execution_failed");
+        assert!(body["delivery"].is_null());
+    }
+}

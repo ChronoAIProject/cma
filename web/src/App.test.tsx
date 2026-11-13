@@ -114,25 +114,30 @@ describe('the retained application shell', () => {
     sessionStorage.removeItem('cma:agent-share:share-one');
   });
 
-  it('explains an unreachable service in plain words and offers Reload', async () => {
+  it('explains an identity outage and retries without reloading', async () => {
     window.history.replaceState(null, '', '/agent-manager');
-    const reload = vi.fn();
-    vi.stubGlobal('location', { ...window.location, reload, pathname: '/agent-manager' });
+    const provider = createMockAuthProvider();
+    const current = vi.spyOn(provider, 'current').mockResolvedValue({
+      status: 'error',
+      reason: 'identity_unavailable',
+      message: 'The identity service is temporarily unavailable. Retrying shortly.',
+    });
     render(
-      <AuthContextProvider
-        provider={createMockAuthProvider({ failCurrent: 'identity check failed with 503' })}
-      >
+      <AuthContextProvider provider={provider}>
         <App />
       </AuthContextProvider>,
     );
     expect(
-      await screen.findByRole('heading', { name: 'CMA could not reach its service' }),
+      await screen.findByRole('heading', {
+        name: 'The identity service is temporarily unavailable',
+      }),
     ).toBeInTheDocument();
-    expect(screen.getByText('It may be starting up. Reload to try again.')).toBeInTheDocument();
-    // The control plane's own sentence stays as the detail for a report.
-    expect(screen.getByText('identity check failed with 503')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Reload' }));
-    expect(reload).toHaveBeenCalledOnce();
-    vi.unstubAllGlobals();
+    expect(
+      screen.getByText('Retrying automatically. You can also try again now.'),
+    ).toBeInTheDocument();
+    current.mockResolvedValue({ status: 'anonymous' });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry now' }));
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument();
+    expect(current).toHaveBeenCalledTimes(2);
   });
 });

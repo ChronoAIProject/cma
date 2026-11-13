@@ -2,23 +2,54 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::acp::{Blocked, Bridge};
+use super::acp_correlation::{valid_call, valid_call_with_policy};
 use super::update_relay::UpdateRelay;
 use crate::{
-    ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind,
-    PermissionRequest, SessionUpdate,
+    ConversationUpdate, PermissionDecision, PermissionOption, PermissionOptionKind, SessionUpdate,
 };
 
 const PERMISSION_LOCATOR_VERSION: u8 = 1;
 const PERMISSION_ID_DOMAIN: &[u8] = b"chrono-hosted-permission-v1\0";
-const MAX_PERMISSION_CALL_BYTES: usize = 256;
 
 impl Bridge {
-    pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) {
+    pub(super) async fn receive(&self, payload: &[u8], updates: &UpdateRelay) -> crate::Result<()> {
         let Ok(frame) = serde_json::from_slice::<serde_json::Value>(payload) else {
             tracing::warn!(bytes = payload.len(), "ACP conversation frame was not JSON");
-            return;
+            return Ok(());
         };
 
+        self.receive_frame(super::retained_json::JsonFrame::legacy(frame), updates)
+            .await
+    }
+
+    pub(super) async fn receive_frame(
+        &self,
+        frame: super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+    ) -> crate::Result<()> {
+        let sign_in = self
+            .json_pools
+            .as_ref()
+            .map(|pools| pools.admit_sign_in(&frame))
+            .transpose()?
+            .flatten();
+        let observation = self
+            .json_pools
+            .as_ref()
+            .map(|pools| pools.admit_observation(&frame))
+            .transpose()?
+            .flatten();
+        self.receive_admitted_frame(frame, updates, sign_in, observation)
+            .await
+    }
+
+    pub(super) async fn receive_admitted_frame(
+        &self,
+        frame: super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+        sign_in: Option<super::sign_in_retention::Admission>,
+        observation: Option<crate::RuntimeOutputUpdate>,
+    ) -> crate::Result<()> {
         if let Some(id) = frame.get("id") {
             if frame.get("method").is_none() {
                 let waiting = match id.as_str() {
@@ -27,20 +58,53 @@ impl Bridge {
                 };
                 if let Some(waiting) = waiting {
                     if waiting.prompt {
-                        updates.send(super::acp_turn::scoped_turn_outcome(
-                            super::acp_turn::turn_outcome(frame.clone()),
-                            true,
-                        ));
+                        let prompt_id = id.as_str().and_then(crate::PromptIdentity::parse);
+                        if let Some(id) = id.as_str() {
+                            self.mark_prompt_completed(id).await;
+                        }
+                        updates
+                            .send(super::acp_turn::scoped_turn_outcome(
+                                super::acp_turn::turn_outcome_with_policy(
+                                    &*frame,
+                                    self.json_pools.is_some(),
+                                ),
+                                true,
+                                prompt_id,
+                            ))
+                            .await;
                     }
                     let _ = waiting.answer.send(frame);
-                    return;
+                    return Ok(());
                 }
                 if let Some(id) = id.as_str() {
-                    if self.recover_prompt_result(id, frame.clone(), updates).await {
+                    if self.recover_prompt_result(id, &frame, updates).await {
                         self.orphaned_prompt_response
                             .store(false, std::sync::atomic::Ordering::SeqCst);
                         self.answered.lock().await.clear();
-                        return;
+                        return Ok(());
+                    }
+                    let already_completed = self.prompt_was_completed(id).await;
+                    if !already_completed {
+                        // The response ID is the native authority. A passive
+                        // attachment may have no local waiter, but it must
+                        // still carry a valid terminal identity to the durable
+                        // recorder before it can ACK the retained frame.
+                        if let Some(prompt_id) = crate::PromptIdentity::parse(id) {
+                            if let Some(outcome) = prompt_outcome(&frame, self.json_pools.is_some())
+                            {
+                                self.mark_prompt_completed(id).await;
+                                self.orphaned_prompt_response
+                                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                                updates
+                                    .send(super::acp_turn::scoped_turn_outcome(
+                                        outcome,
+                                        true,
+                                        Some(prompt_id),
+                                    ))
+                                    .await;
+                                return Ok(());
+                            }
+                        }
                     }
                 }
                 if id.as_i64().is_some()
@@ -48,18 +112,21 @@ impl Bridge {
                         .orphaned_prompt_response
                         .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
+                    // A restored permission has no native terminal identity
+                    // on this legacy numeric path. Consume the compatibility
+                    // marker, but never let an unrelated numeric response
+                    // close whichever turn happens to be active.
                     self.answered.lock().await.clear();
-                    updates.send(super::acp_turn::turn_outcome(frame).into_update());
                 }
-                return;
+                return Ok(());
             }
         }
 
         match frame.get("method").and_then(serde_json::Value::as_str) {
             Some("cma/codex/credentials") => self.subscription_credential(&frame).await,
-            Some("session/update") => self.session_update(&frame, updates).await,
-            Some("session/request_permission") => self.blocked_on(frame, updates).await,
-            Some("elicitation/create") => self.sign_in(&frame, updates).await,
+            Some("session/update") => self.session_update(&frame, updates, observation).await,
+            Some("session/request_permission") => self.blocked_on(&frame, updates).await?,
+            Some("elicitation/create") => self.sign_in(&frame, updates, sign_in).await,
             Some(method) => {
                 if let Some(id) = frame.get("id") {
                     tracing::info!(%method, "refusing ACP request not offered by this client");
@@ -77,10 +144,14 @@ impl Bridge {
             }
             None => {}
         }
+        Ok(())
     }
 
     async fn subscription_credential(&self, frame: &serde_json::Value) {
-        let Some(id) = frame.get("id").filter(|id| valid_call(id)) else {
+        let Some(id) = frame
+            .get("id")
+            .filter(|id| valid_call_with_policy(id, self.json_pools.is_some()))
+        else {
             return;
         };
         let answer = match (&self.subscription, frame.get("params")) {
@@ -98,7 +169,12 @@ impl Bridge {
         let _ = self.send(&frame).await;
     }
 
-    async fn session_update(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
+    async fn session_update(
+        &self,
+        frame: &super::retained_json::JsonFrame,
+        updates: &UpdateRelay,
+        observation: Option<crate::RuntimeOutputUpdate>,
+    ) {
         let Some(session) = frame
             .pointer("/params/sessionId")
             .and_then(serde_json::Value::as_str)
@@ -109,12 +185,17 @@ impl Bridge {
         let Some(value) = frame.pointer("/params/update") else {
             return;
         };
-        self.observe_context_goal(session, value).await;
-        if let Some(update) = super::acp_observations::observation(value) {
+        self.observe_context_frame_goal(frame).await;
+        let observation = match observation {
+            Some(update) => Some(ConversationUpdate::RetainedEffect(update)),
+            None if self.json_pools.is_none() => super::acp_observations::observation(value),
+            None => None,
+        };
+        if let Some(update) = observation {
             self.route_update(session, update, updates).await;
             return;
         }
-        match serde_json::from_value::<SessionUpdate>(value.clone()) {
+        match super::runtime_decode::decode::<SessionUpdate>(value, self.json_pools.is_some()) {
             Ok(update) => {
                 self.route_update(session, ConversationUpdate::Said(update), updates)
                     .await;
@@ -125,8 +206,13 @@ impl Bridge {
         }
     }
 
-    async fn sign_in(&self, frame: &serde_json::Value, updates: &UpdateRelay) {
-        let Some((url, code, message)) = sign_in_from(frame.get("params")) else {
+    async fn sign_in(
+        &self,
+        frame: &serde_json::Value,
+        updates: &UpdateRelay,
+        admission: Option<super::sign_in_retention::Admission>,
+    ) {
+        let Some(fields) = super::sign_in_retention::Fields::read(frame.get("params")) else {
             tracing::warn!("ACP sign-in request contained no URL");
             if let Some(id) = frame.get("id") {
                 let _ = self
@@ -139,7 +225,12 @@ impl Bridge {
             }
             return;
         };
-        updates.send(ConversationUpdate::SignInRequired { url, code, message });
+        let update = fields.owned();
+        let update = match admission {
+            Some(admission) => admission.wrap(update),
+            None => update,
+        };
+        updates.send(update).await;
         if let Some(id) = frame.get("id") {
             let _ = self
                 .send(&serde_json::json!({
@@ -151,56 +242,7 @@ impl Bridge {
         }
     }
 
-    async fn blocked_on(&self, frame: serde_json::Value, updates: &UpdateRelay) {
-        let Some(params) = frame.get("params") else {
-            return;
-        };
-        let Ok(request) = serde_json::from_value::<crate::RequestPermissionRequest>(params.clone())
-        else {
-            tracing::warn!("ACP permission request has an unreadable shape");
-            return;
-        };
-        let session = request.session_id.0.to_string();
-        if self.session().await.as_deref() != Ok(session.as_str()) {
-            tracing::warn!("discarding permission request for another conversation");
-            self.refuse_invalid_call(&frame).await;
-            return;
-        }
-        let Some(call) = frame.get("id").cloned().filter(valid_call) else {
-            tracing::warn!("ACP permission request has an invalid correlation id");
-            return;
-        };
-        let locator = permission_locator(&session, &call, &request.options);
-        let id = permission_id(&locator);
-        if let Some(answer) = self.answered.lock().await.get(&id).cloned() {
-            let _ = self.send(&answer).await;
-            return;
-        }
-        let owns_prompt_waiter = self
-            .owned_prompt_waiters
-            .load(std::sync::atomic::Ordering::SeqCst)
-            > 0;
-        self.blocked.lock().await.insert(
-            id.clone(),
-            Blocked {
-                call,
-                options: request.options.clone(),
-                owns_prompt_waiter,
-            },
-        );
-        self.route_update(
-            &session,
-            ConversationUpdate::Asked(PermissionRequest {
-                id,
-                locator: Some(locator),
-                request,
-            }),
-            updates,
-        )
-        .await;
-    }
-
-    async fn refuse_invalid_call(&self, frame: &serde_json::Value) {
+    pub(super) async fn refuse_invalid_call(&self, frame: &serde_json::Value) {
         if let Some(id) = frame.get("id") {
             let _ = self
                 .send(&serde_json::json!({
@@ -273,7 +315,7 @@ struct HostedPermissionLocator {
     options: Vec<StoredPermissionOption>,
 }
 
-fn permission_locator(
+pub(super) fn permission_locator(
     session: &str,
     call: &serde_json::Value,
     options: &[PermissionOption],
@@ -341,6 +383,7 @@ pub(super) fn blocked_from_locator(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn sign_in_from(
     params: Option<&serde_json::Value>,
 ) -> Option<(String, Option<String>, Option<String>)> {
@@ -384,11 +427,13 @@ pub(crate) fn outcome_for(
     serde_json::json!({ "outcome": "cancelled" })
 }
 
-fn valid_call(call: &serde_json::Value) -> bool {
-    matches!(
-        call,
-        serde_json::Value::String(_) | serde_json::Value::Number(_)
-    ) && call.to_string().len() <= MAX_PERMISSION_CALL_BYTES
+fn prompt_outcome(frame: &serde_json::Value, bounded_json: bool) -> Option<super::acp::Outcome> {
+    let terminal = frame.get("error").is_some()
+        || frame
+            .get("result")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|result| result.contains_key("stopReason"));
+    terminal.then(|| super::acp_turn::turn_outcome_with_policy(frame, bounded_json))
 }
 
 fn hex(bytes: &[u8]) -> String {

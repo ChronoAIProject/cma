@@ -1,9 +1,9 @@
-use layer2_core::sandbox::{AgentLiveFragment, AgentLiveFragmentKind};
+use layer2_core::sandbox::{AgentLiveDelivery, AgentLiveFragmentKind};
 use serde_json::json;
 
 use super::events::AguiEvent;
 
-pub(super) fn project(fragment: AgentLiveFragment) -> AguiEvent {
+pub(super) fn project(fragment: AgentLiveDelivery) -> AguiEvent {
     AguiEvent {
         kind: match fragment.kind {
             AgentLiveFragmentKind::Message => "TEXT_MESSAGE_CONTENT",

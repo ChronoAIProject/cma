@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 260,
+  "openapi_operations": 289,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -844,9 +844,10 @@
     },
     "GET /auth/session": {
       "classification": "supplemental_auth",
-      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "source": "api/crates/cma/src/auth/middleware.rs# Session identity outages return identity_unavailable with Retry-After; only GET /auth/session may use bounded recent browser identity evidence. Other operations remain fail closed.",
       "required_problems": [
-        "store_failed"
+        "store_failed",
+        "identity_unavailable"
       ],
       "non_problem_statuses": {
         "401": "api/crates/cma/src/auth/session_routes.rs# Unsigned browser session is an authentication-state response with authenticated false, not a problem document."
@@ -2770,7 +2771,9 @@
       "required_problems": [
         "agent_not_found",
         "agent_not_ready",
-        "agent_operation_in_flight",
+        "agent_skill_history_full",
+        "agent_skill_install_unsupported",
+        "agent_skill_upgrade_disabled",
         "agent_skill_version_upgrade_unsupported",
         "connections_required",
         "forbidden",
@@ -3632,6 +3635,329 @@
       "non_problem_statuses": {
         "400": "api/crates/layer1-public/src/rest/sandbox_usage.rs# The typed Query extractor rejects malformed or unknown query fields before calling the handler."
       }
+    },
+    "POST /api/v1/usage/metrics/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}/series": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes/{sandbox}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/series": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/owners": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/always-on": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_always_on.rs# Owners may only relinquish Always on; approval requires an administrator. Disable retains revision and idempotency checks.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "always_on_approval_required"
+      ]
+    },
+    "POST /api/v1/admin/sandboxes/{id}/always-on": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/sandboxes.rs# Administrator Always on approval and revocation use revision CAS and record configure activities.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_resource_not_found"
+      ]
+    },
+    "GET /api/v1/admin/auto-pause/preview": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/auto_pause.rs# Operator preview evaluates the same maintenance eligibility proof without persisting a pause.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/admin/auto-pause/pause-idle-now": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/auto_pause.rs# Confirmed operator action schedules eligible idle Sandboxes through the durable maintenance lifecycle.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/options": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Administrator option discovery reauthorizes every request, validates bounded queries and maps reporting pressure and availability failures. Duplicate names use distinct final secondary text, exhausting safe human context before a reference. Precise owner observation times require current ReadUserDirectory authority; Sandbox-only callers retain dates. Primary labels stay plain.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped owner allocations reauthorize every page, resolve cohort-wide labels with current directory precision authority, and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Owner-only bounded read-only assessment; explicit POST repeats stronger admission proof.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Explicit owner consent and fresh proof admit the existing same-image reopening suffix with immutable request receipts.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "missing_idempotency_key",
+        "retained_recovery_consent_required",
+        "retained_recovery_authority_changed",
+        "retained_recovery_not_proved",
+        "retained_recovery_unavailable",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/routes_output.rs# pub(in crate::responses::v2) async fn output_page(",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_output_cursor"
+      ]
+    },
+    "POST /api/v1/telemetry/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/browser_telemetry.rs# Anonymous fixed-category diagnostics have a 256-byte body limit and no durable effects; success and malformed/private fields are covered by real-handler tests.",
+      "required_problems": []
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery/dry-run": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/status": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/admit": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_disabled",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
+    },
+    "GET /api/v1/admin/admission": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects the shared control snapshot and its at most twenty newest immutable changes; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/admission/stop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
+      ]
+    },
+    "POST /api/v1/admin/admission/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
+      ]
     }
   }
 }

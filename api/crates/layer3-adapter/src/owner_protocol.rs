@@ -41,8 +41,9 @@ pub fn current_header() -> crate::Result<Option<String>> {
 
 pub const OWNER_PROTOCOL_VERSION: u32 = 1;
 pub const OWNER_HEADER: &str = "x-cma-manager-ownership";
-/// Starts at the receiver before the manager's subsequent Mongo renewal.
-pub const RECEIVER_LEASE_MS: u64 = 20_000;
+/// Starts at the receiver before the manager's subsequent 15-second Mongo
+/// renewal. Retained receivers advertising the old 20-second lease are refused.
+pub const RECEIVER_LEASE_MS: u64 = 10_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

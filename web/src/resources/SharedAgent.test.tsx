@@ -34,6 +34,7 @@ it('retains an unsaved file draft when write access is withdrawn but read access
   });
   test.show();
   await userEvent.click(await screen.findByRole('button', { name: 'Show Agent computer' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Files' }));
   await userEvent.click(await screen.findByRole('button', { name: 'notes.txt' }));
   const editor = await screen.findByRole('textbox', { name: 'Contents of notes.txt' });
   fireEvent.change(editor, { target: { value: 'Keep this unsaved draft' } });
@@ -169,8 +170,12 @@ it('opens a narrow shared deep link without private ancestry, runtime or persona
     test.readAgentResources,
   ])
     expect(read).not.toHaveBeenCalled();
-  await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
-  expect(await within(screen.getByRole('menu')).findByText('Created manually')).toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Show Agent details' }));
+  expect(
+    await within(screen.getByRole('complementary', { name: 'Agent details' })).findByText(
+      'Created manually',
+    ),
+  ).toBeInTheDocument();
 });
 
 it('allows a writable shared Agent to change settings and checks current access before each update', async () => {
@@ -216,8 +221,7 @@ it('allows current admin interaction through the public SDK and removes it on do
   );
   expect(test.fetch.mock.calls.filter(([url]) => String(url).endsWith('/input'))).toHaveLength(1);
   test.state.capabilities = ['view_details', 'view_history'];
-  await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
-  await user.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
+  await user.click(screen.getByRole('button', { name: 'Show Agent details' }));
   await user.click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(
     await screen.findByText(/Your current access does not allow interaction/),
@@ -238,7 +242,7 @@ it('clears a revoked shared page and aborts its open stream without signing out'
   await waitFor(() => expect(streams.length).toBe(1));
   test.state.revoked = true;
   await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
-  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Show Agent details' }));
   await userEvent.setup().click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(await screen.findByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
   expect(screen.queryByText(detail.title)).not.toBeInTheDocument();
@@ -308,7 +312,7 @@ it('shares the authorized conversation observation with the computer and clears 
   await userEvent.click(await screen.findByRole('button', { name: 'Show Agent computer' }));
   await userEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
   expect(await screen.findByText('shared-proof', { exact: true })).toBeInTheDocument();
-  await userEvent.click(screen.getByRole('tab', { name: 'Browser' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Screen' }));
   await userEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
   expect(replayAgent).toHaveBeenCalledOnce();
   test.state.capabilities = ['view_details'];
@@ -481,7 +485,7 @@ it('retains new live messages and resolved controls when older rich history fini
   );
   expect(screen.getAllByText('A new message during history loading.')).toHaveLength(1);
   expect(screen.getAllByText('A new live answer')).toHaveLength(1);
-  const process = screen.getByRole('button', { name: /^1 tool call$/ });
+  const process = screen.getByRole('button', { name: /^Read / });
   expect(process).toHaveAttribute('aria-expanded', 'false');
   await userEvent.click(process);
   expect(process).toHaveAttribute('aria-expanded', 'true');
@@ -650,13 +654,14 @@ it('retains hydrated tools, approvals, live text and the composer across unchang
   );
   const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Keep this draft' } });
-  const process = screen.getByRole('button', { name: /^1 tool call$/ });
+  const process = screen.getByRole('button', { name: /^Read / });
   expect(process).toHaveAttribute('aria-expanded', 'false');
   fireEvent.click(process);
   expect(process).toHaveAttribute('aria-expanded', 'true');
   expect(screen.getByRole('article', { name: 'Tool call: Read files' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Queue message' })).toBeEnabled();
   // Any redundant rich-history reload would remain pending and expose a reset.
   readAgentEvents.mockImplementation(() => new Promise(() => {}));
   await act(() => vi.advanceTimersByTimeAsync(30_000));
@@ -667,7 +672,8 @@ it('retains hydrated tools, approvals, live text and the composer across unchang
   expect(screen.getByText('A live partial answer')).toBeInTheDocument();
   expect(screen.getByRole('article', { name: 'Tool call: Read files' })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Allow' })).toBeEnabled();
-  expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
+  expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Queue message' })).toBeEnabled();
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Keep this draft');
   await act(async () =>
@@ -1023,7 +1029,7 @@ it('discards personal classification as soon as a shared response arrives and ke
   await screen.findByText(/Your current access does not allow interaction/);
   vi.spyOn(sdk.agents, 'readAccessible').mockImplementation(() => new Promise(() => {}));
   await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
-  await userEvent.setup().click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Show Agent details' }));
   await userEvent.setup().click(await screen.findByRole('button', { name: 'Refresh access' }));
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
   expect(screen.getByRole('heading', { name: 'Opening Agent' })).toBeInTheDocument();
@@ -1033,11 +1039,10 @@ it('uses the personal details drawer without private reads and clears details af
   const test = fixture();
   test.show();
   const user = userEvent.setup();
-  const toggle = await screen.findByRole('button', { name: 'More Agent actions' });
+  const toggle = await screen.findByRole('button', { name: 'Show Agent details' });
   expect(screen.queryByRole('complementary', { name: 'Agent details' })).not.toBeInTheDocument();
   expect(test.fetch.mock.calls.some(([url]) => String(url).endsWith('/channel-usage'))).toBe(false);
   await user.click(toggle);
-  await user.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   const panel = await screen.findByRole('complementary', { name: 'Agent details' });
   expect(await within(panel).findByText(detail.title)).toBeInTheDocument();
   expect(await within(panel).findByText('No channel activity recorded')).toBeInTheDocument();
@@ -1045,7 +1050,6 @@ it('uses the personal details drawer without private reads and clears details af
   await user.click(screen.getByRole('button', { name: 'Close Agent details' }));
   expect(toggle).toHaveFocus();
   await user.click(toggle);
-  await user.click(screen.getByRole('menuitem', { name: 'Show Agent details' }));
   expect(
     await within(screen.getByRole('complementary', { name: 'Agent details' })).findByText(
       detail.title,
@@ -1083,7 +1087,7 @@ it.each([
   await screen.findByText(/Your current access does not allow interaction/);
   await waitFor(() =>
     expect(
-      screen.getByRole('button', { name: 'More Agent actions' }).getAttribute('title'),
+      screen.getByRole('button', { name: 'Show Agent details' }).getAttribute('title'),
     ).toContain(label),
   );
 });

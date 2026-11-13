@@ -191,9 +191,10 @@ impl AuthState {
             return Err(CommandAuthorizationError::Revoked);
         }
         let subject = state.subject.clone();
-        let request = cookie_authorization::request_for_cookie(self, &subject, state)
+        let request = cookie_authorization::request_for_browser_cookie(self, &subject, state)
             .await
-            .map_err(|_| CommandAuthorizationError::Unavailable)?;
+            .map_err(|_| CommandAuthorizationError::Unavailable)?
+            .ok_or(CommandAuthorizationError::Revoked)?;
         if request.delegated_credential.is_none()
             || !request.authorization.allows(Capability::UseOwnSandboxes)
         {

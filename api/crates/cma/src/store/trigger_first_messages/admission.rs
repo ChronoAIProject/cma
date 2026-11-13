@@ -59,14 +59,19 @@ pub(in crate::store) async fn attach(
     let (mut binding, request) =
         TriggerFirstMessageBinding::prepare(launch, admission, agent, &parent, fence, owner)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    let accepted = super::super::agent_commands::reserve::apply(store, &request, session)
-        .await
-        .map_err(|error| match error {
-            super::super::agent_commands::ApplyError::Domain(error) => {
-                LoadError::Domain(super::super::agent_commands::binding::domain_error(error))
-            }
-            super::super::agent_commands::ApplyError::Driver(error) => LoadError::Driver(error),
-        })?;
+    let accepted = super::super::agent_commands::reserve::apply_with_cause(
+        store,
+        &request,
+        layer2_core::admission::AdmissionCause::Continuation,
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        super::super::agent_commands::ApplyError::Domain(error) => {
+            LoadError::Domain(super::super::agent_commands::binding::domain_error(error))
+        }
+        super::super::agent_commands::ApplyError::Driver(error) => LoadError::Driver(error),
+    })?;
     let command = match accepted {
         layer2_core::sandbox::agent_io::CommandReservationResult::Created(command) => command,
         layer2_core::sandbox::agent_io::CommandReservationResult::Existing(_) => {

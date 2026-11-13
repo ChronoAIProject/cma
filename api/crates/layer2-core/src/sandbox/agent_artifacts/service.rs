@@ -154,7 +154,7 @@ impl AgentArtifactService {
             }
             let mut previous = page.cursor.as_deref();
             for row in &rows {
-                row.content()?;
+                row.validate()?;
                 if row.binding != binding
                     || previous.is_some_and(|id| row.metadata.id.as_str() <= id)
                 {

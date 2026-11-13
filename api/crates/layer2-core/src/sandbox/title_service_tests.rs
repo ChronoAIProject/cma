@@ -15,6 +15,7 @@ const NOW: &str = "2026-09-05T00:00:00Z";
 enum GeneratorReply {
     Value(String),
     Error,
+    Permanent,
     Pending,
     Wait(Arc<Semaphore>, String),
 }
@@ -61,6 +62,7 @@ impl AgentTitleGenerator for RecordingGenerator {
         });
         match self.replies.lock().await.pop_front() {
             Some(GeneratorReply::Value(value)) => Ok(AgentTitleGenerationResponse::new(value)),
+            Some(GeneratorReply::Permanent) => Err(AgentTitleGenerationError::permanent()),
             Some(GeneratorReply::Error) | None => Err(AgentTitleGenerationError::unavailable()),
             Some(GeneratorReply::Pending) => pending().await,
             Some(GeneratorReply::Wait(gate, value)) => {
@@ -187,50 +189,50 @@ async fn first_completed_turn_generates_once_from_bounded_private_inputs() {
 }
 
 #[tokio::test]
-async fn one_failure_or_invalid_value_retries_but_two_failures_fall_back() {
-    let retry = fixture("retry");
-    append_turn(&retry, "Explain retries", "They are bounded.", 1);
+async fn transient_failure_retries_only_after_the_durable_backoff() {
+    let f = fixture("retry");
+    append_turn(&f, "Explain retries", "They are bounded.", 1);
+    let now = SystemTime::now();
     let generator = RecordingGenerator::with_replies([
         GeneratorReply::Value("***".into()),
         GeneratorReply::Value("Retry Recovered Title".into()),
     ]);
+    assert!(matches!(
+        f.service
+            .generate_agent_title_at(&f.id, Some(&context()), Some(generator.as_ref()), now)
+            .await,
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
     assert_eq!(
-        retry
-            .service
-            .generate_agent_title(&retry.id, Some(&context()), Some(generator.as_ref()))
+        f.service
+            .generate_agent_title_at(
+                &f.id,
+                Some(&context()),
+                Some(generator.as_ref()),
+                now + Duration::from_secs(59)
+            )
+            .await
+            .unwrap(),
+        AgentTitleOutcome::Skipped
+    );
+    assert_eq!(generator.calls(), 1);
+    assert_eq!(
+        f.service
+            .generate_agent_title_at(
+                &f.id,
+                Some(&context()),
+                Some(generator.as_ref()),
+                now + Duration::from_secs(60)
+            )
             .await
             .unwrap(),
         AgentTitleOutcome::Generated
     );
     assert_eq!(generator.calls(), 2);
-
-    let failed = fixture("failed");
-    let owner = format!("{}\nprivate owner continuation", "\u{754c}".repeat(80));
-    append_turn(&failed, &owner, "The generator fails.", 1);
-    let generator = RecordingGenerator::with_replies([
-        GeneratorReply::Error,
-        GeneratorReply::Error,
-        GeneratorReply::Value("forbidden third attempt".into()),
-    ]);
-    assert_eq!(
-        failed
-            .service
-            .generate_agent_title(&failed.id, Some(&context()), Some(generator.as_ref()))
-            .await
-            .unwrap(),
-        AgentTitleOutcome::Fallback
-    );
-    assert_eq!(generator.calls(), 2);
-    let stored = failed.service.title(&failed.id).await.unwrap().unwrap();
-    assert_eq!(stored.source, AgentTitleSource::Fallback);
-    assert_eq!(
-        stored.title.as_str(),
-        "\u{754c}".repeat(AGENT_TITLE_FALLBACK_SCALARS)
-    );
 }
 
 #[tokio::test(start_paused = true)]
-async fn each_of_two_attempts_has_an_exact_ten_second_timeout() {
+async fn each_admitted_attempt_has_an_exact_ten_second_timeout() {
     let fixture = fixture("timeout");
     append_turn(&fixture, "Timeout fallback", "No response arrives.", 1);
     let generator =
@@ -250,11 +252,11 @@ async fn each_of_two_attempts_has_an_exact_ten_second_timeout() {
     assert_eq!(generator.calls(), 1);
     assert!(!task.is_finished());
     tokio::time::advance(Duration::from_secs(1)).await;
-    wait_for_calls(&generator, 2).await;
-    tokio::time::advance(Duration::from_secs(10)).await;
-    tokio::task::yield_now().await;
-    assert_eq!(task.await.unwrap().unwrap(), AgentTitleOutcome::Fallback);
-    assert_eq!(generator.calls(), 2);
+    assert!(matches!(
+        task.await.unwrap(),
+        Err(AgentTitleServiceError::GenerationUnavailable)
+    ));
+    assert_eq!(generator.calls(), 1);
 }
 
 #[tokio::test]
@@ -290,7 +292,7 @@ async fn concurrent_service_replicas_make_only_one_model_call() {
 }
 
 #[tokio::test]
-async fn expired_takeover_uses_fallback_without_a_second_model_call() {
+async fn expired_takeover_retries_generation_and_fences_the_stale_worker() {
     let fixture = fixture("takeover");
     append_turn(&fixture, "Crash recovery owner", "Use fallback.", 1);
     let stale = fixture
@@ -304,16 +306,16 @@ async fn expired_takeover_uses_fallback_without_a_second_model_call() {
         .unwrap();
     assert_eq!(stale.mode(), AgentTitleClaimMode::Generate);
     let generator =
-        RecordingGenerator::with_replies([GeneratorReply::Value("must never be called".into())]);
+        RecordingGenerator::with_replies([GeneratorReply::Value("Recovered title".into())]);
     assert_eq!(
         fixture
             .service
             .generate_agent_title(&fixture.id, Some(&context()), Some(generator.as_ref()))
             .await
             .unwrap(),
-        AgentTitleOutcome::Fallback
+        AgentTitleOutcome::Generated
     );
-    assert_eq!(generator.calls(), 0);
+    assert_eq!(generator.calls(), 1);
     assert_eq!(
         fixture
             .service
@@ -323,7 +325,7 @@ async fn expired_takeover_uses_fallback_without_a_second_model_call() {
             .unwrap()
             .title
             .as_str(),
-        "Crash recovery owner"
+        "Recovered title"
     );
     assert!(!fixture
         .store
@@ -432,4 +434,99 @@ async fn private_content_never_enters_service_tracing() {
     for private in [owner, assistant, generated, "private-bearer"] {
         assert!(!output.contains(private));
     }
+}
+
+#[tokio::test]
+async fn retries_back_off_durably_across_restarts_and_settle_at_three_calls() {
+    let f = fixture("bounded-retries");
+    append_turn(&f, "A task", "An answer", 1);
+    let generator = RecordingGenerator {
+        replies: Mutex::new([GeneratorReply::Error].into()),
+        ..Default::default()
+    };
+    let now = SystemTime::now();
+    for (at, calls) in [(0, 1), (45, 1), (60, 2), (179, 2), (180, 3), (9999, 3)] {
+        let restarted = AgentTitleService::new(f.store.clone(), "restarted").unwrap();
+        let _ = restarted
+            .generate_agent_title_at(
+                &f.id,
+                Some(&context()),
+                Some(&generator),
+                now + Duration::from_secs(at),
+            )
+            .await;
+        assert_eq!(generator.calls(), calls);
+    }
+    assert_eq!(
+        f.service.title(&f.id).await.unwrap().unwrap().source,
+        AgentTitleSource::Fallback
+    );
+    assert!(f
+        .service
+        .candidates(&PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+}
+#[tokio::test]
+async fn permanent_generation_failure_settles_without_future_calls() {
+    let f = fixture("permanent");
+    append_turn(&f, "A task", "An answer", 1);
+    let generator = RecordingGenerator::with_replies([GeneratorReply::Permanent]);
+    let now = SystemTime::now();
+    assert_eq!(
+        f.service
+            .generate_agent_title_at(&f.id, Some(&context()), Some(generator.as_ref()), now)
+            .await
+            .unwrap(),
+        AgentTitleOutcome::Fallback
+    );
+    assert_eq!(
+        f.service
+            .generate_agent_title_at(
+                &f.id,
+                Some(&context()),
+                Some(generator.as_ref()),
+                now + Duration::from_secs(3600)
+            )
+            .await
+            .unwrap(),
+        AgentTitleOutcome::Skipped
+    );
+    assert_eq!(generator.calls(), 1);
+}
+
+#[tokio::test]
+async fn crashed_final_attempt_settles_fallback_without_a_fourth_model_call() {
+    let f = fixture("crashed-cap");
+    append_turn(&f, "Task after a crash", "An answer", 1);
+    let now = SystemTime::now();
+    for (attempt, delay) in [(1, 0), (2, 60), (3, 180)] {
+        let claim = f
+            .store
+            .acquire_agent_title_claim(
+                &AgentTitleClaimRequest::new(f.id.clone(), "crashed"),
+                now + Duration::from_secs(delay),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(claim.attempts(), attempt);
+        assert_eq!(claim.mode(), AgentTitleClaimMode::Generate);
+    }
+    let generator = RecordingGenerator::default();
+    assert_eq!(
+        f.service
+            .generate_agent_title_at(
+                &f.id,
+                Some(&context()),
+                Some(&generator),
+                now + Duration::from_secs(420)
+            )
+            .await
+            .unwrap(),
+        AgentTitleOutcome::Fallback
+    );
+    assert_eq!(generator.calls(), 0);
 }

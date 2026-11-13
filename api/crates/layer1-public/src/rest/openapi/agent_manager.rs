@@ -10,6 +10,37 @@ const METHODS: &[&str] = &[
 /// Exact method selection prevents unrelated operations sharing a path from
 /// leaking into this contract. The full compatibility document is unchanged.
 const OPERATIONS: &[(&str, &[&str])] = &[
+    ("/api/v1/usage/metrics/reports", &["post"]),
+    ("/api/v1/usage/metrics/reports/{report}", &["get"]),
+    ("/api/v1/usage/metrics/reports/{report}/sandboxes", &["get"]),
+    (
+        "/api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}",
+        &["get"],
+    ),
+    ("/api/v1/usage/metrics/reports/{report}/series", &["get"]),
+    ("/api/v1/admin/usage/metrics/reports", &["post"]),
+    ("/api/v1/admin/usage/metrics/options", &["post"]),
+    (
+        "/api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+        &["get"],
+    ),
+    ("/api/v1/admin/usage/metrics/reports/{report}", &["get"]),
+    (
+        "/api/v1/admin/usage/metrics/reports/{report}/sandboxes",
+        &["get"],
+    ),
+    (
+        "/api/v1/admin/usage/metrics/reports/{report}/sandboxes/{sandbox}",
+        &["get"],
+    ),
+    (
+        "/api/v1/admin/usage/metrics/reports/{report}/series",
+        &["get"],
+    ),
+    (
+        "/api/v1/admin/usage/metrics/reports/{report}/owners",
+        &["get"],
+    ),
     ("/api/v1/usage", &["get"]),
     ("/api/v1/usage/sandboxes", &["get"]),
     ("/api/v1/usage/sandboxes/{id}", &["get"]),

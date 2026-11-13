@@ -27,6 +27,16 @@ fn admin_filter(query: &SandboxAdminQuery) -> Document {
     if let Some(runtime_version) = &query.runtime_version {
         filter.insert("runtime_version", runtime_version);
     }
+    if let Some(always_on) = query.always_on {
+        filter.insert(
+            "record.profile.always_on",
+            if always_on {
+                Bson::Boolean(true)
+            } else {
+                Bson::Document(doc! { "$ne": true })
+            },
+        );
+    }
     if let Some(cursor) = &query.page.cursor {
         filter.insert("_id", doc! { "$gt": cursor });
     }
@@ -103,6 +113,7 @@ async fn read_agents(
     store: &MongoSandboxStore,
     id: &SandboxId,
 ) -> Result<Vec<AgentAdminSummary>, SandboxStoreError> {
+    let mut read = super::mongo_read_telemetry::Read::find(store.agents.name());
     let mut cursor = store
         .agents
         .find(doc! { "sandbox_id": id.as_str() })
@@ -110,13 +121,14 @@ async fn read_agents(
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     let mut rows = Vec::new();
-    while let Some(document) = cursor
-        .try_next()
+    while let Some(document) = read
+        .next(&mut cursor)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
     {
         rows.push(AgentAdminSummary::from(&read_agent(&document)?));
     }
+    read.complete();
     Ok(rows)
 }
 
@@ -215,6 +227,7 @@ mod tests {
             owner: Some(SubjectId("operator-target".into())),
             status: Some(SandboxStatus::Paused),
             runtime_version: Some("runtime-7".into()),
+            always_on: Some(true),
             page: PageRequest {
                 limit: 25,
                 cursor: Some("sbx_after".into()),
@@ -227,6 +240,7 @@ mod tests {
                 "owner": "operator-target",
                 "status": "paused",
                 "runtime_version": "runtime-7",
+                "record.profile.always_on": true,
                 "_id": { "$gt": "sbx_after" },
             } }
         );

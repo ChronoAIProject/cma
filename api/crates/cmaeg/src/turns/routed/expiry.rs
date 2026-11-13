@@ -12,7 +12,14 @@ use cmaeg_core::problem::{Problem, ProblemCode};
 pub(super) const EXPIRED_BEFORE_START: &str = "event_expired_before_start";
 
 fn unstarted(state: &TargetState) -> bool {
-    state.body.is_none() && state.delivery.is_none() && state.projection.is_none()
+    state.delivery.is_none()
+        && state.projection.is_none()
+        && match state.phase {
+            Phase::Pending => state.body.is_none(),
+            Phase::Prepared => state.body.is_some(),
+            Phase::Refused { .. } => true,
+            _ => false,
+        }
 }
 
 impl Journal {
@@ -23,7 +30,7 @@ impl Journal {
         // Expired also describes ancestors, read/replay and delivery authority.
         // Only this target's deadline and retained start evidence decide here.
         if lease.state.event_expires_at > (self.clock)()
-            || lease.state.phase != Phase::Pending
+            || !matches!(lease.state.phase, Phase::Pending | Phase::Prepared)
             || !unstarted(&lease.state)
         {
             return Ok(None);
@@ -31,6 +38,9 @@ impl Journal {
         let phase = Phase::Refused {
             code: EXPIRED_BEFORE_START.into(),
         };
+        // Prepared has no original Responses start, but can retain media work.
+        // Its original expiry closes media effect guards; the media worker
+        // refuses outstanding obligations and retires the active head separately.
         // Keep binding_preparation unchanged: Pending can retain an ambiguous
         // reservation or a confirmed hierarchy receipt. Neither is cancelled
         // or retried by terminalizing the never-started Responses target.
@@ -74,12 +84,10 @@ impl RoutedDelivery {
         {
             return Ok(());
         }
-        self.journal
-            .observe(
-                identity,
-                Change::state(target.launch.consumer.as_str(), ConsumerState::Failed, None),
-            )
-            .await;
+        let mut change = Change::refused(target.launch.consumer.as_str(), EXPIRED_BEFORE_START);
+        change.state = Some(ConsumerState::Failed);
+        change.last_non_admission_code = self.journal.last_non_admission(&state).await?;
+        self.journal.observe(identity, change).await;
         if let Some(custom) = &self.coordinator.custom {
             // Only the original primary Sync waiter can receive this content-
             // free control frame. Atomic terminal enqueue removes that waiter.

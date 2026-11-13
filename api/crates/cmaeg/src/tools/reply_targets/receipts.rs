@@ -36,6 +36,8 @@ pub(crate) struct Claim {
     receipt: Option<StoredReceipt>,
     #[serde(skip)]
     version: u64,
+    #[serde(skip)]
+    fence: Option<Box<super::fence::Fence>>,
 }
 pub(crate) enum Admission {
     Claimed(Claim),
@@ -70,16 +72,35 @@ impl Store {
         let scope = hash(&serde_json::json!({"channel":target.event.channel_id,
             "record":target.event.record_id,"provider":target.provider,"binding":target.binding_id,
             "key":target.agent_key_hash,"event":target.event}));
-        self.claim_scoped(
-            "reply_delivery_v1",
-            "cmaeg.reply-delivery.v1",
-            scope,
-            request_id,
-            hash(message),
-            owner,
-            target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
-        )
-        .await
+        let admission = self
+            .claim_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                scope,
+                request_id,
+                hash(message),
+                owner,
+                target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            )
+            .await?;
+        let Admission::Claimed(mut claim) = admission else {
+            return Ok(admission);
+        };
+        match super::fence::Fence::acquire(&self.records, &self.keys, target, owner).await? {
+            Some(fence) => {
+                claim.fence = Some(Box::new(fence));
+                Ok(Admission::Claimed(claim))
+            }
+            None => {
+                tracing::warn!(
+                    outcome = "unknown",
+                    "reply target blocked by unresolved delivery"
+                );
+                let receipt = uncertain("reply_target_delivery_uncertain");
+                self.finish(claim, &receipt).await?;
+                Ok(Admission::Replay(receipt))
+            }
+        }
     }
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn claim_scoped(
@@ -150,6 +171,7 @@ impl Store {
             expires_at,
             receipt: None,
             version: 0,
+            fence: None,
         }
     }
     /// Check retained results before deciding whether a stale card may start new work.
@@ -226,6 +248,7 @@ impl Store {
         Ok(Admission::Replay(receipt))
     }
     pub async fn finish(&self, mut claim: Claim, receipt: &IntentReceipt) -> Result<(), Problem> {
+        let fence = claim.fence.take();
         claim.receipt = Some(
             self.parts(&claim)
                 .retain(receipt)
@@ -235,6 +258,11 @@ impl Store {
         self.save(&claim, Some(claim.version))
             .await
             .map_err(|_| unavailable())?;
+        if !matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) {
+            if let Some(fence) = fence {
+                fence.release(&self.records, &self.keys).await?;
+            }
+        }
         Ok(())
     }
     fn parts<'a>(&'a self, claim: &'a Claim) -> ReceiptStore<'a> {

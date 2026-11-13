@@ -24,6 +24,11 @@ use sha2::{Digest, Sha256};
 
 use super::{durability::majority_collection, schema, schema::DOCUMENT_SCHEMA_VERSION};
 
+mod admission;
+#[cfg(test)]
+mod operator_stop_tests;
+pub(crate) use admission::LifecycleCreateError;
+
 pub(crate) const COLLECTION: &str = "agent_lifecycle_operations";
 const OWNER_KEY_INDEX: &str = "agent_lifecycle_owner_key";
 // Renewable claims are fenced by a fresh token on every acquisition. A
@@ -143,6 +148,7 @@ pub(crate) struct LifecycleLease {
 #[derive(Clone)]
 pub(crate) struct MongoAgentLifecycleStore {
     operations: Collection<LifecycleRecord>,
+    admission_settings: Collection<mongodb::bson::Document>,
 }
 
 impl MongoAgentLifecycleStore {
@@ -181,7 +187,10 @@ impl MongoAgentLifecycleStore {
             )
             .await
             .map_err(driver)?;
-        Ok(Self { operations })
+        Ok(Self {
+            operations,
+            admission_settings: majority_collection(database, super::settings::SETTINGS),
+        })
     }
 
     pub(crate) async fn create(
@@ -189,7 +198,7 @@ impl MongoAgentLifecycleStore {
         owner: &SubjectId,
         key: &str,
         input: LifecycleInput,
-    ) -> Result<CreateResult, StoreError> {
+    ) -> Result<CreateResult, LifecycleCreateError> {
         let bytes = serde_json::to_vec(&input.request)
             .map_err(|error| StoreError::Malformed(format!("encode lifecycle input: {error}")))?;
         let fingerprint = Binary {
@@ -207,7 +216,8 @@ impl MongoAgentLifecycleStore {
                 return Err(StoreError::RevisionConflict {
                     expected: 0,
                     actual: 1,
-                });
+                }
+                .into());
             }
             return Ok(CreateResult::Existing(Box::new(existing)));
         }
@@ -233,28 +243,7 @@ impl MongoAgentLifecycleStore {
             updated_at: now,
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
         };
-        match self.operations.insert_one(&record).await {
-            Ok(_) => Ok(CreateResult::Created(record.id)),
-            Err(error) if is_duplicate_key(&error) => {
-                let existing = self
-                    .operations
-                    .find_one(doc! { "owner": owner.as_str(), "key": key })
-                    .await
-                    .map_err(driver)?
-                    .ok_or_else(|| {
-                        StoreError::Unavailable("lifecycle operation raced out of view".into())
-                    })?;
-                schema::require_current(existing.document_schema_version)?;
-                if !same_request(&existing.input.request, &record.input.request)? {
-                    return Err(StoreError::RevisionConflict {
-                        expected: 0,
-                        actual: 1,
-                    });
-                }
-                Ok(CreateResult::Existing(Box::new(existing)))
-            }
-            Err(error) => Err(driver(error)),
-        }
+        self.finish_create(record).await
     }
 
     /// Claim queued work or an expired worker, including legacy records whose
@@ -300,20 +289,7 @@ impl MongoAgentLifecycleStore {
         let now = DateTime::from_system_time(SystemTime::now());
         let mut cursor = self
             .operations
-            .find(doc! {
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "$or": [
-                    { "status": "queued", "$or": [
-                        { "retry_at": Bson::Null },
-                        { "retry_at": { "$lte": now } },
-                    ] },
-                    { "status": { "$in": ["running", "ready"] }, "$or": [
-                        { "lease_expires_at": { "$exists": false } },
-                        { "lease_expires_at": Bson::Null },
-                        { "lease_expires_at": { "$lte": now } },
-                    ] },
-                ],
-            })
+            .find(pending_filter(now))
             .sort(doc! { "created_at": 1, "_id": 1 })
             .limit(DISCOVERY_BATCH as i64)
             .await
@@ -432,4 +408,22 @@ fn is_duplicate_key(error: &Error) -> bool {
         error.kind.as_ref(),
         ErrorKind::Write(WriteFailure::WriteError(write)) if write.code == 11_000
     )
+}
+
+/// Shared discovery boundary; future retries and live leases are not due work.
+pub(super) fn pending_filter(now: DateTime) -> mongodb::bson::Document {
+    doc! {
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "$or": [
+            { "status": "queued", "$or": [
+                { "retry_at": Bson::Null },
+                { "retry_at": { "$lte": now } },
+            ] },
+            { "status": { "$in": ["running", "ready"] }, "$or": [
+                { "lease_expires_at": { "$exists": false } },
+                { "lease_expires_at": Bson::Null },
+                { "lease_expires_at": { "$lte": now } },
+            ] },
+        ],
+    }
 }

@@ -13,11 +13,24 @@ use crate::{
 };
 
 use super::CodexAdapter;
+use crate::recovery_diagnostics::{Observation, Reason, Stage};
 
 const LIMIT: usize = 64 * 1024;
 
 #[async_trait::async_trait]
 impl RuntimeRecovery for CodexAdapter {
+    async fn inspect_idle_reopen(
+        &self,
+        request: &RuntimeRecoveryInspectionRequest,
+    ) -> Result<RuntimeRecoveryInspection> {
+        self.verify_recovery_identity(request).await?;
+        let mut input = recovery_input(request)?;
+        input["action"] = json!("inspect_idle");
+        let output = self.provider_recovery_command(request, &input).await?;
+        self.verify_recovery_identity(request).await?;
+        checked_inspection(request, &input, output)
+    }
+
     async fn inspect_nonexecuting_recovery(
         &self,
         request: &RuntimeAdoptionRequest,
@@ -62,26 +75,10 @@ impl RuntimeRecovery for CodexAdapter {
         let input = recovery_input(request)?;
         let output = self.provider_recovery_command(request, &input).await?;
         self.verify_recovery_identity(request).await?;
-        let plan = output.get("plan").ok_or_else(invalid)?.clone();
-        if output["status"] != "inspected"
-            || plan["runtime"] != input["runtime"]
-            || plan["agents"] != input["agents"]
-        {
-            return Err(invalid());
-        }
-        let digest = plan_digest(&plan)?;
-        if output["planSha256"] != digest {
-            return Err(invalid());
-        }
-        let histories = checked_histories(request, &plan["histories"])?;
-        Ok(RuntimeRecoveryInspection {
-            provider_plan: plan,
-            provider_plan_sha256: digest,
-            histories,
-            // A live supervisor is present. Empty pending Workspace recovery
-            // needs separate provider absence evidence and must not use this.
-            runtime_process_absent: false,
-        })
+        Observation::new(Stage::History).adapter(
+            checked_inspection(request, &input, output),
+            Reason::CorruptHistory,
+        )
     }
 
     async fn quiesce_recovery(
@@ -146,9 +143,21 @@ impl CodexAdapter {
         &self,
         request: &RuntimeRecoveryInspectionRequest,
     ) -> Result<()> {
-        let status = self.runtime_status(&request.runtime).await?;
-        status.validate_for(&request.identity)?;
-        if status.boot_id != request.boot_id || status.restore_pending {
+        let mut observation = Observation::new(Stage::History);
+        let status = observation.adapter(
+            self.runtime_status(&request.runtime).await,
+            Reason::NativeChanged,
+        )?;
+        observation.adapter(
+            status.validate_for(&request.identity),
+            Reason::NativeChanged,
+        )?;
+        if status.boot_id != request.boot_id {
+            observation.finish(Reason::BootMismatch);
+            return Err(invalid());
+        }
+        if status.restore_pending {
+            observation.finish(Reason::RestorePending);
             return Err(invalid());
         }
         Ok(())
@@ -171,42 +180,75 @@ impl CodexAdapter {
                 concat!(
                     include_str!("recovery_io.py"),
                     "\n",
+                    include_str!("recovery_ledger.py"),
+                    "\n",
                     include_str!("recovery.py")
                 )
                 .into(),
             ],
             input,
         };
-        let output = self
-            .hosted
-            .run_recovery_command(&request.runtime, &command)
-            .await?;
-        let response: Value = serde_json::from_slice(&output).map_err(|_| invalid())?;
+        let mut observation = Observation::new(Stage::History);
+        let output = observation.adapter(
+            self.hosted
+                .run_recovery_command(&request.runtime, &command)
+                .await,
+            Reason::NativeChanged,
+        )?;
+        let response: Value = serde_json::from_slice(&output).map_err(|_| {
+            observation.finish(Reason::CorruptHistory);
+            invalid()
+        })?;
         if response["version"] != 1 {
+            observation.finish(Reason::CorruptHistory);
             return Err(invalid());
         }
         if response["status"] == "refused" {
-            let category = match response["code"].as_str().unwrap_or_default() {
-                "deadline" => "deadline",
-                "history_missing" | "history_incomplete" | "history_invalid" => {
-                    "history_unavailable"
-                }
-                "history_prefix_changed" | "history_replaced" => "history_changed",
-                "native_turn_unsettled" | "native_turn_restarted" => "turn_unsettled",
-                "boot_changed" | "home_changed" | "supervisor_changed" => "source_changed",
-                "pid_reused" | "untracked_process" | "process_reappeared" => "process_changed",
-                "bridge_unsupported" | "launcher_unsupported" | "native_unsupported" => {
-                    "unsupported_source"
-                }
-                "journal_mismatch" | "plan_mismatch" => "journal_mismatch",
-                _ => "evidence_unavailable",
-            };
-            tracing::warn!(sandbox_id = %request.identity.sandbox_id,
-                generation = request.identity.generation, category,
-                "original runtime recovery proof refused; source retained");
+            observation.finish(provider_refusal(
+                response["code"].as_str().unwrap_or_default(),
+            ));
+            return Err(invalid());
         }
         Ok(response)
     }
+}
+
+fn checked_inspection(
+    request: &RuntimeRecoveryInspectionRequest,
+    input: &Value,
+    output: Value,
+) -> Result<RuntimeRecoveryInspection> {
+    let plan = output.get("plan").ok_or_else(invalid)?.clone();
+    if output["status"] != "inspected"
+        || plan["runtime"] != input["runtime"]
+        || plan["agents"] != input["agents"]
+        || (input["action"] == "inspect_idle"
+            && (plan["idleReopen"] != true || !valid_idle_ledger(&plan["idleLedger"])))
+    {
+        return Err(invalid());
+    }
+    let digest = plan_digest(&plan)?;
+    if output["planSha256"] != digest {
+        return Err(invalid());
+    }
+    let histories = checked_histories(request, &plan["histories"])?;
+    Ok(RuntimeRecoveryInspection {
+        provider_plan: plan,
+        provider_plan_sha256: digest,
+        histories,
+        // A live supervisor is present. Empty pending Workspace recovery
+        // needs separate provider absence evidence and must not use this.
+        runtime_process_absent: false,
+    })
+}
+
+fn valid_idle_ledger(ledger: &Value) -> bool {
+    ledger["format"] == "legacy_v1_unused_process_scope"
+        && ledger["sha256"].as_str().is_some_and(|hash| hex(hash, 64))
+        && ledger["journals"]
+            .as_u64()
+            .zip(ledger["authorities"].as_u64())
+            .is_some_and(|(journals, authorities)| journals <= 128 && authorities <= 128 - journals)
 }
 
 fn recovery_input(request: &RuntimeRecoveryInspectionRequest) -> Result<Value> {
@@ -291,3 +333,42 @@ fn invalid() -> AdapterError {
 #[cfg(test)]
 #[path = "recovery_tests.rs"]
 mod tests;
+
+fn provider_refusal(code: &str) -> Reason {
+    // Exact codes from the pinned recovery.py/recovery_io.py response only.
+    // Never infer a category from error text or expose an arbitrary code label.
+    match code {
+        "deadline" => Reason::Deadline,
+        "evidence_unavailable" => Reason::Unavailable,
+        "history_missing" => Reason::MissingHistory,
+        // history_identity combines absent, malformed and duplicate identity.
+        // Keep the shared incomplete/unverifiable-history category truthful.
+        "history_incomplete"
+        | "history_invalid"
+        | "history_prefix_changed"
+        | "history_replaced"
+        | "history_identity"
+        | "history_descriptor"
+        | "history_symlink"
+        | "history_path"
+        | "history_limit"
+        | "turn_identity"
+        | "turn_limit"
+        | "native_turn_unsettled"
+        | "native_turn_restarted" => Reason::CorruptHistory,
+        "boot_changed" => Reason::BootMismatch,
+        "home_changed" => Reason::HomeChanged,
+        "ledger_format_unproved" => Reason::LedgerFormatUnproved,
+        "ledger_capacity"
+        | "ledger_unproved"
+        | "ledger_unsettled"
+        | "ledger_process_scope_used" => Reason::LedgerHeld,
+        "ledger_changed" => Reason::NativeChanged,
+        "supervisor_changed" | "pid_reused" | "untracked_process" | "process_reappeared" => {
+            Reason::NativeChanged
+        }
+        // Request/unsupported-topology and shared path/journal guards are not
+        // necessarily history failures. Unknown codes retain this fixed refusal.
+        _ => Reason::Ineligible,
+    }
+}

@@ -39,6 +39,7 @@ pub use media::{
     CMAEG_MEDIA_RATE_PER_MINUTE, CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS,
 };
 pub use native_discord::NativeDiscordConfig;
+pub(crate) use routing::github_writes_enabled;
 pub use routing::{RoutingConfig, CMAEG_NON_HUMAN_PROVIDERS};
 pub use service_account::*;
 pub use stt::*;
@@ -63,6 +64,7 @@ pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
 pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";
+pub(crate) const CMAEG_NYXID_TURN_TRACE_ENABLED: &str = "CMAEG_NYXID_TURN_TRACE_ENABLED";
 pub const CMAEG_TOOLS_NYXID_SLUG: &str = "CMAEG_TOOLS_NYXID_SLUG";
 
 /// Configuration errors that prevent the service from binding safely.
@@ -235,6 +237,7 @@ pub struct Config {
 impl Config {
     /// Read configuration from the process environment.
     pub fn from_env() -> Result<Self, ConfigError> {
+        crate::telemetry::turn_trace::config::enabled()?;
         let value = env::var(CMAEG_LISTEN).unwrap_or_else(|_| "0.0.0.0:8090".to_owned());
         let listen = value.parse().map_err(|source| ConfigError::InvalidListen {
             name: CMAEG_LISTEN,
@@ -279,7 +282,7 @@ impl Config {
             management,
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
-            github_enabled: routing::write_flag("CMAEG_GITHUB_ENABLED")?,
+            github_enabled: github_writes_enabled()?,
             native_bot_mentions_writes_enabled: match env::var(
                 "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED",
             ) {

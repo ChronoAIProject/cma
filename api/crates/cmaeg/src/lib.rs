@@ -63,13 +63,13 @@ pub use config::{
     CMAEG_MEDIA_RESPONSE_BYTES, CMAEG_MEDIA_TOOL_PROVIDERS, CMAEG_MEDIA_VIDEO_FRAMES,
     CMAEG_METRICS_LISTEN, CMAEG_MONGODB_AUTHORITY_MODE, CMAEG_MONGODB_DATABASE, CMAEG_MONGODB_URI,
     CMAEG_NON_HUMAN_PROVIDERS, CMAEG_NYXID_BASE_URL, CMAEG_NYXID_CLIENT_ID,
-    CMAEG_NYXID_CLIENT_SECRET, CMAEG_NYXID_COMPLETE_REPLIES, CMAEG_NYXID_NATIVE_MEDIA_ENABLED,
-    CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS, CMAEG_PROVIDER_CONNECT_TIMEOUT_MS,
-    CMAEG_PROVIDER_MAX_INFLIGHT, CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL,
-    CMAEG_PUBLIC_URL, CMAEG_RELAY_TEXT_EDITS_ENABLED, CMAEG_RESTORE_RATE_PER_MINUTE,
-    CMAEG_RESTORE_TIMEOUT_MS, CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED, CMAEG_TOOLS_NYXID_SLUG,
-    CMAEG_TURN_TIMEOUT_MS, CMAEG_WEB_ORIGIN, CMAEG_WHATSAPP_INTERACTIONS_ENABLED,
-    CMAEG_WHATSAPP_TEMPLATES_ENABLED,
+    CMAEG_NYXID_CLIENT_SECRET, CMAEG_NYXID_COMMONMARK_RELAY_ENABLED, CMAEG_NYXID_COMPLETE_REPLIES,
+    CMAEG_NYXID_NATIVE_MEDIA_ENABLED, CMAEG_NYXID_REPLY_TIMEOUT_MS, CMAEG_PROVIDERS,
+    CMAEG_PROVIDER_CONNECT_TIMEOUT_MS, CMAEG_PROVIDER_MAX_INFLIGHT,
+    CMAEG_PROVIDER_REQUEST_TIMEOUT_MS, CMAEG_PUBLIC_API_URL, CMAEG_PUBLIC_URL,
+    CMAEG_RELAY_TEXT_EDITS_ENABLED, CMAEG_RESTORE_RATE_PER_MINUTE, CMAEG_RESTORE_TIMEOUT_MS,
+    CMAEG_TELEGRAM_MESSAGE_EFFECTS_ENABLED, CMAEG_TOOLS_NYXID_SLUG, CMAEG_TURN_TIMEOUT_MS,
+    CMAEG_WEB_ORIGIN, CMAEG_WHATSAPP_INTERACTIONS_ENABLED, CMAEG_WHATSAPP_TEMPLATES_ENABLED,
 };
 
 const REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
@@ -146,6 +146,7 @@ async fn openapi() -> Json<utoipa::openapi::OpenApi> {
 
 /// Run CMAEG until a process termination signal arrives.
 pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let commonmark_relay = config::nyxid_commonmark_relay_from_env()?;
     let complete_replies = config::nyxid_complete_replies_from_env()?;
     let native_media = config::nyxid_native_media_from_env()?;
     let relay_text_edits = config::relay_text_edits_from_env()?;
@@ -169,6 +170,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     serve::serve(
         config,
         complete_replies,
+        commonmark_relay,
         native_media,
         relay_text_edits,
         native_discord_edits,
@@ -208,12 +210,15 @@ pub fn install_panic_hook() {
 /// Initialize the container logger with the service's stable default filter.
 pub fn init_logging() {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
+    let writer = telemetry::turn_trace::log_writer();
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .with_ansi(false)
+                .with_writer(writer)
                 .with_filter(log_layer_filter(std::env::var("RUST_LOG").ok().as_deref())),
         )
+        .with(telemetry::turn_trace::scope::layer())
         .init();
 }
 

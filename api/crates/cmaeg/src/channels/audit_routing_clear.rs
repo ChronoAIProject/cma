@@ -122,6 +122,11 @@ async fn step(
     if definition.durable_custom_execution {
         return Ok(Step::Stop(CUSTOM_EXECUTION_NEEDS_READER));
     }
+    if Extensions::of(&definition).provider_capabilities {
+        // Negotiation belongs to the binding transaction. A routing-only
+        // rollback cannot erase it while the provider may still emit fields.
+        return Ok(Step::Stop("provider_capabilities_require_reader"));
+    }
     if Extensions::of(&definition).legacy_compatible() {
         // A concurrent update already returned it to the legacy shape.
         return Ok(Step::Done);

@@ -201,6 +201,10 @@ the gateway's master keys and CMA service credential as environment variables.
 
 All documentation lives in `docs/`, and every file in it is markdown. The only documentation outside it is this file, `README.md`, and markdown under `sdk/*/docs/`; SDK documentation lives beside its implementation and is the source rendered by the frontend.
 
+Data changes across stores follow [CMA Data Migrations](docs/CMA_Data_Migrations.md).
+Record the reader floor, gated writers, recovery artifacts and completion evidence
+for each release. The standard supplements every existing continuity and CI rule.
+
 ---
 
 ## 3. The four-layer architecture
@@ -474,6 +478,10 @@ writer-fenced; an expired worker must not mutate a newer worker's resources.
 Quiet Sandboxes pause according to platform settings after every Agent is quiet,
 unless their Profile has Always keep alive enabled. Inactivity admission fences
 the mutable Profile policy in the same transaction as its Sandbox/Agent evidence.
+A platform spend stop (`SpendStop`) is the one exception: it also pauses
+Sandboxes kept alive and Active Sandboxes without live Agents, never busy work,
+does not change the preference, and defers managed runtime updates until it
+lifts.
 Any admitted message, creation or Launch that needs one revives it. The owner
 does not need to repair a deployment by clicking a revive control.
 

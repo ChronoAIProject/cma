@@ -173,3 +173,30 @@ async fn agent_resources_requires_credentials_and_refuses_restore_or_checkpoint_
     assert!(!config.home.join("project/.worktrees/agent-1").exists());
     cleanup(&config);
 }
+
+#[tokio::test]
+async fn capacity_checks_both_preparation_intents_before_either_effect() {
+    for (count, accepted) in [(1020, false), (1019, true)] {
+        let config = RuntimeConfig::for_test(root("resource-capacity"));
+        let supervisor = provision(&config).await;
+        let plan = plan(&supervisor).await;
+        crate::mutation_journal::capacity_tests::fill(&config, count);
+        let response = supervisor.dispatch(batch(2, &plan)).await;
+        if accepted {
+            let result = receipt(response, 2);
+            assert!(std::path::Path::new(&result.worktree.path).is_dir());
+            assert!(config.agent_home("agent-1").is_dir());
+        } else {
+            let error = failure(response);
+            assert_eq!(error.code, "mutation_ledger_capacity");
+            assert_eq!(error.detail, crate::mutation_capacity::DETAIL);
+            assert!(!error.retryable);
+            assert!(!crate::worktree::expected_path(&config.home, "project", "agent-1").exists());
+            assert!(!config.agent_home("agent-1").exists());
+            assert!(crate::mutation_authority::records(&config)
+                .unwrap()
+                .is_empty());
+        }
+        cleanup(&config);
+    }
+}

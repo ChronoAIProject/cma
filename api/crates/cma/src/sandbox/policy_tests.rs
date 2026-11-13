@@ -81,6 +81,29 @@ async fn policy_reads_live_limits_retention_and_configured_services() {
 }
 
 #[tokio::test]
+async fn automatic_pause_requires_enablement_and_a_complete_grace_period() {
+    let (store, policy) = live_policy();
+    assert!(!policy
+        .automatic_pause_allowed("2026-09-05T01:00:00Z")
+        .await
+        .unwrap());
+
+    {
+        let mut stored = store.0.lock().unwrap();
+        stored.settings.inactivity.auto_pause_enabled = true;
+        stored.settings.inactivity.grace_started_at = Some("2026-09-05T00:00:00Z".into());
+    }
+    assert!(!policy
+        .automatic_pause_allowed("2026-09-05T00:14:59Z")
+        .await
+        .unwrap());
+    assert!(policy
+        .automatic_pause_allowed("2026-09-05T00:15:00Z")
+        .await
+        .unwrap());
+}
+
+#[tokio::test]
 async fn policy_refuses_limits_that_do_not_fit_the_domain_model() {
     let (store, policy) = live_policy();
     store

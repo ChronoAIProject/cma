@@ -145,6 +145,7 @@ pub(super) fn complete_first_message(
 
 pub(super) fn fail_first_message(
     agent: &mut Agent,
+    class: &str,
     detail: &str,
     at: &str,
     logs: &mut Vec<AgentLogKind>,
@@ -161,13 +162,13 @@ pub(super) fn fail_first_message(
     ) {
         return Ok(());
     }
-    let failure = FirstMessageFailure::new(
-        "agent_turn_failed",
-        bounded(detail.to_owned(), 4 * 1024),
-        false,
-        at,
-    )
-    .map_err(|_| AgentConversationError::InvalidState("first-message failure was invalid"))?;
+    let class = if class.trim().is_empty() || class.len() > 128 {
+        "agent_turn_failed"
+    } else {
+        class
+    };
+    let failure = FirstMessageFailure::new(class, bounded(detail.to_owned(), 4 * 1024), false, at)
+        .map_err(|_| AgentConversationError::InvalidState("first-message failure was invalid"))?;
     record
         .fail(failure)
         .map_err(|_| AgentConversationError::InvalidState("first-message failure was refused"))?;
@@ -194,10 +195,10 @@ pub(super) fn active_turn(agent: &Agent) -> Result<u64, AgentConversationError> 
         .ok_or(AgentConversationError::InvalidState("no turn is active"))
 }
 
-pub(super) fn prompt_evidence(update: ConversationUpdate) -> (ConversationUpdate, bool) {
-    match update {
+pub(super) fn prompt_evidence(update: &ConversationUpdate) -> (&ConversationUpdate, bool) {
+    match update.effect() {
         ConversationUpdate::WithoutPromptEvidence(update) => {
-            let (update, _) = prompt_evidence(*update);
+            let (update, _) = prompt_evidence(update);
             (update, false)
         }
         update => {
@@ -223,6 +224,34 @@ pub(super) fn plain_text(content: &ContentBlock) -> Option<String> {
     }
 }
 
+pub(super) fn validate_prompt_identity(
+    current: &Agent,
+    prompt_id: &layer3_adapter::PromptIdentity,
+) -> Result<(), AgentConversationError> {
+    let conversation = current.conversation.conversation_id.as_deref().ok_or(
+        AgentConversationError::InvalidState("terminal prompt identity has no conversation"),
+    )?;
+    let generation =
+        current
+            .conversation
+            .runtime_generation
+            .ok_or(AgentConversationError::InvalidState(
+                "terminal prompt identity has no generation",
+            ))?;
+    let turn = current
+        .conversation
+        .active_turn
+        .ok_or(AgentConversationError::InvalidState(
+            "terminal prompt identity has no active turn",
+        ))?;
+    if layer3_adapter::PromptIdentity::new(conversation, generation, turn) != *prompt_id {
+        return Err(AgentConversationError::InvalidState(
+            "terminal prompt identity does not match the active turn",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn wire_name<T: serde::Serialize>(value: &T) -> String {
     match serde_json::to_value(value) {
         Ok(serde_json::Value::String(name)) => name,
@@ -246,6 +275,14 @@ pub(super) fn append_bounded(target: &mut String, value: &str, limit: usize) {
     target.push_str(&value[..end]);
 }
 
+pub(super) fn bounded_ref(value: &str, limit: usize) -> String {
+    let mut end = value.len().min(limit);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_owned()
+}
+
 pub(super) fn bounded(mut value: String, limit: usize) -> String {
     if value.len() <= limit {
         return value;
@@ -256,4 +293,34 @@ pub(super) fn bounded(mut value: String, limit: usize) -> String {
     }
     value.truncate(end);
     value
+}
+
+pub(super) fn recorded_tool_output(
+    fields: &layer3_adapter::ToolCallUpdateFields,
+) -> Option<super::RecordedToolOutput> {
+    recorded_tool_blocks(layer3_adapter::reported_tool_text(fields))
+}
+
+pub(super) fn recorded_initial_tool_output(
+    call: &layer3_adapter::ToolCall,
+) -> Option<super::RecordedToolOutput> {
+    recorded_tool_blocks(layer3_adapter::reported_tool_call_text(call))
+}
+
+fn recorded_tool_blocks<'a>(
+    blocks: impl IntoIterator<Item = std::borrow::Cow<'a, str>>,
+) -> Option<super::RecordedToolOutput> {
+    let mut text = String::new();
+    let mut reported = false;
+    let mut truncated = false;
+    for block in blocks {
+        if reported {
+            truncated |= text.len() == 16 * 1024;
+            append_bounded(&mut text, "\n", 16 * 1024);
+        }
+        reported = true;
+        truncated |= text.len().saturating_add(block.len()) > 16 * 1024;
+        append_bounded(&mut text, block.as_ref(), 16 * 1024);
+    }
+    reported.then_some(super::RecordedToolOutput { text, truncated })
 }

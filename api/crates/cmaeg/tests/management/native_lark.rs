@@ -242,3 +242,6 @@ async fn native_lark_history_opt_out_does_not_skip_changed_identity_or_credentia
     stop.send(()).unwrap();
     task.await.unwrap();
 }
+
+#[path = "native_lark_disabled.rs"]
+mod disabled;

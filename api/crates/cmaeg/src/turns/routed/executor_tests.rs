@@ -28,8 +28,20 @@ pub(super) fn executor(
     mpsc::Receiver<DeliveryCommand>,
     WorkItem,
 ) {
+    executor_with_timeout(setup, http, Duration::from_secs(60))
+}
+
+pub(super) fn executor_with_timeout(
+    setup: &Setup,
+    http: &HttpServer,
+    request_timeout: Duration,
+) -> (
+    RoutedTargetExecutor,
+    mpsc::Receiver<DeliveryCommand>,
+    WorkItem,
+) {
     let port = Arc::new(HttpExecutionPort::new(
-        http.client(true, Duration::from_secs(60)),
+        http.client(true, request_timeout),
         setup.port.clone(),
         setup.server.store(),
         setup.journal().clone(),
@@ -330,6 +342,8 @@ async fn persisted_pending_terminal_effect_and_settled_receipt_survive_crashes()
         .unwrap();
     let raw = frames().pop().unwrap();
     let frame = crate::providers::RecoveryEvent {
+        trace_contract: false,
+        trace: None,
         response_id: "resp_accepted".into(),
         sequence_number: 3,
         event: crate::providers::parse_event(&crate::providers::SseFrame {

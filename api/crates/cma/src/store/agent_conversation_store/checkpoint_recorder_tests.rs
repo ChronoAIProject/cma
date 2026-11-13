@@ -103,7 +103,7 @@ async fn retained_mongo_output_replays_once_after_commit_before_ack_and_reopen()
                 },
                 ack,
             ),
-            update: update.map(Box::new),
+            update: update.map(|update| Box::new(update).into()),
         }
     };
     let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));

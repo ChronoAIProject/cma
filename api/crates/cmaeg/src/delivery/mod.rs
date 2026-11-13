@@ -52,6 +52,7 @@ mod native_lark_card_media;
 mod native_lark_controls;
 mod native_lark_thread_start;
 mod pacing;
+pub mod queue;
 pub mod relay_client;
 pub mod render;
 pub(crate) mod retained_receipt;
@@ -75,6 +76,7 @@ mod telegram_media_tests;
 mod telegram_structured;
 #[cfg(test)]
 mod telegram_structured_tests;
+mod trace;
 pub mod webhook_client;
 mod whatsapp;
 mod whatsapp_controls;

@@ -167,6 +167,22 @@ for (const target of ['new', 'contextual'] as const) {
   }, info) => {
     const boundary = new LocalStartup();
     await boundary.route(page, baseURL!);
+    await page.route('**/api/v2/ui/task-experience', (route) =>
+      route.fulfill({
+        json: {
+          object: 'cma.ui.task_experience',
+          schema_version: 1,
+          account_id: 'local-owner',
+          capabilities: {
+            task_home_admission: true,
+            desktop_enable: false,
+            suggested_followup_admission: false,
+            browser_takeover: false,
+            replay_presentation: false,
+          },
+        },
+      }),
+    );
     const writes: { body: unknown; key?: string }[] = [];
     let ready = false;
     await page.route('**/api/agent-manager/v1/agents', async (route) => {
@@ -224,8 +240,11 @@ for (const target of ['new', 'contextual'] as const) {
       .getByLabel('Your task')
       .fill('  Inspect the selected source\nKeep this exact task.  ');
     if (target === 'new') {
-      await dialog.getByLabel('GitHub repository').fill('https://github.com/org/research');
-      await dialog.getByLabel('Repository ref').fill('proof/fixed');
+      await dialog.getByRole('button', { name: 'Add git repo' }).click();
+      const repository = page.getByRole('dialog', { name: 'Add git repo' });
+      await repository.getByLabel('GitHub repository').fill('org/research.git/');
+      await repository.getByLabel('Repository ref').fill('proof/fixed');
+      await repository.getByRole('button', { name: 'Add repo', exact: true }).click();
     } else {
       await expect(dialog.getByLabel('GitHub repository')).toHaveCount(0);
       await expect(dialog.getByText(/Repository context is inherited/)).toBeVisible();
@@ -242,7 +261,12 @@ for (const target of ['new', 'contextual'] as const) {
     );
     await dialog.getByRole('button', { name: 'Recover original task', exact: true }).click();
     await expect(
-      dialog.getByText('Task accepted. Preparing your Agent.', { exact: true }),
+      dialog.getByText(
+        target === 'contextual'
+          ? 'Preparing your Agent…'
+          : 'Preparing a cloud computer for your Agent…',
+        { exact: true },
+      ),
     ).toBeVisible();
     await expect(page).not.toHaveURL(/\/agents\/agt_contract$/);
     expect(writes).toHaveLength(2);

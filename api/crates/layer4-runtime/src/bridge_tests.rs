@@ -1,4 +1,8 @@
+use layer3_adapter::agent_capacity_recovery::{
+    CapacityRecoveryRequest, ConfirmedAgentState, RetainedAgentTarget,
+};
 use layer3_adapter::AgentSlot;
+use layer3_adapter::RuntimeHandle;
 
 use super::*;
 
@@ -15,6 +19,27 @@ fn launch() -> AgentLaunch {
             "while IFS= read -r line; do printf '%s\\n' \"$line\"; done".into(),
         ],
         env: BTreeMap::new(),
+    }
+}
+
+fn recovery_request(challenge: &str, writer_fence: u64) -> CapacityRecoveryRequest {
+    CapacityRecoveryRequest {
+        operation_key: "agent:test-agent:open:v1".into(),
+        target: RetainedAgentTarget {
+            sandbox_id: "sandbox".into(),
+            agent_id: "test-agent".into(),
+            runtime: RuntimeHandle::new("runtime"),
+            boot_id: "a".repeat(32),
+            provision_generation: 1,
+            home_identity: "a".repeat(43),
+            conversation_id: "conversation".into(),
+            conversation_generation: 1,
+            original_open_operation: "agent:test-agent:open:v1".into(),
+            original_open_sha256: "b".repeat(64),
+            active_turn: None,
+        },
+        writer_fence,
+        challenge: challenge.into(),
     }
 }
 
@@ -163,3 +188,151 @@ async fn retiring_a_detached_bridge_cancels_a_backpressured_stdout_reader() {
     .await
     .expect("retired detached bridge must not leave a capacity waiter behind");
 }
+
+#[tokio::test]
+async fn recovery_lease_is_single_use_and_binds_the_writer_fence() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    let request = recovery_request("a".repeat(32).as_str(), 7);
+    assert!(bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .is_ok());
+    assert!(matches!(
+        bridge
+            .reserve_capacity_recovery(&request.challenge, request.writer_fence + 1)
+            .await,
+        Err(layer3_adapter::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)
+    ));
+    assert!(!bridge.consume_capacity_recovery(&request.challenge).await);
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await
+        .unwrap();
+    assert!(bridge.consume_capacity_recovery(&request.challenge).await);
+    assert!(!bridge.consume_capacity_recovery(&request.challenge).await);
+    bridge.terminate().await.unwrap();
+}
+
+#[tokio::test]
+async fn recovery_proof_requires_the_reserved_lease_and_preserves_no_input_path() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    let request = recovery_request("c".repeat(32).as_str(), 9);
+    assert!(matches!(
+        bridge
+            .capacity_recovery_proof(&request, "/tmp".into())
+            .await,
+        Err(layer3_adapter::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)
+    ));
+    bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .unwrap();
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    bridge.retained_output.retain(b"retained").await;
+    assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
+    let proof = bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await
+        .unwrap();
+    assert_eq!(proof.confirmation.request, request);
+    assert_eq!(proof.confirmation.output.acknowledged_through, 0);
+    assert_eq!(proof.confirmation.output.first_retained, 1);
+    assert_eq!(proof.confirmation.output.observed_through, 1);
+    bridge.terminate().await.unwrap();
+}
+
+async fn observe_input(bridge: &Bridge, frame: serde_json::Value) {
+    bridge
+        .observation
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .input(&serde_json::to_vec(&frame).unwrap());
+}
+
+async fn observe_output(bridge: &Bridge, frame: serde_json::Value) {
+    bridge
+        .observation
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .output(&serde_json::to_vec(&frame).unwrap());
+}
+
+#[tokio::test]
+async fn recovery_failed_load_cannot_authorize_a_proof() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    let request = recovery_request(&"d".repeat(32), 10);
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(
+        &bridge,
+        serde_json::json!({"id":"load", "error":{"code":-32603, "message":"load failed"}}),
+    )
+    .await;
+    bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .unwrap();
+    let proof = bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await;
+    bridge.terminate().await.unwrap();
+    assert!(proof.is_err(), "failed load authorized proof: {proof:?}");
+}
+
+#[tokio::test]
+async fn recovery_unrelated_response_preserves_a_working_prompt() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    let prompt = layer3_adapter::PromptIdentity::new("conversation", 1, 1);
+    observe_input(&bridge, serde_json::json!({"id":prompt.as_str(), "method":"session/prompt", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"initialize", "error":{"code":-32603, "message":"Already initialized"}})).await;
+    let state = bridge
+        .observation
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .native_state
+        .clone();
+    bridge.terminate().await.unwrap();
+    assert_eq!(
+        state,
+        Some(ConfirmedAgentState::Working {
+            prompt_id: prompt.as_str().into()
+        })
+    );
+}
+
+#[tokio::test]
+async fn recovery_default_off_bypasses_native_observation() {
+    let bridge = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    let mut output = bridge.subscribe();
+    for frame in [
+        serde_json::json!({"id":"load","method":"session/load","params":{"sessionId":"conversation"}}),
+        serde_json::json!({"id":"load","result":{}}),
+    ] {
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        assert!(bridge.send(bytes.clone()).await);
+        assert_eq!(output.recv().await.unwrap(), Outbound::Frame(bytes));
+    }
+    let bypassed = bridge.observation.is_none();
+    assert_eq!(
+        bridge.reserve_capacity_recovery(&"a".repeat(32), 1).await,
+        Err(CapacityRecoveryError::Unsupported)
+    );
+    bridge.terminate().await.unwrap();
+    assert!(
+        bypassed,
+        "default-off runtime performed native state tracking"
+    );
+}
+
+#[path = "bridge_recovery_tests.rs"]
+mod recovery_tests;

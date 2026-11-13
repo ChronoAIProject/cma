@@ -383,65 +383,6 @@ impl BindingService {
         }
         Err(BindingError::Conflict)
     }
-
-    pub async fn retire_conversation(
-        &self,
-        caller: &Caller,
-        id: &str,
-        conversation_id: &str,
-    ) -> Result<(), BindingError> {
-        if !super::model::valid_id(conversation_id, 8) {
-            return Err(BindingError::InvalidRequest(
-                "invalid conversation identifier".into(),
-            ));
-        }
-        for _ in 0..8 {
-            let binding = self.read_for_retirement(caller, id).await?;
-            let conversation_id = if binding.existing_agent.is_some() {
-                EXISTING_AGENT_CONVERSATION
-            } else {
-                conversation_id
-            };
-            let Some(value) = self
-                .store
-                .binding_conversation(id, binding.generation, conversation_id)
-                .await?
-            else {
-                if binding.state != BindingState::Ready {
-                    return Ok(());
-                }
-                match self.ensure_conversation(caller, id, conversation_id).await {
-                    // There is no conversation to retire, and an orphaned
-                    // binding must not create one merely to acknowledge delete.
-                    Err(BindingError::ResourcesUnavailable) => return Ok(()),
-                    result => {
-                        result?;
-                    }
-                }
-                continue;
-            };
-            if matches!(
-                value.state,
-                BindingConversationState::Retiring | BindingConversationState::Retired
-            ) {
-                return Ok(());
-            }
-            let mut next = value.clone();
-            next.state = BindingConversationState::Retiring;
-            next.revision = next.revision.checked_add(1).ok_or(BindingError::Conflict)?;
-            next.updated_at = now_rfc3339();
-            match self
-                .store
-                .save_binding_conversation(binding.revision, Some(value.revision), next)
-                .await
-            {
-                Ok(()) => return Ok(()),
-                Err(SandboxStoreError::Conflict) => continue,
-                Err(error) => return Err(error.into()),
-            }
-        }
-        Err(BindingError::Conflict)
-    }
 }
 
 pub(super) fn require(caller: &Caller) -> Result<(), BindingError> {
@@ -459,6 +400,7 @@ pub(super) fn unavailable(error: impl std::fmt::Display) -> BindingError {
 
 pub(super) fn credential_error(error: crate::CoreError) -> BindingError {
     match error {
+        crate::CoreError::AdmissionPaused => BindingError::AdmissionPaused,
         crate::CoreError::InvalidRequest(detail) => BindingError::InvalidRequest(detail),
         crate::CoreError::InvalidState(_) => BindingError::Conflict,
         other => unavailable(other),

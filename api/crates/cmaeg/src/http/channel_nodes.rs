@@ -23,7 +23,7 @@ use axum::{
 use cmaeg_core::{ids::ConsumerId, problem::ProblemCode};
 
 #[utoipa::path(post, path = "/v1/channels/{channel_id}/sources/{source_index}/test", operation_id = "testChannelSource", tag = "channels", security(("creatorBearer" = [])),
-    params(("channel_id" = String, Path), ("source_index" = usize, Path)),
+    params(("channel_id" = String, Path), ("source_index" = usize, Path), ("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator")),
     responses((status = 200, body = source_check::SourceCheckResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json")))]
 pub async fn test_source(
     State(state): State<ManagementState>,
@@ -41,7 +41,7 @@ pub async fn test_source(
 }
 
 #[utoipa::path(post, path = "/v1/channels/{channel_id}/consumers/{consumer_id}/test", operation_id = "testChannelConsumer", tag = "channels", security(("creatorBearer" = [])),
-    params(("channel_id" = String, Path), ("consumer_id" = String, Path)),
+    params(("channel_id" = String, Path), ("consumer_id" = String, Path), ("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator")),
     responses((status = 200, body = TestChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json")))]
 pub async fn test_consumer(
     State(state): State<ManagementState>,
@@ -70,7 +70,7 @@ pub async fn test_consumer(
 }
 
 #[utoipa::path(put, path = "/v1/channels/{channel_id}/routing", operation_id = "updateChannelRouting", tag = "channels", security(("creatorBearer" = [])),
-    params(("channel_id" = String, Path)), request_body = RoutingUpdateRequest,
+    params(("channel_id" = String, Path), ("X-CMAEG-Owner" = Option<String>, Header, description = "Organization owner UUID; caller must be an authorized NyxID organization administrator")), request_body = RoutingUpdateRequest,
     responses((status = 200, body = ChannelResponse), (status = "default", body = cmaeg_core::problem::Problem, content_type = "application/problem+json")))]
 pub async fn update_routing(
     State(state): State<ManagementState>,
