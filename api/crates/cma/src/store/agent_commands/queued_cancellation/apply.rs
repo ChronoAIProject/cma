@@ -11,7 +11,7 @@ use super::super::{audit, lane_records, records, worker_apply, ApplyError};
 use super::fences;
 use crate::store::sandbox_mongo::{record_bson, MongoSandboxStore};
 
-pub(super) async fn apply(
+pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     request: &QueuedCancellationReservation,
     session: &mut ClientSession,

@@ -41,17 +41,34 @@ pub(in crate::store) async fn apply(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     if read_format(&row).map_err(ApplyError::Domain)?.is_none() && adoption.is_none() {
-        return domain::publication::apply_mutation_with_capacity(
+        return Box::pin(domain::publication::apply_mutation_with_capacity(
             caller,
             store,
             mutation,
             scope.session(),
             capacity,
-        )
+        ))
         .await;
     }
+    Box::pin(apply_segmented(
+        store, mutation, capacity, checkpoint, adoption, scope, row,
+    ))
+    .await
+}
+
+// Keep the two format implementations in separate futures. A legacy call must
+// not reserve the segmented planner's temporary stack frames while it polls.
+async fn apply_segmented(
+    store: &MongoSandboxStore,
+    mutation: &AgentConversationMutation,
+    capacity: Option<&AgentConversationCapacitySettlement>,
+    checkpoint: Option<&AgentMessageCheckpoint>,
+    adoption: Option<&adoption::Prepared>,
+    scope: &mut TransactionScope<'_>,
+    row: mongodb::bson::Document,
+) -> Result<ConversationReceipt, ApplyError> {
     let current = read_agent(&row).map_err(ApplyError::Domain)?;
-    let captured = capture::capture_transaction(store, &current, scope).await?;
+    let captured = Box::pin(capture::capture_transaction(store, &current, scope)).await?;
     domain::publication::before(store, &current, mutation, scope.session()).await?;
     if let Some(proof) = capacity {
         proof
@@ -75,20 +92,20 @@ pub(in crate::store) async fn apply(
     }
     domain::publication::require_cleanup(&row, &current, mutation)?;
     let logs = domain::conversation_logs(mutation).map_err(ApplyError::Domain)?;
-    let command_dispatch = domain::publication::bind_domain(
+    let command_dispatch = Box::pin(domain::publication::bind_domain(
         store,
         &current,
         captured.projection().latest_turn,
         mutation,
         capacity.is_some(),
         scope.session(),
-    )
+    ))
     .await?;
     let operation = identity(mutation, capacity.is_some(), checkpoint)?;
     let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
     domain::carry_checkpoint_fields(&row, &current, &mutation.agent, &mut fields)
         .map_err(ApplyError::Domain)?;
-    let recorded = writer_commit::publish_prepared(
+    let recorded = Box::pin(writer_commit::publish_prepared(
         store,
         scope,
         &captured,
@@ -109,7 +126,7 @@ pub(in crate::store) async fn apply(
             fields,
         },
         adoption.map(|value| (&value.bootstrap, &value.admission)),
-    )
+    ))
     .await?;
     crate::store::suggestions::enqueue(store, &mutation.agent, &logs, scope.session()).await?;
     Ok(ConversationReceipt {
