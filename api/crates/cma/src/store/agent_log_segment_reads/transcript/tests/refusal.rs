@@ -65,6 +65,13 @@ async fn missing_foreign_stale_and_unsupported_projection_refuses_without_repair
             store.agent_log_usage_projection(&agent).await.is_err(),
             "{fault}"
         );
+        assert!(
+            store
+                .agent_log_page_projection(&agent, 0, 20)
+                .await
+                .is_err(),
+            "{fault}"
+        );
         let mut session = store.client.start_session().snapshot(true).await.unwrap();
         assert!(
             crate::store::agent_titles::transcript_at_snapshot(&store, &agent, &mut session)
