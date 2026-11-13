@@ -9,7 +9,7 @@ pub(in crate::store) async fn advance_workspace(
     let advanced = store
         .workspaces
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": previous.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
@@ -21,7 +21,7 @@ pub(in crate::store) async fn advance_workspace(
                     "workspace next worktree number",
                 )
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
+            }),
             crate::store::work_lease_update::replacement(
                 workspace_replacement_fields(next).map_err(ApplyError::Domain)?,
             ),

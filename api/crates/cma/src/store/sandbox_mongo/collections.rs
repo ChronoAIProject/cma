@@ -7,6 +7,8 @@ pub(super) const SANDBOX_COLLECTIONS: &[&str] = &[
     SANDBOX_SESSIONS,
     "sandbox_retained_availability",
     SANDBOXES,
+    super::super::work_schema::floor::COLLECTION,
+    super::super::sandbox_credentials::issuance::COLLECTION,
     WORKSPACES,
     WORKTREES,
     AGENTS,

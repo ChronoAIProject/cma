@@ -44,6 +44,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub renewable_work: bool,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
@@ -184,7 +185,8 @@ impl SandboxLifecycleComposition {
                 format!("{}:workspace", config.holder),
                 config.deployment_id.clone(),
             )
-            .with_execution(config.execution),
+            .with_execution(config.execution)
+            .with_replicas(config.renewable_work),
         );
         let agent_worker = AgentWorker::new(
             AgentWorkerDependencies {
@@ -233,6 +235,7 @@ impl SandboxLifecycleComposition {
                 dependencies.policy,
             )
             .with_execution(config.execution)
+            .with_replicas(config.renewable_work)
             .with_work_retry_policy(config.work_retry_policy_enabled)
             .with_native_create_retry(config.native_create_retry_enabled)
             .with_home_policy(config.home_policy),

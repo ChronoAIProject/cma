@@ -249,7 +249,7 @@ async fn apply_admission(
         };
         if let Some(document) = store
             .workspaces
-            .find_one(origin_filter)
+            .find_one(crate::store::work_schema::query(origin_filter))
             .session(&mut *session)
             .await
             .map_err(ApplyError::Driver)?
@@ -329,13 +329,13 @@ async fn apply_admission(
         let updated = store
             .sandboxes
             .update_one(
-                doc! {
+                crate::store::work_schema::query(doc! {
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "channel_reuse_cleanup_execution": { "$exists": false },
                     "revision": signed(sandbox.revision, "sandbox revision")
                         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
-                },
+                }),
                 replacement(sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?),
             )
             .session(&mut *session)
@@ -391,11 +391,11 @@ pub(super) async fn lock_sandbox(
     let locked = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
-            },
+            }),
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )
         .session(session)

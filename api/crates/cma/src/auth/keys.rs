@@ -19,6 +19,7 @@ use identifiers::{credential_of, key_name, validate_credential_id};
 mod bots;
 pub(crate) use bots::owner_matches;
 mod catalog;
+mod dispatch;
 mod grant;
 mod identifiers;
 #[cfg(test)]
@@ -231,37 +232,10 @@ impl KeyIssuer {
         owner_token: &str,
         services: &[ServiceId],
     ) -> Result<MintedKey, KeyIssuerError> {
-        validate_credential_id(credential_id)?;
-        let allowed = self.resolve_exact(owner_token, services).await?;
-        let plan = self
-            .scope_plan(
-                owner_token,
-                &allowed,
-                &layer2_core::resource_access::ResourceOwner::Person {
-                    subject: owner.clone(),
-                },
-            )
-            .await?;
-        let expires_at = key_expiry(SystemTime::now());
-        let mut body = mint_request_body(&self.deployment, credential_id, &allowed, expires_at)?;
-        plan.apply(&mut body);
-        let response = self
-            .http
-            .post(format!("{}{KEYS_PATH}", self.base_url))
-            .bearer_auth(owner_token)
-            .json(&body)
-            .send()
+        self.prepare_mint(credential_id, owner, owner_token, services)
+            .await?
+            .dispatch()
             .await
-            .map_err(|error| KeyIssuerError::Unavailable(error.to_string()))?;
-        if !response.status().is_success() {
-            return Err(KeyIssuerError::Refused(response.status().as_u16()));
-        }
-        let response = response
-            .json::<MintedKeyResponse>()
-            .await
-            .map_err(|error| KeyIssuerError::Unavailable(error.to_string()))?;
-        minted_key_from_response(response, &allowed, &plan.allowed_node_ids, expires_at)
-            .ok_or(KeyIssuerError::UnexpectedAuthority)
     }
 
     /// Revoke a provider key using the authority of its owning account.

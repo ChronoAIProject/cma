@@ -39,7 +39,13 @@ impl SandboxWorker {
             .await
             .map_err(|_| refused())?
             .ok_or_else(refused)?;
-        if sandbox.revision != call.revision || sandbox.work.lease.as_ref() != Some(&call.lease) {
+        if sandbox.revision != call.revision
+            || sandbox.work.lease.as_ref().is_none_or(|lease| {
+                lease.holder != call.lease.holder
+                    || lease.fence != call.lease.fence
+                    || lease.expires_at < call.lease.expires_at
+            })
+        {
             return Err(refused());
         }
         let agent = agents
@@ -219,8 +225,7 @@ impl SandboxWorker {
                             }
                         }
                         match parent {
-                            Ok(Some(parent))
-                                if SandboxMutationGuard::capture(&parent) == guard.sandbox => {}
+                            Ok(Some(parent)) if guard.sandbox.matches(&parent) => {}
                             Ok(_) => return,
                             Err(_) => (),
                         }

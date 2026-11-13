@@ -157,7 +157,7 @@ async fn persist_sandbox(
         let advanced = store
             .sandboxes
             .update_one(
-                doc! {
+                crate::store::work_schema::query(doc! {
                     "_id": current.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "channel_reuse_cleanup_execution": { "$exists": false },
@@ -167,7 +167,7 @@ async fn persist_sandbox(
                         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
                     "last_seq": signed(last_seq, "runtime-loss Sandbox event sequence")
                         .map_err(|_| ApplyError::Domain(SandboxStoreError::SequenceConflict))?,
-                },
+                }),
                 crate::store::work_lease_update::replacement(
                     sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)?,
                 ),

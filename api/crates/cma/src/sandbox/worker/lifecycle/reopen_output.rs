@@ -16,6 +16,18 @@ pub(super) async fn drain_while<T>(
     agent_id: &AgentId,
     guard: &AgentReopenGuard,
 ) -> layer3_adapter::Result<T> {
+    if layer2_core::sandbox::store::WorkAuthority::active() {
+        layer2_core::sandbox::store::WorkAuthority::current()
+            .map_err(|_| AdapterError::Unavailable("ordinary work authority expired".into()))?;
+        // The enclosing worker independently renews and cancels this future.
+        // A captured wall-clock expiry cannot shorten a renewed long operation.
+        return tokio::time::timeout(
+            Duration::from_secs(1_800),
+            drain(operation, receiver, recorder, agent_id, guard),
+        )
+        .await
+        .map_err(|_| AdapterError::Unavailable("reopen output operation timed out".into()))?;
+    }
     let expires = guard
         .sandbox
         .lease

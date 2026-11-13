@@ -5,6 +5,7 @@ const DEFAULT_RETRY: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub(crate) struct WorkspaceWorkerConfig {
+    pub renewable_work: bool,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
     pub deployment_id: String,
@@ -15,6 +16,7 @@ pub(crate) struct WorkspaceWorkerConfig {
 impl WorkspaceWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            renewable_work: false,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
@@ -23,14 +25,25 @@ impl WorkspaceWorkerConfig {
         }
     }
 
+    pub fn with_replicas(mut self, enabled: bool) -> Self {
+        self.renewable_work = enabled;
+        if enabled {
+            self.lease_duration =
+                Duration::from_secs(layer2_core::sandbox::store::WORK_LEASE_SECONDS);
+        }
+        self
+    }
+
     pub fn with_execution(
         mut self,
         execution: layer2_core::sandbox::ProvisioningExecution,
     ) -> Self {
         self.execution = execution;
-        self.lease_duration = self.lease_duration.max(Duration::from_secs(
-            layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
-        ));
+        if !self.renewable_work {
+            self.lease_duration = self.lease_duration.max(Duration::from_secs(
+                layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
+            ));
+        }
         self
     }
 }
