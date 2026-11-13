@@ -152,6 +152,9 @@ impl ControlPlaneComposition {
         )
         .with_task_experience(config.task_experience.clone());
         let lifecycle_drain = inline_lifecycle.drain_handle();
+        if let Some(manager) = &agent_manager {
+            manager.register_lifecycle(lifecycle_drain.clone())?;
+        }
         inline_lifecycle.resume_pending();
         let projections = projections
             .with_lifecycle(inline_lifecycle.clone())

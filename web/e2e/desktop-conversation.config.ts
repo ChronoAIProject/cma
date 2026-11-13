@@ -7,7 +7,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
   throw new Error('Desktop layout checks require a loopback preview.');
 export default defineConfig({
   testDir: '.',
-  testMatch: 'desktop-conversation.check.ts',
+  testMatch: ['desktop-conversation.check.ts', 'desktop-reconnect.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,

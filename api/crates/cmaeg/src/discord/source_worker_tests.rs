@@ -41,6 +41,7 @@ impl SourcePort for Port {
             };
             Attempt {
                 result: Ok(GatewayEnd {
+                    transport_closed: true,
                     reason,
                     checkpoint: None,
                     retry_after: Duration::from_millis(1),
@@ -172,6 +173,7 @@ async fn terminal_authentication_error_requires_a_new_source_revision() {
 fn retry_delay_never_shortens_gateway_or_discovery_cooldown() {
     let attempt = Attempt {
         result: Ok(GatewayEnd {
+            transport_closed: true,
             reason: EndReason::RateLimited,
             checkpoint: None,
             retry_after: Duration::from_secs(60),

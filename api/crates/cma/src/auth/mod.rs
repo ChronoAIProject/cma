@@ -20,6 +20,7 @@ mod browser_origins;
 mod browser_session;
 mod cookie_authorization;
 pub mod deferred_commands;
+mod desktop;
 pub mod entitlements;
 pub mod flow;
 mod identity;

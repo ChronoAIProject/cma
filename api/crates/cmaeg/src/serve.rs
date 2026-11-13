@@ -396,6 +396,9 @@ pub(crate) async fn serve(
         state.master_keys.clone(),
         ingress.clone(),
         state.readiness.clone(),
+        replica_runtime
+            .as_ref()
+            .map(|runtime| runtime.partitions.membership()),
     )
     .map_err(|_| std::io::Error::other("native Discord runtime configuration is invalid"))?;
     tracing::info!(bind = %config.listen, "CMAEG listening");
