@@ -17,6 +17,7 @@ pub use layer3_adapter::DesktopFrame;
 
 mod authorization;
 mod owned;
+mod timing;
 pub use authorization::DesktopAuthorization;
 
 #[derive(Debug, thiserror::Error)]
@@ -257,24 +258,31 @@ impl DesktopService {
             // A captured Caller alone cannot observe logout or revoked credentials.
             return Err(DesktopError::AuthorityUnavailable);
         }
-        let (sandbox_id, runtime) = self.authorize(caller, id).await?;
+        let (sandbox_id, runtime) =
+            timing::observe("legacy_lineage", self.authorize(caller, id)).await?;
         let sandbox_id = sandbox_id.to_string();
         let runtime_id = runtime.runtime_id;
         let lease = self.leases.acquire(&sandbox_id).await?;
-        let connection = tokio::time::timeout(
-            Duration::from_secs(10),
-            self.adapter
-                .open_desktop(&RuntimeHandle::new(runtime_id.clone())),
-        )
-        .await
-        .map_err(|_| DesktopError::RuntimeUnavailable)?
-        .map_err(|_| DesktopError::RuntimeUnavailable)?;
+        let connection = timing::observe("legacy_runtime_open", async {
+            tokio::time::timeout(
+                Duration::from_secs(10),
+                self.adapter
+                    .open_desktop(&RuntimeHandle::new(runtime_id.clone())),
+            )
+            .await
+            .map_err(|_| DesktopError::RuntimeUnavailable)?
+            .map_err(|_| DesktopError::RuntimeUnavailable)
+        })
+        .await?;
         let sandbox_id = SandboxId(sandbox_id);
         let session_id = SandboxCommandId::generate().to_string();
-        self.reads
-            .open_sandbox_session(&sandbox_id, &session_id, &session_expiry())
-            .await
-            .map_err(|_| DesktopError::Unavailable)?;
+        timing::observe(
+            "legacy_session_write",
+            self.reads
+                .open_sandbox_session(&sandbox_id, &session_id, &session_expiry()),
+        )
+        .await
+        .map_err(|_| DesktopError::Unavailable)?;
         register_open_desktop_session(&sandbox_id);
         Ok(DesktopConnection {
             connection: Some(connection),

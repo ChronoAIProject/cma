@@ -129,8 +129,26 @@ idempotent. The CLI is a no-op with replica mode disabled.
 HTTP 204 means readiness was withdrawn and drain requested. It does not prove
 socket closure, lease release or completed handoff. Native socket closure and
 the full shared drain must finish before manifest grace values are qualified.
-The manifest owner's staged contract is CLI, then sleep 30 seconds, with a
-provisional 760-second termination grace period. Activation remains separate.
+
+The #1994 design ruling requires the Kubernetes native
+`preStop: { sleep: { seconds: 30 } }` action and retains the 760-second
+termination grace period. The lifecycle configuration must allow at least
+30 seconds of propagation, the parsed `CMAEG_DRAIN_SECONDS` value, and
+45 seconds of teardown margin: 735 seconds with the configured 660-second
+application drain. This arithmetic is a configuration contract, not a measured
+hard lifetime. The manifest and Rust/Ruby contract correction is a separate
+#1994 integration dependency.
+
+An exec hook is prohibited while the in-container media transformer is enabled.
+Making the drain CLI non-dumpable does not protect its independently executed
+parent shell or sleep helper from same-UID access to inherited Secret variables.
+The earlier staged CLI-then-sleep shell hook is therefore not an accepted
+deployment mechanism; historical preparation and release receipts do not qualify
+it for reuse. Native sleep provides propagation delay without creating that
+helper, but does not withdraw readiness or request ownership drain before the
+delay. Secure early owned drain remains pending #1370/S2 integration, including
+authentication, bounded completion/failure semantics and Secret isolation for
+every participating process. Activation and rollback acceptance remain separate.
 
 ## Remaining acceptance gates
 
