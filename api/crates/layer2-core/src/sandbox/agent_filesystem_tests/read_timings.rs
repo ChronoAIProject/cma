@@ -1,6 +1,9 @@
 use super::*;
 use std::{io::Write, sync::Mutex};
 
+#[path = "read_timings/privacy.rs"]
+mod privacy;
+
 #[derive(Clone, Default)]
 struct Output(Arc<Mutex<Vec<u8>>>);
 impl Write for Output {
