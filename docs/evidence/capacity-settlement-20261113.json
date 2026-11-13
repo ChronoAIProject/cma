@@ -1,0 +1,77 @@
+{
+  "issue": 1905,
+  "environment": "disposable local MongoDB 8.0.13 replica set",
+  "interpretation": "Consumed BSON and complete scans, not wire bytes, CPU shares or production latency.",
+  "retained_rows": 10001,
+  "first_repeat_audits_fully": true,
+  "steady_repeats_match_full_agent_and_integrity": true,
+  "conflict_modes": [
+    false,
+    true
+  ],
+  "paired_retries_per_mode_and_step": 3,
+  "steady_state": [
+    {
+      "step": "CloseProcess",
+      "full_documents": 10002,
+      "bounded_documents": 2,
+      "full_bytes": 4229015,
+      "bounded_bytes": 1400,
+      "scans": 0
+    },
+    {
+      "step": "EnsureProcessClosed",
+      "full_documents": 10002,
+      "bounded_documents": 2,
+      "full_bytes": 4308077,
+      "bounded_bytes": 1416,
+      "scans": 0
+    },
+    {
+      "step": "RemoveHome",
+      "full_documents": 10002,
+      "bounded_documents": 2,
+      "full_bytes": 4209027,
+      "bounded_bytes": 1396,
+      "scans": 0
+    },
+    {
+      "step": "RemoveWorktree",
+      "full_documents": 10002,
+      "bounded_documents": 2,
+      "full_bytes": 4248559,
+      "bounded_bytes": 1404,
+      "scans": 0
+    }
+  ],
+  "regression_run": {
+    "base": "5c784605506a62161ca6d21850d8024b54c5cae0",
+    "nextest_run_id": "b2616ca5-6a1d-4b7c-8d40-4b8798f434ad",
+    "passed": 27,
+    "failed": 0,
+    "duration_seconds": 310.33,
+    "selection": "test(bounded_close_retries) or test(retry_audit::telemetry)"
+  },
+  "activation": {
+    "close_retry_default": false,
+    "cohort_required": true,
+    "production_activation_performed_by_this_task": false
+  },
+  "integration_run": {
+    "base": "6ef18c2120209dc7377a6116816bedf54cdd8a49",
+    "nextest_run_id": "34d2d833-6e0e-4adf-b499-cc2481eb1caa",
+    "passed": 5,
+    "failed": 0,
+    "duration_seconds": 119.776,
+    "selection": "test(::capacity_settlement::) or test(retry_audit::telemetry)",
+    "reason": "Recheck capacity contracts after the upstream cooperative scanner change #1915.",
+    "steady_state_matches_regression_run": true
+  },
+  "source_gates": {
+    "rust_toolchain": "1.96.1",
+    "shared_build_slot": true,
+    "format": "cargo fmt --all -- --check",
+    "clippy": "cargo clippy -p cma --tests --locked -- -D warnings",
+    "passed": true
+  }
+}

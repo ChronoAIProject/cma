@@ -375,3 +375,7 @@ data:
   CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED: "false"
   # Validate runtime output structure before allocating owned JSON trees.
   CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED: "false"
+  # Quiet receipt batching is owner-activated only after natural-turn measurement.
+  CHRONO_AGENT_OUTPUT_QUIET_COALESCE_ENABLED: "false"
+  CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_MS: "250"
+  CHRONO_AGENT_OUTPUT_QUIET_COALESCE_MAX_FRAMES: "64"

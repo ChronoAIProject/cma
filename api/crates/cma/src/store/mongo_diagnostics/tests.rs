@@ -2,12 +2,14 @@ use super::*;
 use std::io::Write;
 
 #[test]
-fn command_monitoring_requires_explicit_opt_in() {
+fn detailed_monitoring_requires_opt_in_while_payload_free_counts_remain_enabled() {
     for value in [None, Some("false"), Some(""), Some("TRUE"), Some(" true ")] {
         let mut options = mongodb::options::ClientOptions::default();
         assert!(install_configured(&mut options, "general", value).is_none());
         assert!(options.command_event_handler.is_none());
-        assert_eq!(options.tracing.unwrap().enabled, Some(false));
+        let tracing = options.tracing.unwrap();
+        assert_eq!(tracing.enabled, Some(true));
+        assert_eq!(tracing.query_text_max_length, Some(0));
     }
     let mut options = mongodb::options::ClientOptions::default();
     assert!(install_configured(&mut options, "general", Some("true")).is_some());
