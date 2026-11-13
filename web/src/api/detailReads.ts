@@ -1,5 +1,12 @@
 import type { CmaWebClient, ReadOptions } from './client';
 
+const sources = new WeakMap<CmaWebClient, CmaWebClient>();
+
+/** Retained views belong to the underlying account client, across read wrappers. */
+export function detailReadSource(client: CmaWebClient): CmaWebClient {
+  return sources.get(client) ?? client;
+}
+
 /** Share only pending reads inside one mounted identity scope; never cache authority. */
 export function coalesceDetailReads(client: CmaWebClient) {
   const controllers = new Set<AbortController>();
@@ -54,13 +61,15 @@ export function coalesceDetailReads(client: CmaWebClient) {
       });
     };
   };
+  const wrapped: CmaWebClient = {
+    ...client,
+    readSandbox: wrap(client.readSandbox.bind(client)),
+    readWorkspace: wrap(client.readWorkspace.bind(client)),
+    readAgent: wrap(client.readAgent.bind(client)),
+  };
+  sources.set(wrapped, detailReadSource(client));
   return {
-    client: {
-      ...client,
-      readSandbox: wrap(client.readSandbox.bind(client)),
-      readWorkspace: wrap(client.readWorkspace.bind(client)),
-      readAgent: wrap(client.readAgent.bind(client)),
-    },
+    client: wrapped,
     dispose() {
       for (const controller of controllers) controller.abort();
       controllers.clear();

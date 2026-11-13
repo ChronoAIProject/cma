@@ -107,6 +107,8 @@ pub(super) async fn projected_transcript(
     transcript::complete(store, expected, session).await
 }
 
+pub(super) mod answer;
+pub(super) mod page;
 mod transcript;
 pub(super) use transcript::page as transcript_page;
 

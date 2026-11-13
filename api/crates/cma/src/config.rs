@@ -30,6 +30,7 @@ mod rate_default_lease;
 mod runtime;
 
 mod features;
+mod quiet_output;
 mod task_experience;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;

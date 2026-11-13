@@ -36,6 +36,7 @@ mod titles;
 mod unavailable_credentials;
 pub(crate) mod unpublished_recovery;
 mod warmup;
+pub(crate) mod work_retry;
 pub(crate) mod worker;
 mod workspace_worker;
 
@@ -77,7 +78,7 @@ pub(crate) mod binding_lifecycle_test_support {
     };
     pub(crate) use super::live_agent_stopper::DurableLiveAgentStopper;
     pub(crate) use super::live_agents::{
-        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+        spawn_update_task, DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
         LiveAgentConnectionLossHandler,
     };
     pub(crate) use super::workspace_worker::{
