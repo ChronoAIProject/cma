@@ -61,12 +61,48 @@ async fn document_reclaim_worker_waits_for_startup_and_honours_shutdown() {
     task.await.unwrap();
 }
 #[tokio::test(start_paused = true)]
-async fn document_reclaim_worker_without_storage_exits_without_io() {
-    let (_stop, signal) = tokio::sync::watch::channel(false);
-    DocumentMaintenanceWorker::new(None)
-        .spawn(signal)
-        .await
-        .unwrap();
+async fn document_reclaim_worker_without_storage_stays_optional_and_idle() {
+    let activity = crate::worker_supervision::Workers::new().get("document_maintenance");
+    assert!(!activity.snapshot().required);
+    assert!(activity.snapshot().available());
+    let (stop, signal) = tokio::sync::watch::channel(false);
+    let task = DocumentMaintenanceWorker::new(None).spawn_supervised(signal, activity.clone());
+    settle().await;
+    tokio::time::advance(RECLAIM_INTERVAL * 2).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "running");
+    assert!(!task.is_finished());
+    stop.send(true).unwrap();
+    task.await.unwrap();
+    assert_eq!(activity.snapshot().state, "stopped");
+}
+
+#[tokio::test(start_paused = true)]
+async fn document_reclaim_supervision_preserves_child_and_pacing_after_scheduler_panic() {
+    let store = Arc::new(Store(AtomicUsize::new(0)));
+    let activity = crate::worker_supervision::Workers::new().get("document_maintenance");
+    let (stop, signal) = tokio::sync::watch::channel(false);
+    let task = worker(store.clone()).spawn_supervised(signal, activity.clone());
+    settle().await;
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    settle().await;
+    assert_eq!(store.0.load(Ordering::SeqCst), 1);
+    crate::worker_supervision::panic_next_poll(&activity);
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "backoff");
+    assert!(activity.snapshot().available());
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    settle().await;
+    assert_eq!(activity.snapshot().state, "running");
+    tokio::time::advance(std::time::Duration::from_secs(30)).await;
+    settle().await;
+    assert_eq!(store.0.load(Ordering::SeqCst), 1);
+    tokio::time::advance(std::time::Duration::from_secs(268)).await;
+    settle().await;
+    assert_eq!(store.0.load(Ordering::SeqCst), 2);
+    stop.send(true).unwrap();
+    task.await.unwrap();
 }
 #[test]
 fn document_reclaim_worker_retry_delay_is_at_least_the_interval() {

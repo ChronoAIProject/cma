@@ -56,7 +56,7 @@ async fn session_verifies_once_per_request_and_observes_changed_permissions_and_
         assert_eq!(
             body,
             json!({
-                "authenticated": true, "subject": "owner", "visitor": false,
+                "authenticated": true, "api_commands": false, "subject": "owner", "visitor": false,
                 "usage_reporting": {"measured_visible": false},
                 "capabilities": ["use_own_sandboxes"], "display_name": "Live Owner",
             })

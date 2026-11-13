@@ -58,9 +58,14 @@ pub(super) fn compose(
 
 pub(super) fn worker(
     config: &Config,
-    reclaim: Arc<crate::document_artifacts::MongoDocumentReclaimStore>,
+    stores: &MongoStores,
     blobs: Option<Arc<dyn DocumentBlobMaintenance>>,
 ) -> crate::document_artifacts::worker::DocumentMaintenanceWorker {
+    let reclaim = Arc::new(
+        stores
+            .document_artifacts
+            .reclaim(config.features.document_quotas),
+    );
     let supported = blobs
         .as_ref()
         .is_some_and(|blobs| blobs.deletion_supported());

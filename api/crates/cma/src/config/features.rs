@@ -6,6 +6,7 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub command_reconcile_pacing: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
@@ -20,7 +21,12 @@ pub(crate) struct FeatureFlags {
     pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
     pub model_request_budget_writes_enabled: bool,
+    pub platform_spend_writes_enabled: bool,
+    pub platform_counter_shards: bool,
+    pub admission_control_writes_enabled: bool,
     pub bounded_title_reads: bool,
+    pub access_snapshot_session: bool,
+    pub concurrent_sandbox_detail_enrichment: bool,
     pub sandbox_snapshot_reads: bool,
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
@@ -60,6 +66,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
@@ -74,6 +81,11 @@ impl FeatureFlags {
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
+            access_snapshot_session: super::access_snapshot::enabled(lookup)?,
+            concurrent_sandbox_detail_enrichment: flag(
+                lookup,
+                "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
+            )?,
             sandbox_snapshot_reads: flag(lookup, "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED")?,
             sandbox_batched_reads: flag(lookup, "CHRONO_SANDBOX_BATCHED_READS_ENABLED")?,
             sandbox_detail_timings: match lookup("CHRONO_SANDBOX_DETAIL_TIMINGS_ENABLED")? {
@@ -99,6 +111,12 @@ impl FeatureFlags {
             model_request_budget_writes_enabled: flag(
                 lookup,
                 "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
+            )?,
+            platform_spend_writes_enabled: flag(lookup, "CHRONO_PLATFORM_SPEND_WRITES_ENABLED")?,
+            platform_counter_shards: flag(lookup, "CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED")?,
+            admission_control_writes_enabled: flag(
+                lookup,
+                "CHRONO_ADMISSION_CONTROL_WRITES_ENABLED",
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
@@ -374,29 +392,7 @@ mod transcript_tests {
 }
 
 #[cfg(test)]
-mod permission_bound_tests {
-    use super::*;
-
-    #[test]
-    fn permission_state_requires_its_own_strict_opt_in() {
-        for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
-            let flags = FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED")
-                    .then(|| value.map(str::to_owned))
-                    .flatten())
-            })
-            .unwrap();
-            assert_eq!(flags.bounded_permission_state, expected);
-            assert!(!flags.bounded_response_reads);
-        }
-        for value in ["", "1", "TRUE", " true "] {
-            assert!(FeatureFlags::from_lookup(&mut |key| {
-                Ok((key == "CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED").then(|| value.into()))
-            })
-            .is_err());
-        }
-    }
-}
+mod permission_bound_tests;
 
 #[cfg(test)]
 mod read_frame_tests {
@@ -480,4 +476,12 @@ mod raw_output_tests;
 mod retained_json_tests;
 
 #[cfg(test)]
+#[path = "sandbox_enrichment_tests.rs"]
+mod sandbox_enrichment_tests;
+
+#[cfg(test)]
 mod document_maintenance_tests;
+
+#[cfg(test)]
+#[path = "admission_control_tests.rs"]
+mod admission_control_tests;

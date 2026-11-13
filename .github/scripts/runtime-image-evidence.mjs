@@ -4,12 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { checks as legacyChecks, diagnosticStages } from './runtime-image-probe.mjs';
+import { checks as legacyChecks, diagnosticStages, toolVersionPattern } from './runtime-image-probe.mjs';
 import { bootstrapChecks, bootstrapStages, validateBootstrapProof } from './runtime-bootstrap-probe.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const source = 'https://github.com/ChronoAIProject/cma';
 export const checks = [...legacyChecks, ...bootstrapChecks];
+export const evidenceSchema = 'cma-runtime-image-v2';
 const digest = /^sha256:[0-9a-f]{64}$/;
 const revision = /^[0-9a-f]{40}$/;
 const fields = (value, keys) => assert.deepEqual(Object.keys(value).sort(), [...keys].sort());
@@ -38,10 +39,11 @@ export function validateImage(image, commit, expectedId) {
   assert.equal(image.Config.Labels['dev.chrono.cma.home-layout'], '2');
 }
 
-function validateProbeChecks(proof, expected, requiredChecks) {
+function validateProbeChecks(proof, expected, requiredChecks, requireToolVersions = true) {
   fields(proof, ['checks', 'artifacts']);
   assert.deepEqual(proof.checks, requiredChecks);
-  fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion', 'gh', 'ghVersion']);
+  fields(proof.artifacts, ['runtime', 'launcher', 'native', 'acp', 'codexVersion', 'acpVersion', 'gh', 'ghVersion',
+    ...(requireToolVersions ? ['psVersion', 'jqVersion'] : [])]);
   assert.match(proof.artifacts.runtime, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.launcher, expected.CODEX_LAUNCHER_SHA256);
   assert.equal(proof.artifacts.native, expected.CODEX_NATIVE_SHA256_AMD64);
@@ -50,6 +52,10 @@ function validateProbeChecks(proof, expected, requiredChecks) {
   assert.equal(proof.artifacts.acpVersion, expected.CODEX_ACP_VERSION);
   assert.match(proof.artifacts.gh, /^[0-9a-f]{64}$/);
   assert.equal(proof.artifacts.ghVersion, expected.GH_VERSION);
+  if (requireToolVersions) {
+    assert.match(proof.artifacts.psVersion, toolVersionPattern);
+    assert.match(proof.artifacts.jqVersion, toolVersionPattern);
+  }
 }
 
 export function validateProbe(proof, expected) { validateProbeChecks(proof, expected, checks); }
@@ -64,7 +70,6 @@ export function combineProofs(legacy, bootstrap, expected) {
 
 export function validateEvidence(value, commit, expectedId, expected, sourceReference = null) {
   fields(value, ['schema', 'scope', 'commit', 'image', 'sourceReference', 'result', 'cleanup', 'proof']);
-  assert.equal(value.schema, 'cma-runtime-image-v1');
   assert.equal(value.scope, 'local-contract-3-no-provider-or-model');
   assert.equal(value.commit, commit);
   assert.equal(value.sourceReference, sourceReference);
@@ -75,7 +80,18 @@ export function validateEvidence(value, commit, expectedId, expected, sourceRefe
   assert.equal(value.result, 'pass');
   assert.deepEqual(value.cleanup, { containers: 0, volumes: 0 });
   validateImage(value.image, commit, expectedId);
-  validateProbe(value.proof, expected);
+  // Verify retained evidence using its original profile. New campaigns always
+  // emit v2 and still require both tools; unknown profiles never fall back.
+  switch (value.schema) {
+    case 'cma-runtime-image-v1':
+      validateProbeChecks(value.proof, expected, checks, false);
+      break;
+    case evidenceSchema:
+      validateProbe(value.proof, expected);
+      break;
+    default:
+      assert.fail('unsupported runtime image evidence schema');
+  }
 }
 
 const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', timeout: 180000, maxBuffer: 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -97,7 +113,7 @@ export function campaign(imageRef, commit, output, command = docker) {
   assert.ok(resolve(output) === output && !lstatSync(dirname(output)).isSymbolicLink());
   const expected = pins(readFileSync(resolve(root, 'infra/runtime/Dockerfile'), 'utf8'));
   const sourceReference = imageRef.includes('@') ? imageRef : null;
-  const evidence = { schema: 'cma-runtime-image-v1', scope: 'local-contract-3-no-provider-or-model', commit, image: null, sourceReference, result: 'inconclusive', cleanup: null, proof: null };
+  const evidence = { schema: evidenceSchema, scope: 'local-contract-3-no-provider-or-model', commit, image: null, sourceReference, result: 'inconclusive', cleanup: null, proof: null };
   writeFileSync(output, `${JSON.stringify(evidence)}\n`, { mode: 0o600, flag: 'wx' });
   const identity = `cma-runtime-ci-${randomUUID()}`;
   const label = `dev.chrono.cma.evidence=${identity}`;
@@ -154,6 +170,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const [mode, imageRef, commit, output] = process.argv.slice(2);
     assert.ok(['run', 'verify'].includes(mode) && output && process.argv.length === 6);
     if (mode === 'run') campaign(imageRef, commit, output);
+    // The verify CLI uses the same explicit v1/v2 dispatch as library readers.
     else validateEvidence(JSON.parse(readFileSync(output, 'utf8')), commit, inspect(imageRef).Id, pins(readFileSync(resolve(root, 'infra/runtime/Dockerfile'), 'utf8')), imageRef.includes('@') ? imageRef : null);
     process.stdout.write('Runtime image contract and exact cleanup passed\n');
   } catch { process.stderr.write('Runtime image evidence is not passing; raw diagnostics withheld\n'); process.exitCode = 1; }

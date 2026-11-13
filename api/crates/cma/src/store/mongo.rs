@@ -6,9 +6,10 @@ use layer2_core::StoreError;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 
 use super::{
-    AuthEncryptionKey, MongoActivityStore, MongoAuthStore, MongoOperationStore,
-    MongoPlatformSettingsStore, MongoProfileStore, MongoSandboxCredentialStore, MongoSandboxStore,
-    MongoTriggerDefinitionStore, MongoUserDirectoryStore,
+    AuthEncryptionKey, MongoActivityStore, MongoAdmissionControlStore, MongoAuthStore,
+    MongoOperationStore, MongoPlatformSettingsStore, MongoProfileStore,
+    MongoSandboxCredentialStore, MongoSandboxStore, MongoTriggerDefinitionStore,
+    MongoUserDirectoryStore,
 };
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -36,6 +37,7 @@ pub struct MongoStores {
     pub activity: Arc<MongoActivityStore>,
     pub users: Arc<MongoUserDirectoryStore>,
     pub settings: Arc<MongoPlatformSettingsStore>,
+    pub admission_control: Arc<MongoAdmissionControlStore>,
     pub operations: Arc<MongoOperationStore>,
     pub(crate) native_warm_pools: Arc<super::native_warm_pools::MongoNativeWarmPools>,
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
@@ -142,6 +144,8 @@ impl MongoStores {
             Arc::new(MongoActivityStore::open(&client, database, activity_retention).await?);
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
+        let admission_control =
+            Arc::new(MongoAdmissionControlStore::open(&client, database).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
@@ -225,6 +229,7 @@ impl MongoStores {
             activity,
             users,
             settings,
+            admission_control,
             operations,
             agent_lifecycle,
             client,
