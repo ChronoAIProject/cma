@@ -5,6 +5,7 @@ use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
 mod activity_indexes;
+mod activity_page_index;
 mod agent_log_segments;
 mod collection_indexes;
 pub(in crate::store) mod opening_index;

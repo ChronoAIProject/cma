@@ -35,14 +35,14 @@ pub(super) async fn commit(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };
-        let publication = apply_publication_observed(
+        let publication = Box::pin(apply_publication_observed(
             store,
             &mutation,
             observed,
             repeated_marker,
             &mut history_cache,
             scope,
-        )
+        ))
         .await;
         let receipt = match publication {
             Ok(receipt) => receipt,
@@ -82,10 +82,12 @@ pub(super) async fn commit(
                 let unresolved_error = commit_error.clone();
                 let store = store.clone();
                 return wait_for_reconciliation("agent work publication commit", async move {
-                    if super::super::agent_worker_reconcile::reconcile_publication_after_unknown(
-                        &store,
-                        &receipt,
-                        snapshot_time,
+                    if Box::pin(
+                        super::super::agent_worker_reconcile::reconcile_publication_after_unknown(
+                            &store,
+                            &receipt,
+                            snapshot_time,
+                        ),
                     )
                     .await?
                     {
