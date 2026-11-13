@@ -10,10 +10,11 @@ use layer2_core::{
     AgentId,
 };
 
-pub(super) struct NativeFacts {
+pub(in crate::store) struct NativeFacts {
     pub(super) agents: Vec<Agent>,
     pub(super) workspaces: Vec<Workspace>,
     segmented: BTreeMap<AgentId, (Agent, u64, u64)>,
+    reopen: BTreeMap<AgentId, Vec<u8>>,
 }
 
 impl NativeFacts {
@@ -22,11 +23,35 @@ impl NativeFacts {
         id: &SandboxId,
         scope: &mut TransactionScope<'_>,
     ) -> Result<Self, ApplyError> {
+        Self::capture_mode(store, id, scope, false).await
+    }
+
+    pub(in crate::store) async fn capture_reopen(
+        store: &MongoSandboxStore,
+        id: &SandboxId,
+        scope: &mut TransactionScope<'_>,
+    ) -> Result<Self, ApplyError> {
+        Self::capture_mode(store, id, scope, true).await
+    }
+
+    async fn capture_mode(
+        store: &MongoSandboxStore,
+        id: &SandboxId,
+        scope: &mut TransactionScope<'_>,
+        require_reopen: bool,
+    ) -> Result<Self, ApplyError> {
         let agents = lineage::agents(store, id, scope).await?;
         let workspaces = lineage::workspaces(store, id, scope).await?;
         let mut rows = BTreeMap::new();
+        let mut reopen = BTreeMap::new();
         for agent in &agents {
             if let Some(source) = capture_segmented_scoped(store, agent, scope).await? {
+                if require_reopen {
+                    reopen.insert(
+                        agent.id.clone(),
+                        super::reopen::proof(store, &source, scope).await?,
+                    );
+                }
                 rows.insert(
                     agent.id.clone(),
                     (
@@ -41,7 +66,16 @@ impl NativeFacts {
             agents,
             workspaces,
             segmented: rows,
+            reopen,
         })
+    }
+
+    pub(super) fn reopen_proof(&self, agent: &Agent) -> Result<&[u8], ApplyError> {
+        self.for_agent(agent)?;
+        self.reopen
+            .get(&agent.id)
+            .map(Vec::as_slice)
+            .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))
     }
 
     pub(super) fn for_agent(&self, agent: &Agent) -> Result<Option<(u64, u64)>, ApplyError> {

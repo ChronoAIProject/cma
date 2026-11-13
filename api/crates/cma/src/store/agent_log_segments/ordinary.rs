@@ -173,3 +173,61 @@ pub(in crate::store) async fn approval(
     }
     Ok(Some(Some(entry)))
 }
+
+/// Claim discovery runs in its caller's transaction and never retains a proof
+/// for a later write. Only the four original title inputs are materialized.
+pub(in crate::store) async fn title(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    row: &Document,
+    session: &mut ClientSession,
+) -> Result<Option<Option<layer2_core::sandbox::AgentTitleTranscript>>> {
+    let Some((head, state)) = source(store, agent, row, session).await? else {
+        return Ok(None);
+    };
+    let Some(turn) = state.title_turn else {
+        return Ok(Some(None));
+    };
+    let Some(EvidenceRecord::Turn { facts }) =
+        projection::evidence(store, &head, "turn", &turn.to_string(), session).await?
+    else {
+        return Err(corrupt().into());
+    };
+    facts
+        .validate(agent.conversation.last_seq)
+        .map_err(|_| corrupt())?;
+    if facts.turn_sequence != turn {
+        return Err(corrupt().into());
+    }
+    if !facts.title_eligible || !facts.source_completed {
+        return Ok(Some(None));
+    }
+    let (
+        Some(owner),
+        Some((answer, layer2_core::sandbox::AgentTranscriptRole::Agent, _)),
+        Some(end),
+    ) = (
+        facts.owner_sequence,
+        facts.last_message.as_ref(),
+        facts.end_sequence,
+    )
+    else {
+        return Ok(Some(None));
+    };
+    let mut rows = Vec::with_capacity(4);
+    for sequence in [turn, owner, *answer, end] {
+        rows.push(point(store, &head, sequence, session).await?);
+    }
+    if !matches!(&rows[0].kind, AgentLogKind::TurnStarted {turn_sequence, origin_key, model}
+        if *turn_sequence == turn && origin_key == &facts.origin_key && model == &facts.model)
+        || rows[0].appended_at != facts.started_at
+        || !matches!(rows[1].kind, AgentLogKind::OwnerMessage { .. })
+        || !matches!(rows[2].kind, AgentLogKind::AgentMessage { .. })
+        || !matches!(rows[3].kind, AgentLogKind::TurnCompleted { turn_sequence } if turn_sequence == turn)
+    {
+        return Err(corrupt().into());
+    }
+    Ok(Some(
+        layer2_core::sandbox::AgentTitleTranscript::from_complete_log(&rows),
+    ))
+}

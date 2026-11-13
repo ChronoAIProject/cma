@@ -8,11 +8,13 @@ use layer2_core::{
 };
 use mongodb::{bson::doc, options::ReadConcern};
 
+use super::agent_log_segments::transaction_scope::TransactionScope;
 use super::sandbox_mongo::{
-    commit_transaction, is_transient, start_transaction, wait_for_reconciliation, CommitOutcome,
-    MongoSandboxStore, TRANSACTION_ATTEMPTS,
+    commit_transaction, is_transient, wait_for_reconciliation, CommitOutcome, MongoSandboxStore,
+    TRANSACTION_ATTEMPTS,
 };
 use super::sandbox_unpublished_recovery::transaction::ApplyError;
+use super::sandbox_unpublished_recovery::transaction::NativeFacts;
 
 mod load;
 #[cfg(test)]
@@ -27,11 +29,17 @@ pub(super) async fn snapshot(
     id: &SandboxId,
 ) -> Result<RetainedReopenSnapshot, SandboxStoreError> {
     let mut session = store.client.start_session().await.map_err(unavailable)?;
-    start_transaction(&mut session).await.map_err(unavailable)?;
-    let result = load::snapshot(store, id, &mut session)
+    let mut scope = TransactionScope::start(&mut session)
         .await
-        .map(|(snapshot, _)| snapshot)
-        .map_err(ApplyError::domain);
+        .map_err(unavailable)?;
+    let facts = NativeFacts::capture_reopen(store, id, &mut scope).await;
+    let session = scope.release();
+    let result = match facts {
+        Ok(facts) => load::snapshot_with_sources(store, id, session, Some(&facts)).await,
+        Err(error) => Err(error),
+    }
+    .map(|(snapshot, _)| snapshot)
+    .map_err(ApplyError::domain);
     let _ = session.abort_transaction().await;
     result
 }
@@ -57,13 +65,12 @@ pub(super) async fn admit(
     request.proof.validate(&request.snapshot)?;
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store.client.start_session().await.map_err(unavailable)?;
-        if let Err(error) = start_transaction(&mut session).await {
-            if is_transient(&error) {
-                continue;
-            }
-            return Err(unavailable(error));
-        }
-        let applied = match transaction::apply(store, &request, &mut session).await {
+        let scope = match TransactionScope::start(&mut session).await {
+            Ok(scope) => scope,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(unavailable(error)),
+        };
+        let applied = match transaction::apply_scoped(store, &request, scope).await {
             Ok(applied) => applied,
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;

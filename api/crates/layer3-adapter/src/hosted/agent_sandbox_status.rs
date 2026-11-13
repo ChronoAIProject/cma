@@ -41,25 +41,28 @@ impl AgentSandboxBackend {
             .exchange(handle, RequestFrame::RuntimeStatus(request))
             .await?;
         if let Some(assigned) = assigned {
-            timed(Stage::NativeIdentity, async {
-                let object = self
-                    .client
-                    .validate_request(handle, &assigned.request)
-                    .await?
-                    .ok_or_else(|| {
-                        AdapterError::Unavailable("status runtime disappeared".into())
-                    })?;
-                self.client.verify_explicit_runtime_policy(&object).await?;
-                let pod = self.client.pod_binding(handle).await?;
-                if pod != assigned.pod
-                    || self.assignments.lock().unwrap().get(handle) != Some(&assigned)
-                {
-                    return Err(AdapterError::Rejected(
-                        "native status assignment changed during exchange".into(),
-                    ));
-                }
-                Ok(())
-            })
+            crate::file_read_diagnostics::measure(
+                crate::file_read_diagnostics::Stage::StatusPostValidation,
+                timed(Stage::NativeIdentity, async {
+                    let object = self
+                        .client
+                        .validate_request(handle, &assigned.request)
+                        .await?
+                        .ok_or_else(|| {
+                            AdapterError::Unavailable("status runtime disappeared".into())
+                        })?;
+                    self.client.verify_explicit_runtime_policy(&object).await?;
+                    let pod = self.client.pod_binding(handle).await?;
+                    if pod != assigned.pod
+                        || self.assignments.lock().unwrap().get(handle) != Some(&assigned)
+                    {
+                        return Err(AdapterError::Rejected(
+                            "native status assignment changed during exchange".into(),
+                        ));
+                    }
+                    Ok(())
+                }),
+            )
             .await?;
         }
         Ok(response)
