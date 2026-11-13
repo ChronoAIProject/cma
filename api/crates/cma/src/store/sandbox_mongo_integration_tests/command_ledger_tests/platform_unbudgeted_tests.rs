@@ -1,5 +1,4 @@
-//! Owners without a model budget policy reserve nothing, yet their new
-//! messages, turns and auxiliary requests still meet the platform closures.
+//! An enabled platform meter requires a valued hold for every model commitment.
 use super::super::budget_tests::{configure_metered, open_platform, period_row};
 use super::*;
 use layer2_core::budget::{
@@ -43,14 +42,16 @@ fn reservations() -> Document {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn an_unbudgeted_owner_is_refused_under_spend_stop_and_reserves_nothing_while_open() {
+async fn an_unbudgeted_owner_is_refused_even_while_platform_metering_is_open() {
     let (client, name) = database("platform_unbudgeted").await;
     let (store, agent, parent) = fixture(&name, &client).await;
     budget_someone_else(&store).await;
-    assert!(store
-        .reserve_command(request(&agent, &parent, "open"))
-        .await
-        .is_ok());
+    assert_eq!(
+        store
+            .reserve_command(request(&agent, &parent, "open"))
+            .await,
+        Err(CommandLedgerError::Budget(BudgetError::Unavailable))
+    );
     assert_eq!(
         store
             .model_budget
@@ -78,13 +79,15 @@ async fn an_unbudgeted_owner_is_refused_under_spend_stop_and_reserves_nothing_wh
         Err(CommandLedgerError::Budget(BudgetError::Unavailable))
     );
     close(&store, &[ClosureReason::SpendWarning]).await;
-    assert!(store
-        .reserve_command(request(&agent, &parent, "warned"))
-        .await
-        .is_ok());
+    assert_eq!(
+        store
+            .reserve_command(request(&agent, &parent, "warned"))
+            .await,
+        Err(CommandLedgerError::Budget(BudgetError::Unavailable))
+    );
     assert_eq!(
         store.agent_commands.count_documents(doc! {}).await.unwrap(),
-        2
+        0
     );
     client.database(&name).drop().await.unwrap();
 }
@@ -94,7 +97,6 @@ async fn an_unbudgeted_owner_is_refused_under_spend_stop_and_reserves_nothing_wh
 async fn an_unbudgeted_owners_turns_and_requests_meet_the_stop() {
     let (client, name) = database("platform_unbudgeted_turns").await;
     let (store, agent, parent, execution, _, sends) = composed(&client, &name).await;
-    budget_someone_else(&store).await;
     let running = record(
         store
             .reserve_command(live_request(&agent, &parent, "running"))
@@ -120,12 +122,19 @@ async fn an_unbudgeted_owners_turns_and_requests_meet_the_stop() {
         max_output_tokens: 1,
         fingerprint: "c".repeat(64),
     };
+    // The historical bypass remains available while global metering is off.
     assert_eq!(store.reserve_request(&scope, &request).await, Ok(None));
     let queued = record(
         store
             .reserve_command(live_request(&working, &parent, "queued"))
             .await
             .unwrap(),
+    );
+    budget_someone_else(&store).await;
+    crate::sandbox::assert_metered_title_refusal(store.clone(), scope.clone()).await;
+    assert_eq!(
+        store.reserve_request(&scope, &request).await,
+        Err(BudgetError::Unavailable)
     );
     close(&store, &[ClosureReason::SpendStop]).await;
     let refused = RequestScope {
@@ -171,6 +180,44 @@ async fn an_unbudgeted_owners_turns_and_requests_meet_the_stop() {
             .await
             .unwrap(),
         0
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn a_reserved_queued_turn_checks_stop_after_its_owner_policy_is_removed() {
+    let (client, name) = database("platform_removed_owner").await;
+    let (store, agent, parent, execution, _, sends) = composed(&client, &name).await;
+    configure_metered(&store, &agent.owner).await;
+    let queued = record(
+        store
+            .reserve_command(live_request(&agent, &parent, "reserved-before-stop"))
+            .await
+            .unwrap(),
+    );
+    budget_someone_else(&store).await;
+    close(&store, &[ClosureReason::SpendStop]).await;
+    let worker =
+        AgentCommandWorker::new(store.clone(), execution, "removed-owner-worker".into()).unwrap();
+    worker
+        .run_one(&queued.receipt.envelope.command_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        sends.load(Ordering::SeqCst),
+        0,
+        "a previously valued command cannot dispatch under the current STOP"
+    );
+    let refused = store
+        .get_command(&queued.receipt.envelope.command_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refused.status, AgentResponseStatus::Failed);
+    assert_eq!(
+        refused.work.failure.unwrap().code,
+        CommandFailureCode::PlatformBudgetExhausted
     );
     client.database(&name).drop().await.unwrap();
 }

@@ -48,6 +48,22 @@ pub(crate) async fn scope(request: Request, next: Next) -> Response {
     response.map(|body| Body::new(ContextBody { body, context }))
 }
 
+pub(crate) fn request_span(_request: &Request) -> tracing::Span {
+    let context = layer2_core::diagnostic_context::DiagnosticContext::current();
+    let (method, path) = context
+        .route
+        .split_once(' ')
+        .unwrap_or(("OTHER", "unmatched"));
+    tracing::info_span!(
+        parent: None,
+        "http.request",
+        request_hash = %context.request_hash,
+        route = context.route.as_ref(),
+        method,
+        path,
+    )
+}
+
 struct ContextBody {
     body: Body,
     context: DiagnosticContext,

@@ -160,6 +160,12 @@ impl SandboxControlService {
             request_fingerprint: submission.command.fingerprint(submission.expected_revision),
         };
         envelope.validate()?;
+        let new_commitment = if envelope.command == SandboxControl::Revive {
+            self.require_platform_open(crate::admission::AdmissionCause::Fresh)
+                .await
+        } else {
+            Ok(())
+        };
         let proof = SandboxControlAuthorization::bind(
             (*self.access).clone(),
             authorized,
@@ -181,21 +187,14 @@ impl SandboxControlService {
             admission_audit: proof.audit()?,
             execution_audit: None,
         };
-        if record.envelope.command == SandboxControl::Revive {
-            match self
-                .require_platform_open(crate::admission::AdmissionCause::Fresh)
-                .await
-            {
-                Err(crate::admission::AdmissionRefusal::Paused) => {
-                    if let Some(accepted) = self.store.lookup_sandbox_control(&record).await? {
-                        return Ok(accepted);
-                    }
-                    return Err(SandboxControlServiceError::AdmissionPaused);
-                }
-                result => result.map_err(SandboxControlServiceError::from)?,
-            }
-        }
-        Ok(self.store.reserve_sandbox_control(record, proof).await?)
+        self.store
+            .reserve_sandbox_control(record, proof, new_commitment)
+            .await
+            .map_err(|error| match error {
+                SandboxControlError::AdmissionPaused => SandboxControlServiceError::AdmissionPaused,
+                SandboxControlError::Budget(reason) => SandboxControlServiceError::Budget(reason),
+                other => SandboxControlServiceError::Store(other),
+            })
     }
 
     /// The requesting actor can recover its receipt only while the exact target

@@ -360,7 +360,8 @@ impl SandboxAdapter for HostedAdapter {
         crate::agent_capacity_recovery::CapacityRecoveryConnection,
     > {
         crate::hosted::capacity_recovery::reattach(
-            self.backend.capacity_recovery_transport(),
+            self.backend
+                .capacity_recovery_transport(&request.target.runtime),
             request,
             updates,
         )

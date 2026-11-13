@@ -10,6 +10,29 @@ use serde_json::json;
 use wire::WireServer;
 
 #[tokio::test]
+async fn bearer_command_readiness_is_optional_and_strictly_boolean() {
+    let server = WireServer::new().await;
+    for ready in [None, Some(false), Some(true)] {
+        let mut body =
+            json!({"authenticated":true,"subject":"owner","visitor":false,"capabilities":[]});
+        if let Some(ready) = ready {
+            body["api_commands"] = json!(ready);
+        }
+        server.expect(wire::json("GET", "/auth/session", None, 200, body, true));
+        let AuthSession::SignedIn(identity) = server.client.auth().read_session().await.unwrap()
+        else {
+            panic!("expected signed-in session")
+        };
+        assert_eq!(identity.api_commands, ready);
+    }
+    server.expect(wire::json("GET", "/auth/session", None, 200, json!({"authenticated":true,"subject":"owner","visitor":false,"capabilities":[],"api_commands":"true"}), true));
+    assert!(matches!(
+        server.client.auth().read_session().await,
+        Err(Error::Protocol { .. })
+    ));
+}
+
+#[tokio::test]
 async fn session_visibility_supports_old_servers_and_strict_boolean_values() {
     let server = WireServer::new().await;
     for visible in [None, Some(false), Some(true)] {

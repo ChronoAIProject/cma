@@ -198,6 +198,26 @@ async fn apply_with_sources(
             outcome: SandboxMaintenanceOutcome::NotEligible,
         });
     }
+    // The sweep's cached answer only proposes a pause. A lift or policy
+    // change must conflict with the durable pause admission itself.
+    if platform_stop
+        && !super::super::budget::fence_stop(store, session)
+            .await
+            .map_err(|error| match error {
+                super::super::agent_conversation_store::ApplyError::Domain(error) => {
+                    ApplyError::Domain(error)
+                }
+                super::super::agent_conversation_store::ApplyError::Driver(error) => {
+                    ApplyError::Driver(error)
+                }
+            })?
+    {
+        return Ok(MaintenanceReceipt {
+            sandbox: current,
+            event: None,
+            outcome: SandboxMaintenanceOutcome::NotEligible,
+        });
+    }
     validate_in_transaction(store, &current.id, last_seq, session).await?;
     // Snapshot isolation needs actual writes to prevent a concurrent Agent turn
     // from committing after the evidence read without conflicting with admission.

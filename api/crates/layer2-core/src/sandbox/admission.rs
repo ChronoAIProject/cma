@@ -61,6 +61,7 @@ admission_error!(
     },
     super::SandboxLifecycleCommandError => |kind| Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
     super::control::SandboxControlServiceError => |_| Self::Store(super::control::SandboxControlError::Unavailable),
+    super::control::SandboxControlError => |_| Self::Unavailable,
     super::AgentServiceError => |kind| Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
     super::WorkspaceServiceError => |kind| Self::Unavailable(AdmissionRefusal::Capacity(kind).to_string()),
     super::AgentOperationError => |kind| match kind {
