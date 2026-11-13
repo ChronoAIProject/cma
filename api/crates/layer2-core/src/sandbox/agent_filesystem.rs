@@ -85,6 +85,7 @@ pub struct AgentFileService {
     access: Arc<ResourceAccessService>,
     adapter: Arc<dyn SandboxAdapter>,
     task_experience: Arc<super::task_experience::TaskExperiencePolicy>,
+    environment_cache: Option<Arc<environment::ObservationCache>>,
 }
 impl AgentFileService {
     pub fn new(access: Arc<ResourceAccessService>, adapter: Arc<dyn SandboxAdapter>) -> Arc<Self> {
@@ -92,6 +93,7 @@ impl AgentFileService {
             access,
             adapter,
             task_experience: Default::default(),
+            environment_cache: None,
         })
     }
 
@@ -103,6 +105,16 @@ impl AgentFileService {
             access: self.access.clone(),
             adapter: self.adapter.clone(),
             task_experience: policy,
+            environment_cache: self.environment_cache.clone(),
+        })
+    }
+
+    pub fn with_background_environment(self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::new(Self {
+            access: self.access.clone(),
+            adapter: self.adapter.clone(),
+            task_experience: self.task_experience.clone(),
+            environment_cache: enabled.then(|| Arc::new(environment::ObservationCache::new())),
         })
     }
 
