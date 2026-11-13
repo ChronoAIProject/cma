@@ -1,6 +1,10 @@
 //! Independent operator control over new work; existing work keeps running.
 
 use super::Administration;
+use super::ceilings::{
+    self, AdmissionCapacityCounts, AdmissionCeilings, AdmissionCeilingsChange,
+    AdmissionCeilingsStateView,
+};
 use crate::{Error, Result};
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
@@ -73,6 +77,18 @@ pub struct AdmissionControlReadView {
     /// At most twenty consecutive changes, newest revision first.
     #[serde(deserialize_with = "history")]
     pub history: Vec<AdmissionControlChange>,
+    /// Independently revised ceiling policy; absent on servers predating ceilings.
+    #[serde(default, deserialize_with = "ceilings::optional")]
+    pub ceilings: Option<AdmissionCeilingsStateView>,
+    /// Limits after the deployment home cap; its reserve may exceed that cap.
+    #[serde(default, deserialize_with = "ceilings::optional")]
+    pub effective_limits: Option<AdmissionCeilings>,
+    /// On-demand bounded observations; absent on servers predating ceilings.
+    #[serde(default, deserialize_with = "ceilings::optional")]
+    pub capacity: Option<AdmissionCapacityCounts>,
+    /// At most twenty ceiling changes, newest first; independent of stop history.
+    #[serde(default, deserialize_with = "ceilings::optional_history")]
+    pub ceilings_history: Option<Vec<AdmissionCeilingsChange>>,
 }
 
 impl Administration<'_> {
@@ -119,11 +135,13 @@ impl Administration<'_> {
     }
 }
 
-fn valid_reason(value: &str) -> bool {
+pub(super) fn valid_reason(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 512 && !value.chars().any(char::is_control)
 }
 
-fn reason<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Result<String, D::Error> {
+pub(super) fn reason<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<String, D::Error> {
     let value = String::deserialize(deserializer)?;
     if !valid_reason(&value) {
         return Err(D::Error::custom("invalid admission reason"));
@@ -131,7 +149,7 @@ fn reason<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Str
     Ok(value)
 }
 
-fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+pub(super) fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     deserializer: D,
 ) -> std::result::Result<Option<T>, D::Error> {
     Option::deserialize(deserializer)

@@ -29,7 +29,7 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `interrupt_with_input`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
 | `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
-| `admin()` | `read_admission`, `stop_admission`, `resume_admission`, `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
+| `admin()` | `read_admission`, `stop_admission`, `resume_admission`, `replace_admission_ceilings`, `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
 | `usage()` | `summary`, `sandboxes`, `sandbox`, `events`, `admin_summary`, `admin_sandboxes` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
@@ -980,3 +980,59 @@ gate is closed. A stopped platform refuses new work with `admission_paused`
 and HTTP 503 / `Retry-After: 60`. Existing admitted work and authorized exact
 receipt recovery remain available. This switch enforces the next admission
 snapshot; it does not prove the separate hard commit-time containment bound.
+
+### Capacity ceilings and observations
+
+`read_admission()` also exposes `ceilings` (`AdmissionCeilingsStateView`),
+`effective_limits` (`AdmissionCeilings`), `capacity` (`AdmissionCapacityCounts`)
+and `ceilings_history` (at most twenty consecutive `AdmissionCeilingsChange`
+records, newest first). These fields are `Option` values for servers predating
+ceilings; a present malformed field is a protocol error. Ceiling and stop
+revisions, history and `writes_available` gates are independent.
+
+`replace_admission_ceilings` sends `PUT /api/v1/admin/admission/ceilings` and
+returns `AdmissionCeilingsStateView`. It requires `configure_platform` and the
+observed ceiling revision. It replaces the full policy: `None` is unlimited,
+`Some(0)` prevents additional capacity, and limits use `u32`. An existing-consumer
+reserve must not exceed its configured fleet ceiling when both are set.
+Lowering a ceiling preserves existing resources and active turns. The effective
+home limit also includes the nonzero deployment hard cap; this may be below the
+configured reserve, so read `effective_limits` separately from operator policy.
+
+```rust,no_run
+# async fn example(client: cma_sdk::Client) -> cma_sdk::Result<()> {
+use cma_sdk::admin::{AdmissionCeilings, ExistingReserve, ReplaceAdmissionCeilingsRequest};
+let observed = client.admin().read_admission().await?;
+if let Some(current) = observed.ceilings {
+    client.admin().replace_admission_ceilings(&ReplaceAdmissionCeilingsRequest {
+        ceilings: AdmissionCeilings {
+            retained_homes: Some(100),
+            existing_reserve: ExistingReserve {
+                retained_homes: Some(20),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        reason: "Reserve retained homes for existing consumers".into(),
+        expected_revision: current.revision,
+    }).await?;
+}
+# Ok(())
+# }
+```
+
+`CapacityCount` carries `observed`, `bound` and `saturated`: a saturated count is
+a lower bound, not an exact fleet total. Unset fleet ceilings have null count
+observations. `capacity.pending_launch_homes` is the exact pending reservation
+counter, including when the home ceiling is unset. Observations are advisory;
+the SDK does not infer that a later admission will succeed.
+
+Ceiling writes use the separate default-closed gate. Errors preserve the normal
+`Error::Api` status, code, request id, `Retry-After` and extensions, including
+`admission_ceilings_writes_unavailable`, `admission_ceilings_unavailable` and
+`admission_ceilings_conflict`. The PUT is never retried implicitly. After a
+conflict or uncertain response, read current state before deciding to issue a
+new command; reasons have the same UTF-8 byte and control-character bounds as
+stop/resume. Fresh work may return `registration_closed`,
+`sandbox_capacity_unavailable` or `session_capacity_unavailable`; these do not
+disclose counts or limits.
