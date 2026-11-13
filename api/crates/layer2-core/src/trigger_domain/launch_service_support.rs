@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -11,6 +12,25 @@ use super::{
 };
 
 const MAX_IDEMPOTENCY_KEY_BYTES: usize = 255;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaunchPolicy {
+    pub enabled: bool,
+    pub orchestration_paused: bool,
+    pub visitor_launches_per_day: u32,
+}
+
+#[async_trait]
+pub trait LaunchPolicySource: Send + Sync {
+    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError>;
+}
+
+#[async_trait]
+impl LaunchPolicySource for LaunchPolicy {
+    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError> {
+        Ok(*self)
+    }
+}
 
 pub(super) fn require_launcher(caller: &Caller) -> Result<(), LaunchServiceError> {
     if caller.authorization.allows(Capability::LaunchTriggers)

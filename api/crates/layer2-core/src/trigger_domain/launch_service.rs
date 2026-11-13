@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::{SandboxProfileStore, WorkspaceProfileStore};
@@ -12,6 +11,7 @@ use super::launch_service_support::{
     require_launcher, store_error, trigger_error, validate_create_request,
     validate_requirement_identity,
 };
+pub use super::launch_service_support::{LaunchPolicy, LaunchPolicySource};
 use super::launch_trust::LaunchTrustManifest;
 use super::{
     ExistingAgentChoice, Launch, LaunchAdmission, LaunchAuthorityClass, LaunchConfirmation,
@@ -55,25 +55,6 @@ pub struct LaunchCreateResult {
 impl LaunchCreateResult {
     pub const fn accepted(&self) -> bool {
         !matches!(self.launch.state, LaunchState::Draft)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LaunchPolicy {
-    pub enabled: bool,
-    pub orchestration_paused: bool,
-    pub visitor_launches_per_day: u32,
-}
-
-#[async_trait]
-pub trait LaunchPolicySource: Send + Sync {
-    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError>;
-}
-
-#[async_trait]
-impl LaunchPolicySource for LaunchPolicy {
-    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError> {
-        Ok(*self)
     }
 }
 
