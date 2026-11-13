@@ -36,7 +36,8 @@ impl DurableAgentUpdateRecorder {
         guard: Option<&AgentReopenGuard>,
         identified_terminal: bool,
     ) -> Result<AgentUpdateOutcome, SandboxStoreError> {
-        if let Some(guard) = guard {
+        let id = current.id.clone();
+        let result = if let Some(guard) = guard {
             if let Some(mutation) = &mut mutation {
                 mutation.runtime_generation = current
                     .conversation
@@ -75,7 +76,14 @@ impl DurableAgentUpdateRecorder {
                 }
                 (result, _) => result,
             }
+        };
+        if result
+            .as_ref()
+            .is_ok_and(|outcome| !outcome.appended.is_empty() || outcome.turn_closed)
+        {
+            self.live.publish_head(&id);
         }
+        result
     }
 }
 
