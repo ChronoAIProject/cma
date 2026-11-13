@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule } from './transport/readRetry';
 import type { AgentUsage } from '../api/types';
 import { usageDescription } from './usageDescription';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -89,12 +91,11 @@ export function SessionSettings({
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
     if (!active || !client.readAgentSettings) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = () =>
-      void client.readAgentSettings!(agentId, { signal: request.signal })
+    let failures = 0;
+    const observer = observeRead(async (signal) =>
+      client.readAgentSettings!(agentId, { signal: signal })
         .then((settings) => {
-          if (request.signal.aborted) return;
+          if (signal.aborted) return;
           setSaved(settings);
           setValue(settings);
           setError(undefined);
@@ -107,19 +108,18 @@ export function SessionSettings({
                 ? undefined
                 : previous,
             );
-          if (settings.pending) timer = setTimeout(poll, 2000);
+          failures = 0;
+          if (settings.pending) return { next: 2000, cooldown: 2000 };
         })
         .catch((cause: unknown) => {
-          if (!request.signal.aborted)
+          if (!signal.aborted)
             setError(
               cause instanceof Error ? cause.message : 'Agent settings could not be loaded.',
             );
-        });
-    poll();
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
+          if (!signal.aborted) return retrySchedule(cause, ++failures);
+        }),
+    );
+    return () => observer.dispose();
   }, [active, agentId, client, reload]);
   const update = async () => {
     if (mutation.current || pending || busy || !draft || !client.updateAgentSettings) return;
