@@ -1,6 +1,6 @@
 //! Shared production assembly for Sandbox, Workspace, and Agent workers.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use layer2_core::sandbox::{
     AgentOperationService, AgentService, AgentTitleService, AgentUpdateRecorder,
@@ -90,6 +90,12 @@ impl SandboxLifecycleComposition {
             Arc::clone(&dependencies.policy),
             config.deployment_id.clone(),
         )
+        .with_background_work(crate::background::BackgroundWork::new(
+            crate::background::shared(),
+            "sandbox_reconciliation",
+            Duration::from_secs(30),
+            Duration::from_secs(15),
+        ))
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
         .with_platform_spend(dependencies.store.clone())
