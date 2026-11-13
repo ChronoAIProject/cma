@@ -8,12 +8,14 @@ pub mod owner_allocation;
 pub mod query;
 pub mod series;
 pub mod service;
+pub mod view;
 
 pub use model::*;
 pub use options::*;
 pub use owner_allocation::*;
 pub use query::*;
 pub use service::*;
+pub use view::*;
 
 pub const RETENTION_SECONDS: u64 = 30 * 86_400;
 pub const IDENTITY_RETENTION_SECONDS: u64 = 90 * 86_400;
@@ -25,6 +27,8 @@ pub const ALGORITHM_VERSION: u32 = 1;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MetricsError {
+    #[error("retained usage views are not enabled")]
+    ViewDisabled,
     #[error("{0}")]
     Invalid(String),
     #[error("usage authority required")]
@@ -51,3 +55,6 @@ mod options_regression_tests;
 
 #[cfg(test)]
 mod series_tests;
+
+#[cfg(test)]
+mod view_tests;
