@@ -8,6 +8,18 @@ use layer2_core::sandbox_metrics::{
 
 #[async_trait]
 impl MetricsStore for ReportingStore {
+    async fn latest(
+        &self,
+        scope: &Scope,
+        selection: &layer2_core::sandbox_metrics::ViewSelection,
+        at: u64,
+    ) -> Result<layer2_core::sandbox_metrics::ReportView> {
+        self.latest_view(scope, selection, at).await
+    }
+    async fn verify_snapshot(&self, report: &Report) -> Result<()> {
+        self.verify_retained_snapshot(report).await
+    }
+
     fn check_read_budget(&self) -> Result<()> {
         self.check_circuit(now())
     }
@@ -85,7 +97,10 @@ impl MetricsStore for ReportingStore {
             .map_err(unavailable)?
             .ok_or(MetricsError::NotFound)?;
         let report: Report = decode(&d)?;
-        if report.expires_at <= at {
+        if report.expires_at <= at
+            || d.get_i64("retire_after")
+                .is_ok_and(|until| until <= at as i64)
+        {
             return Err(MetricsError::Expired);
         }
         if report.status == layer2_core::sandbox_metrics::ReportStatus::Failed {
@@ -94,6 +109,7 @@ impl MetricsStore for ReportingStore {
         Ok(report)
     }
     async fn reauthorize(&self, report: &Report) -> Result<()> {
+        self.verify_retained_snapshot(report).await?;
         // Even admin cached membership must not retain another owner's old
         // attribution after a transfer. Owner changes invalidate the snapshot.
         let pipeline = [
@@ -126,6 +142,7 @@ impl MetricsStore for ReportingStore {
                 return Err(MetricsError::NotFound);
             }
         }
+        self.verify_retained_snapshot(report).await?;
         Ok(())
     }
     async fn page(&self, report: &Report, query: PageQuery) -> Result<Rows> {

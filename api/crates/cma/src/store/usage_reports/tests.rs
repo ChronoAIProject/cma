@@ -401,3 +401,9 @@ mod read_models;
 mod scale;
 mod submission;
 mod tenant_isolation;
+
+mod retained_recovery;
+mod retained_restart;
+mod retained_views;
+
+mod retained_measurement;
