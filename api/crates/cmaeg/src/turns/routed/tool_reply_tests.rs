@@ -264,7 +264,7 @@ async fn cancelled_tool_intent_does_not_become_confirmed_and_cannot_send_late() 
 #[tokio::test]
 async fn stale_tool_writer_cannot_erase_or_overwrite_a_new_automatic_reservation() {
     let setup = Setup::new(supported()).await;
-    let store = ReplyStore(setup.journal().clone());
+    let store = ReplyStore(setup.journal().clone(), None);
     let Admission::Claimed(first) = store
         .admit(&setup.plan, setup.target(), Kind::Tool, "a".repeat(64))
         .await
@@ -402,7 +402,7 @@ async fn a_later_unknown_tool_blocks_terminal_even_after_an_earlier_confirmed_re
     let setup = Setup::new(supported()).await;
     let mut lease = accepted(&setup).await;
     let body = setup.journal().body(&lease).await.unwrap();
-    let store = ReplyStore(setup.journal().clone());
+    let store = ReplyStore(setup.journal().clone(), None);
     let Admission::Claimed(first) = store
         .admit(&setup.plan, setup.target(), Kind::Tool, "a".repeat(64))
         .await

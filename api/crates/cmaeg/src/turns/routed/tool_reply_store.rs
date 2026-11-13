@@ -5,6 +5,7 @@ use super::{
     tool_operation::{valid_hash, OperationStore},
     ExecutionError, Journal,
 };
+use crate::replicas::partition::PartitionLease;
 use crate::{
     delivery::{
         intents::{DeliveryOutcome, IntentReceipt},
@@ -15,6 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod replay;
 mod retained;
 mod settlement;
 
@@ -64,8 +66,12 @@ pub(super) struct Record {
 pub(super) struct ReplyClaim {
     record: Record,
     kind: Kind,
+    partition: Option<PartitionLease>,
 }
 impl ReplyClaim {
+    pub fn live_partition(&self) -> bool {
+        self.partition.as_ref().is_none_or(PartitionLease::live)
+    }
     pub fn until(&self) -> i64 {
         self.attempt().until
     }
@@ -86,7 +92,7 @@ pub(super) enum Admission {
     Closed,
 }
 #[derive(Clone)]
-pub(super) struct ReplyStore(pub Journal);
+pub(super) struct ReplyStore(pub Journal, pub Option<PartitionLease>);
 impl ReplyStore {
     pub async fn status(
         &self,
@@ -116,7 +122,8 @@ impl ReplyStore {
         if !record.closed {
             record.closed = true;
             self.0
-                .write(
+                .write_fenced(
+                    &self.1,
                     &record.id,
                     &record.owner,
                     record.retained_until,
@@ -183,7 +190,8 @@ impl ReplyStore {
         }
         record.version = self
             .0
-            .write(
+            .write_fenced(
+                &self.1,
                 &record.id,
                 &record.owner,
                 record.retained_until,
@@ -191,7 +199,11 @@ impl ReplyStore {
                 (record.version > 0).then_some(record.version),
             )
             .await?;
-        Ok(Admission::Claimed(Box::new(ReplyClaim { record, kind })))
+        Ok(Admission::Claimed(Box::new(ReplyClaim {
+            record,
+            kind,
+            partition: self.1.clone(),
+        })))
     }
     pub async fn admit_keyed(
         &self,
@@ -248,7 +260,8 @@ impl ReplyStore {
         }
         record.version = self
             .0
-            .write(
+            .write_fenced(
+                &self.1,
                 &record.id,
                 &record.owner,
                 record.retained_until,
@@ -259,11 +272,12 @@ impl ReplyStore {
         // Only the CAS winner creates a retained key record; failed competing
         // admissions cannot consume records outside the 64-operation bound.
         OperationStore(self.0.clone())
-            .prepare(&record, record.tool.as_ref().unwrap())
+            .prepare(&self.1, &record, record.tool.as_ref().unwrap())
             .await?;
         Ok(Admission::Claimed(Box::new(ReplyClaim {
             record,
             kind: Kind::Tool,
+            partition: self.1.clone(),
         })))
     }
 }

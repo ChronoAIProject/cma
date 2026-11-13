@@ -3,7 +3,8 @@ use super::*;
 
 impl ReplyStore {
     pub async fn guard(&self, claim: &ReplyClaim) -> Result<(), ExecutionError> {
-        if claim.until() <= (self.0.clock)() {
+        self.0.guard_partition(&claim.partition).await?;
+        if !claim.live_partition() || claim.until() <= (self.0.clock)() {
             return Err(ExecutionError::LostLease);
         }
         let Some((stored, version)) = self.0.read::<Record>(&claim.record.id).await? else {
@@ -46,7 +47,7 @@ impl ReplyStore {
         self.guard(claim).await?;
         if claim.attempt().content_hash.is_some() {
             OperationStore(self.0.clone())
-                .finish(&claim.record, claim.attempt(), &receipt)
+                .finish(&claim.partition, &claim.record, claim.attempt(), &receipt)
                 .await?;
         }
         if matches!(claim.kind, Kind::Tool)
@@ -60,7 +61,8 @@ impl ReplyStore {
         };
         attempt.as_mut().unwrap().receipt = Some(receipt.clone());
         self.0
-            .write(
+            .write_fenced(
+                &claim.partition,
                 &next.id,
                 &next.owner,
                 next.retained_until,
