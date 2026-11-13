@@ -78,6 +78,8 @@ pub(crate) mod fleet;
 mod metadata;
 mod preparation;
 mod proof;
+mod recovery;
+pub(super) use recovery::exact_recovery_head;
 #[cfg(test)]
 mod quarantine_tests;
 pub(super) mod read;

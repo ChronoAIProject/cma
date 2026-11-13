@@ -98,6 +98,7 @@ data:
   CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   # Enable only after runtime and scan measurements support cooperative decoding.
+  CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED: "false"
   CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED: "false"
   CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED: "false"
   # Expand-only skill upgrade readers; enable new writers only after migration qualification.
