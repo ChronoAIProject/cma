@@ -26,9 +26,24 @@ impl DurableJournal {
         let connection = gateway.connect(resume, self.clone(), receiver);
         tokio::pin!(connection);
         let renewal = async {
+            let replica = self.store.replica.is_some();
             loop {
-                tokio::time::sleep(Duration::from_secs(10)).await;
-                match tokio::time::timeout(Duration::from_secs(15), self.renew()).await {
+                tokio::time::sleep(if replica {
+                    crate::replicas::config::RENEW
+                } else {
+                    Duration::from_secs(10)
+                })
+                .await;
+                match tokio::time::timeout(
+                    if replica {
+                        crate::replicas::config::STORE_TIMEOUT
+                    } else {
+                        Duration::from_secs(15)
+                    },
+                    self.renew(),
+                )
+                .await
+                {
                     Ok(Ok(())) => {}
                     result => {
                         self.status.step(Stage::Renew);
@@ -71,9 +86,13 @@ impl DurableJournal {
         {
             self.status.cleanup_failed();
         }
-        // Failed release is safe: a new process must wait for the durable lease
-        // to expire, and stale workers cannot release a newer owner's fence.
-        let released = self.release().await.is_ok();
+        // A missing close acknowledgement retains the lease until expiry.
+        // Failed connection setup has never sent Identify and owns no socket.
+        let closed = result.as_ref().map_or(true, |end| end.transport_closed);
+        let released = closed && self.release().await.is_ok();
+        if !closed {
+            tracing::warn!("native Discord close unconfirmed; retaining source lease until expiry");
+        }
         if !released {
             self.status.cleanup_failed();
         }
