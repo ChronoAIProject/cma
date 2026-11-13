@@ -63,7 +63,10 @@ executables each create independent clients and local state. The routed case
 reuses the repository HTTP snapshot/SSE fixture and developer-08's exact helper
 commit, recorded in `peer-provenance.json`. New tests nest under `runner_binary::replicas`, so existing authenticated
 Mongo contract runners select them. Use pinned Rust 1.96.1, CARGO_BUILD_JOBS=4,
-task-local CARGO_HOME/CARGO_TARGET_DIR/TMPDIR. Required gates:
+task-local CARGO_HOME/CARGO_TARGET_DIR/TMPDIR. Pin both RUSTC and RUSTDOC to
+the absolute 1.96.1 toolchain binaries as well as Cargo; the shared wrapper may
+otherwise resolve a different compiler from PATH. Set RUSTUP_TOOLCHAIN=1.96.1
+for the invocation. These are process-local settings. Required gates:
 
 ```sh
 cargo fmt --all --check
