@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 286,
+  "openapi_operations": 288,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3924,6 +3924,31 @@
       ],
       "non_problem_statuses": {
         "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
+    },
+    "GET /api/v1/admin/spend": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/spend.rs# The read handler preserves optional accounting evidence and exhaustively projects core closure reasons in Layer 1; SpendFailure preserves capability and unavailable responses.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "platform_spend_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/spend/observations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/spend.rs# The handler requires ConfigurePlatform and the spend write gate, maps ledger Invalid and Conflict (including disabled metering and period bounds) to invalid_request, and maps every JsonRejection to the same code.",
+      "required_problems": [
+        "forbidden",
+        "invalid_request",
+        "model_budget_writes_unavailable",
+        "not_authenticated",
+        "platform_spend_unavailable"
+      ],
+      "unreachable_problems": {
+        "malformed_json": "api/crates/layer1-public/src/rest/admin/spend.rs# The handler receives Result<Json<ObservationRequest>, JsonRejection> and maps JSON syntax failures to 422 invalid_request.",
+        "unsupported_media_type": "api/crates/layer1-public/src/rest/admin/spend.rs# The handler maps missing or non-JSON content types from JsonRejection to 422 invalid_request.",
+        "request_too_large": "api/crates/layer1-public/src/rest/admin/spend.rs# DefaultBodyLimit rejects during JSON extraction; the handler maps that JsonRejection to 422 invalid_request instead of returning 413."
       }
     }
   }

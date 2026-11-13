@@ -1,0 +1,676 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "admin-spend-observe-cloud",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "metering_enabled": true,
+          "settings_revision": 3,
+          "levels": {
+            "warning": 800000,
+            "stop": 1000000,
+            "disposable": 900000
+          },
+          "ledger": {
+            "period_start": "2026-11-01T00:00:00Z",
+            "period_end": "2026-12-01T00:00:00Z",
+            "settings_revision": 3,
+            "spent": 0,
+            "reserved": 0,
+            "adjustments": 0,
+            "cloud": {
+              "observed_through": "2026-11-02T00:00:00Z",
+              "units": 1234,
+              "recorded_at": "2026-11-02T00:00:00Z",
+              "settings_revision": 3
+            },
+            "closures": []
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-read-cloud",
+      "operation": "GET /api/v1/admin/spend",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "metering_enabled": true,
+          "settings_revision": 3,
+          "levels": {
+            "warning": 800000,
+            "stop": 1000000,
+            "disposable": 900000
+          },
+          "ledger": {
+            "period_start": "2026-11-01T00:00:00Z",
+            "period_end": "2026-12-01T00:00:00Z",
+            "settings_revision": 3,
+            "spent": 0,
+            "reserved": 0,
+            "adjustments": 0,
+            "cloud": {
+              "observed_through": "2026-11-02T00:00:00Z",
+              "units": 1234,
+              "recorded_at": "2026-11-02T00:00:00Z",
+              "settings_revision": 3
+            },
+            "closures": []
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-read-closed",
+      "operation": "GET /api/v1/admin/spend",
+      "scenario": "admin_spend_closed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "metering_enabled": true,
+          "settings_revision": 3,
+          "levels": {
+            "warning": 800000,
+            "stop": 1000000,
+            "disposable": 900000
+          },
+          "committed": 1234,
+          "ledger": {
+            "period_start": "2026-11-01T00:00:00Z",
+            "period_end": "2026-12-01T00:00:00Z",
+            "settings_revision": 3,
+            "spent": 0,
+            "reserved": 0,
+            "adjustments": 0,
+            "cloud": {
+              "observed_through": "2026-11-02T00:00:00Z",
+              "units": 1234,
+              "recorded_at": "2026-11-02T00:00:00Z",
+              "settings_revision": 3
+            },
+            "closures": [
+              {
+                "reason": "metering_unavailable",
+                "since": "2026-11-01T00:00:00Z",
+                "settings_revision": 3,
+                "committed_at_entry": 0
+              }
+            ],
+            "evaluated_at": "2026-11-01T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-conflict",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1235
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "observation conflicts with a recorded value",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-read-off",
+      "operation": "GET /api/v1/admin/spend",
+      "scenario": "admin_spend_off",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "metering_enabled": false,
+          "settings_revision": 3
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-read-forbidden",
+      "operation": "GET /api/v1/admin/spend",
+      "scenario": "admin_spend_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-read-anonymous",
+      "operation": "GET /api/v1/admin/spend",
+      "scenario": "admin_spend_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-read-absent",
+      "operation": "GET /api/v1/admin/spend",
+      "scenario": "admin_spend_absent",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/platform-spend-unavailable",
+          "title": "platform spend unavailable",
+          "status": 503,
+          "detail": "Platform spend accounting could not be read or changed.",
+          "code": "platform_spend_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-read-unavailable",
+      "operation": "GET /api/v1/admin/spend",
+      "scenario": "admin_spend_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/platform-spend-unavailable",
+          "title": "platform spend unavailable",
+          "status": 503,
+          "detail": "Platform spend accounting could not be read or changed.",
+          "code": "platform_spend_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-off",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_off",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "observation is outside the current platform period",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-forbidden",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-anonymous",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-absent",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_absent",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/platform-spend-unavailable",
+          "title": "platform spend unavailable",
+          "status": 503,
+          "detail": "Platform spend accounting could not be read or changed.",
+          "code": "platform_spend_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-unavailable",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/platform-spend-unavailable",
+          "title": "platform spend unavailable",
+          "status": 503,
+          "detail": "Platform spend accounting could not be read or changed.",
+          "code": "platform_spend_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-writes-closed",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_writes_closed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/model-budget-writes-unavailable",
+          "title": "model budget writes unavailable",
+          "status": 503,
+          "detail": "Saving spend controls is not available yet.",
+          "code": "model_budget_writes_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-invalid-time",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "invalid-time",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The observation does not match the platform spend contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-before-period",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-10-31T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "observation is outside the current platform period",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-invalid-source",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "source": "unsupported_source",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The observation does not match the platform spend contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-malformed-json",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The observation does not match the platform spend contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-missing-media-type",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {},
+        "body": {
+          "source": "cloud",
+          "observed_through": "2026-11-02T00:00:00Z",
+          "units": 1234
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The observation does not match the platform spend contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-spend-observe-oversize",
+      "operation": "POST /api/v1/admin/spend/observations",
+      "scenario": "admin_spend_enabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": " ",
+        "rawBodyRepeat": 2097153
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-request",
+          "title": "invalid request",
+          "status": 422,
+          "detail": "The observation does not match the platform spend contract.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}
