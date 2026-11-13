@@ -243,6 +243,8 @@ impl SandboxControlRecord {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxControlError {
+    #[error("operator admission is paused")]
+    AdmissionPaused,
     #[error("model budget refused a new Sandbox commitment: {0}")]
     Budget(crate::budget::BudgetError),
     #[error("invalid Sandbox control request")]
