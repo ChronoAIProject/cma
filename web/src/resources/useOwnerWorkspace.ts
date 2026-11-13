@@ -1,3 +1,4 @@
+import { rateLimitDelay } from '../agent/transport/readRetry';
 import { useEffect, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
@@ -38,10 +39,16 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
+    let retryAt = 0;
+    let failures = 0;
     const delay = createPagePollDelay();
     const poll = () => {
       if (abort.signal.aborted || inFlight || document.hidden) return;
       clearTimeout(timer);
+      if (Date.now() < retryAt) {
+        timer = setTimeout(poll, retryAt - Date.now());
+        return;
+      }
       inFlight = true;
       void (async () => {
         try {
@@ -52,6 +59,8 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
           if (sandbox.id !== workspace.sandboxId)
             throw new Error('Sandbox projection referred to another resource.');
           if (abort.signal.aborted) return;
+          failures = 0;
+          retryAt = 0;
           setStored({ key, state: { status: 'ready', workspace, sandbox, pollError: false } });
           timer = setTimeout(
             poll,
@@ -75,7 +84,8 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
                     message: readableError(error, 'Workspace unavailable.'),
                   },
           }));
-          timer = setTimeout(poll, 5000);
+          retryAt = Date.now() + rateLimitDelay(error, 5000, ++failures);
+          timer = setTimeout(poll, retryAt - Date.now());
         } finally {
           inFlight = false;
         }
