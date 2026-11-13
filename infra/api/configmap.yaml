@@ -96,6 +96,7 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
+  CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED: "false"
   CHRONO_WORK_RETRY_POLICY_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   # Enable only after runtime and scan measurements support cooperative decoding.
@@ -135,6 +136,8 @@ data:
   # Avoid any adoption discovery on the default publication path.
   CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED: "false"
   CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
+  CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED: "false"
+  CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED: "false"
   CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
   # deployed and its latency and authorization evidence is reviewed.

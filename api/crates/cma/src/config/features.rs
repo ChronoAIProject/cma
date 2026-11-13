@@ -8,6 +8,8 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub agent_model_discovery_cache: bool,
+    pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
@@ -58,6 +60,7 @@ pub(crate) struct FeatureFlags {
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
+    pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
     pub event_driven_reconciliation: bool,
@@ -78,6 +81,11 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            agent_model_discovery_cache: flag(
+                lookup,
+                "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
+            )?,
+            agent_environment_async: flag(lookup, "CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED")?,
             agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
             agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(
@@ -126,6 +134,10 @@ impl FeatureFlags {
             native_create_retry_enabled: flag(
                 lookup,
                 "CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED",
+            )?,
+            cleanup_continuation_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",
             )?,
             agent_log_scan_cooperative_enabled: flag(
                 lookup,
@@ -273,3 +285,6 @@ mod sandbox_projection_tests;
 #[cfg(test)]
 #[path = "features/native_create_retry_tests.rs"]
 mod native_create_retry_tests;
+
+#[cfg(test)]
+mod discovery_tests;
