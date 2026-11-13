@@ -84,6 +84,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
         now: String,
         lease_expires_at: String,
     ) -> Result<Option<layer2_core::sandbox::Sandbox>, SandboxStoreError> {
+        let acquisition = super::work_claim_authority::eligible(&lease_expires_at)?;
         for _ in 0..TRANSACTION_ATTEMPTS {
             let Some(mut sandbox) = self.get_sandbox(id).await? else {
                 return Ok(None);
@@ -101,7 +102,10 @@ impl SandboxWorkerStore for MongoSandboxStore {
                 .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
             sandbox.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
             sandbox.updated_at = now.clone();
-            match self.save_sandbox(expected, sandbox.clone()).await {
+            match self
+                .save_sandbox_validated(expected, sandbox.clone(), Some(&acquisition))
+                .await
+            {
                 Ok(()) => return Ok(Some(sandbox)),
                 Err(SandboxStoreError::Conflict) => tokio::task::yield_now().await,
                 Err(error) => return Err(error),

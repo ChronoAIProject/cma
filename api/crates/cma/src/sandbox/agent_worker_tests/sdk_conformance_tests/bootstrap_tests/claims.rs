@@ -36,7 +36,7 @@ async fn bootstrap_mongo_workspace_claim_defers_without_mutation_until_parent_in
         .unwrap();
     store.create_workspace(h.workspace.clone()).await.unwrap();
     let now = rfc3339_at(h.now);
-    let expires = rfc3339_at(h.now + Duration::from_secs(30));
+    let expires = rfc3339_at(std::time::SystemTime::now() + Duration::from_secs(30));
     assert!(store
         .claim_workspace_work(
             &h.workspace.id,
