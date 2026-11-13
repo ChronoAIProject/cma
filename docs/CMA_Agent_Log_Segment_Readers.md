@@ -1,6 +1,7 @@
 # Compatible Agent log reader foundation
 
-Part of #1348. This foundation accepts the retained legacy format and the
+The [canonical segmentation design](CMA_Agent_Log_Segments.md) records the
+#1348 baseline and implementation map. This foundation accepts the retained legacy format and the
 versioned segmented format. It does not admit adoption or rollover. Writer and
 recovery activation require the complete consumer, publication, migration and
 rollback gates in the segmentation plan.

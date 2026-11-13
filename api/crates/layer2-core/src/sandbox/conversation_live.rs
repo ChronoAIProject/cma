@@ -9,6 +9,9 @@ use crate::AgentId;
 
 use super::super::{Agent, AgentMessageAssembly};
 use super::live_budget::{AgentLiveDelivery, LiveBudget};
+#[path = "conversation_head.rs"]
+mod head;
+pub use head::AgentHeadSubscription;
 
 pub(crate) const LIVE_BUFFER_FRAGMENTS: usize = 256;
 const LIVE_FRAGMENT_BYTES: usize = 16 * 1024;
@@ -80,14 +83,22 @@ pub(crate) struct AgentLiveMessageIdentity {
 
 #[derive(Default)]
 pub(super) struct AgentLiveHub {
+    heads: head::AgentHeadHub,
     budget: Option<Arc<LiveBudget>>,
     lanes: Mutex<BTreeMap<AgentId, Weak<broadcast::Sender<Option<AgentLiveDelivery>>>>>,
 }
 
 impl AgentLiveHub {
+    pub(super) fn subscribe_head(&self, id: &AgentId) -> AgentHeadSubscription {
+        self.heads.subscribe(id)
+    }
+    pub(super) fn publish_head(&self, id: &AgentId) {
+        self.heads.publish(id);
+    }
     pub(super) fn with_budget(budget: Arc<LiveBudget>) -> Self {
         Self {
             budget: Some(budget),
+            heads: Default::default(),
             lanes: Mutex::default(),
         }
     }

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use super::{corrupt, io_error, Record, Status, MAX_JOURNAL_BYTES, MAX_JOURNAL_ENTRIES};
+use super::{corrupt, io_error, Record, Status, MAX_JOURNAL_BYTES};
 use crate::failure::{Result, RuntimeError};
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(1);
@@ -25,7 +25,10 @@ pub(super) struct JournalFile {
     kind: FileKind,
 }
 
-pub(super) fn scan(state_root: &Path) -> Result<Vec<JournalFile>> {
+pub(super) fn scan(
+    state_root: &Path,
+    budget: &mut crate::mutation_recovery::ScanBudget,
+) -> Result<Vec<JournalFile>> {
     let directory = journal_directory(state_root);
     match std::fs::symlink_metadata(&directory) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -38,9 +41,7 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<JournalFile>> {
     let entries = std::fs::read_dir(&directory)
         .map_err(|error| io_error("list runtime mutation journal", error))?;
     for entry in entries {
-        if files.len() == MAX_JOURNAL_ENTRIES {
-            return Err(crate::mutation_capacity::exhausted());
-        }
+        budget.entry()?;
         let entry = entry.map_err(|error| io_error("read runtime mutation entry", error))?;
         let name = entry
             .file_name()
@@ -48,7 +49,7 @@ pub(super) fn scan(state_root: &Path) -> Result<Vec<JournalFile>> {
             .map_err(|_| corrupt("runtime mutation journal filename is not UTF-8"))?;
         let kind = classify_name(&name)?;
         let path = entry.path();
-        let record = read_record(&path)?
+        let record = read_budgeted(&path, Some(budget))?
             .ok_or_else(|| corrupt("runtime mutation journal entry disappeared"))?;
         files.push(JournalFile { path, record, kind });
     }
@@ -140,7 +141,7 @@ pub(super) fn validate_replacement(current: &Record, candidate: &Record) -> Resu
     Ok(())
 }
 
-pub(super) fn has_replacements(state_root: &Path, count: &mut usize) -> Result<bool> {
+pub(super) fn has_replacements(state_root: &Path, count: &mut usize, limit: usize) -> Result<bool> {
     let directory = journal_directory(state_root);
     match std::fs::symlink_metadata(&directory) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
@@ -151,7 +152,7 @@ pub(super) fn has_replacements(state_root: &Path, count: &mut usize) -> Result<b
     for entry in std::fs::read_dir(directory)
         .map_err(|error| io_error("list runtime mutation journal", error))?
     {
-        if *count == MAX_JOURNAL_ENTRIES {
+        if *count == limit {
             return Err(crate::mutation_capacity::exhausted());
         }
         *count += 1;
@@ -168,6 +169,13 @@ pub(super) fn has_replacements(state_root: &Path, count: &mut usize) -> Result<b
 }
 
 pub(super) fn read_record(path: &Path) -> Result<Option<Record>> {
+    read_budgeted(path, None)
+}
+
+fn read_budgeted(
+    path: &Path,
+    budget: Option<&mut crate::mutation_recovery::ScanBudget>,
+) -> Result<Option<Record>> {
     let mut file = match open_no_follow(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -180,6 +188,9 @@ pub(super) fn read_record(path: &Path) -> Result<Option<Record>> {
         return Err(corrupt(
             "runtime mutation journal entry is unsafe or oversized",
         ));
+    }
+    if let Some(budget) = budget {
+        budget.bytes(metadata.len())?;
     }
     let mut bytes = Vec::with_capacity(usize::try_from(metadata.len()).unwrap_or(0));
     (&mut file)
