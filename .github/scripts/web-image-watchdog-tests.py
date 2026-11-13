@@ -20,7 +20,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def supervise(directory, mode):
     smoke.run_browser(
-        ["node", "node_modules/@playwright/test/cli.js", "test", "--config",
+        ["node", "--require", str(Path(__file__).with_name("web-image-phases.cjs").resolve()),
+                 "node_modules/@playwright/test/cli.js", "test", "--config",
          "e2e/image-watchdog.config.ts"], cwd=ROOT / "web",
         env={**os.environ, "CMA_WEB_IMAGE_EVIDENCE_DIR": str(directory / "evidence"),
              "CMA_WEB_WATCHDOG_READY": str(directory / "ready.json"),
