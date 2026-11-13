@@ -10,7 +10,11 @@ pub(super) fn find(config: &RuntimeConfig, operation: &Operation) -> Result<Opti
         // V1 permits replacement names without the operation key in their name.
         // Any replacement therefore needs the original full reconciliation;
         // returning early could leave the one physical write slot occupied.
-        if io::has_replacements(&root, &mut count)? {
+        if io::has_replacements(
+            &root,
+            &mut count,
+            crate::mutation_recovery::journal_limit(config),
+        )? {
             return records(config).map(|records| {
                 records
                     .into_iter()
