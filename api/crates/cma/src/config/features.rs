@@ -8,6 +8,7 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
@@ -70,6 +71,10 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            runtime_loss_bounded_proof_enabled: flag(
+                lookup,
+                "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
+            )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
@@ -237,3 +242,6 @@ mod document_maintenance_tests;
 #[cfg(test)]
 #[path = "admission_control_tests.rs"]
 mod admission_control_tests;
+
+#[cfg(test)]
+mod runtime_loss_tests;
