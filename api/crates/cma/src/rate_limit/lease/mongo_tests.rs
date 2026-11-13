@@ -4,6 +4,7 @@ use mongodb::bson::{doc, Document};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 mod fixtures;
+mod public_relay;
 mod read_lanes;
 use fixtures::*;
 

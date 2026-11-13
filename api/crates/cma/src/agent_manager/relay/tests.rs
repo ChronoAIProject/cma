@@ -1,4 +1,5 @@
 use super::*;
+mod transport_auth;
 use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
@@ -15,6 +16,7 @@ use layer2_core::{
     },
 };
 use tokio::task::JoinHandle;
+use transport_auth::test_auth;
 
 pub(crate) struct Instance {
     pub(crate) coordinator: Arc<OwnershipCoordinator>,
@@ -56,6 +58,10 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
             ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"synthetic-test-deployment-key"),
         )
         .unwrap();
+        assert!(relay
+            .public_access
+            .set(Arc::new(transport_auth::TransportPolicy))
+            .is_ok());
         updates.install_live_source(relay.live_source());
         let router = relay.routes(
             Router::new()
@@ -102,24 +108,6 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
         });
     }
     (store, instances)
-}
-
-async fn test_auth(
-    mut request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    if request
-        .headers()
-        .get("authorization")
-        .is_some_and(|value| value == "Bearer synthetic-authorized")
-    {
-        request
-            .extensions_mut()
-            .insert(layer1_public::AuthenticatedSubject(
-                layer2_core::SubjectId::new("synthetic-caller"),
-            ));
-    }
-    next.run(request).await
 }
 
 pub(crate) async fn acquire(
