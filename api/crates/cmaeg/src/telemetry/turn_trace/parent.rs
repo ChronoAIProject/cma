@@ -15,10 +15,16 @@ impl SpanId {
         (value != 0).then_some(Self(value))
     }
 
-    pub(crate) fn fresh() -> Self {
-        let random = Uuid::new_v4();
-        let bytes = random.as_bytes()[..8].try_into().expect("eight bytes");
+    /// Both diagnostic IDs belong to one operation. Use the request's random
+    /// bits instead of a second entropy acquisition solely for its span.
+    pub(super) fn from_request(request: Uuid) -> Self {
+        let bytes = request.as_bytes()[..8].try_into().expect("eight bytes");
         Self(u64::from_be_bytes(bytes).max(1))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fresh() -> Self {
+        Self::from_request(Uuid::new_v4())
     }
 }
 
@@ -93,6 +99,6 @@ pub(super) fn uuid_v4(value: &str) -> Option<Uuid> {
     let id = Uuid::parse_str(value).ok()?;
     (id.get_version_num() == 4
         && id.get_variant() == uuid::Variant::RFC4122
-        && id.hyphenated().to_string() == value)
+        && id.hyphenated().encode_lower(&mut [0; 36]) == value)
         .then_some(id)
 }
