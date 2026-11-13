@@ -31,6 +31,7 @@ pub(super) struct ResponseGate {
     pub after_call: Option<String>,
     pub entered: Arc<tokio::sync::Notify>,
     pub release: Arc<tokio::sync::Notify>,
+    pub disconnect: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(super) struct Fixture {
@@ -134,6 +135,9 @@ impl Fixture {
                 if let Some(gate) = &gate {
                     gate.entered.notify_one();
                     gate.release.notified().await;
+                    if gate.disconnect.load(std::sync::atomic::Ordering::SeqCst) {
+                        continue;
+                    }
                 }
                 let bytes = body.to_string();
                 let written = socket.write_all(format!("HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{bytes}",bytes.len()).as_bytes()).await;
@@ -177,6 +181,7 @@ impl Fixture {
             after_call,
             entered: Arc::default(),
             release: Arc::default(),
+            disconnect: Arc::default(),
         };
         self.state
             .lock()
