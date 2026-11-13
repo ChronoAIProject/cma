@@ -61,6 +61,10 @@ async fn publish_validated(
     session: &mut mongodb::ClientSession,
 ) -> Result<PublicationReceipt, PublishError> {
     store
+        .fence_checkpoint_owners(mutation, session)
+        .await
+        .map_err(PublishError::Domain)?;
+    store
         .checkpoints
         .insert_one(
             checkpoint_document(

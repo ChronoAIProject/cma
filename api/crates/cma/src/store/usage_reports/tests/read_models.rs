@@ -1,5 +1,5 @@
 use super::*;
-fn binding(id: &str, kind: BindingKind, at: u64) -> Binding {
+pub(super) fn binding(id: &str, kind: BindingKind, at: u64) -> Binding {
     Binding {
         id: String::new(),
         schema_version: 1,
@@ -32,17 +32,31 @@ fn binding(id: &str, kind: BindingKind, at: u64) -> Binding {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn metrics_bindings_preserve_independent_home_and_fence_conflicts_and_expiry() {
     let store = fixture().await;
+    assert!(store
+        .lease("observer", "fixture-observer", 70)
+        .await
+        .unwrap());
     let at = now() - 1000;
     let id = "sbx_00000000000000000000000000000001";
     let compute = binding(id, BindingKind::Compute, at);
     let home = binding(id, BindingKind::Home, at);
     store
-        .reconcile_bindings(id, vec![compute.clone(), home.clone()], at)
+        .reconcile_bindings(
+            "fixture-observer",
+            id,
+            vec![compute.clone(), home.clone()],
+            at,
+        )
         .await
         .unwrap();
     let revision = store.mapping_revision().await.unwrap();
     store
-        .reconcile_bindings(id, vec![compute.clone(), home.clone()], at + 60)
+        .reconcile_bindings(
+            "fixture-observer",
+            id,
+            vec![compute.clone(), home.clone()],
+            at + 60,
+        )
         .await
         .unwrap();
     assert_eq!(store.mapping_revision().await.unwrap(), revision);
@@ -50,11 +64,11 @@ async fn metrics_bindings_preserve_independent_home_and_fence_conflicts_and_expi
     conflict.sandbox_id = "another".into();
     conflict.owner_subject = "other-owner".into();
     assert!(store
-        .reconcile_bindings("another", vec![conflict], at + 60)
+        .reconcile_bindings("fixture-observer", "another", vec![conflict], at + 60)
         .await
         .is_err());
     store
-        .reconcile_bindings(id, vec![home.clone()], at + 120)
+        .reconcile_bindings("fixture-observer", id, vec![home.clone()], at + 120)
         .await
         .unwrap();
     let records = store
@@ -85,9 +99,15 @@ async fn metrics_bindings_preserve_independent_home_and_fence_conflicts_and_expi
         None
     );
     let revision = store.mapping_revision().await.unwrap();
-    store.expire_missing_bindings(at + 211).await.unwrap();
+    store
+        .expire_missing_bindings("fixture-observer", at + 211)
+        .await
+        .unwrap();
     assert_eq!(store.mapping_revision().await.unwrap(), revision + 1);
-    store.expire_missing_bindings(at + 212).await.unwrap();
+    store
+        .expire_missing_bindings("fixture-observer", at + 212)
+        .await
+        .unwrap();
     assert_eq!(store.mapping_revision().await.unwrap(), revision + 1);
     let collection = store.collection(super::super::super::sandbox_metric_bindings::COLLECTION);
     let mut cursor = collection.find(doc! {}).await.unwrap();
@@ -100,7 +120,7 @@ async fn metrics_bindings_preserve_independent_home_and_fence_conflicts_and_expi
         assert!(!d.contains_key("active_physical"));
     }
     store
-        .reconcile_bindings(id, vec![home], at + 300)
+        .reconcile_bindings("fixture-observer", id, vec![home], at + 300)
         .await
         .unwrap();
     let active = collection
@@ -219,10 +239,14 @@ async fn metrics_inventory_uses_one_snapshot_and_progress_is_lease_fenced() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn metrics_diagnostics_exclude_assigned_resources_and_reset_changed_incarnations() {
     let store = fixture().await;
+    assert!(store
+        .lease("observer", "fixture-observer", 70)
+        .await
+        .unwrap());
     let at = now() - 600;
     let home = binding("owner-sandbox", BindingKind::Home, at);
     store
-        .reconcile_bindings("owner-sandbox", vec![home.clone()], at)
+        .reconcile_bindings("fixture-observer", "owner-sandbox", vec![home.clone()], at)
         .await
         .unwrap();
     let mut diagnostic = home;

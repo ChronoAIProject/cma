@@ -15,6 +15,7 @@ mod delivery_state;
 mod destinations;
 mod dispatcher;
 mod dispatcher_authority;
+mod effect_roots;
 mod event_attestation;
 mod executor;
 mod expiry;
@@ -32,6 +33,7 @@ mod media_work;
 mod media_worker;
 mod model;
 mod non_admission;
+mod partition_fence;
 mod preparation;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
