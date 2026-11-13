@@ -24,6 +24,7 @@ mod provision_timing;
 mod provisioning;
 mod retained_retirement;
 mod retirement;
+mod retry;
 mod scheduling;
 mod support;
 
@@ -86,6 +87,7 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub work_retry_policy_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -115,6 +117,7 @@ impl SandboxWorkerConfig {
     ) -> Self {
         Self {
             home_policy: None,
+            work_retry_policy_enabled: false,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
@@ -138,6 +141,11 @@ impl SandboxWorkerConfig {
 
     pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
         self.home_policy = policy;
+        self
+    }
+
+    pub(crate) fn with_work_retry_policy(mut self, enabled: bool) -> Self {
+        self.work_retry_policy_enabled = enabled;
         self
     }
 }
