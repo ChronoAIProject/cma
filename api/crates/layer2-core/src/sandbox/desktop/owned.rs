@@ -251,7 +251,7 @@ async fn renew(
         tokio::time::sleep(Duration::from_secs(3)).await;
         let current = *validity.borrow();
         let Some(current) = current else { return };
-        let result = tokio::time::timeout_at(current, async {
+        let result = renew_before_expiry(current, async {
             context.authorization.current(&context.caller).await?;
             let (sandbox_id, runtime) = service.authorize(&context.caller, &context.id).await?;
             if sandbox_id != request.sandbox_id || runtime != request.runtime {
@@ -281,7 +281,7 @@ async fn renew(
         })
         .await;
         match result {
-            Ok(Ok(deadline)) if deadline > Instant::now() => {
+            Ok(deadline) if current > Instant::now() && deadline > Instant::now() => {
                 if validity.send(Some(deadline)).is_err() {
                     return;
                 }
@@ -292,6 +292,25 @@ async fn renew(
                 );
                 validity.send_replace(None);
                 return;
+            }
+        }
+    }
+}
+
+async fn renew_before_expiry<T>(
+    current: Instant,
+    operation: impl std::future::Future<Output = Result<T, DesktopError>>,
+) -> Result<T, DesktopError> {
+    tokio::select! {
+        biased;
+        // A ready late ACK must not restore local authority after expiry.
+        // timeout_at polls the operation first, including after a task pause.
+        _ = tokio::time::sleep_until(current) => Err(DesktopError::Unavailable),
+        result = operation => {
+            if current <= Instant::now() {
+                Err(DesktopError::Unavailable)
+            } else {
+                result
             }
         }
     }
