@@ -315,6 +315,12 @@ impl AuthStore for WrongSubjectStore {
     async fn browser_login(&self, _id: &SecretDigest) -> Result<Option<BrowserLogin>, StoreError> {
         unreachable!()
     }
+    async fn browser_session(
+        &self,
+        _id: &SecretDigest,
+    ) -> Result<Option<(BrowserLogin, Option<SubjectAuthState>)>, StoreError> {
+        unreachable!("sandbox prerequisites do not read browser sessions")
+    }
     async fn delete_browser_login(&self, _id: &SecretDigest) -> Result<(), StoreError> {
         unreachable!()
     }

@@ -2349,6 +2349,28 @@ web assets needed by open tabs and the batch's compatible reader floor through
 normal deployment procedures. Verify an existing tab continues working and names
 its original bundle. This UI change does not authorize deployment or asset removal.
 
+## Buffered Agent history rollout
+
+`CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED` independently defaults to `false`
+and accepts only exact `true` or `false`. It changes the buffered Agent v2
+snapshot and head routes to entry authorization, one current Agent capture and
+one final authorization fence. Cursor validation uses that current header. Page,
+predecessor and tail proof share a log snapshot; command and message bindings
+remain inside the bounded private read. Success, dependency errors, cursor errors
+and timeout all pass the final fence. SSE polling and frame release retain their
+existing checks. There is no persisted-format or public response change.
+
+Keep this switch off for initial deployment. Enable in staging only after the
+authorization/revocation review, run the race and integrity contracts, and rehearse
+returning to `false` with an API rollout. Production activation is release-owner
+controlled: compare the same image in natural-traffic windows of at least 30
+minutes off/on. Hold the independent authorization-session setting fixed, and
+separate #1648 bounded-history activation from this comparison. Follow the exact
+metrics, coverage caveats and pass criteria in
+[the measurement protocol](operations/perf-measurement/history-auth.md).
+Any authorization or content inconsistency requires immediate rollback to false
+on the same image. Local measurements do not complete production verification.
+
 ## Sandbox detail read rollout
 
 `CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED` defaults to `false` and accepts only
@@ -2429,6 +2451,25 @@ appear. Roll only API replicas with the same image. Existing Sandboxes,
 Workspaces, Agents, identifiers and history stay intact. Offline retirement
 archive census explicitly uses the disabled strategy. No persistence format
 changes, migration, row omission or weaker validation accompanies this switch.
+
+## Browser identity reads
+
+`CHRONO_AUTH_BROWSER_SESSION_JOIN_ENABLED` defaults to `false` and accepts only
+exact `true` or `false`. With `true`, Cookie authentication joins the browser
+handle and its subject by their indexed keys in one Mongo aggregate. Both
+records retain their existing schema, revocation and token validation. Expired
+logins are rejected before interpreting subject authority. The post-verification
+custody check and the additional `/auth/session` logout check still run.
+
+Ordinary authenticated Cookie requests use two identity commands instead of
+three; `/auth/session` uses three instead of four, plus its settings read.
+No completed NyxID verification is reused on the normal path. The existing
+60-second outage fallback remains limited to `GET /auth/session`.
+
+Rollback by setting the switch to `false` and restarting the API. No persisted
+format changes or data repair are required. Compare both paths using the
+`identity` diagnostic phase described in [Mongo diagnostics](CMA_Mongo_Diagnostics.md);
+handler reads remain outside this phase.
 
 ## Operator admission stop
 

@@ -149,7 +149,12 @@ impl HttpExecutionPort {
         let current_credential = credential(&current, target)?;
         let snapshot = self
             .providers
-            .response_snapshot(&target.launch.provider.slug, &expected, current_credential)
+            .response_snapshot_with_trace(
+                &target.launch.provider.slug,
+                &expected,
+                current_credential,
+                self.providers.nyxid_trace_contract(&target.launch.provider),
+            )
             .await?;
         expected.native_agent_id = Some(snapshot.native_agent_id.clone());
         // Rotate/revoke between snapshot and replay is respected, rather than
@@ -158,11 +163,12 @@ impl HttpExecutionPort {
         self.journal.guard(lease).await?;
         let stream = self
             .providers
-            .replay_response(
+            .replay_response_with_trace(
                 &target.launch.provider.slug,
                 &expected,
                 *durable_cursor,
                 credential(&current, target)?,
+                self.providers.nyxid_trace_contract(&target.launch.provider),
             )
             .await?;
         // No checkpoint advances here. A delivery worker must guard/renew its
@@ -270,6 +276,7 @@ impl ExecutionPort for HttpExecutionPort {
                     &body.idempotency_key,
                     &body.metadata,
                     credential,
+                    self.providers.nyxid_trace_contract(binding),
                 )
                 .await
             {

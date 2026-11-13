@@ -164,6 +164,7 @@ impl ConsumerGateway {
         ));
         let (delivery, _receiver) = tokio::sync::mpsc::channel(1);
         let tools = cmaeg::tools::ToolsState {
+            commonmark_relay_enabled: false,
             native_media_presentations_enabled: false,
             native_discord_voice_enabled: false,
             discord_thread_history: None,

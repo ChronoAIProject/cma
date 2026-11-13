@@ -138,6 +138,24 @@ pub trait AgentLogStore: Send + Sync {
             .await
     }
 
+    /// Visit the page and its predecessor while proving lineage, consecutive
+    /// sequences and absence beyond the store's committed head in one snapshot.
+    /// The captured head may be newer than `through`; later committed appends
+    /// must not change the requested interval or look like an uncommitted tail.
+    /// A caller may omit a separate tail read only after this method succeeds.
+    async fn visit_agent_log_page_with_tail(
+        &self,
+        _agent_id: &AgentId,
+        _after: u64,
+        _through: u64,
+        _limit: u16,
+        _visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "snapshot page tail proof is not supported by this store".into(),
+        ))
+    }
+
     /// Read one immutable entry for message metadata. The caller must first
     /// authorize the owning lineage and bound sequence by the captured Agent's
     /// committed high-water mark. Conversation replay still uses validated scans.

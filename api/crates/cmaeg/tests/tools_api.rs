@@ -31,10 +31,14 @@ pub mod consumer_support;
 pub mod download_support;
 #[path = "tools/link_redemption.rs"]
 mod link_redemption;
+#[path = "tools/media_authority.rs"]
+mod media_authority;
 #[path = "tools/media_downloads.rs"]
 mod media_downloads;
 #[path = "tools/media_links.rs"]
 mod media_links;
+#[path = "tools/media_redemption.rs"]
+mod media_redemption;
 #[path = "tools/media_support.rs"]
 pub mod media_support;
 #[path = "tools/native_discord_edits.rs"]
