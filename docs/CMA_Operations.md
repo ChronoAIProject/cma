@@ -2778,6 +2778,22 @@ proof that an Agent or desktop is usable. No pool size, resources or concurrency
 change accompanies this switch. Activation and end-to-end production acceptance
 remain separate from merging the default-off implementation.
 
+### Native runtime inspection phase evidence
+
+The existing `Native runtime inspection phase ended` events now split
+post-response verification into `post_status_graph` and `post_status_policy`.
+The graph finishes before the policy read starts. A policy success obtained
+before a later graph observation cannot authorize a definition that changed in
+between; the final home check does not re-read Template/Pool policy.
+
+Both phases are inside `native_observation`; `post_status_home` follows it.
+Pre-response `native_authority_graph` and `native_runtime_policy` run concurrently.
+Do not add these nested or overlapping timers. Each phase records `elapsed_ms`,
+`completed` and `succeeded`; cancellation leaves `completed=false`. A policy
+phase skipped after graph refusal or cancellation emits no event. These timings
+preserve all authority checks, read order, retained-upgrade exemptions and
+existing deadlines. They establish no end-to-end improvement on their own.
+
 ### Initial native readiness retry
 
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
