@@ -45,12 +45,18 @@ impl SandboxReconciler {
                 break false;
             }
             let budget = if reserved {
-                BINDING_OPPORTUNITY
+                if self.runtime_loss_bounded_proof_enabled {
+                    Duration::from_secs(25)
+                } else {
+                    BINDING_OPPORTUNITY
+                }
             } else {
                 OPERATION
             };
             let deadline = if reserved {
-                (tokio::time::Instant::now() + budget).min(started + SLICE)
+                // Reserved work starts an empty slice. Keep five seconds under
+                // the outer 30s deadline for cancellation and bookkeeping.
+                started + budget
             } else {
                 tokio::time::Instant::now() + budget
             };

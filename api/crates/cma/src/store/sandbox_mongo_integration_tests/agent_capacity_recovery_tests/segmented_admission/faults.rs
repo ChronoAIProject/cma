@@ -85,6 +85,57 @@ async fn disable(admin: &Client) {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn capacity_admission_retries_original_commit_after_lost_acknowledgements() {
+    let (admin, client, name, app, trace) = clients().await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (_, caller, request) = exhausted(&store).await;
+    let before = snapshot(&store, &request).await;
+    // Exhaust the driver's one automatic commit retry. The application must
+    // retry this same gate-admission commit before publishing storage recovery.
+    admin
+        .database("admin")
+        .run_command(
+            doc! {"configureFailPoint":"failCommand", "mode":{"times":2_i32},
+            "data":{"failCommands":["commitTransaction"],"appName":&app,
+                "errorCode":50_i32,"errorLabels":["UnknownTransactionCommitResult"]}},
+        )
+        .await
+        .unwrap();
+    trace.armed.store(true, Ordering::SeqCst);
+    let outcome = service(&store, true).admit(&caller, &request).await;
+    trace.armed.store(false, Ordering::SeqCst);
+    disable(&admin).await;
+    let CommitOutcome::Recorded(work) = outcome.unwrap() else {
+        panic!("the original commit must settle after temporary acknowledgement loss")
+    };
+    assert!(trace.commits.load(Ordering::SeqCst) >= 4);
+    assert_eq!(
+        *trace.inserts.lock().unwrap(),
+        vec![
+            "agent_log_admissions",
+            "agent_capacity_recovery_work",
+            "agent_log_segments",
+            "agent_log_publications"
+        ],
+        "commit retries must not rerun admission or publication mutations"
+    );
+    let after = snapshot(&store, &request).await;
+    assert_admitted(&before, &after, &work);
+    close_gates(&store).await;
+    let restarted = MongoSandboxStore::open(&admin, &name).await.unwrap();
+    assert_eq!(
+        service(&restarted, false)
+            .admit(&caller, &request)
+            .await
+            .unwrap(),
+        CommitOutcome::Recorded(work)
+    );
+    assert_eq!(snapshot(&restarted, &request).await, after);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn segmented_capacity_admission_late_abort_rolls_back_carrier_and_successor() {
     let (admin, client, name, app, trace) = clients().await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();

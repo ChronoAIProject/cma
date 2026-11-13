@@ -231,7 +231,7 @@ impl SandboxWorker {
             return self
                 .retry_failure(
                     sandbox,
-                    WorkerFailure::retryable("finishing background snapshot cleanup"),
+                    WorkerFailure::waiting("finishing background snapshot cleanup"),
                     now,
                 )
                 .await;
