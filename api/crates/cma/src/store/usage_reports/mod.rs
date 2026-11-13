@@ -11,6 +11,7 @@ mod progress;
 pub(crate) use progress::Progress;
 mod reads;
 mod schema;
+mod submission;
 mod work;
 pub(crate) use charts::chart_documents;
 pub(crate) use work::ReportLease;
@@ -37,6 +38,7 @@ pub(crate) struct ReportingStore {
     pub(super) db: Database,
     pub(super) signer: Arc<layer2_core::sandbox_metrics::cursor::CursorSigner>,
     pub(super) circuit: Arc<std::sync::atomic::AtomicU64>,
+    notifications: Arc<submission::ReportNotifications>,
 }
 impl ReportingStore {
     pub(crate) async fn snapshot(&self) -> Result<mongodb::ClientSession> {
@@ -105,6 +107,7 @@ impl ReportingStore {
             client,
             signer: Arc::new(layer2_core::sandbox_metrics::cursor::CursorSigner::new(key)),
             circuit,
+            notifications: Arc::default(),
         });
         store.initialize().await?;
         Ok(store)
