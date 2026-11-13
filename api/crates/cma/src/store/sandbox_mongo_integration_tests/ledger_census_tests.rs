@@ -240,3 +240,140 @@ async fn ledger_census_unknown_schema_quarantine_and_changed_lineage_stay_preser
         db.drop().await.unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn ledger_census_discovery_keeps_unknowns_and_has_no_writes_or_indexes() {
+    use crate::store::ledger_census::discovery;
+    let (client, name) = database("ledger_discovery").await;
+    let db = client.database(&name);
+    let (_, documents) = documents();
+    let mut expected = Vec::new();
+    for index in 0..5 {
+        let mut row = documents[3].1.clone();
+        row.insert("_id", format!("agt_{index:03}"));
+        row.get_document_mut("record")
+            .unwrap()
+            .insert("id", format!("agt_{index:03}"));
+        match index {
+            1 => {
+                row.insert("document_schema_version", 99);
+            }
+            2 => {
+                row.insert(
+                    crate::store::agent_log_integrity::QUARANTINE_FIELD,
+                    Bson::Null,
+                );
+            }
+            3 => {
+                row.insert("sandbox_id", "foreign");
+            }
+            4 => {
+                row.get_document_mut("record")
+                    .unwrap()
+                    .get_document_mut("failure")
+                    .unwrap()
+                    .insert("detail", "unrelated failure");
+            }
+            _ => {}
+        }
+        expected.push(row);
+    }
+    let agents = db.collection::<Document>(AGENTS);
+    agents.insert_many(&expected).await.unwrap();
+    let request = discovery::Request {
+        format: "runtime-ledger-discovery-request-v1".into(),
+        after_agent_id: None,
+    };
+    let page = discovery::observe(&client, &db, &request, "a".repeat(64))
+        .await
+        .unwrap();
+    assert_eq!(page.candidates.agents.len(), 1);
+    assert_eq!(page.candidates.agents[0].agent_id, "agt_000");
+    assert_eq!(page.unknown.len(), 3);
+    assert!(page.next.is_none());
+    let encoded = serde_json::to_value(&page).unwrap();
+    assert_eq!(encoded["other_failed"], 1);
+    assert_eq!(encoded["scanned"], 5);
+    assert_eq!(encoded["writes"], false);
+    assert_eq!(encoded["recovery_authorized"], false);
+    assert_eq!(agents.list_index_names().await.unwrap(), ["_id_"]);
+    assert_eq!(agents.count_documents(doc! {}).await.unwrap(), 5);
+    assert_eq!(db.list_collection_names().await.unwrap(), [AGENTS]);
+    for original in expected {
+        assert_eq!(
+            agents
+                .find_one(doc! {"_id": original.get_str("_id").unwrap()})
+                .await
+                .unwrap()
+                .unwrap(),
+            original
+        );
+    }
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn ledger_census_discovery_continues_across_mongo_byte_limited_batches() {
+    use crate::store::ledger_census::discovery;
+    let (client, name) = database("ledger_discovery_bytes").await;
+    let db = client.database(&name);
+    let (_, documents) = documents();
+    let agents = db.collection::<Document>(AGENTS);
+    let detail = format!(
+        "runtime mutation journal contains too many entries {}",
+        "x".repeat(280 * 1024)
+    );
+    for index in 0..65 {
+        let mut row = documents[3].1.clone();
+        row.insert("_id", format!("agt_{index:03}"));
+        row.get_document_mut("record")
+            .unwrap()
+            .insert("id", format!("agt_{index:03}"));
+        row.get_document_mut("record")
+            .unwrap()
+            .get_document_mut("failure")
+            .unwrap()
+            .insert("detail", &detail);
+        agents.insert_one(row).await.unwrap();
+    }
+    // Non-string IDs are outside this discovery's declared scope, so it must
+    // never be used to certify the historical exact-ID cohort's completeness.
+    agents
+        .insert_one(doc! {"_id": 17, "status":"failed"})
+        .await
+        .unwrap();
+    let mut request = discovery::Request {
+        format: "runtime-ledger-discovery-request-v1".into(),
+        after_agent_id: None,
+    };
+    let first = discovery::observe(&client, &db, &request, "a".repeat(64))
+        .await
+        .unwrap();
+    assert_eq!(first.candidates.agents.len(), 64);
+    assert_eq!(first.next.as_deref(), Some("agt_063"));
+    request.after_agent_id = first.next;
+    let second = discovery::observe(&client, &db, &request, "b".repeat(64))
+        .await
+        .unwrap();
+    assert_eq!(second.candidates.agents.len(), 1);
+    assert_eq!(second.candidates.agents[0].agent_id, "agt_064");
+    assert!(second.next.is_none());
+    assert_eq!(agents.count_documents(doc! {}).await.unwrap(), 66);
+    assert_eq!(agents.list_index_names().await.unwrap(), ["_id_"]);
+    // The source-byte budget fails the entire page; no partial candidate list
+    // can look complete when the bounded observation could not finish.
+    agents
+        .update_many(
+            doc! {"_id":{"$type":"string"}},
+            doc! {"$set":{"record.failure.detail": "x".repeat(600 * 1024)}},
+        )
+        .await
+        .unwrap();
+    request.after_agent_id = None;
+    assert!(discovery::observe(&client, &db, &request, "c".repeat(64))
+        .await
+        .is_err());
+    db.drop().await.unwrap();
+}

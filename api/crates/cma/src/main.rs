@@ -100,13 +100,8 @@ async fn main() {
         }
         return;
     }
-    if arguments.len() == 3 && arguments[0] == "--ledger-census" {
-        if let Err(error) = store::ledger_census::command(
-            std::path::Path::new(&arguments[1]),
-            std::path::Path::new(&arguments[2]),
-        )
-        .await
-        {
+    if let Some(result) = store::ledger_census::dispatch(&arguments).await {
+        if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(2);
         }
@@ -183,7 +178,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
+        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --ledger-failed-page PRIVATE_REQUEST PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

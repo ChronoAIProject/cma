@@ -1,4 +1,5 @@
 //! Explicit read-only cohort census; no service startup, writes or effect authority.
+pub(crate) mod discovery;
 mod files;
 mod observation;
 mod report;
@@ -75,26 +76,29 @@ pub(super) struct Census {
     pub recovery_authorized: bool,
 }
 
+pub(crate) async fn dispatch(arguments: &[String]) -> Option<Result<()>> {
+    if !matches!(
+        arguments.first().map(String::as_str),
+        Some("--ledger-census" | "--ledger-failed-page")
+    ) {
+        return None;
+    }
+    let [command_name, request, output] = arguments else {
+        return Some(Err(INVALID));
+    };
+    Some(match command_name.as_str() {
+        "--ledger-census" => command(Path::new(request), Path::new(output)).await,
+        _ => discovery::command(Path::new(request), Path::new(output)).await,
+    })
+}
+
 pub(crate) async fn command(request: &Path, output: &Path) -> Result<()> {
     let input = files::read(request)?;
     let request: Request = serde_json::from_slice(&input).map_err(|_| INVALID)?;
     request.validate()?;
     files::require_parent(output)?;
     let census = tokio::time::timeout(Duration::from_secs(60), async {
-        let uri = std::env::var("CHRONO_MONGODB_URI").map_err(|_| INVALID)?;
-        let name = std::env::var("CHRONO_MONGODB_DATABASE").map_err(|_| INVALID)?;
-        let mode = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(
-            "CHRONO_MONGODB_AUTHORITY_MODE",
-        )
-        .map_err(|_| INVALID)?;
-        let mut options = ClientOptions::parse(uri).await.map_err(|_| INVALID)?;
-        options.server_selection_timeout = Some(Duration::from_secs(5));
-        options.connect_timeout = Some(Duration::from_secs(5));
-        let client = Client::with_options(options).map_err(|_| INVALID)?;
-        let database = client.database(&name);
-        super::isolation::verify_with_authority(&database, mode)
-            .await
-            .map_err(|_| INVALID)?;
+        let (client, database) = connect().await?;
         observe(&client, &database, &request, digest(&input)).await
     })
     .await
@@ -112,4 +116,22 @@ pub(super) use observation::observe;
 
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+async fn connect() -> Result<(Client, mongodb::Database)> {
+    let uri = std::env::var("CHRONO_MONGODB_URI").map_err(|_| INVALID)?;
+    let name = std::env::var("CHRONO_MONGODB_DATABASE").map_err(|_| INVALID)?;
+    let mode = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(
+        "CHRONO_MONGODB_AUTHORITY_MODE",
+    )
+    .map_err(|_| INVALID)?;
+    let mut options = ClientOptions::parse(uri).await.map_err(|_| INVALID)?;
+    options.server_selection_timeout = Some(Duration::from_secs(5));
+    options.connect_timeout = Some(Duration::from_secs(5));
+    let client = Client::with_options(options).map_err(|_| INVALID)?;
+    let database = client.database(&name);
+    super::isolation::verify_with_authority(&database, mode)
+        .await
+        .map_err(|_| INVALID)?;
+    Ok((client, database))
 }
