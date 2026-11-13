@@ -72,7 +72,7 @@ async fn two_public_ingresses_handoff_one_sandbox_socket_and_revoke_on_remote_ch
         .await
         .unwrap();
     first
-        .send(Message::Binary(vec![1, 2].into()))
+        .send(Message::Binary(vec![1, 2]))
         .await
         .unwrap();
     assert_eq!(
@@ -81,7 +81,7 @@ async fn two_public_ingresses_handoff_one_sandbox_socket_and_revoke_on_remote_ch
             .unwrap()
             .unwrap()
             .unwrap(),
-        Message::Binary(vec![1, 2].into())
+        Message::Binary(vec![1, 2])
     );
     let busy = right.discovery(&f.agents[1]).await;
     assert_eq!(busy.status(), 409);
