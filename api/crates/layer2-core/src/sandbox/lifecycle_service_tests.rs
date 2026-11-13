@@ -197,6 +197,7 @@ impl crate::budget::PlatformSpendLedger for FixedSpend {
 fn closed(reason: crate::budget::ClosureReason) -> Arc<FixedSpend> {
     Arc::new(FixedSpend(crate::budget::PlatformAdmissionState {
         configured: true,
+        operator_control: crate::budget::OperatorAdmissionState::Open,
         closures: vec![crate::budget::Closure {
             reason,
             since: 1,
