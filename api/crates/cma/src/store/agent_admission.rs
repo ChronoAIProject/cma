@@ -37,6 +37,7 @@ pub(in crate::store) enum ApplyError {
 }
 
 mod errors;
+mod reuse_reconciliation;
 
 impl MongoSandboxStore {
     fn admit_agent_with_reuse(
@@ -124,6 +125,27 @@ impl MongoSandboxStore {
                         }
                     }
                 }
+                Ok(AdmissionReceipt::Reused(receipt)) => match commit_transaction(session).await {
+                    CommitOutcome::Committed => {
+                        return Ok(AgentAdmissionResult::Existing(receipt.creation))
+                    }
+                    CommitOutcome::Retry(error) => {
+                        last_transient = Some(error.to_string());
+                        continue;
+                    }
+                    CommitOutcome::Unknown(_) => {
+                        return Box::pin(reuse_reconciliation::after_unknown(
+                            self,
+                            &admission,
+                            receipt,
+                            session.operation_time(),
+                        ))
+                        .await;
+                    }
+                    CommitOutcome::Failed(error) => {
+                        return Err(SandboxStoreError::Unavailable(error.to_string()))
+                    }
+                },
                 Ok(AdmissionReceipt::Created(receipt)) => receipt,
                 Err(ApplyError::Domain(error)) => {
                     let _ = session.abort_transaction().await;

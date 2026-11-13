@@ -1,8 +1,7 @@
+use super::history::History;
 use super::*;
-use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::agent_admission_records::ReusedReceipt;
 use crate::store::{
-    agent_log::scan_complete_log_with_session,
-    agent_log_integrity::{integrity_document, prepare_append, AppendCapacity},
     agents::LIVE_STATUSES,
     sandbox_mongo::{signed, DOCUMENT_SCHEMA_VERSION},
 };
@@ -15,8 +14,8 @@ pub(super) async fn reuse_profile_agent(
     reuse_existing: bool,
     common_launch: Option<&layer2_core::trigger_domain::Launch>,
     scope: &mut TransactionScope<'_>,
-) -> Result<Option<layer2_core::sandbox::store::AgentCreation>, ApplyError> {
-    use crate::store::agents::{agent_replacement_fields, read_agent};
+) -> Result<Option<AdmissionReceipt>, ApplyError> {
+    use crate::store::agents::read_agent;
     use crate::store::worktrees::read_worktree;
     let prepared_only = !reuse_existing && matches!(admission.origin, AgentOrigin::Trigger { .. });
     if !reuse_existing
@@ -112,28 +111,8 @@ pub(super) async fn reuse_profile_agent(
     admission
         .materialize(workspace)
         .map_err(ApplyError::Domain)?;
-    let mut initial_log = None;
-    let mut has_input = false;
-    let mut entries = Vec::new();
-    let summary = scan_complete_log_with_session(
-        ScanCaller::CommandAdmission,
-        store,
-        &agent.id,
-        agent.conversation.last_seq,
-        scope.session(),
-        |entry| {
-            entries.push(entry.clone());
-            has_input |= matches!(
-                entry.kind,
-                layer2_core::sandbox::AgentLogKind::OwnerMessage { .. }
-            );
-            if initial_log.is_none() {
-                initial_log = Some(entry);
-            }
-            Ok(())
-        },
-    )
-    .await?;
+    let history = Box::pin(History::read(store, &agent, &document, scope)).await?;
+    let mut has_input = history.has_input;
     if prepared_only && has_input {
         return Ok(None);
     }
@@ -146,82 +125,26 @@ pub(super) async fn reuse_profile_agent(
             .map_err(ApplyError::Driver)?
             .is_some();
     }
-    let prior_revision = agent.revision;
-    let prior_semantic = crate::store::agent_log_integrity::audit_checkpoint(
-        store,
-        &agent,
-        &entries,
-        scope.session(),
-    )
-    .await?;
+    let current = agent.clone();
     let kind = admission
         .initialize_reused_agent(&mut agent, has_input)
         .map_err(ApplyError::Domain)?;
     let attached_first = kind.is_some();
-    if let Some(kind) = kind {
-        let log = layer2_core::sandbox::AgentLogEntry {
+    let logs = kind
+        .into_iter()
+        .map(|kind| layer2_core::sandbox::AgentLogEntry {
             agent_id: agent.id.clone(),
             seq: agent.conversation.last_seq,
             appended_at: admission.event_at.clone(),
             kind,
-        };
-
-        let mut fields = agent_replacement_fields(&agent).map_err(ApplyError::Domain)?;
-        let integrity = prepare_append(
-            &agent,
-            &summary,
-            std::slice::from_ref(&log),
-            agent.revision,
-            prior_semantic
-                .after_append(std::slice::from_ref(&log), &agent)
-                .map_err(ApplyError::Domain)?,
-            AppendCapacity::Normal,
-        )
-        .map_err(ApplyError::Domain)?;
-        fields.insert("agent_log_integrity_v1", integrity.integrity);
-        fields.insert(
-            "last_seq",
-            signed(agent.conversation.last_seq, "Agent log sequence")
-                .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
-        );
-        let changed = store.agents.update_one(doc! { "_id": agent.id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(prior_revision, "Agent revision").map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))? }, doc! { "$set": fields })
-            .session(scope.session()).await.map_err(ApplyError::Driver)?;
-        if changed.matched_count != 1 {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
-        store
-            .agent_log
-            .clone_with_type::<mongodb::bson::RawDocumentBuf>()
-            .insert_one(&integrity.documents[0])
-            .session(scope.session())
-            .await
-            .map_err(classify_log_insert)?;
-    } else {
-        let integrity = integrity_document(&agent, &summary, agent.revision, prior_semantic)
-            .map_err(ApplyError::Domain)?;
-        let changed = store
-            .agents
-            .update_one(
-                doc! {
-                    "_id": agent.id.as_str(),
-                    "revision": signed(prior_revision, "Agent revision")
-                        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
-                    "last_seq": signed(agent.conversation.last_seq, "Agent log sequence")
-                        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
-                },
-                doc! { "$set": { "agent_log_integrity_v1": integrity } },
-            )
-            .session(scope.session())
-            .await
-            .map_err(ApplyError::Driver)?;
-        if changed.matched_count != 1 {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
-    }
+        })
+        .collect::<Vec<_>>();
+    let recorded =
+        Box::pin(history.publish(store, admission, &current, &agent, &logs, scope)).await?;
     // Explicit reuse participates in the same parent fences as creation, including a race
     // against automatic profile children and inactivity pause.
-    if reuse_existing || prepared_only {
-        store.agent_reuse_bindings.insert_one(doc! {
+    if reuse_existing || prepared_only || recorded.is_some() {
+        let mut binding = doc! {
             "_id": crate::store::agent_admission_records::binding_id(admission).map_err(ApplyError::Domain)?,
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "owner": admission.owner.as_str(),
@@ -229,7 +152,23 @@ pub(super) async fn reuse_profile_agent(
             "fingerprint": admission.fingerprint().map_err(ApplyError::Domain)?,
             "agent_id": agent.id.as_str(),
             "sandbox_id": agent.sandbox_id.as_str(),
-        }).session(scope.session()).await.map_err(classify_agent_insert)?;
+        };
+        if let Some(recorded) = &recorded {
+            binding.insert("document_schema_version", 2_i64);
+            binding.insert(
+                "log_publication",
+                mongodb::bson::serialize_to_document(&recorded.publication)
+                    .map_err(|e| ApplyError::Domain(SandboxStoreError::Corrupt(e.to_string())))?,
+            );
+        }
+        store
+            .agent_reuse_bindings
+            .insert_one(binding)
+            .session(scope.session())
+            .await
+            .map_err(classify_agent_insert)?;
+    }
+    if reuse_existing || prepared_only {
         let mut next_workspace = workspace.clone();
         next_workspace.revision = next_workspace
             .revision
@@ -258,13 +197,13 @@ pub(super) async fn reuse_profile_agent(
     }
     if attached_first {
         if let Some(launch) = common_launch {
-            crate::store::trigger_first_messages::attach(
+            Box::pin(crate::store::trigger_first_messages::attach(
                 store,
                 launch,
                 admission,
                 &mut agent,
                 scope.session(),
-            )
+            ))
             .await
             .map_err(ApplyError::from)?;
         }
@@ -283,8 +222,11 @@ pub(super) async fn reuse_profile_agent(
     let creation = layer2_core::sandbox::store::AgentCreation {
         agent,
         worktree,
-        initial_log: initial_log.ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?,
+        initial_log: history.initial,
     };
     creation.validate_replay().map_err(ApplyError::Domain)?;
-    Ok(Some(creation))
+    Ok(Some(match recorded {
+        Some(recorded) => AdmissionReceipt::Reused(Box::new(ReusedReceipt { creation, recorded })),
+        None => AdmissionReceipt::Existing(Box::new(creation)),
+    }))
 }
