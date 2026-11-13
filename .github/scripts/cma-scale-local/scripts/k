@@ -7,8 +7,13 @@ case "${1:-}" in
 esac
 for arg in "$@"; do
   case "$arg" in
-    --context*|--kubeconfig*|--server*|-s|-s=*|--cluster*|--user*|--token*|--certificate-authority*|--insecure-skip-tls-verify*|--namespace*|-n|-n=*|--all-namespaces|-A|--raw*|--proxy-url*|--as*|exec|attach|cp)
+    --context*|--kubeconfig*|--server*|--cluster*|--user*|--token*|--client-*|--password*|--certificate-authority*|--insecure-skip-tls-verify*|--tls-server-name*|--namespace*|--all-namespaces*|--raw*|--proxy-url*|--as*|exec|attach|cp)
       echo "Refused context/namespace override or pod access: $arg" >&2; exit 2 ;;
+    # Permit only the short forms used by this bundle. Reject attached values
+    # and combined shorthands, including -nother, -sURL, -A=true and -wnother.
+    -o|-o=*|-f|-f=*|-l|-l=*|-) ;;
+    --*) ;;
+    -*) echo 'Refused unsupported short option' >&2; exit 2 ;;
   esac
 done
 scale_server=$(kubectl --kubeconfig "$scale_root/private/kubeconfig" --context kind-cma-scale config view --minify -o jsonpath='{.clusters[0].cluster.server}')
