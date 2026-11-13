@@ -30,7 +30,7 @@ would be 150m, below its observed background floor, potentially scaling to max
 without useful extra throughput. The 500m proposal is about 1.26 times the
 observed 396.4m maximum; **historical maximum is not stable idle p99**.
 
-These are architect A1 qualification values, not measured latency knees. Require
+These are architect A1 values retained by A2, not measured latency knees. Require
 target >=1.25 times representative idle p99 **and** below the measured latency
 knee on the same final candidate. AM CPU includes worker/reconciliation work;
 the 24h window spans image changes. HPA may need three AM replicas at historical
@@ -59,6 +59,48 @@ performance-analyst-02's revision-stratified baseline and developer-17's offered
 load fixture; subtract measured idle CPU only with matched windows, exclude
 health/relay duplication, and report CPU seconds per admitted original request
 with background CPU separately. Missing denominator is NOT_RUN, not zero cost.
+
+### Stable N=1 baseline handoff
+
+Performance-analyst-02 supplies a separate stable window on 2026-11-13,
+15:22–15:52 UTC (23:22–23:52 SGT), both services desired/Ready1.
+AM image `dc8548c4a73f2d582d5f7ccdb7e05741d42f569e12f67bcf68ee440948002990`;
+EG image `f8f502aed8b5ea2c68924994c98f988c483dcf689d65998f4d94aeabdf696330`.
+The analyst's A2 receipt associates batch4/source b0129514a through the lead's
+release instruction; that is separate from an immutable build attestation.
+
+| Service | CPU mean / p95, cores | Working set mean / p95, MiB |
+|---|---|---|
+| AM | 0.828 / 1.040 | 52.152 / 54.375 |
+| EG | 0.293 / 0.338 | 20.826 / 21.668 |
+
+There were4,551 header completions, including3,029 non-probe completions
+(1.6828/s), and no observed5xx/429. The adjacent31-minute exporter capture includes
+one before-header cancellation and two EG stream_lost outcomes; zero HTTP5xx is
+not zero logical failure. AM's aggregate0.4921 CPU-seconds per non-probe header
+includes background/worker CPU, so it is not marginal request cost or a capacity
+slope. EG lacks a matched inbound-to-confirmed-outbound population. These results
+support preserving resources and provisional targets, not HPA/max5 qualification.
+
+Create/header p95=766ms (N5), detail234ms (N150), send654ms (N8), and lifecycle
+stop265ms (N6) are sparse backend observations, not completed user journeys or
+proven interrupt latency. Models1974ms/environment1550ms each have N1; usage and
+important transcript variants are unobserved. Sandbox N1318 has p95/p99=580/892ms;
+Workspace N1298 has305/492ms. Final-candidate N1 repeats, matched N2/scale/fault
+windows and completed client journeys remain required.
+
+The31-minute evidence independently confirms application30/reporting4/routing30.
+Application checked-out gauges0–6 are not total open/idle sockets or Atlas
+headroom. Of380,427 application checkouts,25 were at_limit with p95 bucket(0.5,1]s;
+that stratum cannot qualify p99. No server-operation latency/limit is inferred.
+
+Retained research provenance: `performance-analyst-02/cma-scale/baseline-n1.md`,
+SHA256 `1153af97c6a7d8a9f0234145cdf19829769fa0c37a3e9209e427c2846139a78b`;
+`compare_baseline.py`, SHA256
+`5f6cda4797a469623be8b17e6c5f8140171ed0e7fff70876f4d66594c387a6ce`.
+Import the full package into approved release evidence custody; the helper never
+emits release PASS. Historical noise from another image is not a final-candidate
+allowance. No additional telemetry collection was started here.
 
 ## Metrics prerequisites and owner items
 
@@ -89,41 +131,68 @@ created by #1956.
 
 ## Bound active, surge and terminating processes
 
-Proposed cadence, pending the lead's resolution of the original faster request:
-up one per 60s; down stabilization 600s, one per 120s; min two/max five. Grace
-includes the preStop hook and is 760s. Under a tested effective maximum graceful
-lifetime `G`, interval `D`, a conservative HPA-only terminating bound is
-`T = ceil(G / D)`. Repeated load oscillations make `max - min` an unsafe bound.
+A2 fixes min2/max5; up stabilization0s, Max(+2 pods,+100%)/60s; down
+stabilization300s, Min(-1 pod)/120s initially. If qualified p95 from drain
+initiation through all-owner handoff AND successor service exceeds90s, extend
+period to ceil(p95+30s), using the largest qualified service/cohort unless a
+separate per-service review approves otherwise. Sparse/censored/failed or missing
+timings hold S3. `.github/scripts/cma-scale-manifest-contract.rb --hpa ROLE P95`
+only renders this arithmetic; it cannot qualify an evidence cohort. Periods
+above Kubernetes'1800s maximum HOLD for a reviewed alternative, never clamp.
+The faster up policy can move2->4->5 in two policy windows; reserve the full
+qualified node/Mongo/provider envelope before the first increase. Correctness
+must independently exercise N3 as well.
 
-For G=760,D=120: T=7, so **five active + seven terminating = twelve per service**.
+Grace includes preStop and is760s. **p95 is not a hard process lifetime.** Define
+G as the enforced maximum time a departing process can retain clients, starting
+at the downscale decision: include controller/deletion delay, preStop, all
+HTTP/worker tails, delayed node termination and socket lifetime. For down period
+D, the conditional terminating allowance is T=ceil(G/D). Repeated load oscillation
+makes max-minus-min unsafe. Unbounded G means no qualified process envelope.
+
+With a **proven effective G760s**, D120 permits seven terminating plus five
+active, or twelve/service. Kubernetes grace760s alone does not prove G760s.
+For example G=841 requires eight terminating/thirteen processes and130CPU limits
+before other consumers, beyond the proposed128CPU quota. Measure/enforce all
+components; increasing D from measured p95 requires recomputing T against the
+independently established hard G. No nonzero deletion delay is silently omitted.
+
 Rollouts and HPA ramps must not overlap: disable/delete HPA through the reviewed
 procedure, wait for zero terminating processes, then allow one rolling release
 at a time and wait for complete termination before another. A complete old
 generation can overlap the new generation: five old + five new + one surge =
-eleven/service. Budget the larger of twelve and eleven. PDB and maxSurge do not
-bound terminating pods. Deleting/recreating Deployments, extra scale writers,
-manual oscillation or extending grace invalidates this envelope.
+eleven/service, **conditional on actual controller proof**. Budget the larger of
+these separately proven envelopes. PDB and maxSurge do not bound terminating
+pods. Extra scale writers, deployment replacement or extending grace invalidate
+the assumptions. Initial no-overlap cutovers need their separate fixed-two,
+legacy-client-expiry and compatible recovery budget.
 
-The grace deadline must actually bound live clients; missing nodes, blocked
-finalizers, zombies or failed termination may violate it. Detect observed process
-count above twelve or age beyond760s, freeze further HPA direction changes and
-HOLD/abort using the stage controller. This is an operational bound requiring
-proof and monitoring, not an implemented termination-aware controller. If a
-provable bound or these operating restrictions cannot be enforced, S3 is blocked
-until a tested termination-aware gate or larger qualified capacity exists.
+Missing nodes, blocked finalizers, zombies or failed termination may violate G.
+The reviewed observer must detect the first exceeded process/client/lifetime
+bound and stop promotion/further scaling through approved controls; a reactive
+alarm is not a hard termination gate. Capacity must already cover every process
+that can remain alive. If G and operating restrictions cannot be enforced,
+S3 remains HOLD pending a tested termination-aware gate or other qualified bound.
+No such gate is implemented by these YAML policies.
 
-If lead selects down one/60s instead, T=13, hence **eighteen/service** at max5.
-That requires 76.5 requested CPU / 180 limited CPU and 180Gi memory limits before
-other consumers. It exceeds both current and the conservative-cadence proposal
-below; recalculate and qualify before changing cadence. Unrestricted simultaneous
-rollouts likewise invalidate the twelve-process budget.
+Debugger-03's timing report SHA256
+`cc631c79305defc3aa6a32db6cdfb9ad304a0adb5013b6aaa94754029604d00f`
+records zero controlled loaded AM/EG startup, drain, takeover or exit trials
+and zero HPA decision/deletion trials. Installed local Pod metadata gives3s/4s
+container-start-to-latest-Ready (N2/service), with5s probes and unknown live K.
+That exploratory observation is not process-main/first-Ready, owned service or
+a qualified handoff p95. Thus760s grace and the envelope remain **NOT_RUN**.
+Discord bot leases, routed target claims and replica partitions are distinct
+populations; early-drain204 proves neither socket close nor exact lease release
+nor successor service. Require those timings and correctness proofs on the frozen
+integrated candidate before activation.
 
 ## Namespace quotas and node pools
 
 Measured `chrono-bot` quota: requests 40 CPU/80Gi; limits 80 CPU/160Gi; 50 pods.
 Used: requests4.275 CPU/2368Mi; limits10.25 CPU/10368Mi; three pods. After removing
 the one AM and one EG, other current consumers contribute requests0.025 CPU/
-128Mi, limits0.25 CPU/128Mi, one pod. Refresh this subtraction before every stage;
+64Mi, limits0.25 CPU/128Mi, one pod. Refresh this subtraction before every stage;
 do not assume future consumers or unrelated releases fit the old remainder.
 
 | Envelope, each service | Requested CPU | CPU limits | Requested memory | Memory limits | Pods |
@@ -139,9 +208,10 @@ Add other consumers to every row. Current quota already fails eight of each on
 CPU limits (80 +0.25 >80). **Owner capacity item**: for the twelve-process envelope,
 propose requests.cpu64 and limits.cpu128, retaining memory80Gi/160Gi and pods50,
 subject to the fresh all-consumer budget and headroom approval. No quota manifest
-or production change is included here. A lower maxN alone does not remove the
-seven-terminating oscillation budget: even max3 +7 costs100 CPU limits before
-others. Do not activate min=max2 and claim automatic scaling was delivered.
+or production change is included here. No tested autoscaling maxN can currently be certified. Even the conservative
+max3 +7 envelope costs100 CPU limits before others; a tighter envelope would
+need independent proof. Fixed-two fits the snapshot quota, but survivor load,
+transition capacity and Atlas gates are still unqualified. Do not activate min=max2 and claim automatic scaling was delivered.
 
 Three untainted `shared-node-16c32g` nodes, one per zone, each have15.89 allocatable
 CPU/~27.73Gi. Snapshot free requested CPU by zone a/b/c:12.208/8.006/8.781;
@@ -184,8 +254,11 @@ and L=server connection limit:
 
 `B = active_and_terminating_AM * 70 + active_and_terminating_EG * (P + 2) + O`
 
-Require `B <= 0.70 * L` **and** measured peak connection/memory/CPU capacity with
-at least30% headroom at max overlap. With illustrative P10, two/five/twelve each
+Require `B <= 0.70 * L` with the owner-verified tier/per-server limit and a
+complete conservative inventory, plus workload connection/memory/CPU evidence.
+A2 permits the complete configured socket bound to establish >=30% connection
+headroom when Atlas telemetry is unavailable; unknown tier or other consumers
+still HOLD. With illustrative P10, two/five/twelve each
 cost164/410/984 connections/server before O. Twelve requires
 `L >= ceil((984 + O) / 0.70)`; e.g.1406 even if O=0. With P30 it is1224 before O.
 Do not compare all-server sums to one server's limit, or forget monitoring
@@ -201,3 +274,13 @@ for every enabled native/relay/custom path. Do not multiply provider-global
 quotas by replicas or blindly replay Unknown/Partial external sends. Live routing
 includes EG console/legacy-console; cross-pod session evidence cannot be waived
 on an assumption that console is unreachable.
+
+Debugger-01's source inventory, SHA256
+`6ac39157955e0af28e61d63d59d93668e2c0a343f506a55b1cf5069b1eec5ba9`, independently
+supports these client counts at develop a85fb1b98 versus old integration d6fc953a6.
+Re-run it on the final merged source. Locked Mongo3.9.1 pool caps do not bound
+checkout waiters; retain admission/deadlines/cancellation and test queue pressure.
+EG256 inflight is per provider, not a global process cap; media/STT/destination
+pacing also multiplies. Shared report worker/source leases remain2/2 with queue8:
+additional polling/pools do not increase that shared work ceiling. These are
+source observations, not throughput or production configuration qualification.

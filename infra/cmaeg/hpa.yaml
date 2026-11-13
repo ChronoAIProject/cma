@@ -1,4 +1,5 @@
-# Apply only in S3 after both ownership and capacity gates pass.
+# Apply only in S3 after ownership, capacity and qualified timing gates pass.
+# Extend the down period to ceil(p95 handoff + 30) when qualified p95 > 90s.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -29,10 +30,13 @@ spec:
       selectPolicy: Max
       policies:
         - type: Pods
-          value: 1
+          value: 2
+          periodSeconds: 60
+        - type: Percent
+          value: 100
           periodSeconds: 60
     scaleDown:
-      stabilizationWindowSeconds: 600
+      stabilizationWindowSeconds: 300
       selectPolicy: Min
       policies:
         - type: Pods
