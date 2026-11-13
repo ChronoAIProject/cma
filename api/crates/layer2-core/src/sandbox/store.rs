@@ -21,7 +21,7 @@ pub use service_traits::*;
 mod agent;
 pub use agent::AgentStore;
 mod agent_log;
-pub use agent_log::AgentLogStore;
+pub use agent_log::{AgentLogFinalAnswer, AgentLogStore};
 #[cfg(any(test, feature = "test-support"))]
 pub mod agent_log_contract;
 mod agent_response_log;
@@ -41,7 +41,8 @@ mod agent_reads;
 pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
-    apply_sandbox_runtime_loss, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
+    validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
@@ -68,7 +69,7 @@ mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
-pub use agent_message_checkpoint::AgentMessageCheckpoint;
+pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
 mod agent_log_capacity;

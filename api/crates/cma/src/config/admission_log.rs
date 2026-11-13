@@ -72,6 +72,57 @@ mod fleet_tests {
     use super::*;
 
     #[test]
+    fn release_stage_patches_use_valid_independent_default_closed_controls() {
+        const STAGES: [(&str, u8); 4] = [
+            (
+                include_str!("../../../../../infra/api/agent-log-stages/off.json"),
+                0,
+            ),
+            (
+                include_str!("../../../../../infra/api/agent-log-stages/10.json"),
+                10,
+            ),
+            (
+                include_str!("../../../../../infra/api/agent-log-stages/50.json"),
+                50,
+            ),
+            (
+                include_str!("../../../../../infra/api/agent-log-stages/100.json"),
+                100,
+            ),
+        ];
+        for (source, expected) in STAGES {
+            let patch: serde_json::Value = serde_json::from_str(source).unwrap();
+            assert_eq!(patch.as_object().unwrap().len(), 1);
+            let data = patch["data"].as_object().unwrap();
+            assert_eq!(data.len(), 4, "stages must not alter unrelated settings");
+            // Apply over an old explicit cohort and enabled independent gates,
+            // proving the patch clears stale selection and closes new writers.
+            let mut settings = std::collections::BTreeMap::from([
+                ("CHRONO_AGENT_LOG_ADMISSION_AGENTS", "agt_old".to_owned()),
+                (
+                    "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED",
+                    "true".to_owned(),
+                ),
+                ("CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED", "true".to_owned()),
+            ]);
+            for (key, value) in data {
+                settings.insert(key.as_str(), value.as_str().unwrap().to_owned());
+            }
+            let mut lookup = |key: &str| Ok(settings.get(key).cloned());
+            let explicit = from_lookup(&mut lookup).unwrap();
+            assert!(explicit.is_empty());
+            assert_eq!(fleet_percent(&mut lookup, &explicit).unwrap(), expected);
+            let flags = super::super::features::FeatureFlags::from_lookup(&mut lookup).unwrap();
+            assert!(!flags.segment_adoption_enabled);
+            assert!(!flags.capacity_recovery_enabled);
+            assert!(!flags.bounded_response_reads);
+            assert!(!flags.bounded_transcript_reads);
+            assert!(!flags.bounded_usage_reads);
+        }
+    }
+
+    #[test]
     fn fleet_stages_default_off_and_reject_ambiguous_or_mixed_modes() {
         assert_eq!(fleet_percent(&mut |_| Ok(None), &[]).unwrap(), 0);
         for value in ["0", "10", "50", "100"] {

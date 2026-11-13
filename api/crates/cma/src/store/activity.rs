@@ -103,6 +103,24 @@ impl ActivityStore for MongoActivityStore {
         Ok(())
     }
 
+    async fn append_many(&self, records: &[ActivityRecord]) -> Result<(), StoreError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        match self
+            .entries
+            .insert_many(records.iter().map(ActivityDoc::from_record))
+            .ordered(false)
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error) if duplicate_batch(&error) => Ok(()),
+            Err(error) => Err(StoreError::Unavailable(format!(
+                "append activity batch: {error}"
+            ))),
+        }
+    }
+
     async fn list(&self, query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError> {
         query
             .validate()
@@ -161,6 +179,20 @@ impl ActivityStore for MongoActivityStore {
     }
 }
 
+fn duplicate_batch(error: &mongodb::error::Error) -> bool {
+    // Unordered retries may contain both already-inserted IDs and new rows.
+    // A write-concern error still means majority durability is unconfirmed.
+    match error.kind.as_ref() {
+        mongodb::error::ErrorKind::InsertMany(failure) => {
+            failure.write_concern_error.is_none()
+                && failure.write_errors.as_ref().is_some_and(|errors| {
+                    !errors.is_empty() && errors.iter().all(|error| error.code == 11000)
+                })
+        }
+        _ => false,
+    }
+}
+
 fn action_bson(action: ActivityAction) -> Result<Bson, StoreError> {
     mongodb::bson::serialize_to_bson(&action)
         .map_err(|error| StoreError::Malformed(format!("activity action: {error}")))
@@ -203,3 +235,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "activity_batch_tests.rs"]
+mod batch_tests;

@@ -100,12 +100,16 @@ const SANDBOX_COLLECTIONS: &[&str] = &[
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) empty_discovery: super::empty_discovery::Policy,
+    pub(super) agent_connection_observations:
+        Option<std::sync::Arc<super::agent_connection_observations::Observations>>,
     pub(super) segment_logs: super::agent_log_segments::SegmentCollections,
     pub(super) global_sandbox_limit: u16,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
     pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
+    pub(super) runtime_loss_bounded_proof_enabled: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) retry_single_marker_enabled: bool,
     pub(super) retry_audits:
@@ -118,6 +122,7 @@ pub struct MongoSandboxStore {
     pub(super) bounded_transcript_reads: bool,
     pub(super) bounded_usage_reads: bool,
     pub(super) access_snapshot_session: bool,
+    pub(super) sandbox_agent_projection: bool,
     pub(super) sandbox_snapshot_reads: bool,
     pub(super) sandbox_batched_reads: bool,
     pub(super) bounded_response_reads: bool,
@@ -172,6 +177,7 @@ pub struct MongoSandboxStore {
     pub(super) managed_machine_runtime_version: Option<String>,
     pub(super) warm_home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub(crate) warmup_changed: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) native_prepared_changed: std::sync::Arc<tokio::sync::Notify>,
     // Coalesced process-local hints; durable discovery owns recovery and authority.
     pub(crate) sandbox_admitted: std::sync::Arc<tokio::sync::Notify>,
     pub(crate) access_admitted: std::sync::Arc<tokio::sync::Notify>,
@@ -207,6 +213,8 @@ impl MongoSandboxStore {
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
+            empty_discovery: Default::default(),
+            agent_connection_observations: None,
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
             global_sandbox_limit: 0,
             #[cfg(test)]
@@ -214,6 +222,7 @@ impl MongoSandboxStore {
             bounded_admission_agents: Default::default(),
             segment_adoption_enabled: false,
             bounded_approval_reads: false,
+            runtime_loss_bounded_proof_enabled: false,
             bounded_close_retries: false,
             retry_single_marker_enabled: false,
             retry_audits: Default::default(),
@@ -224,6 +233,7 @@ impl MongoSandboxStore {
             bounded_transcript_reads: false,
             bounded_usage_reads: false,
             access_snapshot_session: false,
+            sandbox_agent_projection: false,
             sandbox_snapshot_reads: false,
             sandbox_batched_reads: false,
             bounded_response_reads: false,
@@ -286,6 +296,7 @@ impl MongoSandboxStore {
             managed_machine_runtime_version: None,
             warm_home_policy: None,
             warmup_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
+            native_prepared_changed: std::sync::Arc::new(tokio::sync::Notify::new()),
             sandbox_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -354,10 +365,12 @@ where
             "{context} cannot start while {MAX_PENDING_RECONCILIATIONS} prior reconciliations remain pending"
         )
     })?;
-    let mut task = tokio::spawn(async move {
-        let _permit = permit;
-        future.await
-    });
+    let mut task = tokio::spawn(crate::telemetry::agent_output::inherit_commands(
+        async move {
+            let _permit = permit;
+            future.await
+        },
+    ));
     match tokio::time::timeout(deadline, &mut task).await {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(error)) => {

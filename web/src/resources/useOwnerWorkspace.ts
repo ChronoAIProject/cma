@@ -4,6 +4,7 @@ import type { CmaWebClient } from '../api/client';
 import { readableError } from '../vocabulary/errors';
 import type { SandboxDetail, WorkspaceDetail } from '../api/types';
 import { sandboxRefreshDelay } from '../sandbox/lifecycle';
+import { createPagePollDelay, sandboxPollKey } from '../sandbox/pollDelay';
 
 export type OwnerWorkspaceState =
   | { readonly status: 'loading' }
@@ -20,9 +21,9 @@ export type OwnerWorkspaceState =
  * The owner's Workspace and its parent Sandbox, kept current.
  *
  * Both come from the public owner reads the Sandbox page uses, on the same
- * cadence: every 1.5 seconds while the Workspace or its Sandbox has recorded
- * work in progress, every 5 seconds once settled, never overlapping, and
- * deferred while the page is hidden. A transient failure keeps the last
+ * cadence: readiness backs off while an observation stays unchanged, up to
+ * thirty seconds after ten minutes; settled reads stay at five seconds. Reads
+ * never overlap and are deferred while the page is hidden. A transient failure keeps the last
  * observation and marks it stale; only a refusal or a missing resource
  * replaces it, because a failed read is never proof that something is gone.
  */
@@ -37,6 +38,7 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inFlight = false;
+    const delay = createPagePollDelay();
     const poll = () => {
       if (abort.signal.aborted || inFlight || document.hidden) return;
       clearTimeout(timer);
@@ -53,9 +55,12 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
           setStored({ key, state: { status: 'ready', workspace, sandbox, pollError: false } });
           timer = setTimeout(
             poll,
-            ['preparing', 'removing'].includes(workspace.status)
-              ? 1500
-              : sandboxRefreshDelay(sandbox),
+            delay.next(
+              JSON.stringify([sandboxPollKey(sandbox), workspace.status]),
+              ['preparing', 'removing'].includes(workspace.status)
+                ? 1500
+                : sandboxRefreshDelay(sandbox),
+            ),
           );
         } catch (error) {
           if (abort.signal.aborted) return;
@@ -76,12 +81,18 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
         }
       })();
     };
-    document.addEventListener('visibilitychange', poll);
+    const visible = () => {
+      clearTimeout(timer);
+      if (document.hidden) return;
+      delay.reset();
+      poll();
+    };
+    document.addEventListener('visibilitychange', visible);
     poll();
     return () => {
       abort.abort();
       clearTimeout(timer);
-      document.removeEventListener('visibilitychange', poll);
+      document.removeEventListener('visibilitychange', visible);
     };
   }, [client, workspaceId, key]);
   // A newer request keeps showing the last observation until it answers, but

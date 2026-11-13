@@ -56,6 +56,7 @@ export type TreeAction =
   | { readonly kind: 'export_history'; readonly agentId: string };
 
 export interface TreeProps {
+  readonly active?: boolean;
   readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
   readonly view?: 'agent' | 'sandbox';
@@ -90,6 +91,7 @@ function restored(viewerId: string): Set<string> {
 }
 
 export function Tree({
+  active = true,
   resourceClient,
   viewerId,
   view = 'sandbox',
@@ -116,12 +118,12 @@ export function Tree({
       !deletingItems.includes(item) &&
       (view === 'agent' || statusFilter === 'all' || item.sandbox.status === statusFilter),
   );
-  const facts = useTreeCreation(viewerId, visibleItems, refreshError === undefined);
+  const facts = useTreeCreation(viewerId, visibleItems, active && refreshError === undefined);
   const channelIds = treeAgentIds(visibleItems);
   const channelFacts = useChannelFacts(
     resourceClient,
     channelIds,
-    refreshError === undefined,
+    active && refreshError === undefined,
     viewerId,
   );
   const groupId = useId();

@@ -95,53 +95,56 @@ async fn runtime_loss_rejects_stale_runtime_identity_and_every_incomplete_log_or
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn runtime_loss_retries_a_concurrent_log_head_and_fences_terminal_agent_evidence() {
-    let (client, name, store) = database().await;
-    for terminal in [true, false] {
-        let (sandbox, mut agent) =
-            checkpoint_fixture(&store, &format!("sbx_race_{terminal}")).await;
-        if terminal {
-            agent
-                .transition(
-                    AgentStatus::Stopped,
-                    BEFORE.into(),
-                    Some(AgentStopReason::Owner),
-                )
+    for enabled in [false, true] {
+        let (client, name, store) = database().await;
+        let store = store.with_runtime_loss_bounded_proof(enabled);
+        for terminal in [true, false] {
+            let (sandbox, mut agent) =
+                checkpoint_fixture(&store, &format!("sbx_race_{terminal}")).await;
+            if terminal {
+                agent
+                    .transition(
+                        AgentStatus::Stopped,
+                        BEFORE.into(),
+                        Some(AgentStopReason::Owner),
+                    )
+                    .unwrap();
+                store
+                    .agents
+                    .update_one(
+                        doc! { "_id": agent.id.as_str() },
+                        doc! { "$set": agent_replacement_fields(&agent).unwrap() },
+                    )
+                    .await
+                    .unwrap();
+            }
+            let mut session = client.start_session().await.unwrap();
+            start_transaction(&mut session).await.unwrap();
+            agents::load_agents(&store, &sandbox.id, &mut session)
+                .await
                 .unwrap();
             store
-                .agents
-                .update_one(
-                    doc! { "_id": agent.id.as_str() },
-                    doc! { "$set": agent_replacement_fields(&agent).unwrap() },
+                .append_agent_log(
+                    &agent.id,
+                    OBSERVED.into(),
+                    AgentLogKind::OwnerMessage {
+                        content: "Accepted immediately before recovery.".into(),
+                    },
                 )
                 .await
                 .unwrap();
+            let result = transaction::apply(&store, &loss(&sandbox), &mut session).await;
+            assert!(matches!(result, Err(ApplyError::Driver(error)) if is_transient(&error)));
+            let _ = session.abort_transaction().await;
+            assert_eq!(
+                store.recover_runtime_loss(loss(&sandbox)).await.unwrap(),
+                SandboxRuntimeLossOutcome::RecoveryScheduled
+            );
+            let logs = store.agent_log(&agent.id, 0, 100).await.unwrap();
+            assert!(
+                matches!(&logs[1].kind, AgentLogKind::OwnerMessage { content } if content == "Accepted immediately before recovery.")
+            );
         }
-        let mut session = client.start_session().await.unwrap();
-        start_transaction(&mut session).await.unwrap();
-        agents::load_agents(&store, &sandbox.id, &mut session)
-            .await
-            .unwrap();
-        store
-            .append_agent_log(
-                &agent.id,
-                OBSERVED.into(),
-                AgentLogKind::OwnerMessage {
-                    content: "Accepted immediately before recovery.".into(),
-                },
-            )
-            .await
-            .unwrap();
-        let result = transaction::apply(&store, &loss(&sandbox), &mut session).await;
-        assert!(matches!(result, Err(ApplyError::Driver(error)) if is_transient(&error)));
-        let _ = session.abort_transaction().await;
-        assert_eq!(
-            store.recover_runtime_loss(loss(&sandbox)).await.unwrap(),
-            SandboxRuntimeLossOutcome::RecoveryScheduled
-        );
-        let logs = store.agent_log(&agent.id, 0, 100).await.unwrap();
-        assert!(
-            matches!(&logs[1].kind, AgentLogKind::OwnerMessage { content } if content == "Accepted immediately before recovery.")
-        );
+        client.database(&name).drop().await.unwrap();
     }
-    client.database(&name).drop().await.unwrap();
 }

@@ -217,7 +217,7 @@ pub(in crate::store) async fn trusted_summary(
     }
 }
 
-async fn point_read(
+pub(super) async fn point_read(
     store: &MongoSandboxStore,
     filter: Document,
     id_only: bool,

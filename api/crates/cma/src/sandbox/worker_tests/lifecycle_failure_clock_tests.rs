@@ -1,4 +1,6 @@
 use super::*;
+#[path = "work_retry_policy_tests.rs"]
+mod work_retry_policy_tests;
 use layer2_core::sandbox::store::AgentStore;
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;

@@ -7,6 +7,7 @@ import type { ConversationState } from '../model';
 import { foldV2Item } from './projection';
 import type { AgentV2Session } from './client';
 import { conversationFromHead } from './liveHead';
+import { createIdentityHandoff, IDENTITY_HANDOFF_ENABLED } from './identityGate';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -19,7 +20,7 @@ export async function loadV2Agent(
   onInputReady?: (ready: ReadyAgent) => void,
   onReadAuthorized?: () => void,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
-  await v2.authorize(signal);
+  await v2.authorizeLoad(signal);
   // The same fresh check can publish observed preparation and admit this batch.
   // This synchronous callback cannot supply or retain authorization itself.
   onReadAuthorized?.();
@@ -66,11 +67,13 @@ export async function loadV2Agent(
       return undefined;
     }
   };
+  let pageHandoff: (() => boolean) | undefined;
   const readPage = async (pageCursor?: string) => {
     try {
-      // The entry check covers the first parallel batch. Later pages follow
-      // awaited reads and progress callbacks, so each needs fresh authority.
-      if (pageCursor !== undefined) await v2.authorize(signal);
+      // Only the immediately preceding post-page proof can admit the next
+      // page. Publication callbacks and expired handoffs require a fresh read.
+      if (pageCursor !== undefined && !pageHandoff?.()) await v2.authorize(signal);
+      pageHandoff = undefined;
       signal.throwIfAborted();
       v2.journal.read();
       return await v2.events.snapshot(agentId, {
@@ -139,6 +142,7 @@ export async function loadV2Agent(
   ]);
   // Preserve the final fresh check after every early publication callback.
   await v2.authorize(signal);
+  pageHandoff = createIdentityHandoff(IDENTITY_HANDOFF_ENABLED);
   const preview = latest === undefined ? undefined : { ...latest, usage };
   let conversation: ConversationState = {
     ...conversationFromTranscript({ agentId, throughSeq: 0, turns: [] }),
@@ -158,6 +162,7 @@ export async function loadV2Agent(
   ) {
     page = await readPage();
     await v2.authorize(signal);
+    pageHandoff = createIdentityHandoff(IDENTITY_HANDOFF_ENABLED);
     if (
       page !== undefined &&
       Math.max(preview?.cursor ?? 0, head?.cursor ?? 0) >
@@ -187,6 +192,7 @@ export async function loadV2Agent(
     // rebuild tools and approvals offscreen; replaying each page in the view
     // briefly resurrects old turns and makes the conversation jump backwards.
     if (!previewPublished && preview !== undefined) {
+      if (onProgress !== undefined) pageHandoff = undefined;
       onProgress?.({
         detail,
         workspace,
@@ -199,6 +205,7 @@ export async function loadV2Agent(
     }
     page = await readPage(pageCursor);
     await v2.authorize(signal);
+    pageHandoff = createIdentityHandoff(IDENTITY_HANDOFF_ENABLED);
   }
   const complete = page !== undefined;
   const visible =

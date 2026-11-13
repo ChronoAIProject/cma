@@ -15,6 +15,7 @@ pub struct AgentSandboxConfig {
     pub image_pull_secrets: Vec<String>,
     pub template_network_policy: Option<super::NativeTemplateNetworkPolicy>,
     pub template_fs_group_change_policy: Option<super::NativeFsGroupChangePolicy>,
+    pub native_claim_guard_enabled: bool,
     pub control_key: String,
 }
 
@@ -32,6 +33,10 @@ impl std::fmt::Debug for AgentSandboxConfig {
                 &self.template_fs_group_change_policy,
             )
             .field("control_key", &"<redacted>")
+            .field(
+                "native_claim_guard_enabled",
+                &self.native_claim_guard_enabled,
+            )
             .finish()
     }
 }

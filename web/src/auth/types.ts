@@ -58,7 +58,7 @@ export type AuthState =
     };
 
 export interface AuthProvider {
-  current(): Promise<AuthState>;
+  current(signal?: AbortSignal): Promise<AuthState>;
   signIn(returnTo?: string, options?: SignInOptions): Promise<void>;
   signOut(): Promise<void>;
   /**

@@ -225,6 +225,7 @@ async fn serve() -> Result<(), String> {
         "CMA listening"
     );
     let mut shutdown = ShutdownCoordinator::new();
+    composition::activity::spawn(composition.activity_worker, &mut shutdown);
     shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
     shutdown.push(
         composition
