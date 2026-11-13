@@ -7,7 +7,7 @@ use layer2_core::sandbox::{Sandbox, SandboxEventKind, SandboxStatus, SandboxWork
 use layer3_adapter::RuntimeHandle;
 
 use super::support::{
-    adapter_failure, credential_failure, dependency_failure, funding_failure, operation_id,
+    adapter_failure, credential_failure, dependency_failure, operation_id,
     system_time, WorkerFailure,
 };
 use super::SandboxWorker;
@@ -121,97 +121,6 @@ impl SandboxWorker {
         );
         self.advance(sandbox, SandboxWorkStep::TeardownRuntime, now, event)
             .await
-    }
-
-    pub(super) async fn teardown(
-        &self,
-        mut sandbox: Sandbox,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        // Suspension may have reached Kubernetes before its database acknowledgement.
-        // Native deletion proves CRD and Pod absence without a running process.
-        let retained = sandbox.lifecycle.suspended_runtime.as_deref().or_else(|| {
-            sandbox.runtime.as_ref().filter(|binding| {
-                sandbox.lifecycle.home.is_some() && binding.runtime_id.starts_with("agent-sandbox:")
-            })
-        });
-        if let Some(binding) = retained {
-            if let Some(home) = &sandbox.lifecycle.home {
-                if let Err(error) = self.dependencies.adapter.verify_retained_home_route(
-                    &RuntimeHandle::new(&binding.runtime_id),
-                    &home.request,
-                ) {
-                    return self
-                        .retry_failure(sandbox, adapter_failure(error), now)
-                        .await;
-                }
-            }
-            if let Err(error) = self
-                .dependencies
-                .adapter
-                .teardown_retained_runtime(&RuntimeHandle::new(&binding.runtime_id))
-                .await
-            {
-                return self
-                    .retry_failure(sandbox, adapter_failure(error), now)
-                    .await;
-            }
-            sandbox.lifecycle.suspended_runtime = None;
-            sandbox.runtime = None;
-        }
-        if let Some(binding) = &sandbox.runtime {
-            if let Err(error) = crate::sandbox::runtime_attachment::adopt_bound_runtime(
-                self.dependencies.adapter.as_ref(),
-                &sandbox,
-                &self.config.deployment_id,
-            )
-            .await
-            {
-                let absent = self
-                    .dependencies
-                    .adapter
-                    .runtime_inventory()
-                    .await
-                    .is_ok_and(|inventory| {
-                        inventory
-                            .iter()
-                            .all(|item| item.handle.0 != binding.runtime_id)
-                    });
-                if !absent {
-                    return self
-                        .retry_failure(sandbox, adapter_failure(error), now)
-                        .await;
-                }
-                sandbox.runtime = None;
-            }
-        }
-        if let Some(binding) = &sandbox.runtime {
-            if let Err(error) = self
-                .dependencies
-                .adapter
-                .teardown(&RuntimeHandle(binding.runtime_id.clone()))
-                .await
-            {
-                return self
-                    .retry_failure(sandbox, adapter_failure(error), now)
-                    .await;
-            }
-        }
-        if let Err(error) = self.funding.settle(&sandbox, now).await {
-            return self
-                .retry_failure(sandbox, funding_failure(error), now)
-                .await;
-        }
-        sandbox.runtime = None;
-        self.advance(
-            sandbox,
-            SandboxWorkStep::MarkRetired,
-            now,
-            SandboxEventKind::WorkStepCompleted {
-                step: SandboxWorkStep::TeardownRuntime,
-            },
-        )
-        .await
     }
 
     pub(super) async fn mark_retired(
