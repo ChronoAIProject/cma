@@ -21,7 +21,7 @@ fn pending() -> serde_json::Value {
 #[tokio::test]
 async fn latest_usage_uses_dedicated_route_and_refuses_mixed_scope_without_polling() {
     let server = WireServer::new().await;
-    let path = "/api/v1/admin/usage/metrics/view?window=24h&refresh=false&filters=%7B%22statuses%22%3A%5B%5D%2C%22search%22%3A%22%22%7D";
+    let path = "/api/v1/admin/usage/metrics/view?window=24h";
     server.expect(wire::json("GET", path, None, 202, pending(), true));
     let view = server
         .client

@@ -107,15 +107,17 @@ impl UsageMetrics<'_> {
         } else {
             vec!["usage", "metrics", "view"]
         };
-        let mut values = vec![
-            ("window", input.window.name().to_owned()),
-            ("refresh", input.refresh.to_string()),
-            (
+        let mut values = vec![("window", input.window.name().to_owned())];
+        if input.refresh {
+            values.push(("refresh", "true".into()));
+        }
+        if query.filters != Filters::default() {
+            values.push((
                 "filters",
                 serde_json::to_string(&query.filters)
                     .map_err(|_| Error::validation("invalid usage filters"))?,
-            ),
-        ];
+            ));
+        }
         for (key, value) in [
             ("from", query.from),
             ("to", query.to),
