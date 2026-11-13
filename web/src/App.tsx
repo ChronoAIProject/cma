@@ -34,6 +34,7 @@ import type { AppRouter, AppRoute } from './routing/routes';
 import { EventGatewayPortal } from './services/EventGatewayPortal';
 import { isBotRoute } from './BotManagement';
 import { ServiceBody } from './services/ServiceBody';
+import { useReportOwner } from './usage/metrics/reportOwner';
 import { PortalFrame } from './shell/PortalFrame';
 
 const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
@@ -43,7 +44,7 @@ export function App() {
   const { state: identity } = useAuth();
   const identityScope =
     identity.status === 'authenticated'
-      ? `${identity.user.id}:${identity.user.capabilities.join(',')}`
+      ? JSON.stringify([identity.user.id, [...identity.user.capabilities].sort()])
       : identity.status;
   const lastIdentityScope = useRef(identityScope);
   const [authEpoch, setAuthEpoch] = useState(0);
@@ -52,6 +53,11 @@ export function App() {
     lastIdentityScope.current = identityScope;
     setAuthEpoch((value) => value + 1);
   }, [identityScope]);
+  const usageOwner = useReportOwner(
+    identity.status === 'authenticated' ? identity.user.id : undefined,
+    identity.status === 'authenticated' ? identity.user.capabilities : [],
+    authEpoch,
+  );
   const { navigate } = browserRouter;
   const client = useCmaClient();
   const usageOpen = browserRouter.route.kind === 'usage';
@@ -63,7 +69,7 @@ export function App() {
         <UsageDialog
           key={identity.user.id}
           client={client.usageViews}
-          principal={`${identity.user.id}:${identity.user.capabilities.join(',')}:${authEpoch}`}
+          principal={usageOwner}
           open={usageOpen}
           appearanceNotice={browserRouter.usageAppearanceNotice}
           onClose={() => browserRouter.closeUsage?.()}

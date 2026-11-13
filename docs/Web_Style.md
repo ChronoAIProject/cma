@@ -907,6 +907,17 @@ tabs stop report polling and resume from the retained pending state when shown.
 429 responses and server Retry-After hints use bounded jitter without retrying
 before the server deadline.
 
+Retained reports belong to the exact authenticated principal, capability set,
+sign-in epoch, client and reporting scope. Principals are opaque strings; a
+delimiter within a principal never changes its identity. Authority refusal or a
+response-scope mismatch clears all mounted reports for that owner and cancels
+their in-flight reads; transient service failures may retain an authorized
+snapshot. Unowned pending descriptors share the 32-entry, five-minute cache
+limit with completed reports, and expired descriptors cannot be resumed. A
+pending refresh retains its absolute retry deadline across hide/show; returning
+to a tab resumes that refresh after the remaining server floor even when the
+displayed snapshot was generated recently.
+
 One control for choosing a value and for choosing an action. Both are a card at radius 12 on the menu
 fill with an inverted hairline and the level-3 shadow, holding 40px rows at radius 7. The Lumen row
 radius wins for both appearances; geometry never flips with theme. Hover is the neutral hover
@@ -6367,3 +6378,5 @@ existing explicit revision review. Disabled policies retain every entered value.
 | 2026-11-13 | Bound unchanged owner Sandbox and Workspace transition polling at fifteen/thirty seconds, replace per-poll child fan-out with stable identity and bounded child refresh, and restore retained owner views across detail-read wrappers without extending composer freshness or access authority (#1802). |
 
 | 2026-11-13 | Define retained Operations usage reports: exact-key stale-while-revalidate, server-generated As-of and refresh-deferred states, stable child reads during refresh, default/tab prefetch, hidden-tab pause, and Retry-After jitter (#1947). |
+
+| 2026-11-14 | Preserve opaque usage principals, invalidate every mounted report after authority refusal, bound abandoned pending descriptors, and resume pending refreshes with their original retry deadlines (#1947, #1979). |

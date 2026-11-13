@@ -4,6 +4,7 @@ import { UnavailableView } from '../ConsoleViews';
 import type { Capability } from '../auth/types';
 import type { OperatorClient } from './client';
 import { canOpenOperations } from './capabilities';
+import { type UsageReportOwner } from '../usage/metrics/reportOwner';
 
 export function OperationsRoute({
   operator,
@@ -12,7 +13,7 @@ export function OperationsRoute({
 }: {
   readonly operator?: OperatorClient;
   readonly capabilities: readonly Capability[];
-  readonly principal: string;
+  readonly principal: UsageReportOwner;
 }) {
   if (operator === undefined || !canOpenOperations(capabilities))
     return (
