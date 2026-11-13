@@ -168,3 +168,84 @@ async fn cancelling_a_throttled_flight_releases_capacity_without_detached_retrie
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst), before);
     assert_eq!(fixture.auth.verification_slots.available_permits(), 64);
 }
+
+#[tokio::test]
+async fn advisory_link_does_not_hide_throttle_type_or_backoff_on_public_routes() {
+    for path in ["/auth/session", "/api/v1/agents"] {
+        for userinfo in [false, true] {
+            let fixture = Fixture::new().await;
+            fixture.seed().await;
+            let (app, login) = browser(&fixture).await;
+            assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
+            let endpoint = if userinfo {
+                &fixture.control.userinfo
+            } else {
+                &fixture.control.introspection
+            };
+            throttle(endpoint, "60").await;
+            endpoint.write().await.headers.insert(
+                header::LINK,
+                "</rate-limit-help>; rel=\"help\"".parse().unwrap(),
+            );
+            let before = fixture.control.requests.load(Ordering::SeqCst);
+            let response = app
+                .oneshot(
+                    Request::get(path)
+                        .header(header::COOKIE, format!("cma_session={login}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            let body: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["code"], "identity_unavailable");
+            assert_eq!(body["retryable"], true);
+            assert!(fixture.control.requests.load(Ordering::SeqCst) - before <= 2);
+        }
+    }
+}
+
+#[tokio::test]
+async fn advisory_link_keeps_refusal_precedence_and_rejects_incomplete_success() {
+    for status in [
+        StatusCode::UNAUTHORIZED,
+        StatusCode::FORBIDDEN,
+        StatusCode::OK,
+    ] {
+        let fixture = Fixture::new().await;
+        fixture.seed().await;
+        let (app, login) = browser(&fixture).await;
+        let mut reply = fixture.control.introspection.write().await;
+        reply.status = status;
+        reply
+            .headers
+            .insert(header::LINK, "</next>; rel=\"next\"".parse().unwrap());
+        reply
+            .headers
+            .insert(header::RETRY_AFTER, "60".parse().unwrap());
+        drop(reply);
+        let response = app
+            .oneshot(
+                Request::get("/auth/session")
+                    .header(header::COOKIE, format!("cma_session={login}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            if status == StatusCode::OK {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::UNAUTHORIZED
+            }
+        );
+        assert!(!response.headers().contains_key(header::RETRY_AFTER));
+    }
+}
