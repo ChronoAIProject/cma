@@ -645,7 +645,64 @@ and the full service fault matrix are retained locally under
 Fresh native tool identity, runtime logs, histories and four result files are under
 `/private/var/folders/gq/xbl9r0417sx7r9tm494fsw8m0000gn/T/cma-worker-runtime.1AUfQO/`.
 These are local native-binary results. Exact deployment image digests, real
-provider/PVC and remote-model qualification remain open. Execution-child/process
+provider/PVC and deployed remote-model qualification remain open. Execution-child/process
 loss with long claims, unavailable dependencies or unresolved external outcomes
 retains the safety and timing limits documented above; loop recovery does not
 authorize early lease theft or resending an uncertain effect.
+
+### Real remote inference supplement (2026-11-13)
+
+The same compiled native scheduler tests and executable identities above were
+also exercised with actual `gpt-6-luna` Responses streams through the existing
+NyxID `chrono-llm-public` instance. No provider credential was extracted. A
+disposable acceptance driver replaced only the loopback fixture's model handler:
+it supplied the bounded shell-task instructions and relayed the model request
+through the authenticated NyxID CLI. The model selected the real shell tool and
+produced both answers. The scheduler, runtime, ACP, Codex, Mongo publication and
+test assertions were unchanged. Provider endpoint discovery remained a loopback
+fixture and the retained home remained a host directory, not a Kubernetes PVC.
+
+| Injected scheduler fault | Fault to detection | Fault to resumed scheduling | Fault to durable completion |
+| --- | ---: | ---: | ---: |
+| Panic | 0.294 s | 1.307 s | 5.068 s |
+| Suspended loop | 5.343 s | 6.350 s | 9.358 s |
+
+Both cases passed the existing ten-second detection and thirty-second short-work
+assertions. They preserved the original runtime boot, live shell PID across the
+fault, home inode/config/sentinel, dirty work and conversation. Each produced one
+shell effect, two durable commands and two dispatches, including continuation;
+reopening the store and replaying reservations did not dispatch again. Six
+remote `response.completed` streams were independently checked for completed
+status and response model `gpt-6-luna`; each case made three calls. One separate
+small remote preflight completed before the cases. These samples establish the
+tested short turns, not a model latency guarantee.
+
+Raw driver, fixture adaptation, hashes, request/response streams, runtime logs,
+history, per-case results and `verified-results.json` are retained locally at
+`/private/var/folders/gq/xbl9r0417sx7r9tm494fsw8m0000gn/T/cma1740-provider-7o0m3n8w/remote-native/`.
+Only `evidence/runtime-RsbYl3` and `evidence/runtime-umbCGg` are remote-inference
+results. Preliminary runs used the controlled model because the driver did not
+normalize the compiled fixture path; they are explicitly excluded. The
+run-owned Mongo replica set exited zero and the run-owned native processes were
+closed after both cases.
+
+Deployment qualification is still blocked by the available environment:
+
+- The only local Kubernetes context, `aelf-shared-k8s-prod`, returned HTTP 403
+  for the read-only authorization checks. No cluster resources were modified.
+- Chrono-cd account discovery allows dedicated personal apps, but its documented
+  app contract supplies neither native agent-sandbox controller authority nor a
+  candidate archive import route. Its supported images must already be on GHCR;
+  CMA PR CI exports Docker archives without publishing them.
+- The local Docker daemon answers inspection but creating an isolated container
+  fails while creating its overlay layer with `read-only file system`. Candidate
+  images cannot be loaded/executed through that daemon in its current state.
+- No candidate deployment, real provider allocation, PVC disruption or running
+  API process-loss workload was attempted. An isolated provider-capable target
+  and a qualified image delivery path are still required for that matrix.
+
+The initial PR history scan falsely classified the documented control-plane
+executable digest as an API key. The evidence-only commit was replaced to use
+an unambiguous checksum label, without changing the digest or scanner rules.
+Pinned Gitleaks 8.30.1 then scanned all 4,459 candidate-history commits with no
+findings; the corrected PR's CI secret-scanning job passed as well.
