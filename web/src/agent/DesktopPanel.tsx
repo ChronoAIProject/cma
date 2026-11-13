@@ -152,7 +152,7 @@ export function DesktopPanel({
                   : phase === 'connecting'
                     ? 'Connecting to your machine…'
                     : phase === 'recovering'
-                      ? 'Restoring the desktop display…'
+                      ? error || 'Restoring the desktop display…'
                       : phase === 'loading'
                         ? 'Loading the desktop screen…'
                         : phase === 'error'
