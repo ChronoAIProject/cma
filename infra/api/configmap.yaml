@@ -96,6 +96,7 @@ data:
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"
   # Qualify ordinary CloseProcess retry publication separately from fleet admission.
   CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED: "false"
+  CHRONO_WORK_RETRY_POLICY_ENABLED: "false"
   CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED: "false"
   # Enable only after runtime and scan measurements support cooperative decoding.
   CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED: "false"

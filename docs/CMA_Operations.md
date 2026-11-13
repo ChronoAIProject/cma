@@ -1056,6 +1056,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_AGENT_LIVE_BUFFER_BUDGET_ENABLED` | Strict boolean, default `false`. Shares immutable retained live fragments under one 32 MiB process budget; exhaustion uses the existing live-gap/catch-up path. Decoder, assembly, serialized replay and RSS qualification remain separate. See [Live fragment budget](CMA_Live_Fragment_Budget.md). |
 | `CHRONO_RUNTIME_OUTPUT_JSON_BUDGET_ENABLED` | Strict boolean, default `false`. Before owned decoding, validates Ready and retained ACP JSON against 4 MiB, 8,192 nodes and 64 container levels. Requires retained-output capability; refused output is never ACKed. See [Hosted output JSON budget](CMA_Runtime_Output_JSON_Budget.md) for recovery and accounting limits. |
 | `CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED` | Strict boolean, default `false`. Shares retained domain effects across startup/retry copies and borrows them during durable folding. No wire/checkpoint format change; no aggregate byte-limit claim. Disable and restart for rollback. See [Shared runtime output](CMA_Shared_Runtime_Output.md). |
+| `CHRONO_WORK_RETRY_POLICY_ENABLED` | Strict boolean, default `false` in code and infra. Applies durable step retry backoff and slow maintenance probes without changing work records, leases or terminal semantics. Interactive work never parks. Disable and restart to restore legacy delays for new failures; already published probes remain due within 30 minutes at the default base. See [Work-step retry policy](#work-step-retry-policy). |
 | `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` | Strict boolean, default `false`. Repeated failures of the same step/class retain one diagnostic row and update attempts/ready time under the existing lease and revision fences. First/class-changed failures and success still append. Capacity/ledger markers retain priority. Rollback resumes ordinary appends without data repair. |
 | `CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED` | Strict boolean, default `false`. Reuses trusted metadata for ordinary single-failure CloseProcess publication and zero-entry repeated failures within the shared cohort. Repeated retries fully audit on first use after restart and at least hourly; identical conflict snapshots can reuse history within one invocation. First markers, capacity state changes, successful effects and unknown-commit reconciliation retain complete proofs. Disable and restart for rollback; preserve all history and quarantine. See [Bounded close retries](CMA_Bounded_Close_Retries.md). |
 | `CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED` | Strict boolean, default `false`. Adds cooperative checkpoints to complete Agent-log scans with a fixed 2 ms budget, checked every eight completed rows. Enable only after at least 30 minutes with the switch off establishes #1787 case A (at least 1,000 rows and longest-section p95 at least 10 ms), using #1805 runtime/checkout observations. Roll back by setting `false` and rolling the same API image; no data migration, Sandbox restart, identifier change or history rewrite. |
@@ -2535,3 +2536,75 @@ establish a hard ≤60-second late-commit bound. Record N, flags, source/image,
 environment, exact time window and raw results for the M-OPS-03/M-SCALE-04/TC-100
 drill. Production qualification and the request-arrival/commit-time definition
 remain release-owner work; see [the contract](CMA_Admission_Control.md).
+
+
+### Work-step retry policy
+
+`CHRONO_WORK_RETRY_POLICY_ENABLED` ships disabled. With it enabled, retry delays
+use the persisted attempt count before the failed attempt is published. Maintenance
+retries use 30, 60, 120, 240, then 300 seconds at the default base. At an input
+count of 12, waiting or transient maintenance failures publish a 30-minute probe;
+external-action failures do so at an input count of 3. These publications store
+attempts 13 and 4 respectively. A larger configured base is never shortened.
+Existing RemoveWorktree and runtime-ledger-hold delay floors still apply.
+
+| Worker and step category | Classification and policy |
+| --- | --- |
+| Agent startup, connection publication, first message, live-skill installation and readiness | Interactive: first three retries retain their existing base, then back off to 300 seconds; never parked. Existing one-second publication-conflict bases, parent-readiness pacing hints and wakeups remain in effect. |
+| Agent fencing, process close, stopped/deleted publication, process-closed verification, home/worktree removal | Maintenance: exponential backoff, then pending probes. |
+| Sandbox provision, install, initial credentials, profile workspace creation, activation and every revive phase | Interactive: first three retries retain their base, then back off; never parked. |
+| Sandbox rotation, pause, retirement, retained revocations, purge and other lifecycle work | Maintenance: exponential backoff, then pending probes. Timed successful waits, such as the next credential rotation, retain their existing schedule. |
+
+| Failure category | Examples and maintenance budget |
+| --- | --- |
+| Waiting | StopAgents awaiting child shutdown; checkpoint writers resuming; queue settlement or agents becoming quiet. Park when input attempts reach 12. |
+| Transient dependency | Unavailable runtime/store, temporary credentials/funding, runtime ledger hold or capacity settlement. Park when input attempts reach 12. |
+| External action | Known replaced-process refusals, refused original-history/identity evidence (including CorruptHistory), and security refusals on retirement paths that already remain pending. Park when input attempts reach 3. Existing terminal failures remain terminal. |
+
+The Agent failure handler, connection retry, admission-conflict retry, ledger-hold
+retry, marked-capacity retry, live-skill installation retry and capacity settlement use the policy.
+The live-skill preparation budget keeps its existing terminal refusal. Startup
+parent-readiness observation retains its already-paced immediate wake path. Sandbox
+ordinary retries, lifecycle failure publication, checkpoint writer-resume retry
+and queue recovery use the same pure policy. Queue settlement's existing shorter
+base is retained. A retry releases its lease with the chosen `ready_at` in the
+same fenced publication. No record field, receipt, lease, fence or attempt-count
+serialization changes. A new worker or a successor holder reads the same count;
+`schedule` and `advance` reset it. A successful probe continues the existing step
+transition without owner intervention. Parked work never implies successful
+cleanup, process termination or permission to discard retained data.
+
+`cma_work_retries_total{worker,step,failure_class,parked}` counts confirmed retry
+publications. `cma_work_parked_retries_total{worker,step,failure_class}` counts
+publications of slow probes, including repeated failed probes; it is not an
+entry/exit counter. Each confirmed parked retry emits a warning with object ID,
+closed step/failure labels, persisted attempt count and next probe time, without
+credentials or message content.
+
+`cma_work_parked_items{worker,step}` and
+`cma_worker_durable_items{worker,state="parked"}` sample pending maintenance
+records with attempts greater than 3 and a scheduled interval of at least 30
+minutes since their last update. They describe scheduled slow probes, not exact
+occupancy by failure class: the existing record does not retain that class, and
+a lease claim updates the timestamp so an executing probe leaves this sample.
+The runtime currently uses a 30-second base; a custom base of 30 minutes or more
+would also satisfy this interval predicate. Retry counters use singular worker
+labels (`agent`, `sandbox`); durable observations retain the existing plural
+collection labels (`agents`, `sandboxes`).
+
+The sampler runs only with the switch enabled, projects work metadata only,
+hints the existing pending/due indexes and reads at most 1,001 rows per worker
+collection. More than 1,000 pending records, malformed data, or a query error
+marks the sample unsuccessful without publishing a partial population. Each
+query has a one-second Mongo deadline and a two-second outer deadline. The last
+successful values remain available alongside the existing observation freshness
+and success metrics. Consumers must check those freshness metrics.
+
+Rollback by disabling the switch or restoring the previous image. New failures
+then use the legacy policy, including existing cleanup/ledger backoff; already
+persisted due times expire naturally, within one 30-minute probe interval at the
+default base. No data repair is required. Activation belongs to the release
+owner after a 30-minute baseline and a matching enabled window for retry counts,
+scan bytes, runtime inspections, checkout waits, CPU and route latency. Local
+correctness tests establish no production CPU or latency improvement; profile
+and production measurements remain required for #1421 and the #1786 rollout.

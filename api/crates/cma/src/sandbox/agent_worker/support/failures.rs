@@ -6,7 +6,12 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
         AdapterError::InputAuthorityUnavailable(detail)
         | AdapterError::PromptNotWritten(detail)
         | AdapterError::Unavailable(detail) => {
-            WorkerFailure::retryable("agent_runtime_unavailable", detail)
+            let external = crate::sandbox::work_retry::replaced_runtime(&detail);
+            let mut failure = WorkerFailure::retryable("agent_runtime_unavailable", detail);
+            if external {
+                failure.retry_kind = WorkRetryFailure::ExternalAction;
+            }
+            failure
         }
         AdapterError::RuntimeLedgerHold(_) => WorkerFailure::retryable(
             layer2_core::sandbox::store::AGENT_RUNTIME_LEDGER_HOLD,
@@ -28,15 +33,25 @@ pub(in crate::sandbox::agent_worker) fn adapter_failure(error: AdapterError) -> 
     }
 }
 
-pub(in crate::sandbox::agent_worker) fn cleanup_failure(error: layer3_adapter::AdapterError) -> WorkerFailure {
+pub(in crate::sandbox::agent_worker) fn cleanup_failure(
+    error: layer3_adapter::AdapterError,
+) -> WorkerFailure {
     if matches!(error, layer3_adapter::AdapterError::RuntimeLedgerHold(_)) {
         adapter_failure(error)
     } else {
-        WorkerFailure::retryable("agent_cleanup_unavailable", error.to_string())
+        let external = matches!(&error, AdapterError::Unavailable(detail)
+            if crate::sandbox::work_retry::replaced_runtime(detail));
+        let mut failure = WorkerFailure::retryable("agent_cleanup_unavailable", error.to_string());
+        if external {
+            failure.retry_kind = WorkRetryFailure::ExternalAction;
+        }
+        failure
     }
 }
 
-pub(in crate::sandbox::agent_worker) fn skill_failure(error: AgentSkillResolutionError) -> WorkerFailure {
+pub(in crate::sandbox::agent_worker) fn skill_failure(
+    error: AgentSkillResolutionError,
+) -> WorkerFailure {
     match error {
         AgentSkillResolutionError::Unavailable(detail) => {
             WorkerFailure::retryable("agent_skill_source_unavailable", detail)
@@ -61,4 +76,35 @@ pub(super) fn parent_store_failure(error: SandboxStoreError) -> WorkerFailure {
 
 pub(super) fn missing_parent() -> WorkerFailure {
     WorkerFailure::terminal("agent_parent_missing", "an agent parent record is missing")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_retry_classification_preserves_diagnostics_and_terminal_semantics() {
+        for message in [
+            "bound runtime process was replaced; durable recovery is pending",
+            "retiring native runtime process was replaced",
+        ] {
+            for failure in [
+                adapter_failure(AdapterError::Unavailable(message.into())),
+                cleanup_failure(AdapterError::Unavailable(message.into())),
+            ] {
+                assert_eq!(failure.retry_kind, WorkRetryFailure::ExternalAction);
+                assert!(failure.retryable);
+                assert!(failure.detail.contains(message));
+            }
+        }
+        assert_eq!(
+            adapter_failure(AdapterError::Unavailable("network".into())).retry_kind,
+            WorkRetryFailure::Transient
+        );
+        assert!(!adapter_failure(AdapterError::Rejected("refused".into())).retryable);
+        assert_eq!(
+            adapter_failure(AdapterError::RuntimeLedgerHold("hold".into())).retry_kind,
+            WorkRetryFailure::Transient
+        );
+    }
 }

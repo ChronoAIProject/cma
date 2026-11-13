@@ -350,7 +350,7 @@ fn checkpoint_hold_failure(error: AdapterError) -> WorkerFailure {
         if detail.starts_with("checkpoint_hold_retired: ")
             || detail == "CheckpointForTeardown: checkpoint_hold_retired")
     {
-        return WorkerFailure::retryable("checkpoint writer authority was already resumed");
+        return WorkerFailure::waiting("checkpoint writer authority was already resumed");
     }
     adapter_failure(error)
 }
@@ -366,7 +366,7 @@ pub(super) fn require_quiet_agent(agent: &Agent) -> Result<(), WorkerFailure> {
         || agent.work.lease.is_some()
         || agent.requested_stop_reason.is_some()
     {
-        return Err(WorkerFailure::retryable(
+        return Err(WorkerFailure::waiting(
             "a live agent is not quiet enough for sandbox lifecycle work",
         ));
     }

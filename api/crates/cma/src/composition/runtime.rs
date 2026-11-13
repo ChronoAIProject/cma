@@ -82,6 +82,7 @@ pub(super) fn lifecycle_config(
     crate::sandbox::SandboxLifecycleConfig {
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
+        work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
         access_transport_migration: config.agent_access_transport_migration.clone(),

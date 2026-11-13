@@ -456,7 +456,9 @@ impl ControlPlaneComposition {
         let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
-        let worker_observations = stores.worker_observations();
+        let worker_observations = stores
+            .worker_observations()
+            .with_work_retry_policy(config.features.work_retry_policy_enabled);
         let workers = crate::worker_supervision::Workers::new();
         let health = crate::health::router_with_workers(stores, workers.clone());
         let router = routes::compose(
