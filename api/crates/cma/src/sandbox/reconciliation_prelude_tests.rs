@@ -60,7 +60,7 @@ async fn reserved_opportunity_includes_platform_and_progress_lock_awaits() {
 
 #[tokio::test(start_paused = true)]
 async fn exhausted_prelude_keeps_five_seconds_and_never_dispatches_binding_work() {
-    for (lock_seconds, prelude_seconds) in [(26, 0), (0, 26)] {
+    for (lock_seconds, prelude_seconds) in [(25, 0), (0, 25), (26, 0), (0, 26)] {
         let (store, reconciler) = setup(2, Duration::ZERO).await;
         let reconciler = reconciler
             .with_runtime_loss_bounded_proof(true)
@@ -104,6 +104,15 @@ async fn exhausted_prelude_keeps_five_seconds_and_never_dispatches_binding_work(
             work.run_resumable(|| async { Ok(true) }).await.unwrap(),
             Some(true)
         );
+        let reconciler = reconciler.with_platform_spend(Arc::new(DelayedPlatform(Duration::ZERO)));
+        assert_eq!(
+            work.run_resumable(|| reconciler.run_due(SystemTime::now()))
+                .await
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(store.keys("get"), ["sbx_000"]);
+        assert!(!reconciler.binding_holds.contains("sbx_000"));
     }
 }
 
