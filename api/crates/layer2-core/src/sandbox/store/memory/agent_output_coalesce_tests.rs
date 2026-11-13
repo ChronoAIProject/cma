@@ -63,8 +63,7 @@ async fn default_off_commits_each_receipt_and_count_limit_commits_only_last_curs
             assert_eq!(result.committed.unwrap().cursor, 7);
             assert_eq!(persisted.output.unwrap().cursor, 7);
             assert!(assembly.buffered_output().is_none());
-            assert!(persisted.assembly.quiet_output.is_none());
-            assert!(persisted.assembly.output_committed_at.is_none());
+            assert!(persisted.assembly.output_state.is_none());
         }
     }
 }

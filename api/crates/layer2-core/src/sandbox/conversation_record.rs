@@ -33,7 +33,7 @@ impl DurableAgentUpdateRecorder {
                 "conversation update timestamp is invalid",
             ));
         }
-        if !input.coalesce() && !input.flush() && assembly.quiet_output.is_some() {
+        if !input.coalesce() && !input.flush() && assembly.buffered_output().is_some() {
             return Err(AgentConversationError::InvalidState(
                 "flush quiet receipts before immediate recording",
             ));
@@ -125,7 +125,7 @@ impl DurableAgentUpdateRecorder {
                     return Err(error);
                 }
             };
-            if assembly.quiet_output.is_some() {
+            if assembly.buffered_output().is_some() {
                 // Ephemeral thought identity must survive snapshots while its receipt is buffered.
                 recovered.live_thought = assembly.live_thought.clone();
             }

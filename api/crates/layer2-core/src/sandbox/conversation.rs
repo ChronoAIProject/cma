@@ -18,9 +18,7 @@ pub struct AgentMessageAssembly {
     #[serde(skip)]
     pub(crate) pending_update: Option<Box<PendingAgentUpdate>>,
     #[serde(skip)]
-    pub(crate) quiet_output: Option<super::conversation_recorder::coalesce::QuietOutputBuffer>,
-    #[serde(skip)]
-    pub(crate) output_committed_at: Option<tokio::time::Instant>,
+    pub(crate) output_state: Option<Box<super::conversation_recorder::coalesce::OutputState>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -45,8 +45,7 @@ impl AgentMessageCheckpoint {
                 .as_ref()
                 .is_some_and(|id| id.len() > 4096)
             || self.assembly.pending_update.is_some()
-            || self.assembly.quiet_output.is_some()
-            || self.assembly.output_committed_at.is_some()
+            || self.assembly.output_state.is_some()
             || self.outcome.appended.len() > MAX_AGENT_LOG_BATCH_SIZE
             || self
                 .outcome
