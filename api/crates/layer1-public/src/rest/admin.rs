@@ -27,6 +27,7 @@ pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;
 pub(super) mod settings;
+pub(super) mod spend;
 pub(super) mod triggers;
 pub mod warm_pools;
 
@@ -41,6 +42,7 @@ pub struct AdminState {
     pub(super) runtime_inventory: Option<Arc<dyn RuntimeInventory>>,
     pub(super) runtime_updates: Option<Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>>,
     pub(super) maintenance: Option<Arc<dyn SandboxMaintenanceStore>>,
+    pub(super) spend: Option<Arc<layer2_core::budget::PlatformSpendService>>,
 }
 
 impl AdminState {
@@ -58,6 +60,7 @@ impl AdminState {
             runtime_inventory: None,
             runtime_updates: None,
             maintenance: None,
+            spend: None,
         }
     }
 
@@ -89,12 +92,21 @@ impl AdminState {
         self.maintenance = Some(maintenance);
         self
     }
+
+    pub fn with_platform_spend(
+        mut self,
+        service: Arc<layer2_core::budget::PlatformSpendService>,
+    ) -> Self {
+        self.spend = Some(service);
+        self
+    }
 }
 
 /// Compose every route beneath the deliberately isolated admin path segment.
 pub fn router(state: AdminState) -> Router {
     Router::new()
         .merge(settings::routes())
+        .merge(spend::routes())
         .merge(auto_pause::routes())
         .merge(sandboxes::routes())
         .merge(runtime_update::routes())
