@@ -2,6 +2,8 @@ use super::*;
 use std::time::{Duration, SystemTime};
 
 mod renewal_tests;
+mod snapshot_tests;
+mod snapshot_unknown_tests;
 
 #[derive(Clone, Copy)]
 enum Kind {

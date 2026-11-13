@@ -86,7 +86,9 @@ pub(super) async fn apply(
         .workspaces
         .update_one(
             filter,
-            doc! {"$set":workspace_replacement_fields(&workspace).map_err(ApplyError::Domain)?},
+            crate::store::work_lease_update::replacement(
+                workspace_replacement_fields(&workspace).map_err(ApplyError::Domain)?,
+            ),
         )
         .session(session)
         .await

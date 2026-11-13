@@ -68,8 +68,9 @@ pub(super) async fn apply_removal(
         .workspaces
         .update_one(
             workspace_revision_filter(id, expected)?,
-            doc! { "$set": workspace_replacement_fields(&workspace)
-            .map_err(ApplyError::Domain)? },
+            crate::store::work_lease_update::replacement(
+                workspace_replacement_fields(&workspace).map_err(ApplyError::Domain)?,
+            ),
         )
         .session(session)
         .await

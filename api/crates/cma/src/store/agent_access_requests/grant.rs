@@ -93,7 +93,7 @@ async fn apply(
             "channel_reuse_cleanup_execution":{"$exists":false},
             "revision":signed(current.revision,"access grant revision").map_err(|_| AgentAccessError::Unavailable)?,
             "last_seq":signed(last_seq,"access grant event sequence").map_err(|_| AgentAccessError::Unavailable)?,
-        },doc! {"$set":sandbox_replacement_fields(&sandbox).map_err(|_| AgentAccessError::Unavailable)?})
+        },crate::store::work_lease_update::replacement(sandbox_replacement_fields(&sandbox).map_err(|_| AgentAccessError::Unavailable)?))
             .session(&mut *session).await?;
         if result.matched_count != 1 {
             return Err(AgentAccessError::Conflict.into());

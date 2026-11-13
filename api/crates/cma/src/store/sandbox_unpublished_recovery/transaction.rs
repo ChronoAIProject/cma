@@ -361,7 +361,7 @@ async fn apply_with_sources(
         "channel_retirement_finalization": { "$exists": false },
         "revision": signed(current.sandbox.revision, "recovery Sandbox revision").map_err(corrupt)?,
         "last_seq": signed(last_seq, "recovery Sandbox event sequence").map_err(corrupt)?,
-    }, doc! { "$set": sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)? })
+    }, crate::store::work_lease_update::replacement(sandbox_replacement_fields(&mutation.sandbox).map_err(ApplyError::Domain)?))
         .session(&mut *session).await.map_err(ApplyError::Driver)?;
     if result.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
@@ -409,7 +409,7 @@ pub(super) async fn reconcile(
         .as_ref()
         .map(read_sandbox)
         .transpose()?;
-    if current.as_ref() != Some(&receipt.sandbox) {
+    if !crate::store::work_lease_update::sandbox_matches(current.as_ref(), &receipt.sandbox) {
         return Ok(false);
     }
     Ok(

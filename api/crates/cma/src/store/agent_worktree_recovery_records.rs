@@ -197,7 +197,9 @@ pub(super) async fn replace(
         .workspaces
         .update_one(
             workspace,
-            doc! {"$set":workspace_replacement_fields(&next.workspace)?},
+            crate::store::work_lease_update::replacement(workspace_replacement_fields(
+                &next.workspace,
+            )?),
         )
         .session(&mut *session)
         .await?;

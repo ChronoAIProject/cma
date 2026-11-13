@@ -173,7 +173,7 @@ async fn apply_with_sources(
         "last_seq": number(last_seq)?, FIELD: { "$exists": false },
         "channel_reuse_cleanup_execution": { "$exists": false },
         "channel_retirement_finalization": { "$exists": false },
-    }, doc! { "$set": fields }).session(&mut *session).await.map_err(ApplyError::Driver)?;
+    }, crate::store::work_lease_update::replacement(fields)).session(&mut *session).await.map_err(ApplyError::Driver)?;
     require_one(written.matched_count)?;
     crate::store::sandbox_usage::save::record_saved(store, session, &next, expected.revision)
         .await?;

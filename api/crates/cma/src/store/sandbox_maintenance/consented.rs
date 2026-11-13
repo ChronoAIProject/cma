@@ -357,7 +357,7 @@ async fn apply(
             "revision": signed(expected_revision, "consented pause revision").map_err(|_| AgentAccessError::Conflict)?,
             "last_seq": signed(last_seq, "consented pause event sequence").map_err(|_| AgentAccessError::Conflict)?,
         },
-        doc! { "$set": sandbox_replacement_fields(&sandbox).map_err(domain)? },
+        crate::store::work_lease_update::replacement(sandbox_replacement_fields(&sandbox).map_err(domain)?),
     ).session(&mut *session).await.map_err(driver)?;
     if advanced.matched_count != 1 {
         return Err(AgentAccessError::Conflict.into());

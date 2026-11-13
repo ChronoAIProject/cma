@@ -176,6 +176,7 @@ pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
 mod work_claim_authority;
 mod work_lease_parent;
 mod work_lease_renewal;
+mod work_lease_update;
 mod workspace_admission;
 mod workspace_prepare_recovery;
 mod workspace_profiles;
