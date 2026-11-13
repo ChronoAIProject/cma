@@ -20,7 +20,13 @@ Live image pins can be newer than checked-in Deployment pins. **Never apply an
 entire Deployment or directory for this change.** Use the tested narrow patch
 projection below and install the HPA files only in S3. Apply individual PDB files. PDB `unhealthyPodEvictionPolicy: AlwaysAllow`
 lets a non-Ready pod be evicted without indefinitely blocking node drain;
-`minAvailable:1` protects the healthy survivor.
+`minAvailable:1` protects the healthy survivor. Both topology constraints use
+`matchLabelKeys: [pod-template-hash]` to count each rollout revision separately.
+With service-only counting, old[0,1]+new[1,0] can admit another new pod on the
+first host (total[2,1]); removing old leaves new[2,0]. Require server admission
+and actual rollout verification of distinct hosts after every old pod is gone;
+schema validation alone does not prove scheduling. The local F001 observation
+and this admissibility example do not establish its historical scheduler trace.
 
 Lead admin-merges reviewed exact heads using `--match-head-commit`; the team
 builds locally under approved build authority, without waiting for/polling CI.

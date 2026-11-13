@@ -74,11 +74,14 @@ spec:
       terminationGracePeriodSeconds: 760
       # Honor taints so dedicated sandbox nodes do not count as placement domains.
       # Keep zone spread soft: a zone outage must not block replacement capacity.
+      # Old revisions must not hide skew among the replacement pods.
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
           whenUnsatisfiable: DoNotSchedule
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: cma-event-gateway
@@ -86,6 +89,8 @@ spec:
           topologyKey: topology.kubernetes.io/zone
           whenUnsatisfiable: ScheduleAnyway
           nodeTaintsPolicy: Honor
+          matchLabelKeys:
+            - pod-template-hash
           labelSelector:
             matchLabels:
               app.kubernetes.io/name: cma-event-gateway
