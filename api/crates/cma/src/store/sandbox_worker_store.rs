@@ -31,6 +31,17 @@ impl SandboxWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Sandboxes,
+                &self.sandboxes,
+                doc! {"work_pending":true},
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
         let mut cursor = self
             .sandboxes
             .find(doc! {
@@ -61,6 +72,8 @@ impl SandboxWorkerStore for MongoSandboxStore {
                     .to_string(),
             ));
         }
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Sandboxes, ids.is_empty());
         Ok(ids)
     }
 
