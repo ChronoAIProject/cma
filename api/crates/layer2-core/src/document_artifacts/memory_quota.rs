@@ -104,6 +104,7 @@ impl DocumentQuotaStore for MemoryDocumentQuota {
             documents,
             bytes,
             objects,
+            pending_deletions: None,
         })
     }
 }

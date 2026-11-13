@@ -11,6 +11,7 @@ pub struct DocumentService {
     pub(super) blobs: Arc<dyn DocumentBlobStore>,
     pub(super) revocation_reserve_enabled: bool,
     pub(super) quota: Option<Arc<dyn DocumentQuotaStore>>,
+    pub(super) deletion_enabled: bool,
     source_write_slots: Arc<Semaphore>,
 }
 impl DocumentService {
@@ -31,11 +32,21 @@ impl DocumentService {
         revocation_reserve_enabled: bool,
         quota: Option<Arc<dyn DocumentQuotaStore>>,
     ) -> Arc<Self> {
+        Self::with_deletion(store, blobs, revocation_reserve_enabled, quota, false)
+    }
+    pub fn with_deletion(
+        store: Arc<dyn DocumentStore>,
+        blobs: Arc<dyn DocumentBlobStore>,
+        revocation_reserve_enabled: bool,
+        quota: Option<Arc<dyn DocumentQuotaStore>>,
+        deletion_enabled: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             store,
             blobs,
             revocation_reserve_enabled,
             quota,
+            deletion_enabled,
             source_write_slots: Arc::new(Semaphore::new(DOCUMENT_SOURCE_WRITE_SLOTS)),
         })
     }
@@ -72,6 +83,9 @@ impl DocumentService {
                 guard.validate(Some(&existing)).await?;
             }
             return creation_replay(caller, existing, &fingerprint);
+        }
+        if self.store.tombstone(&id).await?.is_some() {
+            return Err(DocumentError::NotFound);
         }
         let now = crate::now_rfc3339();
         let sha256 = digest(body.markdown.as_bytes());
@@ -121,19 +135,22 @@ impl DocumentService {
             guard.validate(Some(&record)).await?;
         }
         self.validate_write(&record, false)?;
-        if self
+        match self
             .store
             .insert(&record, Some((&reservation, ticket)))
             .await?
         {
-            return Ok(metadata);
+            InsertOutcome::Inserted => return Ok(metadata),
+            InsertOutcome::Deleted => return Err(DocumentError::NotFound),
+            InsertOutcome::Exists => (),
+        }
+        let existing = self.store.get(&record.metadata.id).await?;
+        if existing.is_none() && self.store.tombstone(&record.metadata.id).await?.is_some() {
+            return Err(DocumentError::NotFound);
         }
         creation_replay(
             caller,
-            self.store
-                .get(&record.metadata.id)
-                .await?
-                .ok_or(DocumentError::Unavailable)?,
+            existing.ok_or(DocumentError::Unavailable)?,
             &fingerprint,
         )
     }

@@ -2,6 +2,7 @@
 //! Metadata and access change atomically; immutable source bytes live behind a
 //! separate bounded object repository. No caller selects an object location.
 mod blob_maintenance;
+mod deletion;
 mod maintenance;
 mod mutation;
 mod quota;
@@ -13,6 +14,7 @@ pub use blob_maintenance::{
     valid_document_blob_prefix, BlobDeletion, BlobMaintenanceError, BlobPage,
     DocumentBlobMaintenance, MAX_BLOB_CURSOR_BYTES, MAX_BLOB_PAGE_KEYS,
 };
+pub use deletion::*;
 pub use maintenance::*;
 pub use quota::*;
 pub use service::{DocumentService, DOCUMENT_SOURCE_WRITE_SLOTS};
@@ -45,3 +47,6 @@ mod maintenance_tests;
 
 #[cfg(test)]
 mod usage_tests;
+
+#[cfg(test)]
+mod deletion_tests;

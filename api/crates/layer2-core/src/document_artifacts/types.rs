@@ -42,6 +42,8 @@ pub enum DocumentError {
     },
     #[error("Document source writes are busy")]
     Busy,
+    #[error("Document deletion is unavailable")]
+    DeletionUnavailable,
     #[error("Document storage is unavailable")]
     Unavailable,
     #[error("Document integrity verification failed")]
@@ -256,12 +258,25 @@ impl DocumentListing {
 #[async_trait::async_trait]
 pub trait DocumentStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError>;
-    /// Insert exactly once; false means the deterministic identity already exists.
+    /// Insert exactly once, atomically refusing every tombstoned identity.
     async fn insert(
         &self,
         record: &StoredDocument,
         source: Option<(&DocumentSourceReservation, SourceTicket)>,
-    ) -> Result<bool, DocumentError>;
+    ) -> Result<super::InsertOutcome, DocumentError>;
+    /// Remove the live aggregate and persist its tombstone in one transaction.
+    async fn delete(
+        &self,
+        expected_revision: u64,
+        tombstone: &super::DocumentTombstone,
+    ) -> Result<super::DeleteOutcome, DocumentError>;
+    async fn tombstone(&self, id: &str) -> Result<Option<super::DocumentTombstone>, DocumentError>;
+    async fn purge_state(
+        &self,
+        id: &str,
+    ) -> Result<Option<super::DocumentPurgeState>, DocumentError>;
+    /// Count only this owner's deletions whose physical purge is incomplete.
+    async fn pending_deletions(&self, owner_hash: &str) -> Result<u64, DocumentError>;
     /// Replace only the same owner/id at the exact revision; never upsert.
     async fn compare_exchange(
         &self,
