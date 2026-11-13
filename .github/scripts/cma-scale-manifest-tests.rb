@@ -40,12 +40,26 @@ class CmaScaleManifestTests < Minitest::Test
     rejects { |d, _, _| pod(d)["containers"][0]["readinessProbe"]["failureThreshold"] = 3 }
   end
 
-  def test_rejects_missing_drain_or_swallowed_drain_failure
+  def test_rejects_missing_prestop_or_swallowed_am_drain_failure
     rejects { |d, _, _| pod(d)["containers"][0].delete("lifecycle") }
     d, h, p = CmaScaleManifests.documents("api")
     pod(d)["containers"][0]["lifecycle"]["preStop"]["exec"]["command"][-1] =
       "/usr/local/bin/cma --agent-manager-drain; exec /bin/sleep 30"
     assert_raises(RuntimeError) { CmaScaleManifests.validate("api", d, h, p) }
+  end
+
+  def test_rejects_eg_exec_hook_or_short_routing_propagation
+    [
+      { "exec" => { "command" => ["/bin/sh", "-c",
+        "/usr/local/bin/cmaeg --replica-drain; status=$?; /bin/sleep 30; exit $status"] } },
+      { "exec" => { "command" => ["/bin/sleep", "30"] } },
+      { "sleep" => { "seconds" => 29 } },
+      { "sleep" => { "seconds" => 30 }, "exec" => { "command" => ["/bin/sleep", "30"] } }
+    ].each do |hook|
+      d, h, p = CmaScaleManifests.documents("cmaeg")
+      pod(d)["containers"][0]["lifecycle"]["preStop"] = hook
+      assert_raises(RuntimeError) { CmaScaleManifests.validate("cmaeg", d, h, p) }
+    end
   end
 
   def test_rejects_unbudgeted_requests_and_sidecar_cpu_denominator
