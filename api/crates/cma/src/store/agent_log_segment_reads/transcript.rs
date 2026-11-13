@@ -35,7 +35,7 @@ pub(super) async fn complete(
     };
     let mut turn = next_turn(store, &source, session, 0).await?;
     let mut rows = 0;
-    let mut bytes = 0;
+    let mut bytes = serde_json::to_vec(&result).map_err(|_| corrupt())?.len();
     while let Some(facts) = turn {
         let end = facts.end_sequence.unwrap_or(source.through());
         rows += end - facts.turn_sequence + 1;
@@ -44,6 +44,13 @@ pub(super) async fn complete(
         }
         let mut after = facts.turn_sequence - 1;
         let mut value = materialize::header(store, &source, session, &facts).await?;
+        let separator = usize::from(!result.turns.is_empty());
+        let available = MAX_BYTES
+            .checked_sub(bytes + separator)
+            .ok_or(SandboxStoreError::AgentLogCapacityExceeded)?;
+        if serde_json::to_vec(&value).map_err(|_| corrupt())?.len() > available {
+            return Err(SandboxStoreError::AgentLogCapacityExceeded);
+        }
         while after < end {
             let through = end.min(after + u64::from(MAX_PAGE));
             let entries = points(
@@ -53,10 +60,13 @@ pub(super) async fn complete(
                 &(after + 1..=through).collect::<Vec<_>>(),
             )
             .await?;
-            materialize::append(&facts, &mut value, entries)?;
+            let count = entries.len();
+            if materialize::append(&facts, &mut value, entries, available)? != count {
+                return Err(SandboxStoreError::AgentLogCapacityExceeded);
+            }
             after = through;
         }
-        bytes += serde_json::to_vec(&value).map_err(|_| corrupt())?.len();
+        bytes += serde_json::to_vec(&value).map_err(|_| corrupt())?.len() + separator;
         if bytes > MAX_BYTES {
             return Err(SandboxStoreError::InvalidPage);
         }
@@ -119,17 +129,12 @@ pub(in crate::store) async fn page(
     if after != facts.turn_sequence - 1 {
         value.messages.clear();
     }
-    let entries = points(
-        store,
-        &source,
-        session,
-        &(after + 1..=through).collect::<Vec<_>>(),
-    )
-    .await?;
-    materialize::append(&facts, &mut value, entries)?;
-    if serde_json::to_vec(&value).map_err(|_| corrupt())?.len() > MAX_BYTES {
+    let entries = super::page::points(store, &source, session, after, through).await?;
+    let admitted = materialize::append(&facts, &mut value, entries, MAX_BYTES)?;
+    if admitted == 0 {
         return Err(SandboxStoreError::AgentLogCapacityExceeded);
     }
+    let through = after + admitted as u64;
     let next = if through < end {
         Some((facts.turn_sequence, through))
     } else {

@@ -82,6 +82,7 @@ pub(super) fn agent_files(
     access: Arc<layer2_core::resource_access::ResourceAccessService>,
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     policy: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    read_timings: bool,
 ) -> Router {
     let filesystem_adapter = adapter.clone();
     layer1_public::rest::agent_attachments_router(
@@ -95,7 +96,8 @@ pub(super) fn agent_files(
             access.clone(),
             filesystem_adapter,
         )
-        .with_task_experience(policy),
+        .with_task_experience(policy)
+        .with_read_timings(read_timings),
     ))
     .merge(layer1_public::rest::agent_artifacts_router(
         layer2_core::sandbox::agent_artifacts::AgentArtifactService::new(store, access),

@@ -12,11 +12,6 @@ use kube::{
 use serde_json::json;
 use std::time::Duration;
 
-pub(super) enum NativeHomeAdoption {
-    Ready(Box<HomeVolumeAttachment>),
-    Pending(Box<NativePoolHomeOrigin>),
-}
-
 struct NativeHomeRead {
     current: NativePoolClaim,
     claim: DynamicObject,
@@ -28,7 +23,7 @@ impl AgentSandboxPools {
     pub(super) async fn adopt_native_vct(
         &self,
         original: &NativePoolClaim,
-    ) -> Result<NativeHomeAdoption> {
+    ) -> Result<HomeVolumeAttachment> {
         // Only the read/validation portion may overlap policy. Both must finish
         // before the original ordered, UID/resourceVersion-fenced publications.
         let (policy, observed) = tokio::join!(
@@ -71,7 +66,30 @@ impl AgentSandboxPools {
                 ));
             }
         }
-        self.observe_native_home(&origin).await
+        // Publication acknowledgements remain outside this read-only deadline.
+        // Start one phase before its first GET so a slow initial read cannot
+        // escape the budget or grant subsequent polling a fresh two seconds.
+        let readiness = super::super::NativeReadinessObservation::default();
+        let observe = async {
+            if let Some(home) = readiness.observe(self.observe_native_home(&origin)).await? {
+                return Ok(home);
+            }
+            if self.config.native_claim_guard_enabled {
+                self.wait_native_home(&origin, &readiness).await
+            } else {
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    self.wait_native_home(&origin, &readiness),
+                )
+                .await
+                .map_err(|_| readiness.timeout())?
+            }
+        };
+        if self.config.native_claim_guard_enabled {
+            super::super::claim_guard::bounded("home_authority", &readiness, observe).await
+        } else {
+            observe.await
+        }
     }
 
     async fn read_native_adoption(&self, original: &NativePoolClaim) -> Result<NativeHomeRead> {
@@ -123,42 +141,25 @@ impl AgentSandboxPools {
         })
     }
 
-    pub(super) async fn wait_native_home(
+    async fn wait_native_home(
         &self,
-        origin: NativePoolHomeOrigin,
+        origin: &NativePoolHomeOrigin,
+        readiness: &super::super::NativeReadinessObservation,
     ) -> Result<HomeVolumeAttachment> {
         // Only the original published authority may be observed here. Never
         // replay adoption writes or claim allocation while waiting for Ready.
-        let readiness = super::super::NativeReadinessObservation::default();
-        let observe = async {
-            loop {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                if let Some(home) = readiness
-                    .observe(async {
-                        Ok(match self.observe_native_home(&origin).await? {
-                            NativeHomeAdoption::Ready(home) => Some(*home),
-                            NativeHomeAdoption::Pending(_) => None,
-                        })
-                    })
-                    .await?
-                {
-                    return Ok(home);
-                }
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            if let Some(home) = readiness.observe(self.observe_native_home(origin)).await? {
+                return Ok(home);
             }
-        };
-        if self.config.native_claim_guard_enabled {
-            super::super::claim_guard::bounded("home_authority", &readiness, observe).await
-        } else {
-            tokio::time::timeout(Duration::from_secs(5), observe)
-                .await
-                .map_err(|_| readiness.timeout())?
         }
     }
 
     async fn observe_native_home(
         &self,
         origin: &NativePoolHomeOrigin,
-    ) -> Result<NativeHomeAdoption> {
+    ) -> Result<Option<HomeVolumeAttachment>> {
         let original = &origin.claim;
         let desired = model::claim(&self.config, &original.request)?;
         let name = original
@@ -194,9 +195,9 @@ impl AgentSandboxPools {
         // Ready must acknowledge the annotation's current generation before
         // the returned attachment can admit runtime credentials.
         if super::super::model::ready(&member) {
-            Ok(NativeHomeAdoption::Ready(Box::new(attachment)))
+            Ok(Some(attachment))
         } else {
-            Ok(NativeHomeAdoption::Pending(Box::new(origin.clone())))
+            Ok(None)
         }
     }
 
