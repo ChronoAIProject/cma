@@ -25,6 +25,7 @@ pub(crate) struct Composition {
     pub tool_replies: Arc<RoutedToolReplies>,
     pub scheduler: Scheduler,
     pub media_scheduler: Option<Scheduler>,
+    pub replica_routes: axum::Router,
 }
 pub(crate) fn start_workers(
     composition: Option<Composition>,
@@ -97,6 +98,7 @@ pub(crate) async fn compose(
             Default::default()
         };
     let coordinator = DeliveryCoordinator::new(deps.delivery).with_custom_stream(deps.custom);
+    let mut media_effects: Option<Arc<dyn crate::replicas::effects::EffectExecutor>> = None;
     let media_scheduler = if media_ready {
         let media = deps
             .media
@@ -120,6 +122,7 @@ pub(crate) async fn compose(
             delivery: media_delivery,
             worker: format!("media-{}", uuid::Uuid::new_v4()),
         });
+        media_effects = Some(executor.clone());
         let (scheduler, _) = Scheduler::new(
             Arc::new(index),
             executor,
@@ -155,14 +158,37 @@ pub(crate) async fn compose(
         )
         .with_media_continuations(media_ready),
     );
-    let delivery = RoutedDelivery::new(plans.clone(), journal, authority, coordinator);
-    let tool_replies = Arc::new(delivery.tool_replies());
-    let executor = Arc::new(RoutedTargetExecutor::new(
-        port,
-        delivery,
-        deps.tracker,
-        &config.delivery,
-    ));
+    let delivery = RoutedDelivery::new(plans.clone(), journal.clone(), authority, coordinator);
+    let tools = delivery.tool_replies();
+    let tool_replies = Arc::new(if deps.partitions.is_some() {
+        tools
+            .with_replica_relay()
+            .map_err(|_| "replica tool relay initialization failed")?
+    } else {
+        tools
+    });
+    let executor: Arc<dyn crate::turns::routed::scheduler::TargetExecutor> = Arc::new(
+        RoutedTargetExecutor::new(port, delivery, deps.tracker, &config.delivery),
+    );
+    let (recovery, executor, replica_routes) = if deps.partitions.is_some() {
+        let effects = match media_effects {
+            Some(media) => tool_replies.replica_effect_executor_with_media(media),
+            None => tool_replies.replica_effect_executor(),
+        };
+        let executor = journal
+            .effect_executor(plans.clone(), executor, effects.clone())
+            .map_err(|_| "replica effect executor initialization failed")?;
+        let recovery: Arc<dyn crate::turns::routed::scheduler::RecoverySource> = Arc::new(
+            crate::replicas::effect_recovery::Recovery::new(recovery, effects),
+        );
+        (
+            recovery,
+            executor,
+            tool_replies.clone().replica_relay_router(),
+        )
+    } else {
+        (recovery, executor, axum::Router::new())
+    };
     let (scheduler, schedule) = Scheduler::new(
         recovery,
         executor,
@@ -206,5 +232,6 @@ pub(crate) async fn compose(
         tool_replies,
         scheduler,
         media_scheduler,
+        replica_routes,
     }))
 }
