@@ -70,7 +70,7 @@ pub(super) async fn apply(
                         .map_err(|_| SandboxControlError::Corrupt)?;
                     let result = store.sandboxes.update_one(
                         doc! { "channel_reuse_cleanup_execution": { "$exists": false }, "_id": sandbox.id.as_str(), "revision": snapshot.lineage.sandbox.revision as i64, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
-                        doc! { "$set": fields },
+                        crate::store::work_lease_update::replacement(fields),
                     ).session(&mut *session).await?;
                     if result.matched_count != 1 {
                         return Err(SandboxControlError::Conflict.into());

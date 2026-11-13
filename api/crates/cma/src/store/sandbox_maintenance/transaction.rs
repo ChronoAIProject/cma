@@ -272,7 +272,9 @@ async fn apply_with_sources(
         .sandboxes
         .update_one(
             revision_filter,
-            doc! { "$set": sandbox_replacement_fields(&sandbox).map_err(ApplyError::Domain)? },
+            crate::store::work_lease_update::replacement(
+                sandbox_replacement_fields(&sandbox).map_err(ApplyError::Domain)?,
+            ),
         )
         .session(&mut *session)
         .await

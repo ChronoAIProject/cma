@@ -89,9 +89,17 @@ async fn apply(
         // transaction. A pre-read cannot authorize delayed claim delivery.
         filter = doc! {"$and":[filter, acquisition.clone()]};
     }
-    let updated = store.sandboxes.update_one(filter,
-        doc! { "$set": crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)? })
-        .session(&mut *session).await.map_err(Driver)?;
+    let updated = store
+        .sandboxes
+        .update_one(
+            filter,
+            crate::store::work_lease_update::replacement(
+                crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
+            ),
+        )
+        .session(&mut *session)
+        .await
+        .map_err(Driver)?;
     if updated.matched_count != 1 {
         return Err(Domain(SandboxStoreError::Conflict));
     }

@@ -275,7 +275,9 @@ impl WorkspaceStore for MongoSandboxStore {
                     "revision": signed(expected_revision, "expected workspace revision")
                         .map_err(|_| SandboxStoreError::Conflict)?,
                 },
-                doc! { "$set": workspace_replacement_fields(&workspace)? },
+                crate::store::work_lease_update::replacement(workspace_replacement_fields(
+                    &workspace,
+                )?),
             )
             .await
             .map_err(|error| {

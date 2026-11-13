@@ -408,7 +408,9 @@ async fn advance_sandbox(
                 "revision": signed(current.revision, "sandbox lifecycle revision")
                     .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
             },
-            doc! { "$set": sandbox_replacement_fields(next).map_err(ApplyError::Domain)? },
+            crate::store::work_lease_update::replacement(
+                sandbox_replacement_fields(next).map_err(ApplyError::Domain)?,
+            ),
         )
         .session(&mut *session)
         .await

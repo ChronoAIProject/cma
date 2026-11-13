@@ -233,7 +233,7 @@ async fn apply_transaction(
                         "origin_type": origin_type, "origin_launch_id": origin_launch_id,
                         "origin_operation_id": origin_operation_id,
                     },
-                    doc! { "$set": fields },
+                    crate::store::work_lease_update::replacement(fields),
                 )
                 .session(&mut *session)
                 .await
@@ -293,8 +293,9 @@ async fn apply_transaction(
                             "revision": signed(*expected_revision, "expected workspace revision")
                                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                         },
-                    doc! { "$set": workspace_replacement_fields(workspace)
-                    .map_err(ApplyError::Domain)? },
+                    crate::store::work_lease_update::replacement(
+                        workspace_replacement_fields(workspace).map_err(ApplyError::Domain)?,
+                    ),
                 )
                 .session(&mut *session)
                 .await
@@ -393,7 +394,7 @@ async fn reconcile(
                 .transpose()?;
             Ok(
                 command_revival::matches(store, &mut session, revival.as_ref()).await?
-                    && stored.as_ref() == Some(sandbox.as_ref())
+                    && crate::store::work_lease_update::sandbox_matches(stored.as_ref(), sandbox)
                     && reconcile_event_with_snapshot_session(store, event, &mut session)
                         .await?
                         .is_some(),
@@ -413,10 +414,12 @@ async fn reconcile(
                 .as_ref()
                 .map(read_workspace)
                 .transpose()?;
-            Ok(stored.as_ref() == Some(workspace.as_ref())
-                && reconcile_event_with_snapshot_session(store, event, &mut session)
-                    .await?
-                    .is_some())
+            Ok(
+                crate::store::work_lease_update::workspace_matches(stored.as_ref(), workspace)
+                    && reconcile_event_with_snapshot_session(store, event, &mut session)
+                        .await?
+                        .is_some(),
+            )
         }
         _ => Err(SandboxStoreError::Corrupt(
             "transaction receipt kind does not match its command".into(),

@@ -88,8 +88,9 @@ async fn publish_validated(
                 "revision": signed(current.revision, "checkpoint sandbox revision")
                     .map_err(|_| PublishError::Domain(SandboxStoreError::Conflict))?,
             },
-            doc! { "$set": sandbox_replacement_fields(&mutation.sandbox)
-            .map_err(PublishError::Domain)? },
+            crate::store::work_lease_update::replacement(
+                sandbox_replacement_fields(&mutation.sandbox).map_err(PublishError::Domain)?,
+            ),
         )
         .session(&mut *session)
         .await

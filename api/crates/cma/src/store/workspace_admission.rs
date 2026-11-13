@@ -6,6 +6,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::work_lease_update::replacement;
 use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
 use layer2_core::ids::{SubjectId, WorkspaceId};
@@ -335,7 +336,7 @@ async fn apply_admission(
                     "revision": signed(sandbox.revision, "sandbox revision")
                         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
                 },
-                doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? },
+                replacement(sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?),
             )
             .session(&mut *session)
             .await
