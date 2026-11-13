@@ -11,6 +11,9 @@ use std::sync::Mutex;
 #[path = "drain_tests.rs"]
 mod drain;
 
+#[path = "shared_stream_tests.rs"]
+mod shared_streams;
+
 struct CaptureTransport(Mutex<Vec<OwnershipToken>>);
 #[async_trait::async_trait]
 impl HostedControlTransport for CaptureTransport {
