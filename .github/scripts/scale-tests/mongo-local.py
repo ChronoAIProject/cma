@@ -14,10 +14,12 @@ import os
 from pathlib import Path
 import secrets
 import re
-import signal
+import shutil
 import subprocess
 import tempfile
 import time
+
+from owned_process import OwnedGroup
 
 
 IMAGE = "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c"
@@ -101,6 +103,8 @@ def run(binary, directory, test_name):
     attempted = False
     phase = "container_create"
     process = None
+    group = None
+    temporary = None
     output = None
     result.update(timed_out=False, censored=True, failure_phase=None, error_class=None,
                   exit_code=None, termination_signal=None, output_sha256=None)
@@ -138,35 +142,23 @@ def run(binary, directory, test_name):
         password = environment["MONGO_INITDB_ROOT_PASSWORD"]
         environment["CMA_IM_TEST_MONGODB_URI"] = f"mongodb://contract-admin:{password}@{endpoint}/admin?directConnection=true"
         phase = "test_spawn"
-        with tempfile.TemporaryDirectory(prefix="process-fixture-", dir=directory) as temporary:
-            environment["TMPDIR"] = temporary
-            process = subprocess.Popen([str(binary), test_name, "--ignored", "--nocapture", "--test-threads=1"],
-                                       env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
-            phase = "test_wait"
-            try:
-                output, _ = process.communicate(timeout=120)
-            except subprocess.TimeoutExpired as error:
-                result.update(timed_out=True, code="process_test_deadline")
-                output = error.output or b""
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    final_output, _ = process.communicate(timeout=10)
-                    output = final_output or output
-                except subprocess.TimeoutExpired as error:
-                    output = error.output or output
-                    os.killpg(process.pid, signal.SIGKILL)
-                    try:
-                        final_output, _ = process.communicate(timeout=10)
-                        output = final_output or output
-                    except subprocess.TimeoutExpired as error:
-                        output = error.output or output
-                        raise
-                raise FixtureError("process_test_deadline") from None
-            result.update(status="PASS" if process.returncode == 0 and observations(output)["tests_passed"] == 1 else "FAIL",
-                          censored=False)
-            if result["status"] == "FAIL":
-                result.update(failure_phase="test_result", error_class="test_failure")
+        temporary = tempfile.mkdtemp(prefix="process-fixture-", dir=directory)
+        environment["TMPDIR"] = temporary
+        group = OwnedGroup()
+        group.start()
+        process = group.spawn([str(binary), test_name, "--ignored", "--nocapture", "--test-threads=1"],
+                              env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        phase = "test_wait"
+        try:
+            output, _ = process.communicate(timeout=120)
+        except subprocess.TimeoutExpired as error:
+            result.update(timed_out=True, code="process_test_deadline")
+            output = error.output or b""
+            raise FixtureError("process_test_deadline") from None
+        result.update(status="PASS" if process.returncode == 0 and observations(output)["tests_passed"] == 1 else "FAIL",
+                      censored=False)
+        if result["status"] == "FAIL":
+            result.update(failure_phase="test_result", error_class="test_failure")
     except (RuntimeError, subprocess.TimeoutExpired, OSError, ValueError) as error:
         error_class = ("command_timeout" if isinstance(error, subprocess.TimeoutExpired) else
                        "os_error" if isinstance(error, OSError) else
@@ -178,23 +170,43 @@ def run(binary, directory, test_name):
                 error.code in {"process_test_deadline", "mongo_readiness_deadline"}):
             result["timed_out"] = True
     finally:
-        if output is not None:
-            result.update(observations(output))
-        result["process_cleanup"] = process is None or process.returncode is not None
+        # Every path (normal exit, failure, timeout, spawn/pipe error) observes
+        # the entire reserved group before disposing anything it can still use.
+        custody = group.cleanup(process) if group is not None else {"process_group_cleanup": True}
+        result.update(custody)
         if process is not None:
+            try:
+                final_output, _ = process.communicate(timeout=2)
+                output = final_output or output
+            except subprocess.TimeoutExpired as error:
+                output = error.output or output
+                result["censored"] = True
+            except (OSError, ValueError):
+                result["censored"] = True
             result["exit_code"] = process.returncode
             result["termination_signal"] = -process.returncode if process.returncode is not None and process.returncode < 0 else None
-        try:
-            if attempted:
-                cleanup_container(container, label, suffix)
-            result["container_cleanup"] = True
-            result["cleanup"] = result["process_cleanup"]
-            if not result["process_cleanup"]:
-                result["cleanup_failure_phase"] = "process_termination"
-        except (RuntimeError, subprocess.TimeoutExpired, OSError) as error:
-            result.update(status="BLOCKED", cleanup=False, container_cleanup=False, primary_code=result.get("code"),
-                          code="container_cleanup_unconfirmed", cleanup_failure_phase="container_cleanup",
-                          cleanup_timed_out=isinstance(error, subprocess.TimeoutExpired))
+        if output is not None:
+            result.update(observations(output))
+        result["test_parent_cleanup"] = process is None or process.returncode is not None
+        result["process_cleanup"] = result["test_parent_cleanup"] and result["process_group_cleanup"]
+        result["fixture_directory_retained"] = temporary is not None
+        result["container_cleanup"] = not attempted
+        if not result["process_cleanup"]:
+            result.update(status="BLOCKED", cleanup_failure_phase="process_termination", censored=True)
+            result.setdefault("code", "process_cleanup_unconfirmed")
+        else:
+            try:
+                if temporary is not None:
+                    shutil.rmtree(temporary)
+                    result["fixture_directory_retained"] = False
+                if attempted:
+                    cleanup_container(container, label, suffix)
+                result["container_cleanup"] = True
+                result["cleanup"] = True
+            except (RuntimeError, subprocess.TimeoutExpired, OSError) as error:
+                result.update(status="BLOCKED", cleanup=False, primary_code=result.get("code"),
+                              code="fixture_cleanup_unconfirmed", cleanup_failure_phase="fixture_cleanup",
+                              cleanup_timed_out=isinstance(error, subprocess.TimeoutExpired))
         result["elapsed_seconds"] = time.monotonic() - started
         result["finished_at"] = datetime.now(timezone.utc).isoformat()
         target.write_text(json.dumps(result, indent=2) + "\n")

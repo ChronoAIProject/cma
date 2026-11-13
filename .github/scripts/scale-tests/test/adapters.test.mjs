@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LocalHttp } from '../lib/http.mjs';
-import { LocalCluster } from '../lib/kubernetes.mjs';
+import { LocalCluster, executeWithInput } from '../lib/kubernetes.mjs';
 import { hash } from '../lib/checks.mjs';
 import { saveReport } from '../lib/report.mjs';
 
@@ -35,8 +35,8 @@ test('Kubernetes wrapper pins local API server, namespace UID and test-owned pod
   const calls = [];
   const pod = { metadata: { name: 'test-am', uid: 'test-pod', labels: { 'app.kubernetes.io/part-of': 'cma-scale-tests' } } };
   let remote = false;
-  const command = async (exe, args) => {
-    calls.push([exe, ...args]);
+  const command = async (exe, args, options) => {
+    calls.push({ executable: exe, args, input: options.input });
     const value = args.includes('view') ? remote ? 'https://remote.invalid' : 'https://127.0.0.1:6443'
       : args.includes('namespace') ? JSON.stringify({ metadata: { name: 'cma-scale', uid: 'test-namespace' } })
         : args.includes('get') ? JSON.stringify({ items: [pod] }) : '';
@@ -48,11 +48,47 @@ test('Kubernetes wrapper pins local API server, namespace UID and test-owned pod
   await assert.rejects(cluster.read('secrets')); await assert.rejects(cluster.read('exec'));
   const target = { name: 'test-am', uidHash: hash('test-pod'), labels: pod.metadata.labels };
   assert.equal((await cluster.removePod(target)).processDeathObserved, false);
-  assert.ok(calls.at(-1).includes('--grace-period=0'));
+  assert.deepEqual(calls.at(-1).args.slice(-5),
+    ['delete', '--raw', '/api/v1/namespaces/cma-scale/pods/test-am', '-f', '-']);
+  assert.deepEqual(JSON.parse(calls.at(-1).input), { apiVersion: 'v1', kind: 'DeleteOptions',
+    gracePeriodSeconds: 0, preconditions: { uid: 'test-pod' } });
   await assert.rejects(cluster.removePod({ ...target, uidHash: hash('replaced') }));
   await assert.rejects(cluster.removePod({ ...target, labels: {} }));
   remote = true; await assert.rejects(cluster.read('pods'), /nonlocal/);
   assert.throws(() => new LocalCluster({ ...config, context: 'prod' }, command));
+});
+
+test('pod name reuse between GET and DELETE conflicts on the original UID', async () => {
+  let currentUid = 'original';
+  let deleted = false;
+  const labels = { 'app.kubernetes.io/part-of': 'cma-scale-tests' };
+  const command = async (exe, args, options) => {
+    assert.equal(exe, 'kubectl');
+    if (args.includes('view')) return { stdout: 'https://127.0.0.1:6443' };
+    if (args.includes('namespace')) return { stdout: JSON.stringify({ metadata: { name: 'cma-scale', uid: 'ns' } }) };
+    if (args.includes('get')) {
+      const response = { items: [{ metadata: { name: 'test-am', uid: currentUid, labels } }] };
+      currentUid = 'replacement';
+      return { stdout: JSON.stringify(response) };
+    }
+    assert.ok(args.includes('--raw'));
+    const body = JSON.parse(options.input);
+    assert.equal(body.preconditions.uid, 'original');
+    if (body.preconditions.uid !== currentUid) throw new Error('Conflict: UID precondition failed');
+    deleted = true;
+    return { stdout: '{}' };
+  };
+  const cluster = new LocalCluster({ kubeconfig: '/fixture/config', context: 'kind-cma-scale',
+    namespace: 'cma-scale', namespaceHash: hash('ns') }, command);
+  await assert.rejects(cluster.removePod({ name: 'test-am', uidHash: hash('original'), labels }), /Conflict/);
+  assert.equal(deleted, false);
+});
+
+test('raw command transport delivers stdin and propagates command refusal', async () => {
+  const options = { input: '{"preconditions":{"uid":"synthetic"}}', timeout: 2000, encoding: 'utf8' };
+  const result = await executeWithInput(process.execPath, ['-e', 'process.stdin.pipe(process.stdout)'], options);
+  assert.equal(result.stdout, options.input);
+  await assert.rejects(executeWithInput(process.execPath, ['-e', 'process.exit(1)'], options));
 });
 
 test('reports retain explicit blocked rows and performance deltas', async () => {
