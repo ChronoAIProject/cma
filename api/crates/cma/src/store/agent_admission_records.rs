@@ -18,6 +18,8 @@ use super::sandboxes::read_sandbox;
 use super::workspaces::read_workspace;
 use super::worktrees::read_worktree;
 
+mod source;
+
 pub(super) struct CreatedReceipt {
     pub(super) creation: AgentCreation,
     pub(super) provenance: layer2_core::sandbox::AgentCreationProvenance,
@@ -156,42 +158,7 @@ async fn load_replay_with_session(
         .session(&mut *session)
         .await
         .map_err(LoadError::Driver)?;
-    let last_seq = agent.conversation.last_seq;
-    let mut initial_log = None;
-    match read {
-        ReplayRead::Transaction => {
-            scan_complete_log_with_session(
-                ScanCaller::CommandAdmission,
-                store,
-                &agent.id,
-                last_seq,
-                session,
-                |entry| {
-                    if initial_log.is_none() {
-                        initial_log = Some(entry);
-                    }
-                    Ok(())
-                },
-            )
-            .await?;
-        }
-        ReplayRead::Snapshot => {
-            scan_complete_log_with_snapshot_session(
-                ScanCaller::CommandAdmission,
-                store,
-                &agent.id,
-                last_seq,
-                session,
-                |entry| {
-                    if initial_log.is_none() {
-                        initial_log = Some(entry);
-                    }
-                    Ok(())
-                },
-            )
-            .await?;
-        }
-    }
+    let initial_log = source::legacy_initial(store, &agent, session, read).await?;
     let creation =
         assemble_creation(agent, worktree_document, initial_log).map_err(LoadError::Domain)?;
     if binding.is_some() {
