@@ -114,6 +114,21 @@ impl SandboxWorkerStore for MongoSandboxStore {
         Err(SandboxStoreError::Conflict)
     }
 
+    async fn renew_sandbox_work(
+        &self,
+        claimed: &layer2_core::sandbox::Sandbox,
+        _now: &str,
+        requested_until: &str,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        super::work_lease_renewal::renew(
+            &self.sandboxes,
+            super::work_claim_authority::sandbox_claim(claimed)?,
+            requested_until,
+            None,
+        )
+        .await
+    }
+
     async fn purge_sandbox(
         &self,
         id: &SandboxId,

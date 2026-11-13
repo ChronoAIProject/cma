@@ -1,6 +1,8 @@
 use super::*;
 use std::time::{Duration, SystemTime};
 
+mod renewal_tests;
+
 #[derive(Clone, Copy)]
 enum Kind {
     Sandbox,

@@ -174,6 +174,8 @@ mod warm_sandboxes;
 pub(crate) mod worker_observations;
 pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
 mod work_claim_authority;
+mod work_lease_parent;
+mod work_lease_renewal;
 mod workspace_admission;
 mod workspace_prepare_recovery;
 mod workspace_profiles;

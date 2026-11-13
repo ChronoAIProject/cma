@@ -30,6 +30,8 @@ mod agent_log_publication;
 pub use agent_log_publication::AgentLogPublicationIdentity;
 mod sandbox_worker;
 pub use sandbox_worker::SandboxWorkerStore;
+mod work_lease;
+pub use work_lease::{WORK_LEASE_SECONDS, WORK_RENEW_SECONDS};
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
@@ -333,7 +335,6 @@ pub trait SandboxEventStore: Send + Sync {
         limit: u16,
     ) -> Result<Vec<SandboxEvent>, SandboxStoreError>;
 }
-
 
 #[derive(Debug, Clone)]
 pub enum SandboxTransaction {
