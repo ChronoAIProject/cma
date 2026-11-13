@@ -2,44 +2,17 @@
 use super::*;
 use futures_util::{future::BoxFuture, FutureExt};
 use ring::rand::SecureRandom;
-use std::os::unix::fs::DirBuilderExt;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
 
-struct PrivateDirectory(PathBuf, bool);
-
-impl PrivateDirectory {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "cma-key-provider-contract-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&path)
-            .unwrap();
-        Self(path, false)
-    }
-
-    fn remove(&mut self) {
-        std::fs::remove_dir_all(&self.0).expect("remove joined fixture state");
-        self.1 = true;
-    }
-}
-
-impl Drop for PrivateDirectory {
-    fn drop(&mut self) {
-        if self.1 {
-            return;
-        }
-        if let Err(error) = std::fs::remove_dir_all(&self.0) {
-            eprintln!("provider fixture directory cleanup failed: {error}");
-        }
-    }
-}
+mod cleanup;
+mod directory;
+mod receipt;
+mod tests;
+use directory::PrivateDirectory;
 
 pub(super) struct Provider {
     child: Child,
@@ -52,7 +25,7 @@ pub(super) struct Provider {
 
 impl Provider {
     fn spawn() -> Self {
-        let directory = PrivateDirectory::new();
+        let mut directory = PrivateDirectory::new();
         let mut entropy = [0_u8; 32];
         ring::rand::SystemRandom::new().fill(&mut entropy).unwrap();
         let token = SecretValue::new(
@@ -66,7 +39,7 @@ impl Provider {
         let mut child = tokio::process::Command::new("node")
             .arg(script)
             .arg("--state-root")
-            .arg(&directory.0)
+            .arg(directory.path())
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap())
             .env("CMA_WORK_FIXTURE_BEARER", token.expose())
@@ -76,6 +49,9 @@ impl Provider {
             .kill_on_drop(true)
             .spawn()
             .expect("start counting provider with Node.js");
+        // Register ownership before any fallible pipe extraction. Drop may
+        // request a kill, but only an awaited result can confirm this exit.
+        directory.spawned();
         Self {
             input: child.stdin.take(),
             output: BufReader::new(child.stdout.take().unwrap()),
@@ -164,23 +140,9 @@ impl Provider {
         }
     }
 
-    async fn close(&mut self) {
-        // EOF closes the fixture even if the test left a held response. Join
-        // that exact child before removing its private durable journal.
+    async fn close(&mut self) -> Result<(), cleanup::Failure> {
         self.input.take();
-        let status = match tokio::time::timeout(Duration::from_secs(5), self.child.wait()).await {
-            Ok(status) => status.expect("join fixture child"),
-            Err(_) => {
-                self.child
-                    .kill()
-                    .await
-                    .expect("kill and join fixture child");
-                panic!("provider fixture did not close after stdin EOF");
-            }
-        };
-        assert!(status.success());
-        assert!(!self.directory.0.join("provider.lock").exists());
-        self.directory.remove();
+        cleanup::close(&mut self.child, &mut self.output, &mut self.directory).await
     }
 }
 
@@ -196,8 +158,6 @@ pub(super) async fn with_provider(
     })
     .catch_unwind()
     .await;
-    provider.close().await;
-    if let Err(panic) = result {
-        std::panic::resume_unwind(panic);
-    }
+    let cleanup = AssertUnwindSafe(provider.close()).catch_unwind().await;
+    cleanup::finish_test(result, cleanup);
 }
