@@ -1098,6 +1098,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS` | Total ordered-command bound, at least command bound and at most 1800; default 1800 |
 | `CHRONO_CLONE_DEPTH` | Git clone depth 1-1000; default 50 |
 | `CHRONO_ACTIVITY_ASYNC_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Enables bounded asynchronous request telemetry only. Explicit authorization and operations audits still synchronously await majority persistence. See request activity buffering below. |
+| `CHRONO_ACTIVITY_OPERATIONAL_READ_SAMPLING_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Owner approval required before activation. Samples only authenticated generic GET/HEAD HTTP 200 Sandbox/Workspace detail observations at 1/16 using record UUIDs. All other events, explicit domain/security audits and retention are unchanged. Omitted per-request evidence is unrecoverable; `cma_activity_operational_read_policy_total{decision="retained"} / {decision="sampled_out"}` counts decisions with no actor labels. Independent of async buffering; never enable to fix Activity listing. |
 | `CHRONO_ACTIVITY_RETENTION_DAYS` | Activity TTL, 1-3650 days; default 90 |
 | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` | Pre-auth network budget/burst; default 6000 |
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
@@ -2672,6 +2673,26 @@ scan bytes, runtime inspections, checkout waits, CPU and route latency. Local
 correctness tests establish no production CPU or latency improvement; profile
 and production measurements remain required for #1421 and the #1786 rollout.
 
+### Activity list reads
+
+Operations uses `GET /api/v1/admin/activity?view=summary&limit=50`. The explicit
+summary view omits `detail`; requests without `view` retain complete records.
+Both require `ReadActivityLog`, use descending `(recorded_at, _id)` keyset
+pagination, fetch at most `limit + 1` rows, and never count or skip. Cursors use
+Mongo insertion time, not displayed event time. Pages are live observations,
+not a snapshot spanning multiple requests. Mongo execution is bounded to five
+seconds and one requested page batch; failures remain explicit.
+
+The nonunique `activity_recorded_at_id_desc` index has keys
+`{recorded_at:-1,_id:-1}`. Its explicit additive migration is
+`am-activity-page-index-v1`; requests and startup do not install it. Production
+builds require a lead-approved migration window and the reviewed release
+controller. Existing actor/action indexes and TTL remain unchanged. The release
+record must include plan, checksum, immutable image, index inventory, resource
+budget, and verified postconditions. See issue #1960 for the build/rollback plan.
+`cma_activity_read_seconds` reports Mongo list elapsed time with fixed `view`
+and `outcome` labels; it excludes HTTP authorization, names and audit append.
+
 ### Request activity buffering
 
 `CHRONO_ACTIVITY_ASYNC_ENABLED=false` preserves the existing awaited request
@@ -2809,6 +2830,14 @@ preserve all authority checks, read order, retained-upgrade exemptions and
 existing deadlines. They establish no end-to-end improvement on their own.
 
 ### Initial native readiness retry
+
+Claim-assignment observation has one five-second deadline. Pending reads start
+at least 250 ms apart, with response time counting toward that interval. Reads
+never overlap or catch up after a slow response, and no new read starts at the
+deadline. This allows up to 20 reads per window; delayed responses can use more
+of that budget than a full 250 ms sleep after each response. Include Kubernetes
+request load when measuring this observation change. It neither changes the
+retry switch nor shortens volume attachment or runtime boot.
 
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
 home readiness or create-bind deadline reached after validated Pending can use a
