@@ -30,6 +30,9 @@ mod capacity_usage;
 #[path = "request_budget_tests.rs"]
 pub(in crate::store) mod request_budget;
 
+#[path = "reconcile_pacing_tests.rs"]
+mod reconcile_pacing_tests;
+
 mod bounded_admission_tests;
 mod bounded_audit_tests;
 mod bounded_compatibility_tests;
