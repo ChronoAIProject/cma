@@ -180,3 +180,26 @@ keeping the measurements and the default-off option; neither establishes a
 reliable 10 ms section bound or substitutes for the required production study.
 The full-contract repeat log SHA-256 is
 `9638f1a4e0fdc5b54aedfac01478fd8063d12db7fbbc816d753b8996ba4b3570`.
+
+Runtime-loss recovery (`CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED`, default
+`false`) rejects stale Sandbox/Agent observations before reading logs. Ineligible
+requests therefore no longer discover unrelated log corruption; eligible recovery
+and the Agent's ordinary append, publication, and read paths retain their audits.
+Terminal legacy Agents consume only an exact head proof (head exists with matching
+identity/sequence, no later rows; empty head means no rows). Failed proofs fall back
+to the complete structural/semantic audit. Live legacy Agents require the existing
+cohort-gated trusted summary or use the same complete audit. Segment proof and
+publication retain the existing exclusive transaction scope. No proof is cached
+across attempts, and terminal Agents still receive the CAS recovery fence.
+
+`runtime loss transaction phase` records fixed stages (`sandbox_read`,
+`agent_rows`, `log_full`, `log_bounded`, `agent_writes`, `event_validation`,
+`sandbox_writes`, `commit`), duration, outcome and consumed log-document counts.
+`runtime loss transaction agents` records total/live rows. The existing scan
+counters include full-scan fallback. `runtime loss reconciliation outcome` records
+one result with Sandbox ID, including cancellation. Event validation still scans
+the complete event stream; production p95 above 1 s requires a separate issue.
+The enabled reserved binding ceiling is 25 s, leaving 5 s under the background
+hard deadline; production stage measurements must validate this ceiling before
+activation. The owner controls activation and the deployment engineers own the
+before/after recovery, latency, and rollback evidence described in #1790.
