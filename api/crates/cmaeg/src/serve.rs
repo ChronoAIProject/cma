@@ -56,7 +56,6 @@ pub(crate) async fn serve(
         creator_auth.clone(),
         &config.management.nyxid_base_url,
     )?;
-    // No-op observers and no queue while CMAEG_CONSOLE_ENABLED is off.
     let mut observers = console::observer::Observers::new(config.console.enabled);
     let mut state = http::ManagementState::observed(
         providers.clone(),
@@ -140,8 +139,7 @@ pub(crate) async fn serve(
     let (native_lark_controls, native_lark_thread_start) =
         source_settings::lark_issuance(&config, &state);
     let tool_providers = Arc::new(config.media.tool_providers.clone());
-    // After the recorder, which registers its gauge. `None` while
-    // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
+    // The recorder is installed before the Console registers its gauge.
     let console =
         console::compose(&config, &state, observers.queue.take(), console_sessions).await?;
     // Before the listener binds: a configured transformer must pass its
