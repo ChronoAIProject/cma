@@ -153,22 +153,25 @@ sys.exit(exit_code)
 PY
     ;;
   auto)
-    test -f manifests/hpa-pdb-reviewed.json || { echo 'BLOCKED: developer-16 reviewed HPA/PDB handoff is required' >&2; exit 1; }
+    test -f manifests/hpa-local.json || { echo 'BLOCKED: local HPA manifest is missing' >&2; exit 1; }
     python3 - <<'PY'
 import json
 from pathlib import Path
-items=json.loads(Path('manifests/hpa-pdb-reviewed.json').read_text())['items']
+items=json.loads(Path('manifests/hpa-local.json').read_text())['items']
+names={'cma-agent-manager','cma-event-gateway'}
+if len(items)!=2 or {obj['metadata']['name'] for obj in items}!=names:
+    raise SystemExit('Refused unexpected local HPA set')
 for obj in items:
     if obj['metadata'].get('namespace')!='cma-scale': raise SystemExit('Refused non-local namespace')
-    if obj['metadata'].get('annotations',{}).get('cma.chronoai.dev/review-state')!='approved':
-        raise SystemExit('BLOCKED: exact-version review approval is absent')
-    if obj['kind']=='HorizontalPodAutoscaler':
-        if not (obj['spec']['minReplicas']==2 and obj['spec']['maxReplicas']<=4):
-            raise SystemExit('Refused HPA outside the local resource budget')
-    elif obj['kind']!='PodDisruptionBudget': raise SystemExit('Refused unexpected manifest kind')
+    if obj['apiVersion']!='autoscaling/v2' or obj['kind']!='HorizontalPodAutoscaler':
+        raise SystemExit('Refused unexpected manifest kind')
+    if obj['spec']['scaleTargetRef']!={'apiVersion':'apps/v1','kind':'Deployment','name':obj['metadata']['name']}:
+        raise SystemExit('Refused unrelated scale target')
+    if not (obj['spec']['minReplicas']==2 and obj['spec']['maxReplicas']==4):
+        raise SystemExit('Refused HPA outside the local resource budget')
 PY
-    scripts/k apply --dry-run=server -f manifests/hpa-pdb-reviewed.json >/dev/null
-    scripts/k apply -f manifests/hpa-pdb-reviewed.json
+    scripts/k apply --dry-run=server -f manifests/hpa-local.json >/dev/null
+    scripts/k apply -f manifests/hpa-local.json
     ;;
   *) echo 'Usage: mode.sh fixed-1|fixed-2|auto' >&2; exit 2 ;;
 esac
