@@ -120,9 +120,9 @@ async fn two_instance_owner_abort_is_taken_over_after_fifteen_seconds_once() {
     assert!(owner_task.await.unwrap_err().is_cancelled());
     tokio::time::advance(Duration::from_secs(WORK_LEASE_SECONDS)).await;
     tokio::task::yield_now().await;
-    let takeover_at = tokio::time::Instant::now();
     let takeover = successor.run_one(&created.id, now + Duration::from_secs(WORK_LEASE_SECONDS));
     assert!(takeover.await.unwrap());
+    let takeover_at = tokio::time::Instant::now();
 
     let takeover_time = takeover_at - fault_at;
     assert!(takeover_time <= Duration::from_secs(WORK_LEASE_SECONDS));

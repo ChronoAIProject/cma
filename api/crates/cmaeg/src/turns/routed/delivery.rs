@@ -39,6 +39,7 @@ pub enum FrameDelivery {
     Unknown,
 }
 pub struct RoutedDelivery {
+    pub(super) stream_relay: Option<reqwest::Client>,
     pub(super) plans: PlanStore,
     pub(super) journal: Journal,
     pub(super) authority: Arc<dyn Authority>,
@@ -52,6 +53,7 @@ impl RoutedDelivery {
         coordinator: DeliveryCoordinator,
     ) -> Self {
         Self {
+            stream_relay: None,
             plans,
             journal,
             authority,

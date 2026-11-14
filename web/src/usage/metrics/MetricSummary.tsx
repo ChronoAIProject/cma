@@ -96,7 +96,7 @@ export function AllocatedPeriod({ value }: { readonly value: UsageMetricRow['all
     <section className="usage-allocation-period" aria-label="Allocated resource-hours">
       <h3>Allocated resource-hours</h3>
       <p className="usage-section-description">
-        Capacity reserved over the selected period. This is the basis for billing.
+        Capacity reserved over the report period. This is the basis for billing.
       </p>
       <dl className="usage-metric-totals">
         <div>
