@@ -43,37 +43,47 @@ impl AgentWorker {
             workspace: context.workspace.clone(),
             worktree: context.worktree.clone(),
         };
-        self.retry_startup_publication(agent.clone(), &context.sandbox, now, |current, at| {
-            let observed = observed.clone();
-            let evidence = evidence.clone();
-            let identity = identity.clone();
-            async move {
-                let fence = claimed_fence(&current, &self.config.holder)?;
-                let target = LiveAgentTarget {
-                    agent_id: current.id.clone(),
-                    conversation_id: identity.conversation_id.clone(),
-                    runtime_generation: identity.runtime_generation,
-                };
-                let staged = self
-                    .dependencies
-                    .registry
-                    .staged_attachment(&target, fence)
-                    .map_err(|_| SandboxStoreError::Conflict)?;
-                if staged
-                    .as_ref()
-                    .is_none_or(|staged| staged.identity() != identity)
-                {
-                    return Err(SandboxStoreError::Conflict);
+        let committed = self
+            .retry_startup_publication(agent.clone(), &context.sandbox, now, |current, at| {
+                let observed = observed.clone();
+                let evidence = evidence.clone();
+                let identity = identity.clone();
+                async move {
+                    let fence = claimed_fence(&current, &self.config.holder)?;
+                    let target = LiveAgentTarget {
+                        agent_id: current.id.clone(),
+                        conversation_id: identity.conversation_id.clone(),
+                        runtime_generation: identity.runtime_generation,
+                    };
+                    let staged = self
+                        .dependencies
+                        .registry
+                        .staged_attachment(&target, fence)
+                        .map_err(|_| SandboxStoreError::Conflict)?;
+                    if staged
+                        .as_ref()
+                        .is_none_or(|staged| staged.identity() != identity)
+                    {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    let mutation = prepared_ready_mutation(
+                        current,
+                        &observed,
+                        evidence,
+                        &self.config.holder,
+                        at,
+                    )?;
+                    self.dependencies
+                        .store
+                        .commit_prepared_agent_open_ready(mutation, observed)
+                        .await
                 }
-                let mutation =
-                    prepared_ready_mutation(current, &observed, evidence, &self.config.holder, at)?;
-                self.dependencies
-                    .store
-                    .commit_prepared_agent_open_ready(mutation, observed)
-                    .await
-            }
-        })
-        .await
+            })
+            .await?;
+        if committed {
+            super::create_completion::emit(&agent, "prepared", "warm");
+        }
+        Ok(committed)
     }
 }
 
