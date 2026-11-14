@@ -270,7 +270,7 @@ intermediate promotion gate is part of this cutover.
 
 ## S3: HPA activation and measured automatic up/down
 
-Require S1/S2 PASS, verified Atlas>=30% headroom, the full quota/node/provider bound
+For paired S3, require S1/S2 PASS, verified Atlas>=30% headroom, the full quota/node/provider bound
 and CPU qualification in the capacity document. The selected cadence and max5
 must match reviewed tests. No rollout overlaps HPA qualification. Existing HPA
 must be absent; otherwise capture/review its exact ownership before proceeding.
@@ -306,6 +306,45 @@ Start the final30-minute soak only after actual terminating processes are gone.
 Do not reapply Deployment `replicas:2` while an HPA owns its scale subresource.
 
 ## Soak, abort, rollback and receipts
+
+### EG-only HPA before S1 (Track A)
+
+The separately approved EG-only route permits healthy AM1/OFF with S2 PASS and
+EG2/ON. It does not clear S1 or paired S3b. Use the existing controller `plan`
+and `apply` interface with [the EG-only packet example](../.github/scripts/cma_scale/eg-only.release.example.json).
+The example refuses until populated with actual evidence; every write still
+needs its own exact-context lead grant through the reviewed controller.
+
+The packet's `eg_only_hpa.s2` records the completed >=1800-second S2 PASS,
+matching release source/images, evidence SHA256 and exact Deployment bindings
+(`uid_sha256`, `generation`, `spec_sha256`). Its `capacity` records a <=120-second
+observation, evidence SHA256 and all listed qualifications. Budget at least
+`5 + ceil(hard_lifetime_seconds / 120)` EG processes (12 at760s), plus AM and
+other consumers, all live/terminating Mongo clients and >=30% server headroom.
+The qualified hard lifetime must be >=actual760s; p95 remains <=90s.
+
+| Controller action | Required prior result / effect |
+| --- | --- |
+| `s3-eg-only-quota-raise` | No HPAs; only CPU40/80→64/128, saves exact prior spec |
+| `s3-eg-only-create` | Raised reconciled quota; creates only EG min2/max5, CPU200% |
+| `s3-eg-only-lower-target` | `--created` exact EG-only create result; fresh integer utilization>=12 and ten-minute Ready EG pair |
+| `s3-eg-only-restore-target` | `--created` exact lower result; restores only original CPU target |
+| `s3-eg-only-freeze` | `--created` latest confirmed create/lower/restore result; disables both scaling directions |
+| `s3-eg-only-delete` | `--created` exact freeze result; UID/RV-guarded removal |
+| `s3-eg-only-quota-restore` | `--created` owned quota-raise result; no HPAs, fixed topology and usage below saved ceiling |
+
+Activation rechecks actual/template literal AMOFF/EGON, selected images,
+distinct EG hosts, actual/template EGgrace760, PDB, fresh complete EG PodMetrics
+and planned process incarnations after approval. AM grace is not raised.
+HPA generation is tested when present; UID/freshRV/full-spec CAS is mandatory.
+Missing HPA generation is never synthesized; Deployment generation stays mandatory.
+Target restore/freeze/delete remain available during topology/metrics failure,
+but only for the exact source-bound owned HPA receipt chain. UNKNOWN means
+reconcile, never retry. Before later S1 or recovery Deployment writes, freeze
+and delete EG HPA, verify both HPAs absent, then use the existing guarded
+one-at-a-time descent if needed with actual termination and survivor proof.
+Keep down300s/-1 per120s and observe useful automatic up/down, drain and actual
+return to two separately; manual descent cannot supply automatic acceptance.
 
 ### S1 real production accepted work — binding 19:10 ruling
 

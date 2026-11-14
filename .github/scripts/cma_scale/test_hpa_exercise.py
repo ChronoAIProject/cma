@@ -166,7 +166,14 @@ class ExerciseTests(NoExternalCommands):
             self.assertFalse(path.with_suffix('.result.json').exists())
 
     def test_missing_HPA_metric_or_condition_fails_closed(self):
-        for missing in ('currentMetrics', 'conditions', 'observedGeneration'):
+        for missing in ('currentMetrics', 'conditions'):
             obj = hpa(); del obj['status'][missing]
             with self.subTest(missing=missing), self.assertRaisesRegex(RuntimeError, 'S3b_'):
                 e.utilization(obj)
+
+    def test_optional_observed_generation_allows_absence_but_rejects_staleness(self):
+        obj = hpa(); del obj['status']['observedGeneration']
+        self.assertEqual(e.utilization(obj), 30)
+        obj['status']['observedGeneration'] = 0
+        with self.assertRaisesRegex(RuntimeError, 'generation_not_current'):
+            e.utilization(obj)

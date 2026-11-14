@@ -174,12 +174,17 @@ def transform(obj,op):
   old.append({'path':prefix+[key],'present':True,'value':copy.deepcopy(target[key])});del target[key]
  return result,old
 
-def patch_for(current,expected):
+def patch_for(current,expected,kind=None):
  if current.get('kind')=='ResourceQuota':
   m=current['metadata'];patch=[{'op':'test','path':'/metadata/uid','value':m['uid']},{'op':'test','path':'/metadata/resourceVersion','value':m['resourceVersion']},{'op':'test','path':'/spec','value':current['spec']}]
   for key in QUOTA_AFTER:patch.append({'op':'replace','path':'/spec/hard/'+key,'value':expected['spec']['hard'][key]})
   return patch
- m=current['metadata'];return [{'op':'test','path':'/metadata/uid','value':m['uid']},{'op':'test','path':'/metadata/resourceVersion','value':m['resourceVersion']},{'op':'test','path':'/metadata/generation','value':m['generation']},{'op':'test','path':'/spec','value':current['spec']},{'op':'replace','path':'/spec','value':expected['spec']}]
+ m=current['metadata'];patch=[{'op':'test','path':'/metadata/uid','value':m['uid']},{'op':'test','path':'/metadata/resourceVersion','value':m['resourceVersion']}]
+ # HPA APIs may omit generation. UID/RV/full-spec still provide atomic CAS.
+ if (kind or current.get('kind'))!='HorizontalPodAutoscaler' or 'generation' in m:
+  require(type(m.get('generation')) is int and m['generation']>0,'valid_generation_required')
+  patch.append({'op':'test','path':'/metadata/generation','value':m['generation']})
+ return patch+[{'op':'test','path':'/spec','value':current['spec']},{'op':'replace','path':'/spec','value':expected['spec']}]
 
 def template_identity(template):
  value=copy.deepcopy(template);value.get('metadata',{}).get('labels',{}).pop('pod-template-hash',None)
