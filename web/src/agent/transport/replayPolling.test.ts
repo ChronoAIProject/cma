@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { TransportError, type V2AgentCursor } from '@chronoai/cma-sdk';
+import { ApiError, TransportError, type V2AgentCursor } from '@chronoai/cma-sdk';
 import { harness, cursor } from './controller.fixture';
 import { followV2Agent } from './replay';
 
@@ -12,6 +12,33 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+it.each([429, 503])(
+  'waits for the %s server floor before replaying the same cursor',
+  async (status) => {
+    vi.mocked(Math.random).mockReturnValue(0);
+    const h = harness();
+    const session = (await h.client.agentTransport!.open('agt_1'))!;
+    const events = vi
+      .spyOn(session.events, 'events')
+      .mockRejectedValue(new ApiError(status, 'Retry later', undefined, undefined, 1000));
+    const abort = new AbortController();
+    const following = followV2Agent(session, cursor(2), abort.signal, vi.fn(), vi.fn());
+    await vi.advanceTimersByTimeAsync(999);
+    expect(events).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(events).toHaveBeenCalledTimes(2);
+    expect(events.mock.calls.map(([, options]) => options.afterCursor)).toEqual([
+      cursor(2),
+      cursor(2),
+    ]);
+    abort.abort();
+    await following;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(events).toHaveBeenCalledTimes(2);
+    expect(h.post).not.toHaveBeenCalled();
+  },
+);
 
 it.each([false, true])(
   'backs off streams that close without progress (failure=%s)',
