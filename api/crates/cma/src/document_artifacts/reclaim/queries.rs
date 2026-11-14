@@ -32,19 +32,19 @@ impl MongoDocumentReclaimStore {
         }
         let mut result = self
             .candidate_rows(
-                doc! {"kind":"object","state":"condemned"},
+                doc! {"kind":"object","state":"condemned","$or":[
+                    {"delete_lease_until":{"$exists":false}},
+                    {"delete_lease_until":{"$lt":DateTime::from_millis(
+                        before.saturating_add(RECLAIM_GRACE.as_millis() as i64)
+                    )}}
+                ]},
                 before,
                 limit,
                 true,
             )
             .await?;
-        if result.len() < limit {
-            let filter = reserved_filter(before, self.activation_time().await?);
-            result.extend(
-                self.candidate_rows(filter, before, limit - result.len(), false)
-                    .await?,
-            );
-        }
+        let filter = reserved_filter(before, self.activation_time().await?);
+        result.extend(self.candidate_rows(filter, before, limit, false).await?);
         Ok(result)
     }
     async fn candidate_rows(

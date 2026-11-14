@@ -113,21 +113,25 @@ impl DocumentMaintenanceWorker {
                 return;
             }
             // Future purge steps share this worker and budget, ahead of reclaim.
+            let mut observed = None;
             let result = reclaim
-                .run(|| async {
-                    maintenance
+                .run_resumable(|| async {
+                    let outcome = maintenance
                         .reclaim_step(mongodb::bson::DateTime::now().timestamp_millis())
                         .await
                         .map_err(|_| {
                             SandboxStoreError::Unavailable("document reclaim unavailable".into())
-                        })
+                        })?;
+                    let complete = !outcome.has_more;
+                    observed = Some(outcome);
+                    Ok(complete)
                 })
                 .await;
-            let mut retry_after = None;
+            let more_work = matches!(result, Ok(Some(false)));
             match result {
-                Ok(Some(outcome)) => {
+                Ok(Some(_)) => {
+                    let outcome = observed.expect("an admitted reclaim step records its outcome");
                     emit(&outcome);
-                    retry_after = outcome.retry_after;
                     if outcome.blocked {
                         record_blocked(
                             &mut blocked_reason,
@@ -149,14 +153,18 @@ impl DocumentMaintenanceWorker {
                 Ok(None) => record_blocked(&mut blocked_reason, "background_budget_denied"),
                 Err(_) => record_blocked(&mut blocked_reason, "reclaim_unavailable"),
             }
-            // Denied work is never queued. A dependency's longer minimum delay
-            // also applies after BackgroundWork's own jittered pacing.
-            tokio::time::sleep(next_delay(retry_after)).await;
+            // Resumable work already has a positive BackgroundWork yield. Idle
+            // and denied work retain five-minute pacing without a queued retry.
+            tokio::time::sleep(next_delay(more_work)).await;
         }
     }
 }
-fn next_delay(retry: Option<Duration>) -> Duration {
-    retry.unwrap_or_default().max(RECLAIM_INTERVAL)
+fn next_delay(more_work: bool) -> Duration {
+    if more_work {
+        Duration::ZERO
+    } else {
+        RECLAIM_INTERVAL
+    }
 }
 fn record_blocked(previous: &mut Option<&'static str>, reason: &'static str) {
     metrics::gauge!("cma_document_reclaim_blocked").set(1);

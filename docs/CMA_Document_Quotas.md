@@ -243,10 +243,21 @@ A missing prerequisite records a blocked reason without candidate scans,
 condemnation, deletion or accounting changes. In particular, unsupported deletion
 must never leave a reservation condemned and permanently refuse a same-key save.
 The worker shares the process background budget, waits 30 seconds after startup,
-and runs a bounded 30-second step every five minutes. Budget denial skips that
-round without queuing database work. It processes at most 64 rows per round and
-at most four object deletes concurrently. A deletion failure stops new deletes
-in that batch, retains condemned rows, and respects a longer `Retry-After`.
+and gives each admitted step a 30-second deadline. Discovery and deletion have
+separate bounded candidate allowances: at most 64 old reservations and 64
+condemned rows per step. Candidate selection excludes condemned rows whose
+deletion lease has not strictly expired. A step attempts at most 64 deletions,
+with at most four in flight. A full discovery batch that advances object states,
+or a full deletion batch that makes progress without failure, yields through
+`BackgroundWork` before continuing; its positive jittered delay is 188-250
+milliseconds. Idle, blocked,
+unavailable and budget-denied rounds retain five-minute pacing. Denied work never
+queues for database admission. A deletion failure stops replenishing that batch
+and retains its condemned rows and leases. The worker remembers the dependency's
+`Retry-After` (five minutes when absent) as a minimum pause for new deletions;
+discovery continues during that pause and does not extend it. Total backlog,
+including active leases or paused deletions, is not itself a reason to keep
+yielding.
 
 The object state machine is `reserved -> committed` in the metadata transaction,
 or `reserved -> condemned -> deleted` through reclaim. Legacy rows without a
@@ -292,8 +303,22 @@ inventory before certifying a complete sweep.
 
 Release means finality was proved, followed by accounting settlement. Under a
 healthy dependency and a batch without backlog, grace plus interval plus step
-is about 36 minutes. Larger queues, denied budget or dependency backoff can take
-longer; the metric age is the operational evidence, not a fixed completion SLA.
+is about 36 minutes. This estimate does not cover a queued sweep. With 32,768
+eligible objects, a single 64-object batch every five minutes requires 512
+batches: the 511 gaps alone take 153,300 seconds (42 hours 35 minutes), plus
+startup and actual batch execution time. Larger queues, denied budget or
+dependency backoff can take longer; the metric age is the operational evidence,
+not a fixed completion SLA.
+
+The deterministic maximum-owner regression uses 32,768 distinct eight-byte source
+reservations for one owner, all already past grace, and a healthy in-memory
+deletion fixture returning confirmed absence. It runs the real paced worker with
+paused time: 512 batches judge and delete all 32,768 objects by the 157.75-second
+checkpoint, including the 30-second startup wait and 511 explicit 250-millisecond
+clock advances. The fixture has zero storage or database latency. These are
+finite queue and scheduling results, not production throughput qualification or
+the TC-058, TC-063 and 24-hour orphan-identification journeys. Arbitrary fleet
+scale, dependency recovery and production load still require their own evidence.
 Referenced revisions remain retained. Removing an Agent still does not remove
 its independent documents.
 

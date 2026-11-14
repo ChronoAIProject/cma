@@ -5,6 +5,9 @@ use std::sync::{
     Arc,
 };
 
+#[path = "worker_fairness_tests.rs"]
+mod fairness;
+
 struct Store(AtomicUsize);
 #[async_trait::async_trait]
 impl DocumentReclaimStore for Store {
@@ -105,16 +108,9 @@ async fn document_reclaim_supervision_preserves_child_and_pacing_after_scheduler
     task.await.unwrap();
 }
 #[test]
-fn document_reclaim_worker_retry_delay_is_at_least_the_interval() {
-    assert_eq!(next_delay(None), RECLAIM_INTERVAL);
-    assert_eq!(
-        next_delay(Some(std::time::Duration::from_secs(900))),
-        std::time::Duration::from_secs(900)
-    );
-    assert_eq!(
-        next_delay(Some(std::time::Duration::from_secs(1))),
-        RECLAIM_INTERVAL
-    );
+fn document_reclaim_worker_idle_delay_preserves_resumable_background_pacing() {
+    assert_eq!(next_delay(false), RECLAIM_INTERVAL);
+    assert_eq!(next_delay(true), std::time::Duration::ZERO);
 }
 
 #[tokio::test(start_paused = true)]

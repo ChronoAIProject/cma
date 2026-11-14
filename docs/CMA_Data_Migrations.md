@@ -335,11 +335,19 @@ that outcome.
   and manifests. E1/E2 storage/finality/scope evidence is still external.
 - **Migration and work bounds:** existing index creation is idempotent, outside
   user requests and readiness retries; it has no new DDL completion guarantee.
-  Candidate queries have a three-second maximum, indexed state selection, and
-  at most 64 rows. Startup waits 30 seconds; each five-minute round uses the
-  shared background budget with a 30-second deadline, no queued admission and
-  at most four external deletions. Failed deletion preserves condemned rows and
-  respects dependency retry delay. No transaction contains storage I/O.
+  Candidate queries have a three-second maximum and indexed state selection,
+  with independent limits of 64 old reservations and 64 condemned rows; active
+  deletion leases are excluded from the latter. Startup waits 30 seconds. Each
+  slice uses the shared background budget with a 30-second deadline, no queued
+  admission, at most 64 deletion attempts and at most four external deletions in
+  flight. Full discovery batches that advance states and successful full deletion
+  batches continue after a positive 188-250 millisecond background yield. Idle, blocked,
+  unavailable and budget-denied work retains five-minute pacing. Failed deletion
+  preserves condemned rows and leases and pauses new deletions for the dependency
+  retry delay without pausing discovery or extending the existing delay. Backlog
+  consisting only of active leases or paused deletes does not trigger fast
+  continuation. No transaction contains storage I/O. This scheduling correction
+  adds no durable fields, indexes, collections or reader-floor requirement.
   Every deletion claims independently, including newly condemned rows. It starts
   only when the remaining lease exceeds the 30-second storage operation budget
   plus a five-second margin. Failed, cancelled or short-budget claims remain
