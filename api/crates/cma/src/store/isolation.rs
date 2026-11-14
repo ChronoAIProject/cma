@@ -135,6 +135,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::sandbox_mongo::SANDBOX_BILLING,
     super::sandbox_colors::COLLECTION,
     "sandbox_controls",
+    super::sandbox_credentials::issuance::COLLECTION,
     "sandbox_credential_revocations",
     "sandbox_credentials",
     "sandbox_events",

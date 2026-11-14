@@ -181,7 +181,7 @@ impl MongoSandboxStore {
         }
         let mut cursor = self
             .sandboxes
-            .find(filter)
+            .find(crate::store::work_schema::query(filter))
             .sort(doc! { "_id": 1 })
             .limit(i64::from(page.limit) + 1)
             .await

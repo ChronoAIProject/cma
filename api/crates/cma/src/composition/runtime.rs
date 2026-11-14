@@ -91,6 +91,7 @@ pub(super) fn lifecycle_config(
     ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
+        renewable_work: config.agent_manager_replicas.is_some(),
         ownership,
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,

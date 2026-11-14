@@ -75,6 +75,7 @@ pub struct MongoSandboxStore {
     pub(super) global_sandbox_limit: u16,
     #[cfg(test)]
     pub(super) request_budget_clock: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+    pub(super) renewable_work: bool,
     pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
     pub(super) runtime_loss_bounded_proof_enabled: bool,
@@ -190,6 +191,7 @@ impl MongoSandboxStore {
             #[cfg(test)]
             request_budget_clock: None,
             bounded_admission_agents: Default::default(),
+            renewable_work: false,
             segment_adoption_enabled: false,
             bounded_approval_reads: false,
             runtime_loss_bounded_proof_enabled: false,

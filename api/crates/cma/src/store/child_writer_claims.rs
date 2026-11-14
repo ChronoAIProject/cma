@@ -164,6 +164,9 @@ async fn apply(
             .map_err(ClaimError::Domain)?;
     }
     let (id, sandbox_id, owner, _) = claim.identity();
+    crate::store::work_publication::fence(store, session)
+        .await
+        .map_err(ClaimError::Domain)?;
     diagnostics.phase = "parent_read";
     let parent = store
         .sandboxes
@@ -199,11 +202,17 @@ async fn apply(
     let locked = store
         .sandboxes
         .update_one(
-            doc! {
-                "_id": sandbox_id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": parent_revision,
-            },
+            crate::store::work_schema::query(
+                crate::store::work_publication::sandbox(
+                    doc! {
+                        "_id": sandbox_id.as_str(),
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "revision": parent_revision,
+                    },
+                    sandbox_id.as_str(),
+                )
+                .map_err(ClaimError::Domain)?,
+            ),
             doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
         )
         .session(&mut *session)
@@ -279,7 +288,7 @@ async fn apply(
             .ok_or(ClaimError::Domain(SandboxStoreError::Conflict))?;
         let acquisition =
             super::work_claim_authority::eligible(&lease.expires_at).map_err(ClaimError::Domain)?;
-        filter = doc! {"$and":[filter, acquisition]};
+        filter = super::work_schema::query(doc! {"$and":[filter, acquisition]});
     }
     let mut fields = claim.fields().map_err(ClaimError::Domain)?;
     if let ChildWriterClaim::Agent(agent) = claim {
@@ -297,10 +306,19 @@ async fn apply(
         )
         .map_err(ClaimError::Domain)?;
     }
+    if matches!(claim, ChildWriterClaim::Workspace(row) if row.work.authority_protocol.is_some()) {
+        super::work_schema::floor::retain(store, session)
+            .await
+            .map_err(ClaimError::Driver)?;
+    }
     diagnostics.phase = "child_write";
+    let update: mongodb::options::UpdateModifications = match claim {
+        ChildWriterClaim::Workspace(_) => super::work_lease_update::acquisition(fields).into(),
+        ChildWriterClaim::Agent(_) => doc! {"$set":fields}.into(),
+    };
     let advanced = claim
         .collection(store)
-        .update_one(filter, doc! { "$set": fields })
+        .update_one(filter, update)
         .session(session)
         .await
         .map_err(ClaimError::Driver)?;

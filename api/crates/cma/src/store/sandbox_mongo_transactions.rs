@@ -63,10 +63,23 @@ pub(in crate::store) async fn start_transaction(session: &mut ClientSession) -> 
         .start_transaction()
         .read_concern(ReadConcern::snapshot())
         .write_concern(WriteConcern::majority())
-        .await
+        .await?;
+    if let Err(error) = crate::store::work_publication::fence_current(session).await {
+        if let Err(abort) = session.abort_transaction().await {
+            tracing::warn!(error = %abort, "ordinary work transaction abort was not acknowledged");
+        }
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub(in crate::store) async fn commit_transaction(session: &mut ClientSession) -> CommitOutcome {
+    if let Err(error) = layer2_core::sandbox::store::WorkAuthority::current() {
+        if let Err(abort) = session.abort_transaction().await {
+            tracing::warn!(error = %abort, "expired work publication abort was not acknowledged");
+        }
+        return CommitOutcome::Failed(Error::custom(error));
+    }
     commit_with(session).await
 }
 

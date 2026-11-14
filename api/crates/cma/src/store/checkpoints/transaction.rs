@@ -19,6 +19,10 @@ pub(super) async fn attempt(
     let mut scope = TransactionScope::start(session)
         .await
         .map_err(PublishError::Driver)?;
+    scope
+        .fence_ordinary_work(store)
+        .await
+        .map_err(PublishError::Domain)?;
     let row = scope
         .find_one(
             &store.sandboxes,
@@ -39,6 +43,9 @@ async fn apply_publication(
     mutation: &SandboxCheckpointMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<PublicationReceipt, PublishError> {
+    crate::store::work_publication::fence(store, session)
+        .await
+        .map_err(PublishError::Domain)?;
     let current = store
         .sandboxes
         .find_one(doc! { "_id": mutation.guard.sandbox_id.as_str() })
@@ -81,15 +88,22 @@ async fn publish_validated(
     let advanced = store
         .sandboxes
         .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "revision": signed(current.revision, "checkpoint sandbox revision")
-                    .map_err(|_| PublishError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! { "$set": sandbox_replacement_fields(&mutation.sandbox)
-            .map_err(PublishError::Domain)? },
+            crate::store::work_schema::query(
+                crate::store::work_publication::sandbox(
+                    doc! {
+                        "_id": current.id.as_str(),
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "channel_reuse_cleanup_execution": { "$exists": false },
+                        "revision": signed(current.revision, "checkpoint sandbox revision")
+                            .map_err(|_| PublishError::Domain(SandboxStoreError::Conflict))?,
+                    },
+                    current.id.as_str(),
+                )
+                .map_err(PublishError::Domain)?,
+            ),
+            crate::store::work_lease_update::replacement(
+                sandbox_replacement_fields(&mutation.sandbox).map_err(PublishError::Domain)?,
+            ),
         )
         .session(&mut *session)
         .await

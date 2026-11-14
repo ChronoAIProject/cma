@@ -11,8 +11,8 @@ use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 
 use super::sandbox_mongo::{
-    i64_field_matches, is_duplicate_key, nullable, read_record, record_bson, require_version,
-    signed, string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    i64_field_matches, is_duplicate_key, nullable, record_bson, signed, string_field_matches,
+    MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
 #[cfg(test)]
@@ -98,7 +98,7 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
     let lease_expires_at = workspace.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": workspace.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "document_schema_version": super::work_schema::version(workspace.work.authority_protocol),
         "sandbox_id": workspace.sandbox_id.as_str(),
         "owner": workspace.owner.as_str(),
         "name": &workspace.name,
@@ -123,7 +123,8 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
 }
 
 pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxStoreError> {
-    let workspace: Workspace = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    let workspace: Workspace =
+        super::work_schema::read(document).map_err(SandboxStoreError::Corrupt)?;
     let status = record_bson(&workspace.status).map_err(SandboxStoreError::Corrupt)?;
     let (origin_type, origin_index, origin_launch_id) = origin_fields(&workspace.origin);
     let revision =
@@ -202,7 +203,7 @@ async fn classify_miss(
     {
         None => Ok(SandboxStoreError::NotFound),
         Some(document) => {
-            require_version(&document).map_err(SandboxStoreError::Corrupt)?;
+            super::work_schema::require(&document).map_err(SandboxStoreError::Corrupt)?;
             Ok(SandboxStoreError::Conflict)
         }
     }
@@ -264,18 +265,24 @@ impl WorkspaceStore for MongoSandboxStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
+        if layer2_core::sandbox::store::WorkAuthority::active() {
+            return super::work_publication::workspace::save(self, expected_revision, &workspace)
+                .await;
+        }
         let result = self
             .workspaces
             .update_one(
-                doc! {
+                crate::store::work_schema::query(doc! {
                     "_id": workspace.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "channel_reuse_cleanup_execution": { "$exists": false },
                 "owned_workspace_cleanup_admission_v1": { "$exists": false },
                     "revision": signed(expected_revision, "expected workspace revision")
                         .map_err(|_| SandboxStoreError::Conflict)?,
-                },
-                doc! { "$set": workspace_replacement_fields(&workspace)? },
+                }),
+                crate::store::work_lease_update::replacement(workspace_replacement_fields(
+                    &workspace,
+                )?),
             )
             .await
             .map_err(|error| {
@@ -306,7 +313,7 @@ impl WorkspaceStore for MongoSandboxStore {
         }
         let mut cursor = self
             .workspaces
-            .find(filter)
+            .find(crate::store::work_schema::query(filter))
             .sort(doc! { "_id": 1 })
             .limit(i64::from(page.limit) + 1)
             .await

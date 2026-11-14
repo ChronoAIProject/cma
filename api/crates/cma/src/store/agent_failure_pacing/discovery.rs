@@ -97,7 +97,8 @@ fn build(
         let output = format!("pacing_{name}");
         wake.push(doc! {"$lookup": {
             "from": collection.name(), "localField": format!("record.{name}_id"), "foreignField": "_id",
-            "pipeline": [{"$match": {"document_schema_version": DOCUMENT_SCHEMA_VERSION}},
+            "pipeline": [{"$match": crate::store::work_schema::for_collection(collection,
+                doc! {"document_schema_version": DOCUMENT_SCHEMA_VERSION})},
                 {"$project": {"revision": 1, "record.revision": 1}}], "as": &output,
         }});
         for path in ["revision", "record.revision"] {

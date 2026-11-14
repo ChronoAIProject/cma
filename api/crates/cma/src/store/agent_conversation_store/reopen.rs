@@ -30,9 +30,9 @@ pub(in crate::store) async fn validate_and_fence(
     let locked = store
         .sandboxes
         .update_one(
-            doc! { "_id": parent.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            crate::store::work_schema::query(doc! { "_id": parent.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "revision": super::signed(parent.revision, "reopen parent revision")
-                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))? },
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))? }),
             doc! { "$inc": { "agent_conversation_reopen_fence": 1_i64 } },
         )
         .session(session)
