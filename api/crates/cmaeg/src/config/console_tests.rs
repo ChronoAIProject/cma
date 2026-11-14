@@ -24,6 +24,7 @@ fn detail(error: ConfigError) -> String {
 fn unset_keys_take_their_documented_defaults_and_leave_the_console_off() {
     let config = config_with(&[]).unwrap();
     assert!(!config.enabled);
+    assert!(!config.shared_sessions);
     assert!(config.nyxid_public_url.is_none());
     assert_eq!(config.client_id, "");
     assert!(config.client_secret.is_none());
@@ -36,6 +37,25 @@ fn unset_keys_take_their_documented_defaults_and_leave_the_console_off() {
     let defaults = ConsoleConfig::default();
     assert_eq!(defaults.session_idle, config.session_idle);
     assert_eq!(defaults.sessions_max, config.sessions_max);
+}
+
+#[test]
+fn replicated_console_requires_explicit_shared_authority() {
+    let mut config = ConsoleConfig::default();
+    assert!(config.validate_replica_mode(true).is_ok());
+    config.enabled = true;
+    assert!(config.validate_replica_mode(false).is_ok());
+    assert!(config.validate_replica_mode(true).is_err());
+    config.shared_sessions = true;
+    assert!(config.validate_replica_mode(true).is_ok());
+    assert!(
+        config_with(&[(CMAEG_CONSOLE_SHARED_SESSIONS, "true")])
+            .unwrap()
+            .shared_sessions
+    );
+    for invalid in ["TRUE", "1", "yes", ""] {
+        assert!(config_with(&[(CMAEG_CONSOLE_SHARED_SESSIONS, invalid)]).is_err());
+    }
 }
 
 #[test]

@@ -10,6 +10,7 @@ use super::{media::bounded, ConfigError};
 use cmaeg_core::channel::Secret;
 use std::{env, time::Duration};
 
+pub const CMAEG_CONSOLE_SHARED_SESSIONS: &str = "CMAEG_CONSOLE_SHARED_SESSIONS";
 pub const CMAEG_CONSOLE_ENABLED: &str = "CMAEG_CONSOLE_ENABLED";
 pub const CMAEG_CONSOLE_NYXID_PUBLIC_URL: &str = "CMAEG_CONSOLE_NYXID_PUBLIC_URL";
 pub const CMAEG_CONSOLE_CLIENT_ID: &str = "CMAEG_CONSOLE_CLIENT_ID";
@@ -54,6 +55,8 @@ pub struct ConsoleConfig {
     /// Off, no `/console` route exists and nothing console-related is
     /// allocated.
     pub enabled: bool,
+    /// Owner-activated durable authority; requires the explicit Console migration.
+    pub shared_sessions: bool,
     /// OAuth discovery and endpoint origin; defaults to the retained NyxID base.
     /// This does not change the shared authenticator or its issuer.
     pub nyxid_public_url: Option<String>,
@@ -142,6 +145,7 @@ impl Default for ConsoleConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            shared_sessions: false,
             nyxid_public_url: None,
             client_id: String::new(),
             client_secret: None,
@@ -168,6 +172,7 @@ impl ConsoleConfig {
         let session_ttl = session_ttl(lookup(CMAEG_CONSOLE_SESSION_TTL_MS)?.as_deref())?;
         let config = Self {
             enabled: enabled(lookup(CMAEG_CONSOLE_ENABLED)?.as_deref())?,
+            shared_sessions: shared_sessions(lookup(CMAEG_CONSOLE_SHARED_SESSIONS)?.as_deref())?,
             nyxid_public_url: lookup(CMAEG_CONSOLE_NYXID_PUBLIC_URL)?
                 .map(|value| {
                     super::validate_origin(CMAEG_CONSOLE_NYXID_PUBLIC_URL, &value)
@@ -192,6 +197,7 @@ impl ConsoleConfig {
         };
         tracing::info!(
             enabled = config.enabled,
+            shared_sessions = config.shared_sessions,
             client_configured = !config.client_id.is_empty() && config.client_secret.is_some(),
             login_rate_per_minute = config.login_rate_per_minute,
             session_ttl_ms = config.session_ttl.as_millis() as u64,
@@ -208,6 +214,14 @@ impl ConsoleConfig {
             "console settings"
         );
         Ok(config)
+    }
+
+    /// Replica mode must never expose the legacy process-local authority.
+    pub fn validate_replica_mode(&self, replicas: bool) -> Result<(), ConfigError> {
+        if replicas && self.enabled && !self.shared_sessions {
+            return Err(invalid("replicated Console requires CMAEG_CONSOLE_SHARED_SESSIONS=true and its approved migration".into()));
+        }
+        Ok(())
     }
 
     /// The first missing client setting, named for the operator's error log;
@@ -327,3 +341,13 @@ fn widen(value: u64) -> usize {
 #[cfg(test)]
 #[path = "console_tests.rs"]
 mod tests;
+
+fn shared_sessions(value: Option<&str>) -> Result<bool, ConfigError> {
+    match value {
+        None | Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        Some(_) => Err(invalid(format!(
+            "{CMAEG_CONSOLE_SHARED_SESSIONS} must be true or false"
+        ))),
+    }
+}
