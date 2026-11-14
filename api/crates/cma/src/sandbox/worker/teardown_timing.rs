@@ -58,6 +58,7 @@ impl TeardownTiming {
 
 pub(super) fn adapter_outcome(error: &AdapterError) -> &'static str {
     match error {
+        AdapterError::AccessRevoked => "access_revoked",
         AdapterError::Unavailable(_) => "unavailable",
         AdapterError::NativeClaimNotReady(_) => "claim_pending",
         AdapterError::RuntimeLedgerHold(_) => "ledger_hold",
@@ -117,5 +118,23 @@ mod tests {
             adapter_outcome(&AdapterError::Unavailable("private detail".into())),
             "unavailable"
         );
+    }
+
+    #[tokio::test]
+    async fn teardown_observation_keeps_access_revocation_terminal() {
+        let timing = TeardownTiming::new(&SandboxId("fixture".into()), 0);
+        let error = timing
+            .observe(
+                Phase::Runtime,
+                async { Err::<(), _>(AdapterError::AccessRevoked) },
+                adapter_outcome,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error, AdapterError::AccessRevoked);
+        assert_eq!(adapter_outcome(&error), "access_revoked");
+        let failure = super::super::support::adapter_failure(error);
+        assert_eq!(failure.typed().class, "terminal_security");
+        assert!(!failure.is_retryable());
     }
 }
