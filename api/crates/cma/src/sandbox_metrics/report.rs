@@ -177,18 +177,23 @@ impl MetricsWorkers {
                 .cloned()
                 .map(|id| (id, Accumulator::default()))
                 .collect();
+            let mut prepared_allocation = if self.store.view_policy.allocation_rollups_enabled {
+                Some(trace.stage(Stage::Allocation,
+                    self.store.bucketed_allocation_range(&mut snapshot, &states, report.effective_range)
+                ).await?)
+            } else { None };
             let mut from = report.effective_range.from;
             while from < report.effective_range.to {
                 let range = Range {
                     from,
                     to: ((from / 86_400 + 1) * 86_400).min(report.effective_range.to),
                 };
-                let allocation = trace
-                    .stage(
-                        Stage::Allocation,
-                        self.store.allocation_periods(&mut snapshot, &states, range),
-                    )
-                    .await?;
+                let allocation = match &mut prepared_allocation {
+                    Some(prepared) => prepared.remove(&from).ok_or(MetricsError::Unavailable)?,
+                    None => trace.stage(Stage::Allocation,
+                        self.store.allocation_periods(&mut snapshot, &states, range)
+                    ).await?,
+                };
                 for (id, value) in allocation {
                     if let Some(a) = accum.get_mut(&id) {
                         a.allocation.merge(&value.period);

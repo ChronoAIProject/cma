@@ -21,6 +21,7 @@ impl ReportingStore {
         // projection. Avoid a network round trip for every 200 small events;
         // Mongo still caps each reply at 16 MiB and the 100k event cap is unchanged.
         let mut count = 0;
+        let mut bytes = 0usize;
         while let Some(d) = cursor
             .next(&mut *session)
             .await
@@ -28,7 +29,8 @@ impl ReportingStore {
             .map_err(unavailable)?
         {
             count += 1;
-            if count > 100_000 {
+            bytes = bytes.checked_add(mongodb::bson::serialize_to_vec(&d).map_err(unavailable)?.len()).ok_or(MetricsError::Busy)?;
+            if count > 100_000 || bytes > 64 * 1024 * 1024 {
                 return Err(MetricsError::Busy);
             }
             let e = super::super::sandbox_usage::read_event(&d).map_err(unavailable)?;

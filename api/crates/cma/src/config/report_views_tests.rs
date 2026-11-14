@@ -51,7 +51,7 @@ fn retained_usage_views_and_warmer_require_separate_explicit_activation() {
 #[test]
 fn warmer_windows_are_explicit_bounded_and_keep_legacy_default() {
     let views = r#"[{"principal":"owner","admin":true,"sandbox_id":null}]"#;
-    let parse_warm = |warm| {
+    let parse_warm = |warm: &str| {
         parse(&[
             ("CHRONO_USAGE_REPORT_VIEWS_ENABLED", "true"),
             ("CHRONO_USAGE_REPORT_WARMER_ENABLED", "true"),
@@ -88,8 +88,12 @@ fn warmer_windows_are_explicit_bounded_and_keep_legacy_default() {
 #[test]
 fn incremental_allocation_projection_requires_explicit_activation() {
     assert!(!parse(&[]).unwrap().allocation_rollups_enabled);
-    assert!(parse(&[("CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED","true")]).unwrap().allocation_rollups_enabled);
+    assert!(
+        parse(&[("CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED", "true")])
+            .unwrap()
+            .allocation_rollups_enabled
+    );
     for value in ["yes", "1", "TRUE", ""] {
-        assert!(parse(&[("CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED",value)]).is_err());
+        assert!(parse(&[("CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED", value)]).is_err());
     }
 }
