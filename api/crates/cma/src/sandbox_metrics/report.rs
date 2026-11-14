@@ -332,7 +332,7 @@ impl MetricsWorkers {
                     trace
                         .stage(
                             Stage::Write,
-                            self.store.write_report_chunk(
+                            self.store.write_prepared_report_chunk(
                                 lease,
                                 &pending_rows,
                                 std::mem::take(&mut pending_charts),
@@ -346,8 +346,11 @@ impl MetricsWorkers {
                 trace
                     .stage(
                         Stage::Write,
-                        self.store
-                            .write_report_chunk(lease, &pending_rows, pending_charts),
+                        self.store.write_prepared_report_chunk(
+                            lease,
+                            &pending_rows,
+                            pending_charts,
+                        ),
                     )
                     .await?;
             }

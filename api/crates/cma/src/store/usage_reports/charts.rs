@@ -1,3 +1,4 @@
+use super::chart_encoding::{ChartDocument, ChartRecord};
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::{
@@ -21,7 +22,7 @@ pub(crate) fn chart_documents(
     metric: Metric,
     buckets: Vec<Bucket>,
     expectations: &[Expectation],
-) -> Result<Vec<Document>> {
+) -> Result<Vec<mongodb::bson::RawDocumentBuf>> {
     let rank: f64 = buckets.iter().map(|b| b.integral).sum();
     let mut out = Vec::new();
     // A membership marker is required even if all measurements are absent.
@@ -29,17 +30,26 @@ pub(crate) fn chart_documents(
     for chunk in 0..buckets.len().div_ceil(168).max(1) {
         let points =
             &buckets[(chunk * 168).min(buckets.len())..((chunk + 1) * 168).min(buckets.len())];
-        let record = ChartChunk {
-            buckets: points.to_vec(),
-            expectations: if chunk == 0 {
-                expectations.to_vec()
-            } else {
-                Vec::new()
-            },
-        };
-        out.push(doc!{"_id":format!("{}:{sandbox}:{}:{chunk}",report.report_id,metric.index()),"document_schema_version":1_i64,
-            "report_id":&report.report_id,"sandbox_id":sandbox,"owner":owner,"group":"sandbox","series_id":sandbox,
-            "metric":metric.index() as i64,"chunk":chunk as i64,"rank":rank,"expires_at":expires(report.expires_at+60),"record":encode(&record)?});
+        out.push(
+            ChartDocument {
+                id: format!("{}:{sandbox}:{}:{chunk}", report.report_id, metric.index()),
+                document_schema_version: 1,
+                report_id: &report.report_id,
+                sandbox_id: sandbox,
+                owner,
+                group: "sandbox",
+                series_id: sandbox,
+                metric: metric.index() as i64,
+                chunk: chunk as i64,
+                rank,
+                expires_at: expires(report.expires_at + 60),
+                record: ChartRecord {
+                    buckets: points,
+                    expectations: if chunk == 0 { expectations } else { &[] },
+                },
+            }
+            .encode()?,
+        );
     }
     Ok(out)
 }
