@@ -39,7 +39,7 @@ test('a five-replica result cannot satisfy a registered four-replica comparison'
 test('autoscale uses the declared peak and still fails on a downscale canary error', async () => {
   const historical = await autoscale(fakeDriver(5), { ...config, scalingPeak: 5 }, { time: fakeTime() });
   assert.equal(historical.sequence, '2-5-2'); assert.equal(historical.peak_am, 5);
-  await assert.rejects(autoscale(fakeDriver(5), config, { time: fakeTime() }), /deadline/);
+  await assert.rejects(autoscale(fakeDriver(5), config, { time: fakeTime() }), /scaling_peak_exceeded/);
   const driver = fakeDriver(); let reads = 0;
   driver.startStress = async (_cohort, options) => {
     assert.equal(options.targetReplicas, 4);
