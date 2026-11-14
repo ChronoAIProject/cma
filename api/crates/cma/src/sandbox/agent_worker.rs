@@ -1,12 +1,14 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
+use layer2_core::sandbox::store::{AgentCreateAdmission, AgentLifecycleStore, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentOperationService, AgentUpdateRecorder, AgentWorkStep};
 use layer2_core::{rfc3339_at, AgentId};
 use layer3_adapter::SandboxAdapter;
+use tokio::sync::Semaphore;
 
 use super::agent_skills::AgentSkillResolver;
 use super::live_agents::{DurableAgentConnectionLossHandler, LiveAgentRegistry};
@@ -17,6 +19,7 @@ pub(crate) use capacity::reconnect::RecoveryReconnect;
 pub(crate) use capacity::reconnect::{CapacityRecoveryReconnect, ReconnectAction};
 mod cleanup;
 mod cleanup_publication;
+mod completion_lookup;
 mod connection;
 mod connection_output;
 mod connection_retry;
@@ -43,6 +46,14 @@ const DEFAULT_LEASE: Duration = Duration::from_secs(18 * 60);
 const DEFAULT_RETRY: Duration = Duration::from_secs(30);
 const DEFAULT_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(17 * 60);
+const CREATE_COMPLETION_ADMISSION_SLOTS: usize = 32;
+const CREATE_COMPLETION_ADMISSION_TIMEOUT: Duration = Duration::from_millis(250);
+
+type CompletionAdmissionFuture =
+    Pin<Box<dyn Future<Output = Result<Option<AgentCreateAdmission>, SandboxStoreError>> + Send>>;
+
+#[cfg(test)]
+type CompletionAdmissionLookup = Arc<dyn Fn(Agent) -> CompletionAdmissionFuture + Send + Sync>;
 
 pub(crate) struct AgentWorkerDependencies {
     pub store: Arc<dyn AgentLifecycleStore>,
@@ -138,6 +149,10 @@ pub(crate) struct AgentWorker {
     config: AgentWorkerConfig,
     maintenance: reconcile::MaintenanceChecks,
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
+    startup_timings: Mutex<HashMap<AgentId, startup_timing::StartupPhaseDurations>>,
+    completion_admission_slots: Arc<Semaphore>,
+    #[cfg(test)]
+    completion_admission_lookup: Mutex<Option<CompletionAdmissionLookup>>,
 }
 
 impl AgentWorker {
@@ -154,7 +169,48 @@ impl AgentWorker {
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
             capacity_restart,
+            startup_timings: Mutex::new(HashMap::new()),
+            completion_admission_slots: Arc::new(Semaphore::new(CREATE_COMPLETION_ADMISSION_SLOTS)),
+            #[cfg(test)]
+            completion_admission_lookup: Mutex::new(None),
         })
+    }
+
+    fn retain_startup_timing(
+        &self,
+        agent: &AgentId,
+        timing: startup_timing::StartupPhaseDurations,
+    ) {
+        let mut timings = match self.startup_timings.lock() {
+            Ok(timings) => timings,
+            Err(poisoned) => {
+                tracing::error!("agent startup timing state was poisoned; recovering it");
+                poisoned.into_inner()
+            }
+        };
+        // Startup phase timing is deliberately process-local. Bound this
+        // cache so abandoned or failed creates cannot grow it without limit;
+        // an eviction leaves the eventual event explicitly phase-partial.
+        if timings.len() >= 1024 && !timings.contains_key(agent) {
+            if let Some(oldest) = timings.keys().next().cloned() {
+                timings.remove(&oldest);
+            }
+        }
+        timings.insert(agent.clone(), timing);
+    }
+
+    fn take_startup_timing(
+        &self,
+        agent: &AgentId,
+    ) -> Option<startup_timing::StartupPhaseDurations> {
+        let mut timings = match self.startup_timings.lock() {
+            Ok(timings) => timings,
+            Err(poisoned) => {
+                tracing::error!("agent startup timing state was poisoned; recovering it");
+                poisoned.into_inner()
+            }
+        };
+        timings.remove(agent)
     }
 
     pub(crate) async fn due_work(
@@ -349,5 +405,22 @@ impl AgentWorker {
             AgentWorkStep::PublishDeleted => Box::pin(self.publish_deleted(agent, now)),
             AgentWorkStep::None => Box::pin(async { Err(SandboxStoreError::Conflict) }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_admission_slots_are_bounded_and_nonwaiting() {
+        let slots = Arc::new(Semaphore::new(CREATE_COMPLETION_ADMISSION_SLOTS));
+        let mut permits = Vec::new();
+        for _ in 0..CREATE_COMPLETION_ADMISSION_SLOTS {
+            permits.push(Arc::clone(&slots).try_acquire_owned().unwrap());
+        }
+        assert!(Arc::clone(&slots).try_acquire_owned().is_err());
+        drop(permits.pop());
+        assert!(Arc::clone(&slots).try_acquire_owned().is_ok());
     }
 }

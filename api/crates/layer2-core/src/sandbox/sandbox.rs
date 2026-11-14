@@ -93,8 +93,6 @@ impl Sandbox {
         }
         if !self.credential.validate()
             || self.work.next_fence == 0
-            || (self.work.prepared_installation_digest.is_some()
-                && self.work.authority_protocol.is_none())
             || self
                 .work
                 .prepared_installation_digest
