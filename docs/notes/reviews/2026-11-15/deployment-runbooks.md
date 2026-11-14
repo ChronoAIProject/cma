@@ -4,6 +4,10 @@ Executor: deployment-engineer-01. GO and advancement: lead. Freeze: **00:00 SGT*
 Stage starts are fixed: [S1 06:00](s1-execution.md), [S2 08:30](s2-execution.md),
 [S3 10:30](s3-execution.md). Production verification is 13:00–17:00; final owner
 deadline is 18:00. These documents supply commands; they do not grant execution.
+The [combined U/S timeline](stage-timeline.md) applies the lead's19:56 ruling:
+engineer02 runs U1–U3; engineer01 runs S1–S3, each with a fresh execution grant.
+S1 proceeds at06:00 even during lease-fenced U2 backfill, with state-matched
+baselines. U3 launch must avoid ±15 minutes of each S-stage start.
 
 Use solution-architect-03's `stage-go-checklists.md` and the canonical 25-row
 `/Users/shining/code/work/tech-lead.staff/solution-architect-04/essentials.md`.
@@ -30,7 +34,10 @@ Before stopping either legacy process, obtain the final integrated source,
 revised M3 results and architect04 GO, actual AM/EG image digests, Batch9 N1/OFF
 deployment and stable-soak result, schema/retained-receiver compatibility and
 Activity postcheck. Engineer02 is the sole Batch9/index operator. Its sequence
-remains after03:00: Batch9 plus30-minute soak, then separately approved indexes.
+is03:00 Batch9 → image soak → Activity index → U1 collection/index Job.
+U1 credential grant is `GRANT_NOOP` (AM already has readWrite+dbAdmin).
+U2 starts after U1 success if before04:30, otherwise targets06:45 after the
+actual S1 soak; U3 requires U2 `pass_complete` and the timeline's start exclusions.
 This runbook neither creates an index route nor supplies database credentials.
 
 The lead must select this controller implementation and the RS0-after-old-stop
