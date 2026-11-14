@@ -118,7 +118,11 @@ fn unknown_version_filter(collection: &str) -> Document {
         collection,
         "sandboxes" | "workspaces" | "sandbox_credentials"
     ) {
-        vec![1_i64, super::work_schema::RENEWED_VERSION]
+        vec![
+            1_i64,
+            super::work_schema::RENEWED_VERSION,
+            super::work_schema::PREPARED_VERSION,
+        ]
     } else {
         vec![DOCUMENT_SCHEMA_VERSION]
     };
@@ -152,8 +156,14 @@ mod tests {
             mongodb::bson::bson!([1_i64, 2_i64])
         );
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
-        assert_eq!(versions("sandboxes"), mongodb::bson::bson!([1_i64, 3_i64]));
-        assert_eq!(versions("workspaces"), mongodb::bson::bson!([1_i64, 3_i64]));
+        assert_eq!(
+            versions("sandboxes"),
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64])
+        );
+        assert_eq!(
+            versions("workspaces"),
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64])
+        );
         // Scalar integer and no-array predicates remain present for both paths.
         for guard in [1_usize, 2] {
             assert_eq!(

@@ -98,7 +98,7 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
     let lease_expires_at = workspace.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": workspace.id.as_str(),
-        "document_schema_version": super::work_schema::version(workspace.work.authority_protocol),
+        "document_schema_version": super::work_schema::version(workspace.work.authority_protocol, false),
         "sandbox_id": workspace.sandbox_id.as_str(),
         "owner": workspace.owner.as_str(),
         "name": &workspace.name,

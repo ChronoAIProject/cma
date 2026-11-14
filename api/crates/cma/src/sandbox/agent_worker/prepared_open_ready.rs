@@ -27,6 +27,8 @@ impl AgentWorker {
         attachment: &LiveAgentAttachment,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        let first_ready = agent.ready_at.is_none();
+        let publication_started = tokio::time::Instant::now();
         let identity = attachment.identity();
         if agent.work.warm_conversation_id.as_deref() != Some(identity.conversation_id.as_str())
             || agent.conversation.settings.is_some()
@@ -80,8 +82,23 @@ impl AgentWorker {
                 }
             })
             .await?;
-        if committed {
-            super::create_completion::emit(agent, "prepared", "warm");
+        if committed && first_ready {
+            let ready_at = SystemTime::now();
+            let publish_ready_ms = publication_started.elapsed().as_millis() as u64;
+            let startup_phases = self.take_startup_timing(&agent.id);
+            self.schedule_completion_event(
+                agent.clone(),
+                "prepared",
+                "warm",
+                super::create_completion::CompletionTiming {
+                    admission_ms: None,
+                    admitted_desktop: None,
+                    admitted_machine_included: None,
+                    ready_at,
+                    publish_ready_ms,
+                    startup_phases,
+                },
+            );
         }
         Ok(committed)
     }

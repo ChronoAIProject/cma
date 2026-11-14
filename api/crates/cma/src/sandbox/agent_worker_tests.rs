@@ -53,6 +53,7 @@ use fixture_store::FixtureStore;
 mod cleanup_scheduling_tests;
 mod connection_contention_tests;
 mod connection_failure_tests;
+mod create_completion_tests;
 mod first_message_contention_tests;
 mod first_message_publication_tests;
 mod ledger_hold_tests;
