@@ -1,12 +1,19 @@
-# S1 — AM fixed two, 15 November 06:00 SGT
+# S1 — AM fixed two, 14 November approximately 22:30 SGT
 
 Use [common setup, policy, observations and acceptance](deployment-runbooks.md)
 first. Executor deployment-engineer-01; lead owns GO. Preconditions are K01–K25
-as applicable, the revised M3 gate and architect04 GO, final M4 results,
+as applicable, the revised M3 gate and architect04 GO, Batch9 checkpoint PASS,
 compatible retained receiver/schema, survivor
 capacity, no HPAs or other rollout writer, EG proven healthy at1, canonical
 backend observer, qualified <120s no-overlap variant and both recovery branches.
 No final image, timing proof or production approval is supplied by this file.
+
+The lead's 20:30 [revised timeline](stage-timeline.md) requires the Batch9
+15-minute checkpoint and S1 dry-run projections PASS before S1. Use the merged
+#2043 controller at develop `9be345523fd2768d8e8daf1c0f4ccd487191f9b0` or a
+descendant retaining that correction. Log01's60-minute Batch9 N1 baseline is
+planned 21:30–22:30. Report actual preflight evidence for the fresh S1 approval;
+a planned 22:30 start is not a grant or success result.
 
 The binding lead ruling of 14 November 19:10 SGT replaces the earlier
 synthetic-write plan. S1 observes real production accepted work through read-only
@@ -59,7 +66,7 @@ python3 -B "$scale_tools/observe.py" check --service am --count 1 \
 
 3. Confirm the independent service observer and recovery operator are ready.
 Require successful mapped Compute reads and the bound cutover probe; refresh
-the old Pod UID/restart/image cohort after M4. Follow the observer's query
+the old Pod UID/restart/image cohort after the observed Batch9 checkpoint PASS. Follow the observer's query
 brackets and conservative deadline, not a first-absent timestamp.
 Before stop, confirm owner `operator_trigger_ready`, the actual N1/OFF pre-arm
 context and available shared sample spacing. Trigger the one pair only after
@@ -125,15 +132,16 @@ source/images/config, serving replica identities, baseline and S–E window.
 No synthetic create, Send, Stop or provider workload is authorized by this plan.
 The stopped broker mutation path stays stopped and the NyxID slot is untouched.
 
-The [19:56 U/S schedule](stage-timeline.md) keeps S1 at06:00 even when U2
-backfill is still active; replica maintenance is lease-fenced. Engineer02 supplies
-the actual backfill state/timestamps. Log01 tags latency/error cohorts with that
-state and uses an AM1 baseline from the same state. Split observed state changes
+The [20:30 revised schedule](stage-timeline.md) moves S1 to14 Nov approximately 22:30,
+ahead of the 15 Nov 03:00 Activity/U stages. Engineer02 still supplies actual
+backfill state/timestamps; scheduled future U work does not prove inactivity.
+Log01 tags latency/error cohorts with actual state and uses a same-state AM1
+baseline on the Batch9 image, planned 21:30–22:30. Split observed state changes
 instead of pooling active/inactive windows; unknown state or missing matched
 baseline stays explicit. Preserve the original accepted-command denominator and
-cumulative errors across those cohorts and any low-N extension. A delayed U2
-targets06:45 only after this actual S1 soak ends. U1–U3 remain engineer02-owned
-and each U/S stage still requires its own fresh lead execution approval.
+cumulative errors across cohorts and any low-N extension. U2 starts before 04:30
+after U1 success, otherwise after actual S3 success. Each stage still requires
+observed preceding success and its own fresh lead execution approval.
 
 1. Observe per-replica success, failure and latency for create, send, stop and
    streams. Record actual distinct accepted-command N and available per-route

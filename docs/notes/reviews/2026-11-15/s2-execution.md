@@ -1,4 +1,4 @@
-# S2 — EG fixed two, 15 November 08:30 SGT
+# S2 — EG fixed two, 15 November approximately 00:30 SGT
 
 Use [common setup and safety rules](deployment-runbooks.md). Require signed S1
 PASS, AM2/PDB healthy, final EG image and schema/retained-record compatibility,
@@ -7,6 +7,13 @@ survivor capacity, no HPA/concurrent rollout and qualified <120s cutover.
 Name all enabled provider canaries, reconciliation owner and24-hour monitor
 before GO. Sleep30 alone does not close K13; never use the withdrawn EG exec
 hook or invent `--replica-drain`.
+
+The [20:30 timeline revision](stage-timeline.md) requires S2 and its full soak
+to finish before 02:00. Preserve the controller's 01:58 write margin and enough
+recovery time; the 02:00–02:59 no-write blackout includes recovery. Do not shorten
+soak/drain or start a step that cannot fit. On failure, perform approved rollback,
+report and let the lead re-slot the stage. S1 success and a fresh S2 grant remain
+prerequisites, regardless of the planned 00:30 start.
 
 The six commands below each require fresh plan/server dry-run → exact single-use
 grant → apply/readback, as described in common setup. The image variables are

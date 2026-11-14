@@ -45,11 +45,18 @@ raw mutation command.
 Obtain explicit rollback permissions before starting. Server dry-run does not
 replace permission, application tests or live backend verification.
 
-Lead stage starts are 15 Nov S1 06:00, S2 08:30 and S3 10:30 SGT, with final
-production verification 13:00–17:00 and owner report by 18:00. No writes
-02:00–02:59, including rollback. Existing operation approvals still apply.
-Recheck time immediately before every write; do not
-start an operation whose bounded duration can cross a prohibited window.
+The binding 14 Nov 20:30 [timeline](notes/reviews/2026-11-15/stage-timeline.md)
+plans Batch9 at 14 Nov 21:00 (N=1, shipped defaults, 15-minute checkpoint and
+auto-rollback), S1 approximately 22:30 after checkpoint and #2043 dry-run PASS,
+S2 approximately 15 Nov 00:30 fully soaked before 02:00, and S3 approximately
+05:30–06:00 (quota 64/128 → HPA → S3b once #2038 merges). Log01's Batch9 S1
+baseline is 21:30–22:30. Activity → U1 → U2 begins 03:00; U2 starts before 04:30
+or after actual S3 success. U3 needs `pass_complete` and at least 15 minutes
+from every confirmed S-stage start. M8 uses prod-verifier01's kit 09:00–16:00;
+final report remains due 15 Nov 18:00. Each stage needs observed prior success
+and a fresh lead grant. On failure, roll back compatibly, report and let the
+lead re-slot. No writes 02:00–02:59, including recovery; preserve the controller's
+01:58 margin and never begin a bounded write that can cross the blackout.
 
 ## Release packet and local preparation
 
@@ -146,11 +153,13 @@ Use at least three baseline repeats, preregister measured noise and confidence
 criteria before N2; report N, errors, missing completions, p50/p95 and p99 only
 when N>=1000. Missing/unstable data is INCONCLUSIVE. Do not generate production
 canary traffic or faults without separately scoped authorization. Analyst02's
-three final-candidate production N1 windows require stable matching service by
-01:30 (windows01:30–03:00, read-only during blackout). This cutover does not add
-an ON1 stage to satisfy that schedule. If unavailable, obtain authorized matching
-ON1/ON2 fixture proof from the verifier or HOLD; do not compress windows or use
-batch4 noise. N1 modeOFF versus N2 modeON is a configuration confounder.
+final-candidate baseline packet must be rebound to the revised timeline.
+Log01 supplies the 60-minute 21:30–22:30 Batch9 N1 baseline and retains the standing
+24h context; the existing 1800-second synthetic READ session is a separate bound
+window. Superseded morning windows do not establish matching coverage. Preserve
+actual counts, failures and missing boundaries without fabricating extra windows
+or compressing the statistical method. N1 modeOFF versus N2 modeON remains a
+configuration confounder, with the existing statistical/policy distinction.
 
 Read-only resource checks, after the linked common operator setup:
 
