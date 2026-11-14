@@ -76,17 +76,36 @@ pub(super) fn runtime_path(agent: &Agent, sandbox: &Sandbox) -> &'static str {
     let Some(native) = home.native_pool.as_ref() else {
         return "unknown";
     };
-    if native.claim.is_some()
-        && native.cleanup.is_none()
-        && !native.cleaned
-        && home.attachment().is_some()
-        && runtime.provision_generation == Some(native.request.runtime_generation)
-    {
-        "warm"
-    } else if runtime.provision_generation.is_some() {
-        "cold"
-    } else {
-        "unknown"
+    classify_runtime_facts(
+        native.claim.is_some(),
+        native.cleanup.is_some(),
+        native.cleaned,
+        home.attachment().is_some(),
+        runtime.provision_generation,
+        native.request.runtime_generation,
+    )
+}
+
+fn classify_runtime_facts(
+    native_claimed: bool,
+    native_cleanup: bool,
+    native_cleaned: bool,
+    home_attached: bool,
+    runtime_generation: Option<u64>,
+    expected_generation: u64,
+) -> &'static str {
+    // A matching generation proves warm reuse while the same native
+    // reservation remains actively claimed and attached. A failed, cleaned,
+    // detached, never-claimed, or mismatched-generation proof cannot establish
+    // fresh provision, so it remains unknown.
+    let active_native_claim = native_claimed && !native_cleanup && !native_cleaned && home_attached;
+    if !active_native_claim {
+        return "unknown";
+    }
+    match runtime_generation {
+        Some(generation) if generation == expected_generation => "warm",
+        Some(_) => "unknown",
+        None => "unknown",
     }
 }
 
@@ -260,5 +279,29 @@ mod tests {
         assert_eq!(super::lifecycle_class(Some(true), Some(true)), "desktop");
         assert_eq!(super::lifecycle_class(None, Some(false)), "unknown");
         assert_eq!(super::lifecycle_class(Some(false), None), "unknown");
+    }
+
+    #[test]
+    fn runtime_class_requires_an_active_native_claim_and_attachment() {
+        assert_eq!(
+            super::classify_runtime_facts(true, false, false, true, Some(7), 7),
+            "warm"
+        );
+        assert_eq!(
+            super::classify_runtime_facts(true, false, false, true, Some(8), 7),
+            "unknown"
+        );
+        for (claimed, cleanup, cleaned, attached, generation) in [
+            (false, false, false, true, Some(8)),
+            (true, true, false, true, Some(8)),
+            (true, false, true, true, Some(8)),
+            (true, false, false, false, Some(8)),
+            (true, false, false, true, None),
+        ] {
+            assert_eq!(
+                super::classify_runtime_facts(claimed, cleanup, cleaned, attached, generation, 7),
+                "unknown"
+            );
+        }
     }
 }
