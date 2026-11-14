@@ -32,19 +32,19 @@ impl MongoDocumentReclaimStore {
         }
         let mut result = self
             .candidate_rows(
-                doc! {"kind":"object","state":"condemned"},
+                doc! {"kind":"object","state":"condemned","$or":[
+                    {"delete_lease_until":{"$exists":false}},
+                    {"delete_lease_until":{"$lt":DateTime::from_millis(
+                        before.saturating_add(RECLAIM_GRACE.as_millis() as i64)
+                    )}}
+                ]},
                 before,
                 limit,
                 true,
             )
             .await?;
-        if result.len() < limit {
-            let filter = reserved_filter(before, self.activation_time().await?);
-            result.extend(
-                self.candidate_rows(filter, before, limit - result.len(), false)
-                    .await?,
-            );
-        }
+        let filter = reserved_filter(before, self.activation_time().await?);
+        result.extend(self.candidate_rows(filter, before, limit, false).await?);
         Ok(result)
     }
     async fn candidate_rows(
@@ -56,7 +56,7 @@ impl MongoDocumentReclaimStore {
     ) -> Result<Vec<ObjectCandidate>, DocumentError> {
         // Exclude purge-owned rows before limiting either candidate class. An
         // unchanged handed-off condemned batch must not starve ordinary orphans.
-        // The initial match retains the state index; each foreign lookup uses
+        // The initial match uses the class index; each foreign lookup uses
         // the lifecycle primary key. The query deadline bounds rejected scans.
         // A malformed row must still reach decode_candidate and return Corrupt.
         // Only a canonical ID is eligible for lifecycle ownership exclusion.
@@ -84,10 +84,15 @@ impl MongoDocumentReclaimStore {
             doc! {"$project":{"purge_ownership":0}},
             doc! {"$limit":limit as i64},
         ];
+        let index = if condemned {
+            doc! {"kind":1,"state":1,"delete_lease_until":1}
+        } else {
+            doc! {"kind":1,"state":1,"reserved_at":1}
+        };
         let rows: Vec<Document> = self
             .rows
             .aggregate(pipeline)
-            .hint(Hint::Keys(doc! {"kind":1,"state":1,"reserved_at":1}))
+            .hint(Hint::Keys(index))
             .batch_size(limit as u32)
             .max_time(IO)
             .await

@@ -6,12 +6,19 @@ use std::sync::{
     Mutex,
 };
 
-struct Purge {
-    calls: AtomicUsize,
+pub(super) struct Purge {
+    pub(super) calls: AtomicUsize,
     backlog_calls: AtomicUsize,
     position: Mutex<Option<PurgePosition>>,
 }
 impl Purge {
+    pub(super) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            calls: AtomicUsize::new(0),
+            backlog_calls: AtomicUsize::new(0),
+            position: Mutex::new(None),
+        })
+    }
     fn document(&self) -> PurgeClaimable {
         PurgeClaimable {
             id: format!("doc_{:032x}", 1),
