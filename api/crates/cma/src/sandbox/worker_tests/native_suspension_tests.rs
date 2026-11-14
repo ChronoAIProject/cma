@@ -23,6 +23,7 @@ struct Fixture {
     harness: Harness,
     homes: Arc<home_tests::Homes>,
     backend: NativeBackend,
+    retry_delay: Duration,
 }
 impl Fixture {
     async fn new() -> Self {
@@ -33,6 +34,7 @@ impl Fixture {
             harness,
             homes,
             backend,
+            retry_delay: Duration::from_secs(5),
         }
     }
     async fn native() -> Self {
@@ -76,7 +78,7 @@ impl Fixture {
         let mut config =
             SandboxWorkerConfig::new("restarted", "test", image, self.harness.policy.clone())
                 .with_home_policy(Some(self.home_policy()));
-        config.retry_delay = Duration::from_secs(5);
+        config.retry_delay = self.retry_delay;
         let worker = SandboxWorker::new(
             SandboxWorkerDependencies {
                 store: self.harness.store.clone(),
@@ -114,7 +116,7 @@ impl Fixture {
                 AgentWorker, AgentWorkerConfig, AgentWorkerDependencies,
             };
             let mut config = AgentWorkerConfig::new("retiring-agent", "test");
-            config.retry_delay = Duration::from_secs(5);
+            config.retry_delay = self.retry_delay;
             let worker = AgentWorker::new(
                 AgentWorkerDependencies {
                     store: self.harness.store.clone(),
