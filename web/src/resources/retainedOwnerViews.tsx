@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import type { AgentCreationCategory } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../api/client';
 import { useCmaClient } from '../api/context';
+import { detailReadSource } from '../api/detailReads';
 import type {
   AgentDetail,
   SandboxDetail,
@@ -56,13 +57,13 @@ export function OwnerViewsProvider({
   readonly viewerId: string;
   readonly children: ReactNode;
 }) {
-  const client = useCmaClient();
+  const client = detailReadSource(useCmaClient());
   const views = useMemo(() => new OwnerViews(client, viewerId), [client, viewerId]);
   return <RetainedOwnerViews value={views}>{children}</RetainedOwnerViews>;
 }
 
 export function useOwnerViews() {
-  const client = useCmaClient();
+  const client = detailReadSource(useCmaClient());
   const views = useContext(RetainedOwnerViews);
   return views?.client === client ? views : undefined;
 }

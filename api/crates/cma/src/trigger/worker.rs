@@ -185,26 +185,32 @@ impl LaunchWorker {
         self.execute_step(launch, &context, now).await
     }
 
-    async fn execute_step(
-        &self,
+    // Allocate only the selected step. Embedding every step's future in this
+    // dispatcher inflates the stack of nested admission/publication calls.
+    fn execute_step<'a>(
+        &'a self,
         launch: Launch,
-        context: &FrozenLaunchContext,
+        context: &'a FrozenLaunchContext,
         now: SystemTime,
-    ) -> Result<(), LaunchWorkerError> {
+    ) -> futures_util::future::BoxFuture<'a, Result<(), LaunchWorkerError>> {
         match launch.work.step {
-            LaunchWorkStep::ResolveSandbox => self.resolve_sandbox(launch, context, now).await,
-            LaunchWorkStep::WaitForSandbox => self.wait_for_sandbox(launch, context, now).await,
-            LaunchWorkStep::ResolveWorkspace => self.resolve_workspace(launch, context, now).await,
-            LaunchWorkStep::WaitForWorkspace => self.wait_for_workspace(launch, context, now).await,
-            LaunchWorkStep::ResolveAgent => self.resolve_agent(launch, context, now).await,
-            LaunchWorkStep::WaitForAgent => self.wait_for_agent(launch, context, now).await,
-            LaunchWorkStep::DeliverFirstMessage | LaunchWorkStep::WaitForFirstMessage => {
-                self.observe_first_message(launch, context, now).await
+            LaunchWorkStep::ResolveSandbox => Box::pin(self.resolve_sandbox(launch, context, now)),
+            LaunchWorkStep::WaitForSandbox => Box::pin(self.wait_for_sandbox(launch, context, now)),
+            LaunchWorkStep::ResolveWorkspace => {
+                Box::pin(self.resolve_workspace(launch, context, now))
             }
-            LaunchWorkStep::Finish => self.finish(launch, now).await,
-            LaunchWorkStep::None => Err(LaunchWorkerError::Corrupt(
+            LaunchWorkStep::WaitForWorkspace => {
+                Box::pin(self.wait_for_workspace(launch, context, now))
+            }
+            LaunchWorkStep::ResolveAgent => Box::pin(self.resolve_agent(launch, context, now)),
+            LaunchWorkStep::WaitForAgent => Box::pin(self.wait_for_agent(launch, context, now)),
+            LaunchWorkStep::DeliverFirstMessage | LaunchWorkStep::WaitForFirstMessage => {
+                Box::pin(self.observe_first_message(launch, context, now))
+            }
+            LaunchWorkStep::Finish => Box::pin(self.finish(launch, now)),
+            LaunchWorkStep::None => Box::pin(std::future::ready(Err(LaunchWorkerError::Corrupt(
                 "a non-pending launch was claimed".into(),
-            )),
+            )))),
         }
     }
 }

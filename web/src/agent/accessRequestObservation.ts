@@ -1,9 +1,9 @@
+import { rateLimitDelay } from './transport/readRetry';
 import type { AgentAccessRequest } from './accessRequests';
 import { observeRead } from './transport/readObserver';
 
 const activeDelay = 2_000;
 const runningLimit = 15_000;
-const retryLimit = 10_000;
 // Runtime consent admission checks live lineage, not an active turn. Owner
 // service-access updates can also create requests while a conversation is idle.
 const idleDelay = 30_000;
@@ -39,7 +39,11 @@ export function observeAccessRequests(options: {
       } catch (error) {
         if (signal.aborted) return undefined;
         options.failed(error);
-        const next = Math.min(activeDelay * 2 ** Math.min(failures++, 3), retryLimit);
+        const next = rateLimitDelay(
+          error,
+          Math.min(activeDelay * 2 ** Math.min(failures++, 3), 10000),
+          failures,
+        );
         return { next, cooldown: next, failed: true };
       }
     },

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { AgentLifecycleOperationView, CmaWebClient } from '../api/client';
 import type { AgentTransportPreparation } from '../agent/transport/preparation';
 import { prepareAgentConnections } from '../connections/preparation';
+import { detailReadSource } from '../api/detailReads';
 import { prepareDesktop } from '../agent/desktopPreparation';
 
 /** Start selection only after this retained operation names its actual Agent. */
@@ -22,7 +23,9 @@ export function useLifecycleTransport(
     if (!eligible || !operationId || !agentId || !viewerId) return;
     const preparation = client.agentTransport?.prepare(agentId, viewerId);
     const connections = preparation && prepareAgentConnections(client, agentId, viewerId);
-    const desktop = machineIncluded ? prepareDesktop(client, agentId, viewerId) : undefined;
+    const desktop = machineIncluded
+      ? prepareDesktop(detailReadSource(client), agentId, viewerId)
+      : undefined;
     const handoff = {
       handoff() {
         preparation?.handoff();

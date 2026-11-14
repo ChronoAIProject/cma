@@ -1,4 +1,4 @@
-import { ProtocolError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
 import type { ConnectionTarget } from '../connections/client';
 
 export function validAccessServices(value: unknown): value is readonly string[] {
@@ -42,12 +42,9 @@ function accessRequest(value: unknown, agentId: string): AgentAccessRequest {
     throw new ProtocolError('Agent Manager returned an invalid access request.');
   return request;
 }
-export class AgentAccessError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
+export class AgentAccessError extends ApiError {
+  constructor(status: number, message: string, retryAfterMs?: number) {
+    super(status, message, undefined, undefined, retryAfterMs);
   }
 }
 async function readResponse(response: Response): Promise<unknown> {
@@ -58,6 +55,7 @@ async function readResponse(response: Response): Promise<unknown> {
       typeof problem.detail === 'string'
         ? problem.detail
         : `Agent access could not be updated (${String(response.status)}).`,
+      retryAfterMilliseconds(response),
     );
   }
   return response.json();

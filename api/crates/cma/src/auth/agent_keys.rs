@@ -113,6 +113,7 @@ pub(super) async fn verify(
                 ),
             };
             Ok(VerifiedSubject {
+                verification: None,
                 subject: layer2_core::SubjectId::new(subject),
                 permissions: permissions::PermissionEvidence::Active(
                     permissions::permissions_claim(&body).map_err(Unavailable)?,
