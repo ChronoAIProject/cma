@@ -212,6 +212,134 @@ fn index_removal_is_confined_to_the_binding_migration() {
     assert!(validate(&status, "cma").is_err());
 }
 
+#[test]
+fn activity_metadata_read_is_scoped_to_the_activity_collection() {
+    let grants = activity_index_inspection_role("cma")
+        .get_array("privileges")
+        .unwrap()
+        .clone();
+    validate_activity_index_inspection(&status(grants.clone()), "cma").unwrap();
+
+    let mut missing = grants.clone();
+    let activity = missing
+        .iter_mut()
+        .find(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                == "activity"
+        })
+        .unwrap()
+        .as_document_mut()
+        .unwrap();
+    activity
+        .get_array_mut("actions")
+        .unwrap()
+        .retain(|action| action.as_str() != Some("collStats"));
+    assert!(validate_activity_index_inspection(&status(missing), "cma").is_err());
+
+    let mut foreign = grants;
+    let agents = foreign
+        .iter_mut()
+        .find(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                == "agents"
+        })
+        .unwrap()
+        .as_document_mut()
+        .unwrap();
+    agents
+        .get_array_mut("actions")
+        .unwrap()
+        .push("collStats".into());
+    assert!(validate_activity_index_inspection(&status(foreign), "cma").is_err());
+}
+
+#[test]
+fn ordinary_runtime_role_does_not_require_activity_operation_grants() {
+    let runtime = role("cma").get_array("privileges").unwrap().clone();
+    validate(&status(runtime.clone()), "cma").unwrap();
+    let activity = runtime
+        .iter()
+        .find(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                == "activity"
+        })
+        .unwrap()
+        .as_document()
+        .unwrap();
+    assert!(activity
+        .get_array("actions")
+        .unwrap()
+        .iter()
+        .all(|action| action.as_str() != Some("collStats")));
+    assert!(runtime.iter().all(|grant| {
+        grant
+            .as_document()
+            .unwrap()
+            .get_document("resource")
+            .unwrap()
+            .get_str("collection")
+            .unwrap()
+            != "agent_manager_migrations"
+    }));
+}
+
+#[test]
+fn activity_operation_roles_require_their_explicit_additional_grants() {
+    let inspection = activity_index_inspection_role("cma")
+        .get_array("privileges")
+        .unwrap()
+        .clone();
+    assert!(validate_activity_index_inspection(&status(inspection.clone()), "cma").is_ok());
+    assert!(validate(&status(inspection), "cma").is_err());
+
+    let job = activity_index_job_role("cma")
+        .get_array("privileges")
+        .unwrap()
+        .clone();
+    assert!(validate_activity_index_job(&status(job), "cma").is_ok());
+}
+
+#[test]
+fn activity_operation_authority_accepts_app_user_drop_index_in_shared_mode() {
+    let mut grants = activity_index_job_role("cma")
+        .get_array("privileges")
+        .unwrap()
+        .clone();
+    grants.push(
+        doc! {
+            "resource":{"db":"cma","collection":"activity"},
+            "actions":["dropIndex"]
+        }
+        .into(),
+    );
+    let status = status(grants);
+    assert!(verify_activity_index_authority(
+        &status,
+        "cma",
+        cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema,
+        true,
+    )
+    .is_ok());
+}
+
 fn progress_grant(database: &str) -> Document {
     doc! {"resource":{"db":database,"collection":super::super::provenance_progress::COLLECTION},
     "actions":super::super::provenance_progress::ACTIONS}
