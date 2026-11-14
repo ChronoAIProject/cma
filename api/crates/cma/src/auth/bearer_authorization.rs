@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
 
 use super::{
-    identity::VerifiedSubject, identity_fallback::CredentialPurpose, persistence::SecretDigest,
+    identity::VerifiedSubject, persistence::SecretDigest,
     verification_error::ProviderVerificationError, AuthState, ProviderMetadata,
 };
 
@@ -79,22 +79,18 @@ async fn verify_optional_metadata(
 ) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
     let key = SecretDigest::identify("independent-bearer-verification", credential);
     let flight = auth.bearer_verifications.acquire(&key).await;
+    let led = std::sync::atomic::AtomicBool::new(false);
     let verified = match tokio::time::timeout(
         timeout,
         flight.get_or_init(|| {
-            let purpose = if super::agent_keys::is_agent_key(credential) {
-                CredentialPurpose::AgentKey
-            } else {
-                CredentialPurpose::IndependentBearer
-            };
-            super::identity_retry::verify(auth, metadata, credential, purpose, None, None, timeout)
+            led.store(true, std::sync::atomic::Ordering::Relaxed);
+            super::identity_retry::verify(auth, metadata, credential, None, None, timeout)
         }),
     )
     .await
     {
         Ok(result) => result.clone(),
         Err(_) => {
-            auth.identity_store.invalidate_token(credential);
             let error =
                 ProviderVerificationError::Unavailable("identity caller deadline elapsed".into());
             use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
@@ -108,10 +104,23 @@ async fn verify_optional_metadata(
             Err(error)
         }
     };
+    super::identity_observations::resolution(if led.load(std::sync::atomic::Ordering::Relaxed) {
+        "led"
+    } else {
+        "shared"
+    });
     if flight.initialized() {
         auth.bearer_verifications.release(&key, &flight).await;
     }
-    verified
+    verified.and_then(|evidence| {
+        if !super::identity_lifetime::current(auth, &evidence) {
+            return Err(ProviderVerificationError::Unavailable(
+                "identity evidence changed before consumption".into(),
+            ));
+        }
+        super::identity_lifetime::retain(&evidence);
+        Ok(evidence)
+    })
 }
 
 #[cfg(test)]
