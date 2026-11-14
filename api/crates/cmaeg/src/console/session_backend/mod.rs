@@ -66,6 +66,8 @@ pub trait SessionBackend: Send + Sync {
         id: &'a str,
         touch: bool,
     ) -> BoxFuture<'a, Result<Option<Stored>, StoreError>>;
+    /// A supplied access expiry is an absolute Mongo-clock deadline anchored
+    /// to the refresh claim. Metadata-only updates leave that deadline intact.
     fn compare_exchange<'a>(
         &'a self,
         id: &'a str,
@@ -88,6 +90,7 @@ pub trait SessionBackend: Send + Sync {
 const MAX_PAYLOAD: usize = 65_536;
 const MAX_SESSIONS: usize = 100_000;
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const ADMISSION_MARGIN_MS: i64 = 30_000 + TIMEOUT.as_millis() as i64;
 const SERVER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn identifier(value: &str) -> bool {
@@ -103,8 +106,8 @@ fn payload_valid(payload: &[u8]) -> bool {
 }
 
 #[cfg(test)]
-mod mongo_tests;
-#[cfg(test)]
 mod fault_tests;
+#[cfg(test)]
+mod mongo_tests;
 #[cfg(test)]
 mod tests;
