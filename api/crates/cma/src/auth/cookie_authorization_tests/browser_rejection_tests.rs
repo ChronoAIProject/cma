@@ -219,7 +219,9 @@ async fn browser_provider_outages_remain_503_with_specific_session_identity_erro
         for (method, path) in routes() {
             let (actual, body) = browser.request(method, path).await;
             assert_eq!(actual, StatusCode::SERVICE_UNAVAILABLE, "{stage}: {path}");
-            let expected = if path == "/auth/session" && status == StatusCode::SERVICE_UNAVAILABLE {
+            let expected = if status == StatusCode::TOO_MANY_REQUESTS
+                || (path == "/auth/session" && status == StatusCode::SERVICE_UNAVAILABLE)
+            {
                 "identity_unavailable"
             } else {
                 "store_failed"

@@ -9,7 +9,6 @@ use tokio::sync::{Mutex, OnceCell};
 
 use super::{
     identity,
-    identity_fallback::CredentialPurpose,
     permissions::PermissionEvidence,
     persistence::{DurableSubjectTokens, SecretDigest, SubjectAuthState},
     verification_error::ProviderVerificationError,
@@ -89,15 +88,7 @@ pub(super) async fn request_for_browser_cookie(
     owner: &SubjectId,
     state: SubjectAuthState,
 ) -> Result<Option<RequestAuth>, StoreError> {
-    verify_with_timeout(auth, owner, state, PROVIDER_VERIFICATION_TIMEOUT, false).await
-}
-
-pub(super) async fn request_for_session(
-    auth: &AuthState,
-    owner: &SubjectId,
-    state: SubjectAuthState,
-) -> Result<Option<RequestAuth>, StoreError> {
-    verify_with_timeout(auth, owner, state, PROVIDER_VERIFICATION_TIMEOUT, true).await
+    verify_with_timeout(auth, owner, state, PROVIDER_VERIFICATION_TIMEOUT).await
 }
 
 async fn request_with_timeout(
@@ -106,7 +97,7 @@ async fn request_with_timeout(
     state: SubjectAuthState,
     timeout: Duration,
 ) -> Result<RequestAuth, StoreError> {
-    verify_with_timeout(auth, owner, state, timeout, false)
+    verify_with_timeout(auth, owner, state, timeout)
         .await?
         .ok_or_else(unavailable)
 }
@@ -116,7 +107,6 @@ async fn verify_with_timeout(
     owner: &SubjectId,
     state: SubjectAuthState,
     timeout: Duration,
-    allow_fallback: bool,
 ) -> Result<Option<RequestAuth>, StoreError> {
     if &state.subject != owner {
         return Err(unavailable());
@@ -135,13 +125,8 @@ async fn verify_with_timeout(
     };
     let key = VerificationKey::new(&state, tokens);
     let flight = auth.cookie_verifications.acquire(&key).await;
-    let token_hash = auth.identity_store.key(
-        CredentialPurpose::BrowserCookie,
-        tokens.access_token.expose(),
-    );
-    let epoch = auth.identity_store.epoch();
     // The whole retry sequence and its deadline belong to the shared flight.
-    // Completed verification is never used to skip the next provider check.
+    // Only callers admitted while it is unfinished can share this exact result.
     let led = std::sync::atomic::AtomicBool::new(false);
     let verified = match tokio::time::timeout(
         timeout,
@@ -151,7 +136,6 @@ async fn verify_with_timeout(
                 auth,
                 None,
                 tokens.access_token.expose(),
-                CredentialPurpose::BrowserCookie,
                 Some(tokens.expires_at),
                 Some(owner.as_str()),
                 timeout,
@@ -162,8 +146,6 @@ async fn verify_with_timeout(
     {
         Ok(result) => result.clone(),
         Err(_) => {
-            auth.identity_store
-                .invalidate_token(tokens.access_token.expose());
             let error =
                 ProviderVerificationError::Unavailable("identity caller deadline elapsed".into());
             use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
@@ -183,13 +165,13 @@ async fn verify_with_timeout(
         "shared"
     };
     metrics::counter!("cma_cookie_identity_resolutions_total", "source" => source).increment(1);
+    super::identity_observations::resolution(source);
     tracing::debug!(parent: None, event = "cookie_identity_resolution", source, count = 1u64,
         "Cookie identity verification resolved");
     if flight.initialized() {
         auth.cookie_verifications.release(&key, &flight).await;
     }
-    let mut fallback_reason = None;
-    let mut verified = match verified {
+    let verified = match verified {
         Ok(verified) => verified,
         Err(ProviderVerificationError::Rejected(_)) => {
             // A refusal of a replaced token says nothing about the current login.
@@ -197,16 +179,12 @@ async fn verify_with_timeout(
             require_current_custody(auth, &state).await?;
             return Ok(None);
         }
-        Err(ProviderVerificationError::Transient(reason)) => {
-            let cached = allow_fallback
-                .then(|| auth.identity_store.get(&token_hash, &epoch))
-                .flatten();
-            let Some(verified) = cached else {
-                ProviderVerificationError::Transient(reason).record_unavailable();
-                return Err(super::identity_retry::unavailable());
-            };
-            fallback_reason = Some(reason);
-            verified
+        Err(
+            error @ (ProviderVerificationError::RateLimited(_)
+            | ProviderVerificationError::Transient(_)),
+        ) => {
+            error.record_unavailable();
+            return Err(super::identity_retry::unavailable());
         }
         Err(error @ ProviderVerificationError::Unavailable(_)) => {
             error.record_unavailable();
@@ -214,24 +192,17 @@ async fn verify_with_timeout(
         }
     };
     if &verified.subject != owner {
-        auth.identity_store.invalidate(&token_hash);
+        auth.identity_store
+            .invalidate_token(tokens.access_token.expose());
         return Err(unavailable());
     }
 
     // Provider evidence describes exactly this token generation, not a later login.
     require_current_custody(auth, &state).await?;
-    if let Some(reason) = fallback_reason {
-        // Custody IO may overlap logout or another request's rejection.
-        verified = auth
-            .identity_store
-            .get(&token_hash, &epoch)
-            .ok_or_else(super::identity_retry::unavailable)?;
-        if &verified.subject != owner {
-            auth.identity_store.invalidate(&token_hash);
-            return Err(unavailable());
-        }
-        super::identity_fallback::report(&token_hash, reason);
+    if !super::identity_lifetime::current(auth, &verified) {
+        return Err(unavailable());
     }
+    super::identity_lifetime::retain(&verified);
     let (authorization, delegated_credential) = match &verified.permissions {
         PermissionEvidence::Active(permissions) => (
             crate::permissions::capabilities_from_permissions(permissions.iter().cloned()),

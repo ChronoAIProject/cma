@@ -53,7 +53,7 @@ impl ReportingStore {
         let tenant = reserved("tenant")?;
         let queued = self
             .collection(JOBS)
-            .count_documents(doc! {"state":"pending","logical_expires_at":{"$gt":at as i64}})
+            .count_documents(doc! {"state":{"$in":["pending","view_pending"]},"logical_expires_at":{"$gt":at as i64}})
             .session(&mut session)
             .await
             .map_err(unavailable)?;

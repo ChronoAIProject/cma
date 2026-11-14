@@ -2767,12 +2767,23 @@ exact `true` or `false`. With `true`, Cookie authentication joins the browser
 handle and its subject by their indexed keys in one Mongo aggregate. Both
 records retain their existing schema, revocation and token validation. Expired
 logins are rejected before interpreting subject authority. The post-verification
-custody check and the additional `/auth/session` logout check still run.
+custody check and final durable logout check still run on every browser request.
 
-Ordinary authenticated Cookie requests use two identity commands instead of
-three; `/auth/session` uses three instead of four, plus its settings read.
-No completed NyxID verification is reused on the normal path. The existing
-60-second outage fallback remains limited to `GET /auth/session`.
+With the final logout recheck, authenticated Cookie requests use three identity
+commands with the join and four without it; `/auth/session` adds its settings
+read. Every later request verifies with NyxID. Only overlapping callers can share
+an unfinished identical-credential verification. No completed-success cache or
+session outage fallback is available; an exhausted outage fails closed. See
+[identity policy](Identity_Outage_Policy.md) for exact live-receipt and retry rules.
+Completed-success reuse is deferred to #2002's authoritative revocation contract.
+
+Provider 429 observes Retry-After within the 2,500 ms/three-attempt budget. When
+that delay plus a complete attempt cannot fit, the response is a retryable
+`identity_unavailable` 503 with the remaining Retry-After. Compare per-minute
+`cma_identity_provider_calls_total` and `cma_identity_provider_results_total`
+(outcome `429`) across all replicas, stratified by route, endpoint and image.
+These are verification dispatch attempts and header outcomes; led/shared caller
+counters remain separate and must not inflate the upstream count.
 
 Rollback by setting the switch to `false` and restarting the API. No persisted
 format changes or data repair are required. Compare both paths using the
@@ -3156,3 +3167,17 @@ Existing streams reconnect with their last durable cursor under the unchanged
 SSE contract. Sandbox state and ongoing turns do not change. Reordered live
 fragments, live delivery preceding durable catch-up, or delayed revocation
 closure are rollback signals.
+
+### Retained usage view controls
+
+The activation and rollback packet is [CMA Usage Report Views](CMA_Usage_Report_Views.md).
+
+| Configuration | Default and behavior |
+| --- | --- |
+| `CHRONO_USAGE_REPORT_VIEWS_ENABLED` | `false`. Allows the new immutable retained-report writer only after the complete compatible reader/worker deployment and individual owner approval. Existing report endpoints remain available. |
+| `CHRONO_USAGE_REPORT_WARMER_ENABLED` | `false`. Separately approved background materialization; requires enabled views and explicit scheduling scopes. Uses existing leased workers and admission budgets. |
+| `CHRONO_USAGE_REPORT_FRESH_SECONDS` | `300`, bounded 60–3600 seconds. A committed snapshot older than this is returned as stale and may enqueue one replacement. |
+| `CHRONO_USAGE_REPORT_RETAIN_SECONDS` | `86400`, bounded 3600–86400 seconds. Fixed before children are written; Ready expiry is never extended in place. Must exceed freshness. |
+| `CHRONO_USAGE_REPORT_WARM_SECONDS` | `300`, bounded 60–3600 seconds. Scheduling cadence, with missed ticks skipped and one refresh coalesced per semantic key. |
+| `CHRONO_USAGE_REPORT_WARM_SCOPES` | `[]`. Strict JSON array of at most eight operator-approved `{principal, admin, sandbox_id}` scheduling scopes, at most 8192 bytes. No credentials. A canary Sandbox must currently belong to the named principal. Unfiltered Everyone requires explicit expansion approval. |
+| `CHRONO_USAGE_REPORT_VIEW_SCOPES` | `[]`. Required explicit writer canary cohort when retained views are enabled; at most eight strict `{principal, admin, sandbox_id}` scopes and 8192 bytes. A named Sandbox restricts new retained admission to that exact selected Sandbox. Unlisted callers/selections receive `report_view_disabled` and retain the old workflow. Removing a cohort stops new latest-view work but preserves compatible explicit report reads and accepted-job draining. Warm scopes must be contained in this cohort. |

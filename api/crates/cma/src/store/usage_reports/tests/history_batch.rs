@@ -8,14 +8,14 @@ use std::sync::{
 };
 
 #[derive(Default)]
-struct Commands {
-    event_reads: AtomicUsize,
+pub(super) struct Commands {
+    pub(super) event_reads: AtomicUsize,
     returned: AtomicUsize,
     max_batch: AtomicUsize,
     pending: Mutex<std::collections::HashSet<i32>>,
 }
 
-async fn observed_store() -> (Arc<ReportingStore>, Arc<Commands>) {
+pub(super) async fn observed_store() -> (Arc<ReportingStore>, Arc<Commands>) {
     let original = fixture().await;
     let commands = Arc::new(Commands::default());
     let observed = commands.clone();
@@ -49,7 +49,7 @@ async fn observed_store() -> (Arc<ReportingStore>, Arc<Commands>) {
     (Arc::new(store), commands)
 }
 
-fn event(state: &SandboxUsage, n: u64, start: u64) -> UsageEvent {
+pub(super) fn event(state: &SandboxUsage, n: u64, start: u64) -> UsageEvent {
     let allocation = state.allocation.clone();
     UsageEvent {
         sandbox_id: state.sandbox_id.clone(),

@@ -1,3 +1,5 @@
+import { latestView, type UsageMetricViewQuery } from './view.js';
+export { isUsageViewUnavailable, type UsageMetricViewQuery, type UsageMetricView } from './view.js';
 import type { ResolvedConfig } from '../config.js';
 import { ProtocolError, ValidationError } from '../errors.js';
 import type { OperationOptions } from '../http.js';
@@ -59,6 +61,11 @@ export interface UsageMetricSeriesOptions extends OperationOptions {
 }
 /** Measured CPU/working-set/PVC history. Estimates never change allocated billing. */
 export class SandboxMetrics {
+  /** Return a committed snapshot immediately; refreshes run in leased workers. */
+  latest(input: UsageMetricViewQuery = {}, options: OperationOptions = {}) {
+    return latestView(this.config, this.admin, input, options);
+  }
+
   /** Bounded administrator discovery independent of report readiness. */
   options(query: UsageFilterOptionsQuery) {
     return filterOptions(this.config, this.admin, query);
