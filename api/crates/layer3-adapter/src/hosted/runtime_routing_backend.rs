@@ -53,6 +53,23 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
+        // Count the whole batch against every selected owner; never sum capacities.
+        let mut headroom = usize::MAX;
+        for native in [false, true] {
+            if handles
+                .iter()
+                .any(|handle| handle.0.starts_with("agent-sandbox:") == native)
+            {
+                headroom = headroom.min(
+                    self.select(native)
+                        .ok()?
+                        .startup_binding_headroom(handles)?,
+                );
+            }
+        }
+        Some(headroom)
+    }
     fn desktop_ownership(
         &self,
         handle: &RuntimeHandle,
