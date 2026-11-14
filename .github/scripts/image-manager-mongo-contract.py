@@ -32,7 +32,7 @@ def main():
         replica_key.chmod(0o600)
         log = (path / "mongod.log").open("w")
         process = subprocess.Popen(
-            [mongod, "--auth", "--replSet", "cma-im-contract", "--keyFile", str(replica_key), "--bind_ip", "127.0.0.1", "--port", str(port),
+            [mongod, "--setParameter", "enableTestCommands=1", "--auth", "--replSet", "cma-im-contract", "--keyFile", str(replica_key), "--bind_ip", "127.0.0.1", "--port", str(port),
              "--dbpath", temporary, "--quiet", "--wiredTigerCacheSizeGB", "0.25"],
             stdout=log, stderr=subprocess.STDOUT,
         )
@@ -76,6 +76,8 @@ def main():
             if result.returncode:
                 raise SystemExit(result.returncode)
             for command in [
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "console::session_backend::", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "console", "shared_", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_forms_storage", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_media_continuation_storage", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "nextest", "run", "--workspace", "--locked", "-E",

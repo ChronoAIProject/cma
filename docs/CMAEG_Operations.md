@@ -335,6 +335,7 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. CMA verified-sender input uses a 2-second attestation deadline inside a 5-second preflight budget; keep the provider POST budget at least 10 seconds when enabling that extension (the deployed 30000 ms value is capped at 20 seconds for frozen submission). |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Retained event identity and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_CONSOLE_SHARED_SESSIONS` | `true` or `false` | `false` | Shared durable Console authority in `eg_console_sessions`. Requires the separately approved migration, collection-scoped roles and exclusion of all legacy Console-serving processes. Replica mode with Console enabled refuses startup while this switch is off; enabled storage prerequisites are verified before replica startup. No startup DDL. See [Console authority](#console-authority). |
 | `CMAEG_CONSOLE_NYXID_PUBLIC_URL` | origin URL | `CMAEG_NYXID_BASE_URL` | Console OAuth discovery, authorization, token, revocation and organization-list origin. Production `https://api.nyxid.ai`; HTTPS required except loopback tests. Discovery must advertise endpoints on this exact origin. Does not change shared creator authentication, retained issuer, service audiences or credentials. |
 | `CMAEG_CONSOLE_PUBLIC_URL` | origin URL | `CMAEG_PUBLIC_URL` | Browser console OAuth/CSRF origin. Production `https://cma.nyxid.ai`; register `/console/callback` on the existing OAuth client and route `/console` to CMAEG before enabling. Same strict origin rules as the public origin. Does not change event identities, master keys, or agent credentials. |
 | `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
@@ -403,7 +404,7 @@ applies with all media flags off.**
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
 | `CMAEG_DRAIN_SECONDS` | positive integer, seconds | `600` | Maximum shutdown drain for tracked turns and HTTP requests. |
 | `CMAEG_BUSY_RETRY_MAX_MS` | positive integer, ms | `180000` | Maximum interval for retrying upstream busy refusals, including first-conversation preparation. Jitter is added after the provider's `Retry-After` minimum. |
-| `CMAEG_CONSOLE_ENABLED` | `true` or `false` | `false` | Switch for the sign-in console at `/console`. Exactly `true` or `false`; any other value fails startup. Off, no `/console` route exists (404, as before) and nothing console-related is allocated. On, the console never blocks startup or readiness: while its OAuth client is incomplete or NyxID discovery has not succeeded, `/console*` answers a generic 503 page and ingress is unaffected. Enabling it requires its in-memory state to fit in an eighth of the `cmaeg` memory limit: `CMAEG_CONSOLE_ACTIVITY_MAX_BYTES` + `CMAEG_CONSOLE_INDEX_MAX_RECORDS` × 300 B + `CMAEG_CONSOLE_CHANNEL_IDS_MAX` × 600 B + `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` × 2 KiB + `CMAEG_CONSOLE_SESSIONS_MAX` × 4 KiB, about 80 MiB at the defaults against 128 MiB at a 1Gi limit; `tests/infra_manifests.rs` enforces this. See [Console OAuth client](#console-oauth-client). |
+| `CMAEG_CONSOLE_ENABLED` | `true` or `false` | `false` | Switch for the sign-in console at `/console`. Exactly `true` or `false`; any other value fails startup. Off, no `/console` route exists (404, as before) and nothing console-related is allocated. On, its configured shared storage must pass startup verification; while its OAuth client is incomplete or NyxID discovery has not succeeded, `/console*` answers a generic 503 page and ingress is unaffected. Enabling it requires its in-memory state to fit in an eighth of the `cmaeg` memory limit: `CMAEG_CONSOLE_ACTIVITY_MAX_BYTES` + `CMAEG_CONSOLE_INDEX_MAX_RECORDS` × 300 B + `CMAEG_CONSOLE_CHANNEL_IDS_MAX` × 600 B + `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` × 2 KiB + `CMAEG_CONSOLE_SESSIONS_MAX` × 4 KiB, about 80 MiB at the defaults against 128 MiB at a 1Gi limit; `tests/infra_manifests.rs` enforces this. See [Console OAuth client](#console-oauth-client). |
 | `CMAEG_CONSOLE_CLIENT_ID` | string | `""` | The NyxID OAuth client id the console signs people in with: at most 256 printable characters without spaces. Empty leaves the console at its 503 page, with an `error` log naming this key. |
 | `CMAEG_CONSOLE_CLIENT_SECRET` | secret string | unset | The console client's secret, injected from Kubernetes Secret `cmaeg-console-oauth` through an optional `secretKeyRef`; never a ConfigMap value, never logged. Unset or empty leaves the console at its 503 page, with an `error` log naming this key. |
 | `CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. One gateway-wide limit shared by `/console/login` and `/console/callback`; over it, either renders the sign-in page with 429. It also bounds the token requests the console sends NyxID. |
@@ -1193,12 +1194,55 @@ that need a refresh end. Ingress, tools and delivery are unaffected.
 
 ### Console authority
 
+Shared mode uses encrypted Mongo session authority across independently constructed
+replicas. Install the exact schema and collection-scoped roles only through the
+owner-approved data route: print the role documents with
+`--print-console-sessions-runtime-role` and
+`--print-console-sessions-migration-role`, then run
+`--migrate-console-sessions` with the migrator. Application startup only verifies
+effective grants, schema marker and required indexes. The new collection is
+`eg_console_sessions`; existing `eg_auth_sessions` is unchanged.
+
+Enable `CMAEG_CONSOLE_SHARED_SESSIONS=true` only after every legacy
+Console-serving process has ceased or is excluded. Legacy cookies require a new
+sign-in. Normal recovery uses a compatible shared-session image and the same
+master-key ring/collection, preserving the independent EG replica protocol floor.
+Owner decision #139 A permits neither affinity-only S2 nor a Console-disable
+fallback; image 67d1 cannot honor shared revocation.
+
+In shared mode, every request checks durable live state with Mongo time; TTL
+deletion is cleanup only. Refresh claims a durable single-use attempt before
+contacting NyxID. Provider uncertainty or process loss never makes the old token
+eligible for replay. A published result can be reconciled across later owner or
+display changes; unavailable readback never revokes a possibly published token.
+Unresolved attempts fail closed and require sign-in. Token expiry is anchored
+before provider I/O. Final admission after identity checks compares the exact
+checked snapshot and requires more than 33 seconds of access-token lifetime
+(the 30-second useful margin plus the 3-second storage acknowledgement budget).
+A request already admitted before durable logout may finish.
+
+Logout clears the browser cookie only after majority-confirmed deletion or
+authoritative absence. Database failure returns 503 and retains the cookie for
+retry. Late refresh results, touches and owner updates never upsert revoked
+sessions. Provider cleanup is bounded best effort: logout uses the latest deleted
+token, quota creation returns at most four victim receipts, and uncertain
+acknowledgement may lose a cleanup receipt without restoring session authority.
+Shared expiry is enforced on reads; database TTL cleanup does not promise
+provider-token revocation. The legacy in-memory sweeper remains local-only.
+
+Per instance, shared mode permits 64 requests and 16 refresh/wait operations,
+refusing excess work immediately. Fresh active sessions bypass the refresh
+budget after durable observation. Waiters poll every 100 ms with an 8-second
+polling deadline; individual storage operations are bounded to 3 seconds.
+Metadata revision contention returns 503 for a new request rather than applying
+an old authority verdict to a new selection.
+
 A session's selected owner is a selection, never a grant. Every `/console*`
 request except the sign-in, login, callback and signed-out pages and
 `POST /console/logout` derives owner authority again before it reads or
 writes anything (Amendment R6 §R6.4). Reads and writes, the owner switch
 included, take the same check; there is no separate mutation path. Under the
-session's own lock, each request:
+session's own lock, legacy single-process mode handles tokens as follows:
 
 1. ends a session idle for `CMAEG_CONSOLE_SESSION_IDLE_MS` (30 minutes) or
    older than `CMAEG_CONSOLE_SESSION_TTL_MS` (8 hours), revoking its refresh
@@ -1222,12 +1266,11 @@ session's own lock, each request:
 | Organization | Refused | The selection becomes Personal with "Your admin access to … has ended", and the Personal check runs: a GET is served as Personal (an organization record answers 404), and a POST changes nothing and goes to `/console` |
 | Either | Unavailable, including the 3-second timeout | The generic 503 page with no channel data; the session and its selection are kept |
 
-Logout derives no authority, so it ends the session even during an outage.
+Logout derives no NyxID authority and works during an identity-provider outage. Shared mode still requires a durable revocation result.
 
 **Owner switcher.** The signed-in layout shows the masked subject, a
 switcher offering "Personal" and the organizations NyxID's
-`GET /api/v1/orgs` lists for the session's own token (fetched at most once a
-minute per session; display only), and sign-out. Organizations where the
+`GET /api/v1/orgs` lists for the session's own token (display only; legacy mode caches this list for a minute, while shared requests use their current token), and sign-out. Organizations where the
 account is not an admin are shown disabled with "Admin role required".
 `POST /console/owner` first passes the same per-request check for the current
 selection, then verifies the requested owner with `authenticate_token` and
@@ -1244,9 +1287,9 @@ record_hash, outcome, subject_hash_prefix, owner_kind}` and login
 | Organization admin demoted or removed; organization deleted | 60 s (the cache's success TTL), as on REST |
 | User deactivated, or grant revoked, on a Personal or organization view | 60 s, as on REST |
 | Logout in this console | At once |
-| Console disabled and the rollout restarted | At once (sessions live only in memory) |
+| Legacy process restart | Local sessions end; shared sessions survive instance loss |
 
-**Load.** Per session there is at most one cache fill per 60 seconds, or per
+**Load.** Per process and token there is at most one cache fill per 60 seconds, or per
 10 seconds after a failure; concurrent requests of one session wait on its
 lock and share that fill. Each refresh, about every 870 seconds with NyxID's
 900-second tokens, changes the token and so starts a new fill. A Personal
@@ -1261,7 +1304,7 @@ because NyxID could not answer, sustained for 10 minutes:
 `sum(increase(cmaeg_console_authorizations_total{outcome=~"unavailable|refresh_transient"}[10m])) > 0`.
 Console users are seeing the generic 503 page because NyxID's `users/me`,
 organization authorization or token endpoint is slow or unreachable; their
-sessions are kept and recover by themselves. Ingress is unaffected.
+identity-authority outages preserve sessions; a shared rotating-token attempt with an unknown outcome requires sign-in. Ingress is unaffected.
 
 ### Console memory
 
