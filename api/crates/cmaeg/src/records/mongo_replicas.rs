@@ -1,5 +1,6 @@
 //! Exact version and server-time lease checks compose with existing sealed journals.
 use super::{
+    replica_observation::{Observation, Phase},
     replica_retry::{self, AttemptError},
     MongoRecords, Record, RecordError, CONNECTIONS, INTERACTIONS,
 };
@@ -67,36 +68,50 @@ impl MongoRecords {
                 "invalid replica transaction size".into(),
             ));
         }
-        replica_retry::run(|| self.replica_attempt(writes)).await
+        let observation = Observation::transaction();
+        let result =
+            replica_retry::run(&observation, || self.replica_attempt(writes, &observation)).await;
+        observation.finish(&result);
+        result
     }
 
-    async fn replica_attempt(&self, writes: &[ReplicaWrite]) -> Result<Vec<u64>, AttemptError> {
+    async fn replica_attempt(
+        &self,
+        writes: &[ReplicaWrite],
+        observation: &Observation,
+    ) -> Result<Vec<u64>, AttemptError> {
         #[cfg(test)]
         if let Some(fixture) = &self.replica_attempt_fixture {
-            return fixture.attempt(writes).await;
+            return fixture.attempt(writes, observation).await;
         }
+        observation.phase(Phase::Session);
         let mut session = self
             .db
             .client()
             .start_session()
             .await
-            .map_err(AttemptError::from)?;
+            .map_err(|error| observed_error(observation, error))?;
+        observation.phase(Phase::TransactionStart);
         session
             .start_transaction()
             .read_concern(ReadConcern::snapshot())
             .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
             .await
-            .map_err(AttemptError::from)?;
+            .map_err(|error| observed_error(observation, error))?;
         let mut versions = Vec::with_capacity(writes.len());
         for write in writes {
-            versions.push(self.replica_record(write, &mut session).await?);
+            versions.push(
+                self.replica_record(write, &mut session, observation)
+                    .await?,
+            );
         }
         // Ambiguous commits are surfaced; callers retain custody and retry the
         // same admission rather than guessing whether an external effect occurred.
+        observation.phase(Phase::Commit);
         session
             .commit_transaction()
             .await
-            .map_err(AttemptError::from)?;
+            .map_err(|error| observed_error(observation, error))?;
         Ok(versions)
     }
 
@@ -104,7 +119,9 @@ impl MongoRecords {
         &self,
         write: &ReplicaWrite,
         session: &mut ClientSession,
+        observation: &Observation,
     ) -> Result<u64, AttemptError> {
+        observation.phase(Phase::Validate);
         if write.id.is_empty()
             || write.id.len() > 512
             || write.owner.is_empty()
@@ -148,6 +165,7 @@ impl MongoRecords {
                 .ok()
                 .filter(|version| *version > 0)
                 .ok_or_else(|| RecordError::Rejected("invalid source guard version".into()))?;
+            observation.phase(Phase::ChannelGuard);
             let changed = self
                 .db
                 .collection::<Document>(super::RECORDS)
@@ -157,7 +175,7 @@ impl MongoRecords {
                 )
                 .session(&mut *session)
                 .await
-                .map_err(AttemptError::from)?;
+                .map_err(|error| observed_error(observation, error))?;
             if changed.matched_count != 1 {
                 return Err(RecordError::GuardConflict {
                     scope: "channel",
@@ -171,13 +189,14 @@ impl MongoRecords {
                 .map_err(|_| RecordError::Rejected("invalid replica guard version".into()))?;
             let mut filter = doc! {"_id":&guard.id,"owner":&guard.owner,"version":guarded_version};
             condition(&mut filter, LeaseCondition::Live(guard.until_ms));
+            observation.phase(Phase::PartitionGuard);
             let result = self
                 .db
                 .collection::<Document>(CONNECTIONS)
                 .update_one(filter, doc! {"$inc":{"guard_revision":1_i64}})
                 .session(&mut *session)
                 .await
-                .map_err(AttemptError::from)?;
+                .map_err(|error| observed_error(observation, error))?;
             if result.matched_count != 1 {
                 return Err(RecordError::GuardConflict {
                     scope: "replica_partition",
@@ -218,11 +237,12 @@ impl MongoRecords {
                         "deployment":&projection.deployment,"active":projection.active},
                 );
             }
+            observation.phase(Phase::RecordUpdate);
             let result = records
                 .update_one(filter, doc! {"$set":fields})
                 .session(&mut *session)
                 .await
-                .map_err(AttemptError::from)?;
+                .map_err(|error| observed_error(observation, error))?;
             if result.matched_count != 1 {
                 return Err(RecordError::Conflict {
                     expected,
@@ -231,7 +251,9 @@ impl MongoRecords {
                 .into());
             }
         } else {
+            observation.phase(Phase::RecordInsert);
             records.insert_one(record).session(&mut *session).await.map_err(|error| {
+                observation.mongo_error(&error);
                 if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(value)) if value.code == 11000) {
                     AttemptError::Record(RecordError::Conflict { expected: 0, actual: None })
                 } else {
@@ -241,6 +263,11 @@ impl MongoRecords {
         }
         Ok(version as u64)
     }
+}
+
+fn observed_error(observation: &Observation, error: mongodb::error::Error) -> AttemptError {
+    observation.mongo_error(&error);
+    AttemptError::from(error)
 }
 
 fn condition(filter: &mut Document, required: LeaseCondition) {
