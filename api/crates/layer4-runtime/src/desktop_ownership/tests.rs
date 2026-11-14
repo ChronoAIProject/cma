@@ -6,6 +6,9 @@ use std::time::Duration;
 #[path = "persistence_tests.rs"]
 mod custody;
 
+#[path = "admission_tests.rs"]
+mod admission;
+
 struct Fixture {
     directory: PathBuf,
     receiver: Arc<DesktopReceiver>,
