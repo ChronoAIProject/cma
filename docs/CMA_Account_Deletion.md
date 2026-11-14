@@ -277,3 +277,54 @@ handoff together with the readers that recognize their canonical output.
 | Remaining permanent block | `IdentityRedactionPending { collection }` preserves affected foreign/organization sources and blocks completion until C3. No successful identity redaction, share facade rewrite, delegation handoff, or organization audit rewrite is claimed here. |
 | Recovery | Retain marker timestamps, durable cursor, exact immutable revisions, erasure evidence, and all key/delegation custody. Resume discovery/retention from the C2-compatible cursor. Disabling new requests leaves active denials and stored authority intact; it does not authorize a downgrade or reverse completed effects. |
 | Validation and release evidence | The C2 test slice restores complete publisher admission, draft/fork/default, barrier, exact-continuation, retained-reader and corruption tests from immutable FINAL. Identity-specific tests remain assigned to C3, with explicit C2 permanent-refusal tests supplied by the transitional suite. Record actual guarded checks and isolated Mongo results separately. Production activation, zero residue, and rollback qualification remain unproven. |
+
+## Historical intermediate refusal readers
+
+C1 may persist `RetainedReferencePending { collection }` as
+`{"kind":"retained_reference_pending","collection":"agent_profiles"}` in an
+`account_deletions.block` and in the `reason` of append-only Blocked events.
+C2 replaces that executor refusal with publisher retention, but keeps the exact
+variant, wire name and required string field as a historical reader contract.
+`IdentityRedactionPending { collection }` uses
+`{"kind":"identity_redaction_pending","collection":"resource_policies"}`;
+C2 still emits this safety refusal. C3 must replace its producer while retaining
+both historical reader variants. Do not remove a variant when retiring its
+producer.
+
+This is an additive reader correction, with no schema-version change, new
+collection, record rewrite, event rewrite or destructive migration. Existing
+blocked operations stay blocked until explicitly rearmed. The original request
+key resolves the same durable deletion; rearm and a new lease resume its current
+step, and old Blocked events remain readable with their original sequence, wire
+reason and BSON values. Rearming does not bypass the current executor: C2
+identity residue blocks again until its handler is delivered. Unknown reason
+kinds, missing required collection fields and wrong collection types remain
+malformed; they are never silently ignored.
+
+The C2 reader floor includes this correction before accepting C1 blocked state.
+Pin the corrected immutable executable in the release record and keep it during
+rollback; a prior C2 binary without `retained_reference_pending` cannot replay
+those records or read their events. Deploy compatible readers before any later
+producer change, preserve all request keys and append-only events, and retain
+both intermediate wire variants in C3 recovery artifacts. Product policy and
+production activation remain pending; this correction starts no worker or
+production erasure.
+
+Validate the independent C1 BSON fixtures with the registered Mongo prefix
+`store::account_deletions::tests::legacy_blocks::`. Tests cover both historical
+record/event variants, exact owner/key replay, explicit rearm and resume,
+unchanged historical BSON event values, and strict malformed-input refusal.
+Current
+`store::account_erasure::profile_tests::` verifies actual publisher retention
+rather than the retired publisher-pending path;
+`store::account_erasure::identity_pending_tests::` continues to prove C2's
+remaining identity safety refusal until C3 supplies real identity redaction.
+
+Migration identity: `2026-11-14-account-erasure-intermediate-refusal-readers`;
+service owner: CMA account deletion, issue #1500. The source commit is the
+commit containing this section; pin its immutable executable/image digest in
+the release record. Prerequisites are the C1 record/event schema and C2 publisher
+reader floor. There is no DDL, backfill or transformation command. Deploy the
+compatible reader before allowing a later executor to replace a pending reason;
+keep the same reader during recovery and rollback. Local regression receipts do
+not certify production deployment or an executable release artifact.
