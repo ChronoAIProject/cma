@@ -183,9 +183,8 @@ impl ReportingStore {
         };
         let mut missing = Vec::new();
         for state in &states {
-            if state.created_at >= range.to {
-                continue;
-            }
+            // Retain exact pre-creation projections too. Leaving those days
+            // absent sends every long-range report back to empty ledger scans.
             let key = format!("{}:{}", state.sandbox_id, progress.day);
             let cached = self
                 .collection(COLLECTION)
