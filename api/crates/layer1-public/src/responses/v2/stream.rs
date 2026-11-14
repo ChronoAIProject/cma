@@ -92,12 +92,11 @@ pub(super) async fn open(
     // output. Avoid probing the output format and scanning the Agent log just
     // to construct their response.created frame; snapshot_mode still reads
     // the current Agent and applies the final authority fence.
-    if known_bound == Some(false) && !state.paged_events {
-        let (initial, bound) = match snapshot_mode(&state, &authorization, &receipt, false).await {
-            Ok(value) => value,
-            Err(error) => return error,
-        };
-        return open_legacy(state, authorization, receipt, after, initial, bound);
+    if known_bound == Some(false) {
+        // The response may bind after admission. Start with the metadata-only
+        // header path, then let stream_pages select indexed or legacy output
+        // from the first bound observation instead of freezing legacy routing.
+        return super::stream_pages::open(state, authorization, receipt, after).await;
     }
     let indexed = match state.reads.output_is_indexed(&authorization).await {
         Ok(indexed) => indexed,
