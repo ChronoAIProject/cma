@@ -8,7 +8,10 @@ use layer2_core::sandbox::store::{
     SandboxCustomRuntimeMigrationAdmission, SandboxImageRotationRequest, SandboxMaintenanceOutcome,
     SandboxStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Agent, RuntimeMigrationIdentity, Sandbox, SandboxLifecycleOperation};
+use layer2_core::sandbox::{
+    Agent, RuntimeMigrationAuthorityEntry, RuntimeMigrationIdentity, Sandbox,
+    SandboxLifecycleOperation,
+};
 use mongodb::{
     bson::{doc, Document},
     ClientSession,
@@ -103,6 +106,31 @@ pub(super) async fn validate_admission(
     session: &mut ClientSession,
 ) -> Result<(), ApplyError> {
     let now_ms = runtime_migration_now_ms().map_err(ApplyError::Domain)?;
+    // This internal port accepts typed data, so also enforce the installed
+    // policy here. Exact durable replay has already returned before this point;
+    // admission never reloads or renews a bundle during transaction retries.
+    let policy = store
+        .runtime_migration_authority
+        .as_ref()
+        .map(|authority| authority.policy())
+        .filter(|policy| policy.policy_id == basis.policy_id)
+        .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
+    policy
+        .validate_entry(
+            &RuntimeMigrationAuthorityEntry {
+                authority_id: basis.authority_id.clone(),
+                request_key: basis.request_key.clone(),
+                identity: basis.identity.clone(),
+                target_image: basis.approved_target.clone(),
+                custom_migration: None,
+                clearance: basis.clearance.clone(),
+                observation_reference: None,
+                issued_at_ms: basis.authority_issued_at_ms,
+                expires_at_ms: basis.authority_expires_at_ms,
+            },
+            now_ms,
+        )
+        .map_err(ApplyError::Domain)?;
     basis.validate_at(now_ms).map_err(ApplyError::Domain)?;
     if basis.identity != RuntimeMigrationIdentity::capture(current).map_err(ApplyError::Domain)? {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
