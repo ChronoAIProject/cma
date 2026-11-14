@@ -137,6 +137,7 @@ async fn capacity_recovery_success_attaches_without_replaying_input() {
     proof.validate_for(&request).unwrap();
     transport.retire(&request.target.runtime).await.unwrap();
     server.await.unwrap();
+    drop(channel);
     wait_for_process_budget(available).await;
 }
 
