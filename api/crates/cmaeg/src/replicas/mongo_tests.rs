@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 
 #[path = "mongo_admission_tests.rs"]
 mod admission;
+#[path = "mongo_split_read_tests.rs"]
+mod split_read;
 
 async fn plan() -> AdmittedPlan {
     let (_server, mut plan) = super::partition_tests::plan().await;
