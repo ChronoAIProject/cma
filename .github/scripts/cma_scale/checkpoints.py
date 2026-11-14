@@ -27,6 +27,45 @@ def ready(pod):
         for c in pod.get('status', {}).get('conditions', []))
 
 
+def original_process(obj, template_sha256=None):
+    """Project only safe identities of the one serving pre-pause incarnation."""
+    owned, pods = cohort(obj)
+    g.require(len(pods) == 1 and ready(pods[0]), 'original_legacy_process_required')
+    pod = pods[0]
+    sets = [rs for uid, rs in owned.items() if controlled_by(pod, uid)]
+    template_sha256 = template_sha256 or g.template_identity(obj['spec']['template'])
+    g.require(len(sets) == 1 and not sets[0]['metadata'].get('deletionTimestamp') and
+              g.template_identity(sets[0]['spec']['template']) == template_sha256,
+              'original_legacy_template_required')
+    names = [c['name'] for c in sets[0]['spec']['template']['spec']['containers']]
+    statuses = pod.get('status', {}).get('containerStatuses', [])
+    g.require(names and len(set(names)) == len(names) and
+              sorted(s['name'] for s in statuses) == sorted(names) and
+              sorted(c['name'] for c in pod['spec']['containers']) == sorted(names),
+              'original_container_status_required')
+    containers = []
+    for status in sorted(statuses, key=lambda s: s['name']):
+        running = status.get('state', {}).get('running', {})
+        fields = (status.get('containerID'), status.get('imageID'), running.get('startedAt'))
+        g.require(status.get('ready') is True and all(isinstance(v, str) and v for v in fields)
+                  and type(status.get('restartCount')) is int and status['restartCount'] >= 0,
+                  'original_container_incarnation_required')
+        containers.append(dict(name=status['name'], container_id=fields[0], image_id=fields[1],
+                               started_at=fields[2], restart_count=status['restartCount']))
+    return dict(deployment_uid=obj['metadata']['uid'], rs_uid=sets[0]['metadata']['uid'],
+                pod_uid=pod['metadata']['uid'], template_sha256=template_sha256,
+                containers=containers)
+
+
+def same_original_process(obj, saved):
+    g.require(isinstance(saved, dict) and saved.get('template_sha256'),
+              'saved_original_process_required')
+    g.require(obj['metadata']['uid'] == saved.get('deployment_uid'),
+              'original_deployment_changed')
+    g.require(original_process(obj, saved['template_sha256']) == saved,
+              'original_process_changed')
+
+
 def stable(obj, count, current_template=True, distinct=False):
     spec, status = obj['spec'], obj.get('status', {})
     g.require(spec.get('replicas') == count and

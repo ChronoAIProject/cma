@@ -106,13 +106,8 @@ def checkpoint(obj, op, release=None):
         if op.get('requires_zero') or phase == 'unpause-zero' or op.get('a2_cutover_start'):
             _, pods = checkpoints.cohort(obj)
             g.require(not pods, 'owned_or_selected_process_still_exists')
-        if op.get('abort_before_stop'):
-            selector = 'app.kubernetes.io/name=' + op['name']
-            pods = g.command(g.K + ['get', 'pods', '-l', selector, '-o', 'json'])['items']
-            g.require(len(pods) == 1 and not pods[0]['metadata'].get('deletionTimestamp') and
-                      any(x.get('uid') == op['original_rs_uid'] and x.get('controller')
-                          for x in pods[0]['metadata'].get('ownerReferences', [])),
-                      'abort_original_process_changed')
+        if phase == 'pause-legacy' or op.get('abort_before_stop'):
+            checkpoints.same_original_process(obj, op.get('original_process'))
     elif op['action'] == 'create':
         stable_pair(op['name'], require_grace=op['kind'] == 'HorizontalPodAutoscaler')
         if op['kind'] == 'HorizontalPodAutoscaler':
@@ -179,6 +174,8 @@ def plan(args):
     current = g.get(op['kind'], op['name'])
     if op.get('expected_before'):
         g.same(current, op['expected_before'])
+    if op.get('a2_phase') == 'pause-legacy':
+        op['original_process'] = checkpoints.original_process(current)
     checkpoint(current, op, release)
     expected, old = dry_run(current, op)
     result = dict(version=1, at=g.now(), route=ROUTE, action=args.action, release=release,

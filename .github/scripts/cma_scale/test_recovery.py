@@ -23,7 +23,9 @@ def processes(obj, count=2):
                       'nodeName': 'host-' + str(i)},
              'status': {'conditions': [{'type': 'Ready', 'status': 'True'}],
                         'containerStatuses': [{'name': 'api', 'ready': True,
-                                               'imageID': image(), 'restartCount': 0}]}}
+                                               'imageID': image(), 'restartCount': 0,
+                                               'containerID': 'containerd://app-' + str(i),
+                                               'state': {'running': {'startedAt': '2026-11-14T00:00:00Z'}}}]}}
             for i in range(count)]
     return rs, pods
 
@@ -58,6 +60,9 @@ class RecoveryTests(NoExternalCommands):
         original = deployment(1)
         original['spec']['template']['spec']['containers'][0]['env'][1]['value'] = 'false'
         pause = o.build('s1-pause', release())
+        rs, pods = processes(original, 1)
+        with patch.object(checkpoints, 'cohort', return_value=({'rs': rs}, pods)):
+            pause['original_process'] = checkpoints.original_process(original)
         paused, old = o.transformed(original, pause)
         first = {'operation': pause, 'release': release(), 'before': g.binding(original),
                  'expected_spec_sha256': g.hash_json(paused['spec']), 'previous_fields': old}
@@ -74,7 +79,7 @@ class RecoveryTests(NoExternalCommands):
             original, current, p1, p2 = self.pause_prepare(tmp)
             rs, pods = processes(original, 1)
             with patch.object(g, 'get', return_value=current), \
-                 patch.object(g, 'command', side_effect=[{'items': pods}, {'items': [rs]}]):
+                 patch.object(g, 'command', side_effect=[{'items': [rs]}, {'items': pods}]):
                 op = o.build('s1-abort-before-stop', release(), pause_plan=p1, prepare_plan=p2)
             restored, _ = o.transformed(current, op)
             self.assertEqual(restored['spec'], original['spec'])
@@ -90,8 +95,8 @@ class RecoveryTests(NoExternalCommands):
             rs, pods = processes(original, 1)
             pods[0]['metadata']['ownerReferences'][0]['uid'] = 'different-rs'
             with patch.object(g, 'get', return_value=current), \
-                 patch.object(g, 'command', side_effect=[{'items': pods}, {'items': [rs]}]), \
-                 self.assertRaisesRegex(RuntimeError, 'original_legacy_process'):
+                 patch.object(g, 'command', side_effect=[{'items': [rs]}, {'items': pods}]), \
+                 self.assertRaisesRegex(RuntimeError, 'foreign_pod'):
                 o.build('s1-abort-before-stop', release(), pause_plan=p1, prepare_plan=p2)
 
     def test_hpa_freeze_delete_requires_exact_created_uid(self):
