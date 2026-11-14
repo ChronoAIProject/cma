@@ -18,6 +18,7 @@ pub use layer3_adapter::DesktopFrame;
 mod authorization;
 mod owned;
 mod timing;
+use super::runtime_migration_guard::{try_acquire_desktop_runtime_guard, DesktopRuntimeGuard};
 pub use authorization::DesktopAuthorization;
 
 #[derive(Debug, thiserror::Error)]
@@ -62,6 +63,7 @@ pub struct DesktopConnection {
     session_id: String,
     runtime_id: String,
     _lease: Option<OwnedMutexGuard<()>>,
+    migration_guard: Option<DesktopRuntimeGuard>,
     owned: Option<owned::ConnectionState>,
 }
 
@@ -231,6 +233,7 @@ impl DesktopService {
             }
             self.close(connection.sandbox_id.clone(), connection.session_id.clone())
                 .await;
+            connection.migration_guard.take();
         }
     }
 
@@ -260,6 +263,25 @@ impl DesktopService {
         }
         let (sandbox_id, runtime) =
             timing::observe("legacy_lineage", self.authorize(caller, id)).await?;
+        self.open_legacy_with_binding(caller, id, sandbox_id, runtime)
+            .await
+    }
+
+    async fn open_legacy_with_binding(
+        &self,
+        caller: &Caller,
+        id: &AgentId,
+        sandbox_id: SandboxId,
+        runtime: RuntimeBinding,
+    ) -> Result<DesktopConnection, DesktopError> {
+        let migration_guard =
+            try_acquire_desktop_runtime_guard(&sandbox_id).map_err(|_| DesktopError::Busy)?;
+        // The first lineage read can precede a committed rotation. Revalidate
+        // under the shared gate before any native open effect or session write.
+        let (current_id, current_runtime) = self.authorize(caller, id).await?;
+        if current_id != sandbox_id || current_runtime != runtime {
+            return Err(DesktopError::Unavailable);
+        }
         let sandbox_id = sandbox_id.to_string();
         let runtime_id = runtime.runtime_id;
         let lease = self.leases.acquire(&sandbox_id).await?;
@@ -283,6 +305,9 @@ impl DesktopService {
         )
         .await
         .map_err(|_| DesktopError::Unavailable)?;
+        migration_guard
+            .opened()
+            .map_err(|_| DesktopError::AuthorityUnavailable)?;
         register_open_desktop_session(&sandbox_id);
         Ok(DesktopConnection {
             connection: Some(connection),
@@ -290,6 +315,7 @@ impl DesktopService {
             session_id,
             runtime_id,
             _lease: Some(lease),
+            migration_guard: Some(migration_guard),
             owned: None,
         })
     }
@@ -302,3 +328,7 @@ fn session_expiry() -> String {
 #[cfg(test)]
 #[path = "desktop_lease_tests.rs"]
 mod lease_tests;
+
+#[cfg(test)]
+#[path = "desktop_migration_tests.rs"]
+mod migration_tests;

@@ -1,8 +1,14 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
 mod desktop;
+mod runtime_migration_guard;
 pub use desktop::{
     DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
+};
+pub use runtime_migration_guard::{
+    runtime_desktop_activity_snapshot, runtime_desktop_process_incarnation,
+    try_acquire_runtime_migration_guard, RuntimeDesktopActivitySnapshot, RuntimeMigrationBusy,
+    RuntimeMigrationGuard,
 };
 mod admin;
 mod agent;
@@ -154,6 +160,8 @@ pub use retained_recovery::{
     RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
     RetainedRecoverySource,
 };
+mod runtime_migration;
+pub use runtime_migration::*;
 mod custom_runtime;
 pub use custom_runtime::{
     SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,

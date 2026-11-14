@@ -258,6 +258,16 @@ pub fn validate_image_rotation_request(
 /// Global discovery and evidence-backed atomic maintenance admission.
 #[async_trait]
 pub trait SandboxMaintenanceStore: Send + Sync {
+    /// Operator authority, current activity and lifecycle start share one CAS.
+    async fn admit_custom_runtime_migration(
+        &self,
+        _admission: super::SandboxCustomRuntimeMigrationAdmission,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "custom runtime migration unavailable".into(),
+        ))
+    }
+
     /// Page active and paused Sandbox IDs globally in stable, exclusive-cursor ID order.
     async fn sandbox_maintenance_candidates(
         &self,

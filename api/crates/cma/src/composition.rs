@@ -15,6 +15,7 @@ mod media;
 mod profiles;
 mod routes;
 mod runtime;
+mod runtime_migration;
 mod stores;
 use crate::{
     auth::{service_portal, AuthState},
@@ -181,6 +182,10 @@ impl ControlPlaneComposition {
         )
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
+        .with_runtime_migrations(
+            runtime.migrations,
+            stores.sandbox_model.runtime_migration_verifier(),
+        )
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))

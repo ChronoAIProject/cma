@@ -224,6 +224,7 @@ impl DesktopService {
             session_id: request.session_id,
             runtime_id: request.runtime.runtime_id,
             _lease: None,
+            migration_guard: None,
             owned: Some(ConnectionState {
                 authority,
                 control,

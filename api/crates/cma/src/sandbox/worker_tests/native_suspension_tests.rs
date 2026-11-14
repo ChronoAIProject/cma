@@ -4,6 +4,7 @@ use layer2_core::sandbox::store::{AgentStore, WorkspaceStore};
 use layer2_core::sandbox::{AgentStatus, SandboxLifecycleOperation, SandboxRevivePhase};
 mod backend;
 mod binding_retirement_tests;
+mod custom_runtime_tests;
 mod nonexecuting_recovery_tests;
 mod recovery_request_tests;
 mod recovery_tests;
