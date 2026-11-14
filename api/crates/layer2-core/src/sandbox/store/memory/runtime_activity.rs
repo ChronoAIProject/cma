@@ -3,6 +3,8 @@ use super::super::runtime_activity::*;
 use super::{InMemorySandboxStore, SandboxId, SandboxStoreError, State};
 
 mod records;
+#[cfg(test)]
+mod tests;
 
 #[async_trait::async_trait]
 impl SandboxRuntimeActivityObservationStore for InMemorySandboxStore {

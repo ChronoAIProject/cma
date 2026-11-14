@@ -24,6 +24,16 @@ pub(super) fn capture(
         .get(id)
         .and_then(|events| events.last())
         .map_or(0, |event| event.seq);
+    // A failed admitted update deliberately retains its phase for an explicit
+    // restart. Its stopped work can earn a new interval; queued work cannot.
+    let parked_update = sandbox.work.step == SandboxWorkStep::None
+        && sandbox.work.lease.is_none()
+        && sandbox.runtime_update_request().is_some_and(|request| {
+            request.started_at.is_some()
+                && request.completed_at.is_none()
+                && request.failure.is_some()
+                && sandbox.admitted_runtime_update_target() == Some(request.target_version.as_str())
+        });
     let sandbox_row = row(
         id.as_str(),
         Some(sandbox.revision),
@@ -46,7 +56,7 @@ pub(super) fn capture(
                 sandbox.lifecycle.runtime_generation_high_water,
             ),
             (
-                sandbox.lifecycle.operation.is_some(),
+                &sandbox.lifecycle.operation,
                 &sandbox.last_activity_at,
                 sandbox.work.next_fence,
                 &sandbox.work.lease,
@@ -57,7 +67,7 @@ pub(super) fn capture(
             sandbox.work.step,
             SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
         ) || sandbox.work.lease.is_some()
-            || sandbox.lifecycle.operation.is_some(),
+            || (sandbox.lifecycle.operation.is_some() && !parked_update),
     )?;
     let mut vector = RuntimeActivityVector {
         sandbox_id: id.clone(),
@@ -84,7 +94,7 @@ pub(super) fn capture(
                 &workspace.id,
                 &workspace.sandbox_id,
                 &workspace.created_at,
-                &workspace.updated_at,
+                &workspace.ready_at,
                 workspace.status,
                 workspace.next_worktree_number,
                 workspace.work.step,
@@ -103,12 +113,14 @@ pub(super) fn capture(
         let busy = agent.work.step.is_pending()
             || agent.work.lease.is_some()
             || !agent.conversation.queued_messages.is_empty()
-            || agent.conversation.active_turn.is_some()
+            || (agent.status != AgentStatus::Deleted && agent.conversation.active_turn.is_some())
             || agent
                 .conversation
                 .operation
                 .as_ref()
                 .is_some_and(|operation| operation.blocks_dispatch())
+            || (agent.status == AgentStatus::Deleted
+                && (agent.deleted_at.is_none() || !agent.work.cleanup_debt.is_empty()))
             || (agent.status.is_live()
                 && !matches!(agent.status, AgentStatus::Ready | AgentStatus::Paused));
         let metadata = (
