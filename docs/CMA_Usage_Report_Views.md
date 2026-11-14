@@ -24,7 +24,7 @@ Publication atomically marks the new namespace Ready and replaces its latest poi
 
 After replacement, the detached old namespace retains a 30-second read grace. Cleanup conditionally retires the scanned generation and state only while its current deadline has expired on Mongo's clock, before deleting children. A delayed scan cannot retire a reclaimed ordinary job or a renewed deadline. Chunk and completion writes also check lease and logical expiry on Mongo's clock, with the byte-reservation expression combined with the lease expression. Reservations are released only after child deletion is acknowledged. Expiry and retirement are checked again before returning child results; responses are buffered. Retained parent jobs have no active TTL while reserved; only acknowledged child deletion releases the reservation and starts a 60-second parent tombstone TTL. Automatic TTL deletion is eventual storage cleanup and is not budget-release evidence.
 
-The retention class is bounded to one day, default freshness five minutes, eight keys per principal and 64 total, with at most 64 retained-job metadata records per principal and 512 total (including tombstones). Existing report endpoints keep their ten-minute class. The default warmer covers 24 hours only; seven-day warming is deferred because the cold fixture is substantially more expensive. The seven-day source fixture remains part of local qualification.
+The retention class is bounded to one day, default freshness five minutes, eight keys per principal and 64 total, with at most 64 retained-job metadata records per principal and 512 total (including tombstones). Existing report endpoints keep their ten-minute class. The warmer defaults to 24 hours. On a compatible image, each warm selection may explicitly choose `window:"24h"`, `window:"7d"`, or `window:"30d"`; the subject/admin/Sandbox cohort in `VIEW_SCOPES` remains range-independent. An older image rejects the new field. Each range uses a separate retained key and reservation, so enabling additional ranges needs measured generation cost and separate rollout approval. Scope principals must be the exact authenticated subject; `operator` in tests is not a production alias.
 
 ## Activation packet — HOLD pending exact candidate gates and owner approval
 
@@ -38,3 +38,57 @@ For each canary record full client-send through summary, first page/labels and f
 Abort immediately on foreign data, stale ownership attribution, partial or malformed success, reader-floor mismatch, budget/fence violations or loss of the last-good snapshot during a failed refresh. Abort the performance expansion if full rendered reporting remains above two seconds or transcript/Agent error and latency regressions appear. A cold first-ever filter remains separately reported, never relabelled as a warm success.
 
 Rollback closes the warmer first and then retained admission using their separate switches. Preserve the compatible reader/writer binary until admitted work drains or is reconciled and retained namespaces expire/are safely cleaned. Keep existing report IDs and data through their approved lifetimes; do not point an older reader/writer at active retained jobs. Use the lead's reviewed image rollback route only after the compatibility floor is satisfied. Deletion and reservation-release failures remain visible and charged; do not force-release bytes or edit pointers manually.
+
+## Incremental allocation source buckets
+
+`CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED` is default off. On a compatible image,
+it enables maintenance of disposable `sandbox_usage_allocation_buckets_v1`
+source projections and their use during report generation. The authoritative
+allocation ledger, public report schema, authorization, report worker leases,
+and reporting pool remain in use. The separate live and backfill lanes publish
+under Mongo server-time leases; bucket data and their resume checkpoint share
+the publication transaction.
+
+Every daily total and hourly projection is calculated directly with the existing
+raw allocation projector. A report reuses a cached interval only when its
+source provenance and complete selected range match. At most two partial dates
+use prepared inputs that preserve the original selected-day fold, including
+event order, gaps and projected tails. Current-day reuse requires the captured
+source head and query coverage; complete historical coverage can outlive a
+source revision. Hourly values are never subtracted or regrouped into a
+different floating-point calculation. A rolling 30-day request can cross
+31 UTC dates: the bound is interior daily totals and at most two boundary
+computations, not a claim of at most 30 physical Mongo documents. Missing coverage,
+changed source evidence or incomplete backfill never silently becomes zero.
+Incomplete or stale boundary coverage falls back to the original raw query.
+Malformed cache evidence is refused. Current report ownership and membership
+are still verified independently of these source projections.
+
+Initial source backfill is distinct from cold immutable-report generation.
+Activation measurements must record backfill progress and duration, raw/source-cache
+coverage, report generation/finalization, and committed first-page/owner-label
+latency for 24h, 7d and 30d. A new report ID alone does not establish a cold
+source cache. Fixed worker diagnostics include range_seconds, step_seconds and
+allocation_rollups alongside the report digest and outcome; they contain no
+caller subject. The new source path does not relax the report read-lane timeout
+or byte cap. The 7d web preset should omit explicit resolution and use the
+server's stable 600-second default; a 300-second step may exceed 2016 buckets
+on a minute-aligned rolling range and remains correctly rejected.
+
+Deploy compatible readers/maintenance workers with the new switch false first.
+Approve activation only after the new collection/index readiness, load budget,
+backfill and exactness evidence are reviewed. Preserve existing view and warm
+cohorts, the metrics collection flag and unrelated settings. Disable the new
+switch to stop source-bucket scheduling and use; retain compatible workers
+until in-flight fenced work has completed or expired. Buckets are disposable
+with a 32-day TTL, and disabling the switch does not rewrite or delete raw
+ledger entries, report pointers, report children or reservations. Stop the
+retained warmer first if rolling back its independently approved writer scope.
+
+Observe an admitted report by its immutable report ID. A failed retained job
+is retired immediately and normally returns `410 report_expired`; terminal
+410/404 must not trigger automatic new admission. Repeated latest-view requests
+can otherwise admit replacements after failure. Bound transient retries and
+observation time in the UI. `Retry-After` is a poll delay, not a completion ETA.
+Ready metadata may attach only to a matching report ID. A differently ranged
+preview is never completion of the requested range.
