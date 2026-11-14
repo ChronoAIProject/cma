@@ -14,7 +14,8 @@
 import type { AuthProvider, AuthState, Capability, SignInOptions } from './types';
 import { isCapability } from './types';
 import { parseRoute, routePath } from '../routing/routes';
-import { MAX_LOGIN_URL_BYTES } from '@chronoai/cma-sdk';
+import { authHttpRetry, authTransportRetry } from './retryMetadata';
+import { MAX_LOGIN_URL_BYTES, retryAfterMilliseconds } from '@chronoai/cma-sdk';
 import { retainFatherDraftForSignIn } from '../bots/fatherDraft';
 
 /** Where the control plane answers questions about the current browser identity. */
@@ -228,13 +229,14 @@ export function createNyxidAuthProvider(): AuthProvider {
           credentials: 'include',
           signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
         });
-      } catch {
+      } catch (error) {
         // Unreachable is not anonymous. Saying "signed out" here would invite
         // a sign-in attempt that cannot succeed either.
         const timedOut = timeout.aborted;
         return {
           status: 'error',
           reason: 'service_unavailable',
+          retry: authTransportRetry(error, signal, timedOut),
           message: timedOut
             ? 'CMA did not respond. Retrying shortly.'
             : 'Cannot reach CMA. Check your connection; retrying shortly.',
@@ -256,15 +258,18 @@ export function createNyxidAuthProvider(): AuthProvider {
       if (!response.ok) {
         const problem = (await response.json().catch(() => undefined)) as
           { code?: unknown } | undefined;
+        const retry = authHttpRetry(response.status, problem, retryAfterMilliseconds(response));
         if (response.status === 503 && problem?.code === 'identity_unavailable') {
           return {
             status: 'error',
             reason: 'identity_unavailable',
+            retry,
             message: 'The identity service is temporarily unavailable. Retrying shortly.',
           };
         }
         return {
           status: 'error',
+          retry,
           // Auth-store failures include upstream limits and malformed evidence.
           // Do not turn those into automatic browser retries of a NyxID 429.
           reason:
@@ -278,8 +283,12 @@ export function createNyxidAuthProvider(): AuthProvider {
       let body: IdentityResponse;
       try {
         body = (await response.json()) as IdentityResponse;
-      } catch {
-        return { status: 'error', message: 'identity response was not readable' };
+      } catch (error) {
+        return {
+          status: 'error',
+          message: 'identity response was not readable',
+          retry: authTransportRetry(error, signal, timeout.aborted),
+        };
       }
 
       if (body.authenticated !== true || typeof body.subject !== 'string' || body.subject === '') {
