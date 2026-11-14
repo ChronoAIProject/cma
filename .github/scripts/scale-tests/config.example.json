@@ -1,0 +1,18 @@
+{
+  "schema": "cma-scale-v1",
+  "environment": "local",
+  "isolated": true,
+  "context": "kind-cma-scale",
+  "namespace": "cma-scale",
+  "endpoints": { "am": "https://127.0.0.1:18080", "eg": "https://127.0.0.1:18080" },
+  "recoveryMs": 30000,
+  "scaleTimeoutMs": 1800000,
+  "hardwareHash": "REQUIRED_SHA256",
+  "fixtureHash": "REQUIRED_SHA256",
+  "workloadHash": "REQUIRED_SHA256",
+  "sourceHash": "REQUIRED_SHA256",
+  "imagesHash": "REQUIRED_SHA256",
+  "driverModule": "REQUIRED_REVIEWED_LOCAL_DRIVER_PATH",
+  "driverSha256": "REQUIRED_SHA256",
+  "catalogSha256": "a47475609633f3f736147dbded6dace5864d174b0cf58283425e639aba3ad951"
+}
