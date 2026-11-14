@@ -62,8 +62,10 @@ impl ReportingStore {
         }
         if states.is_empty() { return Ok(BTreeMap::new()); }
         let ids: Vec<_> = states.iter().map(|state| state.sandbox_id.as_str()).collect();
+        let summary_only = range.seconds() != HOUR || !range.from.is_multiple_of(HOUR);
         let mut cursor = self.collection(COLLECTION)
             .find(doc! {"sandbox_id":{"$in":&ids},"day":{"$gte":(range.from / DAY * DAY) as i64,"$lt":range.to as i64}})
+            .projection(if summary_only { doc! {"record":0,"content_sha256":0} } else { doc! {} })
             .batch_size(200).max_time(DB_DEADLINE).session(&mut *session)
             .await.map_err(unavailable)?;
         let mut out = BTreeMap::new();
@@ -71,7 +73,7 @@ impl ReportingStore {
         while let Some(document) = cursor.next(&mut *session).await.transpose().map_err(unavailable)? {
             bytes += mongodb::bson::serialize_to_vec(&document).map_err(unavailable)?.len();
             if bytes > 64 * 1024 * 1024 { return Err(MetricsError::Busy); }
-            let bucket = DayBucket::read(&document)?;
+            let bucket = if summary_only { DayBucket::read_summary(&document)? } else { DayBucket::read(&document)? };
             if !ids.contains(&bucket.sandbox_id.as_str()) || bucket.day < range.from / DAY * DAY
                 || bucket.day >= range.to || out.len() >= states.len() * 31
                 || out.insert((bucket.sandbox_id.clone(), bucket.day), bucket).is_some() {
