@@ -23,6 +23,7 @@ use std::{collections::BTreeMap, sync::Mutex, time::Duration};
 struct Shared {
     config: config::Config,
     provider_bearer: String,
+    channel_key: cmaeg_core::channel::Secret,
     channel_id: String,
     events: Mutex<BTreeMap<String, protocol::Event>>,
     ledger: Mutex<ledger::Ledger>,
