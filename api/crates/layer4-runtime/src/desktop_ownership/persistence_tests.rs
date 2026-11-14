@@ -112,3 +112,52 @@ async fn revoke_reports_uncertainty_when_terminal_cleanup_sees_damaged_custody()
         remains_closed(&fixture, expected).await;
     }
 }
+
+#[tokio::test]
+async fn unpublished_temporary_floor_cannot_replace_retained_custody() {
+    let fixture = Fixture::new();
+    fixture.accept(1).await;
+    let retained = persistence::load(&fixture.receiver.root).unwrap().unwrap();
+    let temporary = fixture.receiver.root.join("interrupted.tmp");
+    for bytes in [
+        b"incomplete".to_vec(),
+        serde_json::to_vec(&retained).unwrap(),
+    ] {
+        std::fs::write(&temporary, bytes).unwrap();
+        assert!(persistence::load(&fixture.receiver.root).unwrap().as_ref() == Some(&retained));
+        let restarted = DesktopReceiver::new(
+            fixture.receiver.root.clone(),
+            fixture.receiver.identity.clone(),
+        );
+        assert!(restarted.register(None, |_| async {}).await.is_err());
+        assert!(restarted
+            .challenge(fixture.request(Some(fixture.owner(1))))
+            .is_err());
+    }
+    let next = fixture.accept(2).await;
+    let published = persistence::load(&fixture.receiver.root).unwrap().unwrap();
+    assert!(published.owner == next);
+    assert!(!published.retired);
+    assert!(temporary.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn activation_symlink_refuses_replacement_without_repairing_the_floor() {
+    let fixture = Fixture::new();
+    fixture.accept(1).await;
+    let floor = fixture.receiver.root.join("floor.json");
+    let original = std::fs::read(&floor).unwrap();
+    let marker = fixture.receiver.root.with_extension("activated");
+    let other = fixture.directory.join("different-marker");
+    std::fs::rename(&marker, &other).unwrap();
+    std::os::unix::fs::symlink(&other, &marker).unwrap();
+    assert!(persistence::load(&fixture.receiver.root).is_err());
+    let mut record: Record = serde_json::from_slice(&original).unwrap();
+    record.owner = fixture.owner(2);
+    assert!(persistence::save(&fixture.receiver.root, &record).is_err());
+    assert_eq!(std::fs::read(&floor).unwrap(), original);
+    assert!(marker.symlink_metadata().unwrap().file_type().is_symlink());
+    assert!(fixture.receiver.challenge(fixture.request(None)).is_err());
+    assert!(persistence::load(&fixture.receiver.root).is_err());
+}
