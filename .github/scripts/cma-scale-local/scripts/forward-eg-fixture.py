@@ -14,11 +14,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--run-name', required=True)
 parser.add_argument('--source', required=True)
 parser.add_argument('--count', type=int, choices=[1, 2], required=True)
+parser.add_argument('--base-port', type=int, default=28281)
 args = parser.parse_args()
 if not re.fullmatch('[a-z0-9][a-z0-9-]{0,31}', args.run_name):
     parser.error('invalid run name')
 if not re.fullmatch('[0-9a-f]{40}', args.source):
     parser.error('expected a full source SHA')
+if not 1024 <= args.base_port <= 65534:
+    parser.error('base port must leave room for two unprivileged ports')
 root = Path(__file__).resolve().parent.parent
 private = root / ('private/eg-fixture-' + args.run_name)
 if not (private / 'output/bootstrap.json').is_file():
@@ -39,7 +42,7 @@ if len(pods) != args.count or any(p['metadata'].get('deletionTimestamp') or
 processes, endpoints = [], []
 try:
     for index, pod in enumerate(sorted(pods, key=lambda p: p['metadata']['name'])):
-        port = 28081 + index
+        port = args.base_port + index
         with socket.socket() as probe:
             probe.bind(('127.0.0.1', port))
         log = private / ('ingress-n' + str(args.count) + '-' + str(index) + '.log')
