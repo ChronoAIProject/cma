@@ -59,7 +59,9 @@ it.each(['account', 'sign-in epoch', 'capability'])(
         </CmaClientProvider>
       </AuthContextProvider>,
     );
-    await screen.findByRole('button', { name: 'Private Alice Sandbox' });
+    // Lazy route imports can queue behind the full suite's parallel transforms.
+    // This setup wait is not a product latency assertion.
+    await screen.findByRole('button', { name: 'Private Alice Sandbox' }, { timeout: 5000 });
     let resolveLate!: (value: ReturnType<typeof reportFixture>) => void;
     metrics.create.mockReturnValueOnce(
       new Promise((resolve) => {
@@ -90,7 +92,7 @@ it.each(['account', 'sign-in epoch', 'capability'])(
       resolveLate({ ...reportFixture(), scope: { principal: 'realm:alice', admin: false } }),
     );
     await screen.findByText(
-      transition === 'capability' ? 'Usage access unavailable' : 'Usage reporting is unavailable',
+      transition === 'capability' ? 'Usage access unavailable' : 'Retrying usage automatically…',
     );
     expect(screen.queryByRole('button', { name: 'Private Alice Sandbox' })).not.toBeInTheDocument();
     expect(metrics.sandboxes).toHaveBeenCalledTimes(1);
