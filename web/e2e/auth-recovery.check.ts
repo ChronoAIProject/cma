@@ -77,15 +77,24 @@ for (const action of ['send', 'cancel'] as const) {
         if (action === 'send') {
           await expect(page.locator('.message--user')).toHaveCount(1);
           await expect(page.locator('.message--user')).toContainText('Sent');
-        } else
-          await expect(
-            page.getByRole('status').filter({ hasText: 'Your response action was delivered.' }),
-          ).toBeVisible();
+        } else {
+          await expect
+            .poll(() => fixture.base.reads.includes('/api/v2/commands/cmd_control'))
+            .toBe(true);
+          await expect(page.getByRole('button', { name: 'Recover pending request' })).toHaveCount(
+            0,
+          );
+          await expect(stop).toBeVisible();
+        }
         const recoveredAt = performance.now();
         if (enabled) expect(recoveredAt - failedAt).toBeGreaterThanOrEqual(1000);
         expect(recoveredAt - failedAt).toBeLessThan(10_000);
         expect(fixture.writes).toHaveLength(!enabled && phase === 'confirmation' ? 2 : 1);
         expect(fixture.effects.size).toBe(1);
+        if (action === 'cancel') {
+          fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
+          await expect(stop).toHaveCount(0);
+        }
         if (fixture.writes.length === 2) {
           expect(fixture.writes[1]!.key).toBe(fixture.writes[0]!.key);
           expect(fixture.writes[1]!.body).toBe(fixture.writes[0]!.body);
