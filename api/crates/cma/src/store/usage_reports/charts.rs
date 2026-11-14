@@ -24,6 +24,7 @@ pub(crate) fn chart_documents(
     expectations: &[Expectation],
 ) -> Result<Vec<mongodb::bson::RawDocumentBuf>> {
     let rank: f64 = buckets.iter().map(|b| b.integral).sum();
+    let expectations = metric_expectations(expectations, metric);
     let mut out = Vec::new();
     // A membership marker is required even if all measurements are absent.
     // Its compact intervals reconstruct null buckets without caching zeros.
@@ -45,7 +46,7 @@ pub(crate) fn chart_documents(
                 expires_at: expires(report.expires_at + 60),
                 record: ChartRecord {
                     buckets: points,
-                    expectations: if chunk == 0 { expectations } else { &[] },
+                    expectations: if chunk == 0 { &expectations } else { &[] },
                 },
             }
             .encode()?,
@@ -53,6 +54,40 @@ pub(crate) fn chart_documents(
     }
     Ok(out)
 }
+
+fn metric_expectations(expectations: &[Expectation], metric: Metric) -> Vec<Expectation> {
+    let value = |e: &Expectation| {
+        if metric == Metric::Disk {
+            e.home
+        } else {
+            e.running
+        }
+    };
+    let mut out: Vec<Expectation> = Vec::with_capacity(expectations.len());
+    for next in expectations {
+        if let Some(last) = out.last_mut() {
+            // Chart readers use only this metric's expectation. Preserve gaps,
+            // overlaps and unknown intervals; merge only adjacent equal states.
+            if last.from < last.to
+                && next.from < next.to
+                && last.to == next.from
+                && value(last) == value(next)
+            {
+                last.to = next.to;
+                if last.running != next.running {
+                    last.running = None;
+                }
+                if last.home != next.home {
+                    last.home = None;
+                }
+                continue;
+            }
+        }
+        out.push(next.clone());
+    }
+    out
+}
+
 impl ReportingStore {
     pub(super) async fn read_series(&self, report: &Report, query: SeriesQuery) -> Result<Series> {
         let top = query.validate(report.scope.admin)?;
@@ -182,3 +217,7 @@ fn merge_sandbox(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "chart_expectation_tests.rs"]
+mod expectation_tests;
