@@ -101,6 +101,7 @@ pub struct MongoSandboxStore {
     pub(super) client: Client,
     pub(super) checkpoint_objects: MongoCheckpointObjectStore,
     pub(super) sandboxes: Collection<Document>,
+    pub(super) lifecycle_operations: Collection<Document>,
     pub(super) sandbox_sessions: Collection<Document>,
     pub(super) workspaces: Collection<Document>,
     pub(super) worktrees: Collection<Document>,
@@ -214,6 +215,10 @@ impl MongoSandboxStore {
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
+            lifecycle_operations: majority_collection(
+                &database,
+                super::agent_lifecycle_operations::COLLECTION,
+            ),
             sandbox_sessions: majority_collection(&database, SANDBOX_SESSIONS),
             workspaces: majority_collection(&database, WORKSPACES),
             worktrees: majority_collection(&database, WORKTREES),

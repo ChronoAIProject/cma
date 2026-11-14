@@ -1,4 +1,5 @@
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
@@ -136,6 +137,7 @@ pub(crate) struct AgentWorker {
     config: AgentWorkerConfig,
     maintenance: reconcile::MaintenanceChecks,
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
+    startup_timings: Mutex<HashMap<AgentId, startup_timing::StartupPhaseDurations>>,
 }
 
 impl AgentWorker {
@@ -152,7 +154,45 @@ impl AgentWorker {
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
             capacity_restart,
+            startup_timings: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn retain_startup_timing(
+        &self,
+        agent: &AgentId,
+        timing: startup_timing::StartupPhaseDurations,
+    ) {
+        let mut timings = match self.startup_timings.lock() {
+            Ok(timings) => timings,
+            Err(poisoned) => {
+                tracing::error!("agent startup timing state was poisoned; recovering it");
+                poisoned.into_inner()
+            }
+        };
+        // Startup phase timing is deliberately process-local. Bound this
+        // cache so abandoned or failed creates cannot grow it without limit;
+        // an eviction leaves the eventual event explicitly phase-partial.
+        if timings.len() >= 1024 && !timings.contains_key(agent) {
+            if let Some(oldest) = timings.keys().next().cloned() {
+                timings.remove(&oldest);
+            }
+        }
+        timings.insert(agent.clone(), timing);
+    }
+
+    fn take_startup_timing(
+        &self,
+        agent: &AgentId,
+    ) -> Option<startup_timing::StartupPhaseDurations> {
+        let mut timings = match self.startup_timings.lock() {
+            Ok(timings) => timings,
+            Err(poisoned) => {
+                tracing::error!("agent startup timing state was poisoned; recovering it");
+                poisoned.into_inner()
+            }
+        };
+        timings.remove(agent)
     }
 
     pub(crate) async fn due_work(
