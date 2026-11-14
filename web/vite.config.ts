@@ -1,17 +1,20 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { buildIdentity, buildIdentityEvidence } from './build/identity';
+import { replicaRecoveryEnabled, recoveryEvidence } from './build/recovery';
 import { systemText } from './build/systemText';
 import { devFixtures } from './build/devFixtures';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig(({ command, mode }) => {
   const identity = buildIdentity(process.env);
+  const recovery = replicaRecoveryEnabled(process.env);
   return {
     // `npm run dev:fixtures` only: answers /auth and /api locally (build/devFixtures.ts).
     plugins: [
       react(),
       buildIdentityEvidence(identity),
+      recoveryEvidence(identity, recovery),
       ...(command === 'serve' && mode === 'fixtures' ? [devFixtures()] : []),
     ],
     css: { postcss: { plugins: [systemText()] } },
@@ -35,6 +38,7 @@ export default defineConfig(({ command, mode }) => {
       __CHRONO_BUILD__: JSON.stringify(identity.version),
       __CHRONO_BUILD_SHA__: JSON.stringify(identity.revision),
       __CHRONO_BUILD_LOCAL__: JSON.stringify(identity.local),
+      __CHRONO_WEB_REPLICA_RECOVERY_ENABLED__: JSON.stringify(recovery),
     },
     test: {
       globals: true,

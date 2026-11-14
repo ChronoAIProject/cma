@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -85,7 +87,18 @@ impl WorkspaceWorker {
         first_error.map_or(Ok(completed), Err)
     }
 
-    pub async fn run_one(
+    /// Run one claimed workspace behind a boxed boundary so the scheduler and
+    /// test callers do not inherit the full execution/renewal state machine.
+    pub fn run_one(
+        &self,
+        id: &WorkspaceId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, SandboxStoreError>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move { self.run_one_inner(&id, now).await })
+    }
+
+    async fn run_one_inner(
         &self,
         id: &WorkspaceId,
         now: SystemTime,

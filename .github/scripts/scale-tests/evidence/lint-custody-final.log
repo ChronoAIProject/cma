@@ -1,0 +1,7 @@
+build-slot: all 6 slots busy; waiting for the first free slot
+build-slot: acquired slot 2/6 (CARGO_BUILD_JOBS=4)
+
+> lint
+> eslint . --max-warnings=0 && node check.mjs
+
+Syntax and source-size checks passed.

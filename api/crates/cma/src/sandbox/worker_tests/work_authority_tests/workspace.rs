@@ -13,6 +13,55 @@ struct PendingPreparation {
     release: Notify,
 }
 
+struct BlockingPreparation {
+    backend: InMemoryHostedBackend,
+    entered: Notify,
+    release: Notify,
+}
+
+#[async_trait::async_trait]
+impl HostedBackend for BlockingPreparation {
+    async fn provision(
+        &self,
+        request: ProviderSandboxRequest,
+    ) -> layer3_adapter::Result<RuntimeHandle> {
+        self.backend.provision(request).await
+    }
+    async fn adopt(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.backend.adopt(handle, request).await
+    }
+    async fn exchange(
+        &self,
+        handle: &RuntimeHandle,
+        request: RequestFrame,
+    ) -> layer3_adapter::Result<ResponseFrame> {
+        if matches!(request, RequestFrame::PrepareWorkspace(_)) {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        self.backend.exchange(handle, request).await
+    }
+    async fn open_agent(
+        &self,
+        handle: &RuntimeHandle,
+        launch: FencedRequest<AgentLaunch>,
+        resume: Option<String>,
+        settings: HostedAgentOpenSettings,
+        updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
+    ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        self.backend
+            .open_agent(handle, launch, resume, settings, updates)
+            .await
+    }
+    async fn teardown(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
+        self.backend.teardown(handle).await
+    }
+}
+
 #[async_trait::async_trait]
 impl HostedBackend for PendingPreparation {
     async fn provision(
@@ -157,4 +206,101 @@ async fn composed_workspace_renews_while_preparation_response_is_pending() {
             .count(),
         1
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn two_instance_workspace_owner_abort_is_taken_over_after_fifteen_seconds_once() {
+    let h = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let (workspace, now) = prepare_workspace(&h).await;
+    let probe = Arc::new(BlockingPreparation {
+        backend: h.backend.clone(),
+        entered: Notify::new(),
+        release: Notify::new(),
+    });
+    let owner = workspace_worker(
+        &h,
+        "owner-a",
+        Arc::new(CodexAdapter::new(
+            probe.clone(),
+            CodexSandboxSpec::default(),
+        )),
+    );
+    let successor = workspace_worker(
+        &h,
+        "owner-b",
+        Arc::new(CodexAdapter::new(
+            Arc::new(h.backend.clone()),
+            CodexSandboxSpec::default(),
+        )),
+    );
+    let id = workspace.id.clone();
+    let owner_task = tokio::spawn(async move { owner.run_one(&id, now).await });
+    probe.entered.notified().await;
+    let fault_at = tokio::time::Instant::now();
+    owner_task.abort();
+    assert!(owner_task.await.unwrap_err().is_cancelled());
+    tokio::time::advance(Duration::from_secs(WORK_LEASE_SECONDS)).await;
+    tokio::task::yield_now().await;
+    assert!(successor
+        .run_one(&workspace.id, now + Duration::from_secs(WORK_LEASE_SECONDS))
+        .await
+        .unwrap());
+    let takeover_at = tokio::time::Instant::now();
+    assert!(takeover_at - fault_at <= Duration::from_secs(WORK_LEASE_SECONDS));
+    let finished = h.store.get_workspace(&workspace.id).await.unwrap().unwrap();
+    assert_eq!(finished.work.step, WorkspaceWorkStep::Setup);
+    assert!(finished.work.lease.is_none());
+    assert_eq!(
+        h.backend
+            .requests()
+            .await
+            .iter()
+            .filter(|(_, frame)| matches!(frame, RequestFrame::PrepareWorkspace(_)))
+            .count(),
+        1
+    );
+}
+
+async fn prepare_workspace(h: &Harness) -> (layer2_core::sandbox::Workspace, SystemTime) {
+    let parent = h.create().await;
+    let now = start_time(&parent);
+    h.drive_active(&parent.id, now).await;
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let profile = seed_workspace_profile(&profiles, 0).await;
+    let service = WorkspaceService::new(h.store.clone(), profiles);
+    let mut workspace = service
+        .create(
+            &caller("owner", [Capability::UseOwnSandboxes]),
+            &parent.id,
+            CreateWorkspace {
+                profile,
+                confirmed_digest: None,
+            },
+        )
+        .await
+        .unwrap();
+    let revision = workspace.revision;
+    workspace.work.authority_protocol = Some(WorkAuthorityProtocol::RenewedV1);
+    workspace.revision += 1;
+    h.store
+        .save_workspace(revision, workspace.clone())
+        .await
+        .unwrap();
+    (workspace, now)
+}
+
+fn workspace_worker(
+    h: &Harness,
+    holder: &str,
+    adapter: Arc<dyn SandboxAdapter>,
+) -> Arc<WorkspaceWorker> {
+    WorkspaceWorker::new(
+        WorkspaceWorkerDependencies {
+            store: h.store.clone(),
+            adapter,
+        },
+        WorkspaceWorkerConfig::new(holder, "test")
+            .with_execution(Default::default())
+            .with_replicas(true),
+    )
 }

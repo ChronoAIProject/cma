@@ -1,0 +1,6 @@
+results/
+*.local.json
+node_modules/
+coverage/
+__pycache__/
+*.pyc

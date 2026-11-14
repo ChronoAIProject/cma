@@ -1,10 +1,12 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@chronoai/cma-sdk';
 import { MetricsDashboard } from './MetricsDashboard';
 import { defaultSelection } from './model';
 import { asOf, metricRow, metricsClient, reportFixture } from './testFixtures';
+
+afterEach(() => vi.useRealTimers());
 
 // Recharts geometry is checked in the local browser fixture; these tests prove API orchestration.
 vi.mock('./MetricChart', () => ({
@@ -95,9 +97,13 @@ it.each([410, 429, 503])(
   'shows report failure %s without an empty or zero-usage claim',
   async (status) => {
     const api = metricsClient(true);
-    api.create.mockRejectedValue(new ApiError(status, 'Fixture failure'));
+    vi.useFakeTimers();
+    api.create.mockRejectedValue(
+      new ApiError(status, 'Fixture failure', undefined, undefined, 1000),
+    );
     renderDashboard(api);
-    await screen.findByRole('alert');
+    await act(async () => vi.advanceTimersByTimeAsync(10000));
+    expect(screen.getByRole('alert')).toBeInTheDocument();
     expect(screen.queryByText('No Sandboxes match this selection.')).not.toBeInTheDocument();
     expect(api.sandboxes).not.toHaveBeenCalled();
     expect(api.series).not.toHaveBeenCalled();
