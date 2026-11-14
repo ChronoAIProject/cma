@@ -143,22 +143,7 @@ async fn main() {
         return;
     }
     if store::migrations::is_command(&arguments) {
-        match store::migrations::command(&arguments).await {
-            Ok(result) => {
-                println!("{result}");
-                if result
-                    .get("verification_passed")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(false)
-                {
-                    std::process::exit(1);
-                }
-            }
-            Err(reason) => {
-                eprintln!("migration refused: {reason}");
-                std::process::exit(2);
-            }
-        }
+        store::migrations::run_command_line(&arguments).await;
         return;
     }
     if store::segment_operations::is_command(&arguments) {
