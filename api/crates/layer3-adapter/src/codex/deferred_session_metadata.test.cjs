@@ -1,6 +1,9 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
-const { readFileSync, mkdirSync, writeFileSync } = require("node:fs");
+const { readFileSync, mkdirSync, writeFileSync, appendFileSync, renameSync,
+  mkdtempSync, rmSync, existsSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { writeFixtureControl } = require("./fixture_control.cjs");
 const { join } = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { bridgePath } = require("./persist_conversations.cjs");
@@ -106,4 +109,57 @@ test("real same-session reload coalesces advisory work and publishes only the re
     assert.equal(f.state.frames.filter(commands).length, 1);
     assert.equal(f.trace().filter(row => row.event === "request" && row.optional === "commands").length, optionalBefore + 1);
   } finally { f.configure({}); await f.close(); }
+});
+
+function controlFixture(t) {
+  const directory = mkdtempSync(join(tmpdir(), "cma-fixture-control-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, "control.json");
+  const previous = { commands: "hold", epoch: 1, limit: 1 };
+  writeFixtureControl(path, previous);
+  return { path, previous, read: () => JSON.parse(readFileSync(path, "utf8")) };
+}
+
+test("control readers see complete snapshots during truncate, partial write and release", t => {
+  const f = controlFixture(t);
+  const observations = [];
+  writeFixtureControl(f.path, {}, {
+    writeFileSync(path, value) {
+      writeFileSync(path, "");
+      observations.push(f.read());
+      appendFileSync(path, value.slice(0, 1));
+      observations.push(f.read());
+      appendFileSync(path, value.slice(1));
+      observations.push(f.read());
+    },
+    renameSync(from, to) {
+      renameSync(from, to);
+      observations.push(f.read());
+    },
+  });
+  assert.deepEqual(observations, [f.previous, f.previous, f.previous, {}]);
+});
+
+for (const operation of ["writeFileSync", "renameSync"]) {
+  test("control " + operation + " failure preserves published controls and allows a later retry", t => {
+    const f = controlFixture(t);
+    const error = Object.assign(new Error("fixture control publication failed"), { code: "EIO" });
+    const io = { writeFileSync, renameSync };
+    io[operation] = path => {
+      if (operation === "writeFileSync") writeFileSync(path, "{");
+      throw error;
+    };
+    assert.throws(() => writeFixtureControl(f.path, {}, io), value => value === error);
+    assert.deepEqual(f.read(), f.previous);
+    writeFixtureControl(f.path, {});
+    assert.deepEqual(f.read(), {});
+  });
+}
+
+test("unserializable controls fail before changing the published snapshot", t => {
+  const f = controlFixture(t);
+  const circular = {}; circular.self = circular;
+  assert.throws(() => writeFixtureControl(f.path, circular), /circular/i);
+  assert.deepEqual(f.read(), f.previous);
+  assert.equal(existsSync(f.path + ".next"), false);
 });
