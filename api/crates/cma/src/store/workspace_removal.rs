@@ -67,9 +67,10 @@ pub(super) async fn apply_removal(
     let updated = store
         .workspaces
         .update_one(
-            workspace_revision_filter(id, expected)?,
-            doc! { "$set": workspace_replacement_fields(&workspace)
-            .map_err(ApplyError::Domain)? },
+            crate::store::work_schema::query(workspace_revision_filter(id, expected)?),
+            crate::store::work_lease_update::replacement(
+                workspace_replacement_fields(&workspace).map_err(ApplyError::Domain)?,
+            ),
         )
         .session(session)
         .await
@@ -89,7 +90,7 @@ async fn lock_workspace(
     let locked = store
         .workspaces
         .update_one(
-            workspace_revision_filter(id, revision)?,
+            crate::store::work_schema::query(workspace_revision_filter(id, revision)?),
             doc! { "$inc": { "removal_lock_fence": 1_i64 } },
         )
         .session(session)

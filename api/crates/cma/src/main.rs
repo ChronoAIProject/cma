@@ -4,6 +4,7 @@ mod activity;
 mod agent_access;
 mod agent_access_worker;
 mod agent_lifecycle;
+mod agent_manager;
 mod agent_models;
 mod auth;
 mod background;
@@ -143,13 +144,7 @@ async fn main() {
         return;
     }
     if store::migrations::is_command(&arguments) {
-        match store::migrations::command(&arguments).await {
-            Ok(result) => println!("{result}"),
-            Err(reason) => {
-                eprintln!("migration refused: {reason}");
-                std::process::exit(2);
-            }
-        }
+        store::migrations::run_command_line(&arguments).await;
         return;
     }
     if store::segment_operations::is_command(&arguments) {
@@ -164,7 +159,13 @@ async fn main() {
     }
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
-            Ok(database) => println!("{}", store::isolation::role(&database)),
+            Ok(database) => println!(
+                "{}",
+                store::isolation::replicas::role(
+                    &database,
+                    std::env::var("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED").as_deref() == Ok("true"),
+                )
+            ),
             Err(_) => {
                 eprintln!("CHRONO_MONGODB_DATABASE is required");
                 std::process::exit(2)
@@ -182,8 +183,8 @@ async fn main() {
         }
         return;
     }
-    if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
+    if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
@@ -195,6 +196,9 @@ async fn main() {
 async fn serve() -> Result<(), String> {
     let config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
+    if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
+        return agent_manager::relay::prestop(&config).await;
+    }
     let recorder = telemetry::install()?;
     let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
     let composition = ControlPlaneComposition::build(&config).await?;
@@ -224,6 +228,9 @@ async fn serve() -> Result<(), String> {
         auth_mode,
         "CMA listening"
     );
+    if let Some(manager) = &composition.agent_manager {
+        manager.activate()?;
+    }
     let mut shutdown = ShutdownCoordinator::new();
     composition::activity::spawn(composition.activity_worker, &mut shutdown);
     shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
@@ -283,16 +290,27 @@ async fn serve() -> Result<(), String> {
         tokio::pin!(server);
         tokio::select! {
             result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),
-            () = shutdown_signal() => {
+            () = async {
+                match &composition.agent_manager {
+                    Some(manager) => tokio::select! { _ = shutdown::shutdown_signal() => (), _ = manager.failed() => () },
+                    None => shutdown::shutdown_signal().await,
+                }
+            } => {
+                let manager_result = shutdown.drain_agent_manager(composition.agent_manager.as_deref()).await;
                 // Existing streams still need their workers until HTTP finishes.
                 let _ = http_stop.send(true);
-                match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
+                let http_result = match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
                     Ok(result) => result.map_err(|error| format!("HTTP server failed: {error}")),
                     Err(_) => Err("HTTP server exceeded its shutdown drain deadline".into()),
-                }
+                };
+                manager_result.and(http_result)
             }
         }
     };
+    let manager_result = shutdown
+        .drain_agent_manager(composition.agent_manager.as_deref())
+        .await;
+    let server_result = server_result.and(manager_result);
     let aborted = shutdown.drain().await;
     match (server_result, aborted) {
         (Err(error), _) => Err(error),
@@ -464,31 +482,6 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
         request.headers_mut().insert(X_REQUEST_ID, normalized);
     }
     next.run(request).await
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
-        }
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
-            }
-            Err(_) => std::future::pending::<()>().await,
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => {},
-        () = terminate => {},
-    }
 }
 
 #[cfg(test)]

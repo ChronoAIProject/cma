@@ -85,13 +85,23 @@ impl SandboxMutationGuard {
         }
     }
 
-    fn matches(&self, sandbox: &Sandbox) -> bool {
+    /// Content comparison only. Durable writers must also fence live authority
+    /// at the write; an extended expiry cannot substitute another holder/fence.
+    pub fn matches(&self, sandbox: &Sandbox) -> bool {
         self.sandbox_id == sandbox.id
             && self.owner == sandbox.owner
             && self.expected_revision == sandbox.revision
             && self.status == sandbox.status
             && self.work_step == sandbox.work.step
-            && self.lease == sandbox.work.lease
+            && match (&self.lease, &sandbox.work.lease) {
+                (Some(original), Some(current)) => {
+                    original.holder == current.holder
+                        && original.fence == current.fence
+                        && original.expires_at <= current.expires_at
+                }
+                (None, None) => true,
+                _ => false,
+            }
             && self.operation == sandbox.lifecycle.operation
             && self.runtime == sandbox.runtime
             && self.checkpoint_capture == sandbox.lifecycle.checkpoint_capture

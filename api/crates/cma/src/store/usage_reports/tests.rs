@@ -1,3 +1,6 @@
+mod binding_fence;
+mod publication_fence;
+mod publication_races;
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox_metrics::*;
@@ -389,6 +392,7 @@ async fn metrics_all_sorts_are_indexed_stable_null_last_and_cursor_bound() {
 
 mod allocated;
 pub(super) mod circuit_capture;
+mod control;
 mod history_batch;
 mod options;
 mod options_authority;
@@ -408,3 +412,11 @@ mod retained_restart;
 mod retained_views;
 
 mod retained_measurement;
+
+mod retained_windows;
+
+mod boundary_deltas;
+mod bucket_ranges;
+mod rebaseline;
+
+mod range_measurement;

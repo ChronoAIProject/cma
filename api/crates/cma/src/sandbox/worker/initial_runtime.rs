@@ -29,6 +29,7 @@ impl SandboxWorker {
         completed_digest: Option<&str>,
         now: SystemTime,
     ) -> Result<Option<Sandbox>, SandboxStoreError> {
+        let prepared_installation = sandbox.work.prepared_installation_digest.is_some();
         let binding = sandbox
             .runtime
             .as_ref()
@@ -62,6 +63,9 @@ impl SandboxWorker {
         );
         match next {
             Ok(Some(step)) => {
+                if prepared_installation {
+                    sandbox.work.prepared_installation_digest = None;
+                }
                 self.advance_status(sandbox, SandboxStatus::Installing, step, now)
                     .await?;
                 Ok(None)
@@ -71,6 +75,7 @@ impl SandboxWorker {
                 // generation before replacing a lost, prebound runtime.
                 let expected = sandbox.revision;
                 sandbox.runtime = None;
+                sandbox.work.prepared_installation_digest = None;
                 sandbox.lifecycle.runtime_generation_high_water = sandbox
                     .lifecycle
                     .runtime_generation_high_water

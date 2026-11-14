@@ -34,3 +34,18 @@ pub(super) async fn seed_profiles(
         .await
         .map_err(|error| format!("default profiles are not usable: {error}"))
 }
+
+pub(super) fn platform_settings(
+    config: &Config,
+    stores: &MongoStores,
+    activity: &Arc<ActivityService>,
+) -> Arc<PlatformSettingsService> {
+    Arc::new(
+        PlatformSettingsService::new(stores.settings.clone(), Arc::clone(activity))
+            .with_model_budget_writes_enabled(config.features.model_budget_writes_enabled)
+            .with_model_request_budget_writes_enabled(
+                config.features.model_request_budget_writes_enabled,
+            )
+            .with_platform_spend_writes_enabled(config.features.platform_spend_writes_enabled),
+    )
+}
