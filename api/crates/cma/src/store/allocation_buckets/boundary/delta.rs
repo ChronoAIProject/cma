@@ -16,7 +16,8 @@ impl DayBucket {
         let Some(input) = &self.boundary else {
             return Ok(None);
         };
-        if self.revision >= state.revision
+        if self.complete_lifecycle != state.complete_lifecycle
+            || self.revision >= state.revision
             || !input.scope_valid
             || input.queried_to < self.last_observed_at.min(self.day + DAY)
         {
