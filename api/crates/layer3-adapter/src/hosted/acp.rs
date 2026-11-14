@@ -89,6 +89,7 @@ pub(super) struct Bridge {
     pub(super) permission_state: Option<Mutex<super::permission_state::PermissionState>>,
     output_json_budget: bool,
     shared_runtime_output: bool,
+    pub(super) agent_correlation_digest: String,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
     sink: Arc<Mutex<Sink>>,
     pub(super) pending: Pending,
