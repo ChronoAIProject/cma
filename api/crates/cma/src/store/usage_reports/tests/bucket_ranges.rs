@@ -137,7 +137,7 @@ async fn bucket_ranges_equal_raw_for_all_presets_edges_and_live_tails() {
             serde_json::to_value(expected).unwrap(),
             "{range:?}"
         );
-        if range.from % DAY == 0 && range.to % DAY == 0 {
+        if range.to <= end {
             assert_eq!(commands.event_reads.load(Ordering::SeqCst), 0);
         }
     }
