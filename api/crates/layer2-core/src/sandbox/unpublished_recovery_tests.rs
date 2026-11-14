@@ -22,6 +22,8 @@ mod reservation;
 mod failed;
 #[path = "unpublished_recovery_legacy_tests.rs"]
 mod legacy;
+#[path = "runtime_update_scoped_tests.rs"]
+mod scoped_restart;
 
 fn snapshot(parked_update: bool) -> SandboxUnpublishedRecoverySnapshot {
     let mut sandbox = native();

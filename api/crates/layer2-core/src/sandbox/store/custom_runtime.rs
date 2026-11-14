@@ -253,6 +253,29 @@ pub(crate) fn valid_label(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
+/// Pure scoped rotation transition, after the adapter's trusted policy and
+/// complete transactional activity checks. Preserve its verified basis atomically.
+pub fn apply_scoped_image_rotation(
+    current: &Sandbox,
+    agents: &[Agent],
+    request: &super::SandboxImageRotationRequest,
+    basis: &RuntimeMigrationAdmissionBasis,
+) -> Result<SandboxMaintenanceApplication, SandboxStoreError> {
+    basis.validate_at(runtime_migration_now_ms()?)?;
+    if basis.identity != crate::sandbox::RuntimeMigrationIdentity::capture(current)?
+        || basis.approved_target != request.expected_runtime_version
+        || (matches!(basis.clearance, RuntimeMigrationClearance::Paused)
+            && current.status != SandboxStatus::Paused)
+    {
+        return Err(invalid());
+    }
+    let mut application = super::apply_image_rotation(current, agents, request)?;
+    if let SandboxMaintenanceApplication::Persist { sandbox, .. } = &mut application {
+        sandbox.lifecycle.runtime_migration_admission = Some(Box::new(basis.clone()));
+    }
+    Ok(application)
+}
+
 const fn invalid() -> SandboxStoreError {
     SandboxStoreError::InvalidTransaction("custom runtime admission is invalid")
 }

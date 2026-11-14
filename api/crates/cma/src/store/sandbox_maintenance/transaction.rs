@@ -207,12 +207,9 @@ async fn apply_with_sources(
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
         MaintenanceRequest::FleetRotation(request, basis) => {
-            let mut application =
-                apply_image_rotation(&current, &agents, request).map_err(ApplyError::Domain)?;
-            if let SandboxMaintenanceApplication::Persist { sandbox, .. } = &mut application {
-                sandbox.lifecycle.runtime_migration_admission = Some(basis.clone());
-            }
-            Ok(application)
+            layer2_core::sandbox::store::apply_scoped_image_rotation(
+                &current, &agents, request, basis,
+            )
         }
         MaintenanceRequest::Custom(admission) => {
             layer2_core::sandbox::store::apply_custom_runtime_migration(
