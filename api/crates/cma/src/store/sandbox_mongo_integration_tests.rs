@@ -79,6 +79,7 @@ use super::worktrees::worktree_replacement_fields;
 use super::DefaultProfileSpec;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
+mod api_memory_fixture;
 mod background_checkpoint_tests;
 pub(super) mod capacity_fixtures;
 pub(in crate::store) mod command_ledger_tests;
