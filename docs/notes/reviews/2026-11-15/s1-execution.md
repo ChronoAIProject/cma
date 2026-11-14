@@ -169,3 +169,15 @@ and actual old-client exit, then fresh30-minute recovery soak. No generic
 `rollout undo`, modeOFF, receiver reset or direct Pod/DB patch is part of recovery.
 If failure happens during recovery itself, reconcile its last write; select a
 new unique plan name and grant only after the actual state is understood.
+
+## Admission and placement checkpoint
+
+[Batch 8 server dry-run results](server-dry-run-20261114.md) passed for AM2, AM PDB
+and AM HPA. S1 AM2/EG1 projects 8.275 requested CPU and 18.25 CPU limits against
+namespace caps 40/80, with four total namespace Pods in the observed snapshot.
+Three shared hosts are eligible; refresh per-host free requests and actual memory
+before stop, then verify distinct-host placement after start. AM observed memory
+was 3273.7 MiB against 256 MiB requested, so request arithmetic alone is insufficient
+for memory headroom. Full-manifest admission also changes probes, metrics and
+historical annotations; use the prepared narrow stage operation and actual final
+image. Admission success does not establish drain-hook support or outage timing.

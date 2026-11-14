@@ -29,7 +29,7 @@ python3 -B "$scale_tools/observe.py" check --service eg --count 1 \
 ```
 
 2. Prepare inactive modeON template: actual image, Pod-IP origin8090, native
-preStop sleep30, grace760, readiness/topology. Preserve guaranteed2Gi and all
+preStop sleep30, grace760, readiness/topology. Preserve memory request=limit 2 GiB and all
 unrelated env/resources. Wait observed generation and original one; branch A
 still applies. The final image must implement the separately qualified secure
 early drain without reintroducing a shell hook.
@@ -147,3 +147,16 @@ Recheck actual canonical service, custody/provider reconciliation and AM2;
 start fresh30-minute recovery soak. Report any120s breach and unresolved
 outcomes. If a recovery write is uncertain, stop and reconcile before planning
 another; do not apply a generic deployment undo or bulk delete.
+
+## Admission and configuration checkpoint
+
+[Batch 8 server dry-run results](server-dry-run-20261114.md) passed for EG2, EG PDB
+and EG HPA, including native sleep 30s. A literal apply would add historical
+`CMAEG_OWNER_KEY_CUTOVER_ID` and `CMAEG_OWNER_KEY_SERVICE_ID` entries absent from
+the live explicit env list. Preserve current configuration and do not import
+those entries incidentally; change only approved stage fields.
+S2 AM2/EG2 projects 8.525 requested CPU/20.25 CPU limits and five namespace Pods,
+within current 40/80 CPU and 50-Pod quota. Refresh this with all other consumers
+and actual placement. EG memory request=limit 2 GiB is retained; its Pod QoS is
+Burstable because CPU request 250m differs from limit 2 CPU. Native sleep admission
+does not close K13 secure early drain or runtime closure qualification.

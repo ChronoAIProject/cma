@@ -257,3 +257,17 @@ status drift, unknown-write replay, blackout, native EG sleep, capacity/cadence,
 recovery ownership, Pod placement/image identity and strict outage arithmetic.
 They do not qualify the actual cutover, image behavior, controller integration,
 secure early EG drain, timing/capacity or production service.
+
+## Production dry-run findings — 14 November
+
+Read [the six-manifest server dry-run and capacity results](server-dry-run-20261114.md)
+before stage planning. All six admission checks and diffs completed; two Pod
+admission checks also passed. This does not qualify runtime execution. Use the
+guarded stage patches, preserving live env/envFrom and unrelated configuration:
+the historical EG full-manifest apply would add two owner-key settings absent
+from the live explicit env list.
+Current namespace quotas cover steady AM2/EG2 and AM5/EG5, but eight processes
+of each already exceed CPU-limit quota; the illustrative G760/P120 envelope
+of twelve each also exceeds CPU-request quota and current eligible CPU. Refresh
+quota, eligible-node placement, actual memory and all terminating processes
+before each stage. Do not count tainted sandbox nodes or infer autoscaler capacity.

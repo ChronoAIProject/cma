@@ -177,3 +177,20 @@ Preserve PDBs, modeON, compatible images and custody. Verify both fixed2 and rea
 service, then fresh30-minute recovery soak. Fixed replicas are not autoscaling
 PASS. A rollback of recovery is never implicit HPA recreation; restarting S3
 requires a fresh explicit lead decision and new operation approvals.
+
+## Admission and termination-capacity checkpoint
+
+[Production server dry-run results](server-dry-run-20261114.md) accepted both HPAs
+and their 60%/200% targets, min 2/max 5 and structural P120 cadence. Metrics were
+fresh; neither HPA was created. Steady AM5/EG5 fits the observed namespace quota
+and a 2/2/1 placement across three eligible shared hosts. This does not establish
+capacity during termination: 8 AM + 8 EG already requires 80.25 CPU limits versus 80;
+the illustrative 12+12 envelope requires 51.025 CPU requests versus 40 and 120.25 CPU
+limits versus 80. Twelve AM alone exceed all 47.67 eligible-node CPU.
+
+Before either HPA creation, require measured hard lifetime/cadence and a refreshed
+combined process budget that passes namespace quota, per-node placement, actual
+memory and all existing consumer/socket limits. If this does not fit, retain
+fixed two and escalate the specific cadence/capacity remedy for lead approval;
+never treat maxReplicas 5 as a total live-process cap. Repeated dry-runs do not
+reserve quota. Keep CPU targets and stage schedule unchanged by this finding.
