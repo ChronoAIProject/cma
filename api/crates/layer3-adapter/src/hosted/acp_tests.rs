@@ -27,6 +27,8 @@ mod open_completion_tests;
 mod provider_tool_tests;
 #[path = "acp_startup_failure_tests.rs"]
 mod startup_failure_tests;
+#[path = "acp_startup_timing_tests.rs"]
+mod startup_timing_tests;
 
 #[path = "acp_buffered_recovery_tests.rs"]
 mod buffered_recovery_tests;
