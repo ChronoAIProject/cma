@@ -163,6 +163,121 @@ fn missing_key_receipt_does_not_complete() {
     assert!(!ResidueReport::default().is_zero());
 }
 #[test]
+fn completion_without_delegation_receipt_preserves_pending_debt() {
+    let mut deletion = requested();
+    deletion.step = ErasureStep::VerifyNoResidue;
+    deletion.inventory.pending_delegations.push(DelegationDebt {
+        bot_id: "organization-bot".into(),
+        authorization_grant_id: "delegation-id".into(),
+        credential_incarnation: "sign-in".into(),
+    });
+    deletion.residue = Some(ResidueReport {
+        keys: KeyReceipt {
+            remaining: 0,
+            empty_at: Some(NOW.into()),
+        },
+        ..ResidueReport::default()
+    });
+    let fence = deletion
+        .claim("worker", NOW, Duration::from_secs(90))
+        .unwrap();
+    let before = deletion.clone();
+    assert_eq!(
+        deletion.complete(fence, NOW, Duration::from_secs(37 * 86400)),
+        Err(AccountDeletionError::Invalid)
+    );
+    assert_eq!(deletion, before);
+}
+
+#[test]
+fn completion_with_confirmed_empty_delegation_debt_needs_no_receipt() {
+    let mut deletion = requested();
+    deletion.step = ErasureStep::VerifyNoResidue;
+    deletion.residue = Some(ResidueReport {
+        keys: KeyReceipt {
+            remaining: 0,
+            empty_at: Some(NOW.into()),
+        },
+        ..ResidueReport::default()
+    });
+    let fence = deletion
+        .claim("worker", NOW, Duration::from_secs(90))
+        .unwrap();
+    deletion
+        .complete(fence, NOW, Duration::from_secs(37 * 86400))
+        .unwrap();
+    assert_eq!(deletion.status, AccountDeletionStatus::Completed);
+}
+
+#[test]
+fn completion_requires_valid_empty_receipt_for_every_pending_delegation() {
+    let mut deletion = requested();
+    deletion.step = ErasureStep::VerifyNoResidue;
+    deletion.inventory.pending_delegations = vec![
+        DelegationDebt {
+            bot_id: "first-organization-bot".into(),
+            authorization_grant_id: "first-grant".into(),
+            credential_incarnation: "sign-in".into(),
+        },
+        DelegationDebt {
+            bot_id: "second-organization-bot".into(),
+            authorization_grant_id: "second-grant".into(),
+            credential_incarnation: "other-sign-in".into(),
+        },
+    ];
+    deletion.residue = Some(ResidueReport {
+        keys: KeyReceipt {
+            remaining: 0,
+            empty_at: Some(NOW.into()),
+        },
+        ..ResidueReport::default()
+    });
+    let fence = deletion
+        .claim("worker", NOW, Duration::from_secs(90))
+        .unwrap();
+    for receipt in [
+        KeyReceipt::default(),
+        KeyReceipt {
+            remaining: 1,
+            empty_at: Some(NOW.into()),
+        },
+        KeyReceipt {
+            remaining: 0,
+            empty_at: Some("unverified".into()),
+        },
+    ] {
+        deletion.residue.as_mut().unwrap().delegations = Some(receipt);
+        let before = deletion.clone();
+        assert!(!deletion.residue.as_ref().unwrap().is_zero());
+        assert_eq!(
+            deletion.complete(fence, NOW, Duration::from_secs(37 * 86400)),
+            Err(AccountDeletionError::Invalid)
+        );
+        assert_eq!(deletion, before);
+    }
+    deletion.residue.as_mut().unwrap().delegations = Some(KeyReceipt {
+        remaining: 0,
+        empty_at: Some(NOW.into()),
+    });
+    deletion
+        .complete(fence, NOW, Duration::from_secs(37 * 86400))
+        .unwrap();
+    assert_eq!(deletion.status, AccountDeletionStatus::Completed);
+    assert!(deletion.inventory.pending_delegations.is_empty());
+}
+
+#[test]
+fn historical_residue_without_delegation_receipt_round_trips() {
+    let stored = serde_json::json!({
+        "records": {}, "objects": 0, "homes": [],
+        "keys": {"remaining": 0, "empty_at": NOW}
+    });
+    let report: ResidueReport = serde_json::from_value(stored.clone()).unwrap();
+    assert!(report.delegations.is_none());
+    assert!(report.is_zero());
+    assert_eq!(serde_json::to_value(&report).unwrap(), stored);
+}
+#[test]
 fn completion_records_the_verification_step_in_the_receipt() {
     let mut deletion = requested();
     deletion.step = ErasureStep::VerifyNoResidue;
@@ -199,10 +314,19 @@ fn completed_tombstone_scrubs_inventory_identities_but_preserves_counts() {
         documents: vec!["document".into()],
         homes: vec!["home".into()],
         pending_key_ids: vec!["credential-id".into()],
+        pending_delegations: vec![DelegationDebt {
+            bot_id: "organization-bot".into(),
+            authorization_grant_id: "delegation-id".into(),
+            credential_incarnation: "sign-in".into(),
+        }],
         counts: BTreeMap::from([("records".into(), 4)]),
     };
     deletion.step = ErasureStep::VerifyNoResidue;
     deletion.residue = Some(ResidueReport {
+        delegations: Some(KeyReceipt {
+            remaining: 0,
+            empty_at: Some(NOW.into()),
+        }),
         keys: KeyReceipt {
             remaining: 0,
             empty_at: Some(NOW.into()),

@@ -235,6 +235,15 @@ impl AccountDeletion {
         {
             return Err(AccountDeletionError::Invalid);
         }
+        if !self.inventory.pending_delegations.is_empty()
+            && !self
+                .residue
+                .as_ref()
+                .and_then(|report| report.delegations.as_ref())
+                .is_some_and(KeyReceipt::confirms_empty)
+        {
+            return Err(AccountDeletionError::Invalid);
+        }
         let expiry = later(at, tombstone_retention)?;
         let reverify_at = later(at, Duration::from_secs(86400))?;
         let event = self.event(
