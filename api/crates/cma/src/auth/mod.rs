@@ -20,6 +20,9 @@ mod browser_origins;
 mod browser_session;
 mod cookie_authorization;
 pub mod deferred_commands;
+mod desktop;
+#[cfg(test)]
+pub(crate) mod desktop_test_support;
 pub mod entitlements;
 pub mod flow;
 mod identity;
@@ -46,6 +49,7 @@ mod provider_metadata;
 mod public_contract_tests;
 mod records;
 mod refresh;
+pub(crate) mod relay;
 mod resource_request;
 mod sandbox_prerequisite;
 pub(crate) mod service_portal;

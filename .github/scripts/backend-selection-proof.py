@@ -34,6 +34,13 @@ SERVICE_AUTH_BASELINE_COMMANDS = [shlex.split(command) for command in (
     "cargo test --locked -p cma store::isolation::tests::real_ -- --ignored --test-threads=1",
     "cargo test --locked -p cmaeg --test management binary::compiled_binary_ -- --include-ignored --test-threads=1",
     "cargo test --locked -p cmaeg --test relay_ingress runner_binary:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test replica_admission_mongo -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib turns::routed::replica_tool_tests:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib turns::routed::replica_legacy_tool_tests:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib turns::routed::compatibility_mongo_tests:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib turns::routed::tool_relay::mongo_tests:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib turns::routed::tool_effects::mongo_ -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --lib turns::routed::media_effects::tests:: -- --ignored --test-threads=1",
     "cargo test --locked -p cma gateway::tests:: -- --ignored --test-threads=1",
     "cargo test --locked -p cma sender_context_tests:: -- --ignored --test-threads=1",
 )]

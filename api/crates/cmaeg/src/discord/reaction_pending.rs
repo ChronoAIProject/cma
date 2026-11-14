@@ -113,8 +113,7 @@ impl DurableJournal {
             retained_until: expiry,
         };
         match self
-            .store
-            .put(&id, &authority.owner, &inbox, None, Some(expiry))
+            .write_owned(&id, &authority.owner, &inbox, None, Some(expiry))
             .await
         {
             Ok(1) => Ok(()),

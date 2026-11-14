@@ -89,6 +89,25 @@ nextest_build run --run-ignored all --test-threads 1 --no-fail-fast \
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)'
 
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)'
+
+# Explicit selection keeps replica delivery tests environmental in normal unit
+# runs while requiring their real authenticated Mongo execution in this gate.
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::tool_relay::mongo_tests::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::tool_effects::mongo_)'
+
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::media_effects::tests::)'
+
 nextest_build run -E 'package(=cma) and test(~gateway::tests::)' \
   --run-ignored only --test-threads 1
 

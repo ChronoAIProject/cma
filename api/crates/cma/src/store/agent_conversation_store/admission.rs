@@ -101,32 +101,29 @@ pub(super) async fn validate_and_fence(
         }
     }
     let expected_revision = parent.revision;
-    let mut update = doc! { "$inc": { "agent_conversation_admission_fence": 1_i64 } };
+    let mut fields = None;
     if parent
         .cancel_recovery_pause(&mutation.appended_at)
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?
     {
-        update.insert(
-            "$set",
-            sandbox_replacement_fields(&parent).map_err(ApplyError::Domain)?,
-        );
+        fields = Some(sandbox_replacement_fields(&parent).map_err(ApplyError::Domain)?);
     }
     // A real parent write serializes phase/owner-kind checks with maintenance,
     // lifecycle and resource-policy commits (including an absent sidecar).
-    let locked = store
-        .sandboxes
-        .update_one(
-            doc! {
-                "_id": parent.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": signed(expected_revision, "Agent admission Sandbox revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            update,
-        )
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
+    let locked = crate::store::work_lease_update::with_fence(
+        &store.sandboxes,
+        doc! {
+            "_id": parent.id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "revision": signed(expected_revision, "Agent admission Sandbox revision")
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+        },
+        fields,
+        "agent_conversation_admission_fence",
+        session,
+    )
+    .await
+    .map_err(ApplyError::Driver)?;
     if locked.matched_count == 1 {
         crate::store::sandbox_usage::save::record_saved(store, session, &parent, expected_revision)
             .await

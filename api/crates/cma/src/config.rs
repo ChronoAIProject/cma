@@ -20,7 +20,9 @@ mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
+mod agent_manager;
 mod agent_sandbox;
+pub(crate) use agent_manager::AgentManagerReplicas;
 mod execution;
 mod gateway;
 mod home;
@@ -28,6 +30,8 @@ mod oauth_resource;
 mod profiles;
 mod public_streams;
 mod rate_default_lease;
+mod rate_limits;
+pub use rate_limits::RateLimitConfig;
 mod runtime;
 
 mod features;
@@ -69,72 +73,6 @@ const PINNED_CLOUDFLARE_PROXY_CIDRS: &str = concat!(
     "2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,",
     "2a06:98c0::/29,2c0f:f248::/32",
 );
-
-/// Per-key request budgets enforced by this process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RateLimitConfig {
-    pub admission_per_minute: NonZeroU32,
-    pub health_per_minute: NonZeroU32,
-    pub default_per_minute: NonZeroU32,
-    pub create_per_minute: NonZeroU32,
-    pub input_per_minute: NonZeroU32,
-    pub control_per_minute: NonZeroU32,
-    pub control_tier_enabled: bool,
-    pub response_input_tier_enabled: bool,
-    pub default_lease_enabled: bool,
-}
-
-impl RateLimitConfig {
-    fn from_lookup(
-        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
-    ) -> Result<Self, String> {
-        Ok(Self {
-            default_lease_enabled: rate_default_lease::enabled(lookup)?,
-            control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
-                None | Some("false") => false,
-                Some("true") => true,
-                _ => return Err("CHRONO_SERVER_RATE_CONTROL_ENABLED must be true or false".into()),
-            },
-            response_input_tier_enabled: match lookup("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED")?
-                .as_deref()
-            {
-                None | Some("false") => false,
-                Some("true") => true,
-                _ => {
-                    return Err(
-                        "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED must be true or false".into(),
-                    )
-                }
-            },
-            admission_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE",
-                6_000,
-                1,
-            )?,
-            health_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
-                120,
-                MINIMUM_HEALTH_REQUESTS_PER_MINUTE,
-            )?,
-            default_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE",
-                600,
-                1,
-            )?,
-            create_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_CREATE_PER_MINUTE", 10, 1)?,
-            input_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_INPUT_PER_MINUTE", 120, 1)?,
-            control_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE",
-                120,
-                1,
-            )?,
-        })
-    }
-}
 
 /// TCP peers allowed to provide the load balancer's client-address chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,6 +162,7 @@ pub struct Config {
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
+    pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
@@ -422,6 +361,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
+            agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
             agent_log_fleet_percent,

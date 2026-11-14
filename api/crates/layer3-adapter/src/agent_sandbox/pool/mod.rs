@@ -24,6 +24,8 @@ mod recovery;
 mod retirement;
 mod retirement_inventory;
 mod runtime;
+mod target_fence;
+pub use target_fence::NativePoolTarget;
 pub(crate) mod runtime_upgrade;
 
 use kube::{

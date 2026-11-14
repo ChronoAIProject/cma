@@ -27,6 +27,8 @@ impl AgentWorker {
         attachment: &LiveAgentAttachment,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        let first_ready = agent.ready_at.is_none();
+        let publication_started = tokio::time::Instant::now();
         let identity = attachment.identity();
         if agent.work.warm_conversation_id.as_deref() != Some(identity.conversation_id.as_str())
             || agent.conversation.settings.is_some()
@@ -43,37 +45,62 @@ impl AgentWorker {
             workspace: context.workspace.clone(),
             worktree: context.worktree.clone(),
         };
-        self.retry_startup_publication(agent.clone(), &context.sandbox, now, |current, at| {
-            let observed = observed.clone();
-            let evidence = evidence.clone();
-            let identity = identity.clone();
-            async move {
-                let fence = claimed_fence(&current, &self.config.holder)?;
-                let target = LiveAgentTarget {
-                    agent_id: current.id.clone(),
-                    conversation_id: identity.conversation_id.clone(),
-                    runtime_generation: identity.runtime_generation,
-                };
-                let staged = self
-                    .dependencies
-                    .registry
-                    .staged_attachment(&target, fence)
-                    .map_err(|_| SandboxStoreError::Conflict)?;
-                if staged
-                    .as_ref()
-                    .is_none_or(|staged| staged.identity() != identity)
-                {
-                    return Err(SandboxStoreError::Conflict);
+        let committed = self
+            .retry_startup_publication(agent.clone(), &context.sandbox, now, |current, at| {
+                let observed = observed.clone();
+                let evidence = evidence.clone();
+                let identity = identity.clone();
+                async move {
+                    let fence = claimed_fence(&current, &self.config.holder)?;
+                    let target = LiveAgentTarget {
+                        agent_id: current.id.clone(),
+                        conversation_id: identity.conversation_id.clone(),
+                        runtime_generation: identity.runtime_generation,
+                    };
+                    let staged = self
+                        .dependencies
+                        .registry
+                        .staged_attachment(&target, fence)
+                        .map_err(|_| SandboxStoreError::Conflict)?;
+                    if staged
+                        .as_ref()
+                        .is_none_or(|staged| staged.identity() != identity)
+                    {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    let mutation = prepared_ready_mutation(
+                        current,
+                        &observed,
+                        evidence,
+                        &self.config.holder,
+                        at,
+                    )?;
+                    self.dependencies
+                        .store
+                        .commit_prepared_agent_open_ready(mutation, observed)
+                        .await
                 }
-                let mutation =
-                    prepared_ready_mutation(current, &observed, evidence, &self.config.holder, at)?;
-                self.dependencies
-                    .store
-                    .commit_prepared_agent_open_ready(mutation, observed)
-                    .await
-            }
-        })
-        .await
+            })
+            .await?;
+        if committed && first_ready {
+            let ready_at = SystemTime::now();
+            let publish_ready_ms = publication_started.elapsed().as_millis() as u64;
+            let startup_phases = self.take_startup_timing(&agent.id);
+            self.schedule_completion_event(
+                agent.clone(),
+                "prepared",
+                "warm",
+                super::create_completion::CompletionTiming {
+                    admission_ms: None,
+                    admitted_desktop: None,
+                    admitted_machine_included: None,
+                    ready_at,
+                    publish_ready_ms,
+                    startup_phases,
+                },
+            );
+        }
+        Ok(committed)
     }
 }
 
