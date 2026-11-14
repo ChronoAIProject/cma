@@ -32,6 +32,35 @@ route: the release contract also requires the official native Cargo build and
 the runtime copy from its qualified output. Local preview packaging is not a
 release target.
 
+Local release packaging of a separately compiled official Alpine ELF must
+generate its Dockerfile from that exact source checkout on every attempt:
+
+```sh
+python3 "$source/.github/scripts/prepare-cmaeg-release-dockerfile.py" \
+  --source "$source" --output "$context/Dockerfile"
+```
+
+The caller must stop on a nonzero exit (`subprocess.run(..., check=True)` or
+`set -e`), before running Docker or saving an image. The prepared context keeps
+the existing `native/cmaeg`, qualified `dependencies/`, and committed media
+fixtures under `api/crates/cmaeg/tests/fixtures/media/`. The generator replaces
+only compilation and dependency preparation; it carries the selected source's
+allocator and sandbox checks, complete media stage, and final runtime stage.
+Missing or changed mandatory gates are errors. There is no skip switch and no
+fallback to a historical prepared Dockerfile. The runtime and media stages both
+copy the allocator-qualified `/out/cmaeg`; a gate failure fails the image build.
+Compilation remains the ordinary locked offline Cargo build in the official
+Alpine builder. The generator does not establish compiler provenance.
+
+Final local image qualification must also execute `--allocator-self-test` on the
+candidate image, using the same network-none, read-only, capability-drop and
+no-new-privileges flags as the existing sandbox check. Allow 130 seconds for
+container startup plus the self-test's internal 120-second deadline. A nonzero
+exit or outer timeout prevents qualification PASS and image save/publication.
+Keep the existing equality check between the compiled ELF, context input and
+final `/usr/local/bin/cmaeg`, as well as sandbox, all nine media cases and runtime
+identity checks. Historical release bundles are evidence, not future recipes.
+
 Record the source and Cargo.lock hashes, builder index and platform image
 identities, Rust/Cargo/cc/musl versions, libc archive hash, executable hash and
 exact-image gate logs. CPU instruction emulation does not change which compiler
