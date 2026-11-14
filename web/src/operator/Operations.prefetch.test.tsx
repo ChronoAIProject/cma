@@ -34,12 +34,11 @@ it.each([false, true])(
       await flush();
       expect(client.adminUsageMetrics.create).toHaveBeenCalledTimes(1);
     }
-    const initialSignal = client.adminUsageMetrics.create.mock.calls[0]![1].signal as AbortSignal;
+    // The completed admission is retained; only the selected job may be polled.
     fireEvent.click(screen.getByRole('button', { name: 'Usage time range' }));
     fireEvent.click(screen.getByRole('menuitemradio', { name: 'Last 7 days' }));
     fireEvent.click(screen.getByRole('button', { name: 'Apply usage filters' }));
     await flush();
-    expect(initialSignal.aborted).toBe(true);
     expect(client.adminUsageMetrics.create).toHaveBeenCalledTimes(2);
     const tab = screen.getByRole('tab', { name: 'Sandboxes & usage' });
     fireEvent.mouseEnter(tab);
