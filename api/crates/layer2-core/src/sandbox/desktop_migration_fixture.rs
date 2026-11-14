@@ -54,6 +54,9 @@ pub(super) struct Fixture {
 }
 impl Fixture {
     pub async fn new() -> Self {
+        Self::with_generation(Some(1)).await
+    }
+    pub async fn with_generation(generation: Option<u64>) -> Self {
         let store = Arc::new(InMemorySandboxStore::default());
         let mut sandbox = crate::sandbox::tests::sandbox();
         sandbox.id = SandboxId::generate();
@@ -70,9 +73,13 @@ impl Fixture {
             boot_id: None,
             runtime_id: "runtime-desktop".into(),
             runtime_version: "runtime-image".into(),
-            provision_generation: Some(1),
+            provision_generation: generation,
             bound_at: crate::now_rfc3339(),
         });
+        sandbox.lifecycle.runtime_generation_high_water = generation.unwrap_or_default();
+        sandbox
+            .validate()
+            .expect("valid runtime generation fixture");
         let id = sandbox.id.clone();
         store.create_sandbox(sandbox).await.unwrap();
         let mut workspace = crate::sandbox::tests::workspace();
