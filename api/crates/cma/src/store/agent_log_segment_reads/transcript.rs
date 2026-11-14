@@ -98,7 +98,8 @@ pub(in crate::store) async fn page(
         .await?
         .is_none()
     {
-        return Ok(None);
+        return crate::store::agent_opening_reads::transcript::page(store, agent, session, request)
+            .await;
     }
     let source = capture::capture(store, agent, session, capture::CaptureMode::Snapshot)
         .await

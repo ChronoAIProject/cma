@@ -40,7 +40,13 @@ pub(in crate::store) async fn reconcile(
     result: &Binary,
     session: &mut ClientSession,
 ) -> Result<Outcome, SandboxStoreError> {
-    reconcile_mode(store, operation, expected, logs, result, session, true).await
+    let mut phase = super::telemetry::Phase::new("reconcile", false);
+    let result = Box::pin(reconcile_mode(
+        store, operation, expected, logs, result, session, true,
+    ))
+    .await;
+    phase.reconciliation(&result);
+    result
 }
 
 pub(in crate::store) async fn reconcile_transaction(
@@ -51,7 +57,10 @@ pub(in crate::store) async fn reconcile_transaction(
     result: &Binary,
     session: &mut ClientSession,
 ) -> Result<Outcome, SandboxStoreError> {
-    reconcile_mode(store, operation, expected, logs, result, session, false).await
+    Box::pin(reconcile_mode(
+        store, operation, expected, logs, result, session, false,
+    ))
+    .await
 }
 
 async fn reconcile_mode(
@@ -138,6 +147,68 @@ async fn reconcile_mode(
         }
     }
     Ok(Outcome::Recorded(Box::new(receipt)))
+}
+
+/// Verify a publication retained by an immutable domain receipt. The domain
+/// adapter validates its request identity and expected event kinds separately.
+pub(in crate::store) async fn retained(
+    store: &MongoSandboxStore,
+    expected: &Publication,
+    current: &Agent,
+    row: &mongodb::bson::Document,
+    session: &mut ClientSession,
+    snapshot: bool,
+) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
+    expected.validate()?;
+    if read_format(row)?.is_none()
+        || read_agent(row)? != *current
+        || expected.agent_id != current.id.as_str()
+        || expected.incarnation != digest::incarnation(current)
+    {
+        return Err(corrupt().into());
+    }
+    let receipts = collection(store, PUBLICATIONS);
+    let query = receipts.find_one(doc! {"_id":&expected.id});
+    let query = if snapshot {
+        query.read_concern(ReadConcern::snapshot())
+    } else {
+        query
+    };
+    let actual = query
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(corrupt)?;
+    if Publication::read(actual)? != *expected {
+        return Err(corrupt().into());
+    }
+    let head = read_head(store, row, session, snapshot).await?;
+    verify_head(store, expected, current, &head, session, snapshot).await?;
+    let count = u16::try_from(expected.last_seq - expected.expected_seq).map_err(|_| corrupt())?;
+    let mut entries = Vec::with_capacity(usize::from(count));
+    visit_range(
+        store,
+        &head,
+        LogRange {
+            after: expected.expected_seq as u64,
+            through: expected.last_seq as u64,
+            limit: count.max(1),
+        },
+        session,
+        snapshot,
+        |entry| {
+            if entry.appended_at != expected.appended_at {
+                return Err(corrupt());
+            }
+            entries.push(entry);
+            Ok(())
+        },
+    )
+    .await?;
+    if entries.len() != usize::from(count) {
+        return Err(corrupt().into());
+    }
+    Ok(entries)
 }
 
 async fn verify_head(

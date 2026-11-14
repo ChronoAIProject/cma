@@ -102,6 +102,9 @@ export const activityAction = enumeration(
   'update',
   'delete',
   'configure',
+  'gateway_record_write',
+  'gateway_record_read',
+  'gateway_record_delete',
 );
 export type ActivityAction = Output<typeof activityAction>;
 const activityTarget = object({
@@ -116,7 +119,7 @@ const activityOutcome = tagged(
   },
   'status',
 );
-export const activityRecord = object({
+const activityFields = {
   id: text,
   at: text,
   actor: nullable(text),
@@ -125,6 +128,8 @@ export const activityRecord = object({
   action: activityAction,
   target: nullable(activityTarget),
   outcome: activityOutcome,
-  detail: dictionary(text),
-});
+};
+export const activitySummary = object(activityFields);
+export type ActivitySummary = Output<typeof activitySummary>;
+export const activityRecord = object({ ...activityFields, detail: dictionary(text) });
 export type ActivityRecord = Output<typeof activityRecord>;
