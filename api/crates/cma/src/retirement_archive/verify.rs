@@ -26,10 +26,10 @@ pub(crate) async fn load(
         || digest(&custody.read(&manifest.original_source).await?) != request.source_sha256
         || digest(&custody.read(&manifest.exclusion).await?) != request.exclusion_sha256
         || manifest.custody != custody.policy().await?
-        || manifest.schema_sha256 != crate::store::retirement_archive::schema_sha256()
     {
         return Err(REFUSED);
     }
+    crate::store::retirement_archive::validate_manifest_census(&manifest)?;
     Ok(manifest)
 }
 pub(crate) async fn restore(
@@ -105,13 +105,8 @@ pub(crate) async fn restore(
         return Err(REFUSED);
     }
     let db = RestoreTree::create(&root.path().join("database"))?;
-    let mut names = BTreeSet::new();
+    // load validated the complete exact namespace set for this census version.
     for record in &manifest.database {
-        if !crate::store::isolation::COLLECTIONS.contains(&record.collection.as_str())
-            || !names.insert(&record.collection)
-        {
-            return Err(REFUSED);
-        }
         let path = db.path().join(format!("{}.bson", record.collection));
         let mut output = std::fs::OpenOptions::new()
             .write(true)
@@ -143,9 +138,6 @@ pub(crate) async fn restore(
         result.documents += count;
         result.bytes += length;
         proof.update(serde_json::to_vec(record).map_err(|_| REFUSED)?);
-    }
-    if names.len() != crate::store::isolation::COLLECTIONS.len() {
-        return Err(REFUSED);
     }
     let external = RestoreTree::create(&root.path().join("external"))?;
     for (index, record) in manifest.external.iter().enumerate() {
