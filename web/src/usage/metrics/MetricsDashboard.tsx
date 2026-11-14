@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import type { Cma, UsageMetricRow } from '@chronoai/cma-sdk';
-import { Skeleton } from '../../ui/Skeleton';
+import { UsageReportProgress } from './UsageReportProgress';
+import { useWarmUsageRanges } from './warmRanges';
 import { UsageOverviewHeader } from './UsageOverviewHeader';
 import { Picker } from '../../ui/Picker';
 import { MetricCharts } from './MetricCharts';
@@ -60,11 +61,20 @@ function MetricsDashboardContent({
   );
   const visible = useUsageVisible(active);
   const state = useUsageReport(api, effectiveSelection, admin, active, principal, forceOnMount);
+  useWarmUsageRanges(
+    api,
+    effectiveSelection,
+    admin,
+    principal,
+    visible && !state.error && Boolean(state.report || state.pending),
+  );
   const [group, setGroup] = useState<Group>('total');
   const [metric, setMetric] = useState<Metric>('cpu');
   const [detail, setDetail] = useState<{ report: string; sandbox: string }>();
   const [blocked, setBlocked] = useState<{ report: string; failure: MetricsFailure }>();
-  const reportId = state.report?.report_id;
+  const preview = state.report ? undefined : state.fallback;
+  const displayedReport = state.report ?? preview?.report;
+  const reportId = displayedReport?.report_id;
   const onFailure = useCallback(
     (failure: MetricsFailure) => {
       if (reportId) setBlocked({ report: reportId, failure });
@@ -72,14 +82,18 @@ function MetricsDashboardContent({
     [reportId],
   );
   const failure = blocked?.report === reportId ? blocked?.failure : undefined;
-  const report = !failure ? state.report : undefined;
+  const report = !failure ? displayedReport : undefined;
   const safeActions = actions
-    ? (row: UsageMetricRow) => actions(row, state.busy || state.stale || !!state.error)
+    ? (row: UsageMetricRow) => actions(row, state.busy || state.stale || !!state.error || !!preview)
     : undefined;
   return (
     <div
       className="usage-metrics"
       aria-label={admin ? 'Operations resource dashboard' : 'Your usage resources'}
+      data-usage-requested-range={effectiveSelection.range}
+      data-usage-state={
+        preview ? 'preview' : state.error || failure ? 'error' : report ? 'committed' : 'pending'
+      }
     >
       {admin ? (
         <OpsMetricFilters
@@ -102,6 +116,7 @@ function MetricsDashboardContent({
                     !admin &&
                     !state.busy &&
                     !state.stale &&
+                    !preview &&
                     report?.scope.admin === false &&
                     report.query.filters.sandbox_id === draft.sandbox &&
                     Number(report.summary?.sandbox_count) > 0;
@@ -117,21 +132,22 @@ function MetricsDashboardContent({
       )}
       <UsageOverviewHeader
         report={report}
-        generatedAt={state.generatedAt}
-        busy={state.busy}
-        refreshing={state.refreshing}
-        stale={state.stale}
+        generatedAt={state.generatedAt ?? preview?.generatedAt}
+        busy={state.busy && !preview}
+        refreshing={!preview && state.refreshing}
+        stale={!preview && state.stale}
         onRefresh={state.refresh}
       />
-      {state.busy && (
-        <p role="status">
-          {report
-            ? 'Refreshing usage report…'
-            : state.pending
-              ? 'Preparing usage report…'
-              : 'Loading usage report…'}
-        </p>
-      )}
+      <UsageReportProgress
+        range={effectiveSelection.range}
+        previewRange={report ? preview?.range : undefined}
+        busy={state.busy || state.retrying}
+        pending={Boolean(state.pending)}
+        retrying={state.retrying}
+        startedAt={state.startedAt}
+        nextCheckAt={state.nextCheckAt}
+        active={visible}
+      />
       <MetricsNotice failure={state.error ?? failure} onRetry={state.refresh} />
       {selection.agent && (
         <p>
@@ -139,21 +155,8 @@ function MetricsDashboardContent({
           are shared with its other Agents.
         </p>
       )}
-      {state.busy && !report && (
-        <div className="usage-loading" aria-hidden="true">
-          <div className="usage-metric-cards">
-            {[0, 1, 2].map((item) => (
-              <div className="usage-metric-card" key={item}>
-                <Skeleton width="40%" />
-                <Skeleton height={32} width="70%" />
-              </div>
-            ))}
-          </div>
-          <Skeleton height={240} radius={12} />
-        </div>
-      )}
       {report && (
-        <section className="usage-report" aria-busy={state.busy || undefined}>
+        <section className="usage-report" aria-busy={(state.busy && !preview) || undefined}>
           <MetricSummary
             report={report}
             measured={measured}
@@ -178,7 +181,7 @@ function MetricsDashboardContent({
               report={report}
               group={admin ? group : 'total'}
               metric={admin ? undefined : metric}
-              active={visible && !state.busy}
+              active={visible}
               onFailure={onFailure}
             />
           )}
@@ -189,7 +192,7 @@ function MetricsDashboardContent({
             sort={effectiveSelection.sort}
             order={effectiveSelection.order}
             admin={admin}
-            active={visible && !state.busy}
+            active={visible}
             measured={measured}
             focusedMetric={admin || !measured ? undefined : metric}
             onSort={(sort) =>
@@ -214,7 +217,7 @@ function MetricsDashboardContent({
               reportId={report.report_id}
               sandboxId={detail.sandbox}
               measured={measured}
-              active={visible && !state.busy}
+              active={visible}
               admin={admin}
               onClose={() => setDetail(undefined)}
               onOwner={(owner) => onSelection({ ...selection, owner, sandbox: '', agent: '' })}
