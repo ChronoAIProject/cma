@@ -1,6 +1,75 @@
 use super::*;
 
 #[tokio::test]
+async fn successful_confirmation_bounds_custody_reads_and_publishes_each_changed_floor() {
+    let f = Fixture::new();
+    let mut owner = f.owner(1);
+    // First admission, replacement and renewal each need the admission,
+    // pre-publication and post-publication reads, without duplicate disk I/O.
+    for step in 0..3 {
+        let previous = (step == 2).then(|| owner.clone());
+        let challenge = f.receiver.challenge(f.request(previous)).unwrap();
+        if step == 1 {
+            owner = f.owner(2);
+        } else if step == 2 {
+            owner.issued_at_ms += 1;
+            owner.expires_at_ms += 1;
+        }
+        let before = f.receiver.custody_reads.load(Ordering::SeqCst);
+        f.receiver
+            .confirm(DesktopConfirmation {
+                ownership: owner.clone(),
+                nonce: challenge.nonce,
+            })
+            .await
+            .unwrap();
+        assert_eq!(f.receiver.custody_reads.load(Ordering::SeqCst) - before, 3);
+        let retained = persistence::load(&f.receiver.root).unwrap().unwrap();
+        assert!(retained.owner == owner && !retained.retired);
+        assert_eq!(f.receiver.persisted.load(Ordering::SeqCst), step + 1);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn expired_confirmation_after_join_keeps_the_durable_tombstone() {
+    let f = Fixture::new();
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    f.receiver
+        .register(None, |_| async move { waiting.await.unwrap() })
+        .await
+        .unwrap();
+    let challenge = f.receiver.challenge(f.request(None)).unwrap();
+    let receiver = f.receiver.clone();
+    let confirmation = DesktopConfirmation {
+        ownership: f.owner(1),
+        nonce: challenge.nonce,
+    };
+    let pending = tokio::spawn(async move { receiver.confirm(confirmation).await });
+    custody::retired(&f).await;
+    let before = f.receiver.persisted.load(Ordering::SeqCst);
+    tokio::time::advance(Duration::from_secs(11)).await;
+    release.send(()).unwrap();
+    assert_eq!(
+        pending.await.unwrap().err().unwrap().code,
+        "desktop_ownership_stale"
+    );
+    assert_eq!(f.receiver.persisted.load(Ordering::SeqCst), before);
+    assert!(
+        persistence::load(&f.receiver.root)
+            .unwrap()
+            .unwrap()
+            .retired
+    );
+    assert!(!f.receiver.state.lock().unwrap().poisoned);
+    assert!(f.receiver.register(None, |_| async {}).await.is_err());
+    assert!(f
+        .receiver
+        .register(Some(f.owner(1)), |_| async {})
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn empty_admission_commits_one_floor_before_ack_and_restart_refuses_replay() {
     let f = Fixture::new();
     let owner = f.accept(1).await;
