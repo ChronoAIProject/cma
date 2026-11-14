@@ -9,7 +9,10 @@ pub(super) const COLLECTIONS: &[&str] = &[
 ];
 
 pub(crate) fn role(database: &str, enabled: bool) -> Document {
-    let mut role = super::role(database);
+    with_replica_grants(super::role(database), database, enabled)
+}
+
+fn with_replica_grants(mut role: Document, database: &str, enabled: bool) -> Document {
     if enabled {
         let grants = role.get_array_mut("privileges").unwrap();
         for collection in COLLECTIONS {
@@ -50,13 +53,58 @@ fn validate(
     if authority == MongoAuthorityMode::Isolated {
         super::validate(status, database)?;
     }
-    verify_shared_schema(status, database, &role(database, true))
+    let required = with_replica_grants(super::required_role(database), database, true);
+    verify_shared_schema(status, database, &required)
         .map_err(|error| StoreError::Unavailable(error.into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enabled_replicas_keep_allocation_grants_optional_and_ownership_required() {
+        let advertised = role("cma", true).get_array("privileges").unwrap().clone();
+        let collection = |grant: &mongodb::bson::Bson| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                .to_owned()
+        };
+        assert!(advertised.iter().any(|grant| {
+            super::super::OPTIONAL_COLLECTIONS.contains(&collection(grant).as_str())
+        }));
+        let without_allocation: Vec<_> = advertised
+            .into_iter()
+            .filter(|grant| {
+                !super::super::OPTIONAL_COLLECTIONS.contains(&collection(grant).as_str())
+            })
+            .collect();
+        let status = |grants| {
+            doc! {"authInfo": {
+                "authenticatedUsers": [{"user": "manager", "db": "cma"}],
+                "authenticatedUserPrivileges": grants,
+            }}
+        };
+        for mode in [MongoAuthorityMode::Isolated, MongoAuthorityMode::SharedSchema] {
+            validate(&status(without_allocation.clone()), "cma", mode).unwrap();
+            for required in COLLECTIONS {
+                let mut missing = without_allocation.clone();
+                missing.retain(|grant| collection(grant) != *required);
+                assert!(validate(&status(missing), "cma", mode).is_err());
+            }
+        }
+        let mut foreign = without_allocation;
+        foreign.push(
+            doc! {"resource": {"db": "cma", "collection": "im_images"}, "actions": ["find"]}
+                .into(),
+        );
+        assert!(validate(&status(foreign), "cma", MongoAuthorityMode::Isolated).is_err());
+    }
 
     #[test]
     fn ownership_grants_are_required_only_when_enabled_and_never_grant_foreign_access() {
