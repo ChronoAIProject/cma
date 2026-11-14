@@ -174,18 +174,13 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
-        let native_warm_pools = runtime.warm_pools;
+        let native_warm_pools = runtime.warm_pools.clone();
         let admin = layer1_public::rest::admin::AdminState::new(
             Arc::clone(&settings),
             sandbox_operators,
             Arc::clone(&activity),
         )
         .with_user_directory(Arc::clone(&users))
-        .with_runtime_updates(runtime.updates.clone())
-        .with_runtime_migrations(
-            runtime.migrations,
-            stores.sandbox_model.runtime_migration_verifier(),
-        )
         .with_maintenance(stores.sandbox_model.clone())
         .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
@@ -193,6 +188,7 @@ impl ControlPlaneComposition {
             layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
                 .with_writes_enabled(config.features.admission_control_writes_enabled),
         ));
+        let admin = runtime.attach_admin(admin, &stores);
         let operations: Arc<dyn OperationStore> = stores.operations.clone();
         let profiles = ProfilesState::new(
             stores.sandbox_profiles.clone(),
