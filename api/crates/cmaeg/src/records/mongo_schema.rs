@@ -70,6 +70,7 @@ pub async fn verify_with_authority(
                         MEDIA_CONTINUATIONS,
                         USES,
                         CUTOVERS,
+                        crate::console::session_backend::schema::COLLECTION,
                     ]
                     .contains(&collection))
             {
