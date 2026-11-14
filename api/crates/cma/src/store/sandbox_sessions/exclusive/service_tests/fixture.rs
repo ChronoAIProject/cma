@@ -151,12 +151,22 @@ pub(super) fn service(
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     replicas: bool,
 ) -> DesktopService {
+    let access = Arc::new(store.clone());
+    service_with_access(store, adapter, replicas, access)
+}
+
+pub(super) fn service_with_access(
+    store: MongoSandboxStore,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    replicas: bool,
+    access: Arc<dyn layer2_core::resource_access::ResourceShareStore>,
+) -> DesktopService {
     let store = Arc::new(store);
     // Match the production resource-authority path instead of measuring the
     // fallback reader's separate ancestry requests. Personal owners need no
     // organization authority, but every snapshot still validates current rows.
     let access = Arc::new(ResourceAccessService::new(
-        store.clone(),
+        access,
         Arc::new(NoOrganizations),
     ));
     let reads = AgentReadService::new(store.clone(), Arc::new(Resources))
