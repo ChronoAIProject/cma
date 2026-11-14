@@ -22,7 +22,7 @@ async fn client(uri: &str, enabled: bool) -> (Client, Arc<Mutex<Counts>>) {
     let diagnostics = enabled.then(Diagnostics::default);
     if let Some(commands) = diagnostics.clone() {
         drop(super::periodic::start(&commands));
-        super::metadata_hook::install(&mut options, commands);
+        super::metadata_hook::install(&mut options, Some(commands));
     }
     let counts = Arc::new(Mutex::new(Counts::default()));
     let observed = counts.clone();

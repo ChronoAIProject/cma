@@ -604,7 +604,8 @@
           "title": "store failed",
           "status": 503,
           "detail": "Authentication authority is temporarily unavailable.",
-          "code": "store_failed"
+          "code": "store_failed",
+          "retryable": false
         },
         "bodyKind": "json"
       },
@@ -632,7 +633,8 @@
           "title": "store failed",
           "status": 503,
           "detail": "Authentication authority is temporarily unavailable.",
-          "code": "store_failed"
+          "code": "store_failed",
+          "retryable": false
         },
         "bodyKind": "json"
       },
@@ -660,7 +662,8 @@
           "title": "store failed",
           "status": 503,
           "detail": "Authentication authority is temporarily unavailable.",
-          "code": "store_failed"
+          "code": "store_failed",
+          "retryable": false
         },
         "bodyKind": "json"
       },
@@ -692,7 +695,8 @@
           "title": "store failed",
           "status": 503,
           "detail": "Authentication authority is temporarily unavailable.",
-          "code": "store_failed"
+          "code": "store_failed",
+          "retryable": false
         },
         "bodyKind": "json"
       },
@@ -958,7 +962,8 @@
           "title": "Identity service temporarily unavailable",
           "status": 503,
           "detail": "The identity service is temporarily unavailable. Please retry shortly.",
-          "code": "identity_unavailable"
+          "code": "identity_unavailable",
+          "retryable": true
         },
         "bodyKind": "json"
       },

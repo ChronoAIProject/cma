@@ -1,5 +1,6 @@
 use super::*;
 
+#[derive(Debug, PartialEq, Eq)]
 pub(super) enum Refusal {
     Limited(u64),
     Unavailable,
@@ -12,7 +13,12 @@ impl RateLimiters {
         key: &RateKey,
     ) -> Result<(), Refusal> {
         // Reject repeated local excess before it can generate database traffic.
-        self.check(budget, key).map_err(Refusal::Limited)?;
+        self.check(budget, key).map_err(|delay| {
+            if matches!(budget, Budget::Default) {
+                lease::record("refused");
+            }
+            Refusal::Limited(delay)
+        })?;
         let Some((store, config)) = &self.shared else {
             return Ok(());
         };
@@ -30,14 +36,28 @@ impl RateLimiters {
             RateKey::Client(ClientKey::Unidentified) => "unidentified".into(),
         };
         let key = format!("{tier}:{:x}", Sha256::digest(identity.as_bytes()));
-        match store.check(&key, limit.get()).await {
+        if matches!(budget, Budget::Default) && config.default_lease_enabled {
+            return self
+                .default_leases
+                .check(store.as_ref(), &key, limit.get())
+                .await;
+        }
+        let outcome = match store.check(&key, limit.get()).await {
             Ok(None) => Ok(()),
             Ok(Some(delay)) => Err(Refusal::Limited(delay)),
             Err(error) => {
                 tracing::warn!(%error, "shared request budget unavailable");
                 Err(Refusal::Unavailable)
             }
+        };
+        if matches!(budget, Budget::Default) {
+            lease::record(match &outcome {
+                Ok(()) => "charged",
+                Err(Refusal::Limited(_)) => "refused",
+                Err(Refusal::Unavailable) => "unavailable",
+            });
         }
+        outcome
     }
 }
 

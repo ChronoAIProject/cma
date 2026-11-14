@@ -47,7 +47,16 @@ impl Following {
                     }
                     fragments.push(fragment);
                 }
-                Ok(_) => {}
+                Ok(fragment) => {
+                    if self.state.event_wake
+                        && fragment.agent_id == self.header.id
+                        && Some(fragment.turn_sequence) == self.header.active_turn
+                        && Some(fragment.runtime_generation) != self.header.runtime_generation
+                    {
+                        self.queue_fragments(&mut fragments);
+                        self.queue_gap(Some(1), "lagged");
+                    }
+                }
                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(frames)) => {
                     self.queue_fragments(&mut fragments);
                     self.queue_gap(Some(frames), "lagged");

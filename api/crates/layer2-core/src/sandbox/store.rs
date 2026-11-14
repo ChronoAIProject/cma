@@ -21,7 +21,9 @@ pub use service_traits::*;
 mod agent;
 pub use agent::AgentStore;
 mod agent_log;
-pub use agent_log::AgentLogStore;
+pub use agent_log::{AgentLogFinalAnswer, AgentLogStore};
+#[cfg(any(test, feature = "test-support"))]
+pub mod agent_log_contract;
 mod agent_response_log;
 pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
@@ -39,7 +41,8 @@ mod agent_reads;
 pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
-    apply_sandbox_runtime_loss, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
+    validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
@@ -66,17 +69,22 @@ mod agent_reopen;
 pub use agent_conversation::{
     validate_agent_conversation_admission, AgentConversationMutation, AgentConversationStore,
 };
-pub use agent_message_checkpoint::AgentMessageCheckpoint;
+pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
 mod agent_log_capacity;
 pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
+mod agent_repeated_failure;
+pub use agent_repeated_failure::{
+    plan_agent_repeated_failure, validate_agent_repeated_failure, AgentRepeatedFailure,
+};
 mod agent_cleanup_capacity;
 pub use agent_cleanup_capacity::{
     agent_cleanup_capacity_retry, agent_cleanup_capacity_retry_hint,
     plan_agent_cleanup_capacity_retry, plan_agent_marked_cleanup_capacity_retry,
     plan_agent_runtime_ledger_hold_retry, validate_agent_cleanup_capacity_log,
-    AGENT_RUNTIME_LEDGER_HOLD, AGENT_RUNTIME_LEDGER_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
+    validate_agent_cleanup_capacity_log_with_retry, AGENT_RUNTIME_LEDGER_HOLD,
+    AGENT_RUNTIME_LEDGER_HOLD_DETAIL, NORMAL_AGENT_LOG_ENTRIES,
 };
 mod agent_sign_in;
 pub use agent_lifecycle::{

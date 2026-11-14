@@ -8,7 +8,7 @@ use layer2_core::profiles::{
 };
 use layer2_core::sandbox::{SandboxStoreError, WarmSandboxState};
 use layer2_core::{now_rfc3339, rfc3339_at, ServiceId};
-use layer3_adapter::{AdapterError, SandboxAdapter};
+use layer3_adapter::SandboxAdapter;
 use tokio::sync::watch;
 use tokio::task::{JoinHandle, JoinSet};
 use tokio::time::MissedTickBehavior;
@@ -147,7 +147,7 @@ impl NativePreparedWorker {
                             None => {}
                         }
                     }
-                    _ = ticker.tick() => {
+                    _ = super::refill::changed(&mut ticker, &worker.store.native_prepared_changed) => {
                         if let Err(error) = worker.store.reconcile_native_prepared_target(worker.desired.as_ref(), worker.target, &now_rfc3339()).await {
                             tracing::warn!(%error, "native preparation target reconciliation deferred");
                             continue;
@@ -225,38 +225,8 @@ impl NativePreparedWorker {
                 _ = heartbeat.tick() => self.store.renew_native_prepared_work(&claim, &after(60)).await?,
             }
         };
-        let (next, proof, delay) = match result {
-            Ok((next, proof)) => {
-                let delay = if next.state == WarmSandboxState::Ready {
-                    5
-                } else {
-                    0
-                };
-                (next, proof, delay)
-            }
-            Err(error) => {
-                // Runtime error details can contain output. Keep only durable identity in logs.
-                tracing::warn!(sandbox_id = %claim.record.id, "native preparation effect deferred; retaining exact authority");
-                let mut next = claim.record.clone();
-                let retry = matches!(error, AdapterError::Unavailable(_))
-                    && matches!(
-                        next.state,
-                        WarmSandboxState::Preparing | WarmSandboxState::Installing
-                    );
-                if !retry {
-                    next.state = WarmSandboxState::Retiring;
-                }
-                (
-                    next,
-                    if retry {
-                        claim.workspace_proof.clone()
-                    } else {
-                        None
-                    },
-                    if retry { 5 } else { 30 },
-                )
-            }
-        };
+        let (next, proof, delay) =
+            super::complete_step(&claim.record, claim.workspace_proof.as_ref(), result);
         self.store
             .finish_native_prepared_work_with_proof(
                 &claim,
