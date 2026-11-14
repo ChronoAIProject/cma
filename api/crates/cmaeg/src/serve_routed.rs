@@ -159,6 +159,13 @@ pub(crate) async fn compose(
         .with_media_continuations(media_ready),
     );
     let delivery = RoutedDelivery::new(plans.clone(), journal.clone(), authority, coordinator);
+    let delivery = if deps.partitions.is_some() {
+        delivery
+            .with_stream_relay()
+            .map_err(|_| "replica stream relay initialization failed")?
+    } else {
+        delivery
+    };
     let tools = delivery.tool_replies();
     let tool_replies = Arc::new(if deps.partitions.is_some() {
         tools
