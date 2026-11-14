@@ -22,11 +22,7 @@ pub(super) fn emit(agent: &Agent, ready_path: &'static str, runtime_path: &'stat
             .map_or(
                 "plain",
                 |message| {
-                    if message.desktop {
-                        "desktop"
-                    } else {
-                        "plain"
-                    }
+                    if message.desktop { "desktop" } else { "plain" }
                 },
             ),
     };
@@ -68,8 +64,7 @@ mod tests {
             "phase_coverage",
             "phase_accounting",
         ];
-        assert!(!fields.iter().any(|field| {
-            field.contains("id") || field.contains("request") || field.contains("token")
-        }));
+        let forbidden = ["id", "request", "token", "owner", "resource", "url"];
+        assert!(!fields.iter().any(|field| forbidden.contains(field)));
     }
 }
