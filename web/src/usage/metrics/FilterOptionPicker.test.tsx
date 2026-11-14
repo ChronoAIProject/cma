@@ -77,7 +77,7 @@ it('shows loading, failure/retry and empty choices without changing the selectio
   render(<FilterOptionPicker api={api} kind="owner" value="" onChange={change} active />);
   await actor.click(screen.getByRole('button', { name: 'Owner: Everyone' }));
   await screen.findByText('Loading owner choices…');
-  await act(async () => reject(new ApiError(503, 'Unavailable')));
+  await act(async () => reject(new ApiError(400, 'Invalid selection')));
   await screen.findByRole('alert');
   expect(screen.queryByText('No matching owner choices.')).not.toBeInTheDocument();
   api.options.mockResolvedValueOnce({ items: [], next: null });
