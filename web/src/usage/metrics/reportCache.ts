@@ -1,6 +1,7 @@
 import type { UsageMetricReport } from '@chronoai/cma-sdk';
 import type { MetricsClient, Selection } from './model';
 import type { MetricsFailure } from './failure';
+import type { UsageRetryState } from './retry';
 
 export type CommittedUsageReport = UsageMetricReport & {
   /** Optional fields supplied by the cached-report API when available. */
@@ -10,6 +11,11 @@ export type CommittedUsageReport = UsageMetricReport & {
 
 export interface ReportEntry {
   owner: string;
+  retry: UsageRetryState;
+  retrying: boolean;
+  observationStartedAt: number;
+  stopped: boolean;
+  background: boolean;
   report?: CommittedUsageReport;
   generatedAt?: number;
   stale: boolean;
@@ -19,6 +25,7 @@ export interface ReportEntry {
   retryAt: number;
   pollAt: number;
   latestPending: boolean;
+  refreshReportId?: string;
   lastStarted: number;
   completedAt: number;
   attempted: boolean;
@@ -73,8 +80,12 @@ export function clearReportOwner(api: MetricsClient, owner: string, failure?: Me
     entry.stale = false;
     entry.refreshing = false;
     entry.completedAt = 0;
+    entry.retrying = false;
+    entry.observationStartedAt = 0;
+    entry.stopped = true;
     entry.pollAt = 0;
     entry.latestPending = false;
+    entry.refreshReportId = undefined;
     entry.error = failure;
     entry.authorityBlocked = true;
     notify(entry);
@@ -129,6 +140,11 @@ export function entryFor(api: MetricsClient, key: string, owner: string): Report
   if (!entry) {
     entry = {
       owner,
+      retry: { failures: 0, retryAt: 0 },
+      retrying: false,
+      observationStartedAt: 0,
+      stopped: false,
+      background: false,
       stale: false,
       refreshing: false,
       retryAt: 0,
@@ -175,4 +191,35 @@ export function retainVisible(entry: ReportEntry) {
 // A deliberate retry can reauthorize this selection; periodic/visibility work cannot.
 export function allowReportRetry(entry: ReportEntry) {
   entry.authorityBlocked = false;
+  if (entry.stopped) {
+    entry.pending = undefined;
+    entry.latestPending = false;
+    entry.refreshReportId = undefined;
+  }
+  entry.stopped = false;
+  entry.observationStartedAt = 0;
+  entry.retry.failures = 0;
+}
+
+/** A preview may change only the range, never membership, authority or client. */
+export function nearestCommittedReport(
+  api: MetricsClient,
+  selection: Selection,
+  admin: boolean,
+  owner: string,
+) {
+  if (selection.range !== '7d' && selection.range !== '30d') return undefined;
+  const ranges = selection.range === '7d' ? (['24h', '30d'] as const) : (['7d', '24h'] as const);
+  const entries = reportCache.get(api);
+  for (const range of ranges) {
+    const entry = entries?.get(reportKey({ ...selection, range }, admin, owner));
+    if (!entry?.report || entry.authorityBlocked || entry.owner !== owner) continue;
+    if (
+      Date.now() - entry.completedAt >= CACHE_TTL_MS ||
+      Number(entry.report.expires_at) * 1000 <= Date.now()
+    )
+      continue;
+    return { report: entry.report, generatedAt: entry.generatedAt, range };
+  }
+  return undefined;
 }
