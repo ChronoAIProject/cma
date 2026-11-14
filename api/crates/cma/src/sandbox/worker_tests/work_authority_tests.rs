@@ -98,7 +98,61 @@ async fn composed_sandbox_worker_renews_while_credential_future_is_pending() {
     assert_eq!(h.actions.snapshot(), ["mint:1"]);
 }
 
+#[tokio::test(start_paused = true)]
+async fn two_instance_owner_abort_is_taken_over_after_fifteen_seconds_once() {
+    let h = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let (created, now) = prepare_renewable_sandbox(&h).await;
+
+    let owner_credentials = BlockingCredentials::new(h.credentials.clone());
+    let owner = renewable_for(&h, "owner-a", owner_credentials.clone());
+    let successor = renewable_for(&h, "owner-b", h.credentials.clone());
+    let id = created.id.clone();
+    let owner_task = tokio::spawn({
+        let owner = owner.clone();
+        async move { owner.run_one(&id, now).await }
+    });
+    owner_credentials.entered.notified().await;
+
+    // The owner is terminated while its credential effect is still pending.
+    // Aborting the task models process loss and drops its local authority.
+    let fault_at = tokio::time::Instant::now();
+    owner_task.abort();
+    assert!(owner_task.await.unwrap_err().is_cancelled());
+    tokio::time::advance(Duration::from_secs(WORK_LEASE_SECONDS)).await;
+    tokio::task::yield_now().await;
+    let takeover = successor.run_one(&created.id, now + Duration::from_secs(WORK_LEASE_SECONDS));
+    assert!(takeover.await.unwrap());
+    let takeover_at = tokio::time::Instant::now();
+
+    let takeover_time = takeover_at - fault_at;
+    assert!(takeover_time <= Duration::from_secs(WORK_LEASE_SECONDS));
+    let finished = h.stored(&created.id).await;
+    assert!(finished.work.lease.is_none());
+    assert_eq!(h.actions.snapshot(), ["mint:1"]);
+}
+
+async fn prepare_renewable_sandbox(h: &Harness) -> (Sandbox, SystemTime) {
+    let created = h.create().await;
+    let now = start_time(&created);
+    h.run(&created.id, now).await;
+    h.run(&created.id, now).await;
+    let mut protected = h.stored(&created.id).await;
+    let revision = protected.revision;
+    protected.work.authority_protocol = Some(WorkAuthorityProtocol::RenewedV1);
+    protected.revision += 1;
+    h.store.save_sandbox(revision, protected).await.unwrap();
+    (created, now)
+}
+
 fn renewable(h: &Harness, credentials: Arc<dyn SandboxCredentialController>) -> Arc<SandboxWorker> {
+    renewable_for(h, "renewed-worker", credentials)
+}
+
+fn renewable_for(
+    h: &Harness,
+    holder: &str,
+    credentials: Arc<dyn SandboxCredentialController>,
+) -> Arc<SandboxWorker> {
     SandboxWorker::new(
         SandboxWorkerDependencies {
             store: h.store.clone(),
@@ -114,7 +168,7 @@ fn renewable(h: &Harness, credentials: Arc<dyn SandboxCredentialController>) -> 
             updates: DurableAgentUpdateRecorder::new(h.store.clone()),
             operations: AgentOperationService::new(h.store.clone(), h.registry.clone()),
         },
-        SandboxWorkerConfig::new("renewed-worker", "test", runtime_image(), h.policy.clone())
+        SandboxWorkerConfig::new(holder, "test", runtime_image(), h.policy.clone())
             .with_execution(Default::default())
             .with_replicas(true),
     )

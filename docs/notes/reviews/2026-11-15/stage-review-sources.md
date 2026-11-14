@@ -1,0 +1,45 @@
+# Stage checklist references and verification
+
+Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016). Owner: solution-architect-03. **Initial freeze 14 November 2026, 16:17 SGT**, before 15 November 00:00; updated the same day for the later lead soak ruling and controller preparation. Deliverables: [three stage pages](stage-go-checklists.md) and [command/rollback details](stage-command-review.md). The lead retains GO and stage advancement; deployment-engineer-01 executes.
+
+## Controlling references
+
+- Lead plan: `/Users/shining/code/work/tech-lead/notes/2026-11-14-hard-deadline-plan.md`. S1 06:00, S2 08:30, S3 10:30, final 18:00 SGT; no writes 02:00–02:59. Local gates and admin integration; no CI wait.
+- Architect-04: `/Users/shining/code/work/tech-lead.staff/solution-architect-04/`, files `production-stages.md`, `essentials.md`, `contract-addendum-a2.md`, `contract-addendum-a3.md` and `contract-addendum-work-recovery-20261114.md`. Current K01–K25 and A3 supersede old full-matrix repetitions, schedules and blanket noise rules.
+- Manifest baseline #1968: `d38966aab5c77fa2262da2d14ffba0da84cd958c`; corrected EG native sleep #1996: `37f2bedbfce3be4fe5b8bd1370ba2c81cd872be5`. Inspected integration: `15306eed8aacb67964f95442c1f29ba47d161502`. This identifies source, not final production images or runtime qualification.
+- Current execution preparation: engineer commit `08ce4653d5777ca766ab449d9e7ec6b1e6acf983`, [deployment-runbooks.md](https://github.com/ChronoAIProject/cma/blob/08ce4653d5777ca766ab449d9e7ec6b1e6acf983/docs/notes/reviews/2026-11-15/deployment-runbooks.md) and the adjacent S1/S2/S3 pages. It supplies controller commands and recovery branches; lead selection, actual qualification and operation approvals remain required. Historical A2-r5 commands are superseded. Its corrected metadata-only predecessor is not an executable root; EG exec derivatives remain withdrawn.
+- Developer-16 input: `/Users/shining/code/work/tech-lead.staff/developer-16/deadline-20261115/stage-checklist-handoff-r1/HANDOFF.md`. Correction source and operation identities were checked against this handoff.
+- Later lead ruling: `/Users/shining/code/work/tech-lead.staff/performance-analyst-02/cma-scale/hard-deadline/lead-soak-ruling.md`, also incorporated in current architect-04 essentials K21/K23. Keep30-minute soaks, E+15 reports and separate statistical/policy verdicts. Valid matched CRITICAL INCONCLUSIVE may receive policy PASS only with assessed no adverse signal and passing applicable absolute checks. Missing/invalid/incomplete observations and UX/background are excluded. Longer-soak requests are closed. Retain after03:00 index order; engineer02 is sole M4/index operator.
+
+## Review and checks
+
+Deployment-engineer-01 read the initial three-file draft. Incorporated its concrete corrections: actual distinct-host placement is checked after start-two; metadata is not an executable root; one post window does not create a statistical PASS; observing five is necessary only to claim five was exercised. K14 still covers maximum capacity and K25 useful automatic up/down. Developer-16 supplied the manifest/operation and capacity handoff. The later lead ruling changes stage acceptance, not the statistical result. No new tooling review was performed for the follow-up.
+
+Completed checks at initial freeze on 14 November:
+
+- Manifest contract: both roles PASS. Existing manifest suite: **21 tests, 120 assertions, 0 failures/errors/skips**.
+- Corrected operation comparison: **15 of 16 unchanged**; sole delta is EG exec → native sleep30. Both prepare projections preserve fields/env and do not write replicas. All 14 copied manifest/build inputs match the correction commit.
+- At initial freeze no controller or failed-start commands were supplied. Engineer commit `08ce4653d` now supplies both; actual controller/cutover qualification and authorized backend/user-service observation remain open, along with final images, K13, lifetime/capacity and calibrated load. Another documentary approval cannot close these execution gaps.
+- Final document checks PASS: three stage pages, four quoted Bash blocks syntax-valid, eight local links resolve, all K01–K25 mapped, every file below500 lines, and no whitespace errors. Shell checks are syntax only; no production commands were executed.
+
+The lead's speed directive applies: evidence is source, tests, commit and concise results. No further intermediate sealing, checksum handoffs or unchanged-byte review rounds are required. No application build, container, production query, server dry-run, helper execution or activation was performed for this task.
+
+Follow-up verification: current lead ruling and essentials K21/K23 read; current action names checked against the engineer's stage pages. Three pages, K01–K25 mapping, local links, the single current Bash example's syntax, line limits and whitespace pass. Engineer-reported33 controller tests and eight driver tests remain author evidence; this update does not rerun or qualify those tools.
+
+## Essential ownership and stage coverage
+
+| Rows | Required evidence handoff |
+| --- | --- |
+| K01 | Integrator/local verifiers: final source, local gates, build and configuration before M4/S1. |
+| K02 | Engineer/production verifiers: accepted-work conservation at every stage; no empty denominator. |
+| K03–K08 | AM owners/local verifier: local races/kill; S1 observations, preserved through S2/S3. |
+| K09–K11 | EG owners/local verifier: local admission/provider/loss; authorized S2/S3 observations. |
+| K12 | Local verifier/developer-17: actual M3 2→4→2; S3 automatic behavior is separate. |
+| K13–K15 | Developer-16, drain/capacity owners and engineer: drain, placement, capacity, compatible receivers/floors before activation and throughout transitions. |
+| K16–K21 | Analyst/client/production verifiers: complete journeys, distinct routes, A3 classes/confidence; M8 evidence by17:00. |
+| K22 | Engineer: approved S1/S2 operations, no overlap and actual <120s service-restoration clock. |
+| K23 | Engineer/provider monitor: fresh S1/S2 stable soaks, closed canaries and named24-hour monitor. |
+| K24 | Engineer/lead: state-specific compatible recovery before each stage; M8 fixes forward only. |
+| K25 | Engineer/developer-17/production verifiers: useful automatic up/down, final stable-two soak and M8/final reporting. |
+
+Reviewer owns the checklist decision record; these evidence handoffs confer no production permissions. Publish through developer-13's named integration branch and milestone PR, with `Closes #2016`; no independent develop PR. Task scratch is removed before final handoff, and the lead retains worktree cleanup.
