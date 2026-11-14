@@ -1,5 +1,6 @@
 //! Exact daily totals and bounded prepared inputs for partial UTC days.
 use super::*;
+use crate::store::sandbox_usage_rollups::AllocationDelta;
 use std::collections::BTreeMap;
 
 impl ReportingStore {
@@ -12,6 +13,7 @@ impl ReportingStore {
         if !self.view_policy.allocation_rollups_enabled {
             return Err(MetricsError::ViewDisabled);
         }
+        let _timer = self.time_read("allocation_rollups")?;
         let started = std::time::Instant::now();
         let cached = self.allocation_bucket_page(session, states, range).await?;
         let cache_us = started.elapsed().as_micros();
@@ -35,6 +37,8 @@ impl ReportingStore {
             };
             let mut values = BTreeMap::new();
             let mut missing = Vec::new();
+            let mut changed = Vec::new();
+            let mut deltas = Vec::new();
             for state in states {
                 let id = state.sandbox_id.to_string();
                 let cached_projection = match cached.get(&(id.clone(), day)) {
@@ -49,12 +53,50 @@ impl ReportingStore {
                 };
                 if let Some(projection) = cached_projection {
                     values.insert(id, projection);
+                } else if let Some(revision) = cached
+                    .get(&(id, day))
+                    .map(|bucket| bucket.delta_revision(state, selected))
+                    .transpose()?
+                    .flatten()
+                {
+                    changed.push(state);
+                    deltas.push(AllocationDelta {
+                        sandbox_id: state.sandbox_id.as_str(),
+                        after_revision: revision,
+                        through_revision: state.revision,
+                    });
                 } else {
                     missing.push(state.clone());
                 }
             }
+            let cached_hits = values.len();
+            let mut delta_hits = 0;
+            if !deltas.is_empty() {
+                let mut appended = self
+                    .allocation_events_after(session, &deltas, selected)
+                    .await?;
+                for state in changed {
+                    let id = state.sandbox_id.to_string();
+                    let bucket = cached
+                        .get(&(id.clone(), day))
+                        .ok_or(MetricsError::Unavailable)?;
+                    match bucket.project_delta(
+                        state,
+                        &appended.remove(&id).unwrap_or_default(),
+                        selected,
+                    )? {
+                        Some(projection) => {
+                            values.insert(id, projection);
+                            delta_hits += 1;
+                        }
+                        None => missing.push(state.clone()),
+                    }
+                }
+                metrics::counter!("cma_usage_allocation_bucket_reads_total", "outcome" => "delta")
+                    .increment(delta_hits);
+            }
             metrics::counter!("cma_usage_allocation_bucket_reads_total", "outcome" => "hit")
-                .increment(values.len() as u64);
+                .increment(cached_hits as u64);
             metrics::counter!("cma_usage_allocation_bucket_reads_total", "outcome" => "raw_fallback").increment(missing.len() as u64);
             if !missing.is_empty() {
                 // Do not sum/subtract floating point hourly slices: that changes
