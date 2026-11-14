@@ -1,0 +1,7 @@
+{
+  "verdict": "PASS_FOR_LOCAL_SYNTHETIC_REUSE_ONLY",
+  "verdictSha256": "771748498e063396ab22392c9fd3e361645949f9f5bf74381a23bd5a3d550fbd",
+  "files": {
+    "lib/core.mjs": "963999dc3432bfd6d562778c33d71148cd08449ed2385dca8a13537254102777"
+  }
+}

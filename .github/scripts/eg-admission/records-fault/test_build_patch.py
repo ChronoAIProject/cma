@@ -9,7 +9,7 @@ import unittest
 from build_patch import ACTIONS, HERE, RECORDS, render, validate
 
 REPOSITORY = HERE.parents[3]
-REVISION = "6b1ace3e12aaabef592875cc851dbd7af763b670"
+REVISION = "1630d06798cbb148d11cad68f9fc43b1f05f280c"
 CONFIG = {
     "schema": "eg_records_fault_v1",
     "database_name": "eg_diag_10000000000040008000000000000001",
@@ -102,7 +102,11 @@ class PatchTest(unittest.TestCase):
         )
 
     def test_unreviewed_source_and_mutable_revision_are_rejected(self):
-        for revision in ["HEAD", "aadd212c2810fb12d443998e3cf75bab2fd670cf"]:
+        for revision in [
+            "HEAD",
+            "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+            "70edad1e3f01069841361a90ba40dfd23b34a058",
+        ]:
             with self.subTest(revision=revision), self.assertRaises(ValueError):
                 render(REPOSITORY, revision, CONFIG)
 

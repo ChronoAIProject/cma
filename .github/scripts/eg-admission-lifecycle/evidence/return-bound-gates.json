@@ -1,0 +1,114 @@
+{
+  "recorded_at_utc": "2026-11-14T08:04:08.093815+00:00",
+  "parent": "1233d9b0fffca49b0ea8882c7d29b800032e7016",
+  "finding": "EGL-001",
+  "scope": "Explicit timeout return bound in lifecycle evidence only; no watchdog or live acceptance",
+  "source_sha256": {
+    "lifecycle.py": "ee4742a9e50d43100cb99eecc46d95c251ca0a20f2bb162ac183192da5e61292",
+    "binding.py": "91e2393ad71b18015df16f448320eb7729844b9cb4f8ff56c04427047c63a1c0",
+    "capture.py": "7bdd4951d0a1fc3d59a3afdb368efe9229e5e15138d08084999d00cac069b688",
+    "test_lifecycle.py": "23d61dff3333c2fa24c210f41fcb1357cda87ae75757c5b9b9084dd5adeee1d4",
+    "README.md": "bd97fe84becd26cd7d5721f342b70213bbac7af8f6cb9fc9cc6d53ed81bd1c51"
+  },
+  "logs_sha256": {
+    "return-bound-python-gates.log": "2cb2f26b5e7548320baa8d89c5457133663e8d7962b655950722d1f73635fda8",
+    "return-bound-coverage.json": "5e42c2e70991923fafaa0d281c8b34d5ad7e91014a42da43b73e70657a651d9d",
+    "return-bound-original-counterexample.json": "f62402cfc4f7d3ebcb5eefb52b797b38e0973db60cc0483dad05276cc0ecfe81"
+  },
+  "checks": {
+    "pure_mocked_tests": {
+      "passed": 20,
+      "failed": 0
+    },
+    "ast_syntax": "PASS",
+    "source_under_500_lines": "PASS",
+    "whitespace": "PASS",
+    "temporary_test_directories": 0
+  },
+  "coverage": {
+    "lifecycle.py": {
+      "executable_lines": 193,
+      "covered_lines": 164,
+      "percent": 84.97,
+      "missing": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        18,
+        22,
+        23,
+        31,
+        35,
+        40,
+        45,
+        49,
+        50,
+        55,
+        91,
+        101,
+        110,
+        127,
+        133,
+        145,
+        155,
+        178,
+        204,
+        248
+      ]
+    },
+    "binding.py": {
+      "executable_lines": 43,
+      "covered_lines": 38,
+      "percent": 88.37,
+      "missing": [
+        6,
+        7,
+        9,
+        12,
+        17
+      ]
+    },
+    "capture.py": {
+      "executable_lines": 110,
+      "covered_lines": 89,
+      "percent": 80.91,
+      "missing": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        14,
+        87,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        125,
+        126
+      ]
+    }
+  },
+  "coverage_method": "stdlib trace statement counts; imports before tracing counted missing; no branch claim",
+  "limits": [
+    "No actual child, Kubernetes, database, provider or production operation.",
+    "Caller enforces watchdog; no live budget selected.",
+    "Mandatory return bounds are registered before execution; no default tolerance.",
+    "Existing source finding and reproducer remain historical.",
+    "Exact-source rereview required before live capture."
+  ]
+}
