@@ -304,6 +304,17 @@ impl AgentStore for MongoSandboxStore {
         if agent.conversation.last_seq != 0 {
             return Err(SandboxStoreError::SequenceConflict);
         }
+        // Creation provenance survives physical Sandbox purge. Its unique Agent
+        // identity also fences recreation through this lower-level creation port.
+        if self
+            .agent_creation_provenance
+            .find_one(doc! {"_id": agent.id.as_str()})
+            .await
+            .map_err(|_| SandboxStoreError::Unavailable("Agent identity check unavailable".into()))?
+            .is_some()
+        {
+            return Err(SandboxStoreError::Duplicate);
+        }
         self.agents
             .insert_one(agent_document(&agent)?)
             .await

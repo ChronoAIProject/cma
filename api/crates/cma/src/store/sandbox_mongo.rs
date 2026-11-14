@@ -88,6 +88,7 @@ pub struct MongoSandboxStore {
     pub(super) bounded_admission_agents: std::collections::BTreeSet<layer2_core::AgentId>,
     pub(super) platform_counter_shards: bool,
     pub(super) bounded_title_reads: bool,
+    pub(super) title_effect_custody: bool,
     pub(super) bounded_transcript_reads: bool,
     pub(super) bounded_usage_reads: bool,
     pub(super) access_snapshot_session: bool,
@@ -202,6 +203,7 @@ impl MongoSandboxStore {
             fleet_log_activation: Default::default(),
             platform_counter_shards: false,
             bounded_title_reads: false,
+            title_effect_custody: false,
             bounded_transcript_reads: false,
             bounded_usage_reads: false,
             access_snapshot_session: false,
@@ -309,7 +311,7 @@ impl MongoSandboxStore {
         super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
         super::native_prepared::ensure_indexes(&store.native_prepared).await?;
         tracing::info!(database = name, "sandbox-model Mongo store ready");
-        Ok(store)
+        Ok(store.with_title_effect_custody(false))
     }
 }
 

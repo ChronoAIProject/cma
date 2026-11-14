@@ -5,14 +5,15 @@ use super::super::{storage, ExecutionError};
 use cmaeg_core::seal::{open_interaction, seal_interaction, MasterKeyRing};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub(super) const BODY_LIMIT: usize = 384 * 1024;
+pub(in crate::turns::routed) const BODY_LIMIT: usize = 384 * 1024;
 const PLAINTEXT_LIMIT: usize = 192 * 1024;
+pub(in crate::turns::routed) const STREAM_BODY_LIMIT: usize = 768 * 1024;
 const CHUNK: usize = 32 * 1024;
 const MAX_LIFETIME: i64 = 25;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Envelope {
+pub(in crate::turns::routed) struct Envelope {
     pub id: String,
     manifest: String,
     chunks: Vec<String>,
@@ -28,20 +29,30 @@ struct Manifest {
     chunks: usize,
 }
 #[derive(Clone, Copy)]
-pub(super) enum Direction {
+pub(in crate::turns::routed) enum Direction {
     Request,
     Response,
+    StreamRequest,
+    StreamResponse,
 }
 impl Direction {
+    fn plaintext_limit(self) -> usize {
+        match self {
+            Self::StreamRequest | Self::StreamResponse => 320 * 1024,
+            _ => PLAINTEXT_LIMIT,
+        }
+    }
     fn domain(self) -> &'static str {
         match self {
             Self::Request => "cmaeg-replica-tool-request-v1",
             Self::Response => "cmaeg-replica-tool-response-v1",
+            Self::StreamRequest => "cmaeg-replica-stream-request-v1",
+            Self::StreamResponse => "cmaeg-replica-stream-response-v1",
         }
     }
 }
 
-pub(super) fn seal(
+pub(in crate::turns::routed) fn seal(
     keys: &MasterKeyRing,
     direction: Direction,
     id: &str,
@@ -56,7 +67,7 @@ pub(super) fn seal(
         return Err(ExecutionError::Invalid);
     }
     let plaintext = storage::bytes(value)?;
-    if plaintext.is_empty() || plaintext.len() > PLAINTEXT_LIMIT {
+    if plaintext.is_empty() || plaintext.len() > direction.plaintext_limit() {
         return Err(ExecutionError::Invalid);
     }
     let manifest = Manifest {
@@ -86,7 +97,7 @@ pub(super) fn seal(
     })
 }
 
-pub(super) fn open<T: DeserializeOwned>(
+pub(in crate::turns::routed) fn open<T: DeserializeOwned>(
     keys: &MasterKeyRing,
     direction: Direction,
     context: &str,
@@ -95,7 +106,7 @@ pub(super) fn open<T: DeserializeOwned>(
 ) -> Result<T, ExecutionError> {
     validate_id(&envelope.id)?;
     if envelope.manifest.len() > 2048
-        || envelope.chunks.len() > PLAINTEXT_LIMIT.div_ceil(CHUNK)
+        || envelope.chunks.len() > direction.plaintext_limit().div_ceil(CHUNK)
         || envelope.chunks.iter().any(|chunk| chunk.len() > 65536)
     {
         return Err(ExecutionError::Invalid);
@@ -111,7 +122,7 @@ pub(super) fn open<T: DeserializeOwned>(
     if manifest.version != 1
         || manifest.context != context
         || manifest.bytes == 0
-        || manifest.bytes > PLAINTEXT_LIMIT
+        || manifest.bytes > direction.plaintext_limit()
         || manifest.chunks != manifest.bytes.div_ceil(CHUNK)
         || envelope.chunks.len() != manifest.chunks
         || manifest.sha256.len() != 64

@@ -483,3 +483,46 @@ outcome and remaining gates. Retain sanitized evidence under the engineer's owne
 path; remove temporary download/build/dry-run files. Issue closure for #1956
 covers delivery of manifests/runbook only; production verification stays on
 #1356/#1541/#1530 and the lead's S1/S2/S3 receipts.
+
+## Automatic title provider custody
+
+Before enabling replica mode, every API, title worker and recovery process must
+include the title effect custody reader/writer floor. The integrator wires
+`MongoSandboxStore::with_title_effect_custody` to the existing replica-mode
+configuration. The store default remains OFF. Exclude older title writers before
+enabling: they do not enforce the retained barrier and cannot be used for rollback.
+
+A claim first records `title_effect_floor: 1` and a bounded
+`title_effect_custody` envelope in its Agent document. Before the provider call,
+the floor advances irreversibly to `2` and the envelope freezes the original
+claim, first-turn transcript digest, request digest and strategy. Preparation performs no provider request. Only the original
+process's consuming prepared capability can dispatch after exact durable intent
+confirmation and live-authority validation. There is no provider lookup or retry
+for an unresolved intent. A crash before dispatch may therefore leave zero calls
+and an unresolved title; a lost provider response may leave one call and the same
+unresolved state. A new claim, strategy, model, fallback or user title cannot
+create another attempt for that Agent obligation. A retained legacy attempt has
+no provider finality proof either: its first custody claim records a permanent
+`legacy_unresolved` barrier at floor `2` instead of dispatching again. Exclude all legacy
+in-flight title dispatchers during activation, including mode-OFF workers.
+
+Accepted sanitized results are persisted before title publication. A successor
+may publish that exact result under its current claim without contacting the
+provider. User-title precedence and expiry still fence mutations. An uncertain
+intent or result acknowledgement reconciles only that exact stored identity;
+absence or a conflicting record never proves permission to repeat a call.
+
+The floor and envelope survive flag OFF, ordinary Agent replacement fields,
+log appends, retained reopen, fallback maintenance and user-title writes. Missing,
+null after floor `2`, malformed or unknown-version custody fails closed. No TTL or
+compaction removes it. The writer inventory uses `$set` for Agent replacements;
+title claim/completion writers preserve the separate custody fields. Physical
+Sandbox purge refuses unresolved or malformed custody. Purging an accepted result
+also requires permanent creation provenance, which survives purge and prevents
+recreating the same Agent identity through admission or low-level creation.
+Restore Agents, logs and permanent creation provenance coherently. Clearing the
+floor or deleting provenance to regain title retries is not a supported recovery.
+
+Synthetic counting-provider tests establish the no-resend invariant. They do
+not reconcile real provider outcomes or authorize activation. Retained Unknown
+outcomes require a separately qualified provider/finality recovery procedure.

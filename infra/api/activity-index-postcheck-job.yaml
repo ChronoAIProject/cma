@@ -1,0 +1,69 @@
+# One-off, operator-created Job. This is deliberately not referenced by the
+# cma-agent-manager Deployment, startup probes or readiness gates.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cma-activity-index-postcheck
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-activity-index-postcheck
+    app.kubernetes.io/part-of: cma
+    app.kubernetes.io/component: migration
+  annotations:
+    cma.chronoai.dev/operation: activity-index-postcheck
+    cma.chronoai.dev/approval: deployment-engineer-01
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cma-activity-index-postcheck
+        app.kubernetes.io/part-of: cma
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: chrono-bot-ksa
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: activity-index-size
+          # The release controller must replace this with the exact immutable
+          # API image that contains these CLI modes before creating the Job.
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              /usr/local/bin/cma --index-preflight activity-first-page
+              exec /usr/local/bin/cma --activity-index-size
+          envFrom:
+            # Rendering MUST copy the live cma-agent-manager api container's
+            # envFrom and env in memory, preserving Secret references exactly.
+            # These checked-in references are placeholders, never read Secrets.
+            # Append only the non-secret operation controls below, if present.
+            - configMapRef:
+                name: cma-agent-manager
+            - secretRef:
+                name: cma-agent-manager
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

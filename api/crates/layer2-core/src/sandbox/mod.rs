@@ -192,8 +192,12 @@ mod service_trust;
 mod status;
 pub mod store;
 mod title;
+mod title_effect;
 mod title_sanitize;
 mod title_service;
+pub use title_effect::{
+    AgentTitleEffect, AgentTitleEffectIntent, AgentTitleEffectState, PreparedAgentTitle,
+};
 mod title_store;
 mod warmup;
 mod workspace;
@@ -399,6 +403,8 @@ mod sandbox_usage_tests;
 mod service_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod title_effect_tests;
 #[cfg(test)]
 mod title_service_tests;
 #[cfg(test)]
