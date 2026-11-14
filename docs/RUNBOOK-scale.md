@@ -125,7 +125,13 @@ The script refuses an existing endpoint record or occupied port, verifies curren
 
 `/control/run` supplies signed Telegram callback events and independent durable/provider/sink accounting. It is not a Custom SSE client.08 supplies the separate Custom observer;15 joins routing/target evidence. Preserve the original completed0ac event without resend. A healthy Custom result cannot close EG-SSE-001.
 
-End sequence:08 finishes requests; owner establishes actual gateway process finality;08 closes/reconciles the fixture;17 stops its single process within63s. Preserve private database/journal and all failed outcomes. `/control/close` alone is not gateway death. Then stop only the exact recorded forwards and prepare a fresh ON config. AM browser/create/recovery fixtures remain missing and are separately owned with01/17/02.
+End sequence:08 finishes requests and17 releases the cohort for gateway finality. The owner then runs:
+
+```sh
+python3 scripts/stop-eg-fixture.py --run-name f6-off --source "$CANDIDATE" --count 1
+```
+
+This checks the exact fixture/source/count and absent HPA, scales only EG to0 with resource-version/replica preconditions, waits for Pod deletion and confirms the recorded application/proxy containers have exited or been removed from the owned kind node runtime. It never reads container environment or executes inside a Pod. The private `gateway-finality.json` retains success or partial failure. Close only the direct ingress forward identified in that cohort's `endpoints-n1.json`; keep the Mongo forward and fixture for reconciliation.08 then closes/reconciles the fixture;17 stops its single process within63s. Preserve private database/journal and all failed outcomes. `/control/close` alone is not gateway death. Then stop only the exact recorded forwards and prepare a fresh ON config. AM browser/create/recovery fixtures remain missing and are separately owned with01/17/02.
 
 ## Fixed modes, HPA and faults
 
