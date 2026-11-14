@@ -2123,6 +2123,7 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
  "tracking-allocator",
  "url",
  "uuid",

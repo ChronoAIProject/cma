@@ -17,8 +17,14 @@ def original_spec(role):
 
 def utilization(obj):
     status = obj.get('status', {})
-    g.require(status.get('observedGeneration') == obj['metadata']['generation'] and
-              all(any(c.get('type') == kind and c.get('status') == 'True'
+    generation = obj['metadata'].get('generation')
+    g.require('generation' not in obj['metadata'] or type(generation) is int and generation > 0,
+              'S3b_invalid_HPA_generation')
+    # HPA generation and observedGeneration are optional; never invent either.
+    g.require('observedGeneration' not in status or generation is not None and
+              type(status['observedGeneration']) is int and status['observedGeneration'] == generation,
+              'S3b_HPA_generation_not_current')
+    g.require(all(any(c.get('type') == kind and c.get('status') == 'True'
                       for c in status.get('conditions', []))
                   for kind in ('AbleToScale', 'ScalingActive')),
               'S3b_HPA_conditions_not_current')
@@ -80,21 +86,22 @@ def fresh_metrics(name, pods):
                   'S3b_complete_PodMetrics_required')
 
 
-def build(role, action, release, created):
+def build(role, action, release, created, topology=None, prefix=None):
     name = 'cma-agent-manager' if role == 'am' else 'cma-event-gateway'
     g.require(created is not None, 'S3b_confirmed_prior_result_required')
     result = g.load(created)
     prior = result.get('operation', {})
     g.require(action in ('lower-target', 'restore-target'), 'S3b_action_required')
+    prefix = prefix or 's3-' + role
     g.require(result.get('state') == 'APPLIED' and result.get('source') == release['source']
               and prior.get('kind') == 'HorizontalPodAutoscaler' and prior.get('name') == name
               and (prior.get('action') == 'create' if action == 'lower-target' else
-                   prior.get('id') == 's3-' + role + '-lower-target'
+                   prior.get('id') == prefix + '-lower-target'
                    and prior.get('hpa_exercise') == 'lower-target'),
               'S3b_confirmed_owned_result_required')
     obj = g.get('HorizontalPodAutoscaler', name)
     g.same(obj, result.get('after'))
-    op = dict(id=f's3-{role}-{action}', stage='S3', context=g.CONTEXT, namespace=g.NAMESPACE,
+    op = dict(id=f'{prefix}-{action}', stage='S3', context=g.CONTEXT, namespace=g.NAMESPACE,
               kind='HorizontalPodAutoscaler', name=name, action='patch', role=role,
               hpa_exercise=action, expected_before=g.binding(obj))
     if action == 'lower-target':
@@ -103,7 +110,7 @@ def build(role, action, release, created):
         lower = max(1, value * 5 // 6)
         original = obj['spec']['metrics'][0]['resource']['target']['averageUtilization']
         g.require(lower < original, 'S3b_target_must_be_lower_than_original')
-        bindings, cohorts = stable_pairs(release)
+        bindings, cohorts = (topology or stable_pairs)(release)
         fresh_metrics(name, cohorts[role])
         spec = copy.deepcopy(obj['spec'])
         spec['metrics'][0]['resource']['target']['averageUtilization'] = lower
@@ -117,11 +124,11 @@ def build(role, action, release, created):
     return op
 
 
-def checkpoint(obj, op, release):
+def checkpoint(obj, op, release, topology=None):
     g.same(obj, op['expected_before'])
     if op['hpa_exercise'] == 'restore-target':
         return  # Failed metrics/readiness must not prevent the guarded target restore.
     g.require(utilization(obj) == op['sampled_utilization'], 'S3b_metric_changed_replan')
-    bindings, cohorts = stable_pairs(release)
+    bindings, cohorts = (topology or stable_pairs)(release)
     g.require(bindings == op['deployment_bindings'], 'S3b_Deployment_changed')
     fresh_metrics(op['name'], cohorts[op['role']])
