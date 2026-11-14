@@ -62,6 +62,6 @@ pub(crate) fn attach(
         2: Some(recorder),
         ..Default::default()
     };
-    super::metadata_hook::install(options, diagnostics.clone());
+    super::metadata_hook::install(options, Some(diagnostics.clone()));
     move |event| diagnostics.cmap(event)
 }
