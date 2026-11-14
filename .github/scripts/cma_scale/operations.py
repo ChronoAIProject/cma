@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import rules as g
+import checkpoints
 
 TEMPLATES = Path(__file__).with_name('templates')
 SUFFIXES = {'pause': 'pause', 'prepare': 'prepare-template.template',
@@ -52,10 +53,15 @@ def abort_before_stop(stage, service, pause_plan, prepare_plan=None):
     current = g.get('Deployment', name)
     g.require(current is not None and current['spec'].get('paused') is True
               and current['spec'].get('replicas') == 1, 'abort_only_before_old_stop')
+    g.require(g.binding(current)['uid_sha256'] == first['before']['uid_sha256'],
+              'original_deployment_changed')
+    original = first['operation'].get('original_process')
+    checkpoints.same_original_process(current, original)
     last = g.load(prepare_plan) if prepare_plan else first
     if prepare_plan:
         g.require(last['operation']['id'] == stage.lower() + '-prepare-paused-template'
-                  and last['release']['source'] == first['release']['source'],
+                  and last['release']['source'] == first['release']['source']
+                  and last['before']['uid_sha256'] == first['before']['uid_sha256'],
                   'wrong_prepare_plan')
     g.require(g.hash_json(current['spec']) == last['expected_spec_sha256'], 'abort_spec_drift')
     restored = copy.deepcopy(current)
@@ -82,23 +88,11 @@ def abort_before_stop(stage, service, pause_plan, prepare_plan=None):
                     target.pop(key, None)
     g.require(g.hash_json(restored['spec']) == first['before']['spec_sha256'],
               'abort_does_not_restore_original_spec')
-    # A new/foreign process would make this a post-activation recovery instead.
-    selector = ','.join(k + '=' + v for k, v in current['spec']['selector']['matchLabels'].items())
-    pods = g.command(g.K + ['get', 'pods', '-l', selector, '-o', 'json'])['items']
-    sets = g.command(g.K + ['get', 'replicasets', '-o', 'json'])['items']
-    original_sets = [rs for rs in sets if
-                     any(o.get('uid') == current['metadata']['uid'] and o.get('controller')
-                         for o in rs['metadata'].get('ownerReferences', [])) and
-                     g.template_identity(rs['spec']['template']) ==
-                     g.template_identity(restored['spec']['template'])]
-    g.require(len(original_sets) == 1 and len(pods) == 1 and
-              not pods[0]['metadata'].get('deletionTimestamp') and
-              any(o.get('uid') == original_sets[0]['metadata']['uid'] and o.get('controller')
-                  for o in pods[0]['metadata'].get('ownerReferences', [])),
-              'original_legacy_process_required_for_abort')
+    g.require(g.template_identity(restored['spec']['template']) == original['template_sha256'],
+              'abort_original_template_mismatch')
     op = base(stage, service, stage.lower() + '-abort-before-stop')
     op.update(abort_before_stop=True, expected_before=g.binding(current),
-              original_rs_uid=original_sets[0]['metadata']['uid'],
+              original_process=original,
               restored_spec_sha256=first['before']['spec_sha256'],
               restore_fields=[p['previous_fields'] for p in
                               ([last, first] if prepare_plan else [first])])
