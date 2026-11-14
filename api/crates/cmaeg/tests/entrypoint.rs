@@ -22,11 +22,13 @@ fn unknown_arguments_print_the_usage_line_and_exit_two() {
     assert_usage(&run(&[OsStr::new("--serve")]));
     assert_usage(&run(&[OsStr::new("--print-openapi"), OsStr::new("extra")]));
     for command in [
+        "--replica-drain",
         "--allocator-self-test",
         "--migrate",
         "--migrate-console-sessions",
         "--print-console-sessions-runtime-role",
         "--print-console-sessions-migration-role",
+        "--migrate-replicas",
         "--print-runtime-role",
         "--print-migration-role",
         "--migrate-worker-credentials",
