@@ -7,7 +7,9 @@ use std::collections::BTreeSet;
 mod legacy;
 
 #[cfg(test)]
-pub(super) use legacy::{COLLECTIONS as LEGACY_COLLECTIONS, SHA256 as LEGACY_SHA256};
+pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
+#[cfg(test)]
+pub(super) const LEGACY_SHA256: &str = legacy::SHA256;
 
 pub(crate) fn schema_sha256() -> String {
     digest(
