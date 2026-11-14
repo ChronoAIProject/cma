@@ -51,16 +51,13 @@ impl AgentWorkerStore for MongoSandboxStore {
                 .and_then(|request| request.get(key))
                 .is_none_or(|value| matches!(value, Bson::Boolean(_)))
         };
-        let (desktop, machine_included) =
-            if request.is_some() && valid_bool("desktop") && valid_bool("machine_included") {
-                let request = request.expect("request presence checked");
-                (
-                    Some(request.get_bool("desktop").unwrap_or(false)),
-                    Some(request.get_bool("machine_included").unwrap_or(false)),
-                )
-            } else {
-                (None, None)
-            };
+        let (desktop, machine_included) = match request {
+            Some(request) if valid_bool("desktop") && valid_bool("machine_included") => (
+                Some(request.get_bool("desktop").unwrap_or(false)),
+                Some(request.get_bool("machine_included").unwrap_or(false)),
+            ),
+            _ => (None, None),
+        };
         Ok(admitted_at_ms.map(
             |admitted_at_ms| layer2_core::sandbox::store::AgentCreateAdmission {
                 admitted_at_ms,
