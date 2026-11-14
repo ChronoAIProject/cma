@@ -90,8 +90,11 @@ impl DesktopOwnedRuntime for ProviderHostedControlTransport {
                 ownership: owner.clone(),
                 nonce: challenge.nonce.clone(),
             };
-            let reply: DesktopAcknowledgement =
-                pending.captured.exchange(self, "confirm", &request).await?;
+            let reply: DesktopAcknowledgement = observe(
+                "runtime_confirm",
+                pending.captured.exchange(self, "confirm", &request),
+            )
+            .await?;
             if reply.ownership != *owner {
                 return Err(refused());
             }
@@ -101,7 +104,11 @@ impl DesktopOwnedRuntime for ProviderHostedControlTransport {
                 owner.clone(),
                 pending.deadline,
             ));
-            pending.captured.connect(self, owner, control).await
+            observe(
+                "runtime_handshake",
+                pending.captured.connect(self, owner, control),
+            )
+            .await
         })
         .await
     }
@@ -193,6 +200,27 @@ async fn bounded<T>(
 
 fn refused() -> AdapterError {
     AdapterError::Unavailable("desktop receiver authority could not be established".into())
+}
+
+async fn observe<T>(
+    phase: &'static str,
+    operation: impl std::future::Future<Output = crate::Result<T>>,
+) -> crate::Result<T> {
+    let started = tracing::enabled!(target: "cma::desktop::connect", tracing::Level::DEBUG)
+        .then(Instant::now);
+    let result = operation.await;
+    if let Some(started) = started {
+        // Scalar stages distinguish retained-floor confirmation from transport
+        // setup without recording endpoint, credential or ownership identities.
+        tracing::debug!(
+            target: "cma::desktop::connect",
+            phase,
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            outcome = if result.is_ok() { "success" } else { "failure" },
+            "desktop adapter phase completed"
+        );
+    }
+    result
 }
 
 #[cfg(test)]
