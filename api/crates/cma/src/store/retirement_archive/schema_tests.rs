@@ -10,12 +10,12 @@ fn frozen_legacy_census_matches_the_exact_pre_allocation_descriptor() {
     let audit: Vec<_> = super::super::census_catalog::AUDIT
         .iter()
         .copied()
-        .filter(|(name, _)| *name != crate::store::allocation_buckets::COLLECTION)
+        .filter(|(name, _)| legacy::COLLECTIONS.contains(name))
         .collect();
     let names: Vec<_> = crate::store::isolation::COLLECTIONS
         .iter()
         .copied()
-        .filter(|name| *name != crate::store::allocation_buckets::COLLECTION)
+        .filter(|name| legacy::COLLECTIONS.contains(name))
         .collect();
     assert_eq!(names, legacy::COLLECTIONS);
     assert_eq!(
@@ -85,21 +85,26 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     mismatched.schema_sha256 = schema_sha256();
     assert!(validate_manifest_census(&mismatched).is_err());
     assert!(matches_current(&old, current.clone()).unwrap());
-    for mode in 0..5 {
-        let mut changed = current.clone();
-        let extra = changed
-            .database
-            .iter_mut()
-            .find(|r| r.collection == crate::store::allocation_buckets::COLLECTION)
-            .unwrap();
-        match mode {
-            0 => extra.documents = 1,
-            1 => extra.bytes = 5,
-            2 => extra.sha256 = digest(b"changed"),
-            3 => extra.objects.push(changed.original_source.clone()),
-            _ => changed.database[0].documents += 1,
+    for name in crate::store::isolation::COLLECTIONS
+        .iter()
+        .filter(|name| !legacy::COLLECTIONS.contains(name))
+    {
+        for mode in 0..5 {
+            let mut changed = current.clone();
+            let extra = changed
+                .database
+                .iter_mut()
+                .find(|r| r.collection == *name)
+                .unwrap();
+            match mode {
+                0 => extra.documents = 1,
+                1 => extra.bytes = 5,
+                2 => extra.sha256 = digest(b"changed"),
+                3 => extra.objects.push(changed.original_source.clone()),
+                _ => changed.database[0].documents += 1,
+            }
+            assert!(!matches_current(&old, changed).unwrap());
         }
-        assert!(!matches_current(&old, changed).unwrap());
     }
     assert!(matches_current(&old, old.clone()).is_err());
     assert!(matches_current(&current, current.clone()).unwrap());
