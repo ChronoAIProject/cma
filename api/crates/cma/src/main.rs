@@ -143,13 +143,7 @@ async fn main() {
         return;
     }
     if store::migrations::is_command(&arguments) {
-        match store::migrations::command(&arguments).await {
-            Ok(result) => println!("{result}"),
-            Err(reason) => {
-                eprintln!("migration refused: {reason}");
-                std::process::exit(2);
-            }
-        }
+        store::migrations::run_command_line(&arguments).await;
         return;
     }
     if store::segment_operations::is_command(&arguments) {
@@ -183,7 +177,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
+        eprintln!("usage: cma [--index-catalog | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

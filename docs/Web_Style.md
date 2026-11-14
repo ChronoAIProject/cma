@@ -6294,6 +6294,7 @@ saving. Use existing form spacing, labels and validation; introduce no new token
 
 ### 2026-11-10 — Usage reporting backoff
 
+The bounded automatic recovery policy below supersedes the original manual-only retry behavior.
 Usage reports, chart/table/detail reads and filter discovery share a server-directed
 429 cooldown within the same account/API scope. Changing filters, closing/reopening
 a picker or dialog, and pressing Refresh must not bypass Retry-After. Preserve the
@@ -6439,4 +6440,74 @@ feedback components without introducing new visual tokens.
 | 2026-11-14 | Preserve opaque usage principals, invalidate every mounted report after authority refusal, bound abandoned pending descriptors, and resume pending refreshes with their original retry deadlines (#1947, #1979). |
 
 | 2026-11-14 | Transfer Operations prefetch ownership to the active usage dashboard so filter changes cancel abandoned default polling (#1947). |
+
+### 2026-11-14 — Bounded recovery for long usage ranges
+
+Preset 24-hour, seven-day and thirty-day views use the server's default bucket
+resolution. Custom ranges retain their explicit endpoints and the legacy
+one-hour flow retains its explicit interval. Opening observes an existing committed view without forcing
+another generation; an explicit Refresh may request replacement work.
+
+While the selected range has no committed report, display an information notice
+with the requested range, elapsed wait and the next observation countdown. Do not
+show an indefinite skeleton, invent percentage completion, or describe Retry-After
+as a completion estimate. The public API has no completion ETA: say that an estimate
+is unavailable. Stop automatic report observation after two minutes, including
+hidden time, and offer an explicit retry or shorter range with the selection intact.
+A request itself times out after thirty seconds. A late or cancelled response must
+never publish into a newer selection or identity.
+
+For seven-day and thirty-day selections, a recent committed neighboring preset
+may be shown while the requested report is unavailable. Prefer seven days over
+24 hours for thirty days, and 24 hours over thirty days for seven days. Reuse only
+the same client, principal, capabilities, sign-in epoch, admin scope and membership
+filters, within the five-minute cache lifetime and report expiry. Label it **Showing
+Last 24 hours**, **Showing Last 7 days**, or **Showing Last 30 days**, explicitly state
+that it is not the requested period, and show its actual period and As-of time.
+Every summary, chart, page and detail remains attached to that preview's immutable
+report ID. Captions say **report period**, including resource-hour cards, inventory,
+charts and history disclosures, so preview values never imply the selected period. Disable workload actions and Agent selection while previewing another
+range. A preview does not count as requested-range completion.
+
+Retry classified transient transport, timeout, capacity and dependency failures
+before displaying a final error. Use at most three automatic retries after the
+first attempt, exponential delay with positive jitter, and every Retry-After floor.
+Keep an already authorized same-range report visible while retrying. Statuses
+401/403, typed 404, 410, validation errors and malformed responses are terminal;
+authority refusal clears all owned retained data. Final failures stop periodic
+resubmission until the user deliberately retries. Manual refresh, filter changes,
+visibility and cache churn must not erase server cooldowns. Child reads and filter
+discovery follow the same bounded transient recovery, without publishing false
+empty or zero states.
+
+After admission, observe the exact pending report ID. Do not poll the latest-view
+endpoint to discover whether a failed job should be admitted again. Once that ID
+is ready, observe the committed view and replace the complete snapshot and its
+metadata together; never attach a newer pointer's metadata to an older report.
+Retained refresh keeps the previous committed summary and children visible while
+its exact replacement ID is observed. Hiding the view cancels requests; returning
+resumes the remaining deadline, with no simultaneous report observations.
+
+When a visible usage dashboard has received its selected report's first response,
+allow one sequential admission for each other seven-day/thirty-day preset using
+the same authority and filters. A direct seven-day/thirty-day entry first observes
+the daily view so a server-warmed daily snapshot can serve as the labelled preview
+even without a local cache. Skip the selected range: at most two optional view
+requests are made for each preset selection. Foreground report observations take priority in the
+single per-client report queue. These optional warm requests do not poll, force a
+refresh, retry failures, or use legacy POST fallback. Stop the sequence on failure
+and release it on exit, hide or authority change. Reopening within five minutes
+reuses the attempt; selecting an admitted range adopts its exact pending ID and
+starts a visible observation budget. A mounted selection can adopt an in-flight
+warm request without duplicate submission.
+
+The dashboard exposes non-sensitive requested-range and state attributes for
+render qualification: pending, preview, committed or error. These attributes alone
+are not completion: require the matching report's summary, first page and default
+selected charts, available labels and two animation frames. Retained stale
+same-range display is a separate measurement stratum.
+
+| 2026-11-14 | Correct preset bucket selection, bound long-range report observation and transient retries, label neighboring committed previews, and sequentially warm seven-day/thirty-day views with exact-ID polling and cancellable ownership (#2013). |
+
+| 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
 | 2026-11-13 | Removed the Image Manager portal, disabled service menu entry, sign-in placeholder and custom image selectors. New Bots, Triggers and Agents use only the system default image. Historical custom image drafts require an explicit switch to the system default before saving. Existing components and visual rules are retained. |

@@ -408,3 +408,11 @@ mod retained_restart;
 mod retained_views;
 
 mod retained_measurement;
+
+mod retained_windows;
+
+mod boundary_deltas;
+mod bucket_ranges;
+mod rebaseline;
+
+mod range_measurement;

@@ -42,7 +42,10 @@ impl MetricsWorkers {
         }
         for registered in &policy.warm_scopes {
             let at = crate::store::usage_reports::now();
-            let mut input = ViewInput::default();
+            let mut input = ViewInput {
+                window: registered.window,
+                ..ViewInput::default()
+            };
             input.filters.sandbox_id = registered.sandbox_id.clone();
             let selection = input.validate(at)?;
             let scope = registered.scope();
