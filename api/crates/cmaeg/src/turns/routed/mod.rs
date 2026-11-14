@@ -52,6 +52,7 @@ mod replay_frame;
 mod replay_projection;
 pub mod scheduler;
 mod storage;
+mod stream_relay;
 mod tool_effects;
 mod tool_operation;
 mod tool_relay;
