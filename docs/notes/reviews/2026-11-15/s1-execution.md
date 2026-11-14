@@ -125,6 +125,16 @@ source/images/config, serving replica identities, baseline and S–E window.
 No synthetic create, Send, Stop or provider workload is authorized by this plan.
 The stopped broker mutation path stays stopped and the NyxID slot is untouched.
 
+The [19:56 U/S schedule](stage-timeline.md) keeps S1 at06:00 even when U2
+backfill is still active; replica maintenance is lease-fenced. Engineer02 supplies
+the actual backfill state/timestamps. Log01 tags latency/error cohorts with that
+state and uses an AM1 baseline from the same state. Split observed state changes
+instead of pooling active/inactive windows; unknown state or missing matched
+baseline stays explicit. Preserve the original accepted-command denominator and
+cumulative errors across those cohorts and any low-N extension. A delayed U2
+targets06:45 only after this actual S1 soak ends. U1–U3 remain engineer02-owned
+and each U/S stage still requires its own fresh lead execution approval.
+
 1. Observe per-replica success, failure and latency for create, send, stop and
    streams. Record actual distinct accepted-command N and available per-route
    counts; retries and synthetic reads do not increase this denominator.
@@ -168,7 +178,8 @@ The stopped broker mutation path stays stopped and the NyxID slot is untouched.
    restored successful service and final reconciliation as separate times.
 
 Report by actual E+15 minutes: selected source/images/config, S/E and any
-extension, query and read-sampler bindings, actual accepted-command N, available
+extension, query and read-sampler bindings, backfill state and matched baseline
+intervals, actual accepted-command N, available
 per-replica/route counts, ownership/fencing/ledger results, 5xx/429 causes versus
 baseline, read-range timings, all failed/incomplete outcomes, and any recovery.
 If the low-N fallback is used, state its required-suite PASS and zero-error
