@@ -67,6 +67,14 @@ async fn independent_replicas_share_storage_and_preserve_one_provider_admission(
     }
 }
 
+// Keep the inherited N3 coverage available without widening the N1/N2 diagnostic.
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo replica set"]
+async fn three_replicas_share_storage_and_preserve_one_provider_admission() {
+    verify_replicas(3, false).await;
+    verify_replicas(3, true).await;
+}
+
 async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
     let trace = trace::Trace::new(replicas, ownership_enabled);
     trace.stage("cohort", "start", 0);

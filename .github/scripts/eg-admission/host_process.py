@@ -249,7 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--application", required=True, type=Path)
-    parser.add_argument("--test-name", default="runner_binary::replicas::")
+    parser.add_argument("--test-name", default="runner_binary::replicas::independent_replicas_share_storage_and_preserve_one_provider_admission")
     arguments = parser.parse_args()
     if not arguments.binary.is_file() or not arguments.application.is_file():
         raise SystemExit("BLOCKED: compiled test binary required")

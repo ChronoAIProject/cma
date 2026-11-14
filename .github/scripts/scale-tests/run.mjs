@@ -1,0 +1,40 @@
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { check, safeFailure } from './lib/checks.mjs';
+import { pinnedModule, validateConfig, guardedFetch } from './lib/safety.mjs';
+import { scenarioNames, saveReport, saveSamples } from './lib/report.mjs';
+import { runSuite } from './lib/suite.mjs';
+
+const args = process.argv.slice(2);
+let output = resolve('results', new Date().toISOString().replaceAll(':', '-'));
+try {
+  check(args.length % 2 === 0, 'arguments_require_values', true);
+  const options = {};
+  for (let i = 0; i < args.length; i += 2) {
+    check(['--config', '--out', '--scenario'].includes(args[i]) && !options[args[i]], 'invalid_argument', true);
+    options[args[i]] = args[i + 1];
+  }
+  if (options['--out']) output = resolve(options['--out']);
+  const scenario = options['--scenario'] ?? 'all';
+  check(['all', 'baseline-n1'].includes(scenario), 'invalid_scenario', true);
+  check(options['--config'], 'environment_config_missing', true);
+  const config = validateConfig(JSON.parse(await readFile(options['--config'], 'utf8')));
+  check(config.driverModule && config.driverSha256, 'environment_driver_missing', true);
+  const module = await pinnedModule(pathToFileURL(resolve(config.driverModule)), config.driverSha256);
+  const driver = await module.createDriver(config, { fetch: guardedFetch() });
+  const report = await runSuite(config, driver, { scenario, progress: (line) => console.log(line),
+    checkpoint: (value) => saveReport(resolve(output, 'preregistered-noise'), value),
+    samples: (cohort, index) => saveSamples(resolve(output, 'samples'), cohort, index) });
+  await saveReport(output, report);
+  console.log(`${report.status === 'GO' ? 'DONE' : 'BLOCKED'}: local suite ${report.status}; evidence=${output}`);
+  process.exitCode = report.status === 'GO' ? 0 : 2;
+} catch (error) {
+  const failure = safeFailure(error);
+  const report = { schema: 'cma-scale-results-v1', environment: 'local', status: 'BLOCKED',
+    started_at: new Date().toISOString(), scenarios: scenarioNames.map((scenario) => ({ scenario,
+      status: 'BLOCKED', code: failure.code })) };
+  await saveReport(output, report);
+  console.error(`BLOCKED: ${failure.code}; evidence=${output}`);
+  process.exitCode = 2;
+}

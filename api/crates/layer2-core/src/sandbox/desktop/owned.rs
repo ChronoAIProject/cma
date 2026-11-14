@@ -183,8 +183,11 @@ impl DesktopService {
         // An open may wait for provider I/O. Recheck the actual caller and exact
         // binding before exposing its socket; heartbeat revalidation follows.
         let current = tokio::time::timeout_at(deadline, async {
-            timing::observe("post_open_credential", authorization.current(caller)).await?;
-            timing::observe("post_open_lineage", self.authorize(caller, id)).await
+            let (_, binding) = tokio::try_join!(
+                timing::observe("post_open_credential", authorization.current(caller)),
+                timing::observe("post_open_lineage", self.authorize(caller, id)),
+            )?;
+            Ok::<_, DesktopError>(binding)
         })
         .await;
         if !matches!(current, Ok(Ok((ref sandbox_id, ref runtime)))
