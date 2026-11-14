@@ -90,7 +90,10 @@ mod tests {
                 "authenticatedUserPrivileges": grants,
             }}
         };
-        for mode in [MongoAuthorityMode::Isolated, MongoAuthorityMode::SharedSchema] {
+        for mode in [
+            MongoAuthorityMode::Isolated,
+            MongoAuthorityMode::SharedSchema,
+        ] {
             validate(&status(without_allocation.clone()), "cma", mode).unwrap();
             for required in COLLECTIONS {
                 let mut missing = without_allocation.clone();
@@ -100,8 +103,7 @@ mod tests {
         }
         let mut foreign = without_allocation;
         foreign.push(
-            doc! {"resource": {"db": "cma", "collection": "im_images"}, "actions": ["find"]}
-                .into(),
+            doc! {"resource": {"db": "cma", "collection": "im_images"}, "actions": ["find"]}.into(),
         );
         assert!(validate(&status(foreign), "cma", MongoAuthorityMode::Isolated).is_err());
     }
