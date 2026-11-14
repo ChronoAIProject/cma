@@ -1,9 +1,10 @@
 //! Operator activity keeps its audit identity while explicit subject details are erased.
-use super::{tests::*, *};
+use super::{references::Redaction, tests::*, *};
 use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityRecord, ActivityStore, ActivityTarget, DetailKey,
+    DELETED_ACCOUNT_SUBJECT,
 };
-use mongodb::bson::{doc, Document};
+use mongodb::bson::{self, doc, Document};
 
 fn activity(actor: &str, target: &str, subject: &str) -> ActivityRecord {
     let mut record = ActivityRecord::new(ActivityAction::Delete, ActivityOutcome::Succeeded)
@@ -36,6 +37,75 @@ async fn row(db: &Database, id: &str) -> Document {
         .await
         .unwrap()
         .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn purged_sandbox_operator_audit_redacts_only_the_explicit_subject() {
+    let db = database().await;
+    let mut originals = vec![];
+    for target in ["sandbox:removed-sandbox", "sandbox:removed-sandbox:events"] {
+        let record = activity("operator", target, "a");
+        append(&db, &record).await;
+        originals.push(record);
+    }
+    let unrelated = activity("operator", "sandbox:removed-sandbox", "b");
+    let untouched = append(&db, &unrelated).await;
+    let mut inventory = ErasureInventory::default();
+    drain(&db, "a", &mut inventory).await;
+    for mut expected in originals {
+        expected
+            .detail
+            .record(DetailKey::Subject, DELETED_ACCOUNT_SUBJECT);
+        let stored = row(&db, &expected.id.0).await;
+        let actual: ActivityRecord = crate::store::sandbox_mongo::read_record(&stored).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(stored.get_i64("mutation_version").unwrap(), 1);
+    }
+    assert_eq!(row(&db, &unrelated.id.0).await, untouched);
+    assert!(inventory.sandboxes.is_empty());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn operator_detail_redaction_cannot_overwrite_a_concurrent_audit_edit() {
+    let db = database().await;
+    let original = activity("operator", "sandbox:removed-sandbox", "a");
+    let stale = append(&db, &original).await;
+    let mut concurrent = original.clone();
+    concurrent
+        .detail
+        .record(DetailKey::Status, "concurrent-status");
+    db.collection::<Document>("activity")
+        .update_one(
+            doc! {"_id":&original.id.0},
+            doc! {"$set":{"record":bson::serialize_to_bson(&concurrent).unwrap()}},
+        )
+        .await
+        .unwrap();
+    let before = row(&db, &original.id.0).await;
+    let subjects = BTreeSet::from(["a".into()]);
+    assert_eq!(
+        super::identity_refs::redact(&db, "activity", &stale, &subjects)
+            .await
+            .unwrap(),
+        Redaction::Conflict
+    );
+    assert_eq!(row(&db, &original.id.0).await, before);
+    assert_eq!(
+        super::identity_refs::redact(&db, "activity", &before, &subjects)
+            .await
+            .unwrap(),
+        Redaction::Updated
+    );
+    concurrent
+        .detail
+        .record(DetailKey::Subject, DELETED_ACCOUNT_SUBJECT);
+    let actual: ActivityRecord =
+        crate::store::sandbox_mongo::read_record(&row(&db, &original.id.0).await).unwrap();
+    assert_eq!(actual, concurrent);
+    db.drop().await.unwrap();
 }
 
 #[tokio::test]

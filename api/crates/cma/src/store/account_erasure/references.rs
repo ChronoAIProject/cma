@@ -309,8 +309,11 @@ async fn receipt(
     if !remove_subjects(&mut receipt.share, subjects, &receipt.at.clone()) {
         return Ok(Redaction::Unchanged);
     }
-    let encoded = records::receipt_document(&receipt)
-        .map_err(|_| Error::InvalidRecord("resource_share_commands"))?;
+    let encoded = records::retained_receipt_document(
+        &receipt,
+        row.get_bool("erased_actor").ok() == Some(true),
+    )
+    .map_err(|_| Error::InvalidRecord("resource_share_commands"))?;
     let mut replacement = row.clone();
     replacement.extend(encoded);
     let (filter, next) = immutable_cas(row, "resource_share_commands")?;

@@ -86,8 +86,8 @@ pub enum ErasureBlock {
     RetainedReferencePending {
         collection: String,
     },
-    /// Keep the C1/C2 record/event format when replacing identity handling.
-    /// C2 still emits this refusal; later identity executors retain only its reader.
+    /// Historical C1/C2 record/event format; keep the exact wire name and fields.
+    /// The C3 identity executor no longer emits this refusal.
     IdentityRedactionPending {
         collection: String,
     },

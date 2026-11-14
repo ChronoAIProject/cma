@@ -221,8 +221,6 @@ mod drain_authority_tests;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
-mod identity_pending_tests;
-#[cfg(test)]
 mod observer_tests;
 #[cfg(test)]
 pub(crate) mod optional_authority_tests;
@@ -249,6 +247,8 @@ mod round2_query_tests;
 #[cfg(test)]
 mod round2_tests;
 #[cfg(test)]
+mod round3_activity_tests;
+#[cfg(test)]
 mod round3_barrier_tests;
 #[cfg(test)]
 mod round3_capacity_tests;
@@ -257,12 +257,16 @@ mod round3_continuation_tests;
 #[cfg(test)]
 mod round3_discovery_tests;
 #[cfg(test)]
+mod scan_tests;
+#[cfg(test)]
+mod share_policy_tests;
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
 mod round4_continuation_tests;
 #[cfg(test)]
 mod round4_executor_tests;
+
 #[cfg(test)]
 mod round4_query_tests;
-#[cfg(test)]
-mod scan_tests;
-#[cfg(test)]
-mod tests;

@@ -100,7 +100,11 @@ async fn apply_inner(
         .session(&mut *session)
         .await?
     {
-        return Ok(request.replay(records::read_receipt(&receipt)?)?);
+        let retained = records::read_receipt(&receipt)?;
+        if receipt.get_bool("erased_actor").ok() == Some(true) {
+            return Err(ResourceAccessStoreError::IdempotencyConflict.into());
+        }
+        return Ok(request.replay(retained)?);
     }
     if !guarded {
         super::execution::refuse_legacy_change(store, request, session).await?;

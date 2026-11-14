@@ -1,4 +1,6 @@
 use super::*;
+use layer2_core::resource_access::*;
+use layer2_core::AgentId;
 
 pub(super) const AT: &str = "2026-11-14T00:00:00Z";
 pub(super) fn document() -> StoredDocument {
@@ -73,6 +75,32 @@ pub(super) fn document() -> StoredDocument {
     };
     value.validate().unwrap();
     value
+}
+pub(in crate::store::account_erasure) fn share() -> Document {
+    let record = ResourceShare {
+        id: "share-one".into(),
+        owner: ResourceOwner::Person {
+            subject: SubjectId::new("survivor"),
+        },
+        selector: ResourceSelector::Agent {
+            agent_id: AgentId("agt-other".into()),
+        },
+        target_org_id: SubjectId::new(""),
+        link: Some(AgentShareLink {
+            audience: AgentShareAudience::Public,
+            token_sha256: digest(b"link"),
+            accepted_subjects: vec![SubjectId::new("erased"), SubjectId::new("other")],
+        }),
+        mode: ShareMode::View,
+        issuer_actor: ResourceActor::Human {
+            subject: SubjectId::new("survivor"),
+        },
+        created_at: AT.into(),
+        revoked_at: None,
+        revision: 1,
+    };
+    assert!(record.validate());
+    doc! {"_id":&record.id,"document_schema_version":1_i64,"sandbox_id":"sbx-other","selector_kind":"agent","selector_id":"agt-other","target_org_id":"","revoked":false,"revision":1_i64,"accepted_subjects":["erased","other"],"record":mongodb::bson::serialize_to_bson(&record).unwrap()}
 }
 pub(super) fn revision() -> (Document, TriggerRevision, TriggerId) {
     let content:TriggerContent = serde_json::from_value(serde_json::json!({
