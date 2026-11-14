@@ -32,7 +32,7 @@ pub(crate) mod suggestions;
 mod title_budget;
 mod title_scheduler;
 mod title_worker;
-mod titles;
+pub(crate) mod titles;
 mod unavailable_credentials;
 pub(crate) mod unpublished_recovery;
 mod warmup;

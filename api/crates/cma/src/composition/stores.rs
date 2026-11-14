@@ -31,6 +31,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .clone()
             .with_runtime_loss_bounded_proof(config.features.runtime_loss_bounded_proof_enabled)
             .with_renewable_work(config.agent_manager_replicas.is_some())
+            .with_title_effect_custody(config.agent_manager_replicas.is_some())
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_platform_counter_shards(config.features.platform_counter_shards)
             .with_bounded_close_retries(config.features.bounded_close_retries)
