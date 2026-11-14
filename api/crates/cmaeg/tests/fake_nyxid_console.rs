@@ -22,6 +22,9 @@ use std::{
 pub const CLIENT_ID: &str = "console-fixture-client";
 pub const CLIENT_SECRET: &str = "console-fixture-client-secret";
 
+#[path = "fake_nyxid_console_barrier.rs"]
+pub mod barrier;
+
 /// One token endpoint request, as the console sent it.
 #[derive(Debug, Clone)]
 pub struct TokenCall {
@@ -42,6 +45,8 @@ struct CodeGrant {
 }
 
 pub struct OAuthState {
+    pub refresh_gate: Mutex<Option<Arc<barrier::ResponseGate>>>,
+    pub identity_gate: Mutex<Option<Arc<barrier::ResponseGate>>>,
     pub base_url: Mutex<String>,
     /// Replaces the advertised discovery document when set.
     pub discovery: Mutex<Option<serde_json::Value>>,
@@ -80,6 +85,8 @@ pub struct OAuthState {
 impl Default for OAuthState {
     fn default() -> Self {
         Self {
+            refresh_gate: Mutex::new(None),
+            identity_gate: Mutex::new(None),
             base_url: Mutex::new(String::new()),
             discovery: Mutex::new(None),
             discovery_status: AtomicU16::new(200),
@@ -317,7 +324,20 @@ pub async fn token(
         }
         _ => return oauth_error(StatusCode::BAD_REQUEST, "unsupported_grant_type"),
     };
-    Json(state.issue(&subject)).into_response()
+    let issued = state.issue(&subject);
+    if call.grant_type == "refresh_token" {
+        let gate = state.refresh_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.hold().await;
+            if gate.lose_response {
+                let broken = futures_util::stream::once(async {
+                    Err::<bytes::Bytes, _>(std::io::Error::other("fixture lost token response"))
+                });
+                return Response::new(axum::body::Body::from_stream(broken));
+            }
+        }
+    }
+    Json(issued).into_response()
 }
 
 fn oauth_error(status: StatusCode, error: &str) -> Response {
@@ -345,6 +365,10 @@ pub async fn revoke(
 pub async fn users_me(state: &OAuthState, headers: &HeaderMap) -> Option<Response> {
     let subject = state.bearer_subject(headers)?;
     state.users_me_calls.fetch_add(1, Ordering::SeqCst);
+    let gate = state.identity_gate.lock().unwrap().clone();
+    if let Some(gate) = gate {
+        gate.hold().await;
+    }
     if state.hang.lock().unwrap().contains(&subject) {
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
