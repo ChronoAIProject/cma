@@ -19,7 +19,12 @@ pub(crate) async fn initialize(store: &ReportingStore) -> Result<()> {
     Ok(())
 }
 impl ReportingStore {
-    pub(crate) async fn save_metric_rollups(&self, rollups: &[MetricRollup]) -> Result<()> {
+    pub(crate) async fn save_metric_rollups(
+        &self,
+        key: &str,
+        holder: &str,
+        rollups: &[MetricRollup],
+    ) -> Result<()> {
         let mut updates = Vec::new();
         for rollup in rollups {
             if rollup.minutes.len() > 60 || rollup.algorithm_version != ALGORITHM_VERSION {
@@ -38,7 +43,8 @@ impl ReportingStore {
             {"$literal":d},"$$ROOT"]}}],"upsert":true,"multi":false});
         }
         for chunk in updates.chunks(200) {
-            self.bulk_updates(COLLECTION, chunk.to_vec()).await?;
+            self.controlled_updates(key, holder, COLLECTION, chunk.to_vec())
+                .await?;
         }
         Ok(())
     }

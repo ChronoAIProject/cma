@@ -171,7 +171,10 @@ impl RoutedDelivery {
                 if !gate.commit() {
                     return Err(ExecutionError::LostLease);
                 }
-                let outcome = if body.metadata.contains_key(super::media_schedule::KEY) {
+                let outcome = if self.remote_waiter(&event) {
+                    self.forward_stream(plan, target, lease, effect, current.version)
+                        .await
+                } else if body.metadata.contains_key(super::media_schedule::KEY) {
                     custom.local_response(&event, effect, &frame.response_id)
                 } else {
                     custom.local(&event, effect)
@@ -287,7 +290,7 @@ impl RoutedDelivery {
         // becomes an aggregate Confirmed receipt, even with zero webhooks.
         self.record(lease, DeliveryStatus::Settled { receipt: None })
             .await?;
-        if effect.terminal() && !self.close(plan, target).await? {
+        if effect.terminal() && !self.close(plan, target, lease).await? {
             return Ok(FrameDelivery::Unknown);
         }
         self.journal

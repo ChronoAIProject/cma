@@ -40,10 +40,10 @@ allow and matching per-step approvals. A refusal stops the step; never edit poli
 Obtain explicit rollback permissions before starting. Server dry-run does not
 replace permission, application tests or live backend verification.
 
-Earliest stage start15 Nov03:00 SGT; no write02:00–02:59, including rollback.
-Proposed outage windows S1 03:15 and S2 04:15 still need owner approval.
-Reserve S1~03:15–04:15, S2~04:15–05:30, S3~05:30–09:30, review09:30–12:00,
-owner result before13:00. Recheck time immediately before every write; do not
+Lead stage starts are 15 Nov S1 06:00, S2 08:30 and S3 10:30 SGT, with final
+production verification 13:00–17:00 and owner report by 18:00. No writes
+02:00–02:59, including rollback. Existing operation approvals still apply.
+Recheck time immediately before every write; do not
 start an operation whose bounded duration can cross a prohibited window.
 
 ## Release packet and local preparation
@@ -165,6 +165,17 @@ with request/user payloads. Keep source/image/config changes as separate strata.
 Do not restore an old whole object from this capture.
 
 ## Common stage gates and verification
+
+**Latest lead M3 merge ruling:** local source/resource placement, PDB and
+readiness subchecks PASS; retained f6 host cross-ingress N1/N2 OFF/ON PASS;
+all integration-head (5cfd or newer) multi-instance suites against one real
+Mongo must report PASS/FAIL through local-verifier-02; environment01 EG fixture
+cases PASS. The suites cover killed-owner takeover, recovery leases, fencing,
+no duplicate effects, title custody, desktop exclusive sessions and EG delivery/SSE.
+Architect04 supplies the quick integrated source pass. This supersedes the
+earlier requirement for a deployed local AM runtime/auth/provider workload before
+merge. Unrun local end-to-end rows remain unrun; S1 observes real production
+accepted work as specified below. The missing local adapter is not an M3 merge blocker.
 
 Require integrated local fmt/clippy/tests and real Mongo independent-instance
 proof. **Before zeroing legacy AM**, inventory every retained traffic-capable
@@ -396,8 +407,53 @@ Do not reapply Deployment `replicas:2` while an HPA owns its scale subresource.
 
 ## Soak, abort, rollback and receipts
 
+### S1 real production accepted work — binding 19:10 ruling
+
+S1 observes REAL production accepted work through read-only logs/metrics during
+an initial 30-minute soak. There is no synthetic write executor; broker creates
+and sends remain stopped and the NyxID slot stays untouched. The earlier
+synthetic-executor/private-binding HOLD is removed. Bind actual source/images,
+serving replicas, baseline and S–E to the existing operator observation path.
+
+Log-engineer01 owns the queries: per-replica create/send/stop/stream success and
+latency; ownership and epoch transitions; fencing refusals; independent ledger
+duplicate effects (the same logical command executed twice must equal zero);
+and 5xx/429 by cause versus baseline. Retain actual accepted-command N and
+available per-route counts, failures, uncertainty and terminal/effect outcomes.
+Reconciled failures remain failures; balanced accounting alone is not PASS.
+
+Prod-verifier02 adds synthetic READS ONLY to bring critical read routes to
+sufficient N: existing Agent open detail/transcript and retained usage 24 h/7 d/30 d,
+with separate counts/timings through one owned sampler/lane. Observe existing
+lock ownership and pacing; no overlapping collector, synthetic mutation,
+retired browser-profile reuse or change to the NyxID reservation.
+
+If accepted production write commands N<20 at 30 minutes, extend the same
+observation by up to 30 minutes. If still below 20 afterward, accept on the required
+in-code multi-instance suites PASS plus zero errors, disclose actual low N,
+and do not hold S1 for low traffic. Record actual extended E and report by E+15.
+This sample-count exception does not invent per-route latency or client/render
+measurements; missing observations remain explicit. Actual errors, duplicate or
+stale effects and observed absolute-target failures remain failures.
+
+Apply A3 and absolute targets to measured boundaries. **Immediately dispatch the
+preapproved compatible rollback** for failed in-contract work, accepted-work
+loss, duplicate/stale effect, unresolved terminal/effect failure, broken runtime/
+auth/provider service or breached absolute latency/recovery/availability targets.
+Do not wait for soak end or two five-minute performance windows. Stop promotion,
+preserve custody/evidence and use the existing compatible recovery branch.
+Record detection, rollback dispatch, restored service and final reconciliation
+separately. Retain ownership/receiver/record floors; never blindly resend unknown
+work, restart a legacy writer or switch ownership OFF as an automatic recovery.
+
+The [selected S1 runbook](notes/reviews/2026-11-15/s1-execution.md#mandatory-production-accepted-work-observation)
+contains the execution/report sequence. Production authority, controller route,
+per-stage approvals and 02:00–02:59 blackout remain unchanged. S2 retains its
+existing provider-specific accepted-work and terminal reconciliation requirements.
+
 Every stage needs30 stable minutes after its intended replica count is Ready,
-healthy in endpoints/NEG, ownership stable, and old processes finished. Record
+healthy in endpoints/NEG, ownership stable, and old processes finished. S1 may
+extend this same observation under the low-N rule above. Record
 per-minute desired/Ready/Available/terminating, backend health, owner/epoch/stale
 effect counters, stream gaps, oldest accepted-unfinished age, terminal/receipt
 reconciliation, CPU/throttling/memory/OOM, Mongo occupancy/checkout/timeouts,
@@ -412,9 +468,12 @@ accepted work/terminal lost, two desktop owners, auth bypass, epoch/cursor damag
 zero healthy backends outside the approved cutover, >30s sudden-loss service gap,
 no restored service by120s inside the approved cutover, incompatible receiver,
 OOM/repeated crash, breached process/provider bounds or Atlas headroom<30%.
-Performance regression beyond preregistered noise/absolute limits aborts after
-two consecutive five-minute windows; widespread failures abort immediately.
-Missing evidence or low samples HOLD promotion. Unknown/Partial stops promotion
+Performance-only regression beyond preregistered noise limits aborts after
+two consecutive five-minute windows; widespread failures and S1 failed work or
+absolute-target violations require immediate compatible rollback. Missing
+evidence remains explicit; S1 low accepted-command N follows the extension and
+suites-plus-zero-errors acceptance above and does not hold promotion by itself.
+Other insufficient evidence retains the applicable stage gate. Unknown/Partial stops promotion
 and pages the lead; reconcile within the approved observation window or invoke
 compatible recovery. Continue assigned24h post-go-live monitoring with these
 triggers even beyond15Nov13:00.
@@ -483,3 +542,46 @@ outcome and remaining gates. Retain sanitized evidence under the engineer's owne
 path; remove temporary download/build/dry-run files. Issue closure for #1956
 covers delivery of manifests/runbook only; production verification stays on
 #1356/#1541/#1530 and the lead's S1/S2/S3 receipts.
+
+## Automatic title provider custody
+
+Before enabling replica mode, every API, title worker and recovery process must
+include the title effect custody reader/writer floor. The integrator wires
+`MongoSandboxStore::with_title_effect_custody` to the existing replica-mode
+configuration. The store default remains OFF. Exclude older title writers before
+enabling: they do not enforce the retained barrier and cannot be used for rollback.
+
+A claim first records `title_effect_floor: 1` and a bounded
+`title_effect_custody` envelope in its Agent document. Before the provider call,
+the floor advances irreversibly to `2` and the envelope freezes the original
+claim, first-turn transcript digest, request digest and strategy. Preparation performs no provider request. Only the original
+process's consuming prepared capability can dispatch after exact durable intent
+confirmation and live-authority validation. There is no provider lookup or retry
+for an unresolved intent. A crash before dispatch may therefore leave zero calls
+and an unresolved title; a lost provider response may leave one call and the same
+unresolved state. A new claim, strategy, model, fallback or user title cannot
+create another attempt for that Agent obligation. A retained legacy attempt has
+no provider finality proof either: its first custody claim records a permanent
+`legacy_unresolved` barrier at floor `2` instead of dispatching again. Exclude all legacy
+in-flight title dispatchers during activation, including mode-OFF workers.
+
+Accepted sanitized results are persisted before title publication. A successor
+may publish that exact result under its current claim without contacting the
+provider. User-title precedence and expiry still fence mutations. An uncertain
+intent or result acknowledgement reconciles only that exact stored identity;
+absence or a conflicting record never proves permission to repeat a call.
+
+The floor and envelope survive flag OFF, ordinary Agent replacement fields,
+log appends, retained reopen, fallback maintenance and user-title writes. Missing,
+null after floor `2`, malformed or unknown-version custody fails closed. No TTL or
+compaction removes it. The writer inventory uses `$set` for Agent replacements;
+title claim/completion writers preserve the separate custody fields. Physical
+Sandbox purge refuses unresolved or malformed custody. Purging an accepted result
+also requires permanent creation provenance, which survives purge and prevents
+recreating the same Agent identity through admission or low-level creation.
+Restore Agents, logs and permanent creation provenance coherently. Clearing the
+floor or deleting provenance to regain title retries is not a supported recovery.
+
+Synthetic counting-provider tests establish the no-resend invariant. They do
+not reconcile real provider outcomes or authorize activation. Retained Unknown
+outcomes require a separately qualified provider/finality recovery procedure.

@@ -53,6 +53,12 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    fn desktop_ownership(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.for_handle(handle).ok()?.desktop_ownership(handle)
+    }
     fn capacity_recovery_transport(
         &self,
         handle: &RuntimeHandle,
@@ -346,6 +352,18 @@ impl HostedBackend for RuntimeBackends {
             .inspect_native_runtime(handle, request, home)
             .await
     }
+    async fn inspect_native_runtime_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<RuntimeInspection>> {
+        self.for_handle(handle)?
+            .inspect_native_runtime_after(handle, request, home, admission)
+            .await
+    }
+
     async fn reclaim(&self, observation: &RuntimeObservation) -> Result<()> {
         self.for_handle(&observation.handle)?
             .reclaim(observation)

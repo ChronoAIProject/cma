@@ -208,8 +208,7 @@ impl DurableJournal {
                 // Persist refusal before ACK so a changed replay cannot become
                 // a valid submission under the same interaction identity.
                 if self
-                    .store
-                    .put(
+                    .write_owned(
                         &rejected,
                         &authority.owner,
                         &json!({"kind":"discord_modal_rejected_v1","interaction":id}),
@@ -305,8 +304,7 @@ impl DurableJournal {
             &[&authority.record, &authority.bot_id, id],
         );
         if self
-            .store
-            .put(
+            .write_owned(
                 &claim,
                 &authority.owner,
                 &json!({"kind":"discord_component_ack_v1","interaction":id}),

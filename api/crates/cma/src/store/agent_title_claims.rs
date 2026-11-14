@@ -1,6 +1,7 @@
 //! Single-writer Mongo claims for automatic agent-title generation.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use futures_util::TryStreamExt;
 use std::time::SystemTime;
 
 use layer2_core::sandbox::store::SandboxStoreError;
@@ -110,9 +111,27 @@ async fn apply_claim(
     expires_at: DateTime,
     session: &mut mongodb::ClientSession,
 ) -> Result<ClaimApply, ApplyError> {
-    let Some((agent, state)) = load_agent(store, request.agent_id(), session).await? else {
+    let Some((agent, state, server_now)) = load_agent(store, request.agent_id(), session).await?
+    else {
         return Ok(ClaimApply::Settled(None));
     };
+    let (now, expires_at) = if store.title_effect_custody
+        || state.effect != layer2_core::sandbox::AgentTitleEffectState::Legacy
+    {
+        let expires = server_now
+            .timestamp_millis()
+            .checked_add(
+                i64::try_from(request.ttl().as_millis())
+                    .map_err(|_| ApplyError::Domain(AgentTitleStoreError::InvalidClaim))?,
+            )
+            .ok_or(ApplyError::Domain(AgentTitleStoreError::InvalidClaim))?;
+        (server_now, DateTime::from_millis(expires))
+    } else {
+        (now, expires_at)
+    };
+    if agent.status == layer2_core::sandbox::AgentStatus::Deleted {
+        return Ok(ClaimApply::Settled(None));
+    }
     if state
         .stored
         .as_ref()
@@ -120,7 +139,11 @@ async fn apply_claim(
     {
         return Ok(ClaimApply::Settled(None));
     }
-    if title_transcript(store, &agent, session).await?.is_none() {
+    if state.effect.unknown() {
+        return Ok(ClaimApply::Settled(None));
+    }
+    let accepted = state.effect.accepted().is_some();
+    if !accepted && title_transcript(store, &agent, session).await?.is_none() {
         return Ok(ClaimApply::Settled(None));
     }
     if let Some(lease) = state.lease.as_ref().filter(|lease| lease.expires_at > now) {
@@ -128,11 +151,12 @@ async fn apply_claim(
             || lease.to_claim(request).with_attempts(state.retry.attempts),
         )));
     }
-    if !state.retry.eligible(now) {
+    if !accepted && !state.retry.eligible(now) {
         return Ok(ClaimApply::Settled(None));
     }
-    let exhausted = state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS;
-    let attempts = state.retry.attempts + u32::from(!exhausted);
+    let exhausted =
+        !accepted && state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS;
+    let attempts = state.retry.attempts + u32::from(!exhausted && !accepted);
     let mode = if exhausted {
         AgentTitleClaimMode::FallbackOnly
     } else {
@@ -154,12 +178,26 @@ async fn apply_claim(
         "record.title",
         agent.title.clone().map(Bson::String).unwrap_or(Bson::Null),
     );
+    let mut fields = claim_fields(&claim, state.stored.is_some());
+    if store.title_effect_custody
+        && state.effect == layer2_core::sandbox::AgentTitleEffectState::Legacy
+    {
+        fields.extend(if state.attempted {
+            // Legacy attempts have no provider finality proof. Upgrading must
+            // not reinterpret them as new, safely retryable obligations.
+            super::agent_title_effect::legacy_unknown_fields()
+        } else {
+            super::agent_title_effect::initial_fields()
+        });
+    }
+    if store.title_effect_custody
+        || state.effect != layer2_core::sandbox::AgentTitleEffectState::Legacy
+    {
+        filter.insert("$expr", doc! {"$lt": ["$$NOW", expires_at]});
+    }
     let result = store
         .agents
-        .update_one(
-            filter,
-            doc! { "$set": claim_fields(&claim, state.stored.is_some()) },
-        )
+        .update_one(filter, doc! { "$set": fields })
         .session(session)
         .await
         .map_err(ApplyError::Driver)?;
@@ -173,19 +211,34 @@ async fn load_agent(
     store: &MongoSandboxStore,
     id: &layer2_core::ids::AgentId,
     session: &mut mongodb::ClientSession,
-) -> Result<Option<(Agent, TitleState)>, ApplyError> {
-    let document = store
+) -> Result<Option<(Agent, TitleState, DateTime)>, ApplyError> {
+    // Read the database clock beside the exact Agent in this transaction. A
+    // caller clock jump cannot grant, extend or prematurely steal custody.
+    let mut cursor = store
         .agents
-        .find_one(doc! { "_id": id.as_str() })
-        .session(session)
+        .aggregate([
+            doc! {"$match": {"_id": id.as_str()}},
+            doc! {"$set": {"title_server_now": "$$NOW"}},
+        ])
+        .session(&mut *session)
         .await
         .map_err(ApplyError::Driver)?;
+    let document = cursor
+        .stream(&mut *session)
+        .try_next()
+        .await
+        .map_err(ApplyError::Driver)?;
+    drop(cursor);
     let Some(document) = document else {
         return Ok(None);
     };
     let agent = read_agent(&document).map_err(map_domain)?;
     let state = read_title_state(&document, &agent).map_err(ApplyError::Domain)?;
-    Ok(Some((agent, state)))
+    let now = document
+        .get_datetime("title_server_now")
+        .copied()
+        .map_err(|_| ApplyError::Domain(AgentTitleStoreError::Corrupt))?;
+    Ok(Some((agent, state, now)))
 }
 
 async fn title_transcript(

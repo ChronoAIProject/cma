@@ -6,6 +6,7 @@ use super::{
     ExecutionError, Journal,
 };
 use crate::delivery::{intents::IntentReceipt, retained_receipt::StoredReceipt};
+use crate::replicas::partition::PartitionLease;
 use serde::{Deserialize, Serialize};
 const KIND: &str = "ordinary_route_tool_operation_v1";
 
@@ -47,7 +48,12 @@ impl OperationStore {
             None => Ok(None),
         }
     }
-    pub async fn prepare(&self, record: &Record, attempt: &Attempt) -> Result<(), ExecutionError> {
+    pub async fn prepare(
+        &self,
+        partition: &Option<PartitionLease>,
+        record: &Record,
+        attempt: &Attempt,
+    ) -> Result<(), ExecutionError> {
         let content_hash = attempt
             .content_hash
             .as_ref()
@@ -66,12 +72,20 @@ impl OperationStore {
             receipt: None,
         };
         self.0
-            .write(&entry.id, &entry.owner, entry.retained_until, &entry, None)
+            .write_fenced(
+                partition,
+                &entry.id,
+                &entry.owner,
+                entry.retained_until,
+                &entry,
+                None,
+            )
             .await?;
         Ok(())
     }
     pub async fn finish(
         &self,
+        partition: &Option<PartitionLease>,
         record: &Record,
         attempt: &Attempt,
         receipt: &StoredReceipt,
@@ -99,7 +113,8 @@ impl OperationStore {
         }
         entry.receipt = Some(receipt.clone());
         self.0
-            .write(
+            .write_fenced(
+                partition,
                 &entry.id,
                 &entry.owner,
                 entry.retained_until,

@@ -11,6 +11,7 @@ use std::{
 
 #[derive(Clone)]
 pub struct Journal {
+    pub(super) partitions: Option<crate::replicas::partition::Partitions>,
     pub(super) activity: Option<Arc<crate::activity::ActivityStore>>,
     pub(super) records: RecordClient,
     pub(super) keys: Arc<MasterKeyRing>,
@@ -34,6 +35,7 @@ impl Journal {
 
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
+            partitions: None,
             activity: None,
             records: records.interactions(),
             keys,
@@ -78,6 +80,10 @@ impl Journal {
         if plan.retained_until <= now {
             return Err(ExecutionError::Expired);
         }
+        let partition = match &self.partitions {
+            Some(partitions) => Some(partitions.claim(plan, target).await?),
+            None => None,
+        };
         let existing = self.read::<TargetState>(&target.id).await?;
         let mut state = match existing {
             Some((mut state, version)) => {
@@ -109,7 +115,7 @@ impl Journal {
         validate(&state, plan, target)?;
         // Re-entry uses the opaque lease, not a worker name. Two concurrent
         // invocations from one process must never both own the same target.
-        if state.version > 0 && state.ownership.until > now {
+        if partition.is_none() && state.version > 0 && state.ownership.until > now {
             return Err(ExecutionError::Busy);
         }
         state.ownership = Ownership {
@@ -120,10 +126,13 @@ impl Journal {
                 .epoch
                 .checked_add(1)
                 .ok_or(ExecutionError::Corrupt)?,
-            until: now + LEASE_SECONDS,
+            until: partition
+                .as_ref()
+                .map_or(now + LEASE_SECONDS, |token| token.until_seconds()),
         };
         state.version = self
-            .write(
+            .write_fenced(
+                &partition,
                 &state.id,
                 &state.owner,
                 state.retained_until,
@@ -131,10 +140,11 @@ impl Journal {
                 (state.version > 0).then_some(state.version),
             )
             .await?;
-        Ok(Lease { state })
+        Ok(Lease { state, partition })
     }
 
     pub async fn guard(&self, lease: &Lease) -> Result<(), ExecutionError> {
+        self.guard_partition(&lease.partition).await?;
         let now = (self.clock)();
         if lease.state.retained_until <= now {
             return Err(ExecutionError::Expired);
@@ -160,7 +170,12 @@ impl Journal {
     pub async fn renew(&self, lease: &mut Lease) -> Result<(), ExecutionError> {
         self.guard(lease).await?;
         let mut next = lease.state.clone();
-        next.ownership.until = (self.clock)() + LEASE_SECONDS;
+        if let (Some(partitions), Some(token)) = (&self.partitions, &mut lease.partition) {
+            partitions.renew(token).await?;
+            next.ownership.until = token.until_seconds();
+        } else {
+            next.ownership.until = (self.clock)() + LEASE_SECONDS;
+        }
         self.commit(lease, next).await
     }
 
@@ -168,7 +183,15 @@ impl Journal {
         self.guard(lease).await?;
         let mut next = lease.state.clone();
         next.ownership.until = (self.clock)();
-        self.commit(lease, next).await
+        self.commit(lease, next).await?;
+        if let (Some(partitions), Some(token)) = (&self.partitions, &lease.partition) {
+            if lease.state.phase.terminal() {
+                partitions.complete(token).await?;
+            } else {
+                partitions.release(token).await?;
+            }
+        }
+        Ok(())
     }
 
     pub(super) async fn transition(
@@ -188,7 +211,8 @@ impl Journal {
         mut next: TargetState,
     ) -> Result<(), ExecutionError> {
         next.version = self
-            .write(
+            .write_fenced(
+                &lease.partition,
                 &next.id,
                 &next.owner,
                 next.retained_until,

@@ -1,0 +1,72 @@
+{
+  "id": "s3-cmaeg-hpa",
+  "stage": "S3",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "HorizontalPodAutoscaler",
+  "name": "cma-event-gateway",
+  "action": "create",
+  "manifest": {
+    "apiVersion": "autoscaling/v2",
+    "kind": "HorizontalPodAutoscaler",
+    "metadata": {
+      "name": "cma-event-gateway",
+      "namespace": "chrono-bot",
+      "labels": {
+        "app.kubernetes.io/name": "cma-event-gateway",
+        "app.kubernetes.io/part-of": "cma"
+      }
+    },
+    "spec": {
+      "scaleTargetRef": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "name": "cma-event-gateway"
+      },
+      "minReplicas": 2,
+      "maxReplicas": 5,
+      "metrics": [
+        {
+          "type": "Resource",
+          "resource": {
+            "name": "cpu",
+            "target": {
+              "type": "Utilization",
+              "averageUtilization": 200
+            }
+          }
+        }
+      ],
+      "behavior": {
+        "scaleUp": {
+          "stabilizationWindowSeconds": 0,
+          "selectPolicy": "Max",
+          "policies": [
+            {
+              "type": "Pods",
+              "value": 2,
+              "periodSeconds": 60
+            },
+            {
+              "type": "Percent",
+              "value": 100,
+              "periodSeconds": 60
+            }
+          ]
+        },
+        "scaleDown": {
+          "stabilizationWindowSeconds": 300,
+          "selectPolicy": "Min",
+          "policies": [
+            {
+              "type": "Pods",
+              "value": 1,
+              "periodSeconds": 120
+            }
+          ]
+        }
+      }
+    }
+  },
+  "design_revision": "A2"
+}

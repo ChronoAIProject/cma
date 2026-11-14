@@ -23,6 +23,12 @@ pub(super) async fn apply(
     }
     let current = read_agent(&row).map_err(map_domain)?;
     let state = read_title_state(&row, &current).map_err(ApplyError::Domain)?;
+    if state.effect != layer2_core::sandbox::AgentTitleEffectState::Legacy
+        && current.status == layer2_core::sandbox::AgentStatus::Deleted
+        && matches!(mutation, TitleMutation::Automatic { .. })
+    {
+        return Ok(Some(TitleApply::Settled(TitleOutcome::Automatic(false))));
+    }
     if let Some(outcome) = mutation.settled(&state) {
         return Ok(Some(TitleApply::Settled(outcome)));
     }
@@ -49,6 +55,7 @@ pub(super) async fn apply(
     );
     if let TitleMutation::Automatic { claim, .. } = mutation {
         filter.extend(lease_filter(claim, state.stored.is_some()));
+        crate::store::agent_title_effect::publication_filter(&mut filter, claim, &state);
     }
     // Completion fields bind the exact original claim or user operation token.
     // They are allocated before retry and exclude the changing Agent head.
