@@ -59,6 +59,12 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
 export CMA_IM_TEST_MONGODB_URI="mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@${endpoint}/admin?directConnection=true"
 cd "$repo_root/api"
+# Shared Console authority uses this authenticated disposable replica set.
+# Serial execution isolates its appName-scoped acknowledgement-loss failpoint.
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~console::session_backend::)'
+nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(test) and binary(=console) and test(~shared_)'
 nextest_build run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))'
 
