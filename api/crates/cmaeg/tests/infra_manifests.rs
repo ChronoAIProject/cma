@@ -18,6 +18,8 @@ mod lifecycle;
 mod native_whatsapp;
 #[path = "infra_manifests/owner_keys.rs"]
 mod owner_keys;
+#[path = "infra_manifests/release_allocator.rs"]
+mod release_allocator;
 
 use fixtures::{set_config, with_memory};
 
@@ -357,15 +359,6 @@ fn the_runtime_image_ships_the_self_tested_ffmpeg_in_the_documented_dir() {
     // The stage copies exactly the fixtures the self-test's cases name.
     assert!(self_test
         .contains(&"COPY api/crates/cmaeg/tests/fixtures/media/ /opt/cmaeg-media-fixtures/"));
-}
-
-#[test]
-fn release_build_qualifies_the_allocator_in_the_shipped_executable() {
-    let build = stage(DOCKERFILE, "build");
-    assert!(build.contains(&"RUN --network=none /out/cmaeg --allocator-self-test"));
-    assert!(
-        stage(DOCKERFILE, "runtime").contains(&"COPY --from=build /out/cmaeg /usr/local/bin/cmaeg")
-    );
 }
 
 #[test]

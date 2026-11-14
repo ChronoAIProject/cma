@@ -170,6 +170,17 @@ fn the_sandbox_check_takes_no_arguments() {
     assert_usage(&run_strs(&["--media-sandbox-check", "extra"]));
 }
 
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn allocator_qualification_without_procfs_fails_before_serving() {
+    let output = run_strs(&["--allocator-self-test"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.starts_with("allocator-self-test outcome=failed error="));
+    assert!(!error.contains("configuration invalid"));
+}
+
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 #[test]
 fn the_sandbox_check_fails_where_no_sandbox_exists() {
