@@ -37,6 +37,11 @@ impl RoutedTargetExecutor {
         tracker: Arc<TurnTracker>,
         config: &DeliveryConfig,
     ) -> Self {
+        let renew_interval = if port.clone().dispatcher().journal().partitions.is_some() {
+            crate::replicas::config::RENEW
+        } else {
+            RENEW
+        };
         Self {
             port,
             delivery,
@@ -44,7 +49,7 @@ impl RoutedTargetExecutor {
             worker: format!("routed-{}", uuid::Uuid::new_v4()),
             failure_text: config.failure_text.clone(),
             frame_limit: MAX_FRAMES,
-            renew_interval: RENEW,
+            renew_interval,
             invocation_bound: INVOCATION_BOUND,
         }
     }
@@ -266,7 +271,7 @@ impl TargetExecutor for RoutedTargetExecutor {
             match self.run(work).await {
                 Ok(result) => result,
                 Err(error) => {
-                    tracing::warn!(target_id = %work.target_id, ?error, "routed execution deferred");
+                    tracing::warn!(target_sha256 = %super::storage::hash(work.target_id.as_bytes()), ?error, "routed execution deferred");
                     match error {
                         ExecutionError::Busy
                         | ExecutionError::LostLease

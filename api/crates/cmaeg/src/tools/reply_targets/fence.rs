@@ -30,23 +30,7 @@ impl Fence {
         target: &ReplyTargetPayload,
         owner: &str,
     ) -> Result<Option<Self>, Problem> {
-        // Issuance time, token ciphertext, message and caller key cannot create
-        // another uncertainty domain for the same original event and consumer.
-        let scope = hash(&serde_json::json!({"record": target.event.record_id,
-            "event": target.event.event_id, "consumer": target.event.consumer}));
-        let digest = Sha256::digest(format!("cmaeg.reply-uncertainty.v1\0{scope}"));
-        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
-        bytes[6] = (bytes[6] & 0x0f) | 0x40;
-        bytes[8] = (bytes[8] & 0x3f) | 0x80;
-        let mut fence = Self {
-            kind: "reply_uncertainty_v1".into(),
-            id: uuid::Uuid::from_bytes(bytes).to_string(),
-            owner: owner.into(),
-            scope,
-            expires_at: target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
-            active: true,
-            version: 0,
-        };
+        let mut fence = Self::initial(target, owner);
         let url = records.record_url(&fence.id).map_err(|_| unavailable())?;
         let expected = match records.get(url.as_str()).await {
             Ok(row) => {
@@ -79,6 +63,53 @@ impl Fence {
             Err(RecordError::Conflict { .. }) => Ok(None),
             Err(_) => Err(unavailable()),
         }
+    }
+
+    fn initial(target: &ReplyTargetPayload, owner: &str) -> Self {
+        // Issuance time, token ciphertext, message and caller key cannot create
+        // another uncertainty domain for the same original event and consumer.
+        let scope = hash(&serde_json::json!({"record": target.event.record_id,
+            "event": target.event.event_id, "consumer": target.event.consumer}));
+        let digest = Sha256::digest(format!("cmaeg.reply-uncertainty.v1\0{scope}"));
+        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        Self {
+            kind: "reply_uncertainty_v1".into(),
+            id: uuid::Uuid::from_bytes(bytes).to_string(),
+            owner: owner.into(),
+            scope,
+            expires_at: target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            active: true,
+            version: 0,
+        }
+    }
+    pub(super) async fn unresolved(
+        records: &RecordClient,
+        keys: &MasterKeyRing,
+        target: &ReplyTargetPayload,
+        owner: &str,
+    ) -> Result<bool, Problem> {
+        let expected = Self::initial(target, owner);
+        let url = records
+            .record_url(&expected.id)
+            .map_err(|_| unavailable())?;
+        let row = match records.get(url.as_str()).await {
+            Ok(row) => row,
+            Err(RecordError::NotFound) => return Ok(false),
+            Err(_) => return Err(unavailable()),
+        };
+        let opened = open_interaction(keys, &expected.id, &row.blob).map_err(|_| unavailable())?;
+        let saved: Self = serde_json::from_slice(&opened.payload).map_err(|_| unavailable())?;
+        if saved.kind != expected.kind
+            || saved.id != expected.id
+            || saved.owner != expected.owner
+            || saved.scope != expected.scope
+            || saved.expires_at != expected.expires_at
+        {
+            return Err(unavailable());
+        }
+        Ok(saved.active)
     }
 
     /// Only called after a definite result and its exact receipt are durable.

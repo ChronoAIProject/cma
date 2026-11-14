@@ -179,6 +179,7 @@ async fn commit_inner(
         if let Some(mutation) = &mutation {
             admission::require_current(mutation, &mut session).await?;
         }
+        store.fence_agent_effect(&current.id, &mut session).await?;
         let published = publication.is_some();
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {

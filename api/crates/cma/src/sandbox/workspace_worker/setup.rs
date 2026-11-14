@@ -24,6 +24,7 @@ impl WorkspaceWorker {
             execution.total_timeout_seconds,
             layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
         );
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self
             .dependencies
             .adapter
@@ -42,6 +43,7 @@ impl WorkspaceWorker {
                         execution.total_timeout_seconds,
                         layer3_adapter::DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES,
                     );
+                    layer2_core::sandbox::store::WorkAuthority::current()?;
                     match self
                         .dependencies
                         .adapter
