@@ -7,6 +7,7 @@ const { join } = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
+const { writeFixtureControl } = require("./fixture_control.cjs");
 
 async function metadataFixture() {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
@@ -14,7 +15,7 @@ async function metadataFixture() {
   const directory = mkdtempSync(join(tmpdir(), "cma-deferred-metadata-"));
   const home = join(directory, "home"); mkdirSync(home);
   const control = join(directory, "control.json"), trace = join(directory, "trace.jsonl");
-  writeFileSync(control, "{}"); writeFileSync(trace, "");
+  writeFixtureControl(control, {}); writeFileSync(trace, "");
   const proxy = join(directory, "native-proxy.cjs");
   // Hold exact native replies, allowing unrelated native requests to proceed.
   // No native metadata, input or credential payload is retained in the trace.
@@ -74,7 +75,7 @@ child.on("exit",code=>process.exit(code??1));
     { cwd: directory, env: { PATH: process.env.PATH, CODEX_HOME: home, CODEX_PATH: proxy } },
     frame => state.frames.push(frame), 15000);
   return { bridge, directory, home, state,
-    configure: value => writeFileSync(control, JSON.stringify(value)),
+    configure: value => writeFixtureControl(control, value),
     trace: () => readFileSync(trace, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse),
     async waitFor(predicate) {
       const until = performance.now() + 10000;
