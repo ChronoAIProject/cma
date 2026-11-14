@@ -187,7 +187,9 @@ class Observer:
         if metrics["cma_runtime_workers"] != 8:
             raise RuntimeError("actual API Tokio worker count differs from paired contract")
         now = datetime.datetime.now(datetime.timezone.utc)
-        started = datetime.datetime.fromisoformat(identity[3].replace("Z", "+00:00"))
+        # Python 3.9 accepts microseconds, while Docker emits nanoseconds.
+        started_text = re.sub(r"(\.\d{6})\d+", r"\1", identity[3]).replace("Z", "+00:00")
+        started = datetime.datetime.fromisoformat(started_text)
         return {"utc": now.isoformat(), "process_started_utc": identity[3],
                 "process_age_seconds": (now - started).total_seconds(),
                 "elapsed_seconds": time.monotonic() - self.started, "phase": phase, "round": round_number,

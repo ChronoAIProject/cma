@@ -79,6 +79,10 @@ def startup(config, output):
     try:
         while time.monotonic() < deadline:
             row = {"utc": utc(), "outcome": "failed"}
+            if docker("inspect", "--format", "{{.State.Running}}", config["container"]).strip() != "true":
+                row["outcome"] = "process_exited"
+                rows.append(row)
+                raise RuntimeError("actual API exited before HTTP readiness")
             try:
                 status = docker("exec", config["container"], "cat", "/proc/1/status", timeout=5)
                 stat = docker("exec", config["container"], "cat", "/proc/1/stat", timeout=5)

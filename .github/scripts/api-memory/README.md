@@ -1,3 +1,16 @@
+The binding 23:55 SGT qualification uses `light.py`: two actual API images run side by side for 20 minutes against separate fresh empty databases. Each receives exactly one request per second, rotating `/livez`, `/ready`, and `/openapi.json` (400 requests per route, 1,200 per image). RSS, anonymous RSS and task/stream gauges are sampled every 30 seconds. The corrected image must have a full-window slope below 1 MiB/min **and** the old image must show clear positive growth. A flat old control is a negative reproduction, not a paired PASS.
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/api-memory/light.py \
+  api/target/api-memory-rca/light-parallel-new
+```
+
+Run only in the owner's allocated campaign window. Both fixed image manifest/config identities are verified from local Docker descriptors. The APIs use identical CPU affinity 0–7, two-CPU quota, 2 GiB memory, eight Tokio workers, logging and application settings; database names and host ports differ. No authentication header or cookie is sent. Startup requires the exact generated Mongo role for each synthetic database principal, an HTTPS public-origin setting, native home/pool configuration with every target set to zero, and a synthetic Kubernetes endpoint returning empty namespaced runtime/PVC lists. That responder runs inside the owned Mongo container, refuses all writes, and provisions no runtime resources. The normal Docker bridge is required for published loopback ports; `--internal` suppresses those bindings on this local engine. All published ports bind to 127.0.0.1.
+
+The actual qualified-window attempt began at 2026-11-14T16:16:08.156726Z, retained under `light-parallel-9`. Earlier startup/setup attempts remain separate; none is treated as an API memory failure. The observer accepts Docker nanosecond timestamps under Python 3.9 by truncating only the process-age calculation to microseconds, while retaining the original Docker timestamp. Startup exceptions retain file/line/function without private argument values. All requested work and sample failures remain in the result; failure of one image during the loop does not cancel the other's observation.
+
+The finite-history workflow below is optional follow-up depth. Its two offline exporter build attempts reached the 6 GiB guard and produced no fixture. It is not a prerequisite for the binding light-request qualification, and no further exporter retry belongs to the active campaign.
+
 This incident-only harness compares the shipped Zig API image with the corrected official Alpine image at application source `67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6`. It changes no application production behavior. It requires the incident owner's scheduled local resource window. Preparing these files does not start that window.
 
 The offline exporter is a single ignored Rust test using the production BSON codecs and semantic history validator. It writes one private fixture: one stopped Agent, its parent/workspace/worktree, and 515 durable events representing 128 completed turns. It starts no Mongo connection, API, provider or runtime. The fixture source is deliberately an incident helper, not a proposed general CI Mongo test.
@@ -8,7 +21,7 @@ After the image builder releases NORMAL3, the scheduled exporter command is:
 PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/api-memory/export.py
 ```
 
-It builds in the owned `api/target/api-memory-export` cache clone, runs only the named exporter with Rust 1.96.1, and caps compilation at two jobs, 900 seconds and 6 GiB aggregate process-group RSS. `api/target/api-memory-rca/export-result.json` records actual times and disposition; the compile log and generated fixture stay in its private subdirectory. Cargo revalidates the copied cache against exact 67b source plus the fixture.
+It builds in the owned `api/target/api-memory-export` cache clone, runs only the named exporter with Rust 1.96.1, and caps the retry at one job, 900 seconds and 6 GiB aggregate process-group RSS, with debug symbols disabled only for the CMA test executable. Attempt 1 exceeded the same 6 GiB bound and produced no fixture; its result and private log are retained separately. `api/target/api-memory-rca/export-result.json` records actual times and disposition; the compile log and generated fixture stay in its private subdirectory. Cargo revalidates the copied cache against exact 67b source plus the fixture.
 
 After the exporter succeeds and the EG service cohort releases the runtime window, the owner runs:
 

@@ -13,8 +13,9 @@ API = ROOT / "api"
 EVIDENCE = API / "target/api-memory-rca"
 PRIVATE = EVIDENCE / "private"
 COMMAND = ["/Users/shining/code/work/.tl-env/build-slot", "env", "RUSTC_WRAPPER=",
-           "CARGO_BUILD_JOBS=2", "/Users/shining/.cargo/bin/cargo", "+1.96.1", "test",
-           "--locked", "--offline", "--all-features", "-j", "2", "-p", "cma", "--bin", "cma",
+           "CARGO_BUILD_JOBS=1", "/Users/shining/.cargo/bin/cargo", "+1.96.1", "test",
+           "--config", "profile.test.package.cma.debug=0",
+           "--locked", "--offline", "--all-features", "-j", "1", "-p", "cma", "--bin", "cma",
            "store::sandbox_mongo_integration_tests::api_memory_fixture::export_finite_api_memory_dataset",
            "--", "--ignored", "--exact", "--nocapture"]
 
@@ -45,9 +46,12 @@ def run():
         report["pid"] = process.pid
         try:
             while process.poll() is None:
-                rows = subprocess.check_output(["ps", "-axo", "pid=,pgid=,rss="], text=True)
-                rss = sum(int(row.split()[2]) for row in rows.splitlines()
-                          if len(row.split()) == 3 and int(row.split()[1]) == process.pid)
+                rows = subprocess.check_output(["ps", "-axo", "pid=,pgid=,rss=,comm="], text=True)
+                members = [row.split(maxsplit=3) for row in rows.splitlines()
+                           if len(row.split(maxsplit=3)) == 4 and int(row.split()[1]) == process.pid]
+                rss = sum(int(row[2]) for row in members)
+                if rss > report["peak_group_rss_kib"]:
+                    report["peak_processes"] = [{"pid": int(row[0]), "rss_kib": int(row[2]), "command": Path(row[3]).name} for row in members]
                 report["peak_group_rss_kib"] = max(report["peak_group_rss_kib"], rss)
                 if rss > report["max_process_group_rss_kib"] or time.monotonic() - started > 900:
                     report["stop_reason"] = "RSS limit" if rss > report["max_process_group_rss_kib"] else "time limit"

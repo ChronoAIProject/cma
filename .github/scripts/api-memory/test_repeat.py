@@ -186,6 +186,50 @@ class DriverTests(unittest.TestCase):
 
 
 class PairTests(unittest.TestCase):
+    def test_docker_nanoseconds_are_preserved_and_parse_on_python39(self):
+        config = repeat.validate(configuration())
+        observer = repeat.Observer(config)
+        stamp = "2026-11-14T16:13:48.123456789Z"
+        identity = f"container {config['docker_image_id']} 0 {stamp} true 2000000000 2147483648 0-7"
+        status = "VmRSS: 100 kB\nRssAnon: 70 kB\nThreads: 12\nCpus_allowed_list: 0-7\n"
+        stat = "1 (cma) " + " ".join(["S"] + ["0"] * 18 + ["123"])
+        metrics = "\n".join(f"{name} {8 if name == 'cma_runtime_workers' else 0}" for name in repeat.METRICS).encode()
+        with patch.object(observer, "docker", side_effect=[identity, status, stat]), patch.object(repeat, "get", return_value=metrics):
+            row = observer.sample("initial", 0)
+        self.assertEqual(row["process_started_utc"], stamp)
+        self.assertEqual(row["cpu_affinity"], "0-7")
+        self.assertEqual(row["rss_kib"], 100)
+        self.assertGreater(row["process_age_seconds"], 0)
+
+    def test_exited_api_fails_promptly_with_retained_startup_boundary(self):
+        import pair
+        with tempfile.TemporaryDirectory() as folder, patch.object(pair, "docker", return_value="false"), patch.object(repeat, "get") as get:
+            with self.assertRaises(RuntimeError):
+                pair.startup(configuration(), Path(folder))
+            rows = json.loads((Path(folder) / "startup.json").read_text())
+            self.assertEqual(rows[-1]["outcome"], "process_exited")
+            self.assertEqual(len(rows), 1)
+            get.assert_not_called()
+
+    def test_light_request_failure_keeps_full_offered_denominator(self):
+        import light
+        clock = [0.0]
+
+        class Stop:
+            def wait(self, duration):
+                clock[0] += duration
+                return False
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(light.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(repeat, "get", side_effect=[RuntimeError("private transport message")] + [b"ok"] * 1199):
+            result = light.workload(configuration(), 0, Path(folder), Stop())
+            self.assertEqual(result["offered"], 1200)
+            self.assertEqual(result["completed"], 1199)
+            self.assertEqual(result["failed"], 1)
+            self.assertEqual(result["not_offered"], 0)
+            self.assertTrue(all(row["offered"] == 400 for row in result["routes"].values()))
+            self.assertNotIn("private transport message", (Path(folder) / "requests.jsonl").read_text())
+
     def test_failed_first_attempt_does_not_skip_second_and_cleanup_is_owned(self):
         import pair
         calls = []
