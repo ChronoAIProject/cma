@@ -71,15 +71,21 @@ pub(super) fn save(root: &Path, record: &Record) -> Result<()> {
     let marker = root.with_extension("activated");
     match std::fs::symlink_metadata(&marker) {
         Ok(_) if read(&marker)? == MARKER => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => write_new(&marker, MARKER)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            write_synced_file(&marker, MARKER)?;
+            crate::fs_durability::sync_parent(&marker).map_err(|_| unavailable())?;
+        }
         _ => return Err(unavailable()),
     }
     let temporary = root.join(format!("{}.tmp", uuid::Uuid::new_v4()));
     let result = (|| {
-        write_new(
+        write_synced_file(
             &temporary,
             &serde_json::to_vec(record).map_err(|_| unavailable())?,
         )?;
+        // The temporary name need not survive a crash: until replacement the
+        // old floor remains authoritative. Sync its complete contents first,
+        // then atomically replace and sync the destination's directory entry.
         crate::fs_durability::rename(&temporary, &root.join("floor.json"))
             .map_err(|_| unavailable())
     })();
@@ -89,7 +95,7 @@ pub(super) fn save(root: &Path, record: &Record) -> Result<()> {
     result
 }
 
-fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+fn write_synced_file(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut options = std::fs::OpenOptions::new();
     options.create_new(true).write(true);
     #[cfg(unix)]
@@ -101,6 +107,5 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     }
     let mut file = options.open(path).map_err(|_| unavailable())?;
     file.write_all(bytes).map_err(|_| unavailable())?;
-    file.sync_all().map_err(|_| unavailable())?;
-    crate::fs_durability::sync_parent(path).map_err(|_| unavailable())
+    file.sync_all().map_err(|_| unavailable())
 }
