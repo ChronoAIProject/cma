@@ -3,6 +3,7 @@ import { stats } from '../timing/lib/core.mjs';
 import { deltaInterval } from './confidence.mjs';
 import { userLimits, criterionFor } from './catalog.mjs';
 import { performanceClass, p95Allowance } from './performance-policy.mjs';
+import { expectedReplicas } from './replicas.mjs';
 export { userLimits } from './catalog.mjs';
 
 // Same nearest-rank definition as prod-verifier-02 timing-harness/lib/core.mjs.
@@ -34,7 +35,7 @@ export function calibrateNoise(baselines, requiredRoutes, { maxNoiseMs = 0 } = {
   }));
 }
 
-export function compareCohorts(cohorts, requiredRoutes, minimumSamples = 100, calibration) {
+export function compareCohorts(cohorts, requiredRoutes, minimumSamples = 100, calibration, { scalingPeak = 4 } = {}) {
   check(Array.isArray(requiredRoutes) && requiredRoutes.length > 0
     && new Set(requiredRoutes).size === requiredRoutes.length, 'route_inventory_required', true);
   check(Number.isSafeInteger(minimumSamples) && minimumSamples >= 100, 'insufficient_sample_budget', true);
@@ -47,7 +48,7 @@ export function compareCohorts(cohorts, requiredRoutes, minimumSamples = 100, ca
     for (const key of ['hardwareHash', 'fixtureHash', 'workloadHash', 'sourceHash', 'imagesHash']) {
       check(isHash(cohort[key]) && cohort[key] === cohorts[0][key], 'cohort_provenance_mismatch', true);
     }
-    check(cohort.observedReplicas === (cohort.phase === 'n1' ? 1 : cohort.phase === 'n2' ? 2 : '2-5-2'),
+    check(cohort.observedReplicas === expectedReplicas(cohort.phase, scalingPeak),
       'cohort_replica_evidence_missing', true);
   }
   const rows = [];
@@ -89,7 +90,7 @@ export function compareCohorts(cohorts, requiredRoutes, minimumSamples = 100, ca
         tolerance_ms: allowance?.allowance_ms ?? null,
         optimization_note: pass && allowance.aim_ms !== null && interval.upper_ms > allowance.aim_ms
           ? 'ux_above_five_percent_aim_within_ten_percent_cap' : null,
-        phase: cohorts[i].phase, ...value, baseline_p95_ms: base,
+        phase: cohorts[i].phase, observedReplicas: cohorts[i].observedReplicas, ...value, baseline_p95_ms: base,
         noise_ms: noise ?? null, delta_ms: base === null || value.p95_ms === null ? null : value.p95_ms - base,
         delta_percent: base === null || base === 0 || value.p95_ms === null ? null : 100 * (value.p95_ms - base) / base,
         confidence_interval: interval, limit_ms: limit,

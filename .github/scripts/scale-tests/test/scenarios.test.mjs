@@ -50,7 +50,8 @@ test('autoscale preserves canaries during stress removal and requires workload e
   for (const users of [2, 100]) {
     const driver = fakeDriver();
     const result = await autoscale(driver, config, { users, time: fakeTime() });
-    assert.equal(result.peak_am, 5); assert.equal(result.peak_eg, 5);
+    assert.equal(result.peak_am, 4); assert.equal(result.peak_eg, 4);
+    assert.equal(result.sequence, '2-4-2');
     assert.equal(driver.cleaned, 1); assert.equal(driver.stopped, 1);
   }
   const driver = fakeDriver(); driver.finishUsers = async () => ({ ...snapshot(), actualReadsPerSecond: 9 });

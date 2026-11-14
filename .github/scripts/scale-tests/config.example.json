@@ -7,6 +7,7 @@
   "endpoints": { "am": "https://127.0.0.1:18080", "eg": "https://127.0.0.1:18080" },
   "recoveryMs": 30000,
   "scaleTimeoutMs": 1800000,
+  "scalingPeak": 4,
   "hardwareHash": "REQUIRED_SHA256",
   "fixtureHash": "REQUIRED_SHA256",
   "workloadHash": "REQUIRED_SHA256",

@@ -158,6 +158,13 @@ M3 essentials adjudicator. M3 uses N1/N2/2→4→2/kill; production automatic HP
 min2/max5 remains a separate required S3 observation. No old matrix row supplies
 an additional promotion prerequisite beyond its applicable essential.
 
+`scalingPeak` defaults to4 for M3; the example configuration declares it explicitly.
+Use5 only for an explicitly selected 2→5→2 run. Collection and comparison require
+the selected sequence and retain the actual replica sequence in raw samples and
+comparison rows. A 2→5→2 observation cannot satisfy a registered 2→4→2 comparison.
+The autoscale scenario stops stress at the selected peak while connected users
+and canaries remain active through downscale. The HPA min2/max5 policy is unchanged.
+
 `performance-classes-a3.json` preserves the exact decoded architect A3 inventory:
 43 catalog memberships, 80 observed routes and 18 operation families. The
 published copy compacts rows; its SHA256 is pinned in `performance-policy.mjs`,
@@ -174,7 +181,9 @@ page completion remains separately measured with no invented absolute ceiling.
 Baseline stability/noise registration remains required; the legacy zero default
 noise ceiling is conservative and is not a measured noise allowance. A3 must
 not be used to declare a noisy/inadequate sample suitable or widen a critical
-allowance after seeing its comparison. Exact-source tool review precedes use.
+allowance after seeing its comparison. The lead's speed directive removes
+intermediate tooling-review gates; integrated production changes retain their
+correctness/safety review. Actual execution scope and production approvals remain.
 
 Copy `config.example.json` to `config.local.json`, fill the exact reviewed local
 handoff and pin the driver. Place no credential values in that file. Then:
