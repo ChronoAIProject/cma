@@ -116,6 +116,11 @@ impl DesktopReceiver {
         // The supervisor is the sole writer under this state lock. Every
         // transition compares the retained floor; never repair custody loss.
         self.verify(state)?;
+        // Stream completion and explicit revoke may retire the same owner.
+        // Equality avoids a second sync only after checking durable custody.
+        if state.record.as_ref() == Some(&record) {
+            return Ok(());
+        }
         if persistence::save(&self.root, &record).is_err() {
             self.poison(state);
             return Err(unavailable());
