@@ -42,6 +42,9 @@ pub struct WorkspaceWorkLease {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceWorkState {
+    /// Retained after switch-off; older strict readers cannot interpret this work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_protocol: Option<super::store::WorkAuthorityProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepare_recovery: Option<Box<super::WorkspacePrepareRecovery>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,6 +60,7 @@ pub struct WorkspaceWorkState {
 impl WorkspaceWorkState {
     pub fn new(step: WorkspaceWorkStep, ready_at: String) -> Self {
         Self {
+            authority_protocol: None,
             prepare_recovery: None,
             execution: None,
             step,

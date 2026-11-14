@@ -23,14 +23,7 @@ impl Bridge {
         let mut framed = Vec::with_capacity(body.len() + 1);
         framed.push(LANE_CONVERSATION);
         framed.extend_from_slice(&body);
-        self.sink
-            .lock()
-            .await
-            .send(Message::Binary(framed))
-            .await
-            .map_err(|error| {
-                AdapterError::Unavailable(format!("conversation write failed: {error}"))
-            })
+        self.write_owned(Message::Binary(framed)).await
     }
 
     pub(in crate::hosted) async fn retire(&self) {
