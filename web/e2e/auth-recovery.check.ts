@@ -14,6 +14,8 @@ for (const action of ['send', 'cancel'] as const) {
       if (action === 'cancel') fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
       let failedAt = 0;
       let faultPosts = -1;
+      let faultActive = true;
+      let authFailures = 0;
       try {
         await fixture.route(page, baseURL!);
         await page.goto('/agents/agt_contract');
@@ -24,9 +26,18 @@ for (const action of ['send', 'cancel'] as const) {
         if (action === 'send') await input.fill('Auth recovery request');
         else await expect(stop).toBeEnabled();
         await page.route('**/auth/session', async (route) => {
-          if (!failedAt && (phase === 'before-submit' || fixture.writes.length > 0)) {
-            failedAt = performance.now();
-            faultPosts = fixture.writes.length;
+          // A background read must not consume a single injected error before
+          // the mutation's independent identity lane reaches the same outage.
+          if (
+            faultActive &&
+            (phase === 'before-submit' || fixture.writes.length > 0) &&
+            (!failedAt || performance.now() - failedAt < 500)
+          ) {
+            if (!failedAt) {
+              failedAt = performance.now();
+              faultPosts = fixture.writes.length;
+            }
+            authFailures += 1;
             return route.fulfill({
               status: 503,
               headers: { 'retry-after': '1', 'cache-control': 'no-store' },
@@ -51,15 +62,22 @@ for (const action of ['send', 'cancel'] as const) {
           await expect(
             page
               .getByRole('alert')
-              .filter({ hasText: 'identity service is temporarily unavailable' }),
+              .filter({ hasText: 'CMA had a problem on its side. Try again in a moment.' }),
           ).toBeVisible();
           expect(fixture.writes.length).toBe(faultPosts);
+          faultActive = false;
           if (phase === 'confirmation')
             await page.getByRole('button', { name: 'Recover pending request' }).click();
-          else await submit();
+          else {
+            if (action === 'send')
+              await expect(page.locator('.message--user')).toContainText('Not sent');
+            await submit();
+          }
         }
-        if (action === 'send') await expect(page.locator('.message--user')).toContainText('Sent');
-        else
+        if (action === 'send') {
+          await expect(page.locator('.message--user')).toHaveCount(1);
+          await expect(page.locator('.message--user')).toContainText('Sent');
+        } else
           await expect(
             page.getByRole('status').filter({ hasText: 'Your response action was delivered.' }),
           ).toBeVisible();
@@ -87,6 +105,7 @@ for (const action of ['send', 'cancel'] as const) {
               postsBeforeFault: faultPosts,
               posts: fixture.writes.length,
               effects: fixture.effects.size,
+              authFailures,
               sameKey: fixture.writes.every((write) => write.key === fixture.writes[0]!.key),
             },
             null,
