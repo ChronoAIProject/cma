@@ -32,7 +32,7 @@ impl AgentResponseLogStore for Source {
 }
 
 #[tokio::test(start_paused = true)]
-async fn headers_do_not_read_history_and_unchanged_polls_skip_source_projection() {
+async fn unbound_headers_and_polls_skip_source_projection() {
     let source = Arc::new(Source::default());
     let f = fixture_with_events(Some(source.clone()), true).await;
     let response = create(&f, false).await;
@@ -43,7 +43,7 @@ async fn headers_do_not_read_history_and_unchanged_polls_skip_source_projection(
         events(&body.next().await.unwrap().unwrap())[0]["type"],
         "response.created"
     );
-    assert_eq!(source.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(source.calls.load(Ordering::SeqCst), 0);
     assert!(
         tokio::time::timeout(Duration::from_millis(800), body.next())
             .await
@@ -51,8 +51,8 @@ async fn headers_do_not_read_history_and_unchanged_polls_skip_source_projection(
     );
     assert_eq!(
         source.calls.load(Ordering::SeqCst),
-        1,
-        "three idle polls must not scan again"
+        0,
+        "unbound idle polls must not scan output"
     );
     let command = f
         .store
@@ -76,10 +76,10 @@ async fn headers_do_not_read_history_and_unchanged_polls_skip_source_projection(
     );
     assert_eq!(
         source.calls.load(Ordering::SeqCst),
-        2,
-        "command-only change must be observed"
+        0,
+        "command-only change must be observed without output scans"
     );
-    assert!(body.next().await.is_none());
+    drop(body);
 }
 
 #[tokio::test(start_paused = true)]
@@ -94,14 +94,11 @@ async fn a_stalled_source_cannot_delay_headers_or_change_the_command_outcome() {
     assert_eq!(source.calls.load(Ordering::SeqCst), 0);
     let mut body = response.into_body().into_data_stream();
     let bytes = body.next().await.unwrap().unwrap();
-    assert_eq!(
-        events(&bytes)[0]["code"],
-        "response_observation_unavailable"
-    );
-    assert!(!String::from_utf8_lossy(&bytes)
+    assert_eq!(events(&bytes)[0]["type"], "response.created");
+    assert!(String::from_utf8_lossy(&bytes)
         .lines()
         .any(|line| line.starts_with("id:")));
-    assert!(body.next().await.is_none());
+    drop(body);
     assert_eq!(
         f.store
             .command_work_page(&PageRequest::default())
@@ -114,7 +111,7 @@ async fn a_stalled_source_cannot_delay_headers_or_change_the_command_outcome() {
 }
 
 #[tokio::test]
-async fn source_failure_after_headers_has_no_replay_id_and_does_not_write() {
+async fn unbound_source_failure_does_not_change_the_command_or_stream() {
     let source = Arc::new(Source::default());
     source.fail.store(true, Ordering::SeqCst);
     let f = fixture_with_events(Some(source.clone()), true).await;
@@ -128,16 +125,13 @@ async fn source_failure_after_headers_has_no_replay_id_and_does_not_write() {
         .remove(0);
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(source.calls.load(Ordering::SeqCst), 0);
-    let bytes = axum::body::to_bytes(response.into_body(), 10000)
-        .await
-        .unwrap();
-    assert_eq!(
-        events(&bytes)[0]["code"],
-        "response_observation_unavailable"
-    );
-    assert!(!String::from_utf8_lossy(&bytes)
+    let mut body = response.into_body().into_data_stream();
+    let bytes = body.next().await.unwrap().unwrap();
+    assert_eq!(events(&bytes)[0]["type"], "response.created");
+    assert!(String::from_utf8_lossy(&bytes)
         .lines()
         .any(|line| line.starts_with("id:")));
+    drop(body);
     let after = f
         .store
         .command_work_page(&PageRequest::default())
@@ -194,11 +188,13 @@ async fn future_cursor_is_a_connection_error_and_overflow_is_refused_before_head
 }
 
 #[tokio::test]
-async fn default_off_keeps_pre_header_observation() {
+async fn unbound_response_skips_output_source_before_headers() {
     let source = Arc::new(Source::default());
-    source.fail.store(true, Ordering::SeqCst);
+    source.stall.store(true, Ordering::SeqCst);
     let f = fixture_with_events(Some(source.clone()), false).await;
-    let response = create(&f, false).await;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(source.calls.load(Ordering::SeqCst), 1);
+    let response = tokio::time::timeout(Duration::from_millis(10), create(&f, false))
+        .await
+        .expect("unbound response headers must not wait for output source");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(source.calls.load(Ordering::SeqCst), 0);
 }
