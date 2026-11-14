@@ -16,6 +16,20 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
     if op.starts_with("POST ") {
         return c.check(api.create(&c.body()?).await);
     }
+    if op.ends_with("/view") {
+        return c.check(
+            api.latest(&cma_sdk::usage_metrics::ViewQuery {
+                window: cma_sdk::usage_metrics::ViewWindow::Custom,
+                query: cma_sdk::usage_metrics::Query {
+                    from: c.number("from")?,
+                    to: c.number("to")?,
+                    ..Default::default()
+                },
+                refresh: false,
+            })
+            .await,
+        );
+    }
     let id = c.param("report");
     let page = PageOptions {
         limit: c.number("limit")?,

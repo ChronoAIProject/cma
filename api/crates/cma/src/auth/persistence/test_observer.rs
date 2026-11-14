@@ -3,11 +3,18 @@ use super::*;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+#[derive(Default)]
+pub(crate) struct ReadGate {
+    pub reached: tokio::sync::Notify,
+    pub release: tokio::sync::Notify,
+}
+
 pub(crate) struct ObservedAuthStore {
     pub inner: Arc<dyn AuthStore>,
     pub wait: Duration,
     pub wrong_subject: bool,
     pub reads: Mutex<Vec<(&'static str, &'static str)>>,
+    pub held_read: Mutex<Option<(&'static str, Arc<ReadGate>)>>,
 }
 impl ObservedAuthStore {
     pub fn new(inner: Arc<dyn AuthStore>, wait: Duration) -> Self {
@@ -16,6 +23,7 @@ impl ObservedAuthStore {
             wait,
             wrong_subject: false,
             reads: Mutex::new(Vec::new()),
+            held_read: Mutex::new(None),
         }
     }
     async fn observe(&self, operation: &'static str) {
@@ -23,6 +31,18 @@ impl ObservedAuthStore {
             operation,
             layer2_core::diagnostic_context::DiagnosticContext::current().phase,
         ));
+        let gate = {
+            let mut held = self.held_read.lock().unwrap();
+            if held.as_ref().is_some_and(|(name, _)| *name == operation) {
+                held.take().map(|(_, gate)| gate)
+            } else {
+                None
+            }
+        };
+        if let Some(gate) = gate {
+            gate.reached.notify_one();
+            gate.release.notified().await;
+        }
         if !self.wait.is_zero() {
             tokio::time::sleep(self.wait).await;
         }
