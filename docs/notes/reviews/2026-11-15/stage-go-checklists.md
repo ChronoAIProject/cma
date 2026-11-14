@@ -63,19 +63,19 @@ Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; 
 **Pre-checks — initial every box before creating either HPA**
 
 - [ ] Signed S1/S2 PASS; both fixed two, healthy canonical backends, PDBs `minAvailable:1`/`AlwaysAllow`, zero terminating; unchanged qualified images/modeON/fences/record floors. Capture narrow pre-S3 specs/hashes. No rollout overlaps HPA operation; disable/remove HPA and wait all terminations before any later rollout.
-- [ ] K12–K15: M3 actual N1/N2/2→4→2/kill evidence, secure drain and survivor recovery ≤30s. Qualified complete-cohort p95 handoff and **separate hard lifetime G** through process/socket/client exit exist; missing/censored timing cannot choose cadence.
-- [ ] K14: qualify the combined active+surge+terminating budget, all consumers, node loss/provider limits and ≥30% per-server Mongo headroom. Steady5/5 fits the18:04 snapshot; eight AM+eight EG already exceed CPU limit quota (80.25>80). Illustrative G760/P120 gives12/service and fails quota/nodes. G remains unqualified; refresh actual memory/placement capacity before either HPA.
+- [ ] K12–K15: M3 actual N1/N2/2→4→2/kill, secure drain and survivor recovery ≤30s. Qualified handoff p95≤90s and **separate hard lifetime G** exist; missing/incompatible timing means HOLD. Both templates and actual Pods have grace760s including preStop; S1/S2 must replace the live Batch8 grace735s.
+- [ ] K14: qualify combined active+surge+terminating processes, all consumers, node loss/provider limits and ≥30% Mongo headroom against the selected64/128 CPU ceilings and actual nodes/memory. Illustrative G760/P120 gives12/service: it fits raised quota but exceeds47.67 eligible-node CPU. G remains unqualified; raising quota supplies no node or socket capacity.
 - [ ] K21/K25: fresh v2 resource metrics, useful-load response, CPU idle/knee qualification and matched N1/N2/scaling evidence. AM60% of4CPU=2.4 cores; EG200% of250m=500m. CPU-only that cannot add useful capacity ⇒ HOLD for reviewed metric design. No assumed custom metrics API.
 - [ ] Exact release/HPA payload and renderer hashes, route/per-operation grants, owned-load scope, freeze/delete/descent recovery and observation window bound. No production writes 02:00–02:59. Schedule leaves time for stabilization, full termination, final soak and M8; deadline cannot shorten them.
 
-**GO sequence — render locally; guarded AM create/readback, then EG create/readback**
+**GO sequence — granted quota pre-step, then AM HPA and EG HPA**
 
-`s3-am-create → s3-eg-create`; each target is its canonical Deployment. Read back `min2/max5`, fresh observedGeneration/metric values, `AbleToScale`/`ScalingActive`; explain `ScalingLimited`.
+`s3-quota-raise → s3-am-create → s3-eg-create`. Before either HPA, use the exact S3 grant to change only `chrono-bot/sandbox-quota` CPU ceilings40/80→64/128. Save complete before-spec and confirmed result; require64/128 in both spec/status. Preserve memory/Pod limits. Each HPA targets its canonical Deployment; verify min2/max5, fresh metrics/generation and scaling conditions. Unknown writes require reconciliation.
 
 | Direction | Required policy |
 | --- | --- |
 | Up | stabilization0; Max of +2 pods/60s and +100%/60s |
-| Down | stabilization300s; Min, −1 pod/P; P120s if qualified p95≤90s, otherwise ceil(p95+30s); maximum supported1800s, never clamp |
+| Down | stabilization300s; Min, −1 Pod/120s fixed; handoff p95>90s or missing/censored timing ⇒ HOLD, never change cadence silently |
 
 Prove useful **automatic** up/down for each service under approved load within capacity. Claim exercised5 only if observed5; configured ceiling capacity remains K14, useful automatic up/down remains K25. Manual replica patches do not satisfy K25. Remove only owned load, observe full down stabilization/cadence, handoff and actual exits to2. Record transitions, failures and peak clients; a PDB does not cap HPA terminations.
 
@@ -85,5 +85,7 @@ Prove useful **automatic** up/down for each service under approved load within c
 - [ ] All K16–K21 absolute/A3 acceptance checks pass at N2 and scaling; no unobserved route PASS. Report statistical/policy verdicts separately; only valid matched CRITICAL observations meeting B6 may receive the exception. Bind logs plus NyxID/client evidence for M8 13:00–17:00 and final18:00 report. Provider 24-hour monitoring continues beyond that deadline.
 
 **Abort/recovery:** any S1/S2 safety, availability, capacity or supported performance trigger ⇒ stop promotion; halt only owned load. Generate/readback **both** HPA directions Disabled, then UID/resourceVersion-bound delete of only S3-created HPAs. Account for in-flight controller writes. With HPA absent, healthy survivors and zero prior terminations, descend **one at a time** to2, retaining PDBs/modeON/compatible images/custody. If demand requires >2, hold that safe fixed count and report autoscaling not delivered. Run fresh30-minute recovery soak; no image/mode downgrade or bulk5→2.
+
+Then `s3-quota-restore` needs its own grant and confirmed raise result: fixed2, no HPA/terminations, reconciled quota status and used CPU≤40/80. Otherwise retain raised ceilings during recovery. Preserve unrelated fields; no automatic restore after successful S3.
 
 **Decision:** GO/HOLD/ABORT ___; executor ___; reviewer ___; lead ___; release/HPA/receipts ___; ramp/down ___; soak ___→___; M8 ledger ___ . Fixed replicas alone are not S3 PASS.
