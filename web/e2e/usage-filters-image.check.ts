@@ -34,14 +34,31 @@ for (const theme of ['light', 'dark']) {
     const filters = page.getByRole('form', { name: 'Usage filters' });
     await expect(filters).toBeVisible();
     await expect(filters.locator('input')).toHaveCount(0);
-    const apply = async () => {
+    const displayedReport = async (id: string) => {
+      await expect
+        .poll(
+          () => metrics.reads.filter((url) => url.pathname.endsWith('/sandboxes')).at(-1)?.pathname,
+        )
+        .toBe(`/api/v1/admin/usage/metrics/reports/${id}/sandboxes`);
+      const summary = metrics.reports.get(id)!.summary!;
+      await expect(
+        page.getByText(
+          `${Number(summary.sandbox_count).toLocaleString('en-SG')} Sandboxes · ${Number(summary.running_count).toLocaleString('en-SG')} running`,
+          { exact: true },
+        ),
+      ).toBeVisible();
+    };
+    const apply = async (cached?: (typeof metrics.creates)[number]) => {
       const before = metrics.creates.length;
       await page.getByRole('button', { name: 'Apply usage filters' }).click();
-      await expect.poll(() => metrics.creates.length).toBe(before + 1);
+      if (!cached) await expect.poll(() => metrics.creates.length).toBe(before + 1);
       await expect(
         page.getByRole('button', { name: 'Research Sandbox', exact: true }),
       ).toBeVisible();
-      const id = metrics.creates.at(-1)!.id;
+      const selected = cached ?? metrics.creates.at(-1)!;
+      const { id } = selected;
+      await displayedReport(id);
+      if (cached) expect(metrics.creates).toHaveLength(before);
       // The fixture advertises a 1s report retry. Default expect.poll backoff
       // observes it at ~1.85s on every apply; sample the in-memory log promptly.
       await expect
@@ -53,12 +70,14 @@ for (const theme of ['light', 'dark']) {
         expect(
           metrics.reads.filter((url) => url.pathname.endsWith(`/reports/${created.id}`)).length,
         ).toBeLessThanOrEqual(1);
+      return selected;
     };
     // Open and search while reporting is still pending. Discovery never submits a report.
     await page.getByRole('button', { name: 'Owner: Everyone' }).click();
     await page.getByRole('textbox', { name: 'Search owner choices' }).fill('Alex');
     await expect(page.getByRole('menuitemradio', { name: /Alex Chen/ })).toHaveCount(2);
     expect(metrics.creates).toHaveLength(1);
+    const initialReport = metrics.creates[0]!;
     await expect(
       page.getByRole('menuitemradio', { name: 'Alex Chen Joined 2026-11-01', exact: true }),
     ).toBeVisible();
@@ -79,8 +98,8 @@ for (const theme of ['light', 'dark']) {
     await expect(
       page.getByRole('button', { name: 'Owner: Alex Chen', exact: true }),
     ).toHaveAttribute('title', 'Alex Chen');
-    await apply();
-    expect(metrics.creates.at(-1)?.input.filters?.owner).toBe(filterOwners[0]!.value);
+    const ownerReport = await apply();
+    expect(ownerReport.input.filters?.owner).toBe(filterOwners[0]!.value);
     await page.screenshot({
       path: info.outputPath(`owner-selected-${theme}.png`),
       animations: 'disabled',
@@ -116,12 +135,13 @@ for (const theme of ['light', 'dark']) {
     });
     await page.getByRole('button', { name: /^Sandbox: Research/ }).click();
     await page.getByRole('menuitemradio', { name: 'All Sandboxes' }).click();
-    await apply();
-    expect(metrics.creates.at(-1)?.input.filters?.sandbox_id).toBeUndefined();
+    // Returning to the same fresh selection reuses its committed report.
+    const restoredOwner = await apply(ownerReport);
+    expect(restoredOwner.input.filters?.sandbox_id).toBeUndefined();
     await page.getByRole('button', { name: /^Owner: Alex Chen/ }).click();
     await page.getByRole('menuitemradio', { name: 'Everyone' }).click();
-    await apply();
-    expect(metrics.creates.at(-1)?.input.filters?.owner).toBeUndefined();
+    const restoredDefault = await apply(initialReport);
+    expect(restoredDefault.input.filters?.owner).toBeUndefined();
     for (const [control, search, choice, field, value] of [
       [
         'Runtime version: Any runtime',
@@ -153,6 +173,7 @@ for (const theme of ['light', 'dark']) {
     await page.getByLabel('Usage range to').fill('2026-11-02T00:00');
     await apply();
     await page.screenshot({ path: info.outputPath(`custom-and-filtered-${theme}.png`) });
+    const beforeClear = metrics.creates.length;
     await page.getByRole('button', { name: 'Clear filters' }).click();
     await expect(page.getByRole('button', { name: 'Owner: Everyone' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Runtime version: Any runtime' })).toBeVisible();
@@ -162,7 +183,9 @@ for (const theme of ['light', 'dark']) {
     await expect(page.getByRole('button', { name: 'Usage Sandbox status' })).toContainText(
       'Any status',
     );
-    await expect.poll(() => metrics.creates.at(-1)?.input.filters?.statuses).toEqual([]);
+    await displayedReport(initialReport.id);
+    expect(metrics.creates).toHaveLength(beforeClear);
+    expect(initialReport.input.filters?.statuses).toEqual([]);
     for (const [control, choice] of [
       ['Allocation chart resource', 'Memory'],
       ['Allocation chart resource', 'CPU'],
@@ -175,11 +198,19 @@ for (const theme of ['light', 'dark']) {
         choice!,
       );
     }
+    const beforeFailedOptions = options.reads.length;
     options.failure = 503;
     await page.getByRole('button', { name: 'Owner: Everyone' }).click();
+    // Use a fresh query so the retrying request cannot display earlier choices.
+    await page.getByRole('textbox', { name: 'Search owner choices' }).fill('Unnamed');
     await expect(
       page.getByRole('alert').filter({ hasText: 'Usage reporting is unavailable' }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 15_000 });
+    expect(
+      options.reads
+        .slice(beforeFailedOptions)
+        .filter((url) => url.searchParams.get('search') === 'Unnamed'),
+    ).toHaveLength(4);
     await page.screenshot({
       path: info.outputPath(`option-error-${theme}.png`),
       animations: 'disabled',
