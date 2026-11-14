@@ -7,7 +7,7 @@ use crate::{
     *,
 };
 use kube::{api::DynamicObject, ResourceExt};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub struct AgentSandboxBackend {
@@ -41,10 +41,7 @@ impl AgentSandboxBackend {
                 .await?;
         }
         let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
-        let pod = self
-            .client
-            .wait_ready(handle, Duration::from_secs(180))
-            .await?;
+        let pod = self.client.wait_ready_for_create(handle).await?;
         timing.completed("wait_ready");
         if let Some(until) = request.funded_until {
             // Readiness can consume the remaining window; never bind expired work.

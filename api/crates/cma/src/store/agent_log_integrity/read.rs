@@ -27,7 +27,7 @@ pub(in crate::store) async fn scan_complete_log_with_session(
         &agent.id,
         agent.conversation.last_seq,
         session,
-        false,
+        crate::store::agent_log_integrity::ScanOptions::new(false, store.scan_cooperation),
         |entry| {
             if let layer2_core::sandbox::AgentLogKind::Created {
                 workspace_id,

@@ -479,3 +479,6 @@ async fn deferred_live_rechecks_committed_messages_and_preserves_remaining_order
 
 #[path = "stream_lag_tests.rs"]
 mod lag;
+
+#[path = "stream_wake_tests.rs"]
+mod wake;

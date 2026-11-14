@@ -15,6 +15,7 @@ impl Store {
             "unavailable" => Err(MetricsError::Unavailable),
             "missing" => Err(MetricsError::NotFound),
             "invalid" => Err(MetricsError::Invalid("Invalid retained cursor".into())),
+            "view_disabled" => Err(MetricsError::ViewDisabled),
             _ => Ok(()),
         }
     }
@@ -129,6 +130,31 @@ fn row() -> Row {
 }
 #[async_trait]
 impl MetricsStore for Store {
+    async fn latest(&self, scope: &Scope, selection: &ViewSelection, _: u64) -> Result<ReportView> {
+        self.check()?;
+        let mut report = self.report(scope.clone());
+        let pending = report.status == ReportStatus::Pending;
+        if pending {
+            report.summary = None;
+        }
+        Ok(ReportView {
+            schema_version: 1,
+            window: selection.window,
+            requested_range: selection.query.range(),
+            generated_at: (!pending).then_some(report.as_of),
+            stale: false,
+            refresh: ViewRefresh {
+                state: if pending {
+                    RefreshState::Pending
+                } else {
+                    RefreshState::Idle
+                },
+                report_id: pending.then(|| report.report_id.clone()),
+                retry_after_seconds: if pending { 2 } else { 0 },
+            },
+            report,
+        })
+    }
     fn check_read_budget(&self) -> Result<()> {
         self.check()
     }
