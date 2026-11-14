@@ -127,3 +127,39 @@ pub(super) async fn verify_runtime() {
     assert!(matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==13));
     db.drop().await.unwrap();
 }
+
+#[test]
+fn index_operations_do_not_require_the_disabled_allocation_namespace() {
+    use cma_service_auth::mongodb_authority::MongoAuthorityMode;
+    for build in [false, true] {
+        let role = role_with_index_operation("cma", &["activity"], build, false);
+        let grants = role.get_array("privileges").unwrap().clone();
+        for authority in [
+            MongoAuthorityMode::Isolated,
+            MongoAuthorityMode::SharedSchema,
+        ] {
+            verify_index_operation_authority(
+                &status(grants.clone()),
+                "cma",
+                authority,
+                &["activity"],
+                build,
+            )
+            .unwrap();
+        }
+        // Optional allocation grants do not make operation grants optional.
+        assert!(verify_index_operation_authority(
+            &status(
+                required_role("cma")
+                    .get_array("privileges")
+                    .unwrap()
+                    .clone()
+            ),
+            "cma",
+            MongoAuthorityMode::Isolated,
+            &["activity"],
+            build,
+        )
+        .is_err());
+    }
+}
