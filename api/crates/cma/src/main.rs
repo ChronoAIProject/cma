@@ -1,5 +1,13 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
 
+// Avoid libc allocator retention and contention across async worker threads.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(test)]
+#[path = "../../cmaeg/tests/support/global_allocator.rs"]
+mod global_allocator_tests;
+
 mod activity;
 mod agent_access;
 mod agent_access_worker;
