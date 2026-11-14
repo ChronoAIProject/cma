@@ -13,6 +13,7 @@ mod admission;
 mod capture;
 mod projection;
 mod records;
+mod storage;
 pub(super) use admission::validate_for_admission;
 
 const CAPTURE_BUDGET: Duration = Duration::from_secs(5);

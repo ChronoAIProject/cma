@@ -7,7 +7,21 @@ use mongodb::options::{ClientOptions, ReadConcern, WriteConcern};
 use mongodb::Client;
 
 use super::*;
-use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
+
+mod generation;
+use crate::store::sandbox_maintenance::mongo_integration_tests::{
+    database as base_database, fixture,
+};
+
+async fn database() -> (Client, String, MongoSandboxStore) {
+    let (client, name, store) = base_database().await;
+    // Provision the actual optional log schema in the disposable fixture only.
+    // Observation never creates missing collections to manufacture coverage.
+    crate::store::agent_log_segments::schema::migrate(&client.database(&name))
+        .await
+        .unwrap();
+    (client, name, store)
+}
 
 fn context(store: &MongoSandboxStore) -> RuntimeActivitySourceContext {
     RuntimeActivitySourceContext {
@@ -109,9 +123,32 @@ async fn read_only_observer_uses_snapshot_watermark_and_content_free_queries() {
     let mut finds = 0;
     for (name, command) in &commands {
         assert!(
-            matches!(name.as_str(), "hello" | "find" | "getMore" | "killCursors"),
+            matches!(
+                name.as_str(),
+                "hello" | "listCollections" | "find" | "getMore" | "killCursors"
+            ),
             "observer command {name}"
         );
+        if name == "listCollections" {
+            assert_eq!(
+                command.get_document("filter").unwrap(),
+                &doc! {"name":{"$in":storage::COLLECTIONS.to_vec()}}
+            );
+            assert_eq!(
+                command
+                    .get_document("cursor")
+                    .unwrap()
+                    .get_i32("batchSize")
+                    .ok()
+                    .map(i64::from)
+                    .or_else(|| command
+                        .get_document("cursor")
+                        .unwrap()
+                        .get_i64("batchSize")
+                        .ok()),
+                Some(storage::COLLECTIONS.len() as i64 + 1)
+            );
+        }
         if name == "find" {
             finds += 1;
             let concern = command.get_document("readConcern").unwrap();
