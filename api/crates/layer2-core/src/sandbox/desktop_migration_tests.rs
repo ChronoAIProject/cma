@@ -155,7 +155,7 @@ async fn desktop_revalidates_active_state_and_exact_runtime_after_earlier_author
         assert!(matches!(
             fixture
                 .service
-                .open_authorized(&fixture.owner, &fixture.agent_id, id, runtime)
+                .open_legacy_with_binding(&fixture.owner, &fixture.agent_id, id, runtime)
                 .await,
             Err(DesktopError::Unavailable)
         ));
