@@ -75,13 +75,25 @@ class OriginalProcessTests(NoExternalCommands):
                      self.assertRaisesRegex(RuntimeError, 'original_process_changed'):
                     o.build('s1-abort-before-stop', release(), pause_plan=path)
 
-    def test_old_plan_without_original_identity_fails_closed(self):
+    def test_missing_or_incomplete_saved_identity_fails_closed(self):
         with tempfile.TemporaryDirectory() as root:
-            _, paused, _, _, path = planned_pause(root)
-            saved = g.load(path); del saved['operation']['original_process']; g.save(path, saved)
-            with patch.object(g, 'get', return_value=paused), \
-                 self.assertRaisesRegex(RuntimeError, 'saved_original_process_required'):
-                o.build('s1-abort-before-stop', release(), pause_plan=path)
+            _, paused, rs, pods, path = planned_pause(root)
+            saved = g.load(path)
+            for missing in ('original_process', 'deployment_uid', 'rs_uid', 'pod_uid',
+                            'template_sha256', 'containers', 'container_id'):
+                incomplete = copy.deepcopy(saved)
+                identity = incomplete['operation']['original_process']
+                if missing == 'original_process':
+                    del incomplete['operation'][missing]
+                elif missing == 'container_id':
+                    del identity['containers'][0][missing]
+                else:
+                    del identity[missing]
+                g.save(path, incomplete)
+                with self.subTest(missing=missing), patch.object(g, 'get', return_value=paused), \
+                     patch.object(checkpoints, 'cohort', return_value=({'rs': rs}, pods)), \
+                     self.assertRaisesRegex(RuntimeError, 'original_(process|deployment)'):
+                    o.build('s1-abort-before-stop', release(), pause_plan=path)
         with self.assertRaisesRegex(RuntimeError, 'pause_requires_unpaused_legacy_one'):
             g.deployment_checkpoint(deployment(1, True), o.build('s1-pause', release()))
 
@@ -125,7 +137,7 @@ class TemplatePreservationTests(NoExternalCommands):
         extra = {'topologyKey': 'example.com/rack', 'whenUnsatisfiable': 'ScheduleAnyway',
                  'maxSkew': 2, 'labelSelector': {'matchLabels': {'other': 'work'}}}
         for stage in ('s1', 's2'):
-            for prior in ('absent', 'empty', 'populated'):
+            for prior in ('absent', 'empty', 'poststart-only', 'populated'):
                 with self.subTest(stage=stage, prior=prior):
                     obj = deployment(1, True); ps = obj['spec']['template']['spec']
                     container = ps['containers'][0]
@@ -134,19 +146,21 @@ class TemplatePreservationTests(NoExternalCommands):
                     if prior != 'absent':
                         ps['topologySpreadConstraints'] = []
                         container['lifecycle'] = {}
-                    if prior == 'populated':
+                    if prior in ('poststart-only', 'populated'):
                         ps['topologySpreadConstraints'] = [copy.deepcopy(extra), {
                             'topologyKey': 'kubernetes.io/hostname', 'whenUnsatisfiable': 'DoNotSchedule',
                             'maxSkew': 3, 'minDomains': 2}]
                         container['lifecycle'] = {'postStart': {'exec': {'command': ['/bin/true']}},
                                                   'preStop': {'sleep': {'seconds': 10}}}
+                        if prior == 'poststart-only':
+                            del container['lifecycle']['preStop']
                     original = copy.deepcopy(obj)
                     op = o.build(stage + '-prepare', release()); input_op = copy.deepcopy(op)
                     after, old = o.transformed(obj, op)
                     actual = after['spec']['template']['spec']
                     self.assertEqual(obj, original)
                     self.assertEqual(op, input_op)
-                    if prior == 'populated':
+                    if prior in ('poststart-only', 'populated'):
                         self.assertEqual(actual['topologySpreadConstraints'][0], extra)
                         host = actual['topologySpreadConstraints'][1]
                         self.assertEqual((host['maxSkew'], host['minDomains']), (1, 2))
