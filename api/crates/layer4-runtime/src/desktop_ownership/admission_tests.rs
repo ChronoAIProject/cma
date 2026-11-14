@@ -99,3 +99,49 @@ async fn pending_custody_requires_tombstone_before_join_and_active_floor_after_j
             .retired
     );
 }
+
+#[tokio::test]
+async fn revoke_and_task_completion_share_one_durable_retirement() {
+    let f = Fixture::new();
+    let owner = f.accept(1).await;
+    let (started, waiting) = tokio::sync::oneshot::channel();
+    f.receiver
+        .register(Some(owner.clone()), move |session| async move {
+            started.send(()).unwrap();
+            assert!(session.run(std::future::pending::<()>()).await.is_err());
+        })
+        .await
+        .unwrap();
+    waiting.await.unwrap();
+    let before = f.receiver.persisted.load(Ordering::SeqCst);
+    f.receiver.revoke(owner.clone()).await.unwrap();
+    assert!(f.receiver.tasks.lock().await.is_empty());
+    assert_eq!(f.receiver.persisted.load(Ordering::SeqCst) - before, 1);
+    let retired = persistence::load(&f.receiver.root).unwrap().unwrap();
+    assert!(retired.retired && retired.owner == owner);
+    f.receiver.revoke(owner).await.unwrap();
+    assert_eq!(f.receiver.persisted.load(Ordering::SeqCst) - before, 1);
+    assert!(f.receiver.register(None, |_| async {}).await.is_err());
+}
+
+#[tokio::test]
+async fn unchanged_record_still_requires_current_durable_custody() {
+    for missing in [false, true] {
+        let f = Fixture::new();
+        let owner = f.accept(1).await;
+        f.receiver.revoke(owner).await.unwrap();
+        let before = f.receiver.persisted.load(Ordering::SeqCst);
+        let floor = f.receiver.root.join("floor.json");
+        if missing {
+            std::fs::remove_file(&floor).unwrap();
+        } else {
+            std::fs::write(&floor, b"damaged custody").unwrap();
+        }
+        let mut state = f.receiver.state.lock().unwrap();
+        let unchanged = state.record.clone().unwrap();
+        assert!(f.receiver.persist(&mut state, unchanged).is_err());
+        assert!(state.poisoned && state.legacy_closed && state.deadline.is_none());
+        assert_eq!(f.receiver.persisted.load(Ordering::SeqCst), before);
+        assert!(persistence::load(&f.receiver.root).is_err());
+    }
+}
