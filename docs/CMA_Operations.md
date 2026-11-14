@@ -745,6 +745,18 @@ not prove that a transaction failed to commit. Use the durable reconciliation
 result for that distinction. Timing instrumentation grants no authority and does
 not change startup checks, retries or readiness criteria.
 
+The pinned runtime defers the advisory command catalogue and goal snapshot on
+ACP session load until required preparation and complete history delivery have
+finished. Authentication, forced skill refresh, model/tool readiness and prepared
+close-before-load still gate completion. Metadata may arrive after the load
+response; first-turn skill and goal execution use their native paths. Deferred
+publication checks the exact session, generation and close state. At most 32
+session jobs run, with one latest replacement coalesced per session; overflow
+skips advisory publication and reports a fixed diagnostic. An in-flight read can
+finish after close, but cannot publish into a closed or replaced session. This
+behavior requires the updated runtime image; an API-only rollout does not change
+an existing Sandbox's provider bundle.
+
 Native inspection timings separate exclusive HTTP checkout, the authority graph,
 runtime policy, the process-status exchange and the fresh post-status home read.
 The graph and policy reads overlap. They and the status exchange are nested
@@ -1099,6 +1111,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS` | Total ordered-command bound, at least command bound and at most 1800; default 1800 |
 | `CHRONO_CLONE_DEPTH` | Git clone depth 1-1000; default 50 |
 | `CHRONO_ACTIVITY_ASYNC_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Enables bounded asynchronous request telemetry only. Explicit authorization and operations audits still synchronously await majority persistence. See request activity buffering below. |
+| `CHRONO_ACTIVITY_OPERATIONAL_READ_SAMPLING_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Owner approval required before activation. Samples only authenticated generic GET/HEAD HTTP 200 Sandbox/Workspace detail observations at 1/16 using record UUIDs. All other events, explicit domain/security audits and retention are unchanged. Omitted per-request evidence is unrecoverable; `cma_activity_operational_read_policy_total{decision="retained"} / {decision="sampled_out"}` counts decisions with no actor labels. Independent of async buffering; never enable to fix Activity listing. |
 | `CHRONO_ACTIVITY_RETENTION_DAYS` | Activity TTL, 1-3650 days; default 90 |
 | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` | Pre-auth network budget/burst; default 6000 |
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
@@ -2516,12 +2529,23 @@ exact `true` or `false`. With `true`, Cookie authentication joins the browser
 handle and its subject by their indexed keys in one Mongo aggregate. Both
 records retain their existing schema, revocation and token validation. Expired
 logins are rejected before interpreting subject authority. The post-verification
-custody check and the additional `/auth/session` logout check still run.
+custody check and final durable logout check still run on every browser request.
 
-Ordinary authenticated Cookie requests use two identity commands instead of
-three; `/auth/session` uses three instead of four, plus its settings read.
-No completed NyxID verification is reused on the normal path. The existing
-60-second outage fallback remains limited to `GET /auth/session`.
+With the final logout recheck, authenticated Cookie requests use three identity
+commands with the join and four without it; `/auth/session` adds its settings
+read. Every later request verifies with NyxID. Only overlapping callers can share
+an unfinished identical-credential verification. No completed-success cache or
+session outage fallback is available; an exhausted outage fails closed. See
+[identity policy](Identity_Outage_Policy.md) for exact live-receipt and retry rules.
+Completed-success reuse is deferred to #2002's authoritative revocation contract.
+
+Provider 429 observes Retry-After within the 2,500 ms/three-attempt budget. When
+that delay plus a complete attempt cannot fit, the response is a retryable
+`identity_unavailable` 503 with the remaining Retry-After. Compare per-minute
+`cma_identity_provider_calls_total` and `cma_identity_provider_results_total`
+(outcome `429`) across all replicas, stratified by route, endpoint and image.
+These are verification dispatch attempts and header outcomes; led/shared caller
+counters remain separate and must not inflate the upstream count.
 
 Rollback by setting the switch to `false` and restarting the API. No persisted
 format changes or data repair are required. Compare both paths using the
@@ -2673,6 +2697,26 @@ scan bytes, runtime inspections, checkout waits, CPU and route latency. Local
 correctness tests establish no production CPU or latency improvement; profile
 and production measurements remain required for #1421 and the #1786 rollout.
 
+### Activity list reads
+
+Operations uses `GET /api/v1/admin/activity?view=summary&limit=50`. The explicit
+summary view omits `detail`; requests without `view` retain complete records.
+Both require `ReadActivityLog`, use descending `(recorded_at, _id)` keyset
+pagination, fetch at most `limit + 1` rows, and never count or skip. Cursors use
+Mongo insertion time, not displayed event time. Pages are live observations,
+not a snapshot spanning multiple requests. Mongo execution is bounded to five
+seconds and one requested page batch; failures remain explicit.
+
+The nonunique `activity_recorded_at_id_desc` index has keys
+`{recorded_at:-1,_id:-1}`. Its explicit additive migration is
+`am-activity-page-index-v1`; requests and startup do not install it. Production
+builds require a lead-approved migration window and the reviewed release
+controller. Existing actor/action indexes and TTL remain unchanged. The release
+record must include plan, checksum, immutable image, index inventory, resource
+budget, and verified postconditions. See issue #1960 for the build/rollback plan.
+`cma_activity_read_seconds` reports Mongo list elapsed time with fixed `view`
+and `outcome` labels; it excludes HTTP authorization, names and audit append.
+
 ### Request activity buffering
 
 `CHRONO_ACTIVITY_ASYNC_ENABLED=false` preserves the existing awaited request
@@ -2810,6 +2854,14 @@ preserve all authority checks, read order, retained-upgrade exemptions and
 existing deadlines. They establish no end-to-end improvement on their own.
 
 ### Initial native readiness retry
+
+Claim-assignment observation has one five-second deadline. Pending reads start
+at least 250 ms apart, with response time counting toward that interval. Reads
+never overlap or catch up after a slow response, and no new read starts at the
+deadline. This allows up to 20 reads per window; delayed responses can use more
+of that budget than a full 250 ms sleep after each response. Include Kubernetes
+request load when measuring this observation change. It neither changes the
+retry switch nor shortens volume attachment or runtime boot.
 
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
 home readiness or create-bind deadline reached after validated Pending can use a
@@ -2983,3 +3035,17 @@ failure metadata. PR-A ignores ceiling enforcement and is not a valid recovery
 artifact after activation, even though its control decoder remains readable.
 Use a compatible forward fix. See the full
 [capacity contract and migration record](CMA_Admission_Control.md#capacity-ceilings-and-the-existing-consumer-reserve).
+
+### Retained usage view controls
+
+The activation and rollback packet is [CMA Usage Report Views](CMA_Usage_Report_Views.md).
+
+| Configuration | Default and behavior |
+| --- | --- |
+| `CHRONO_USAGE_REPORT_VIEWS_ENABLED` | `false`. Allows the new immutable retained-report writer only after the complete compatible reader/worker deployment and individual owner approval. Existing report endpoints remain available. |
+| `CHRONO_USAGE_REPORT_WARMER_ENABLED` | `false`. Separately approved background materialization; requires enabled views and explicit scheduling scopes. Uses existing leased workers and admission budgets. |
+| `CHRONO_USAGE_REPORT_FRESH_SECONDS` | `300`, bounded 60–3600 seconds. A committed snapshot older than this is returned as stale and may enqueue one replacement. |
+| `CHRONO_USAGE_REPORT_RETAIN_SECONDS` | `86400`, bounded 3600–86400 seconds. Fixed before children are written; Ready expiry is never extended in place. Must exceed freshness. |
+| `CHRONO_USAGE_REPORT_WARM_SECONDS` | `300`, bounded 60–3600 seconds. Scheduling cadence, with missed ticks skipped and one refresh coalesced per semantic key. |
+| `CHRONO_USAGE_REPORT_WARM_SCOPES` | `[]`. Strict JSON array of at most eight operator-approved `{principal, admin, sandbox_id}` scheduling scopes, at most 8192 bytes. No credentials. A canary Sandbox must currently belong to the named principal. Unfiltered Everyone requires explicit expansion approval. |
+| `CHRONO_USAGE_REPORT_VIEW_SCOPES` | `[]`. Required explicit writer canary cohort when retained views are enabled; at most eight strict `{principal, admin, sandbox_id}` scopes and 8192 bytes. A named Sandbox restricts new retained admission to that exact selected Sandbox. Unlisted callers/selections receive `report_view_disabled` and retain the old workflow. Removing a cohort stops new latest-view work but preserves compatible explicit report reads and accepted-job draining. Warm scopes must be contained in this cohort. |

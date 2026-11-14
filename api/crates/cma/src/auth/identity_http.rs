@@ -19,8 +19,9 @@ pub(super) async fn json(
     deadline: Instant,
     endpoint: Endpoint,
 ) -> Result<Value, Error> {
-    // Only a timeout before response headers is fallback-eligible. Once headers
+    // Only a timeout before response headers is retryable. Once headers
     // arrive, the body must complete and validate within the same attempt budget.
+    let mut call = super::identity_observations::Call::start(endpoint);
     let response = timeout_at(deadline, request.send())
         .await
         .map_err(|_| Error::Transient("timeout"))
@@ -31,11 +32,28 @@ pub(super) async fn json(
                 Error::Transient("connection") => Reason::Connection,
                 _ => Reason::Transport,
             };
+            call.finish(None);
             record(endpoint, Stage::ResponseHeaders, reason, None, error);
         })?;
     let status = response.status();
+    call.finish(Some(status.as_u16()));
     if matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
         let error = Error::status(status);
+        record(
+            endpoint,
+            Stage::Status,
+            Reason::HttpStatus,
+            Some(status.as_u16()),
+            &error,
+        );
+        return Err(error);
+    }
+    // A throttle is not successful identity evidence. Legal advisory headers
+    // must not hide its backoff or turn it into an invalid-evidence refusal.
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        let error = Error::RateLimited(super::identity_throttle::RetryAfter::from_headers(
+            response.headers(),
+        ));
         record(
             endpoint,
             Stage::Status,
