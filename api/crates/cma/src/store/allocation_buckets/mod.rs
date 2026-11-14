@@ -1,4 +1,5 @@
 //! Disposable daily/hourly projections; the allocated ledger remains authoritative.
+mod boundary;
 mod materialize;
 mod publication;
 mod reads;
@@ -44,6 +45,9 @@ struct DayBucket {
     day: u64,
     total: Slice,
     hours: Vec<Slice>,
+    // Boundary inputs have their own digest and are excluded from summary IO.
+    #[serde(skip)]
+    boundary: Option<boundary::Boundary>,
 }
 
 impl DayBucket {

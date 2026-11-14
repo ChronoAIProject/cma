@@ -3,16 +3,28 @@ use layer2_core::sandbox_usage::UsageEvent;
 
 /// Preserve the original event fold order. Summing independently rounded hour
 /// totals would change the daily f64 result and hide cross-hour revision gaps.
+#[cfg(test)]
 pub(super) fn build(
     state: &SandboxUsage,
     events: &[UsageEvent],
     range: Range,
+) -> Result<DayBucket> {
+    build_covered(state, events, range, range.to)
+}
+
+pub(super) fn build_covered(
+    state: &SandboxUsage,
+    events: &[UsageEvent],
+    range: Range,
+    queried_to: u64,
 ) -> Result<DayBucket> {
     if events.len() > 100_000
         || range.from >= range.to
         || range.seconds() > DAY
         || !range.from.is_multiple_of(DAY)
         || !range.to.is_multiple_of(HOUR)
+        || queried_to < range.to
+        || queried_to > range.from + DAY
         || events
             .windows(2)
             .any(|pair| pair[0].revision >= pair[1].revision)
@@ -24,9 +36,29 @@ pub(super) fn build(
     {
         return Err(MetricsError::Unavailable);
     }
-    let projection = |range| Slice {
-        range,
-        projection: allocation::project(state, events, range),
+    let foreign_scope = events
+        .iter()
+        .any(|e| e.sandbox_id != state.sandbox_id || e.owner != state.owner);
+    let projection = |range: Range| {
+        // The raw query excludes nonintersecting events before checking owner.
+        // Preserve that distinction for corrupt foreign-scope input as well.
+        let selected: Vec<_> = if foreign_scope {
+            events
+                .iter()
+                .filter(|e| e.ended_at > range.from && e.started_at < range.to)
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Slice {
+            range,
+            projection: allocation::project(
+                state,
+                if foreign_scope { &selected } else { events },
+                range,
+            ),
+        }
     };
     let bucket = DayBucket {
         version: 1,
@@ -51,6 +83,7 @@ pub(super) fn build(
                 })
             })
             .collect(),
+        boundary: Some(boundary::Boundary::new(state, events, queried_to)),
     };
     bucket.validate()?;
     Ok(bucket)

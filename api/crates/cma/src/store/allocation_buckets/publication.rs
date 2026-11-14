@@ -132,6 +132,18 @@ impl ReportingStore {
                 {
                     return Err(MetricsError::Unavailable);
                 }
+                if old.revision == bucket.revision
+                    && old
+                        .boundary
+                        .as_ref()
+                        .zip(bucket.boundary.as_ref())
+                        .is_some_and(|(prior, next)| {
+                            prior.queried_to > next.queried_to
+                                || (prior.queried_to == next.queried_to && prior != next)
+                        })
+                {
+                    return Err(MetricsError::Unavailable);
+                }
             }
             document.insert("publication_lane", lease.lane.key());
             document.insert("publication_generation", lease.generation);
