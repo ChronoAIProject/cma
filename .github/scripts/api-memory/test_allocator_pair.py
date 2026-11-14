@@ -11,6 +11,18 @@ import hierarchy_seed as fixture
 
 
 class AllocatorQualificationTests(unittest.TestCase):
+    def test_swap_readback_keeps_process_cgroup_and_vm_units_separate(self):
+        values = ['VmSwap:\t16 kB\n', '32768\n', 'MemAvailable: 4096 kB\nSwapTotal: 1024 kB\nSwapFree: 512 kB\n']
+        with patch.object(fixture.pair, 'docker', side_effect=values):
+            value = fixture.swap_snapshot({'container': 'owned'})
+        self.assertEqual(value['process_vm_swap_kib'], 16)
+        self.assertEqual(value['cgroup_memory_swap_current_bytes'], 32768)
+        self.assertEqual(value['linux_vm']['SwapFree_kib'], 512)
+        with patch.object(fixture.pair, 'docker', side_effect=RuntimeError('private')):
+            failed = fixture.swap_snapshot({'container': 'owned'})
+        self.assertNotIn('private', json.dumps(failed))
+        self.assertEqual(failed['cgroup_readback_failure'], 'RuntimeError')
+
     def test_fixture_refusal_retains_status_without_body_or_subject(self):
         error = driver.repeat.HttpResponseError(401, 37)
         with patch.object(fixture.repeat, 'get', side_effect=error):

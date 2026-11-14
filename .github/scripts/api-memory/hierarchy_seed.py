@@ -75,6 +75,27 @@ def validate_body(route, body):
         raise ValueError('workspace hierarchy fixture changed')
 
 
+def swap_snapshot(config):
+    """One pre/postflight readback; no new collector or acceptance criterion."""
+    snapshot = {}
+    for name, path in (('process', '/proc/1/status'), ('cgroup', '/sys/fs/cgroup/memory.swap.current'),
+                       ('vm', '/proc/meminfo')):
+        try:
+            text = pair.docker('exec', config['container'], 'cat', path)
+            if name == 'cgroup':
+                snapshot['cgroup_memory_swap_current_bytes'] = int(text.strip())
+            else:
+                fields = {line.partition(':')[0]: line.partition(':')[2].strip() for line in text.splitlines()}
+                if name == 'process':
+                    snapshot['process_vm_swap_kib'] = int(fields['VmSwap'].split()[0])
+                else:
+                    snapshot['linux_vm'] = {key + '_kib': int(fields[key].split()[0])
+                                            for key in ('MemAvailable', 'SwapTotal', 'SwapFree')}
+        except Exception as error:
+            snapshot[name + '_readback_failure'] = type(error).__name__
+    return snapshot
+
+
 class Fixture:
     subject = SUBJECT
 
@@ -140,4 +161,5 @@ print(JSON.stringify(result));
                                  or s['parent_revision'] != 1 or s['workspace_revision'] != 1 for s in states):
             raise RuntimeError('fixture acquired lifecycle work or changed')
         return {'fixture_sha256': self.digest, 'reads': checks, 'states': states,
+                'swap_readbacks': {kind: swap_snapshot(config) for kind, config in configs.items()},
                 'limitation': 'Dormant failed parent and ready workspace; no live runtime, Agents or provider traffic.'}
