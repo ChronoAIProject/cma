@@ -408,3 +408,9 @@ mod retained_restart;
 mod retained_views;
 
 mod retained_measurement;
+
+mod retained_windows;
+
+mod bucket_ranges;
+
+mod range_measurement;
