@@ -53,8 +53,18 @@ fn fixture_proof(final_observation: RuntimeActivitySnapshot) -> RuntimeActivityP
     }
 }
 
-async fn transaction(store: &MongoSandboxStore) -> ClientSession {
-    let mut session = store.client.start_session().await.unwrap();
+async fn transaction(store: &MongoSandboxStore, proof: &RuntimeActivityProof) -> ClientSession {
+    let mut session = store
+        .client
+        .start_session()
+        .causal_consistency(true)
+        .await
+        .unwrap();
+    let watermark = proof.final_observation.watermark;
+    session.advance_operation_time(mongodb::bson::Timestamp {
+        time: watermark.seconds,
+        increment: watermark.increment,
+    });
     session
         .start_transaction()
         .read_concern(ReadConcern::snapshot())
@@ -68,7 +78,7 @@ async fn transaction(store: &MongoSandboxStore) -> ClientSession {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn read_only_observer_uses_snapshot_watermark_and_content_free_queries() {
     let (admin, name, original) = database().await;
-    let (sandbox, _) = fixture(&original, "sbx_activity_read").await;
+    let (sandbox, agent) = fixture(&original, "sbx_activity_read").await;
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let mut options = ClientOptions::parse(uri).await.unwrap();
     let trace = Arc::new(Mutex::new(Vec::<(String, Document)>::new()));
@@ -128,6 +138,38 @@ async fn read_only_observer_uses_snapshot_watermark_and_content_free_queries() {
             .unwrap()
             .unwrap()
     );
+    // Admission starts a distinct causal transaction after the saved boundary.
+    // The observer assertions above are evaluated before any admission writes.
+    let proof = fixture_proof(snapshot);
+    trace.lock().unwrap().clear();
+    let mut session = transaction(&store, &proof).await;
+    validate_for_admission(
+        &store,
+        &before,
+        &[agent],
+        &proof,
+        now_ms().unwrap(),
+        &mut session,
+    )
+    .await
+    .unwrap();
+    session.abort_transaction().await.unwrap();
+    let commands = trace.lock().unwrap().clone();
+    let first = commands
+        .iter()
+        .find(|(_, command)| command.get_bool("startTransaction") == Ok(true))
+        .unwrap();
+    let lower = first
+        .1
+        .get_document("readConcern")
+        .unwrap()
+        .get_timestamp("afterClusterTime")
+        .unwrap();
+    let watermark = proof.final_observation.watermark;
+    assert_eq!(
+        (lower.time, lower.increment),
+        (watermark.seconds, watermark.increment)
+    );
     admin.database(&name).drop().await.unwrap();
 }
 
@@ -144,7 +186,7 @@ async fn admission_compares_original_vector_and_fences_without_refreshing_proof(
         .await
         .unwrap()
         .unwrap();
-    let mut session = transaction(&store).await;
+    let mut session = transaction(&store, &proof).await;
     validate_for_admission(
         &store,
         &root,
@@ -172,7 +214,7 @@ async fn admission_compares_original_vector_and_fences_without_refreshing_proof(
         )
         .await
         .unwrap();
-    let mut session = transaction(&store).await;
+    let mut session = transaction(&store, &proof).await;
     assert!(validate_for_admission(
         &store,
         &root,
@@ -211,7 +253,7 @@ async fn concurrent_parent_or_agent_writer_conflicts_with_admission_fence() {
             .await
             .unwrap()
             .unwrap();
-        let mut session = transaction(&store).await;
+        let mut session = transaction(&store, &proof).await;
         capture::current(
             &store,
             &sandbox.id,
