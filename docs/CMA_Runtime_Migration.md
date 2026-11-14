@@ -66,8 +66,22 @@ self-approved clearance. The service independently matches the configured approv
 target, source qualification, current identity and exact server authority entry.
 
 Admission acquires the common desktop/migration exclusion guard before its source
-snapshot and keeps it through commit or unknown-commit reconciliation. It checks
-all child/work/session evidence, compares the original complete activity vector,
+snapshot and keeps it through commit or unknown-commit reconciliation.
+Scoped admission reserves one of 16 process-local custody entries before database
+work, then transfers the complete admission/commit/reconciliation operation to an
+owned task. Its 30-second response deadline and caller cancellation do not cancel
+the driver or release desktop exclusion. A definite commit, definite abort or exact
+receipt/event reconciliation releases custody. Missing commit time, a mismatched
+receipt, a read failure or panic after commit dispatch leaves that Sandbox closed
+to desktop opening and new admission for the process lifetime. These unresolved
+entries have no TTL, eviction or automatic unlock, and count against the bound;
+capacity refusal happens before database effects. This is a conservative availability
+limit: a caller error does not prove abort, and a restart is not a supported way to
+resolve uncertainty or qualify a new observation source. Exact accepted replay is
+still read-only. Admission from a task-local claimed-work scope refuses before
+spawning; the supported operator/sweeper scope must not lose leased authority.
+
+Admission checks all child/work/session evidence, compares the original complete activity vector,
 fences the corresponding durable writers, and queues plus starts ImageRotation
 in the same transaction and revision increment. There is no delayed custom queue
 that can start later using expired clearance. The verified basis is stored with

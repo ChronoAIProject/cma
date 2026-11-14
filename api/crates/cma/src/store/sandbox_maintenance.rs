@@ -20,6 +20,7 @@ use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRe
 
 mod consented;
 mod custom_runtime;
+mod desktop_custody;
 mod evidence;
 #[cfg(test)]
 pub(crate) mod mongo_integration_tests;
@@ -141,14 +142,22 @@ async fn schedule_receipt(
     store: &MongoSandboxStore,
     request: MaintenanceRequest,
 ) -> Result<transaction::MaintenanceReceipt, SandboxStoreError> {
-    let _desktop = if request.requires_desktop_guard() {
-        Some(
-            layer2_core::sandbox::try_acquire_runtime_migration_guard(request.sandbox_id())
-                .map_err(|_| SandboxStoreError::Conflict)?,
-        )
-    } else {
-        None
-    };
+    if request.requires_desktop_guard() {
+        let id = request.sandbox_id().clone();
+        let store = store.clone();
+        return desktop_custody::run(&id, move |custody| async move {
+            schedule_owned(&store, request, Some(custody)).await
+        })
+        .await;
+    }
+    schedule_owned(store, request, None).await
+}
+
+async fn schedule_owned(
+    store: &MongoSandboxStore,
+    request: MaintenanceRequest,
+    mut custody: Option<desktop_custody::Custody>,
+) -> Result<transaction::MaintenanceReceipt, SandboxStoreError> {
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         if attempt > 0 {
@@ -201,10 +210,33 @@ async fn schedule_receipt(
                 return Err(error);
             }
         }
+        if let Some(custody) = &mut custody {
+            custody.commit_started();
+        }
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(receipt),
-            CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+            CommitOutcome::Committed => {
+                if let Some(custody) = &mut custody {
+                    custody.confirmed();
+                }
+                return Ok(receipt);
+            }
+            CommitOutcome::Retry(error) => {
+                if let Some(custody) = &mut custody {
+                    custody.confirmed();
+                }
+                last_transient = Some(error.to_string());
+            }
             CommitOutcome::Unknown(error) => {
+                if let Some(custody) = &mut custody {
+                    // Already owned before effects. Do not acquire another
+                    // reconciliation slot or move finality outside that owner.
+                    custody
+                        .reconcile(session.operation_time(), |snapshot_time| {
+                            reconcile(store, &receipt, snapshot_time)
+                        })
+                        .await?;
+                    return Ok(receipt);
+                }
                 let snapshot_time = session.operation_time().ok_or_else(|| {
                     SandboxStoreError::Unavailable(format!(
                         "sandbox maintenance commit remained unknown without an operation time: {error}"
@@ -230,6 +262,9 @@ async fn schedule_receipt(
                 })?;
             }
             CommitOutcome::Failed(error) => {
+                if let Some(custody) = &mut custody {
+                    custody.confirmed();
+                }
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         }
