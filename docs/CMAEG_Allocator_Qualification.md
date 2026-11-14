@@ -13,7 +13,9 @@ after all acknowledgements and a zero-live-payload check. After 256 warmup
 rounds, the remaining fixed schedule must stay within 24 MiB of the warm RSS
 baseline. The test performs 4096 rounds, has a 120-second deadline, and fails
 when procfs RSS is unavailable. It uses no credentials, database or network.
-The final worker joins and zero-live-payload check are mandatory.
+The final worker joins and zero-live-payload check are mandatory. The final RSS
+sample must also meet the same retention bound, and completion (including
+startup and worker shutdown) must remain within the deadline.
 
 The normal Dockerfile runs this gate before its existing sandbox and nine-case
 media gates. An alternative packaging route must execute all three gates on
@@ -25,7 +27,10 @@ Release images use the official Dockerfile's `rust:1.96.1-alpine` toolchain,
 For linux/amd64, use the x86_64 compiler and Alpine musl linker from that image.
 Do not replace the Rust build stage with an unqualified cross-compiled ELF.
 `cargo zigbuild` can replace libc's allocator even when the resulting ELF is
-reported as static musl.
+reported as static musl. Passing a memory sample does not authorize that build
+route: the release contract also requires the official native Cargo build and
+the runtime copy from its qualified output. Local preview packaging is not a
+release target.
 
 Record the source and Cargo.lock hashes, builder index and platform image
 identities, Rust/Cargo/cc/musl versions, libc archive hash, executable hash and

@@ -68,6 +68,10 @@ fn rss_kib() -> io::Result<usize> {
     // Missing procfs or an unsupported platform is a failed qualification.
     // Never report a skipped platform as a successful memory bound.
     let status = std::fs::read_to_string("/proc/self/status")?;
+    parse_rss_kib(&status)
+}
+
+fn parse_rss_kib(status: &str) -> io::Result<usize> {
     status
         .lines()
         .find_map(|line| line.strip_prefix("VmRSS:"))
@@ -76,13 +80,37 @@ fn rss_kib() -> io::Result<usize> {
         .ok_or_else(|| io::Error::other("VmRSS in KiB is unavailable"))
 }
 
-fn sample(boundary: &str, started: Instant) -> io::Result<usize> {
-    let live = LIVE.load(Ordering::Acquire);
+fn check_live_blocks(live: usize) -> io::Result<()> {
     if live != 0 {
         return Err(io::Error::other(
             "allocator test retained live payload blocks",
         ));
     }
+    Ok(())
+}
+
+fn check_deadline(elapsed: Duration) -> io::Result<()> {
+    if elapsed >= DEADLINE {
+        return Err(io::Error::other(
+            "allocator qualification deadline exceeded",
+        ));
+    }
+    Ok(())
+}
+
+fn check_retention(baseline: usize, rss: usize) -> io::Result<()> {
+    let retained = rss.saturating_sub(baseline);
+    if retained > RETAINED_LIMIT_KIB {
+        return Err(io::Error::other(format!(
+            "freed allocations retained {retained} KiB above warm baseline; limit {RETAINED_LIMIT_KIB} KiB"
+        )));
+    }
+    Ok(())
+}
+
+fn sample(boundary: &str, started: Instant) -> io::Result<usize> {
+    let live = LIVE.load(Ordering::Acquire);
+    check_live_blocks(live)?;
     let rss = rss_kib()?;
     println!(
         "allocator-self-test boundary={boundary} live_blocks={live} rss_kib={rss} elapsed_ms={}",
@@ -91,16 +119,15 @@ fn sample(boundary: &str, started: Instant) -> io::Result<usize> {
     Ok(rss)
 }
 
-fn exercise(senders: &[mpsc::SyncSender<Vec<Block>>], done: &mpsc::Receiver<()>) -> io::Result<()> {
-    let started = Instant::now();
+fn exercise(
+    senders: &[mpsc::SyncSender<Vec<Block>>],
+    done: &mpsc::Receiver<()>,
+    started: Instant,
+) -> io::Result<usize> {
     let mut baseline = 0;
     let mut retained = 0;
     for round in 0..ROUNDS {
-        if started.elapsed() >= DEADLINE {
-            return Err(io::Error::other(
-                "allocator qualification deadline exceeded",
-            ));
-        }
+        check_deadline(started.elapsed())?;
         for (worker, sender) in senders.iter().enumerate() {
             let mut blocks = Vec::with_capacity(BLOCKS);
             for item in 0..BLOCKS {
@@ -132,12 +159,8 @@ fn exercise(senders: &[mpsc::SyncSender<Vec<Block>>], done: &mpsc::Receiver<()>)
             }
         }
     }
-    if retained > RETAINED_LIMIT_KIB {
-        return Err(io::Error::other(format!(
-            "freed allocations retained {retained} KiB above warm baseline; limit {RETAINED_LIMIT_KIB} KiB"
-        )));
-    }
-    Ok(())
+    check_retention(0, retained)?;
+    Ok(baseline)
 }
 
 pub fn run() -> io::Result<()> {
@@ -169,7 +192,7 @@ pub fn run() -> io::Result<()> {
             })?);
             senders.push(sender);
         }
-        exercise(&senders, &done)
+        exercise(&senders, &done, started)
     })();
     // Close both directions before joining, including partial startup/error
     // paths, so a blocked acknowledgement cannot strand a persistent worker.
@@ -180,11 +203,18 @@ pub fn run() -> io::Result<()> {
         worker_failed |= worker.join().is_err();
     }
     let final_sample = sample("quiesced", started);
-    result?;
+    let baseline = result?;
     if worker_failed {
         return Err(io::Error::other("allocator qualification worker panicked"));
     }
-    final_sample?;
+    // Worker teardown belongs to qualification too. Neither late completion nor
+    // retention seen only after the final round may turn into a successful gate.
+    check_retention(baseline, final_sample?)?;
+    check_deadline(started.elapsed())?;
     println!("allocator-self-test outcome=ok");
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "allocator_self_test/tests.rs"]
+mod tests;
