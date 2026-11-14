@@ -24,6 +24,7 @@ export class LocalUsageMetrics {
   readonly ownerOverrides = new Map<number, Partial<UsageOwnerAllocation>>();
   ownerFailure = 0;
   failure = 0;
+  retryAfterSeconds?: number;
   pending = false;
   /** Read-only session exposure; the test may change it after an admin save. */
   measuredVisible = false;
@@ -56,6 +57,10 @@ export class LocalUsageMetrics {
       if (this.failure)
         return route.fulfill({
           status: this.failure,
+          headers:
+            this.retryAfterSeconds === undefined
+              ? {}
+              : { 'Retry-After': String(this.retryAfterSeconds) },
           json: {
             status: this.failure,
             title: 'Usage unavailable',

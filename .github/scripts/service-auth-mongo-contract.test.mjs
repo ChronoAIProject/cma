@@ -5,8 +5,8 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Each row is one former invocation, including both include-ignored cases and
-// nextest's existing exact owner-key contract. Match substrings explicitly.
+// Independent inventory of every invocation, including replica delivery and
+// the exact owner-key contract. Check complete arguments in source and archive mode.
 const selections = [
   ['package(=cmaeg) and kind(lib) and test(~optional_forms_storage)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)', 'only', true],
@@ -113,7 +113,7 @@ for (const reuse of [false, true]) {
   for (const scenario of ['test-error', 'cleanup-error', 'foreign-container']) test(`${reuse ? 'archive' : 'source'}: ${scenario} fails without deleting foreign containers`, () => {
     const f = fixture(reuse, scenario);
     try {
-      assert.throws(f.run);
+      assert.throws(f.run, error => error.status === (scenario === 'test-error' ? 8 : 1));
       const removals = f.calls().filter(row => row.args[0] === 'rm');
       assert.equal(removals.length, scenario === 'foreign-container' ? 0 : 1);
       assert.equal(f.calls().filter(row => row.command === 'cargo').length, scenario === 'foreign-container' ? 0 : scenario === 'test-error' ? 1 : selections.length);
