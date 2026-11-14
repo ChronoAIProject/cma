@@ -40,6 +40,7 @@ mod agent_provenance_inventory;
 mod agent_reads;
 mod agent_task_status;
 mod agent_title_claims;
+mod agent_title_effect;
 mod agent_title_retry;
 mod agent_title_state;
 mod agent_title_writes;
