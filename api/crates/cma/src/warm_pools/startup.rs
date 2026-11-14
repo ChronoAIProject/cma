@@ -30,21 +30,39 @@ impl NativeWarmPools {
                     home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
                 })
                 .map_err(|_| WarmPoolError::Unavailable)?;
-            await_ready(self.store.as_ref(), provider, &plan, STARTUP_WARMUP_LIMIT).await?;
+            await_ready_with_fencing(
+                self.store.as_ref(),
+                provider,
+                &plan,
+                STARTUP_WARMUP_LIMIT,
+                self.target_fencing,
+            )
+            .await?;
         }
         Ok(())
     }
 }
 
+#[cfg(test)]
 pub(super) async fn await_ready(
     store: &dyn PoolTargetStore,
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
     limit: Duration,
 ) -> Result<(), WarmPoolError> {
+    await_ready_with_fencing(store, provider, plan, limit, false).await
+}
+
+async fn await_ready_with_fencing(
+    store: &dyn PoolTargetStore,
+    provider: &dyn NativePoolControl,
+    plan: &NativePoolConfiguration,
+    limit: Duration,
+    target_fencing: bool,
+) -> Result<(), WarmPoolError> {
     tokio::time::timeout(limit, async {
         loop {
-            match step(store, provider, plan).await {
+            match step(store, provider, plan, target_fencing).await {
                 Ok(true) => return Ok(()),
                 Ok(false) => {}
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),
@@ -61,6 +79,7 @@ async fn step(
     store: &dyn PoolTargetStore,
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
+    target_fencing: bool,
 ) -> Result<bool, WarmPoolError> {
     let target = store
         .list()
@@ -122,7 +141,7 @@ async fn step(
                 claimed.binding = Some(existing.binding);
             }
         }
-        reconcile_claimed(store, provider, claimed).await?;
+        reconcile_claimed(store, provider, claimed, target_fencing).await?;
     }
     Ok(false)
 }

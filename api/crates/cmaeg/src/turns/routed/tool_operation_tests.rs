@@ -103,7 +103,7 @@ async fn stable_keys_replay_but_distinct_keys_send_identical_content_and_survive
         storage::bytes(&first).unwrap(),
         storage::bytes(&second).unwrap()
     );
-    let store = ReplyStore(h.setup.journal().clone());
+    let store = ReplyStore(h.setup.journal().clone(), None);
     assert_eq!(
         store.close(&h.setup.plan, h.setup.target()).await.unwrap(),
         ToolReplyStatus::Confirmed
@@ -215,7 +215,7 @@ async fn concurrent_duplicate_calls_have_one_send_and_retry_the_retained_receipt
 #[tokio::test]
 async fn operation_cap_rejects_before_writes_but_keeps_old_receipts_replayable() {
     let setup = Setup::new(supported()).await;
-    let store = ReplyStore(setup.journal().clone());
+    let store = ReplyStore(setup.journal().clone(), None);
     for index in 0..64 {
         let key = index.to_string();
         let Admission::Claimed(claim) = store
@@ -273,7 +273,7 @@ async fn ambiguous_admission_or_preparation_never_produces_a_send_permission() {
     for prepare in [false, true] {
         for persisted in [false, true] {
             let setup = Setup::new(supported()).await;
-            let store = ReplyStore(setup.journal().clone());
+            let store = ReplyStore(setup.journal().clone(), None);
             let id = if prepare {
                 operation_id(&setup, "ambiguous")
             } else {
@@ -351,7 +351,7 @@ async fn receipt_storage_loss_stays_unknown_and_persisted_receipts_reconcile_bef
     for guard in [false, true] {
         for persisted in [false, true] {
             let setup = Setup::new(supported()).await;
-            let store = ReplyStore(setup.journal().clone());
+            let store = ReplyStore(setup.journal().clone(), None);
             let Admission::Claimed(claim) = store
                 .admit_keyed(
                     &setup.plan,
@@ -421,7 +421,7 @@ async fn rejected_unsupported_and_unknown_receipts_are_replayed_without_new_effe
         },
     ] {
         let setup = Setup::new(supported()).await;
-        let store = ReplyStore(setup.journal().clone());
+        let store = ReplyStore(setup.journal().clone(), None);
         let Admission::Claimed(claim) = store
             .admit_keyed(
                 &setup.plan,

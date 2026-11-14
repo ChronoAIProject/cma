@@ -15,110 +15,11 @@ mod home_policy_tests;
 #[path = "retirement_tests.rs"]
 mod retirement_tests;
 
-fn bounds() -> ProfileCapacityBounds {
-    ProfileCapacityBounds {
-        min_cpu_millis: 100,
-        max_cpu_millis: 16000,
-        min_memory_mib: 128,
-        max_memory_mib: 32768,
-    }
-}
-
-async fn fixture(
-    count: u8,
-) -> (
-    Client,
-    String,
-    MongoSandboxStore,
-    MongoProfileStore,
-    SandboxProfile,
-) {
-    let (client, name) = database("warmup").await;
-    let mut store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    store.warm_runtime_version = Some(IMAGE.into());
-    let profiles = MongoProfileStore::open(&client, &name).await.unwrap();
-    let source = sandbox("sbx_unused", "unused");
-    let mut profile = SandboxProfile {
-        internal: false,
-        id: source.profile.id,
-        owner: source.owner,
-        name: "Warm environment".into(),
-        description: String::new(),
-        visibility: ProfileVisibility::Public,
-        availability: Default::default(),
-        forked_from: None,
-        uses_count: 0,
-        draft: source.profile.content,
-        draft_version: 1,
-        created_at: NOW.into(),
-        updated_at: NOW.into(),
-        retired_at: None,
-    };
-    profiles
-        .create_sandbox_profile(profile.clone())
-        .await
-        .unwrap();
-    let scanner: [String; 0] = [];
-    profiles
-        .publish_sandbox_profile(&profile.id, 1, NOW.into(), bounds(), &scanner)
-        .await
-        .unwrap();
-    profile.availability.warmup_enabled = true;
-    profile.availability.warmup_count = count;
-    profile.draft_version = 2;
-    profiles
-        .save_sandbox_draft(1, profile.clone())
-        .await
-        .unwrap();
-    (client, name, store, profiles, profile)
-}
-
-async fn reconcile(store: &MongoSandboxStore, profile: &SandboxProfile) {
-    store
-        .reconcile_warmup_target(
-            &profile.id,
-            IMAGE,
-            &[],
-            ProvisioningExecution::default(),
-            NOW,
-        )
-        .await
-        .unwrap();
-}
-
-async fn records(store: &MongoSandboxStore) -> Vec<WarmSandbox> {
-    store
-        .warm_sandboxes
-        .find(doc! {})
-        .await
-        .unwrap()
-        .try_collect::<Vec<_>>()
-        .await
-        .unwrap()
-        .iter()
-        .map(|document| crate::store::warm_sandboxes::read(document).unwrap())
-        .collect()
-}
-
-async fn make_ready(store: &MongoSandboxStore) -> SandboxId {
-    let claim = store.claim_warmup_work(NOW, LATER).await.unwrap().unwrap();
-    let mut next = claim.record.clone();
-    next.runtime = Some(RuntimeBinding {
-        boot_id: None,
-        runtime_id: format!("runtime-{}", next.id),
-        runtime_version: IMAGE.into(),
-        provision_generation: Some(1),
-        bound_at: NOW.into(),
-    });
-    next.installed_request_sha256 = Some("a".repeat(64));
-    next.state = WarmSandboxState::Ready;
-    let id = next.id.clone();
-    store
-        .finish_warmup_work(&claim, next, NOW, LATER)
-        .await
-        .unwrap();
-    id
-}
+#[path = "test_fixture.rs"]
+mod fixture;
+use fixture::{admission, bounds, expire, fixture, make_ready, reconcile, records, stamp};
+#[path = "lease_tests.rs"]
+mod lease_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -148,7 +49,8 @@ async fn concurrent_replenishment_caps_reservations_and_claims_are_exclusive() {
             );
             request.sandbox.owner = SubjectId::new(format!("visitor_{number}"));
             let request =
-                SandboxAdmission::new(request.sandbox, request.name, 20, NOW.into()).unwrap();
+                SandboxAdmission::new(request.sandbox, request.name, 20, stamp(0).as_str().into())
+                    .unwrap();
             store.admit_sandbox(request).await.unwrap()
         });
     }
@@ -253,7 +155,12 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
     let ready = make_ready(&store).await;
     let locator = MarketplaceLocator::Sandbox(profile.id.clone());
     let layer2_core::profiles::ForkedProfile::Sandbox(fork) = profiles
-        .fork_profile(&SubjectId::new("visitor"), &locator, 1, NOW.into())
+        .fork_profile(
+            &SubjectId::new("visitor"),
+            &locator,
+            1,
+            stamp(0).as_str().into(),
+        )
         .await
         .unwrap()
     else {
@@ -261,7 +168,7 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
     };
     let scanner: [String; 0] = [];
     let revision = profiles
-        .publish_sandbox_profile(&fork.id, 1, NOW.into(), bounds(), &scanner)
+        .publish_sandbox_profile(&fork.id, 1, stamp(0).as_str().into(), bounds(), &scanner)
         .await
         .unwrap();
     let mut copy = sandbox("sbx_copy", "copy");
@@ -270,7 +177,7 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
         copy,
         SandboxAdmissionName::Allocate("trigger-research".into()),
         10,
-        NOW.into(),
+        stamp(0).as_str().into(),
     )
     .unwrap();
     let SandboxAdmissionResult::Created(copy) = store.admit_sandbox(request).await.unwrap() else {
@@ -286,7 +193,7 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
             &profile.owner,
             &locator,
             ProfileVisibility::Private,
-            NOW.into(),
+            stamp(0).as_str().into(),
             bounds(),
             &scanner,
         )
@@ -314,7 +221,11 @@ async fn private_copies_and_unshared_profiles_cannot_consume_source_pool() {
 async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
     let (client, name, store, profiles, mut profile) = fixture(1).await;
     reconcile(&store, &profile).await;
-    let old = store.claim_warmup_work(NOW, LATER).await.unwrap().unwrap();
+    let old = store
+        .claim_warmup_work(stamp(0).as_str(), stamp(60).as_str())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(store
         .unowned_runtime_authority(&old.record.id, 1, "future-runtime")
         .await
@@ -327,7 +238,7 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
         .unwrap();
     let scanner: [String; 0] = [];
     profiles
-        .publish_sandbox_profile(&profile.id, 3, NOW.into(), bounds(), &scanner)
+        .publish_sandbox_profile(&profile.id, 3, stamp(0).as_str().into(), bounds(), &scanner)
         .await
         .unwrap();
     reconcile(&store, &profile).await;
@@ -341,12 +252,17 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
         WarmSandboxState::Retiring
     );
     assert!(matches!(
-        store.renew_warmup_work(&old, LATER).await,
+        store.renew_warmup_work(&old, stamp(60).as_str()).await,
         Err(SandboxStoreError::Conflict)
     ));
     assert!(matches!(
         store
-            .finish_warmup_work(&old, old.record.clone(), NOW, NOW)
+            .finish_warmup_work(
+                &old,
+                old.record.clone(),
+                stamp(0).as_str(),
+                stamp(0).as_str()
+            )
             .await,
         Err(SandboxStoreError::Conflict)
     ));
@@ -360,8 +276,9 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
     );
     // Replacement waits for exact teardown, so a provider outage cannot grow
     // an unbounded population of failed runtimes.
+    expire(&store, &old.record.id).await;
     let cleanup = store
-        .claim_warmup_work(LATER, "2026-09-05T00:02:00Z")
+        .claim_warmup_work(stamp(60).as_str(), stamp(120).as_str())
         .await
         .unwrap()
         .unwrap();
@@ -369,7 +286,7 @@ async fn changing_environment_retires_old_pool_and_fences_inflight_workers() {
     let mut retired = cleanup.record.clone();
     retired.state = WarmSandboxState::Retired;
     store
-        .finish_warmup_work(&cleanup, retired, LATER, LATER)
+        .finish_warmup_work(&cleanup, retired, stamp(60).as_str(), stamp(60).as_str())
         .await
         .unwrap();
     reconcile(&store, &profile).await;
@@ -426,7 +343,11 @@ async fn claimed_reservation_transfers_reclaim_authority_to_owned_sandbox() {
 async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker() {
     let (client, name, mut store, _, profile) = fixture(1).await;
     reconcile(&store, &profile).await;
-    let preparing = store.claim_warmup_work(NOW, LATER).await.unwrap().unwrap();
+    let preparing = store
+        .claim_warmup_work(stamp(0).as_str(), stamp(60).as_str())
+        .await
+        .unwrap()
+        .unwrap();
     let mut next = preparing.record.clone();
     let mut home = layer2_core::sandbox::SandboxHome::reserve(
         &next.id,
@@ -454,18 +375,19 @@ async fn claimed_home_transfers_atomically_and_refuses_the_previous_warm_worker(
         runtime_id: format!("runtime-{}", next.id),
         runtime_version: IMAGE.into(),
         provision_generation: Some(1),
-        bound_at: NOW.into(),
+        bound_at: stamp(0).as_str().into(),
     });
     next.installed_request_sha256 = Some("a".repeat(64));
     next.state = WarmSandboxState::Ready;
     store
-        .finish_warmup_work(&preparing, next, NOW, NOW)
+        .finish_warmup_work(&preparing, next, stamp(0).as_str(), stamp(0).as_str())
         .await
         .unwrap();
     assert!(store.unowned_home_authority(&home.request).await.unwrap());
-    let expired_at = "2026-09-05T00:00:10Z";
+    let expiry = stamp(10);
+    let expired_at = expiry.as_str();
     let stale = store
-        .claim_warmup_work(NOW, expired_at)
+        .claim_warmup_work(stamp(0).as_str(), expired_at)
         .await
         .unwrap()
         .unwrap();

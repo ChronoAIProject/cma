@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+mod authority;
+mod config;
 mod execute;
 
 use layer2_core::sandbox::store::{SandboxStoreError, SandboxTransaction, WorkspaceLifecycleStore};
@@ -27,8 +29,6 @@ mod setup;
 mod support;
 pub(crate) use profile::DurableProfileWorkspaceProvisioner;
 
-const DEFAULT_LEASE: Duration = Duration::from_secs(15 * 60);
-const DEFAULT_RETRY: Duration = Duration::from_secs(30);
 const WORK_BATCH_SIZE: u16 = 50;
 
 pub(crate) struct WorkspaceWorkerDependencies {
@@ -36,37 +36,7 @@ pub(crate) struct WorkspaceWorkerDependencies {
     pub adapter: Arc<dyn SandboxAdapter>,
 }
 
-#[derive(Clone)]
-pub(crate) struct WorkspaceWorkerConfig {
-    pub execution: layer2_core::sandbox::ProvisioningExecution,
-    pub holder: String,
-    pub deployment_id: String,
-    pub lease_duration: Duration,
-    pub retry_delay: Duration,
-}
-
-impl WorkspaceWorkerConfig {
-    pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
-        Self {
-            execution: Default::default(),
-            holder: holder.into(),
-            deployment_id: deployment_id.into(),
-            lease_duration: DEFAULT_LEASE,
-            retry_delay: DEFAULT_RETRY,
-        }
-    }
-
-    pub fn with_execution(
-        mut self,
-        execution: layer2_core::sandbox::ProvisioningExecution,
-    ) -> Self {
-        self.execution = execution;
-        self.lease_duration = self.lease_duration.max(Duration::from_secs(
-            layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
-        ));
-        self
-    }
-}
+pub(crate) use config::WorkspaceWorkerConfig;
 
 pub(crate) struct WorkspaceWorker {
     dependencies: WorkspaceWorkerDependencies,
@@ -90,6 +60,7 @@ impl WorkspaceWorker {
     }
 
     pub async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let due = self
             .dependencies
             .store
@@ -98,7 +69,12 @@ impl WorkspaceWorker {
         let mut completed = 0;
         let mut first_error = None;
         for id in due {
-            match self.run_one(&id, now).await {
+            let at = if self.config.renewable_work {
+                now + started.elapsed()
+            } else {
+                now
+            };
+            match self.run_one(&id, at).await {
                 Ok(true) => completed += 1,
                 Ok(false) => {}
                 Err(error) => {
@@ -114,19 +90,31 @@ impl WorkspaceWorker {
         id: &WorkspaceId,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
-        let Some(workspace) = self
-            .dependencies
-            .store
-            .claim_workspace_work(
-                id,
-                &self.config.holder,
-                rfc3339_at(now),
-                rfc3339_at(now + self.config.lease_duration),
+        let claiming = tokio::time::Instant::now();
+        let claiming_work = self.dependencies.store.claim_workspace_work(
+            id,
+            &self.config.holder,
+            rfc3339_at(now),
+            rfc3339_at(now + self.config.lease_duration),
+        );
+        let granted = if self.config.renewable_work {
+            tokio::time::timeout(
+                Duration::from_secs(layer2_core::sandbox::store::WORK_RENEW_SECONDS),
+                claiming_work,
             )
-            .await?
-        else {
+            .await
+            .map_err(|_| {
+                SandboxStoreError::Unavailable("work acquisition acknowledgement timed out".into())
+            })??
+        } else {
+            claiming_work.await?
+        };
+        let Some(workspace) = granted else {
             return Ok(false);
         };
+        if self.config.renewable_work || workspace.work.authority_protocol.is_some() {
+            return self.run_renewable(workspace, now, claiming).await;
+        }
         self.execute(workspace, now).await?;
         Ok(true)
     }
@@ -168,6 +156,7 @@ impl WorkspaceWorker {
                 .expect("execution policy was persisted")
                 .clone_depth,
         );
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self
             .dependencies
             .adapter
@@ -257,6 +246,7 @@ impl WorkspaceWorker {
             workspace.id.to_string(),
             workspace.name.clone(),
         );
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self
             .dependencies
             .adapter
@@ -288,6 +278,26 @@ impl WorkspaceWorker {
                     && sandbox.credential.delivered
             })
             .ok_or_else(|| WorkerFailure::retryable("sandbox runtime is not ready"))?;
+        let authorities = layer2_core::sandbox::store::WorkAuthority::current()
+            .map_err(|_| WorkerFailure::retryable("Workspace work authority expired"))?;
+        if authorities
+            .iter()
+            .filter_map(|authority| authority.parent())
+            .any(|original| {
+                original.id == sandbox.id
+                    && (original.owner != sandbox.owner
+                        || original.status != sandbox.status
+                        || original.runtime != sandbox.runtime
+                        || original.credential.key_generation != sandbox.credential.key_generation
+                        || original.lifecycle.runtime_generation_high_water
+                            != sandbox.lifecycle.runtime_generation_high_water
+                        || original.lifecycle.operation != sandbox.lifecycle.operation)
+            })
+        {
+            return Err(WorkerFailure::retryable(
+                "Workspace parent runtime authority changed",
+            ));
+        }
         let inspection_started = std::time::Instant::now();
         let attached = super::runtime_attachment::adopt_bound_runtime(
             self.dependencies.adapter.as_ref(),

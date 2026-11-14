@@ -16,6 +16,18 @@ pub(super) async fn drain_while<T>(
     agent_id: &AgentId,
     guard: &AgentReopenGuard,
 ) -> layer3_adapter::Result<T> {
+    if layer2_core::sandbox::store::WorkAuthority::active() {
+        layer2_core::sandbox::store::WorkAuthority::current()
+            .map_err(|_| AdapterError::Unavailable("ordinary work authority expired".into()))?;
+        // The enclosing worker independently renews and cancels this future.
+        // A captured wall-clock expiry cannot shorten a renewed long operation.
+        return tokio::time::timeout(
+            Duration::from_secs(1_800),
+            drain(operation, receiver, recorder, agent_id, guard),
+        )
+        .await
+        .map_err(|_| AdapterError::Unavailable("reopen output operation timed out".into()))?;
+    }
     let expires = guard
         .sandbox
         .lease
@@ -27,6 +39,13 @@ pub(super) async fn drain_while<T>(
     let now = layer2_core::seconds_from_rfc3339(&now_rfc3339())
         .expect("clock produces a valid timestamp");
     let remaining = expires.saturating_sub(now);
+    // Tokio polls an immediately ready future even when its timeout is zero.
+    // Refuse before polling so an expired claim cannot begin the operation.
+    if remaining == 0 {
+        return Err(AdapterError::Unavailable(
+            "reopen output lifecycle lease expired".into(),
+        ));
+    }
     tokio::time::timeout(
         Duration::from_secs(remaining),
         drain(operation, receiver, recorder, agent_id, guard),

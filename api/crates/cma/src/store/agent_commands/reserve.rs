@@ -190,11 +190,11 @@ pub(in crate::store) async fn apply_with_cause(
     let result = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": parent.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": parent_revision,
-            },
+            }),
             doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
         )
         .session(&mut *session)

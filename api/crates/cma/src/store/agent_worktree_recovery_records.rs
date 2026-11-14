@@ -121,7 +121,10 @@ pub(super) async fn fence_parents(
     );
     let result = store
         .sandboxes
-        .update_one(parent, doc! {"$inc":{"workspace_admission_fence":1_i64}})
+        .update_one(
+            crate::store::work_schema::query(parent),
+            doc! {"$inc":{"workspace_admission_fence":1_i64}},
+        )
         .session(&mut *session)
         .await?;
     if result.matched_count != 1 {
@@ -134,7 +137,10 @@ pub(super) async fn fence_parents(
     );
     let result = store
         .workspaces
-        .update_one(parent, doc! {"$inc":{"removal_lock_fence":1_i64}})
+        .update_one(
+            crate::store::work_schema::query(parent),
+            doc! {"$inc":{"removal_lock_fence":1_i64}},
+        )
         .session(session)
         .await?;
     if result.matched_count != 1 {
@@ -196,8 +202,10 @@ pub(super) async fn replace(
     let result = store
         .workspaces
         .update_one(
-            workspace,
-            doc! {"$set":workspace_replacement_fields(&next.workspace)?},
+            crate::store::work_schema::query(workspace),
+            crate::store::work_lease_update::replacement(workspace_replacement_fields(
+                &next.workspace,
+            )?),
         )
         .session(&mut *session)
         .await?;

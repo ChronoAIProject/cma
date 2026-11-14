@@ -75,7 +75,7 @@ pub(super) async fn current(
     else {
         return Ok(false);
     };
-    let sandbox: Sandbox = read_record(&row).map_err(unavailable)?;
+    let sandbox: Sandbox = crate::store::work_schema::read(&row).map_err(unavailable)?;
     let newer = store
         .agent_commands
         .find_one(doc! {"agent_id":work.agent_id.as_str(),
@@ -174,7 +174,7 @@ pub(in crate::store) async fn enqueue(
     else {
         return Ok(());
     };
-    let sandbox: Sandbox = read_record(&row)
+    let sandbox: Sandbox = crate::store::work_schema::read(&row)
         .map_err(|reason| TransactionLogError::Domain(SandboxStoreError::Corrupt(reason)))?;
     let Some(work) = work_from_turn(agent, &sandbox, &entries) else {
         return Ok(());

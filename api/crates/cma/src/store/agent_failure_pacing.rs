@@ -200,8 +200,11 @@ pub(super) async fn decision(
         ),
     ] {
         let parent = collection
-            .find_one(doc! {"_id": id,
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION})
+            .find_one(super::work_schema::for_collection(
+                collection,
+                doc! {"_id": id,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION},
+            ))
             .projection(doc! {"revision": 1, "record.revision": 1})
             .await
             .map_err(unavailable)?;

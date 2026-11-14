@@ -9,6 +9,7 @@ pub mod activity;
 pub mod activity_detail;
 pub mod activity_service;
 pub mod admission;
+pub mod agent_ownership;
 pub mod authz;
 pub mod bot_setups;
 pub mod bots;

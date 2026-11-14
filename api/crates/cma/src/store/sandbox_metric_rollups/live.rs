@@ -9,7 +9,11 @@ pub(crate) struct LiveReading {
     pub metrics: [Aggregate; 3],
 }
 impl ReportingStore {
-    pub(crate) async fn save_live(&self, readings: &[(String, LiveReading)]) -> Result<()> {
+    pub(crate) async fn save_live(
+        &self,
+        holder: &str,
+        readings: &[(String, LiveReading)],
+    ) -> Result<()> {
         let mut updates = Vec::new();
         for (id, reading) in readings {
             let key = format!("{id}:live");
@@ -20,7 +24,8 @@ impl ReportingStore {
                 {"$literal":d},"$$ROOT"]}}],"upsert":true,"multi":false});
         }
         if !updates.is_empty() {
-            self.bulk_updates(COLLECTION, updates).await?;
+            self.controlled_updates("rollups", holder, COLLECTION, updates)
+                .await?;
         }
         Ok(())
     }

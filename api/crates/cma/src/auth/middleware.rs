@@ -133,6 +133,18 @@ pub async fn attach_subject(
                     binding_id: binding.binding_id().into(),
                 });
         }
+        if request.uri().path().starts_with("/api/v1/agents/")
+            && request.uri().path().ends_with("/desktop/ws")
+        {
+            // The domain service uses this independent port only in replica
+            // mode. Retain legacy authentication behavior if capture is refused.
+            match super::desktop::capture(auth.clone(), request.headers(), &resolved) {
+                Ok(authority) => {
+                    request.extensions_mut().insert(authority);
+                }
+                Err(_) => tracing::debug!("desktop renewable authority unavailable"),
+            }
+        }
         request
             .extensions_mut()
             .insert(auth.resource_request_context(&resolved));
