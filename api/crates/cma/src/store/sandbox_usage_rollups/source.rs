@@ -29,7 +29,13 @@ impl ReportingStore {
             .map_err(unavailable)?
         {
             count += 1;
-            bytes = bytes.checked_add(mongodb::bson::serialize_to_vec(&d).map_err(unavailable)?.len()).ok_or(MetricsError::Busy)?;
+            bytes = bytes
+                .checked_add(
+                    mongodb::bson::serialize_to_vec(&d)
+                        .map_err(unavailable)?
+                        .len(),
+                )
+                .ok_or(MetricsError::Busy)?;
             if count > 100_000 || bytes > 64 * 1024 * 1024 {
                 return Err(MetricsError::Busy);
             }
