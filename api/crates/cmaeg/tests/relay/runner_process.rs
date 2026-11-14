@@ -4,10 +4,13 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::json;
 use std::{fs, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
 use tokio::process::{Child, Command};
+#[path = "replica_capture.rs"]
+pub mod capture;
 #[path = "../support/database.rs"]
 pub mod database;
 pub struct Process {
     _database: Option<Arc<database::DatabaseFixture>>,
+    capture: Option<capture::Capture>,
     pub child: Child,
     pub dir: PathBuf,
     pub base: String,
@@ -16,8 +19,13 @@ pub struct Process {
 }
 impl Drop for Process {
     fn drop(&mut self) {
-        let _ = self.child.start_kill();
-        let _ = fs::remove_dir_all(&self.dir);
+        if let Err(_error) = self.child.start_kill() {
+            eprintln!("host_child_signal_failed");
+        }
+        // The owned parent collects logs only after group absence is confirmed.
+        if self.capture.is_none() {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
     }
 }
 impl Process {
@@ -104,9 +112,12 @@ impl Process {
                 .upsert(true).await.unwrap();
             database.configure(&mut command);
         }
+        capture::verify_application();
         let child = command
             .kill_on_drop(true)
             .env("RUST_LOG", "cmaeg=info")
+            // The unoptimized executable needs the same stack budget as backend tests.
+            .env("RUST_MIN_STACK", "33554432")
             .env("CMAEG_LISTEN", address.to_string())
             .env("CMAEG_PUBLIC_URL", &base)
             .env("CMAEG_REPLICA_ADDRESS", &base)
@@ -128,6 +139,7 @@ impl Process {
             .unwrap();
         let mut process = Self {
             _database: database,
+            capture: capture::Capture::new(&dir, child.id().unwrap(), env),
             child,
             dir,
             base,
@@ -153,6 +165,12 @@ impl Process {
         .unwrap();
         fixture.url = format!("{}/v1/callbacks/{}", process.base, fixture.id);
         process
+    }
+    pub fn mark_joined(&mut self) -> Result<(), &'static str> {
+        match &mut self.capture {
+            Some(capture) => capture.joined(),
+            None => Ok(()),
+        }
     }
     pub fn logs(&self) -> String {
         fs::read_to_string(self.dir.join("trace.log")).unwrap()
