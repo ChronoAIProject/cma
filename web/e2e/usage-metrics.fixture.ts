@@ -42,6 +42,12 @@ export class LocalUsageMetrics {
     );
   }
   async route(page: Page) {
+    await page.route('**/api/v1/**usage/metrics/view**', (route) =>
+      route.fulfill({
+        status: 501,
+        json: { status: 501, title: 'Disabled', code: 'report_view_disabled' },
+      }),
+    );
     await page.route('**/api/v1/**usage/metrics/reports**', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
@@ -64,6 +70,7 @@ export class LocalUsageMetrics {
         const base = reportFixture(admin, id);
         let report: UsageMetricReport = {
           ...base,
+          scope: { principal: 'local-owner', admin },
           query: {
             from: input.from ?? asOf - 86400,
             to: input.to ?? asOf,
