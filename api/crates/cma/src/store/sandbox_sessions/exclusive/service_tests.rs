@@ -12,6 +12,7 @@ mod ingress;
 mod receiver;
 use fixture::Services;
 
+mod authorization_tests;
 mod latency_tests;
 mod recovery_tests;
 mod router_tests;

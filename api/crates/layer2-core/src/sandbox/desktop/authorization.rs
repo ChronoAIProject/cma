@@ -19,14 +19,16 @@ impl DesktopService {
         if !self.replicas_enabled {
             return self.open(caller, id).await;
         }
-        timing::observe("pre_open_credential", async {
-            tokio::time::timeout(Duration::from_secs(5), authority.current(caller))
-                .await
-                .map_err(|_| DesktopError::AuthorityUnavailable)?
-        })
-        .await?;
-        let (sandbox_id, runtime) =
-            timing::observe("pre_open_lineage", self.authorize(caller, id)).await?;
+        // These current reads have no runtime effects and neither depends on
+        // the other's result. Both must succeed before acquiring any authority.
+        let (_, (sandbox_id, runtime)) = tokio::try_join!(
+            timing::observe("pre_open_credential", async {
+                tokio::time::timeout(Duration::from_secs(5), authority.current(caller))
+                    .await
+                    .map_err(|_| DesktopError::AuthorityUnavailable)?
+            }),
+            timing::observe("pre_open_lineage", self.authorize(caller, id)),
+        )?;
         self.open_owned(caller, id, sandbox_id, runtime, authority)
             .await
     }
