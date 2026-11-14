@@ -1,0 +1,11 @@
+{
+  "environment": "isolated-local",
+  "synthetic_identity": true,
+  "origin": "https://am.cma-scale.test:18080",
+  "storage_state": "/absolute/private/local-synthetic-browser-state.json",
+  "playwright_module": "/absolute/path/to/playwright-core/index.mjs",
+  "browser_executable": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "samples_per_variant": 1,
+  "source": "combined candidate API and corresponding runtime source",
+  "output": "/absolute/new/task-local/create-results"
+}
