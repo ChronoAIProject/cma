@@ -42,7 +42,8 @@ impl Bridge {
         phase: &mut &'static str,
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
-        let mut timing = super::startup_timing::StartupTiming::new();
+        let mut timing =
+            super::startup_timing::StartupTiming::for_agent(self.agent_correlation_digest.clone());
         *phase = "protocol_initialize";
         let greeting = self
             .greet(serde_json::json!({
@@ -197,27 +198,48 @@ impl Bridge {
         let session = match (greeting, resume) {
             (Greeting::Fresh(_), Some(conversation)) => {
                 *phase = "session_load";
-                self.activate_session(conversation.clone(), updates).await?;
-                self.load_retained_session(serde_json::json!({
-                    "sessionId": conversation,
-                    "cwd": cwd,
-                    "mcpServers": tool_servers,
-                }))
-                .await
-                .map_err(|error| error.context("could not resume conversation"))?;
+                timing
+                    .subphase(
+                        "fresh_load",
+                        "activate_session",
+                        self.activate_session(conversation.clone(), updates),
+                    )
+                    .await?;
+                timing
+                    .subphase(
+                        "fresh_load",
+                        "session_load",
+                        self.load_retained_session(serde_json::json!({
+                            "sessionId": conversation,
+                            "cwd": cwd,
+                            "mcpServers": tool_servers,
+                        })),
+                    )
+                    .await
+                    .map_err(|error| error.context("could not resume conversation"))?;
                 conversation
             }
             (Greeting::Fresh(_), None) => {
                 *phase = "session_new";
-                let started = self
-                    .call(
-                        "session/new",
-                        serde_json::json!({ "cwd": cwd, "mcpServers": tool_servers }),
+                let started = timing
+                    .subphase(
+                        "fresh_new",
+                        "session_new",
+                        self.call(
+                            "session/new",
+                            serde_json::json!({ "cwd": cwd, "mcpServers": tool_servers }),
+                        ),
                     )
                     .await?;
                 let conversation =
                     super::acp_session_identity::read(&started, self.json_pools.is_some())?;
-                self.activate_session(conversation.clone(), updates).await?;
+                timing
+                    .subphase(
+                        "fresh_new",
+                        "activate_session",
+                        self.activate_session(conversation.clone(), updates),
+                    )
+                    .await?;
                 conversation
             }
             (Greeting::Existing, Some(conversation)) => {
@@ -243,24 +265,46 @@ impl Bridge {
                     // ordinary retained conversations never take it.
                     let mut rebinding = super::startup_timing::StartupTiming::new();
                     *phase = "prepared_session_close";
-                    self.call(
-                        "session/close",
-                        serde_json::json!({ "sessionId": conversation }),
-                    )
-                    .await?;
+                    timing
+                        .subphase(
+                            "prepared_rejoin",
+                            "session_close",
+                            self.call(
+                                "session/close",
+                                serde_json::json!({ "sessionId": conversation }),
+                            ),
+                        )
+                        .await?;
                     rebinding.completed("prepared_protocol_close");
                     *phase = "prepared_session_load";
-                    self.activate_session(conversation.clone(), updates).await?;
-                    self.load_retained_session(serde_json::json!({
-                        "sessionId": conversation,
-                        "cwd": cwd,
-                        "mcpServers": tool_servers,
-                    }))
-                    .await
-                    .map_err(|error| error.context("could not bind prepared conversation"))?;
+                    timing
+                        .subphase(
+                            "prepared_rejoin",
+                            "activate_session",
+                            self.activate_session(conversation.clone(), updates),
+                        )
+                        .await?;
+                    timing
+                        .subphase(
+                            "prepared_rejoin",
+                            "session_load",
+                            self.load_retained_session(serde_json::json!({
+                                "sessionId": conversation,
+                                "cwd": cwd,
+                                "mcpServers": tool_servers,
+                            })),
+                        )
+                        .await
+                        .map_err(|error| error.context("could not bind prepared conversation"))?;
                     rebinding.completed("prepared_protocol_load");
                 } else {
-                    self.activate_session(conversation.clone(), updates).await?;
+                    timing
+                        .subphase(
+                            "existing_rejoin",
+                            "activate_session",
+                            self.activate_session(conversation.clone(), updates),
+                        )
+                        .await?;
                 }
                 tracing::info!("rejoining the conversation held by the runtime");
                 conversation
