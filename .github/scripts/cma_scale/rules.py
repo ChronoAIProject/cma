@@ -127,6 +127,8 @@ def transform(obj,op):
    old.append({'path':prefix+[key],'present':key in target,'value':copy.deepcopy(target.get(key))})
    target[key]=copy.deepcopy(value)
  set_keys(s,changes.get('deployment',{}),SPEC_KEYS,['spec'])
+ # DeploymentSpec.paused is omitted by the API when false; match its wire form.
+ if changes.get('deployment',{}).get('paused') is False:s.pop('paused',None)
  ps=s['template']['spec'];pv=copy.deepcopy(changes.get('pod',{}))
  if 'topologySpreadConstraints' in pv:
   pv['topologySpreadConstraints']=merge_topology(ps.get('topologySpreadConstraints',[]),pv['topologySpreadConstraints'])
