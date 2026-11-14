@@ -86,10 +86,11 @@ impl DayBucket {
         // remains exact even when its historical unknown/gap values are nonzero.
         // The baseline checks above still refuse a change in tracking semantics.
         let closed = self.last_observed_at >= self.day + DAY
-            && self
-                .boundary
-                .as_ref()
-                .is_some_and(|input| input.queried_to == self.day + DAY);
+            && (self.total.range.to == self.day + DAY
+                || self
+                    .boundary
+                    .as_ref()
+                    .is_some_and(|input| input.queried_to == self.day + DAY));
         Ok(self.revision < state.revision
             && self.last_observed_at <= state.last_observed_at
             && (self.total.projection.period.complete || closed)

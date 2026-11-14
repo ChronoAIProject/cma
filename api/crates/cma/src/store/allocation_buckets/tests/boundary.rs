@@ -206,6 +206,13 @@ fn fully_queried_closed_incomplete_days_reuse_exact_unknown_values_across_heads(
     let mut appended = events.clone();
     appended.push(event(&next, 3, s.last_observed_at, next.last_observed_at));
     assert!(bucket.validate_source(&next).unwrap());
+    let summary = DayBucket::read_summary(&bucket.document().unwrap()).unwrap();
+    assert!(summary.boundary.is_none());
+    assert!(summary.validate_source(&next).unwrap());
+    assert_projection(
+        &summary.total.projection,
+        &allocation::project(&next, &appended, full),
+    );
     assert_projection(
         &bucket.total.projection,
         &allocation::project(&next, &appended, full),
