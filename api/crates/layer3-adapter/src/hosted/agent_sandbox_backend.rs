@@ -270,6 +270,16 @@ impl HostedBackend for AgentSandboxBackend {
     ) -> Result<Option<RuntimeInspection>> {
         self.inspect_native_context(handle, request, home).await
     }
+    async fn inspect_native_runtime_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<RuntimeInspection>> {
+        self.inspect_native_context_after(handle, request, home, admission)
+            .await
+    }
 
     async fn inspect_nonexecuting_runtime(
         &self,
