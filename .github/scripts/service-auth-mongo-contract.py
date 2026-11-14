@@ -32,7 +32,7 @@ def main():
         replica_key.chmod(0o600)
         log = (path / "mongod.log").open("w")
         process = subprocess.Popen(
-            [mongod, "--auth", "--replSet", "service-auth-contract", "--keyFile", str(replica_key), "--bind_ip", "127.0.0.1", "--port", str(port),
+            [mongod, "--setParameter", "enableTestCommands=1", "--auth", "--replSet", "service-auth-contract", "--keyFile", str(replica_key), "--bind_ip", "127.0.0.1", "--port", str(port),
              "--dbpath", temporary, "--quiet", "--wiredTigerCacheSizeGB", "0.25"],
             stdout=log, stderr=subprocess.STDOUT,
         )
@@ -69,6 +69,8 @@ def main():
             subprocess.run(["cargo", "build", "--locked", "-p", "cmaeg"], cwd=root / "api", env=environment, check=True)
             print("Running real MongoDB isolation and lifecycle recovery contracts", flush=True)
             for command in [
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "console::session_backend::", "--", "--ignored", "--test-threads=1"],
+                ["cargo", "test", "--locked", "-p", "cmaeg", "--test", "console", "shared_", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_forms_storage", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "test", "--locked", "-p", "cmaeg", "--lib", "optional_media_continuation_storage", "--", "--ignored", "--test-threads=1"],
                 ["cargo", "nextest", "run", "--workspace", "--locked", "-E",

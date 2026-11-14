@@ -22,6 +22,8 @@ RUNNER = ROOT / ".github/scripts/backend-nextest.sh"
 # Retain the reviewed behavior baseline from the former runner as explicit libtest
 # commands, independent of the new runner's selection syntax and script names.
 SERVICE_AUTH_BASELINE_COMMANDS = [shlex.split(command) for command in (
+    "cargo test --locked -p cmaeg --lib console::session_backend:: -- --ignored --test-threads=1",
+    "cargo test --locked -p cmaeg --test console shared_ -- --ignored --test-threads=1",
     "cargo test --locked -p cmaeg --lib optional_forms_storage -- --ignored --test-threads=1",
     "cargo test --locked -p cmaeg --lib optional_media_continuation_storage -- --ignored --test-threads=1",
     "cargo nextest run --locked -p cmaeg -E 'test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)' --run-ignored only --test-threads 1",

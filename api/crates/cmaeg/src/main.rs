@@ -7,7 +7,7 @@ use cmaeg::{
 };
 use std::{ffi::OsString, io::Write, path::Path};
 
-const USAGE: &str = "usage: cmaeg [--replica-drain | --print-openapi | --migrate | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
+const USAGE: &str = "usage: cmaeg [--replica-drain | --print-openapi | --migrate | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]";
 
 fn main() {
     // `args_os` never panics: `args` aborts with exit 101 on a non-UTF-8
@@ -56,6 +56,9 @@ fn main() {
         ["--replica-drain"] => replica_drain(),
         [command @ ("--migrate"
         | "--migrate-replicas"
+        | "--migrate-console-sessions"
+        | "--print-console-sessions-runtime-role"
+        | "--print-console-sessions-migration-role"
         | "--print-runtime-role"
         | "--print-migration-role"
         | "--migrate-worker-credentials"
@@ -201,6 +204,7 @@ fn run_database_command(command: &str) {
             command,
             "--migrate"
                 | "--migrate-replicas"
+                | "--migrate-console-sessions"
                 | "--migrate-automation"
                 | "--migrate-worker-credentials"
                 | "--migrate-thread-fences"
@@ -209,7 +213,12 @@ fn run_database_command(command: &str) {
         ) {
             println!(
                 "{}",
-                if command.contains("automation") {
+                if command.contains("console-sessions") {
+                    cmaeg::console::session_backend::schema::role(
+                        &database,
+                        command.ends_with("migration-role"),
+                    )
+                } else if command.contains("automation") {
                     if command.ends_with("migration-role") {
                         cmaeg::github::migration_role(&database)
                     } else {
@@ -246,6 +255,12 @@ fn run_database_command(command: &str) {
         let client = mongodb::Client::with_uri_str(uri)
             .await
             .map_err(|_| "Gateway database client configuration failed; details withheld")?;
+        if command == "--migrate-console-sessions" {
+            cmaeg::console::session_backend::schema::migrate(&client.database(&database))
+                .await
+                .map_err(|_| "Gateway Console session migration failed; details withheld")?;
+            return Ok(());
+        }
         if command == "--migrate-automation" {
             cmaeg::github::migrate(&client.database(&database))
                 .await

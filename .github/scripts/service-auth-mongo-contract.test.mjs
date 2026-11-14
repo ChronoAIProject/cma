@@ -8,6 +8,8 @@ import { join } from 'node:path';
 // Independent inventory of every invocation, including replica delivery and
 // the exact owner-key contract. Check complete arguments in source and archive mode.
 const selections = [
+  ['package(=cmaeg) and kind(lib) and test(~console::session_backend::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=console) and test(~shared_)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_forms_storage)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)', 'only', true],
   ['package(=cmaeg) and test(=worker_credentials::mongo::integration_tests::worker_history_cross_client_visibility_append_only_grants_and_cutover_barrier)', 'only', false],
@@ -83,7 +85,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 21);
+      assert.equal(selections.length, 23);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -160,6 +162,6 @@ print(json.dumps({"baseline": len(proof["SERVICE_AUTH_BASELINE_COMMANDS"]),
                   "actual": parse(pathlib.Path(sys.argv[2]), "nextest_build ")}))
 `, script, runner], { encoding: 'utf8', env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'} });
   const result = JSON.parse(value);
-  assert.equal(result.baseline, 21);
+  assert.equal(result.baseline, 23);
   assert.deepEqual(result.actual.map(args => args[args.indexOf('-E') + 1]), selections.map(([expression]) => expression));
 });
