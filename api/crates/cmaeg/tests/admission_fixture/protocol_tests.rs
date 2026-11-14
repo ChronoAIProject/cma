@@ -25,6 +25,7 @@ fn relay_replays_preserve_signed_body_and_claim_bindings() {
     let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
     let body: Value = serde_json::from_slice(&first.body).unwrap();
     assert_eq!(claims["message_id"], body["message_id"]);
+    assert_eq!(claims["jti"], body["correlation_id"]);
     assert_eq!(claims["body_sha256"], hash(&first.body));
     assert_eq!(claims["aud"], "channel-relay/callback");
     assert_eq!(
@@ -43,6 +44,87 @@ fn relay_replays_preserve_signed_body_and_claim_bindings() {
         .unwrap();
     assert_eq!(body["reply_token"], first.reply);
     assert_eq!(body["timestamp"], first.timestamp);
+}
+
+#[tokio::test]
+async fn generated_callback_passes_production_verification_and_rejects_unbound_correlation() {
+    use axum::{routing::get, Json, Router};
+    use cmaeg::{
+        channels::resolver::ResolvedChannel,
+        ingress::relay::{
+            jwks::JwksCache,
+            verify::{verify, CallbackHeaders},
+        },
+    };
+    use cmaeg_core::seal::ChannelPointer;
+    use std::time::{Duration, Instant};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/jwks", get(|| async { Json(Signer::shared().jwks()) })),
+        )
+        .with_graceful_shutdown(async {
+            let _ = stopped.await;
+        })
+        .await
+        .unwrap();
+    });
+    let definition =
+        super::bootstrap::channel(&origin, &super::bootstrap::random_secret().unwrap()).unwrap();
+    let channel = ResolvedChannel {
+        id: ChannelId::new("cmaeg1.ch.synthetic-channel").unwrap(),
+        pointer: ChannelPointer {
+            v: 1,
+            record_id: definition.record_id.clone(),
+            record_url: format!("{origin}/records"),
+        },
+        definition,
+        agent_key_hash: [0; 32],
+        consumer_keys: vec![],
+        loaded_at: Instant::now(),
+        version: 1,
+    };
+    let identity = EventIdentity {
+        owner: channel.definition.owner.subject.clone(),
+        channel_id: channel.id.clone(),
+        record_id: channel.definition.record_id.clone(),
+        event_id: EventId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+    };
+    let signed = Event::new(identity.clone()).signed();
+    let keys = JwksCache::new(Duration::from_secs(60)).unwrap();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let headers = |token| CallbackHeaders {
+        callback_token: token,
+        user_token: None,
+        message_id: identity.event_id.as_str(),
+        platform: "telegram",
+        timestamp: &signed.timestamp,
+    };
+    verify(
+        &channel,
+        0,
+        &keys,
+        headers(&signed.callback),
+        &signed.body,
+        now,
+    )
+    .await
+    .expect("fixture must pass the production callback and reply verifier");
+    let encoded = signed.callback.split('.').nth(1).unwrap();
+    let mut claims: Value =
+        serde_json::from_slice(&URL_SAFE_NO_PAD.decode(encoded).unwrap()).unwrap();
+    claims["jti"] = uuid::Uuid::new_v4().to_string().into();
+    let wrong = Signer::shared().token(&claims);
+    let error = verify(&channel, 0, &keys, headers(&wrong), &signed.body, now)
+        .await
+        .err()
+        .unwrap();
+    assert_eq!(error.0, "payload_binding_mismatch");
+    stop.send(()).unwrap();
+    server.await.unwrap();
 }
 
 #[test]

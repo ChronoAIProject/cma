@@ -168,7 +168,10 @@ pub async fn prepare(config: Config) -> Result<Arc<Shared>, &'static str> {
     }))
 }
 
-fn channel(origin: &str, provider_bearer: &str) -> Result<ChannelDefinition, &'static str> {
+pub(super) fn channel(
+    origin: &str,
+    provider_bearer: &str,
+) -> Result<ChannelDefinition, &'static str> {
     let record_id = uuid::Uuid::new_v4().to_string();
     let owner = uuid::Uuid::new_v4().to_string();
     let mut channel: Value = serde_json::from_str(include_str!(
