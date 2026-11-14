@@ -180,6 +180,7 @@ pub(super) async fn fixture(
         let mut sandbox = base.clone();
         sandbox.id = SandboxId(format!("sbx_startup_{index:03}"));
         sandbox.name = format!("startup-{index}");
+        sandbox.revision = 1;
         let handle = harness
             .adapter
             .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
