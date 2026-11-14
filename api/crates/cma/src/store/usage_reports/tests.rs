@@ -417,5 +417,6 @@ mod retained_windows;
 
 mod boundary_deltas;
 mod bucket_ranges;
+mod rebaseline;
 
 mod range_measurement;
