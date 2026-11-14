@@ -154,7 +154,7 @@ async fn schedule_receipt(
         if attempt > 0 {
             tokio::task::yield_now().await;
         }
-        let mut session = match store.client.start_session().await {
+        let mut session = match store.client.start_session().causal_consistency(true).await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {
                 last_transient = Some(error.to_string());
@@ -162,6 +162,17 @@ async fn schedule_receipt(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
+        if let Some(basis) = request.basis() {
+            if let layer2_core::sandbox::store::RuntimeMigrationClearance::Observed { proof } =
+                &basis.clearance
+            {
+                let watermark = proof.final_observation.watermark;
+                session.advance_operation_time(mongodb::bson::Timestamp {
+                    time: watermark.seconds,
+                    increment: watermark.increment,
+                });
+            }
+        }
         let receipt = match apply_attempt(store, &request, &mut session).await {
             Ok(receipt) => receipt,
             Err(ApplyError::Domain(error)) => {

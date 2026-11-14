@@ -56,13 +56,41 @@ impl SandboxCustomRuntimeMigrationAdmission {
     /// Exact read-only replay is resolved before requiring a live bundle. An
     /// explicit restart always takes a new activity admission without retargeting.
     pub fn is_replay(&self, sandbox: &Sandbox) -> Result<bool, SandboxStoreError> {
-        matching_custom_runtime_replay(
+        let matched = matching_custom_runtime_replay(
             sandbox,
             &self.migration,
             &self.basis.authority_id,
             self.expected_current_revision,
             self.restart_failed,
-        )
+        )?;
+        if !matched {
+            return Ok(false);
+        }
+        let basis = sandbox
+            .lifecycle
+            .custom_runtime
+            .as_ref()
+            .and_then(|state| state.admission_basis.as_ref())
+            .ok_or_else(invalid)?;
+        let original = std::iter::once(basis.as_ref())
+            .chain(basis.earlier_admissions.iter())
+            .find(|basis| {
+                basis.authority_id == self.basis.authority_id
+                    && basis.identity.revision == self.expected_current_revision
+            })
+            .ok_or_else(invalid)?;
+        if original.policy_id != self.basis.policy_id
+            || original.request_key != self.basis.request_key
+            || original.identity != self.basis.identity
+            || original.approved_target != self.basis.approved_target
+            || original.source_runtime != self.basis.source_runtime
+            || original.clearance != self.basis.clearance
+            || original.authority_issued_at_ms != self.basis.authority_issued_at_ms
+            || original.authority_expires_at_ms != self.basis.authority_expires_at_ms
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Ok(true)
     }
 }
 
@@ -177,6 +205,9 @@ pub fn apply_custom_runtime_migration(
             .previous_request_keys
             .contains(&admission.migration.request_key)
     {
+        return Err(invalid());
+    }
+    if serde_json::to_vec(&basis).map_err(|_| invalid())?.len() > 4 * 1024 * 1024 {
         return Err(invalid());
     }
     let mut next = current.clone();
