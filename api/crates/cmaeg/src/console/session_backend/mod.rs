@@ -71,8 +71,15 @@ pub trait SessionBackend: Send + Sync {
         id: &'a str,
         expected: &'a [u8],
         next: Vec<u8>,
-        access_ttl_ms: Option<i64>,
+        access_expires_ms: Option<i64>,
     ) -> BoxFuture<'a, Result<Option<Stored>, StoreError>>;
+    /// Final admission of the exact token/owner snapshot checked by the caller.
+    /// The database must still show a useful access-token lifetime at this fence.
+    fn admit<'a>(
+        &'a self,
+        id: &'a str,
+        expected: &'a [u8],
+    ) -> BoxFuture<'a, Result<bool, StoreError>>;
     /// The acknowledged deletion returns its exact encrypted payload for
     /// bounded provider cleanup. Proved absence without a receipt returns None.
     fn revoke<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Option<Vec<u8>>, StoreError>>;
