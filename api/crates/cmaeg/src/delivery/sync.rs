@@ -18,6 +18,7 @@ struct Entry {
     deadline: Arc<Mutex<Option<tokio::time::Instant>>>,
     media_responses: bool,
     original_terminal: Option<OriginalTerminal>,
+    relayed_cursor: Option<u64>,
 }
 struct OriginalTerminal {
     name: &'static str,
@@ -31,12 +32,14 @@ struct Frame {
     _permit: OwnedSemaphorePermit,
 }
 pub struct SyncRegistry {
+    instance: Option<String>,
     waiters: Mutex<HashMap<String, Entry>>,
     bytes: Arc<Semaphore>,
 }
 impl Default for SyncRegistry {
     fn default() -> Self {
         Self {
+            instance: None,
             waiters: Mutex::new(HashMap::new()),
             bytes: Arc::new(Semaphore::new(32 * 1024 * 1024)),
         }
@@ -56,6 +59,11 @@ impl Drop for Waiter {
     }
 }
 impl SyncRegistry {
+    pub(crate) fn with_instance(mut self, instance: String) -> Self {
+        self.instance = Some(instance);
+        self
+    }
+
     pub fn register(self: &Arc<Self>) -> Option<(String, Waiter)> {
         self.register_with_media_responses(false)
     }
@@ -67,7 +75,11 @@ impl SyncRegistry {
         if waiters.len() >= 4096 {
             return None;
         }
-        let id = uuid::Uuid::new_v4().to_string();
+        let nonce = uuid::Uuid::new_v4().to_string();
+        let id = self
+            .instance
+            .as_ref()
+            .map_or_else(|| nonce.clone(), |instance| format!("{instance}:{nonce}"));
         let (sender, receiver) = mpsc::channel(8);
         let failed = Arc::new(AtomicBool::new(false));
         let deadline = Arc::new(Mutex::new(None));
@@ -79,6 +91,7 @@ impl SyncRegistry {
                 deadline: deadline.clone(),
                 media_responses,
                 original_terminal: None,
+                relayed_cursor: None,
             },
         );
         Some((
@@ -169,6 +182,24 @@ impl SyncRegistry {
         }
         sent
     }
+    /// Reserve one remote frame in the original live waiter. Exact duplicates
+    /// are never enqueued again; older or conflicting cursors fail closed.
+    pub(crate) fn claim_relay(&self, waiter: &str, cursor: u64) -> bool {
+        let mut waiters = self.waiters.lock().unwrap();
+        let Some(entry) = waiters.get_mut(waiter) else {
+            return false;
+        };
+        if entry
+            .relayed_cursor
+            .as_ref()
+            .is_some_and(|last| cursor <= *last)
+        {
+            return false;
+        }
+        entry.relayed_cursor = Some(cursor);
+        true
+    }
+
     /// Bounds only explicitly opted-in continuation streams. It never extends
     /// a prior deadline or changes the terminal contract of ordinary streams.
     pub(crate) fn bound(&self, waiter: &str, budget: std::time::Duration) {
