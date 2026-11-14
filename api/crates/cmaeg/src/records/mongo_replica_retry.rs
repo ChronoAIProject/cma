@@ -1,5 +1,9 @@
 //! Retry only a Mongo transaction known to have aborted, never an uncertain commit.
-use super::{failure, RecordError};
+use super::{
+    failure,
+    replica_observation::{Observation, Phase},
+    RecordError,
+};
 use std::{future::Future, time::Duration};
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -7,14 +11,16 @@ const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// One deadline includes every attempt and backoff, including direct root writes
 /// which do not pass through the partition store's separate outer timeout.
 pub(super) async fn run<F: Future<Output = Result<Vec<u64>, AttemptError>>>(
+    observation: &Observation,
     mut attempt: impl FnMut() -> F,
 ) -> Result<Vec<u64>, RecordError> {
     let deadline = tokio::time::Instant::now() + WRITE_TIMEOUT;
     tokio::time::timeout_at(deadline, async {
         for number in 0..5 {
             if tokio::time::Instant::now() >= deadline {
-                return Err(deadline_error());
+                return Err(deadline_error(observation));
             }
+            observation.attempt(number + 1);
             if number > 0 {
                 metrics::counter!("cmaeg_replica_transaction_retries_total").increment(1);
             }
@@ -25,6 +31,7 @@ pub(super) async fn run<F: Future<Output = Result<Vec<u64>, AttemptError>>>(
                     if number == 4 {
                         break;
                     }
+                    observation.phase(Phase::Backoff);
                     tokio::time::sleep(Duration::from_millis(5 << number)).await;
                 }
             }
@@ -34,13 +41,13 @@ pub(super) async fn run<F: Future<Output = Result<Vec<u64>, AttemptError>>>(
         ))
     })
     .await
-    .map_err(|_| deadline_error())?
+    .map_err(|_| deadline_error(observation))?
 }
 
-fn deadline_error() -> RecordError {
+fn deadline_error(observation: &Observation) -> RecordError {
     // Cancellation may race a server commit. Preserve uncertainty: there is
     // no retry here and the caller must reconcile the same retained intent.
-    tracing::warn!("replica transaction deadline exceeded; commit outcome uncertain");
+    observation.deadline();
     RecordError::Unavailable("replica transaction deadline exceeded".into())
 }
 

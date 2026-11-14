@@ -1,5 +1,9 @@
 //! Discovery metadata never mutates the immutable manifest's bytes or version.
-use super::{failure, MongoRecords, RecordError, RecordHead, INTERACTIONS};
+use super::{
+    failure,
+    replica_observation::{Observation, Phase},
+    MongoRecords, RecordError, RecordHead, INTERACTIONS,
+};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, Document},
@@ -13,6 +17,22 @@ impl MongoRecords {
         owner: &str,
         version: u64,
         deployment: &str,
+    ) -> Result<(), RecordError> {
+        let observation = Observation::index();
+        let result = self
+            .finish_admission_index_observed(id, owner, version, deployment, &observation)
+            .await;
+        observation.finish(&result);
+        result
+    }
+
+    async fn finish_admission_index_observed(
+        &self,
+        id: &str,
+        owner: &str,
+        version: u64,
+        deployment: &str,
+        observation: &Observation,
     ) -> Result<(), RecordError> {
         if version != 1 || deployment.len() != 64 {
             return Err(RecordError::Rejected(
@@ -31,10 +51,11 @@ impl MongoRecords {
         let mut indexed = filter.clone();
         indexed.insert("replica.kind", "admission");
         indexed.insert("replica.deployment", deployment);
+        observation.phase(Phase::IndexUpdate);
         let changed = records
             .update_one(indexed, doc! {"$set":{"replica.active":false}})
             .await
-            .map_err(failure)?;
+            .map_err(|error| observed_error(observation, error))?;
         if changed.matched_count == 1 {
             return Ok(());
         }
@@ -42,7 +63,13 @@ impl MongoRecords {
         // there is nothing to clear; a different indexed kind/deployment fails.
         let mut legacy = filter;
         legacy.insert("replica", doc! {"$exists":false});
-        if records.find_one(legacy).await.map_err(failure)?.is_some() {
+        observation.phase(Phase::IndexLegacyRead);
+        if records
+            .find_one(legacy)
+            .await
+            .map_err(|error| observed_error(observation, error))?
+            .is_some()
+        {
             Ok(())
         } else {
             Err(RecordError::Conflict {
@@ -102,4 +129,9 @@ impl MongoRecords {
             })
             .collect()
     }
+}
+
+fn observed_error(observation: &Observation, error: mongodb::error::Error) -> RecordError {
+    observation.mongo_error(&error);
+    failure(error)
 }
