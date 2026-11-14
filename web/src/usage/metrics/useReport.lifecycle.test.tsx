@@ -104,6 +104,10 @@ it.each([false, true])(
             },
       )
       .mockResolvedValue(view('idle'));
+    api.report.mockImplementation(async (id: string) => ({
+      ...reportFixture(true),
+      report_id: id,
+    }));
     Object.assign(api, { latest });
     const hook = renderHook(({ active }) => useUsageReport(api, defaultSelection, true, active), {
       initialProps: { active: true },
@@ -132,6 +136,7 @@ it('pauses and resumes an actual document visibility change', async () => {
   visibility.mockReturnValue('visible');
   const api = metricsClient(true);
   const latest = vi.fn().mockResolvedValueOnce(view()).mockResolvedValue(view('idle'));
+  api.report.mockResolvedValue({ ...reportFixture(true), report_id: 'replacement' });
   Object.assign(api, { latest });
   renderHook(() => useUsageReport(api, defaultSelection, true));
   await flush();
@@ -150,7 +155,7 @@ it('pauses and resumes an actual document visibility change', async () => {
 });
 
 it.each(['principal', 'admin', '403'])(
-  'clears two mounted selections on %s mismatch and rejects late work',
+  'clears two mounted selections on %s mismatch and cancels sibling polling',
   async (kind) => {
     vi.useFakeTimers();
     const api = metricsClient();
@@ -161,15 +166,14 @@ it.each(['principal', 'admin', '403'])(
     await flush();
     expect(first.result.current.report).toBeDefined();
     expect(second.result.current.report).toBeDefined();
-    let resolveLate!: (value: ReturnType<typeof reportFixture>) => void;
-    api.create.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolveLate = resolve;
-      }),
-    );
+    api.create.mockResolvedValueOnce({
+      ...reportFixture(),
+      status: 'pending',
+      summary: null,
+      retry_after_seconds: 2,
+    });
     act(() => second.result.current.refresh());
     await flush();
-    const oldSignal = api.create.mock.calls[2]![1].signal as AbortSignal;
     if (kind === '403') api.create.mockRejectedValueOnce(new ApiError(403, 'Refused'));
     else
       api.create.mockResolvedValueOnce({
@@ -178,14 +182,13 @@ it.each(['principal', 'admin', '403'])(
       });
     act(() => first.result.current.refresh());
     await flush();
-    expect(oldSignal.aborted).toBe(true);
     expect(first.result.current.report).toBeUndefined();
     expect(second.result.current.report).toBeUndefined();
     expect(second.result.current.error?.denied).toBe(true);
-    await act(async () => resolveLate(reportFixture(false, 'late')));
     await act(async () => vi.advanceTimersByTimeAsync(60000));
     expect(second.result.current.report).toBeUndefined();
     expect(api.create).toHaveBeenCalledTimes(4);
+    expect(api.report).not.toHaveBeenCalled();
     expect(liveEntries.size).toBe(0);
   },
 );
@@ -218,7 +221,8 @@ it.each(['principal', 'capabilities', 'epoch'])(
     expect(hook.result.current.report).toBeUndefined();
     await flush();
     expect(hook.result.current.report).toBeUndefined();
-    expect(hook.result.current.error?.denied).toBe(false);
+    expect(hook.result.current.error).toBeUndefined();
+    expect(hook.result.current.retrying).toBe(true);
   },
 );
 

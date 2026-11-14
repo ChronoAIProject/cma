@@ -35,6 +35,9 @@ export function latestQuery(
     const preset = { ...query };
     delete preset.from;
     delete preset.to;
+    // The server aligns rolling endpoints independently. Its stable preset
+    // resolution also accounts for partial boundary buckets (7d needs 600s).
+    delete preset.step_seconds;
     return { ...preset, window: selection.range, refresh };
   }
   return { ...query, window: selection.range, refresh };

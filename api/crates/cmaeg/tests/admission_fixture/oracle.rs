@@ -6,7 +6,7 @@ use cmaeg::{
     records::{mongo::MongoRecords, RecordClient, RecordError},
     turns::routed::TargetState,
 };
-use cmaeg_core::seal::{open_interaction, MasterKeyRing};
+use cmaeg_core::seal::{open_connection, open_interaction, MasterKeyRing};
 use serde_json::{json, Value};
 use std::{path::PathBuf, sync::Arc};
 
@@ -42,16 +42,28 @@ impl Oracle {
     pub async fn shutdown(&self) {
         self.client.clone().shutdown().await;
     }
-    async fn retained(&self, id: &str) -> Result<Option<(Value, u64, String)>, &'static str> {
-        let url = self.records.record_url(id).map_err(|_| "oracle identity")?;
-        let row = match self.records.get(url.as_str()).await {
+    async fn retained(
+        &self,
+        id: &str,
+        expiring: bool,
+    ) -> Result<Option<(Value, u64, String)>, &'static str> {
+        let records = if expiring {
+            self.records.clone().interactions()
+        } else {
+            self.records.clone().connections()
+        };
+        let url = records.record_url(id).map_err(|_| "oracle identity")?;
+        let row = match records.get(url.as_str()).await {
             Ok(row) => row,
             Err(RecordError::NotFound) => return Ok(None),
             Err(_) => return Err("oracle record read"),
         };
-        let bytes = open_interaction(&self.keys, id, &row.blob)
-            .map_err(|_| "oracle sealed record")?
-            .payload;
+        let opened = if expiring {
+            open_interaction(&self.keys, id, &row.blob)
+        } else {
+            open_connection(&self.keys, id, &row.blob)
+        };
+        let bytes = opened.map_err(|_| "oracle sealed record")?.payload;
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| "oracle record schema")?;
         let path = self.receipts.join(format!(
             "{}-{}-{}.json",
@@ -83,7 +95,7 @@ impl Oracle {
             );
         };
         let root = self
-            .retained(&plan.admission_id)
+            .retained(&plan.admission_id, true)
             .await?
             .ok_or("oracle root vanished")?;
         let deployment = hash(b"http://127.0.0.1:18999");
@@ -103,9 +115,9 @@ impl Oracle {
                 ],
             );
             let item_id = index_id("cmaeg-partition-item-v1", &[&target.id]);
-            let item = self.retained(&item_id).await?;
-            let head = self.retained(&partition).await?;
-            let target_state = self.retained(&target.id).await?;
+            let item = self.retained(&item_id, true).await?;
+            let head = self.retained(&partition, false).await?;
+            let target_state = self.retained(&target.id, true).await?;
             let mut terminal = false;
             let mut target_hash = None;
             let mut target_version = None;
@@ -169,3 +181,7 @@ impl Oracle {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "oracle_tests.rs"]
+mod tests;

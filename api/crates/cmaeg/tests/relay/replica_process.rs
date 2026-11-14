@@ -1,12 +1,17 @@
 //! Independent executables sharing one authenticated replica-set database.
 //! Provider fixture admission proves this exact fixture contract, not native sends.
+use crate::runner_process::capture;
 #[path = "../support/replica_delivery.rs"]
 mod delivery;
+#[path = "replica_queue_oracle.rs"]
+mod queue;
 #[allow(dead_code)] // Reuse the existing full HTTP snapshot/SSE fixture in this integration binary.
 #[path = "../../src/turns/routed/adapter_test_server.rs"]
 mod replay_provider;
 #[path = "replica_trace.rs"]
 mod trace;
+#[path = "replica_workload.rs"]
+mod workload;
 
 use crate::{
     fake_nyxid_reply::FakeReply,
@@ -15,10 +20,10 @@ use crate::{
 };
 use cmaeg::ingress::routing_store::EventIdentity;
 use cmaeg_core::ids::EventId;
-use delivery::{routed_channel, routed_env, runner_keys, DeliveryOracle};
+use delivery::{routed_channel, routed_env};
 use mongodb::bson::doc;
 use serde_json::{json, Value};
-use std::{collections::HashSet, path::Path, sync::Arc, time::Duration};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 fn ingress_reason(value: &Value) -> &'static str {
     match value["detail"].as_str().or_else(|| value["code"].as_str()) {
@@ -56,10 +61,18 @@ fn failure_diagnostics_reject_unreviewed_text() {
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo replica set"]
 async fn independent_replicas_share_storage_and_preserve_one_provider_admission() {
-    for replicas in [1, 2, 3] {
+    for replicas in [1, 2] {
         verify_replicas(replicas, false).await;
         verify_replicas(replicas, true).await;
     }
+}
+
+// Keep the inherited N3 coverage available without widening the N1/N2 diagnostic.
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo replica set"]
+async fn three_replicas_share_storage_and_preserve_one_provider_admission() {
+    verify_replicas(3, false).await;
+    verify_replicas(3, true).await;
 }
 
 async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
@@ -72,6 +85,9 @@ async fn verify_replicas(replicas: usize, ownership_enabled: bool) {
 }
 
 async fn verify_cohort(replicas: usize, ownership_enabled: bool, trace: &trace::Trace) {
+    let mut ledger = capture::Ledger::new(replicas, ownership_enabled);
+    capture::verify_application();
+    ledger.record(json!({"stage":"setup", "unique_events":1}));
     trace.stage("setup", "start", 0);
     let provider = replay_provider::HttpServer::start().await;
     {
@@ -106,6 +122,7 @@ async fn verify_cohort(replicas: usize, ownership_enabled: bool, trace: &trace::
     ));
     // Membership shares a deployment identity while each process advertises its own address.
     routing.push(("CMAEG_PUBLIC_URL".into(), "http://127.0.0.1:18999".into()));
+    routing.push(("RUST_LOG".into(), "cmaeg=info,cmaeg::ingress::admission_trace=debug,cmaeg::records::mongo::replica_observation=debug".into()));
     let env: Vec<_> = routing
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
@@ -133,6 +150,11 @@ async fn verify_cohort(replicas: usize, ownership_enabled: bool, trace: &trace::
     let mut processes = Vec::new();
     for ordinal in 1..=replicas {
         trace.stage("ready", "start", ordinal);
+        let ordinal_text = ordinal.to_string();
+        let replicas_text = replicas.to_string();
+        let mut env = env.clone();
+        env.push(("CMAEG_HOST_REPLICAS", &replicas_text));
+        env.push(("CMAEG_HOST_ORDINAL", &ordinal_text));
         processes.push(
             Process::with_providers(
                 &mut fixture,
@@ -162,143 +184,84 @@ async fn verify_cohort(replicas: usize, ownership_enabled: bool, trace: &trace::
         record_id: channel.pointer.record_id.clone(),
         event_id: EventId::new(envelope.payload["message_id"].as_str().unwrap()).unwrap(),
     };
-    let (body, token) = envelope.signed();
-    let requests = processes.iter().enumerate().map(|(index, process)| {
-        let mut request = fixture.request(body.clone(), &token).build().unwrap();
-        *request.url_mut() = format!("{}/v1/callbacks/{}", process.base, fixture.id)
-            .parse()
-            .unwrap();
-        let client = &fixture.client;
-        async move {
-            trace.stage("ingress", "start", index + 1);
-            trace.stage("headers", "start", index + 1);
-            let result = client.execute(request).await;
-            if let Ok(response) = &result {
-                trace.headers(index + 1, response.status().as_u16());
-                trace.stage("headers", "end", index + 1);
-            }
-            result
-        }
-    });
-    trace.stage("oracle_open", "start", 0);
-    let oracle = DeliveryOracle::open(&database.uri, &database.name, runner_keys()).await;
-    trace.stage("oracle_open", "end", 0);
-    let mut rejected = None;
-    let mut accepted = 0;
-    for (index, response) in futures_util::future::join_all(requests)
-        .await
-        .into_iter()
-        .enumerate()
-    {
-        let response = response.unwrap();
-        let status = response.status();
-        trace.stage("body", "start", index + 1);
-        let value: Value = response.json().await.unwrap();
-        trace.stage("body", "end", index + 1);
-        trace.stage("ingress", "end", index + 1);
-        let reason = ingress_reason(&value);
-        if status != 202 {
-            rejected = Some(status);
-            eprintln!("replica_rejection replicas={replicas} ownership={ownership_enabled} ingress_rejection={reason}");
-        } else {
-            assert_eq!(value["status"].as_str(), Some("accepted"));
-            accepted += 1;
-        }
+    let mut failures = workload::Workload {
+        fixture: &fixture,
+        processes: &mut processes,
+        database: &database,
+        identity: &identity,
+        envelope: &envelope,
+        enabled: ownership_enabled,
+        trace,
+        ledger: &mut ledger,
     }
-    if let Some(status) = rejected {
-        // This is an after-response observation, not proof of the failed request's queue commit.
-        trace.stage("rejected_oracle", "start", 0);
-        let plan = oracle.plan(&identity).await;
-        let target_present = if let Some(plan) = &plan {
-            oracle
-                .targets(plan)
-                .await
-                .values()
-                .filter(|target| target.is_some())
-                .count()
-        } else {
-            0
-        };
-        trace.stage("rejected_oracle", "end", 0);
-        eprintln!("replica_failure replicas={replicas} ownership={ownership_enabled} accepted={accepted} durable_plan={} target_present={target_present}", plan.is_some());
-        assert_eq!(
-                status,
-                202,
-            "the same admitted event must remain accepted through every ingress; replicas={replicas}"
-            );
-    }
-    trace.stage("oracle", "start", 0);
-    let plan = tokio::time::timeout(Duration::from_secs(20), async {
-        loop {
-            if let Some(plan) = oracle.plan(&identity).await {
-                let targets = oracle.targets(&plan).await;
-                if !targets.is_empty()
-                    && targets.values().all(|value| {
-                        value
-                            .as_ref()
-                            .is_some_and(|value| value.confirmed_terminal_text())
-                    })
-                {
-                    break plan;
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .expect("durable confirmed delivery deadline");
-    assert_eq!(plan.targets.len(), 1);
-    trace.stage("oracle", "end", 0);
-    for (index, process) in processes.iter_mut().enumerate() {
-        trace.stage("exit", "start", index + 1);
-        process.terminate().await;
-        assert!(
-            tokio::time::timeout(Duration::from_secs(20), process.child.wait())
-                .await
-                .unwrap()
-                .unwrap()
-                .success()
-        );
-        trace.stage("exit", "end", index + 1);
-        process.assert_safe_logs();
-    }
+    .run()
+    .await;
+    failures.extend(workload::stop(&mut processes, trace, &mut ledger).await);
     trace.stage("reconcile", "start", 0);
-    assert_eq!(
-        provider
-            .seen()
-            .iter()
-            .filter(|request| request.method == "POST")
-            .count(),
-        1,
-        "one provider command identity survives concurrent ingress"
-    );
-    // Independent sink observations detect a duplicate hidden by journal settlement.
-    assert_eq!(
-        sink.texts().len(),
-        1,
-        "one complete terminal fixture effect"
-    );
-    assert!(sink.texts().iter().all(|text| text == "hello"));
-    assert_eq!(
+    ledger.record(json!({"stage":"channel_records_start", "records":null}));
+    let records = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         database
             .admin
             .database(&database.name)
             .collection::<mongodb::bson::Document>("eg_channel_records")
             .count_documents(doc! {})
             .await
-            .unwrap(),
-        1
-    );
+    })
+    .await;
+    let records = match records {
+        Ok(Ok(count)) => Some(count),
+        _ => None,
+    };
+    ledger.record(json!({"stage":"channel_records_end", "records":records}));
+    if records != Some(1) {
+        failures.push("channel_records_mismatch");
+    }
+    let provider_posts = provider
+        .seen()
+        .iter()
+        .filter(|request| request.method == "POST")
+        .count();
+    let effects = sink.texts();
+    ledger.record(json!({"stage":"effects", "provider_posts":provider_posts,
+        "sink_effects":effects.len(), "failures":failures}));
+    if provider_posts != 1 {
+        failures.push("provider_admission_not_unique");
+    }
+    if effects.len() != 1 || effects.iter().any(|text| text != "hello") {
+        failures.push("terminal_effect_not_unique");
+    }
     trace.stage("reconcile", "end", 0);
     trace.stage("database_cleanup", "start", 0);
     drop(processes);
-    database
-        .admin
-        .database(&database.name)
-        .drop()
-        .await
-        .unwrap();
+    let cleanup = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        // End only this disposable database's sessions after its children exit;
+        // abandoned transactions otherwise outlive their client connection.
+        database
+            .admin
+            .database("admin")
+            .run_command(doc! {"killAllSessions": [
+                {"user":"runtime", "db":&database.name},
+                {"user":"migrator", "db":&database.name},
+            ]})
+            .await?;
+        database.admin.database(&database.name).drop().await
+    })
+    .await;
+    let cleanup_outcome = match &cleanup {
+        Ok(Ok(())) => "complete",
+        Ok(Err(_)) => "driver_error",
+        Err(_) => "timeout",
+    };
+    ledger.record(json!({"stage":"database_cleanup", "outcome":cleanup_outcome, "complete":matches!(cleanup, Ok(Ok(())))}));
+    if !matches!(cleanup, Ok(Ok(()))) {
+        failures.push("database_cleanup_failed");
+    }
     trace.stage("database_cleanup", "end", 0);
+    ledger.record(json!({"stage":"final", "failures":failures, "complete":failures.is_empty()}));
+    if failures.contains(&"cross_ingress_not_accepted") {
+        panic!("the same admitted event must remain accepted through every ingress; failures={failures:?}");
+    }
+    assert!(failures.is_empty(), "host cohort failures: {failures:?}");
     eprintln!("replica_fixture replicas={replicas} status=PASS ownership={ownership_enabled}");
     trace.stage("teardown", "start", 0);
 }
