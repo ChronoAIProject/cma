@@ -253,7 +253,7 @@ async fn current_owner_ancestry_and_conversation_refusals_never_fall_back() {
             "worktree_agent" => tree.agent_id = None,
             "workspace" => tree.workspace_id = WorkspaceId("different".into()),
             "sandbox" => space.sandbox_id = SandboxId("different".into()),
-            "conversation" => current.conversation.active_turn = Some(10),
+            "conversation" => current.conversation.runtime_generation = Some(1),
             _ => {}
         }
         store.create_sandbox(root).await.unwrap();
@@ -315,7 +315,7 @@ async fn matching_authorized_rows_still_enforce_filter_order_and_cursor() {
             "cursor" => page.next = Some("wrong".into()),
             "limit" => page.items.push(row.clone()),
             "owner" => page.items[0].owner = SubjectId::new("other"),
-            "conversation" => page.items[0].conversation.active_turn = Some(99),
+            "conversation" => page.items[0].conversation.runtime_generation = Some(1),
             _ => unreachable!(),
         }
         probe.supplied = Some(page);
