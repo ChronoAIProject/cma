@@ -1,7 +1,7 @@
 //! Process argument dispatch: unknown arguments are a usage error, never a panic.
 use std::{ffi::OsStr, process::Output};
 
-const USAGE: &str = "usage: cmaeg [--print-openapi | --migrate | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
+const USAGE: &str = "usage: cmaeg [--replica-drain | --print-openapi | --migrate | --migrate-console-sessions | --print-console-sessions-runtime-role | --print-console-sessions-migration-role | --migrate-replicas | --print-runtime-role | --print-migration-role | --migrate-worker-credentials | --print-worker-credentials-runtime-role | --print-worker-credentials-migration-role | --attest-owner-key-cutover RELEASE --all-writers-drained | --migrate-automation | --print-automation-runtime-role | --print-automation-migration-role | --migrate-thread-fences | --print-thread-fences-runtime-role | --print-thread-fences-migration-role | --migrate-media-continuations | --print-media-continuations-runtime-role | --print-media-continuations-migration-role | --migrate-whatsapp-forms | --print-whatsapp-forms-runtime-role | --print-whatsapp-forms-migration-role | --import-legacy-records PATH | --audit-custom-attachments [--clear] | --audit-routing [--clear [--allow-default-widening]] | --media-job <op> <bin-dir> <job-dir> [arg] | --media-sandbox-check | --media-self-test <fixtures-dir>]\n";
 
 fn run(arguments: &[&OsStr]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_cmaeg"))
@@ -22,7 +22,12 @@ fn unknown_arguments_print_the_usage_line_and_exit_two() {
     assert_usage(&run(&[OsStr::new("--serve")]));
     assert_usage(&run(&[OsStr::new("--print-openapi"), OsStr::new("extra")]));
     for command in [
+        "--replica-drain",
         "--migrate",
+        "--migrate-console-sessions",
+        "--print-console-sessions-runtime-role",
+        "--print-console-sessions-migration-role",
+        "--migrate-replicas",
         "--print-runtime-role",
         "--print-migration-role",
         "--migrate-worker-credentials",
