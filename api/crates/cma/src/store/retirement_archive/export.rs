@@ -62,7 +62,30 @@ pub(crate) async fn capture(
     let mut external = Vec::new();
     let mut total = 0;
     let mut document_count = 0;
+    let present_optional = store
+        .database
+        .list_collection_names()
+        .filter(doc! {"name":{"$in":super::super::isolation::OPTIONAL_COLLECTIONS}})
+        .await
+        .map_err(|_| REFUSED)?;
     for name in super::super::isolation::COLLECTIONS {
+        // Disabled features have no collection or grants. An absent optional
+        // namespace contributes an explicit empty inventory without reading it.
+        // Existing namespaces still take the normal ownership/authority path.
+        if super::super::isolation::OPTIONAL_COLLECTIONS.contains(name)
+            && !present_optional
+                .iter()
+                .any(|present| present.as_str() == *name)
+        {
+            records.push(DatabaseRecord {
+                collection: (*name).into(),
+                documents: 0,
+                bytes: 0,
+                sha256: digest(&[]),
+                objects: Vec::new(),
+            });
+            continue;
+        }
         let selected =
             super::census::selection(&store.database, name, &closure, &mut session).await?;
         let mut cursor = store

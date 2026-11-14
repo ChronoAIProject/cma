@@ -10,6 +10,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::sandbox_metric_bindings::COLLECTION,
     super::sandbox_metric_rollups::COLLECTION,
     super::sandbox_usage_rollups::COLLECTION,
+    super::allocation_buckets::COLLECTION,
     super::usage_reports::JOBS,
     super::usage_reports::ROWS,
     super::usage_reports::CHARTS,
@@ -158,6 +159,9 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspaces",
     "worktrees",
 ];
+// These derived stores are activated separately. Existing credentials must
+// still start while the feature is disabled; partial grants remain invalid.
+pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[super::allocation_buckets::COLLECTION];
 // Existing AM stores initialize their own indexes and schemas at startup.
 // These privileges confer no access to EG/IM (or legacy gateway) collections.
 const ACTIONS: &[&str] = &[
@@ -171,8 +175,12 @@ const ACTIONS: &[&str] = &[
     "collMod",
 ];
 pub(crate) fn role(database: &str) -> Document {
+    role_with_optional(database, true)
+}
+fn role_with_optional(database: &str, include_optional: bool) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
+        .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
             let mut actions = ACTIONS.to_vec();
             if *name == "binding_conversations" {
@@ -244,9 +252,10 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
         return Err(denied());
     }
     if !COLLECTIONS.iter().all(|name| {
-        ACTIONS
-            .iter()
-            .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
+        (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
+            || ACTIONS
+                .iter()
+                .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
     }) || !grants
         .get("binding_conversations")
         .is_some_and(|actions| actions.contains("dropIndex"))
@@ -254,6 +263,9 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
         return Err(denied());
     }
     Ok(())
+}
+fn required_role(database: &str) -> Document {
+    role_with_optional(database, false)
 }
 #[cfg(test)]
 pub(crate) async fn verify(database: &Database) -> Result<(), StoreError> {
@@ -282,7 +294,7 @@ pub(crate) async fn verify_with_authority(
             cma_service_auth::mongodb_authority::verify_shared_schema(
                 &status,
                 database.name(),
-                &role(database.name()),
+                &required_role(database.name()),
             )
             .map_err(|error| StoreError::Unavailable(error.into()))
         }
@@ -291,6 +303,9 @@ pub(crate) async fn verify_with_authority(
 #[cfg(test)]
 #[path = "agent_lifecycle_contract.rs"]
 pub(super) mod agent_lifecycle_contract;
+#[cfg(test)]
+#[path = "isolation/allocation_tests.rs"]
+mod allocation_tests;
 #[cfg(test)]
 #[path = "lifecycle_children_contract.rs"]
 mod lifecycle_children_contract;

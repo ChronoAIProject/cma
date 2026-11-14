@@ -1,4 +1,10 @@
 use super::*;
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_allocation_buckets_activate_only_with_confined_namespace_grants() {
+    super::allocation_tests::verify_runtime().await;
+}
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
