@@ -3,6 +3,8 @@ use crate::agent_capacity_recovery::{
     tests::{confirmation, request},
     CapacityRecoveryNativeProof,
 };
+use crate::hosted::process_ingress_test_support::{process_budget_lock, wait_for_process_budget};
+use crate::ingress_budget::IngressBudget;
 use tokio::sync::Notify;
 
 struct Pause {
@@ -114,6 +116,8 @@ async fn recovery_fixture(
 
 #[tokio::test]
 async fn capacity_recovery_success_attaches_without_replaying_input() {
+    let _process_budget = process_budget_lock().await;
+    let available = IngressBudget::process().available_bytes();
     let pause = Arc::new(Pause {
         stage: usize::MAX,
         reached: Notify::new(),
@@ -133,10 +137,13 @@ async fn capacity_recovery_success_attaches_without_replaying_input() {
     proof.validate_for(&request).unwrap();
     transport.retire(&request.target.runtime).await.unwrap();
     server.await.unwrap();
+    wait_for_process_budget(available).await;
 }
 
 #[tokio::test]
 async fn capacity_recovery_fences_every_opening_await_against_close_and_retire() {
+    let _process_budget = process_budget_lock().await;
+    let available = IngressBudget::process().available_bytes();
     for retire in [false, true] {
         for stage in 0..4 {
             let pause = Arc::new(Pause {
@@ -211,6 +218,7 @@ async fn capacity_recovery_fences_every_opening_await_against_close_and_retire()
             assert!(transport.state.lock().await.links.is_empty());
         }
     }
+    wait_for_process_budget(available).await;
 }
 
 #[tokio::test]
