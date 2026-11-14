@@ -25,7 +25,7 @@ environment, credentials or error text. A namespace replacement invalidates the
 capture. Captured container ID/start/restart identity is not process-exit proof.
 Co-location is reported explicitly; readiness cannot pass placement or capacity.
 
-Before real use, obtain exact-source tooling review and the owner image/config,
+Before real use, obtain the owner image/config,
 dedicated database/credentials, endpoints, controls and coordinated window. HTTP
 JWKS/provider fixture access must satisfy the product's loopback rule through a
 reviewed per-Pod proxy, or use trusted TLS. No URL-policy relaxation is supplied.
@@ -89,3 +89,47 @@ N1/N2 timeout closure. Historical aadd212/c08 attribution remains unknown.
 
 Validation is pure Python and mocked Kubernetes, with no application, Docker,
 Mongo, actual child process, cluster request, load or production operation.
+
+## Local fixture process control
+
+`fixture_process.py` adds actual host process control for the separate admission
+fixture. It uses the existing process-group custody helper and makes no HTTP or
+Kubernetes calls. The owner supplies the binary, private config and all three
+budgets before launch. There are no arbitrary shell callbacks:
+
+```sh
+python3 fixture_process.py --binary /absolute/cmaeg-admission-fixture \
+  --config /private/fixture.json --out /task/fixture-process \
+  --ready-seconds READY --lifetime-seconds LIFETIME --shutdown-seconds SHUTDOWN
+```
+
+Replace the uppercase budget placeholders with the agreed seconds for that
+cohort. The fixture's own setup/shutdown limits remain unchanged. A lifetime or
+readiness deadline marks the result incomplete and starts shutdown; it does not
+grant another attempt. SIGINT/SIGTERM to this wrapper requests an operator stop.
+For a debug fixture requiring an explicit worker stack, pass
+`--runtime-stack-bytes` with the owner-selected size; this sets `RUST_MIN_STACK`
+only for the fixture child. Unrelated shell environment is not inherited.
+Do that only after the owner has established gateway finality and developer08
+has completed close/reconcile. The wrapper cannot establish either condition.
+
+Only complete fixed READY/STOPPED/error markers are retained from child output;
+other output is discarded. Shutdown keeps draining the pipe while waiting for
+fixture exit. A surviving descendant is still owned after parent exit. A stall
+exhausting the shutdown budget triggers group cleanup/KILL and stays incomplete.
+The existing helper uses a separate two-second KILL/anchor wait, and each numeric
+process-table read can take up to two seconds; reported shutdown elapsed includes
+those operations. `fixture_exit_within_shutdown_budget` describes observed fixture
+group exit before escalation, not a whole-invocation latency qualification.
+
+The database, private fixture files and observations are retained on every
+outcome. The result never certifies gateway death or application acceptance.
+These tests use real local children for graceful exit, TERM-ignoring stall,
+parent exit with a survivor, lifetime expiry and incomplete marker framing:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_lifecycle.py test_fixture_process.py
+```
+
+The lead's speed directive requires no intermediate tooling review. Actual
+resource readiness, serialized workload ownership and production approvals remain.
