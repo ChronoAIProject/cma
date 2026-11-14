@@ -77,7 +77,7 @@ pub enum ErasureBlock {
         class: String,
         limit: u64,
     },
-    /// The attributed record requires repair of its ownership evidence.
+    /// The attributed record cannot be erased without repairing its evidence.
     CorruptRecord {
         collection: String,
     },
@@ -186,13 +186,32 @@ pub struct ErasureInventory {
     pub documents: Vec<String>,
     pub homes: Vec<String>,
     pub pending_key_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_delegations: Vec<DelegationDebt>,
     pub counts: BTreeMap<String, u64>,
+}
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelegationDebt {
+    pub bot_id: String,
+    pub authorization_grant_id: String,
+    pub credential_incarnation: String,
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeyReceipt {
     pub remaining: u64,
     pub empty_at: Option<String>,
+}
+impl KeyReceipt {
+    pub(super) fn confirms_empty(&self) -> bool {
+        self.remaining == 0
+            && self
+                .empty_at
+                .as_deref()
+                .and_then(crate::seconds_from_rfc3339)
+                .is_some()
+    }
 }
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -201,19 +220,21 @@ pub struct ResidueReport {
     pub objects: u64,
     pub homes: Vec<String>,
     pub keys: KeyReceipt,
+    /// Authoritative confirmation covering every inventoried delegation grant,
+    /// independent of the account's empty key list. Historical debt has no proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegations: Option<KeyReceipt>,
 }
 impl ResidueReport {
     pub fn is_zero(&self) -> bool {
         self.records.values().all(|count| *count == 0)
             && self.objects == 0
             && self.homes.is_empty()
-            && self.keys.remaining == 0
+            && self.keys.confirms_empty()
             && self
-                .keys
-                .empty_at
-                .as_deref()
-                .and_then(crate::seconds_from_rfc3339)
-                .is_some()
+                .delegations
+                .as_ref()
+                .is_none_or(KeyReceipt::confirms_empty)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
