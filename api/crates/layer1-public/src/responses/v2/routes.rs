@@ -369,7 +369,10 @@ pub(super) async fn replay(
         authorization,
         status.receipt,
         query.starting_after.or(header),
-        Some(status.turn_sequence.is_some()),
+        // Replay is already an established read path. Preserve its legacy
+        // cursor error contract while allowing submit to use the unbound
+        // header fast path; a bound replay still carries the known hint.
+        status.turn_sequence.map(|_| true),
     )
     .await
 }
