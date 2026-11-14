@@ -1657,6 +1657,16 @@ budget expires before this waiter is confirmed, the request returns 202 JSON and
 admission and provider work continue. It does not open an unowned stream that
 could remain empty when a concurrent duplicate is resolved.
 
+For an admitted ordinary stream in replica mode, the original ingress observes
+the primary target once per second while its waiter remains live. A confirmed
+terminal state or lost terminal delivery closes that waiter with a content-free
+`cmaeg.failed` / `sync_delivery_lost` control. Status reads, including access to a
+shared pool of 32 observers, have a two-second bound; failed observation closes
+only the connection with `sync_delivery_observation_unavailable` uncertainty.
+Neither control changes durable delivery evidence or retries the provider or
+answer. Queued and executing work has no new total stream deadline. Explicit
+media-continuation streams retain their existing separate lifetime contract.
+
 Legacy Custom retries using `cma_codex` read the provider's original admitted event under the
 channel's current credential before starting work. Missing CloudEvent `time`
 retains the original generated timestamp; an explicit time, source, subject,

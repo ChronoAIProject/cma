@@ -64,6 +64,7 @@ pub struct RoutedIngress {
     binding_replacement_bindings: BTreeSet<String>,
     pub(crate) quoted_context_enabled: bool,
     sync_delivery_enabled: bool,
+    stream_monitor: Option<crate::turns::routed::StreamMonitor>,
     custom_media_providers: BTreeSet<String>,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
@@ -89,6 +90,7 @@ impl RoutedIngress {
             binding_replacement_bindings: BTreeSet::new(),
             quoted_context_enabled: false,
             sync_delivery_enabled: false,
+            stream_monitor: None,
             custom_media_providers: BTreeSet::new(),
             clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
         }
@@ -140,6 +142,13 @@ impl RoutedIngress {
     }
     pub fn with_sync_delivery(mut self, enabled: bool) -> Self {
         self.sync_delivery_enabled = enabled;
+        self
+    }
+    pub(crate) fn with_stream_monitor(
+        mut self,
+        monitor: Option<crate::turns::routed::StreamMonitor>,
+    ) -> Self {
+        self.stream_monitor = monitor;
         self
     }
     pub fn with_custom_media_providers(mut self, providers: BTreeSet<String>) -> Self {
