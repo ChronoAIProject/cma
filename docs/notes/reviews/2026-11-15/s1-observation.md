@@ -2,7 +2,7 @@
 
 Observer: solution-architect-03; cutover executor: deployment-engineer-01; user-service probe owner: prod-verifier-02. The lead approved these read-only Kubernetes/Compute observations on14November. Engineer01 agreed the scope and event boundaries. No rollout, scale, IAM, credential, Secret, pod-exec or probe-traffic changes are included.
 
-**Kubernetes mapping observed; Compute mapping/access and the cutover probe remain HOLD.** Read-only permission is already granted. The technical dependency is a working authorized Compute identity/invocation and actual resource mapping, not another generic approval.
+**Kubernetes mapping observed; owner probe CLI supplied; execution remains HOLD.** Compute mapping/access, actual probe window/clock inputs and the replacement-source association are still required. Read-only observation permission is already granted; no repeat generic approval is needed.
 
 ## Actual preparation results
 
@@ -113,10 +113,38 @@ Let `D_low` be a defensible earliest withdrawal bound including query/freshness 
 
 Run the deadline alarm independently of blocking reads. At120s from the conservative withdrawal lower bound without proven restoration, stop promotion and use the already approved compatible recovery. UNKNOWN never resets the clock. Preserve a breach even if recovery later succeeds; never force-delete or shorten authority/grace.
 
-## User-service probe — owner adaptation pending
+## Owner's concrete cutover probe
 
-Prod-verifier-02 owns the invocation. Existing `read-capture.mjs` soak/ paced profiles are not cutover-qualified: discovery consumes time, the soak starts after convergence, failures stop traffic, and the result lacks required completion/source association. Do not substitute an older Activity/legacy-usage round or `/livez`/`/ready` diagnostics.
+Prod-verifier-02 executes from `/Users/shining/code/work/tech-lead.staff/prod-verifier-02`. The full [owner contract](/Users/shining/code/work/tech-lead.staff/prod-verifier-02/deadline-20261115/cutover/README.md) and [session](/Users/shining/code/work/tech-lead.staff/prod-verifier-02/deadline-20261115/cutover/session.example.json) / [withdrawal](/Users/shining/code/work/tech-lead.staff/prod-verifier-02/deadline-20261115/cutover/withdrawal.example.json) templates define the inputs. Use new private completed inputs; unset templates deny execution. Existing soak/ paced profiles, older Activity/legacy-usage rounds and health diagnostics are not substitutes.
 
-Engineer01 requested: pre-armed pinned fixture/broker; one Agent detail/transcript pair; cap1/no retries; existing lock/pacing/abort rules; bounded window/explicit trigger; sanitized UTC and monotonic request starts, decoded completion and predicate completion. `replacement_source_qualified` stays false until joined to actual exclusive replacement routing throughout the request or a server/request join. The owner must supply the concrete CLI, full-body predicate and source join before the stop checkpoint passes. No probe traffic was requested or launched by this preparation.
+Bind **actually observed Batch9 N1/OFF** source/images/generations/controls, `cohort=n1_repeat`, AM1/EG1 and `observed_at<=arming_start<=window_start`. Do not fill predicted target generations or replicas. The owner confirmed this pre-arm state is supported; replacement identities/config are a separate post-cutover join. Supply actual UTC boundaries and a justified host-clock bound, never zero for unknown uncertainty.
+
+Offline validation only:
+
+```bash
+node deadline-20261115/cutover-capture.mjs --validate /absolute/path/to/session.json
+```
+
+For the selected authorized execution window, the owner arms once. **Arming is an execution action**: authenticated owner/fixture discovery and the shared collector lock/private IPC are established. It sends no detail/transcript pair before a valid trigger. Take `RUN_ID` only from `operator_trigger_ready` after setup succeeds.
+
+```bash
+node deadline-20261115/cutover-capture.mjs --arm /absolute/path/to/session.json
+```
+
+Trigger only after the observer establishes the actual withdrawal bracket and the executor has independently established safe authority cessation. This consumes the single attempt before pacing; no automatic retry or new arm to hide failure:
+
+```bash
+node deadline-20261115/cutover-capture.mjs --trigger RUN_ID /absolute/path/to/withdrawal.json
+```
+
+The schema is `cma-cutover-withdrawal-v1`: `lower_utc`, `upper_utc`, `query_start_utc`, `query_end_utc`, `freshness_bound_ms`, `clock_uncertainty_ms`, `established` and `observer`. Preserve the full query/freshness bracket; there is no one-second bracket cap. Lower must cover query start minus freshness. Host-clock uncertainty is separate, must be known and within the owner's supported0–1000ms, with the additional1ms UTC rounding retained. Never shrink a conservative bracket or replace unknowns with zero. Both request-start lower bounds must exceed the expanded withdrawal upper bound.
+
+The attempt is one detail/transcript GET pair, cap1, no retry/usage/Activity. Keep the shared lock, retained≥90-second sample spacing, ordinary1-second admission spacing, sibling drain and429/5xx/broker/identity aborts. Reserve that sample spacing before stopping legacy; do not reset the shared clock or bypass another collector. Arming starts at most30minutes before the execution window; the window is at most10minutes. Request timeout is1–30seconds, clamped to the remaining window. These limits never extend the120-second cutover budget.
+
+Read the final `deadline-20261115/cutover/results/<UTC>/capture.json`, not trigger acknowledgment. Require both decoded HTTP200 responses, detail/transcript identity matching the pinned Agent, both starts after the expanded withdrawal bound and timely predicate completion. Events retain each `request_start` / `decoded_body_complete`, `pair_settled`, `both_decoded_bodies_complete` when true, `identity_predicate_complete` and `cutover_finished`. Failed/incomplete sibling results remain failures; clock discontinuity/expiry fails closed. No response payloads, raw IDs or credentials are persisted.
+
+Every event/result retains **`replacement_source_qualified=false`**; the best owner-local result is `IDENTITY_QUALIFIED_SOURCE_UNQUALIFIED`. The reported `R_high-D_low<120000` numeric check is insufficient for acceptance. Join actual exclusive qualified replacement routing throughout the request or a server/request source association, and retain that separate stage evidence. Never rewrite the probe's pre-arm metadata or false source flag into serving-replica proof. Different hosts' monotonic clocks are never subtracted.
+
+Engineer01 reports the owner passed24 shared and9 focused local tests; those are author results, not production or duplicate reviewer execution. Neither arming nor trigger traffic was performed by this checklist update.
 
 Retain actual cohorts, query brackets/errors, four-event times, outage upper bound, operation/recovery outcomes and lead decision. Continue the separate30-minute soak/E+15 report. This preparation executed only Kubernetes and failed Compute reads; no S1 restoration time is established.

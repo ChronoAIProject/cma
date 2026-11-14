@@ -9,9 +9,10 @@ No final image, timing proof or production approval is supplied by this file.
 
 The lead has approved read-only cutover observations. Use the agreed
 [S1 observer commands and timing bounds](s1-observation.md). Canonical
-Service/EndpointSlice/NEG annotation mapping is observed; successful Compute
-health access/resource mapping and the cutover-specific user-service invocation
-remain technical HOLDs. Generic read-only approval need not be requested again.
+Service/EndpointSlice/NEG annotation mapping is observed and the owner cutover
+CLI is supplied. Compute access/resource mapping, actual probe inputs/window and
+independent replacement-source association remain technical HOLDs. Generic
+read-only observation approval need not be requested again.
 
 Bind the actual selected images from the completed local release input:
 
@@ -53,6 +54,10 @@ python3 -B "$scale_tools/observe.py" check --service am --count 1 \
 Require successful mapped Compute reads and the bound cutover probe; refresh
 the old Pod UID/restart/image cohort after M4. Follow the observer's query
 brackets and conservative deadline, not a first-absent timestamp.
+Before stop, confirm owner `operator_trigger_ready`, the actual N1/OFF pre-arm
+context and available shared sample spacing. Trigger the one pair only after
+qualified withdrawal and authority cessation; retain its final result and the
+independent replacement-source join, not the trigger acknowledgment.
 Stop legacy1→0. This is the last safe boundary for branch A. Observe actual old
 backend withdrawal; start the strict clock from that observation. All previous
 process, socket and effect authority must end or be safely revoked/expired.
