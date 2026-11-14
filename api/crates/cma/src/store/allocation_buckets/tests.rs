@@ -3,6 +3,7 @@ use layer2_core::sandbox_usage::{UsageEvent, UsageEventKind, UsageTotals};
 use layer2_core::{SandboxId, SubjectId};
 
 mod boundary;
+mod live;
 mod mongo;
 mod recovery;
 
