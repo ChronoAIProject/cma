@@ -55,15 +55,27 @@ impl DayBucket {
         format!("{}:{}", self.sandbox_id, self.day)
     }
 
+    fn baseline_matches(&self, revision: u64, complete_lifecycle: bool) -> Result<bool> {
+        if self.complete_lifecycle == complete_lifecycle {
+            return Ok(true);
+        }
+        // The supported rebaseline writer excludes an uncertain ledger tail.
+        // That forward transition invalidates prepared coverage, not identity.
+        if self.complete_lifecycle && !complete_lifecycle && self.revision < revision {
+            return Ok(false);
+        }
+        Err(MetricsError::Unavailable)
+    }
+
     fn validate_source(&self, state: &SandboxUsage) -> Result<bool> {
         if self.sandbox_id != state.sandbox_id.as_str()
             || self.owner != state.owner.as_str()
             || self.created_at != state.created_at
             || self.tracking_started_at != state.tracking_started_at
-            || self.complete_lifecycle != state.complete_lifecycle
         {
             return Err(MetricsError::Unavailable);
         }
+        let baseline_matches = self.baseline_matches(state.revision, state.complete_lifecycle)?;
         if self.revision == state.revision {
             if self.source_seq != state.source_seq
                 || self.source_revision != state.source_revision
@@ -80,6 +92,9 @@ impl DayBucket {
                 || self.source_revision > state.source_revision)
         {
             return Err(MetricsError::Unavailable);
+        }
+        if !baseline_matches {
+            return Ok(false);
         }
         // observe_inner appends at the prior last_observed_at; rebaseline only
         // moves that boundary forward. A fully queried closed day therefore
