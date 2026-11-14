@@ -14,7 +14,16 @@ impl TitleMutation {
                 Self::User { .. } => TitleOutcome::User(SetAgentTitleOutcome::AlreadySet),
             });
         }
-        if let Self::Automatic { claim, source, .. } = self {
+        if let Self::Automatic {
+            claim,
+            source,
+            title,
+            ..
+        } = self
+        {
+            if !state.effect.permits_title(title, *source) {
+                return Some(TitleOutcome::Automatic(false));
+            }
             if !state
                 .lease
                 .as_ref()

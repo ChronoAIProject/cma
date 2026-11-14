@@ -109,7 +109,12 @@ pub(crate) async fn serve(
     };
     let (scheduler, outcomes) = delivery::router::ShardedScheduler::channel(256);
     let delivery: std::sync::Arc<dyn delivery::router::DeliverySink> = Arc::new(scheduler);
-    let waiters = Arc::new(delivery::sync::SyncRegistry::default());
+    let registry = delivery::sync::SyncRegistry::default();
+    let registry = match &replica_runtime {
+        Some(runtime) => registry.with_instance(runtime.partitions.membership().instance),
+        None => registry,
+    };
+    let waiters = Arc::new(registry);
     let custom_delivery = delivery::custom::CustomDelivery::new(
         config.management.public_url.clone(),
         waiters.clone(),
