@@ -7,6 +7,7 @@ use layer2_core::{
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
 mod source;
+pub(crate) use source::AllocationDelta;
 use std::collections::BTreeMap;
 pub(crate) const COLLECTION: &str = "sandbox_usage_rollups";
 #[derive(Clone, Serialize, Deserialize)]

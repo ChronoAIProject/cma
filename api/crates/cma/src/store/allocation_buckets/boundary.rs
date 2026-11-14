@@ -3,6 +3,7 @@ use super::*;
 use layer2_core::sandbox_usage::{UsageEvent, UsageEventKind, UsageTotals};
 use mongodb::bson::{spec::BinarySubtype, Binary, Bson};
 use sha2::{Digest, Sha256};
+mod delta;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +31,26 @@ struct Bound<T> {
 }
 
 impl Boundary {
+    fn events(&self, state: &SandboxUsage) -> Vec<UsageEvent> {
+        self.events
+            .iter()
+            .map(|e| UsageEvent {
+                sandbox_id: state.sandbox_id.clone(),
+                owner: state.owner.clone(),
+                revision: e.revision,
+                kind: e.kind,
+                started_at: e.started_at,
+                ended_at: e.ended_at,
+                allocation: e.allocation.clone(),
+                // The original projector does not consume these ledger fields.
+                source_seq: 0,
+                next_allocation: e.allocation.clone(),
+                status: String::new(),
+                quantity: UsageTotals::default(),
+            })
+            .collect()
+    }
+
     pub(super) fn new(state: &SandboxUsage, events: &[UsageEvent], queried_to: u64) -> Self {
         let scope_valid = events
             .iter()
@@ -156,25 +177,7 @@ impl DayBucket {
         {
             return Ok(None);
         }
-        let events: Vec<_> = input
-            .events
-            .iter()
-            .map(|e| UsageEvent {
-                sandbox_id: state.sandbox_id.clone(),
-                owner: state.owner.clone(),
-                revision: e.revision,
-                kind: e.kind,
-                started_at: e.started_at,
-                ended_at: e.ended_at,
-                allocation: e.allocation.clone(),
-                // The established allocation projector consumes only the fields above.
-                // Other ledger fields remain authoritative exclusively in the raw store.
-                source_seq: 0,
-                next_allocation: e.allocation.clone(),
-                status: String::new(),
-                quantity: UsageTotals::default(),
-            })
-            .collect();
+        let events = input.events(state);
         Ok(Some(allocation::project(state, &events, range)))
     }
 }

@@ -411,6 +411,7 @@ mod retained_measurement;
 
 mod retained_windows;
 
+mod boundary_deltas;
 mod bucket_ranges;
 
 mod range_measurement;
