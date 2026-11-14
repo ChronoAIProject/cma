@@ -2,6 +2,7 @@
 //! provider operation is retried, and an uncertain hop remains Lost evidence.
 #[cfg(test)]
 mod mongo_tests;
+pub(super) mod monitor;
 mod receive;
 #[cfg(test)]
 mod tests;
