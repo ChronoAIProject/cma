@@ -19,7 +19,11 @@ impl MetricsWorkers {
                 .await;
                 // This synchronous root keeps JSON formatters from inheriting
                 // ambient request/tenant context; never hold it across await.
-                let root = tracing::info_span!(parent:None, "usage_allocation_maintenance");
+                let root = if matches!(&result, Ok(Ok(_))) {
+                    tracing::info_span!(parent:None, "usage_allocation_maintenance")
+                } else {
+                    tracing::warn_span!(parent:None, "usage_allocation_maintenance")
+                };
                 if root.is_disabled() {
                     continue;
                 }

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const PAGE_SIZE: i64 = 4;
+pub(super) const PAGE_SIZE: i64 = 16;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Lane {
     Live,
@@ -38,6 +38,7 @@ impl Progress {
         };
         if let Some(saved) = &lease.progress {
             if !saved.day.is_multiple_of(DAY)
+                || saved.day > i64::MAX as u64 / 1000 - 32 * DAY
                 || !saved.cutoff.is_multiple_of(HOUR)
                 || saved.cutoff < saved.day
                 || saved.cutoff > saved.day + DAY
@@ -51,6 +52,7 @@ impl Progress {
             if !saved.pass_complete
                 && saved.day >= today.saturating_sub(30 * DAY)
                 && saved.day <= first_day
+                && (matches!(lease.lane, Lane::Backfill) || saved.day == today)
             {
                 return Ok(saved.clone());
             }
@@ -110,16 +112,40 @@ impl ReportingStore {
             return Ok(Maintenance::default());
         };
         let progress = Progress::select(&lease)?;
+        if progress.cutoff == progress.day {
+            let next = progress.next(lane, lease.at, None, false);
+            self.publish_allocation_buckets(&lease, &[], &next).await?;
+            return Ok(Maintenance {
+                claimed: true,
+                pass_complete: next.pass_complete,
+                ..Default::default()
+            });
+        }
+        let mut page_size = PAGE_SIZE;
+        loop {
+            match self
+                .maintain_allocation_page(&lease, &progress, page_size)
+                .await
+            {
+                // Busy is raised by the source/materialization/publication byte
+                // budgets before any transaction writes. Retry a smaller page
+                // under the same lease; never skip a member to make progress.
+                Err(MetricsError::Busy) if page_size > 1 => page_size /= 2,
+                result => return result,
+            }
+        }
+    }
+
+    async fn maintain_allocation_page(
+        &self,
+        lease: &publication::Lease,
+        progress: &Progress,
+        page_size: i64,
+    ) -> Result<Maintenance> {
         let mut result = Maintenance {
             claimed: true,
             ..Default::default()
         };
-        if progress.cutoff == progress.day {
-            let next = progress.next(lane, lease.at, None, false);
-            self.publish_allocation_buckets(&lease, &[], &next).await?;
-            result.pass_complete = next.pass_complete;
-            return Ok(result);
-        }
         let mut snapshot = self.snapshot().await?;
         let mut filter = Document::new();
         if let Some(after) = &progress.after {
@@ -129,8 +155,8 @@ impl ReportingStore {
             .collection(super::super::sandbox_usage::STATES)
             .find(filter)
             .sort(doc! {"_id":1})
-            .limit(PAGE_SIZE + 1)
-            .batch_size((PAGE_SIZE + 1) as u32)
+            .limit(page_size + 1)
+            .batch_size((page_size + 1) as u32)
             .max_time(DB_DEADLINE)
             .session(&mut snapshot)
             .await
@@ -144,8 +170,8 @@ impl ReportingStore {
         {
             states.push(super::super::sandbox_usage::read_state(&document).map_err(unavailable)?);
         }
-        let more = states.len() > PAGE_SIZE as usize;
-        states.truncate(PAGE_SIZE as usize);
+        let more = states.len() > page_size as usize;
+        states.truncate(page_size as usize);
         let last = states.last().map(|s| s.sandbox_id.to_string());
         result.states = states.len();
         let range = Range {
@@ -196,10 +222,65 @@ impl ReportingStore {
             })
             .collect::<Result<Vec<_>>>()?;
         result.written = buckets.len();
-        let next = progress.next(lane, lease.at, last, more);
+        let next = progress.next(lease.lane, lease.at, last, more);
         result.pass_complete = next.pass_complete;
-        self.publish_allocation_buckets(&lease, &buckets, &next)
+        self.publish_allocation_buckets(lease, &buckets, &next)
             .await?;
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lease(progress: Progress) -> publication::Lease {
+        publication::Lease {
+            lane: Lane::Live,
+            holder: "test".into(),
+            generation: 1,
+            at: 100 * DAY + 6 * HOUR,
+            progress: Some(progress),
+        }
+    }
+
+    #[test]
+    fn live_resume_keeps_cutoff_until_finished_and_prioritizes_the_new_day() {
+        let mut lease = lease(Progress {
+            day: 100 * DAY,
+            cutoff: 100 * DAY + 5 * HOUR,
+            after: Some("sandbox".into()),
+            pass_complete: false,
+        });
+        let resumed = Progress::select(&lease).unwrap();
+        assert_eq!(resumed.cutoff, 100 * DAY + 5 * HOUR);
+        assert_eq!(resumed.after.as_deref(), Some("sandbox"));
+        lease.progress.as_mut().unwrap().pass_complete = true;
+        let refreshed = Progress::select(&lease).unwrap();
+        assert_eq!(refreshed.cutoff, 100 * DAY + 6 * HOUR);
+        assert!(refreshed.after.is_none());
+        lease.progress.as_mut().unwrap().pass_complete = false;
+        lease.at += DAY;
+        let tomorrow = Progress::select(&lease).unwrap();
+        assert_eq!(tomorrow.day, 101 * DAY);
+        assert!(tomorrow.after.is_none());
+    }
+
+    #[test]
+    fn malformed_durable_progress_refuses_before_scanning_or_overflow() {
+        let mut lease = lease(Progress {
+            day: u64::MAX / DAY * DAY,
+            cutoff: u64::MAX,
+            after: None,
+            pass_complete: false,
+        });
+        assert!(Progress::select(&lease).is_err());
+        lease.progress = Some(Progress {
+            day: 100 * DAY,
+            cutoff: 100 * DAY + 1,
+            after: None,
+            pass_complete: false,
+        });
+        assert!(Progress::select(&lease).is_err());
     }
 }
