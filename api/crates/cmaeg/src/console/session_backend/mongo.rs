@@ -107,21 +107,26 @@ impl SessionBackend for MongoSessionBackend {
         id: &'a str,
         expected: &'a [u8],
         next: Vec<u8>,
-        access_ttl_ms: Option<i64>,
+        access_expires_ms: Option<i64>,
     ) -> BoxFuture<'a, Result<Option<Stored>, StoreError>> {
         Box::pin(async move {
             if !identifier(id)
                 || !payload_valid(expected)
                 || !payload_valid(&next)
-                || access_ttl_ms.is_some_and(|ttl| ttl <= 0 || ttl > 86_400_000)
+                || access_expires_ms.is_some_and(|deadline| deadline <= 0)
             {
                 return Err(StoreError::Invalid);
             }
             let mut filter = live(id);
             filter.insert("payload", binary(expected.to_vec()));
             let mut set = doc! {"payload":{"$literal":binary(next)},"observed_at":"$$NOW","fence":{"$add":["$fence",1_i64]}};
-            if let Some(ttl) = access_ttl_ms {
-                set.insert("access_expires_at", doc! {"$add":["$$NOW",ttl]});
+            if let Some(deadline) = access_expires_ms {
+                // The caller anchors this deadline at the durable attempt,
+                // never at completion of provider or database I/O.
+                set.insert(
+                    "access_expires_at",
+                    mongodb::bson::DateTime::from_millis(deadline),
+                );
             }
             bounded("compare_exchange", async {
                 self.rows
@@ -132,6 +137,43 @@ impl SessionBackend for MongoSessionBackend {
                     .map_err(|_| StoreError::Unavailable)?
                     .map(stored)
                     .transpose()
+            })
+            .await
+        })
+    }
+
+    fn admit<'a>(
+        &'a self,
+        id: &'a str,
+        expected: &'a [u8],
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move {
+            if !identifier(id) || !payload_valid(expected) {
+                return Err(StoreError::Invalid);
+            }
+            let mut filter = live(id);
+            filter.insert("payload", binary(expected.to_vec()));
+            // Reserve the entire client I/O budget after the database fence,
+            // so an acknowledgement delayed to the deadline cannot consume the
+            // Console's 30-second useful-token margin.
+            filter.insert(
+                "$and",
+                vec![doc! {"$expr":{"$gt":["$access_expires_at",{"$add":["$$NOW",33_000_i64]}]}}],
+            );
+            bounded("admit", async {
+                let row = self
+                    .rows
+                    .find_one_and_update(
+                        filter,
+                        vec![
+                            doc! {"$set":{"observed_at":"$$NOW","fence":{"$add":["$fence",1_i64]}}},
+                        ],
+                    )
+                    .return_document(ReturnDocument::After)
+                    .max_time(SERVER_TIMEOUT)
+                    .await
+                    .map_err(|_| StoreError::Unavailable)?;
+                Ok(row.is_some())
             })
             .await
         })
