@@ -17,6 +17,10 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_metric_bindings", Sandbox(&["sandbox_id"])),
     ("sandbox_metric_rollups", Sandbox(&["sandbox_id"])),
     ("sandbox_usage_rollups", Sandbox(&["sandbox_id"])),
+    (
+        "sandbox_usage_allocation_buckets_v1",
+        Sandbox(&["sandbox_id"]),
+    ),
     ("sandbox_usage_reports", Empty),
     ("sandbox_usage_report_rows", Sandbox(&["sandbox_id"])),
     ("sandbox_usage_report_charts", Sandbox(&["sandbox_id"])),

@@ -1,6 +1,7 @@
 //! Isolated, bounded reporting pool and disposable immutable report snapshots.
 mod admission;
 mod budget;
+mod chart_encoding;
 mod charts;
 mod diagnostics;
 pub(crate) mod inventory;
