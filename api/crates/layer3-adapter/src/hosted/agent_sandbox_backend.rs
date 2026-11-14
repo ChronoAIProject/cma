@@ -55,6 +55,12 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn desktop_ownership(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.transport.desktop_ownership()
+    }
     fn capacity_recovery_transport(
         &self,
         _handle: &RuntimeHandle,
@@ -263,6 +269,16 @@ impl HostedBackend for AgentSandboxBackend {
         home: &HomeVolumeAttachment,
     ) -> Result<Option<RuntimeInspection>> {
         self.inspect_native_context(handle, request, home).await
+    }
+    async fn inspect_native_runtime_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<RuntimeInspection>> {
+        self.inspect_native_context_after(handle, request, home, admission)
+            .await
     }
 
     async fn inspect_nonexecuting_runtime(

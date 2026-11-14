@@ -73,3 +73,89 @@ Execution remains disabled until durable per-target scheduling, lease fencing,
 consumer-scoped delivery/finalization and fresh owner/source/consumer authority
 checks are implemented. Synchronous fanout must also enforce its primary reply
 contract. Neither a stored binding nor an admitted root replaces those checks.
+
+## Replica-mode compatibility admission
+
+Installing the replica admission queue also makes the shared verified-ingress
+fallback durable. Existing selected ordinary routing still uses its normal
+resolver. When that path would use the legacy launcher, the gateway instead
+retains one original launch under `replica_compatibility_payload_v1`: the exact
+Activity, sealed event payload, consumer, provider binding, conversation,
+partition key, idempotency key and verified source bytes. It does not add a
+routing policy to an unrouted channel or fan out an already selected callback.
+The original event expiry and the existing seven-day retention remain separate.
+
+This covers the shared Custom, NyxID callback and native Telegram launch path,
+including authenticated interactive callbacks after their existing interaction
+store has selected and sealed the owning consumer. Existing dedicated native
+Discord, Lark, WhatsApp and GitHub adapters retain their admission checks. GitHub
+cannot enter the generic compatibility writer: its root still requires atomic
+channel and integration guards. No additional agent-published producer has been
+identified; routing/lineage types alone are not evidence of an available producer.
+
+Compatibility admission verifies the original event attestation before reading
+or writing a plan. A duplicate restores the winning snapshot before inspecting
+current routing or credentials. Changed consumer, conversation, partition,
+lineage or idempotency key cannot reinterpret a retained compatibility plan.
+The dispatcher checks current owner, source, consumer, provider and credentials
+before effects; only the explicit compatibility discriminator allows a current
+channel without a routing policy. An admission root alone is insufficient for
+success: every target must have acknowledged durable queue custody. Recovery
+repairs a retained root after an interrupted enqueue.
+
+New work requires configured provider replay support, supported delivery, an
+accepting scheduler and enabled admissions. Missing verified bytes, storage or
+queue failure never falls back to a local launch in replica mode. Without the
+injected replica queue, the old selector and fallback behavior remain in force.
+The new payload discriminator requires a compatible reader for rollback; it
+must be included in the replica protocol-floor deployment cohort.
+
+Connection completion uses an explicit injection:
+`Arc<RoutedIngress>::replica_completion_launcher(Arc<dyn ActivityObserver>)`
+returns `Arc<dyn TurnLauncher>` for `ConnectionService::start_completion_worker`.
+It accepts only the internal `gateway.connection.ready` system-event shape,
+verifies its sealed event, and persists canonical Activity bytes because no
+external request body exists. It retains the original conversation and key.
+The completion outbox treats `LaunchOutcome::Admitted` as durable gateway custody;
+this does not claim provider acceptance or delivery. Replica-mode service
+composition must install this launcher instead of the live turn runner.
+
+These changes do not establish cross-process Sync delivery, public console
+consistency, independent process/node recovery or loaded latency. Those service
+composition and integrated acceptance gates remain separate.
+
+## Retained unkeyed tool confirmations
+
+A reply confirmed with replicas disabled can have only an unkeyed attempt in
+the reply guard. Replica readers replay that exact operation before admitting a
+new claim, including when the guard is closed. Current caller, original event,
+target and message checks still apply; an aggregate confirmation flag cannot
+stand in for an exact receipt.
+
+Before a different enabled reply displaces that attempt, the captured partition
+owner preserves its exact stored receipt in one immutable encrypted
+`ordinary_route_legacy_tool_confirmation_v1` record. The archive binds the
+operation, target, root, owner, request hash and original retention deadline.
+Referenced multipart receipt pages must remain readable. No original content
+hash is inferred or fabricated.
+
+The archive is confirmed first, then its operation-ID pointer and the new claim
+are committed together in the existing fenced guard CAS. A failed or uncertain
+archive cannot grant a new claim. If only the archive commits, the original
+guard still retains the receipt; an unused archive expires at the original
+deadline. If the guard commits but its acknowledgement is lost, a fresh reader
+finds the pointer. Exact read-back resolves a competing or uncertain archive
+create, while the guard mutation still requires captured partition authority.
+Pending or unknown effects continue to block new sends.
+
+The pointer avoids adding a third full receipt to the 40 KiB guard. It counts
+toward the existing 64-operation limit and identifies at most one displaced
+legacy confirmation. Ordinary OFF writes omit the pointer and create no archive.
+Receipt replay remains read-only and requires no new partition claim. Missing
+or inconsistent retained evidence fails closed instead of authorizing resend.
+
+The pointer is a reader-floor change: older strict guard readers cannot consume
+it. A rollback must retain readers for this field and archive kind throughout
+the retention window; merely disabling replicas does not make an older binary
+compatible. Local writer/reader and acknowledgement-loss tests do not qualify
+deployment cutover or retained-floor rollback.
