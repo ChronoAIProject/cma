@@ -285,7 +285,7 @@ pub(super) fn workspace_admission(workspace: Workspace) -> WorkspaceAdmission {
     }
 }
 
-pub(super) fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
+pub(in crate::store) fn ready_workspace(parent: &Sandbox, id: &str, name: &str) -> Workspace {
     let mut workspace = workspace(parent, id, name);
     workspace.resolved_commit = Some("a".repeat(40));
     workspace.status = WorkspaceStatus::Ready;
