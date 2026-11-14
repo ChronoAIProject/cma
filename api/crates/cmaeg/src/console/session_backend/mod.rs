@@ -105,4 +105,6 @@ fn payload_valid(payload: &[u8]) -> bool {
 #[cfg(test)]
 mod mongo_tests;
 #[cfg(test)]
+mod fault_tests;
+#[cfg(test)]
 mod tests;
