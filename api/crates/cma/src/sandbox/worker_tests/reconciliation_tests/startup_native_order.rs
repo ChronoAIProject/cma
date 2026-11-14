@@ -221,7 +221,8 @@ impl NativeStartup {
         assert!(assigned <= bound && bound < status && status < returned && returned < durable);
         // These are real Kubernetes reads around assignment delivery and after
         // the held status reply, not a synthetic closure's phase labels.
-        for path in [&self.native.claim_path, api::MEMBER, api::POD, api::VOLUME] {
+        let pods = api::POD.rsplit_once('/').unwrap().0;
+        for path in [&self.native.claim_path, api::MEMBER, pods, api::VOLUME] {
             for (start, end) in [(0, assigned), (assigned, bound), (returned + 1, durable)] {
                 assert!(
                     api.calls[start..end]
