@@ -209,6 +209,13 @@ impl WarmSandbox {
             .bound_at = at.into();
         next.lifecycle.runtime_generation_high_water = 1;
         next.work.execution = Some(self.plan.execution);
+        // Installation-only reservations may have no durable home authority;
+        // they still need the ordinary runtime adoption/install fallback.
+        next.work.prepared_installation_digest = self
+            .home
+            .as_ref()
+            .filter(|home| home.native_pool.is_some() && home.attachment().is_some())
+            .and_then(|_| self.installed_request_sha256.clone());
         next.validate()
             .map_err(|error| corrupt(&error.to_string()))?;
         self.revision = self

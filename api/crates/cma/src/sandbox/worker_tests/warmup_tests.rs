@@ -390,6 +390,7 @@ async fn warm_install_precedes_credentials_and_admission_reuses_exact_runtime() 
             &layer2_core::now_rfc3339(),
         )
         .unwrap();
+    assert!(candidate.work.prepared_installation_digest.is_none());
     harness.store.create_sandbox(candidate).await.unwrap();
     let active = harness
         .drive_active(&id, SystemTime::now() + Duration::from_secs(1))
@@ -421,6 +422,7 @@ async fn warm_install_precedes_credentials_and_admission_reuses_exact_runtime() 
         installs[0], installs[1],
         "installation replay has exactly the same identity"
     );
+    assert!(active.work.prepared_installation_digest.is_none());
 }
 
 #[tokio::test]
@@ -467,6 +469,7 @@ async fn lost_warm_runtime_is_replaced_before_any_user_credential_is_delivered()
     assert_ne!(binding.runtime_id, old.handle.as_str());
     assert_eq!(binding.provision_generation, Some(2));
     assert_eq!(harness.adapter.runtime_inventory().await.unwrap().len(), 1);
+    assert!(active.work.prepared_installation_digest.is_none());
     assert!(
         harness
             .backend
