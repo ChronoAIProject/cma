@@ -315,12 +315,12 @@ jobs:
             infra/api/secret.yaml infra/api/service.yaml \
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
-            infra/api/gcpbackendpolicy.yaml \
+            infra/api/gcpbackendpolicy.yaml infra/api/hpa.yaml infra/api/pdb.yaml \
             infra/cmaeg/Dockerfile infra/cmaeg/configmap.yaml infra/cmaeg/deployment.yaml \
             infra/cmaeg/secret.yaml infra/cmaeg/service.yaml \
             infra/cmaeg/serviceaccount.yaml \
             infra/cmaeg/httproute.yaml infra/cmaeg/healthcheckpolicy.yaml \
-            infra/cmaeg/gcpbackendpolicy.yaml \
+            infra/cmaeg/gcpbackendpolicy.yaml infra/cmaeg/hpa.yaml infra/cmaeg/pdb.yaml \
             infra/image-manager/Dockerfile \
             infra/image-manager/configmap.yaml \
             infra/image-manager/deployment.yaml \
@@ -984,6 +984,10 @@ jobs:
           ruby-version: "3.4"
       - name: HTTPRoute ownership
         run: ruby .github/scripts/check-http-route-backends.rb
+      - name: CMA replica and autoscaling contracts
+        run: |
+          ruby .github/scripts/cma-scale-manifest-contract.rb
+          ruby .github/scripts/cma-scale-manifest-tests.rb
       - name: Retained Web asset inventory
         run: |
           ruby .github/scripts/web-asset-retention-contract.rb
@@ -1193,11 +1197,21 @@ jobs:
         run: npm ci --prefix web
       - name: Detached browser cleanup regression
         if: matrix.component == 'web'
-        timeout-minutes: 2
+        # Two probes, each bounded by 60s startup + 30s execution + 30s grace
+        # + 20s cleanup/fallback. The image suite below retains its 240s + 30s.
+        timeout-minutes: 5
         env:
           CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
           CMA_WEB_WATCHDOG_EVIDENCE_DIR: ${{ runner.temp }}/web-image-evidence/watchdog
         run: python3 .github/scripts/web-image-watchdog-tests.py
+      - name: Watchdog startup and retained evidence regressions
+        if: matrix.component == 'web'
+        # Slow-ready and never-ready probes use the same bounded supervisor.
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: /usr/bin/google-chrome
+          CMA_WEB_WATCHDOG_EVIDENCE_TEST_DIR: ${{ runner.temp }}/web-image-evidence/startup
+        run: python3 .github/scripts/web-image-watchdog-evidence-tests.py
       - name: Browser finalization phase regression
         if: matrix.component == 'web'
         timeout-minutes: 2

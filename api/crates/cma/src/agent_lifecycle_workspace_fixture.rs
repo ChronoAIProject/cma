@@ -78,7 +78,7 @@ pub(super) fn facade(
     )
 }
 
-pub(super) async fn seed(store: &InMemorySandboxStore) -> Workspace {
+pub(in crate::agent_lifecycle) async fn seed(store: &InMemorySandboxStore) -> Workspace {
     let sandbox = Sandbox {
         id: SandboxId("sbx_existing".into()),
         owner: SubjectId::new("owner"),

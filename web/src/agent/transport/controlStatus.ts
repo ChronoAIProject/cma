@@ -1,3 +1,4 @@
+import { rateLimitDelay } from './readRetry';
 import { useEffect, useState } from 'react';
 import { commandIsTerminal, type V2CommandStatus } from '@chronoai/cma-sdk';
 import type { AgentV2Session } from './client';
@@ -57,6 +58,7 @@ export function useControlStatus(
   useEffect(() => {
     if (session === undefined || commandId === undefined) return;
     let retry = 1000;
+    let failures = 0;
     let previous: string | undefined;
     const observer = observeRead(async (signal) => {
       try {
@@ -73,6 +75,7 @@ export function useControlStatus(
           throw new Error('The action receipt changed its conversation target.');
         setResult({ id: commandId, text: notice(command, intent.interruption) });
         if (commandIsTerminal(command)) return;
+        failures = 0;
         const progress = JSON.stringify([
           command.status,
           command.delivery,
@@ -91,7 +94,8 @@ export function useControlStatus(
         if (!transientReadFailure(error)) return;
         previous = undefined;
         retry = Math.min(retry * 2, 10000);
-        return { next: retry, cooldown: retry, failed: true };
+        const next = rateLimitDelay(error, retry, ++failures);
+        return { next, cooldown: next, failed: true };
       }
     });
     return () => observer.dispose();

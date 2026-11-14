@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule } from './transport/readRetry';
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { Button } from '../ui/Button';
@@ -55,12 +57,11 @@ export function StopAgentDialog({
   }, [agentId, client, requestKey, revision]);
   useEffect(() => {
     if (complete) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    let failures = 0;
+    const observer = observeRead(async (signal) => {
       try {
-        const detail = await client.readAgent(agentId, { signal: request.signal });
-        if (request.signal.aborted) return;
+        const detail = await client.readAgent(agentId, { signal: signal });
+        if (signal.aborted) return;
         if (detail.id !== agentId)
           throw new Error('Agent identity changed while checking stop progress.');
         if (detail.status === 'stopped') {
@@ -75,17 +76,15 @@ export function StopAgentDialog({
             ? 'The Agent is unavailable. Stopping has not been confirmed.'
             : undefined,
         );
-      } catch {
-        if (request.signal.aborted) return;
+        failures = 0;
+      } catch (error) {
+        if (signal.aborted) return;
         setReadError('Stop status could not be refreshed. Completion is not yet confirmed.');
+        return retrySchedule(error, ++failures);
       }
-      timer = setTimeout(() => void poll(), 1000);
-    };
-    void poll();
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
+      return { next: 1000, cooldown: 1000 };
+    });
+    return () => observer.dispose();
   }, [agentId, client, complete, revision]);
   return (
     <Modal

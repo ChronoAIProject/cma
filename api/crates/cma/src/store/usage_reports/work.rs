@@ -6,6 +6,7 @@ pub(crate) struct ReportLease {
     pub holder: String,
     pub generation: i64,
     pub slot: String,
+    pub view: Option<ViewLease>,
 }
 impl ReportingStore {
     pub(crate) async fn claim_report(
@@ -19,24 +20,47 @@ impl ReportingStore {
         if !self.lease(slot, holder, 70).await? {
             return Ok(None);
         }
-        let d=self.collection(JOBS).find_one_and_update(doc!{"logical_expires_at":{"$gt":at as i64},"$or":[{"state":"pending"},{"state":"running","lease_until":{"$lte":at as i64}}]},
-            doc!{"$set":{"state":"running","lease_holder":holder,"lease_until":(at+70) as i64,"bytes":0_i64},"$inc":{"generation":1_i64}})
+        // Retained jobs use different states so predecessor workers cannot
+        // claim them and replace their fixed retention with the legacy TTL.
+        let d=self.collection(JOBS).find_one_and_update(doc!{"logical_expires_at":{"$gt":at as i64},"$or":[
+            {"state":"pending"},{"state":"running","lease_until":{"$lte":at as i64}},
+            {"kind":views::VIEW_KIND,"state":"view_pending"},
+            {"kind":views::VIEW_KIND,"state":"view_running","lease_until":{"$lte":at as i64}}]},
+            vec![doc!{"$set":{"state":{"$cond":[{"$eq":["$kind",views::VIEW_KIND]},"view_running","running"]},
+                "lease_holder":holder,"lease_until":(at+70) as i64,"bytes":0_i64,
+                "generation":{"$add":["$generation",1_i64]}}}])
             .sort(doc!{"created_at":1}).return_document(ReturnDocument::After).max_time(DB_DEADLINE).await.map_err(unavailable)?;
         let Some(d) = d else {
             self.release(slot, holder).await?;
             return Ok(None);
         };
         let mut report: Report = decode(&d)?;
+        tracing::debug!(
+            report_id = %report.report_id,
+            queue_delay_seconds = at.saturating_sub(report.as_of),
+            "sandbox report claimed"
+        );
         report.as_of = at;
         report.measurement_cutoff =
             at.saturating_sub(layer2_core::sandbox_metrics::FINALIZATION_DELAY_SECONDS);
         report.effective_range = report.query.effective_range(at);
-        report.expires_at = at + layer2_core::sandbox_metrics::REPORT_TTL_SECONDS;
+        let view = if d.get_str("kind").ok() == Some(views::VIEW_KIND) {
+            report.expires_at = u64::try_from(d.get_i64("retain_until").map_err(unavailable)?)
+                .map_err(unavailable)?;
+            Some(ViewLease {
+                key: d.get_str("view_key").map_err(unavailable)?.into(),
+                revision: d.get_i64("view_revision").map_err(unavailable)?,
+            })
+        } else {
+            report.expires_at = at + layer2_core::sandbox_metrics::REPORT_TTL_SECONDS;
+            None
+        };
         let lease = ReportLease {
             report,
             holder: holder.into(),
             generation: d.get_i64("generation").map_err(unavailable)?,
             slot: slot.into(),
+            view,
         };
         // Cleanup is fenced in the same read-model transaction as the lease.
         // A delayed former worker cannot erase its successor's cached rows.
@@ -44,7 +68,7 @@ impl ReportingStore {
         session.start_transaction().await.map_err(unavailable)?;
         if self
             .collection(JOBS)
-            .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":expires(lease.report.expires_at+86_400)}})
+            .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"row_count":0_i64,"chart_count":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":if lease.view.is_some() { mongodb::bson::Bson::Null } else { expires(lease.report.expires_at+86_400).into() }}})
             .session(&mut session)
             .await
             .map_err(unavailable)?
@@ -63,17 +87,20 @@ impl ReportingStore {
         session.commit_transaction().await.map_err(unavailable)?;
         Ok(Some(lease))
     }
-    async fn prune_cache(&self, at: u64) -> Result<()> {
+    pub(super) async fn prune_cache(&self, at: u64) -> Result<()> {
         use futures_util::TryStreamExt;
         let mut cursor = self
             .collection(JOBS)
-            .find(doc! {"reserved":true,"logical_expires_at":{"$lte":at as i64}})
+            .find(doc! {"reserved":true,"$or":[{"logical_expires_at":{"$lte":at as i64}},{"kind":views::VIEW_KIND,"retire_after":{"$lte":at as i64}}]})
             .limit(8)
             .max_time(DB_DEADLINE)
             .await
             .map_err(unavailable)?;
         while let Some(d) = cursor.try_next().await.map_err(unavailable)? {
             let id = d.get_str("_id").map_err(unavailable)?;
+            if !self.retire_expired_report(&d).await? {
+                continue;
+            }
             for collection in [ROWS, CHARTS] {
                 let result=self.db.run_command(doc! {"delete":collection,"deletes":[{"q":{"report_id":id},"limit":0}],"maxTimeMS":2000_i64})
                     .await.map_err(unavailable)?;
@@ -85,15 +112,40 @@ impl ReportingStore {
             }
             // Admission never releases a byte reservation before cache data
             // has been removed, even when the asynchronous TTL monitor lags.
+            let mut released = doc! {"reserved":false,"bytes":0_i64};
+            if d.get_str("kind").ok() == Some(views::VIEW_KIND) {
+                // A retained reservation has no parent TTL until acknowledged
+                // child deletion; independent TTL lag cannot undercharge bytes.
+                released.insert("expires_at", expires(at + 60));
+            }
             self.collection(JOBS)
                 .update_one(
-                    doc! {"_id":id},
-                    doc! {"$set":{"reserved":false,"bytes":0_i64}},
+                    doc! {"_id":id,"generation":d.get_i64("generation").map_err(unavailable)?,
+                    "state":retired_state(&d)},
+                    doc! {"$set":released},
                 )
                 .await
                 .map_err(unavailable)?;
         }
         Ok(())
+    }
+
+    pub(super) async fn retire_expired_report(&self, candidate: &Document) -> Result<bool> {
+        // A scan is only a candidate: claiming or completing can advance its
+        // generation/deadline before deletion. Retire the exact live record
+        // first, conflicting with chunk transactions and excluding new claims.
+        let filter = doc! {"_id":candidate.get_str("_id").map_err(unavailable)?,
+        "reserved":true,"generation":candidate.get_i64("generation").map_err(unavailable)?,
+        "state":candidate.get_str("state").map_err(unavailable)?,
+        "$expr":{"$or":[{"$lte":["$logical_expires_at",server_seconds()]},
+            {"$and":[{"$eq":["$kind",views::VIEW_KIND]},
+                {"$lte":[{"$ifNull":["$retire_after",i64::MAX]},server_seconds()]}]}]}};
+        let updated = self
+            .collection(JOBS)
+            .update_one(filter, doc! {"$set":{"state":retired_state(candidate)}})
+            .await
+            .map_err(unavailable)?;
+        Ok(updated.matched_count == 1)
     }
 
     pub(crate) async fn write_report_chunk(
@@ -102,6 +154,8 @@ impl ReportingStore {
         rows: &[Row],
         charts: Vec<Document>,
     ) -> Result<()> {
+        let row_count = rows.len() as i64;
+        let chart_count = charts.len() as i64;
         let rows = rows
             .iter()
             .map(|row| row_document(&lease.report, row))
@@ -116,15 +170,17 @@ impl ReportingStore {
         }
         let mut session = self.client.start_session().await.map_err(unavailable)?;
         session.start_transaction().await.map_err(unavailable)?;
-        let mut fence = lease.fence();
-        fence.insert("bytes", doc! {"$lte":self.budgets.report_bytes-bytes});
-        fence.insert(
-            "$expr",
-            doc! {"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]},
-        );
+        // Keep the server-time lease expression and byte expression together;
+        // inserting another $expr into the lease filter would discard expiry.
+        let fence = doc! {"$and":[lease.fence(), {
+        "bytes":{"$lte":self.budgets.report_bytes-bytes},
+        "$expr":{"$lte":[{"$add":["$bytes",bytes]},"$reserved_bytes"]}}]};
         let updated = self
             .collection(JOBS)
-            .update_one(fence, doc! {"$inc":{"bytes":bytes}})
+            .update_one(
+                fence,
+                doc! {"$inc":{"bytes":bytes,"row_count":row_count,"chart_count":chart_count}},
+            )
             .session(&mut session)
             .await
             .map_err(unavailable)?;
@@ -160,6 +216,10 @@ impl ReportingStore {
             ReportStatus::Failed
         };
         report.report_complete = success;
+        if lease.view.is_some() {
+            report.expires_at = lease.report.expires_at;
+            return self.finish_view(lease, &report, success).await;
+        }
         report.expires_at = now() + layer2_core::sandbox_metrics::REPORT_TTL_SECONDS;
         let state = if success { "ready" } else { "failed" };
         let result = self
@@ -176,12 +236,26 @@ impl ReportingStore {
         if result.matched_count != 1 {
             return Err(MetricsError::Unavailable);
         }
+        self.notifications.finished(&report.report_id);
         Ok(())
     }
 }
 impl ReportLease {
-    fn fence(&self) -> Document {
-        doc! {"_id":&self.report.report_id,"generation":self.generation,"lease_holder":&self.holder,"state":"running","lease_until":{"$gt":now() as i64}}
+    pub(super) fn fence(&self) -> Document {
+        doc! {"_id":&self.report.report_id,"generation":self.generation,"lease_holder":&self.holder,
+        "state":if self.view.is_some() {"view_running"} else {"running"},
+        "$expr":{"$and":[{"$gt":["$lease_until",server_seconds()]},
+            {"$gt":["$logical_expires_at",server_seconds()]}]}}
+    }
+}
+fn server_seconds() -> Document {
+    doc! {"$toLong":{"$divide":[{"$toLong":"$$NOW"},1000_i64]}}
+}
+fn retired_state(job: &Document) -> &'static str {
+    if job.get_str("kind").ok() == Some(views::VIEW_KIND) {
+        "view_retired"
+    } else {
+        "retired"
     }
 }
 fn row_document(report: &Report, row: &Row) -> Result<Document> {

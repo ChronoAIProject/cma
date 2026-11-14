@@ -148,6 +148,9 @@ async fn relay(
         }
     }
     let (sandbox_id, session_id) = connection.session_ids();
+    // Release the runtime stream and its exclusive lease before slow persistence
+    // or client-close IO. Session close is keyed to the old session, not its successor.
+    drop(connection);
     service.close(sandbox_id, session_id).await;
     let _ = tokio::time::timeout(Duration::from_secs(2), sink.send(Message::Close(None))).await;
 }
@@ -162,12 +165,34 @@ fn problem(error: DesktopError) -> Response {
         ),
     };
     let body = super::problem_document(status, code, &error.to_string(), code);
-    super::problem_response(status, body)
+    let mut response = super::problem_response(status, body);
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-store, private".parse().unwrap());
+    if matches!(error, DesktopError::Busy | DesktopError::RuntimeUnavailable) {
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, "1".parse().unwrap());
+    }
+    response
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn busy_discovery_exposes_a_private_retry_deadline() {
+        let response = problem(DesktopError::Busy);
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "1");
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "no-store, private"
+        );
+        assert!(!problem(DesktopError::Unavailable)
+            .headers()
+            .contains_key(header::RETRY_AFTER));
+    }
     #[test]
     fn desktop_cookie_stream_requires_one_exact_origin() {
         let origins = vec![

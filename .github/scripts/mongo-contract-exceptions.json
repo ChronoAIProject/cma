@@ -1,0 +1,87 @@
+{
+  "auth::resource_request::tests::paired::real_nyxid_keys_and_egress_authorize_only_current_owner_reads": {
+    "kind": "fixture",
+    "reason": "Requires the real NyxID loopback acceptance fixture and dedicated MongoDB."
+  },
+  "gateway::tests::compiled_gateway_accepts_cma_profiles_and_full_lifecycle_after_restart": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "gateway::tests::key_expiry::mint_accepts_provider_fractional_zero_expiry_and_returns_canonical_time": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "gateway::tests::lifecycle::disabled_runtime_rotates_after_route_removal_and_cannot_enable_without_a_route": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "gateway::tests::lifecycle::production_effects_create_disable_rotate_and_delete_through_compiled_gateway": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "gateway::tests::lifecycle::required_profile_refusal_cleans_up_instead_of_activating_a_partial_bot": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "gateway::tests::lifecycle::unknown_nyxid_creation_outcomes_clean_up_owned_effects_after_gateway_restart": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "gateway::tests::rest::bot_rest_admits_durable_work_and_hides_other_owners_without_exposing_keys": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "gateway::tests::web::dashboard_creates_tests_and_deletes_a_gateway_connection_consumer": {
+    "kind": "fixture",
+    "reason": "Requires authenticated service Mongo, built web/, Playwright and CMAEG migrations."
+  },
+  "profile_authoring::tests::live_trureturing_repository_resolution": {
+    "kind": "fixture",
+    "reason": "Reads the public GitHub API; run explicitly when network verification is available."
+  },
+  "profile_policy::secret_scanner::tests::pinned_engine_detects_complete_rules_beyond_prefix_markers": {
+    "kind": "fixture",
+    "reason": "Requires checksum-verified gitleaks 8.30.1 at CMA_TEST_GITLEAKS."
+  },
+  "sandbox::agent_worker_tests::sdk_conformance_tests::official_responses_sdk_server": {
+    "kind": "helper",
+    "reason": "Runs a loopback-only fixture for the official Responses SDK scripts."
+  },
+  "sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child": {
+    "kind": "helper",
+    "reason": "Invoked only by initial_task_public_service_process_exit_preserves_admission."
+  },
+  "store::isolation::shared_schema_contract::real_shared_database_bootstrap_preserves_foreign_schemas": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "store::isolation::tests::real_agent_manager_credential_cannot_read_gateway_or_images": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "store::isolation::tests::real_progress_grants_cannot_delete_receipts_or_access_another_service": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "store::migrations::tests::segments_runtime::canonical_migrator_and_isolated_runtime_cover_controls_and_format2_work": {
+    "kind": "fixture",
+    "reason": "Requires authenticated disposable service Mongo fixture."
+  },
+  "store::trigger_definitions::reference_integration_tests::publication_uses_current_visibility_but_preview_uses_exact_revision": {
+    "kind": "deferred",
+    "reason": "Existing trigger-reference refusal mismatch; restore selection with its separately owned fix.",
+    "issue": "https://github.com/ChronoAIProject/cma/issues/1854"
+  },
+  "store::worker_runtime_supervision_tests::scheduler_panic_preserves_native_task_home_and_conversation": {
+    "kind": "fixture",
+    "reason": "Requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh."
+  },
+  "store::worker_runtime_supervision_tests::scheduler_stall_preserves_native_task_home_and_conversation": {
+    "kind": "fixture",
+    "reason": "Requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh."
+  },
+  "worker_supervision::service_fault_tests::whole_service_worker_failures_recover_over_http": {
+    "kind": "fixture",
+    "reason": "Starts the full service; requires explicitly isolated Mongo/provider configuration."
+  }
+}
