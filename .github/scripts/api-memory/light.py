@@ -135,7 +135,7 @@ def measure(configs, output):
     return result
 
 
-def run(output):
+def run(output, *, image_bindings=None, fixture=None, measurement=measure, contract=None):
     output = output.resolve()
     output.mkdir(mode=0o700)
     private = output / "private"
@@ -150,9 +150,14 @@ def run(output):
     result = {"started_utc": pair.utc(), "source": pair.SOURCE, "owner": owner,
               "grant": "direct LEAD 23:55 parallel empty-DB API qualification",
               "routes": list(ROUTES), "outcome": "incomplete", "images": {}}
+    if contract is not None:
+        result["contract"] = contract
+        result["grant"] = contract["grant"]
+        result["routes"] = contract["routes"]
     try:
-        bindings = {"musl": pair.image(pair.NEW), "zig": pair.image(pair.OLD)}
+        bindings = image_bindings or {"musl": pair.image(pair.NEW), "zig": pair.image(pair.OLD)}
         result["images"] = bindings
+        result["sources"] = {kind: binding["source"] for kind, binding in bindings.items()}
         pair.docker("network", "create", "--label", f"{pair.LABEL}={owner}", owner)
         network = True
         pair.docker("run", "--detach", "--pull", "never", "--name", mongo, "--hostname", mongo,
@@ -188,7 +193,8 @@ def run(output):
             (output / kind).mkdir()
             container = owner + "-" + kind
             database = "cma_memory_rca_" + owner.removeprefix("cma-memory-rca-") + "_" + kind
-            settings = pair.environment("synthetic-memory-reader", mongo, database, key)
+            subject = fixture.subject if fixture is not None else "synthetic-memory-reader"
+            settings = pair.environment(subject, mongo, database, key)
             role = json.loads(pair.docker("run", "--rm", "--pull", "never", "--network", "none",
                             "--platform", "linux/amd64", "--cpus", "0.5", "--memory", "256m",
                             "--label", f"{pair.LABEL}={owner}", "--env", f"CHRONO_MONGODB_DATABASE={database}",
@@ -197,6 +203,8 @@ def run(output):
             setup = "const input=JSON.parse(require('fs').readFileSync(0,'utf8')); const target=db.getSiblingDB(input.database); if(!target.runCommand(input.role).ok) throw Error('role setup'); target.createUser({user:'api-memory',pwd:input.password,roles:[{role:'cma_am_runtime',db:input.database}]}); print('ready');"
             pair.docker("exec", "-i", mongo, "mongosh", "--quiet", "--eval", setup,
                         input=json.dumps({"database": database, "password": database_password, "role": role}))
+            if fixture is not None:
+                fixture.seed(mongo, database)
             settings["CHRONO_MONGODB_URI"] = f"mongodb://api-memory:{database_password}@{mongo}:27017/?replicaSet=cma_memory_rca&authSource={database}"
             settings["KUBECONFIG"] = "/run/synthetic-kubeconfig"
             settings.update({"CHRONO_SANDBOX_PROVIDER": "agent-sandbox", "CHRONO_RETAIN_OPENSANDBOX": "false",
@@ -209,7 +217,7 @@ def run(output):
             settings["CHRONO_SERVER_CORS_ORIGIN"] = "https://api-memory.invalid"
             envfile = private / (kind + ".env")
             pair.private_write(envfile, "".join(f"{name}={value}\n" for name, value in settings.items()))
-            config = {"source": pair.SOURCE, "container": container, "docker_image_id": binding["id"],
+            config = {"source": binding["source"], "container": container, "docker_image_id": binding["id"],
                       "origin": f"http://127.0.0.1:{18980 + offset}", "metrics_origin": f"http://127.0.0.1:{18991 + offset}"}
             pair.private_write(private / (kind + ".json"), json.dumps(config, indent=2))
             pair.docker("create", "--name", container, "--label", f"{pair.LABEL}={owner}", "--network", owner,
@@ -228,7 +236,13 @@ def run(output):
             list(pool.map(lambda item: pair.startup(item[1], output / item[0]), configs.items()))
         result["startup_pass_utc"] = pair.utc()
         time.sleep(12)
-        result["measurement"] = measure(configs, output)
+        if fixture is not None:
+            result["fixture_before"] = fixture.check(configs, mongo)
+            (output / "fixture-before.json").write_text(json.dumps(result["fixture_before"], indent=2) + "\n")
+        result["measurement"] = measurement(configs, output)
+        if fixture is not None:
+            result["fixture_after"] = fixture.check(configs, mongo)
+            (output / "fixture-after.json").write_text(json.dumps(result["fixture_after"], indent=2) + "\n")
         result["outcome"] = "completed"
     except BaseException as error:
         result["failure_type"] = type(error).__name__
