@@ -1,8 +1,129 @@
-# Activity index production execution packet
+# Named-query index toolkit execution packet
 
-Owner: deployment-engineer-01. Issue: #2005. The source change is the
-merged Activity page index from #1974; this packet does not authorize a
-production write by itself.
+Owner: deployment-engineer-01. Issue #2005 / PR #2008. Activity is the first catalog entry. `agents-owner-page` adds the analyst-ranked
+nonunique `{owner:1,_id:1}` access path through `am-agent-owner-page-index-v1`.
+Other candidates require a reviewed catalog entry and complete manifest before execution. This packet supplies no operation
+approval. Small collections may run soon after fresh approval; large collections
+remain in 15 November 03:00–05:00 SGT. Never run production writes 02:00–02:59.
+
+## Reusable command contract
+
+The API dispatches these commands before serving. No request, worker, startup or
+readiness path invokes the toolkit. `--index-catalog` prints the compiled names,
+collection/filter/sort/projection/limit definitions and exact index/manifest
+checksums. Runtime input selects names; it cannot supply arbitrary Mongo commands,
+filters, collection names or index options. Add a reviewed catalog entry and its
+complete one-index manifest to support another index. Never change an already
+recorded manifest's checksum. Activity aliases retain the existing manifest.
+
+```text
+cma --index-catalog
+cma --index-size activity-first-page,agents-owner-page
+cma --index-verify activity-first-page
+cma --index-build activity-first-page CHECKSUM IMMUTABLE_IMAGE [SECONDS]
+cma --index-status activity-first-page
+cma --index-abort activity-first-page CHECKSUM IMMUTABLE_IMAGE PREVIOUS_FENCE
+```
+
+The Agent owner query samples one owner string internally from the first matching
+Agent in `_id` order, using a bounded projection. It outputs only a filter digest,
+never the owner value. Compare that digest before/after; a different owner is a
+different cohort. One sampled owner does not establish all-owner performance.
+An empty collection has no representative owner explain and cannot pass automatic
+verification. Activity uses its exact unfiltered first-page query. The interval,
+partial-report, worker and small-pool research candidates are not build targets;
+the analyst identifies possible sorts/write costs that still need evidence.
+
+Sizing/verification accept at most eight distinct comma-separated catalog names.
+Build, status and abort accept exactly one. Each read command has a five-second
+server bound; a query inspection has a 30-second outer allowance. Unknown index
+names/keys are redacted or hashed; no document values, planner text, hosts,
+shard names, connection strings or credential values are output. Sizing executes
+the bounded unhinted query with executionStats and returns no source documents.
+The automatic verification exit is nonzero unless the exact index exists and
+every supported plan branch reaches it, without COLLSCAN/SORT, missing children,
+unknown topology or incomplete markers. Preserve its JSON on failure. This is a
+planner gate; it does not establish HTTP or page-usable latency.
+
+## Render and approve each Job
+
+`infra/api/index-toolkit-job.yaml` defaults to read-only sizing and uses the
+Deployment's ConfigMap, Secret references and service account. Render a fresh
+explicit Job name for each size/build/status/verify/abort attempt; never mutate a
+created Job's pod template or delete an active Job to reuse its name. Bind the
+same approved immutable image in the container image and `INDEX_RELEASE_IMAGE`,
+plus its actual compiled source and registry compatibility. The inherited image
+is a placeholder, not release evidence. The image CLI argument is an operator
+assertion, not independent image attestation.
+
+Set `INDEX_OPERATION`, `INDEX_QUERIES`, and (for writes) the selected manifest
+checksum. `INDEX_BUILD_TIMEOUT_SECONDS` defaults to 2100 and accepts 60–3600.
+Build progress records the query/manifest, fence and elapsed time. The 30-second
+server-time lease renews every five seconds; a heartbeat every 30 seconds means
+the client is alive, not a server build percentage. The outer build allowance is
+the chosen timeout plus 60 seconds; the Job deadline is 3900 seconds. There is no
+automatic Job retry. Timeouts, lost acknowledgements and lease loss do not prove
+that MongoDB stopped its submitted command.
+
+Bind the reviewed controller version/verdict and exact create, stop,
+Job-status and sanitized-log readback handles in the release record. The kubectl
+shapes below are not a substitute for an approved controller route. No Secret
+read, copied URI or pod exec is required. Attest effective grants internally:
+ordinary runtime authority is unchanged; sizing adds collStats on selected AM
+collections, build/status use the explicit ledger role. Use `--index-status` for the matching
+operation credential; the older generic migration-status role is a separate contract. Shared-schema remains a
+database-scoped authority model, not isolated least privilege, and refuses
+dropIndex on selected collections or database-wide. Isolated operation roles
+must match exactly; do not change a live isolated runtime's grants as a workaround.
+
+## Exact-target abort through the toolkit
+
+The abort operation deliberately refuses ordinary build credentials. A separate
+approved operator credential must have only listIndexes/dropIndex on the selected
+collection and find/insert/update/createCollection on the migration ledger. It
+cannot have database-wide drops or unrelated runtime authority. Reference the
+approved credential in a separately rendered abort Job; never extract its value.
+The release owner must approve the conditional drop and its controller route
+before admitting the build.
+
+Stop the build client, prevent other invocations, reconcile actual server DDL,
+and wait for the durable lease to expire. Obtain the matching attempt fence from
+sanitized progress/status. Abort validates that manifest is incomplete and the
+latest attempt matches the approved image/fence, then acquires the next global
+fence transactionally. A live executor, concurrent completion or intervening
+migration refuses. Key/name/options/default-collation drift refuses before DDL.
+The command drops only the selected visible index with maxTimeMS=5000 and
+majority acknowledgement; absence before drop is a refusal requiring server
+reconciliation. It never drops TTL/unique/partial indexes or uses wildcards.
+
+An acknowledged drop is recorded as a FAILED build attempt and leaves the
+manifest incomplete; it never erases receipts or certifies server quiescence.
+The prior executor cannot publish completion after the new fence. Reconcile
+server build state and exact inventory after any drop/timeout before considering
+resume. If completion already won, ordinary abort refuses: use a reviewed
+manifest-forward recovery. Keep the exact operator image/registry compatible
+with all recorded migrations. Do not substitute killOp or restart MongoDB.
+
+## Activity acceptance and scheduling
+
+Activity's API acceptance is p95 <1 second, as stated in the original lead task;
+collect at least 20 natural requests and retain errors and full denominators.
+K19 additionally requires page completion: correct first-page rows or verified
+empty state, loading cleared, and usable filters/pagination. No numeric page
+ceiling is supplied; API p95 does not establish that client boundary. Under A3,
+Activity API and page are UX-AFFECTING: the confidence upper bound on p95
+regression must fit +10% of the matched N1 baseline, aiming for <=5%, while API
+p95 remains <1s. Do not add noise to the percentage. Critical enclosing journeys
+retain their own absolute targets and noise-only allowance. K25 automatic
+production HPA remains a separate release obligation.
+
+Size first. A collection being <=5M documents and having a <=30-minute approved
+estimate does not automatically classify it as small. Deployment must explicitly
+classify it using live size, topology and resource/duration evidence. If a large
+build stays after03:00, the serial soak/build/repeat schedule still requires an
+approved arrangement preserving K21; do not compress or borrow noise windows.
+Use the Activity-specific gates and retained command shapes below for its first
+catalog entry. All numbers are go/no-go inputs, never inferred production facts.
 
 The candidate index is nonunique, visible and unfiltered:
 

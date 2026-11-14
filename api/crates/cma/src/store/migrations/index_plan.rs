@@ -3,9 +3,7 @@
 use mongodb::bson::{Bson, Document};
 use serde_json::{Map, Value};
 
-const TARGET_INDEX: &str = "activity_recorded_at_id_desc";
-
-pub(super) fn sanitize(plan: &Document) -> Value {
+pub(super) fn sanitize(plan: &Document, target_index: &str, safe_fields: &[&str]) -> Value {
     let mut output = Map::new();
     if let Some(stage) = plan
         .get_str("stage")
@@ -20,8 +18,8 @@ pub(super) fn sanitize(plan: &Document) -> Value {
     if let Ok(index_name) = plan.get_str("indexName") {
         output.insert(
             "index_name".into(),
-            Value::String(if index_name == TARGET_INDEX {
-                TARGET_INDEX.to_owned()
+            Value::String(if index_name == target_index {
+                target_index.to_owned()
             } else {
                 "<redacted>".to_owned()
             }),
@@ -29,7 +27,10 @@ pub(super) fn sanitize(plan: &Document) -> Value {
     }
     for key in ["keyPattern", "sortPattern"] {
         if let Ok(pattern) = plan.get_document(key) {
-            output.insert(key.to_snake_case(), Value::Object(key_pattern(pattern)));
+            output.insert(
+                key.to_snake_case(),
+                Value::Object(key_pattern(pattern, safe_fields)),
+            );
         }
     }
     if let Ok(direction) = plan.get_str("direction") {
@@ -44,7 +45,12 @@ pub(super) fn sanitize(plan: &Document) -> Value {
         "child",
     ] {
         if let Ok(child) = plan.get_document(key) {
-            output.insert(key.to_snake_case(), sanitize(child));
+            output.insert(
+                key.to_snake_case(),
+                sanitize(child, target_index, safe_fields),
+            );
+        } else if plan.contains_key(key) {
+            output.insert("incomplete".into(), Value::Bool(true));
         }
     }
     for key in ["inputStages", "children"] {
@@ -53,7 +59,7 @@ pub(super) fn sanitize(plan: &Document) -> Value {
             let values = children
                 .iter()
                 .filter_map(|child| match child.as_document() {
-                    Some(child) => Some(sanitize(child)),
+                    Some(child) => Some(sanitize(child, target_index, safe_fields)),
                     None => {
                         incomplete = true;
                         None
@@ -71,7 +77,7 @@ pub(super) fn sanitize(plan: &Document) -> Value {
         let values = shards
             .iter()
             .filter_map(|shard| match shard.as_document() {
-                Some(shard) => Some(sanitize(shard)),
+                Some(shard) => Some(sanitize(shard, target_index, safe_fields)),
                 None => {
                     incomplete = true;
                     None
@@ -87,7 +93,7 @@ pub(super) fn sanitize(plan: &Document) -> Value {
         let values = shards
             .values()
             .filter_map(|shard| match shard.as_document() {
-                Some(shard) => Some(sanitize(shard)),
+                Some(shard) => Some(sanitize(shard, target_index, safe_fields)),
                 None => {
                     incomplete = true;
                     None
@@ -107,14 +113,87 @@ pub(super) fn sanitize(plan: &Document) -> Value {
     Value::Object(output)
 }
 
-fn key_pattern(pattern: &Document) -> Map<String, Value> {
+/// A complete permitted topology must reach the expected index in every branch.
+/// Unknown stages, missing children and empty shards cannot certify a clean plan.
+pub(super) fn verifies(plan: &Value, expected: &str) -> bool {
+    let Some(node) = plan.as_object() else {
+        return false;
+    };
+    if node.get("incomplete") == Some(&Value::Bool(true)) {
+        return false;
+    }
+    let stage = node.get("stage").and_then(Value::as_str);
+    if matches!(stage, Some("IXSCAN" | "DISTINCT_SCAN" | "EXPRESS_IXSCAN")) {
+        return node.get("index_name").and_then(Value::as_str) == Some(expected)
+            && ![
+                "input_stage",
+                "outer_stage",
+                "inner_stage",
+                "query_plan",
+                "winning_plan",
+                "child",
+                "input_stages",
+                "children",
+                "shards",
+            ]
+            .iter()
+            .any(|key| node.contains_key(*key));
+    }
+    if stage.is_some_and(|s| {
+        ![
+            "LIMIT",
+            "SKIP",
+            "FETCH",
+            "PROJECTION_SIMPLE",
+            "PROJECTION_DEFAULT",
+            "PROJECTION_COVERED",
+            "SHARD_MERGE",
+            "SINGLE_SHARD",
+            "SHARDING_FILTER",
+            "OR",
+            "SORT_MERGE",
+            "AND_HASH",
+            "AND_SORTED",
+        ]
+        .contains(&s)
+    }) {
+        return false;
+    }
+    let mut children = Vec::new();
+    for key in [
+        "input_stage",
+        "outer_stage",
+        "inner_stage",
+        "query_plan",
+        "winning_plan",
+        "child",
+    ] {
+        if let Some(child) = node.get(key) {
+            children.push(child);
+        }
+    }
+    for key in ["input_stages", "children", "shards"] {
+        if let Some(value) = node.get(key) {
+            let Some(array) = value.as_array() else {
+                return false;
+            };
+            if array.is_empty() {
+                return false;
+            }
+            children.extend(array);
+        }
+    }
+    !children.is_empty() && children.into_iter().all(|child| verifies(child, expected))
+}
+
+fn key_pattern(pattern: &Document, safe_fields: &[&str]) -> Map<String, Value> {
     pattern
         .iter()
         .filter_map(|(key, value)| {
-            let safe_key = match key.as_str() {
-                "recorded_at" | "_id" => key,
-                _ => return None,
-            };
+            if !safe_fields.contains(&key.as_str()) {
+                return None;
+            }
+            let safe_key = key;
             let direction = match value {
                 Bson::Int32(value) if *value == 1 || *value == -1 => i64::from(*value),
                 Bson::Int64(value) if *value == 1 || *value == -1 => *value,
@@ -166,7 +245,13 @@ impl SnakeCase for str {
 mod tests {
     use mongodb::bson::doc;
 
-    use super::sanitize;
+    fn sanitize(plan: &mongodb::bson::Document) -> serde_json::Value {
+        super::sanitize(
+            plan,
+            "activity_recorded_at_id_desc",
+            &["recorded_at", "_id"],
+        )
+    }
 
     #[test]
     fn explain_projection_omits_shard_identifiers_and_unknown_fields() {

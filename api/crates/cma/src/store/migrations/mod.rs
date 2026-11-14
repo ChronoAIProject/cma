@@ -5,11 +5,12 @@ use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
 mod activity_indexes;
-mod activity_inventory;
 mod activity_page_index;
-mod activity_plan;
 mod agent_log_segments;
+mod agent_owner_index;
 mod collection_indexes;
+mod index_inventory;
+mod index_plan;
 mod index_toolkit;
 pub(in crate::store) mod opening_index;
 mod steps;

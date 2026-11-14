@@ -144,7 +144,16 @@ async fn main() {
     }
     if store::migrations::is_command(&arguments) {
         match store::migrations::command(&arguments).await {
-            Ok(result) => println!("{result}"),
+            Ok(result) => {
+                println!("{result}");
+                if result
+                    .get("verification_passed")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(false)
+                {
+                    std::process::exit(1);
+                }
+            }
             Err(reason) => {
                 eprintln!("migration refused: {reason}");
                 std::process::exit(2);
@@ -183,7 +192,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() {
-        eprintln!("usage: cma [--activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
+        eprintln!("usage: cma [--index-catalog | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

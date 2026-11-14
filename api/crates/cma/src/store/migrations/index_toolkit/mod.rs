@@ -1,93 +1,46 @@
-//! Explicit production inspection and online Activity index-build commands.
-//!
-//! These commands are separate from startup and HTTP reads. Sizing is read-only;
-//! the build path uses the durable migration lease and manifest with a bounded DDL.
-
+//! Explicit named-query index operations; never composed into API startup.
+use super::{ledger, Result, IO};
+use mongodb::{options::ClientOptions, Client, Database};
+use serde_json::{json, Value};
 use std::time::Duration;
 
-use mongodb::{options::ClientOptions, Client, Database};
-use serde_json::Value;
-
-use super::{Result, IO};
-
+mod abort;
+mod authority;
 mod build;
+mod catalog;
+mod cli;
 mod inspection;
-use build::build;
-use inspection::size;
+#[cfg(test)]
+mod tests;
 
-const COLLECTION: &str = "activity";
-const SIZE_DEADLINE: Duration = Duration::from_secs(30);
-const DEFAULT_BUILD_TIMEOUT_SECONDS: u64 = 2_100;
-const MIN_BUILD_TIMEOUT_SECONDS: u64 = 60;
-const MAX_BUILD_TIMEOUT_SECONDS: u64 = 3_600;
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(30);
 const LEASE_RENEWAL_INTERVAL: Duration = Duration::from_secs(5);
 
-enum Operation {
-    Size,
-    Build {
-        checksum: String,
-        image: String,
-        timeout_seconds: u64,
-    },
-}
-
 pub(super) fn is_command(arguments: &[String]) -> bool {
-    matches!(
-        arguments.first().map(String::as_str),
-        Some("--activity-index-size") | Some("--activity-index-build")
-    )
+    arguments
+        .first()
+        .is_some_and(|arg| arg.starts_with("--index-") || arg.starts_with("--activity-index-"))
 }
 
 pub(super) async fn command(arguments: &[String]) -> Result<Value> {
-    let operation = parse(arguments)?;
-    match operation {
-        Operation::Size => tokio::time::timeout(SIZE_DEADLINE, size())
-            .await
-            .map_err(|_| "activity sizing deadline exceeded; no write was attempted")?,
-        Operation::Build {
-            checksum,
-            image,
-            timeout_seconds,
-        } => tokio::time::timeout(
-            Duration::from_secs(timeout_seconds.saturating_add(60)),
-            build(&checksum, &image, timeout_seconds),
-        )
-        .await
-        .map_err(|_| "activity index deadline exceeded; inspect index and migration status")?,
-    }
-}
-
-fn parse(arguments: &[String]) -> Result<Operation> {
-    match arguments
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>()
-        .as_slice()
-    {
-        ["--activity-index-size"] => Ok(Operation::Size),
-        ["--activity-index-build", checksum, image] => Ok(Operation::Build {
-            checksum: (*checksum).to_owned(),
-            image: (*image).to_owned(),
-            timeout_seconds: DEFAULT_BUILD_TIMEOUT_SECONDS,
-        }),
-        ["--activity-index-build", checksum, image, timeout] => Ok(Operation::Build {
-            checksum: (*checksum).to_owned(),
-            image: (*image).to_owned(),
-            timeout_seconds: parse_timeout(timeout)?,
-        }),
-        _ => Err("unsupported Activity index command or arguments"),
-    }
-}
-
-fn parse_timeout(value: &str) -> Result<u64> {
-    let seconds = value
-        .parse::<u64>()
-        .map_err(|_| "Activity index timeout must be an integer number of seconds")?;
-    if !(MIN_BUILD_TIMEOUT_SECONDS..=MAX_BUILD_TIMEOUT_SECONDS).contains(&seconds) {
-        return Err("Activity index timeout must be between 60 and 3600 seconds");
-    }
-    Ok(seconds)
+    use cli::Operation;
+    let operation = cli::parse(arguments)?;
+    let deadline = operation.deadline();
+    tokio::time::timeout(deadline, async {
+        match operation {
+            Operation::Catalog => Ok(json!({"schema":"index-toolkit-catalog-v1", "queries":catalog::all().iter().map(catalog::Query::describe).collect::<Vec<_>>()})),
+            Operation::Inspect {queries, verify, legacy} => inspection::inspect(&queries, verify, legacy).await,
+            Operation::Build {query, checksum, image, timeout} => build::build(&query, &checksum, &image, timeout).await,
+            Operation::Abort {query, checksum, image, fence} => abort::abort(&query, &checksum, &image, fence).await,
+            Operation::Status(query) => {
+                let (client,database,mode)=open_database().await?;
+                authority::verify(&database,mode,&[query.collection],true).await?;
+                let ledger=ledger::Ledger::for_step(client,database,query.step);
+                ledger.preflight().await?;
+                ledger.status().await
+            }
+        }
+    }).await.map_err(|_| "index operation deadline exceeded; reconcile database and durable attempt before retry")?
 }
 
 async fn open_database() -> Result<(
@@ -120,32 +73,4 @@ fn validate_database(name: &str) -> Result<()> {
         return Err("invalid database name");
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parser_keeps_sizing_read_only_and_bounds_build_timeout() {
-        assert!(matches!(
-            parse(&["--activity-index-size".into()]),
-            Ok(Operation::Size)
-        ));
-        assert!(matches!(
-            parse(&[
-                "--activity-index-build".into(),
-                "a".repeat(64),
-                "ghcr.io/chronoaiproject/cma-api@sha256:".to_owned() + &"b".repeat(64),
-                "60".into(),
-            ]),
-            Ok(Operation::Build {
-                timeout_seconds: 60,
-                ..
-            })
-        ));
-        assert!(parse_timeout("59").is_err());
-        assert!(parse_timeout("3601").is_err());
-        assert_eq!(parse_timeout("2100").unwrap(), 2100);
-    }
 }
