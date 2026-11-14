@@ -8,13 +8,11 @@ capacity, no HPAs or other rollout writer, EG proven healthy at1, canonical
 backend observer, qualified <120s no-overlap variant and both recovery branches.
 No final image, timing proof or production approval is supplied by this file.
 
-S1 supplies the real-runtime accepted-work coverage deferred by the lead's
-revised local M3 ruling. **Execution remains HOLD until the lead assigns/provides
-the accepted-work executor and owner-private configuration.** Engineer01 and
-prod-verifier02 confirm their existing GET sampler does not supply this binding;
-the stopped historical broker mutation path and old copied browser profile
-cannot be reused. This S1 input does not restore the superseded local M3 adapter
-requirement. The mandatory sequence and required interface are below.
+The binding lead ruling of 14 November 19:10 SGT replaces the earlier
+synthetic-write plan. S1 observes real production accepted work through read-only
+logs and metrics. There is no synthetic write executor: broker creates/sends
+remain stopped and the NyxID slot stays untouched. The former executor/private
+binding HOLD is removed. Prod-verifier02 supplies synthetic reads only, as below.
 
 The lead has approved read-only cutover observations. Use the agreed
 [S1 observer commands and timing bounds](s1-observation.md). Canonical
@@ -112,79 +110,71 @@ k get pdb cma-agent-manager -o 'jsonpath={.spec}{"\n"}{.status}{"\n"}'
 ```
 
 Declare actual soak S/E, update actual source/Pod packets, and follow common
-30-minute measurement/acceptance and the mandatory accepted-work sequence below.
+30-minute measurement/acceptance and the mandatory production observation below.
 Capture cross-ingress, background work, fences/custody, desktop exclusion and
 all applicable route/client targets.
 Lead's signed S1 PASS permits S2; no automatic advancement.
 
-## Mandatory real-runtime accepted-work soak
+## Mandatory production accepted-work observation
 
-Deployment-engineer01 owns execution and immediate compatible recovery. Run
-continuous synthetic owner-account traffic through actual production
-authentication, AM, runtime and provider for the full 30-minute S1 soak. The
-acceptance clock starts only after the complete path is usable and the intended
-replica count, backends, membership and handoffs are stable. Health/readiness,
-read-only NyxID sampling and local component tests do not supply this evidence.
+Deployment-engineer01 owns execution and immediate compatible recovery.
+Log-engineer01 owns the read-only logs/metrics queries over REAL production
+traffic. Start the initial 30-minute soak only after the intended replica count,
+backends, membership and handoffs are stable. Bind the queries to the actual
+source/images/config, serving replica identities, baseline and S–E window.
+No synthetic create, Send, Stop or provider workload is authorized by this plan.
+The stopped broker mutation path stays stopped and the NyxID slot is untouched.
 
-1. Before cutover, bind the selected source/API/runtime/receiver images and
-   switches to the owner's bounded workload command and private configuration.
-   Record its validate/run/stop/reconcile/owned-cleanup interface, actual
-   half-open S–E window, attempt/cadence caps, both-ingress routing and independent
-   terminal/effect oracle. Keep credentials, account/resource identities,
-   request content and browser state in private files. Bind immediate incident
-   delivery/acknowledgment to the recovery operator, and have the exact compatible
-   branch and operation grants ready before traffic. A final report or periodic
-   pane check is not the immediate failure interface.
-2. Exercise create/open/workspace/send/stream/interrupt through the real public
-   API and client. Include plain/desktop create to usable Ready/frame, Send
-   through provider/runtime execution and terminal delivery, interrupt
-   acknowledgment, open to usable history/composer, and usage through coherent
-   first page/render. Record supported client boundaries explicitly; an unbound
-   required frame or render path remains NOT_RUN and prevents S1 PASS.
-3. Exercise both serving AM instances and cross-ingress admission/reconnect
-   without relying on stickiness. Join each logical operation to its durable
-   identity, actual ingress, current owner/fence, client completion and
-   independent terminal/effect result. For any owner-loss/handoff already
-   included in the approved S1 controls, follow the same accepted work through
-   successor recovery and require sustained successful service within 30 s.
-   This sequence adds no unapproved fault operation.
-4. Retain offered, accepted, refused, failed, completed, reconciled and unresolved
-   counts plus completed observations per journey. Partition accepted work as
-   `accepted = terminal + reconciled + unresolved`, with mutually exclusive
-   categories and independent effect counts. Require zero accepted loss,
-   duplicate committed effects and stale-owner effects. Retain every failure,
-   timeout, reconnect gap and incomplete attempt; retries never replace the
-   original outcome. Reconciled failures remain failures; balanced counts alone
-   do not establish PASS.
-5. Apply unchanged A3 classes and absolute targets to actual client boundaries:
-   create≤5s, open/Send/interrupt≤1s, usage≤2s, plus the common applicable route
-   limits. Keep headers, complete bodies and rendering distinct. Missing or
-   incomplete observations and observed absolute failures cannot receive PASS
-   through the CRITICAL statistical-INCONCLUSIVE exception.
-6. **Immediately stop new synthetic admissions and dispatch the preapproved
-   compatible rollback** on accepted-work loss, duplicate/stale effects,
-   authorization breach, dual desktop authority, broken auth/runtime/provider,
-   unresolved terminal/effect failure, unbounded work, a failed in-contract
-   journey or a failed absolute completion/recovery/availability target. Do not
-   wait for soak end or two consecutive five-minute performance windows.
-   Preserve custody and original operation keys; never blindly resend/delete
-   unknown work. Branch B requires healthy owners and fresh survivor capacity;
-   otherwise use approved branch C and retain receiver/ownership/record floors.
-   Record detection, rollback dispatch, restored successful user service and
-   final reconciliation as separate times.
+1. Observe per-replica success, failure and latency for create, send, stop and
+   streams. Record actual distinct accepted-command N and available per-route
+   counts; retries and synthetic reads do not increase this denominator.
+   Keep operation/owner/epoch linkage and client-boundary attribution where
+   present; never invent serving-instance identity, frame/render completion or
+   latency from transport headers. Unobserved client boundaries remain explicit.
+2. Query ownership and epoch transitions, fencing refusals, and the independent
+   ledger duplicate-effect check: the same logical command executed twice must
+   equal zero. Reconcile available accepted/terminal/effect outcomes and retain
+   failed, incomplete, uncertain and stale-effect observations. Correct fencing
+   refusals are safety evidence, distinct from a committed stale effect. Compare
+   5xx and 429 counts/rates by cause with the matched baseline.
+3. Prod-verifier02 runs synthetic READS ONLY through one owned sampler/lane:
+   existing Agent open detail/transcript and retained usage 24 h/7 d/30 d. Keep
+   separate range/route counts and timings to bring critical read routes to
+   sufficient N. Bind the sampler to its actual release/window and respect its
+   shared lock and pacing. Never start an overlapping collector, bypass a live
+   lock, reuse the stopped mutation path or touch the NyxID reservation.
+4. At 30 minutes, if fewer than 20 production write commands were accepted, extend
+   the same observation soak by up to 30 minutes and record revised E. If N is
+   still below 20 after the extension, **accept on passing required in-code
+   multi-instance suites plus zero errors**, disclose actual low N and the
+   extension in the report, and do not hold S1 for low traffic. This is a stage
+   acceptance exception for sample count; it supplies no invented per-route
+   measurement or unobserved client-boundary PASS. Actual failures remain
+   failures, including duplicate/stale effects and observed absolute violations.
+5. Apply unchanged A3 classes and absolute targets to the boundaries actually
+   measured: create≤5s, open/Send/interrupt≤1s, usage≤2s, and the common applicable
+   route limits. Preserve all errors, timeouts, refusals, incomplete outcomes and
+   baseline/telemetry gaps. Low N alone follows the explicit exception above;
+   missing evidence is not fabricated or converted into a measurement.
+6. On accepted-work loss, duplicate/stale effects, authorization breach, dual
+   desktop authority, unresolved terminal/effect failure, broken runtime/auth/
+   provider service, failed in-contract journeys or breached absolute completion,
+   recovery or availability targets, **stop promotion and immediately dispatch
+   the approved compatible rollback**. Do not wait for soak end or two
+   consecutive five-minute performance windows. Engineer01 uses branch B only
+   with healthy owners and fresh survivor capacity; otherwise use approved
+   branch C, preserving custody and receiver/ownership/record floors. Never
+   blindly resend or delete unknown work. Record detection, rollback dispatch,
+   restored successful service and final reconciliation as separate times.
 
-The executor stops new admissions at E even if the campaign is incomplete.
-Continue only bounded observation/reconciliation and approved owned cleanup;
-unknown accepted work retains custody. Coordinate supplemental reads through
-the common scheduler/lock rules. No independent overlapping 30-minute read
-runner may compete with this campaign.
-
-S1 passes only after the full 30-minute window and final reconciliation satisfy
-every required journey and accounting condition. Report the actual command and
-private configuration path, selected images, S/E, per-ingress/journey counts,
-failed/incomplete outcomes, A3/absolute results and any recovery by E+15 minutes.
-Missing/unresolved outcomes prevent PASS. Existing per-operation production
-authority, compatible rollback and the 02:00–02:59 SGT no-write rule remain.
+Report by actual E+15 minutes: selected source/images/config, S/E and any
+extension, query and read-sampler bindings, actual accepted-command N, available
+per-replica/route counts, ownership/fencing/ledger results, 5xx/429 causes versus
+baseline, read-range timings, all failed/incomplete outcomes, and any recovery.
+If the low-N fallback is used, state its required-suite PASS and zero-error
+basis alongside the actual N and unobserved boundaries. The former synthetic
+write executor requirement is closed; existing production approvals, compatible
+rollback and 02:00–02:59 SGT no-write rules remain.
 
 ## Recovery A — before old stop, original one still serving
 

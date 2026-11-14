@@ -174,8 +174,8 @@ cases PASS. The suites cover killed-owner takeover, recovery leases, fencing,
 no duplicate effects, title custody, desktop exclusive sessions and EG delivery/SSE.
 Architect04 supplies the quick integrated source pass. This supersedes the
 earlier requirement for a deployed local AM runtime/auth/provider workload before
-merge. Unrun local end-to-end rows remain unrun; S1 must execute the real-runtime
-accepted-work soak below. The missing local adapter is not an M3 merge blocker.
+merge. Unrun local end-to-end rows remain unrun; S1 observes real production
+accepted work as specified below. The missing local adapter is not an M3 merge blocker.
 
 Require integrated local fmt/clippy/tests and real Mongo independent-instance
 proof. **Before zeroing legacy AM**, inventory every retained traffic-capable
@@ -407,51 +407,53 @@ Do not reapply Deployment `replicas:2` while an HPA owns its scale subresource.
 
 ## Soak, abort, rollback and receipts
 
-### Mandatory S1 real-runtime accepted work
+### S1 real production accepted work — binding 19:10 ruling
 
-The revised M3 gate does not claim deployed local AM end-to-end acceptance.
-After the selected S1 candidate is serving and its complete path is usable,
-run **30 continuous minutes of synthetic owner-account traffic through actual
-production authentication, AM, runtime and provider**. Bind the selected canary
-run/stop command and private configuration to actual API/runtime images and
-switches. Keep identifiers, tokens, request content and browser state private.
-Health probes, component tests and the read-only sampler do not count as this work.
+S1 observes REAL production accepted work through read-only logs/metrics during
+an initial 30-minute soak. There is no synthetic write executor; broker creates
+and sends remain stopped and the NyxID slot stays untouched. The earlier
+synthetic-executor/private-binding HOLD is removed. Bind actual source/images,
+serving replicas, baseline and S–E to the existing operator observation path.
 
-The [selected S1 runbook](notes/reviews/2026-11-15/s1-execution.md#mandatory-real-runtime-accepted-work-soak)
-records the current execution HOLD: the lead must assign/provide the accepted-work
-executor/private binding, and engineer01 binds its release, window and rollback.
-Follow the common runbook's scheduler/lock ownership for supplemental reads.
-This is a production S1 execution input, not a local M3 merge blocker.
+Log-engineer01 owns the queries: per-replica create/send/stop/stream success and
+latency; ownership and epoch transitions; fencing refusals; independent ledger
+duplicate effects (the same logical command executed twice must equal zero);
+and 5xx/429 by cause versus baseline. Retain actual accepted-command N and
+available per-route counts, failures, uncertainty and terminal/effect outcomes.
+Reconciled failures remain failures; balanced accounting alone is not PASS.
 
-Exercise real create/open, workspace, send/stream and interrupt operations
-through both serving ingresses. Retain serving/owning-instance observations and,
-for each logical operation, offered/admitted/refused/failed status, durable
-operation and owner/fence linkage, client completion and independent terminal/effect
-results. Reconcile accepted = terminal + reconciled + unresolved as disjoint counts;
-require zero accepted loss, duplicate committed effects or stale-owner effects.
-Keep every failed attempt, timeout, reconnect gap and incomplete operation even
-if a retry succeeds. Reconciled failures remain failures; balanced accounting
-alone is not PASS. Apply A3 classes and the existing absolute client limits.
+Prod-verifier02 adds synthetic READS ONLY to bring critical read routes to
+sufficient N: existing Agent open detail/transcript and retained usage 24 h/7 d/30 d,
+with separate counts/timings through one owned sampler/lane. Observe existing
+lock ownership and pacing; no overlapping collector, synthetic mutation,
+retired browser-profile reuse or change to the NyxID reservation.
 
-**Immediately trigger the preapproved compatible rollback** on accepted-work loss,
-duplicate/stale effect, unreconciled or unbounded work, a broken auth/runtime/provider
-path, a failed in-contract journey, or a breached absolute latency/recovery/availability
-stop condition. Do not wait for the soak to finish or for two five-minute performance
-windows. Stop new synthetic admissions, preserve custody and effect evidence, and
-use the existing compatible recovery branch. Record detection, rollback dispatch,
-restored successful service and final reconciliation times separately. Preserve
-ownership, receiver and retained-record floors; never blindly resend an unknown
-effect or automatically restart a legacy image or turn ownership OFF.
+If accepted production write commands N<20 at 30 minutes, extend the same
+observation by up to 30 minutes. If still below 20 afterward, accept on the required
+in-code multi-instance suites PASS plus zero errors, disclose actual low N,
+and do not hold S1 for low traffic. Record actual extended E and report by E+15.
+This sample-count exception does not invent per-route latency or client/render
+measurements; missing observations remain explicit. Actual errors, duplicate or
+stale effects and observed absolute-target failures remain failures.
 
-S1 passes only after the complete 30-minute window and final reconciliation pass.
-Record the actual canary command/private-config path, images, operation counts,
-client latency classes and any rollback result; report by soak end E +15 minutes.
-Missing or unresolved outcomes prevent S1 PASS. Production authority, controller
-route, per-stage approvals and the 02:00–02:59 blackout remain unchanged. S2 retains
-its existing provider-specific accepted-work and terminal reconciliation requirements.
+Apply A3 and absolute targets to measured boundaries. **Immediately dispatch the
+preapproved compatible rollback** for failed in-contract work, accepted-work
+loss, duplicate/stale effect, unresolved terminal/effect failure, broken runtime/
+auth/provider service or breached absolute latency/recovery/availability targets.
+Do not wait for soak end or two five-minute performance windows. Stop promotion,
+preserve custody/evidence and use the existing compatible recovery branch.
+Record detection, rollback dispatch, restored service and final reconciliation
+separately. Retain ownership/receiver/record floors; never blindly resend unknown
+work, restart a legacy writer or switch ownership OFF as an automatic recovery.
+
+The [selected S1 runbook](notes/reviews/2026-11-15/s1-execution.md#mandatory-production-accepted-work-observation)
+contains the execution/report sequence. Production authority, controller route,
+per-stage approvals and 02:00–02:59 blackout remain unchanged. S2 retains its
+existing provider-specific accepted-work and terminal reconciliation requirements.
 
 Every stage needs30 stable minutes after its intended replica count is Ready,
-healthy in endpoints/NEG, ownership stable, and old processes finished. Record
+healthy in endpoints/NEG, ownership stable, and old processes finished. S1 may
+extend this same observation under the low-N rule above. Record
 per-minute desired/Ready/Available/terminating, backend health, owner/epoch/stale
 effect counters, stream gaps, oldest accepted-unfinished age, terminal/receipt
 reconciliation, CPU/throttling/memory/OOM, Mongo occupancy/checkout/timeouts,
@@ -466,9 +468,12 @@ accepted work/terminal lost, two desktop owners, auth bypass, epoch/cursor damag
 zero healthy backends outside the approved cutover, >30s sudden-loss service gap,
 no restored service by120s inside the approved cutover, incompatible receiver,
 OOM/repeated crash, breached process/provider bounds or Atlas headroom<30%.
-Performance regression beyond preregistered noise/absolute limits aborts after
-two consecutive five-minute windows; widespread failures abort immediately.
-Missing evidence or low samples HOLD promotion. Unknown/Partial stops promotion
+Performance-only regression beyond preregistered noise limits aborts after
+two consecutive five-minute windows; widespread failures and S1 failed work or
+absolute-target violations require immediate compatible rollback. Missing
+evidence remains explicit; S1 low accepted-command N follows the extension and
+suites-plus-zero-errors acceptance above and does not hold promotion by itself.
+Other insufficient evidence retains the applicable stage gate. Unknown/Partial stops promotion
 and pages the lead; reconcile within the approved observation window or invoke
 compatible recovery. Continue assigned24h post-go-live monitoring with these
 triggers even beyond15Nov13:00.

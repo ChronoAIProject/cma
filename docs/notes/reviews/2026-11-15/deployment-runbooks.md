@@ -9,7 +9,7 @@ Use solution-architect-03's `stage-go-checklists.md` and the canonical 25-row
 `/Users/shining/code/work/tech-lead.staff/solution-architect-04/essentials.md`.
 The lead speed directive replaces intermediate hash/review chains with source,
 tests and results. The later lead ruling keeps **30-minute soaks** and reporting
-by actual end **E+15 minutes**; see `performance-analyst-02/cma-scale/hard-deadline/lead-soak-ruling.md`.
+by actual end **E+15 minutes**, with the later S1 low-traffic extension below; see `performance-analyst-02/cma-scale/hard-deadline/lead-soak-ruling.md`.
 It supersedes the older checklist's single-postwindow acceptance restriction,
 without changing statistical verdicts or absolute targets.
 
@@ -54,16 +54,13 @@ only. S3 additionally needs complete-cohort handoff p95, a distinct hard
 process/socket/client lifetime, all-consumer capacity and calibrated useful load.
 No fallback to old modeOFF writers or historical EG shell hooks is supported.
 
-**S1 execution HOLD:** engineer01 and prod-verifier02 have confirmed that no
-selected accepted-work executor/private configuration is currently available.
-The lead must assign/provide that binding; engineer01 binds it to the actual
-release, bounded S–E workload and immediate compatible rollback. The required
-interface includes validate/run/stop/reconcile/owned-cleanup, real auth/runtime/
-provider and client/frame paths, both-ingress owner/fence attribution, independent
-effect/terminal accounting and immediate incident delivery to the recovery
-operator. The GET sampler does not supply it. Historical stopped broker mutation
-commands and the old copied browser profile remain unavailable. This is an S1
-execution input, not an additional local M3 or tooling-review gate.
+**Binding S1 ruling, 14 November 19:10 SGT:** no synthetic write executor is
+required or authorized. The former executor/private-binding HOLD is removed.
+Broker creates/sends stay stopped and the NyxID slot remains untouched.
+Log-engineer01 owns read-only queries over real production accepted work;
+prod-verifier02 supplies synthetic reads only. Engineer01 binds the actual
+release/window, query/read inputs and approved compatible rollback. The exact
+observation and low-N acceptance rule are in the S1 runbook below.
 
 ## Operator setup and one-operation transaction
 
@@ -198,23 +195,31 @@ python3 -B /Users/shining/code/work/tech-lead.staff/log-engineer-01/tools/bind_s
 ## Every stage's soak, acceptance and abort
 
 Start S only after intended Pods, real backends, membership and handoffs are
-stable and all previous terminations complete. Declare E=S+30min in advance.
+stable and all previous terminations complete. Declare initial E=S+30min in advance.
+S1 alone may extend the same observation by up to 30 min under the low-N rule below;
+record actual E and report by that E+15.
 Image/config/count changes restart stability; retain full-stage failures.
 S3's S is after actual automatic return to2. Existing monitors supply per-minute
-capacity/ownership/custody and two five-minute background cycles. The authorized
-NyxID owner runs existing detail/transcript and retained24h usage reads during
-S–E, against the matched final-N1 profile. That sampler remains GET-only; body
-timing does not prove browser rendering or accepted-work completion. S1 also
-requires the [real-runtime accepted-work sequence](s1-execution.md#mandatory-real-runtime-accepted-work-soak)
-using synthetic owner-account traffic for the full 30-minute window. Passive
-reads alone cannot satisfy it.
+capacity/ownership/custody and two five-minute background cycles. Prod-verifier02 runs synthetic READS ONLY: existing Agent detail/transcript and
+retained usage 24 h/7 d/30 d, with separate counts/timings and the matched final-N1
+profile. Body timing does not prove browser rendering or write completion.
+S1's [production accepted-work observation](s1-execution.md#mandatory-production-accepted-work-observation)
+uses real traffic and log-engineer01's read-only queries for per-replica
+create/send/stop/stream success and latency, ownership/epoch transitions, fencing
+refusals, ledger duplicate effects (same logical command executed twice=0), and
+5xx/429 by cause versus baseline. No synthetic writes or NyxID slot changes.
 
-The supplemental read runner holds its owned `.capture-lock` for its entire
-run. Use one coordinated scheduler/lane or explicitly nonoverlapping ownership;
-do not start independent overlapping 30-minute read and accepted-work runners.
-Stop only the exact owned read PID with SIGINT/SIGTERM, retain partial evidence
-and wait for its lock release. Never remove another process's lock or bypass
-pacing. The existing read cadence grants no mutation cadence.
+The read runner holds its owned `.capture-lock` for its entire run. Use one
+coordinated sampler/lane and preserve pacing. Stop only the exact owned read PID
+with SIGINT/SIGTERM, retain partial evidence and wait for its lock release;
+never remove another process's lock or start an overlapping collector.
+
+At the initial 30-minute S1 end, accepted production write commands N<20 extends
+the same observation by up to 30 minutes. If N remains below 20 afterward, accept
+on the required in-code multi-instance suites PASS plus zero errors; disclose
+actual low N and do not hold S1 for low traffic. Keep unavailable per-route/client
+measurements explicit and preserve all actual failures, absolute limits and
+compatible rollback. This exception does not change other stage windows.
 
 Before HTTP windows in SGT: S1 05:28–05:58, S2 07:58–08:28, S3 09:58–10:28.
 After is actual S–E. Analyst owns capture and the exact query inventory; reuse
@@ -280,11 +285,12 @@ Deployment scale-to-zero, involuntary loss or HPA Pod removal.
 Report source/controller commit, image refs, actual operation outcomes and
 S/E/outage clocks, essentials PASS/FAIL/NOT_RUN/INCONCLUSIVE, per-route counts,
 failed/incomplete outcomes, peak processes/clients and headroom, HPA transitions,
-recovery and next-stage lead decision. For S1, include the actual accepted-work
-command/private configuration path, journey boundaries and disjoint
-accepted = terminal + reconciled + unresolved accounting, with zero unresolved,
-lost, duplicate or stale effects required for PASS. Reconciled failures remain
-failures; balanced accounting alone is not acceptance. No intermediate
+recovery and next-stage lead decision. For S1, include the actual log-query/read-sampler bindings,
+accepted production command N, any extension and actual E, per-replica successes
+and latency, ownership/epoch/fencing observations, ledger duplicate count and
+5xx/429 cause comparison. State low-N fallback acceptance only with passing
+required multi-instance suites and zero errors; retain actual low N and all
+unobserved client boundaries. Reconciled failures remain failures. No intermediate
 seals/hash inventories.
 
 Local verification of this implementation:
