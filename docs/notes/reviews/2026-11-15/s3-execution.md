@@ -1,4 +1,9 @@
-# S3 — automatic scaling, 15 November approximately 05:30–06:00 SGT
+# S3 — paired automatic scaling
+
+For Track A after S2 with **AM1/OFF + EG2/ON**, use the separate
+[EG-only S3 packet](s3-eg-only-execution.md). Do not run the paired AM HPA or
+both-pair quota steps below for that topology. The lead binds actual timing;
+the older approximately05:30–06:00 schedule is not execution authority.
 
 Use [common setup/safety/acceptance](deployment-runbooks.md). Require signed
 S1/S2 PASS; both fixed2, zero terminating processes/clients, real backends and
@@ -149,7 +154,8 @@ k get hpa cma-agent-manager \
   -o 'jsonpath={.spec}{"\n"}{.status}{"\n"}'
 ```
 
-Require actual HPA observed generation, AbleToScale/ScalingActive, fresh current
+Validate HPA generation/observedGeneration when supplied; never invent absent
+HPA fields. Require AbleToScale/ScalingActive, fresh current
 metrics and idle pair2; explain ScalingLimited. If AM changes before EG create,
 hold and re-evaluate; never race an automatic scale with a Deployment patch.
 

@@ -1,7 +1,13 @@
 # Production scale execution — 14–15 November 2026
 
 Executor: deployment-engineer-01. GO, advancement and failure re-slotting: lead.
-The binding 20:30 [combined timeline](stage-timeline.md) plans Batch9 at 14 Nov 21:00,
+**Current Track A (15 November03:50/05:18):** fixed EG2/ON S2 may precede S1
+while AM remains1/OFF. After actual S2 PASS, use the separately reviewed
+[EG-only S3 packet](s3-eg-only-execution.md); S1 and paired S3 remain separate.
+Console/shared-session, storage, compatible ON recovery and all actual S2 gates
+still apply. No approval or fixed execution time follows from this re-slotting.
+
+The historical 20:30 [combined timeline](stage-timeline.md) planned Batch9 at 14 Nov 21:00,
 [S1 approximately 22:30](s1-execution.md), [S2 approximately 15 Nov 00:30](s2-execution.md),
 and [S3 approximately 05:30–06:00](s3-execution.md). M8 uses prod-verifier01's kit
 09:00–16:00; the final owner report remains due 15 Nov 18:00. Each stage requires
