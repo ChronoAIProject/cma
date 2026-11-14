@@ -94,7 +94,7 @@ async fn rebaseline_falls_back_then_rebuilds_reports_and_advances_maintenance() 
         crate::store::sandbox_mongo_integration_tests::sandbox(before.sandbox_id.as_str());
     sandbox.owner = before.owner.clone();
     sandbox.created_at = at(day);
-    sandbox.status = layer2_core::SandboxStatus::Paused;
+    sandbox.status = layer2_core::sandbox::SandboxStatus::Paused;
     sandbox.revision = before.source_revision + 1;
     let (next, baseline) = layer2_core::sandbox_usage::rebaseline(
         &before,
