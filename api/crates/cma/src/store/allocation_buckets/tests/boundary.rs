@@ -178,3 +178,56 @@ fn boundary_binary_digest_and_source_binding_refuse_tampering() {
     );
     assert!(DayBucket::read_boundary(&swapped).is_err());
 }
+
+#[test]
+fn fully_queried_closed_incomplete_days_reuse_exact_unknown_values_across_heads() {
+    let from = 100 * DAY;
+    let mut s = state(1, from);
+    s.tracking_started_at += HOUR;
+    s.complete_lifecycle = false;
+    s.last_observed_at = from + DAY;
+    s.revision = 2;
+    let mut baseline = event(&s, 1, from + HOUR, from + HOUR);
+    baseline.kind = UsageEventKind::Baseline;
+    let events = vec![baseline, event(&s, 2, from + HOUR, from + DAY)];
+    let full = Range {
+        from,
+        to: from + DAY,
+    };
+    let bucket = materialize::build(&s, &events, full).unwrap();
+    assert!(!bucket.total.projection.period.complete);
+    assert_eq!(bucket.total.projection.period.unknown_seconds, HOUR);
+    let mut next = s.clone();
+    next.revision += 1;
+    next.source_seq += 1;
+    next.source_revision += 1;
+    next.last_observed_at += HOUR;
+    next.allocation.cpu_millis += 17;
+    let mut appended = events.clone();
+    appended.push(event(&next, 3, s.last_observed_at, next.last_observed_at));
+    assert!(bucket.validate_source(&next).unwrap());
+    assert_projection(
+        &bucket.total.projection,
+        &allocation::project(&next, &appended, full),
+    );
+    let edge = Range {
+        from: from + 17,
+        to: from + 2 * HOUR + 11,
+    };
+    assert_projection(
+        &bucket.project_boundary(&next, edge).unwrap().unwrap(),
+        &allocation::project(&next, &appended, edge),
+    );
+    let partial = materialize::build(
+        &s,
+        &events,
+        Range {
+            from,
+            to: from + 2 * HOUR,
+        },
+    )
+    .unwrap();
+    assert!(!partial.validate_source(&next).unwrap());
+    next.tracking_started_at += 1;
+    assert!(bucket.validate_source(&next).is_err());
+}

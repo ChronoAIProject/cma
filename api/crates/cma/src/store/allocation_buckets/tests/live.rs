@@ -116,3 +116,81 @@ async fn backfill_pre_creation_days_preserves_raw_zeros_without_cache_holes() {
     );
     store.db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn closed_incomplete_history_converges_across_source_checkpoints() {
+    let store = fixture().await;
+    let today = super::super::super::usage_reports::now() / DAY * DAY;
+    let from = today - DAY;
+    let mut s = state(1, from);
+    s.tracking_started_at += HOUR;
+    s.complete_lifecycle = false;
+    s.last_observed_at = today;
+    s.revision = 2;
+    let interval = event(&s, 2, from + HOUR, today);
+    seed(&store, std::slice::from_ref(&s)).await;
+    store
+        .collection(super::super::super::sandbox_usage::EVENTS)
+        .insert_one(super::super::super::sandbox_usage::event_document(&interval).unwrap())
+        .await
+        .unwrap();
+    let first = store
+        .maintain_allocation_buckets(true, Lane::Backfill)
+        .await
+        .unwrap();
+    assert_eq!((first.written, first.source_rows), (1, 1));
+    s.revision += 1;
+    s.source_seq += 1;
+    s.source_revision += 1;
+    s.last_observed_at += 300;
+    store
+        .collection(super::super::super::sandbox_usage::EVENTS)
+        .insert_one(
+            super::super::super::sandbox_usage::event_document(&event(
+                &s,
+                3,
+                today,
+                s.last_observed_at,
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    store
+        .collection(super::super::super::sandbox_usage::STATES)
+        .replace_one(
+            doc! {"_id":s.sandbox_id.as_str()},
+            super::super::super::sandbox_usage::state_document(&s).unwrap(),
+        )
+        .await
+        .unwrap();
+    store
+        .collection(CONTROL)
+        .update_one(
+            doc! {"_id":Lane::Backfill.key()},
+            doc! {"$unset":{"record":""}},
+        )
+        .await
+        .unwrap();
+    ready(&store, Lane::Backfill).await;
+    let next = store
+        .maintain_allocation_buckets(true, Lane::Backfill)
+        .await
+        .unwrap();
+    assert_eq!((next.reused, next.written, next.source_rows), (1, 0, 0));
+    let document = store
+        .collection(COLLECTION)
+        .find_one(doc! {})
+        .await
+        .unwrap()
+        .unwrap();
+    let bucket = DayBucket::read(&document).unwrap();
+    assert!(!bucket.total.projection.period.complete);
+    assert_eq!(bucket.total.projection.period.unknown_seconds, HOUR);
+    assert_projection(
+        &bucket.total.projection,
+        &allocation::project(&s, &[interval], Range { from, to: today }),
+    );
+    store.db.drop().await.unwrap();
+}
