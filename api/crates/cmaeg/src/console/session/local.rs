@@ -1,4 +1,4 @@
-//! Process-local Console session operations.
+//! Process-local compatibility mode; never used by the durable writer.
 use super::*;
 
 impl SessionStore {
@@ -7,6 +7,9 @@ impl SessionStore {
     /// The subject's oldest sessions beyond its cap end first, then the least
     /// recently seen sessions beyond the global cap.
     pub fn create(&self, subject: String, tokens: TokenSet) -> Option<(Secret, Arc<SessionCell>)> {
+        if self.shared.is_some() {
+            return None;
+        }
         let mut id = [0_u8; SESSION_ID_BYTES];
         let mut csrf_key = [0_u8; 32];
         let random = SystemRandom::new();
@@ -36,6 +39,7 @@ impl SessionStore {
                 refresh_retry_at: None,
             }),
             ended: AtomicBool::new(false),
+            snapshot: Mutex::new(None),
         });
         self.sessions.insert(key, cell.clone());
         self.enforce_subject_cap(&cell);
@@ -48,6 +52,9 @@ impl SessionStore {
     /// The live session named by a cookie value, after its idle and absolute
     /// checks; seeing it counts as activity.
     pub fn find(&self, sid: &str) -> Option<Arc<SessionCell>> {
+        if self.shared.is_some() {
+            return None;
+        }
         if sid.len() != 43 || URL_SAFE_NO_PAD.decode(sid).is_err() {
             return None;
         }
@@ -93,6 +100,10 @@ impl SessionStore {
 
     /// Remove `cell` and revoke its refresh token, best effort. Idempotent.
     pub fn end(&self, cell: &Arc<SessionCell>, reason: EndReason) {
+        if self.shared.is_some() {
+            tracing::error!("durable session requires awaited revocation");
+            return;
+        }
         if cell.ended.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -134,6 +145,9 @@ impl SessionStore {
     /// one session make one refresh. The rotated refresh token replaces the
     /// old one before the lock is released.
     pub async fn refresh(&self, cell: &Arc<SessionCell>, auth: &mut SessionAuth) -> Refresh {
+        if self.shared.is_some() {
+            return self.refresh_shared(cell, auth).await;
+        }
         let now = self.clock.now();
         if auth.access_usable(now) {
             return Refresh::NotDue;

@@ -1,5 +1,5 @@
-//! Console sessions, held only in memory. A pod restart signs everyone out;
-//! the next GET shows the sign-in page.
+//! Console session snapshots with an optional shared durable authority.
+//! Local compatibility mode remains available until the owner activates migration.
 //!
 //! Locking rule: a request clones its cell's `Arc` and drops the map guard
 //! before any await. `meta` is a std mutex held only for short synchronous
@@ -24,7 +24,14 @@ use sha2::{Digest, Sha256};
 use super::{clock::Clock, oidc::EndpointCell, revoke::Revoker, subject_hash_prefix, token::*};
 use crate::{telemetry::names, ConsoleConfig};
 
+mod codec;
 mod local;
+mod refresh;
+mod shared;
+use super::session_backend::{SessionBackend, StoreError};
+use cmaeg_core::seal::MasterKeyRing;
+use codec::Snapshot;
+use shared::SharedSessions;
 
 /// A transient refresh failure is retried after this long.
 const REFRESH_RETRY: Duration = Duration::from_secs(10);
@@ -53,14 +60,14 @@ impl From<&ConsoleConfig> for SessionLimits {
 }
 
 /// Whose channels the session looks at: a selection, never a grant.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum OwnerSelection {
     Personal,
     Organization(String),
 }
 
 /// A one-time notice shown on the next page.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Flash {
     AdminEnded { organization: String },
     OwnerRefused,
@@ -121,6 +128,7 @@ pub struct SessionCell {
     meta: Mutex<SessionMeta>,
     auth: tokio::sync::Mutex<SessionAuth>,
     ended: AtomicBool,
+    snapshot: Mutex<Option<Snapshot>>,
 }
 
 impl SessionCell {
@@ -192,6 +200,7 @@ pub struct SessionStore {
     tokens: TokenClient,
     endpoints: Arc<EndpointCell>,
     revoker: Revoker,
+    shared: Option<SharedSessions>,
 }
 
 impl SessionStore {
@@ -203,6 +212,7 @@ impl SessionStore {
     ) -> Self {
         Self {
             sessions: DashMap::new(),
+            shared: None,
             limits,
             revoker: Revoker::new(tokens.clone(), endpoints.clone()),
             clock,
@@ -222,7 +232,6 @@ impl SessionStore {
     pub fn now(&self) -> Instant {
         self.clock.now()
     }
-
 }
 
 fn digest(sid: &str) -> [u8; 32] {
