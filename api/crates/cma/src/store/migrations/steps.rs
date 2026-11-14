@@ -1,7 +1,7 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
-    activity_indexes, activity_page_index, agent_log_segments, collection_indexes, opening_index,
-    Result,
+    activity_indexes, activity_page_index, agent_log_segments, agent_owner_index,
+    collection_indexes, opening_index, Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -11,15 +11,17 @@ pub(super) enum Step {
     ActivityPage,
     LedgerCollection,
     AgentOpening,
+    AgentOwnerPage,
     AgentLogSegments,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 5] = [
+    pub(super) const ALL: [Self; 6] = [
         Self::Activity,
         Self::ActivityPage,
         Self::LedgerCollection,
         Self::AgentOpening,
+        Self::AgentOwnerPage,
         Self::AgentLogSegments,
     ];
     pub(super) fn parse(id: &str) -> Result<Self> {
@@ -34,6 +36,7 @@ impl Step {
             Self::ActivityPage => activity_page_index::ID,
             Self::LedgerCollection => collection_indexes::ID,
             Self::AgentOpening => opening_index::ID,
+            Self::AgentOwnerPage => agent_owner_index::ID,
             Self::AgentLogSegments => agent_log_segments::ID,
         }
     }
@@ -43,6 +46,7 @@ impl Step {
             Self::ActivityPage => activity_page_index::checksum(),
             Self::LedgerCollection => collection_indexes::checksum(),
             Self::AgentOpening => opening_index::checksum(),
+            Self::AgentOwnerPage => agent_owner_index::checksum(),
             Self::AgentLogSegments => agent_log_segments::checksum(),
         }
     }
@@ -54,7 +58,7 @@ impl Step {
             Self::Activity => 2,
             Self::ActivityPage => 1,
             Self::LedgerCollection => 5,
-            Self::AgentOpening => 1,
+            Self::AgentOpening | Self::AgentOwnerPage => 1,
             Self::AgentLogSegments => agent_log_segments::MAX_SCHEMA_STEPS,
         }
     }
@@ -63,15 +67,18 @@ impl Step {
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
+            Self::AgentOwnerPage => &["agents"],
             Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
         }
     }
     pub(super) fn effect_field(self) -> &'static str {
         match self {
             Self::AgentLogSegments => "applied_schema_steps",
-            Self::Activity | Self::ActivityPage | Self::LedgerCollection | Self::AgentOpening => {
-                "created_indexes"
-            }
+            Self::Activity
+            | Self::ActivityPage
+            | Self::LedgerCollection
+            | Self::AgentOpening
+            | Self::AgentOwnerPage => "created_indexes",
         }
     }
     pub(super) async fn inspect(
@@ -91,6 +98,11 @@ impl Step {
                 .collect()),
             Self::LedgerCollection => collection_indexes::inspect(database).await,
             Self::AgentOpening => opening_index::inspect(database).await,
+            Self::AgentOwnerPage => Ok(agent_owner_index::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("agents", index))
+                .collect()),
             Self::AgentLogSegments => Err("segment migration requires schema-unit inspection"),
         }
     }
@@ -109,6 +121,9 @@ impl Step {
             }
             Self::LedgerCollection => collection_indexes::create(database, collection, index).await,
             Self::AgentOpening => opening_index::create(database, collection, index).await,
+            Self::AgentOwnerPage if collection == "agents" => {
+                agent_owner_index::create(database, index).await
+            }
             _ => Err("migration collection mismatch"),
         }
     }

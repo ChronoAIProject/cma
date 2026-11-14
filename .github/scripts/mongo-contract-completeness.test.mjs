@@ -96,9 +96,10 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 128);
+  assert.equal(new Set(requiredPrefixes).size, 129);
   assert.ok(requiredPrefixes.includes('store::allocation_buckets::'));
   assert.ok(requiredPrefixes.includes(taskHome));
+  assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
