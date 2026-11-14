@@ -1,5 +1,9 @@
 //! Start serving only after warm-pool and retained-runtime authority are ready.
-use std::{future::IntoFuture, net::SocketAddr, time::Duration};
+use std::{
+    future::IntoFuture,
+    net::SocketAddr,
+    time::{Duration, Instant},
+};
 
 use crate::{
     agent_manager,
@@ -7,6 +11,7 @@ use crate::{
     config::Config,
     read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
+    startup_timing::{observe, Phase},
     telemetry, with_cors, with_request_context,
 };
 
@@ -14,6 +19,7 @@ use crate::{
 const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 
 pub(crate) async fn serve() -> Result<(), String> {
+    let startup_started = Instant::now();
     let config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
@@ -21,35 +27,58 @@ pub(crate) async fn serve() -> Result<(), String> {
     }
     let recorder = telemetry::install()?;
     let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
-    let composition = ControlPlaneComposition::build(&config).await?;
+    let composition = observe(
+        "composition",
+        ControlPlaneComposition::build(&config),
+        |_| None,
+    )
+    .await?;
     let auth_mode = config.auth_mode_name();
     let app = with_request_context(with_cors(composition.router, config.cors_origins));
 
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).
-    composition
-        .native_warm_pools
-        .ensure_default()
-        .await
-        .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
-    composition
-        .native_warm_pools
-        .await_default_ready()
-        .await
-        .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
+    observe(
+        "default_warm_pool_configuration",
+        composition.native_warm_pools.ensure_default(),
+        |_| None,
+    )
+    .await
+    .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
+    observe(
+        "default_warm_pool_readiness",
+        composition.native_warm_pools.await_default_ready(),
+        |_| None,
+    )
+    .await
+    .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
 
-    let listener = tokio::net::TcpListener::bind(config.bind)
-        .await
-        .map_err(|error| format!("cannot bind {}: {error}", config.bind))?;
-    composition.sandbox_lifecycle.initialize().await?;
+    let listener = observe(
+        "socket_bind",
+        tokio::net::TcpListener::bind(config.bind),
+        |_| Some(1),
+    )
+    .await
+    .map_err(|error| format!("cannot bind {}: {error}", config.bind))?;
+    observe(
+        "sandbox_initialization",
+        composition.sandbox_lifecycle.initialize(),
+        |_| None,
+    )
+    .await?;
     tracing::info!(
+        target: "cma",
         bind = %config.bind,
         public_url = %config.public_url,
         auth_mode,
         "CMA listening"
     );
+    let workers = Phase::new("worker_start");
     if let Some(manager) = &composition.agent_manager {
-        manager.activate()?;
+        if let Err(error) = manager.activate() {
+            workers.finish("error", None);
+            return Err(error);
+        }
     }
     let mut shutdown = ShutdownCoordinator::new();
     composition::activity::spawn(composition.activity_worker, &mut shutdown);
@@ -99,6 +128,11 @@ pub(crate) async fn serve() -> Result<(), String> {
     shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
     composition.usage.spawn(&mut shutdown);
     composition.usage_metrics.spawn(&mut shutdown);
+    workers.finish("ok", None);
+    // This is entry into HTTP serving, not an observed HTTP/Kubernetes Ready result.
+    tracing::info!(target: "cma_startup", parent: None,
+        phase = "serving_entry", elapsed_ms = startup_started.elapsed().as_millis(),
+        timing_basis = "serve_entry", outcome = "ok", "API startup serving entry");
     let (http_stop, http_signal) = tokio::sync::watch::channel(false);
     let server_result = {
         let server = axum::serve(
@@ -140,4 +174,3 @@ pub(crate) async fn serve() -> Result<(), String> {
         )),
     }
 }
-
