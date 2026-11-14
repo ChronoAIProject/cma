@@ -158,7 +158,7 @@ impl SessionBackend for MongoSessionBackend {
             // Console's 30-second useful-token margin.
             filter.insert(
                 "$and",
-                vec![doc! {"$expr":{"$gt":["$access_expires_at",{"$add":["$$NOW",33_000_i64]}]}}],
+                vec![doc! {"$expr":{"$gt":["$access_expires_at",{"$add":["$$NOW",ADMISSION_MARGIN_MS]}]}}],
             );
             bounded("admit", async {
                 let row = self
