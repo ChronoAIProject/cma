@@ -263,10 +263,11 @@ impl DesktopService {
         }
         let (sandbox_id, runtime) =
             timing::observe("legacy_lineage", self.authorize(caller, id)).await?;
-        self.open_authorized(caller, id, sandbox_id, runtime).await
+        self.open_legacy_with_binding(caller, id, sandbox_id, runtime)
+            .await
     }
 
-    async fn open_authorized(
+    async fn open_legacy_with_binding(
         &self,
         caller: &Caller,
         id: &AgentId,
