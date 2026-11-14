@@ -1,5 +1,6 @@
 import { TransportError, type V2AgentEventItem } from '@chronoai/cma-sdk';
 import type { CmaWebClient } from '../../api/client';
+import type { AgentTranscript } from '../../api/types';
 import { conversationFromTranscript } from '../conversation';
 import { mergeTranscriptSnapshot } from '../chronology';
 import { transientReadFailure, type AgentLoadLineage, type ReadyAgent } from '../loadAgent';
@@ -8,6 +9,10 @@ import { foldV2Item } from './projection';
 import type { AgentV2Session } from './client';
 import { conversationFromHead } from './liveHead';
 import { createIdentityHandoff, IDENTITY_HANDOFF_ENABLED } from './identityGate';
+import { createProjectionPublication } from './publication';
+import { readAgentProjections } from './projections';
+import type { AuthorizedOpeningReads } from './openingReads';
+import { IdentityChangedError } from './identity';
 
 export async function loadV2Agent(
   client: CmaWebClient,
@@ -19,6 +24,7 @@ export async function loadV2Agent(
   lineage?: AgentLoadLineage,
   onInputReady?: (ready: ReadyAgent) => void,
   onReadAuthorized?: () => void,
+  opening?: () => Promise<AuthorizedOpeningReads>,
 ): Promise<ReadyAgent & { readonly durableEvents: readonly [] }> {
   await v2.authorizeLoad(signal);
   // The same fresh check can publish observed preparation and admit this batch.
@@ -26,42 +32,14 @@ export async function loadV2Agent(
   onReadAuthorized?.();
   signal.throwIfAborted();
   v2.journal.read();
-  const readHierarchy = async () => {
-    const detailRead = (async () => client.readAgent(agentId, { signal }))();
-    const [detail, preparedWorkspace] = await Promise.all([
-      detailRead,
-      lineage?.agentId === agentId
-        ? (async () => client.readWorkspace(lineage.workspaceId, { signal }))()
-        : undefined,
-    ]);
-    signal.throwIfAborted();
-    if (
-      detail.id !== agentId ||
-      (lineage !== undefined &&
-        (lineage.agentId !== agentId ||
-          lineage.workspaceId !== detail.workspace.id ||
-          lineage.sandboxId !== detail.sandbox.id))
-    )
-      throw new Error('Agent projections changed identity.');
-    const workspace =
-      preparedWorkspace ?? (await client.readWorkspace(detail.workspace.id, { signal }));
-    signal.throwIfAborted();
-    if (workspace.id !== detail.workspace.id || workspace.sandboxId !== detail.sandbox.id)
-      throw new Error('Agent projections changed identity.');
-    return { detail, workspace };
-  };
-  const readUsage = async () => {
-    const usage = await client.readAgentUsage(agentId, { signal });
-    signal.throwIfAborted();
-    if (usage.agentId !== agentId) throw new Error('Agent projections changed identity.');
-    return usage;
-  };
+  const prepared = opening === undefined ? undefined : await opening();
+  signal.throwIfAborted();
+  prepared?.assertCurrent();
+  if (prepared !== undefined && prepared.owner !== v2.owner) throw new IdentityChangedError();
+  const reads = prepared?.reads ?? readAgentProjections(client, agentId, signal, lineage);
   const readTranscript = async () => {
     try {
-      const transcript = await client.readAgentTranscript(agentId, { signal });
-      signal.throwIfAborted();
-      if (transcript.agentId !== agentId) throw new Error('Agent projections changed identity.');
-      return transcript;
+      return await reads.transcript;
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
       return undefined;
@@ -89,44 +67,60 @@ export async function loadV2Agent(
   };
   // Input authority and the latest transcript do not depend on rich event pages.
   // Observe every parallel failure even if another read or early callback fails.
-  // Independent projections depend on the raw hierarchy, not on another
-  // projection's publication check. Each still starts its own fresh identity
-  // check only after all of the data it will expose has finished loading.
-  const hierarchy = readHierarchy();
-  const hierarchyPublished = hierarchy.then(async (value) => {
-    if (onInputReady !== undefined) await v2.authorize(signal);
-    onInputReady?.({
-      ...value,
-      v2,
-      v2Items: [],
-      conversation: conversationFromTranscript({ agentId, turns: [], throughSeq: 0 }),
-      historyLoading: true,
-    });
-    return value;
-  });
-  const projections = Promise.all([hierarchy, readTranscript()]).then(
-    async ([metadata, transcript]) => {
-      if (onInputReady !== undefined) await v2.authorize(signal);
-      const preview = transcript === undefined ? undefined : conversationFromTranscript(transcript);
-      if (preview !== undefined)
-        onInputReady?.({
+  // Projections that finish before metadata can share one publication check.
+  // A later completion never joins a check that has already started.
+  const hierarchy = reads.hierarchy;
+  const publish = createProjectionPublication(
+    hierarchy,
+    () => v2.authorize(signal),
+    () => v2.journal.read(),
+    signal,
+  );
+  const hierarchyPublished =
+    onInputReady === undefined
+      ? hierarchy
+      : publish((metadata) => {
+          onInputReady({
+            ...metadata,
+            v2,
+            v2Items: [],
+            conversation: conversationFromTranscript({ agentId, turns: [], throughSeq: 0 }),
+            historyLoading: true,
+          });
+        });
+  const publishTranscript = async (transcript: AgentTranscript | undefined) => {
+    const preview = transcript === undefined ? undefined : conversationFromTranscript(transcript);
+    if (preview !== undefined && onInputReady !== undefined)
+      await publish((metadata) => {
+        onInputReady({
           ...metadata,
           v2,
           v2Items: [],
           conversation: preview,
           historyLoading: true,
         });
-      return { ...metadata, preview };
-    },
-  );
+      });
+    return preview;
+  };
+  // A completed route read can join metadata's fresh publication check now.
+  // Pending data still waits for completion and can only join a later batch.
+  const completedTranscript = reads.completedTranscript();
+  const transcriptPublished =
+    completedTranscript === undefined
+      ? readTranscript().then(publishTranscript)
+      : publishTranscript(completedTranscript);
+  const projections = Promise.all([hierarchy, transcriptPublished]).then(([metadata, preview]) => ({
+    ...metadata,
+    preview,
+  }));
   const liveHead = (async () => {
     if (onInputReady === undefined) return undefined;
     try {
       const head = await v2.events.head(agentId, { signal });
-      const metadata = await hierarchy;
-      await v2.authorize(signal);
       const conversation = conversationFromHead(head);
-      onInputReady({ ...metadata, v2, v2Items: [], conversation, historyLoading: true });
+      await publish((metadata) => {
+        onInputReady({ ...metadata, v2, v2Items: [], conversation, historyLoading: true });
+      });
       return conversation;
     } catch (error) {
       if (signal.aborted || !allowIncomplete || !transientReadFailure(error)) throw error;
@@ -135,11 +129,11 @@ export async function loadV2Agent(
   })();
   const [{ detail, workspace, preview: latest }, usage, firstPage, head] = await Promise.all([
     projections,
-    readUsage(),
+    reads.usage,
     readPage(),
     liveHead,
     hierarchyPublished,
-  ]);
+  ]).finally(() => publish.dispose());
   // Preserve the final fresh check after every early publication callback.
   await v2.authorize(signal);
   pageHandoff = createIdentityHandoff(IDENTITY_HANDOFF_ENABLED);
