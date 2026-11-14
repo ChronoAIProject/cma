@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
+use layer2_core::sandbox::store::{AgentCreateAdmission, AgentLifecycleStore, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentOperationService, AgentUpdateRecorder, AgentWorkStep};
 use layer2_core::{rfc3339_at, AgentId};
 use layer3_adapter::SandboxAdapter;
@@ -19,6 +19,7 @@ pub(crate) use capacity::reconnect::RecoveryReconnect;
 pub(crate) use capacity::reconnect::{CapacityRecoveryReconnect, ReconnectAction};
 mod cleanup;
 mod cleanup_publication;
+mod completion_lookup;
 mod connection;
 mod connection_output;
 mod connection_retry;
@@ -47,6 +48,12 @@ const DEFAULT_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(17 * 60);
 const CREATE_COMPLETION_ADMISSION_SLOTS: usize = 32;
 const CREATE_COMPLETION_ADMISSION_TIMEOUT: Duration = Duration::from_millis(250);
+
+type CompletionAdmissionFuture =
+    Pin<Box<dyn Future<Output = Result<Option<AgentCreateAdmission>, SandboxStoreError>> + Send>>;
+
+#[cfg(test)]
+type CompletionAdmissionLookup = Arc<dyn Fn(Agent) -> CompletionAdmissionFuture + Send + Sync>;
 
 pub(crate) struct AgentWorkerDependencies {
     pub store: Arc<dyn AgentLifecycleStore>,
@@ -144,6 +151,8 @@ pub(crate) struct AgentWorker {
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
     startup_timings: Mutex<HashMap<AgentId, startup_timing::StartupPhaseDurations>>,
     completion_admission_slots: Arc<Semaphore>,
+    #[cfg(test)]
+    completion_admission_lookup: Mutex<Option<CompletionAdmissionLookup>>,
 }
 
 impl AgentWorker {
@@ -162,72 +171,9 @@ impl AgentWorker {
             capacity_restart,
             startup_timings: Mutex::new(HashMap::new()),
             completion_admission_slots: Arc::new(Semaphore::new(CREATE_COMPLETION_ADMISSION_SLOTS)),
+            #[cfg(test)]
+            completion_admission_lookup: Mutex::new(None),
         })
-    }
-
-    fn schedule_completion_event(
-        &self,
-        agent: Agent,
-        ready_path: &'static str,
-        runtime_path: &'static str,
-        timing: create_completion::CompletionTiming,
-    ) {
-        let permit = match Arc::clone(&self.completion_admission_slots).try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
-                tracing::warn!(
-                    target: "agent_create_completion_lookup",
-                    parent: None,
-                    outcome = "admission_lookup_saturated",
-                    "Agent create completion admission lookup was skipped"
-                );
-                create_completion::emit(&agent, ready_path, runtime_path, timing);
-                return;
-            }
-        };
-        let store = self.dependencies.store.clone();
-        tokio::spawn(async move {
-            let _permit = permit;
-            let admission = match tokio::time::timeout(
-                CREATE_COMPLETION_ADMISSION_TIMEOUT,
-                store.agent_create_admission(&agent),
-            )
-            .await
-            {
-                Ok(Ok(admission)) => admission,
-                Ok(Err(_)) => {
-                    tracing::debug!(
-                        target: "agent_create_completion_lookup",
-                        parent: None,
-                        outcome = "admission_lookup_failed",
-                        "Agent create completion admission lookup failed"
-                    );
-                    None
-                }
-                Err(_) => {
-                    tracing::debug!(
-                        target: "agent_create_completion_lookup",
-                        parent: None,
-                        outcome = "admission_lookup_timeout",
-                        "Agent create completion admission lookup timed out"
-                    );
-                    None
-                }
-            };
-            create_completion::emit(
-                &agent,
-                ready_path,
-                runtime_path,
-                create_completion::CompletionTiming {
-                    admission_ms: admission.as_ref().map(|value| value.admitted_at_ms),
-                    admitted_desktop: admission.as_ref().and_then(|value| value.desktop),
-                    admitted_machine_included: admission
-                        .as_ref()
-                        .and_then(|value| value.machine_included),
-                    ..timing
-                },
-            );
-        });
     }
 
     fn retain_startup_timing(

@@ -1,5 +1,8 @@
 use super::*;
+use layer2_core::sandbox::store::{AgentCreateAdmission, SandboxStoreError};
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use tokio::sync::Notify;
 use tracing_subscriber::fmt::MakeWriter;
 
 #[derive(Clone)]
@@ -100,4 +103,122 @@ async fn ordinary_completion_is_after_ready_has_open_phases_and_does_not_repeat(
         1,
         "connection continuation is not another create"
     );
+}
+
+struct PendingAdmissions {
+    calls: AtomicUsize,
+    active: AtomicUsize,
+    max_active: AtomicUsize,
+    released: AtomicBool,
+    return_error: AtomicBool,
+    wake: Notify,
+}
+
+impl PendingAdmissions {
+    fn record_active(&self) {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        let mut maximum = self.max_active.load(Ordering::SeqCst);
+        while active > maximum {
+            match self.max_active.compare_exchange(
+                maximum,
+                active,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => break,
+                Err(observed) => maximum = observed,
+            }
+        }
+    }
+
+    async fn lookup(
+        self: Arc<Self>,
+        _agent: Agent,
+    ) -> Result<Option<AgentCreateAdmission>, SandboxStoreError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.record_active();
+        while !self.released.load(Ordering::SeqCst) {
+            let notified = self.wake.notified();
+            if self.released.load(Ordering::SeqCst) {
+                break;
+            }
+            notified.await;
+        }
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        if self.return_error.load(Ordering::SeqCst) {
+            Err(SandboxStoreError::Unavailable(
+                "test admission failure".into(),
+            ))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn release_with_error(&self) {
+        self.return_error.store(true, Ordering::SeqCst);
+        self.released.store(true, Ordering::SeqCst);
+        self.wake.notify_waiters();
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn admission_lookup_saturation_keeps_ready_path_nonwaiting_and_falls_back_once() {
+    let capture = EventCapture(Arc::new(Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(capture.clone())
+        .finish();
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let admissions = Arc::new(PendingAdmissions {
+        calls: AtomicUsize::new(0),
+        active: AtomicUsize::new(0),
+        max_active: AtomicUsize::new(0),
+        released: AtomicBool::new(false),
+        return_error: AtomicBool::new(false),
+        wake: Notify::new(),
+    });
+    let pending = admissions.clone();
+    harness
+        .worker
+        .set_completion_admission_lookup(move |agent| pending.clone().lookup(agent));
+    let agent = harness.admit("held-admission", vec![]).await;
+
+    for _ in 0..33 {
+        harness
+            .worker
+            .schedule_completion_event_for_test(agent.clone());
+    }
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while admissions.calls.load(Ordering::SeqCst) < 32 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the first 32 admission reads should be pending");
+    assert_eq!(admissions.calls.load(Ordering::SeqCst), 32);
+    assert_eq!(admissions.max_active.load(Ordering::SeqCst), 32);
+
+    // The 33rd completion is emitted synchronously on saturation, proving
+    // that a held admission read cannot delay the Ready caller.
+    assert_eq!(capture.events().len(), 1);
+    assert!(capture.events()[0].contains("timing_valid=false"));
+    assert!(!capture.events()[0].contains("total_ms="));
+
+    admissions.release_with_error();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while capture.events().len() < 33 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pending admission failures should emit one unavailable event each");
+    tokio::task::yield_now().await;
+    let events = capture.events();
+    assert_eq!(events.len(), 33);
+    assert!(events
+        .iter()
+        .all(|event| { event.contains("timing_valid=false") && !event.contains("total_ms=") }));
+    assert_eq!(admissions.active.load(Ordering::SeqCst), 0);
+    assert_eq!(admissions.calls.load(Ordering::SeqCst), 32);
 }
