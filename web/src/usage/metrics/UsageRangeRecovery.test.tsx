@@ -191,6 +191,17 @@ it('labels a same-owner nearest range and fetches children using its exact repor
   expect(api.sandboxes).toHaveBeenCalledWith('report-one', expect.anything());
   expect(rendered.container.querySelector('.usage-loading')).not.toBeInTheDocument();
   expect(screen.getByText(/completion estimate is not available/)).toBeInTheDocument();
+  expect(rendered.container).toHaveTextContent('Capacity reserved over the report period.');
+  expect(rendered.container).toHaveTextContent('Allocated resource-hours for the report period');
+  expect(rendered.container).toHaveTextContent('core-hours in the report period');
+  expect(rendered.container).not.toHaveTextContent(/selected period/i);
+  fireEvent.click(screen.getByRole('button', { name: 'Research Sandbox' }));
+  await flush();
+  expect(api.sandbox).toHaveBeenCalledWith('report-one', 'sbx-1', expect.anything());
+  expect(screen.getByRole('region', { name: 'Sandbox usage details' })).toHaveTextContent(
+    'Capacity reserved over the report period.',
+  );
+  expect(rendered.container).not.toHaveTextContent(/selected period/i);
   fireEvent.click(screen.getByRole('button', { name: 'Refresh usage' }));
   expect(api.create).toHaveBeenCalledTimes(2);
 });

@@ -141,6 +141,10 @@ test('LOCAL compiled range switching uses labelled previews and the warmed immut
   await expect(page.getByText('Showing Last 7 days', { exact: true })).toBeVisible();
   await expect(page.locator('.usage-metrics')).toHaveAttribute('data-usage-state', 'preview');
   await expect(page.getByText(/not last 30 days/)).toBeVisible();
+  await expect(page.locator('.usage-report')).not.toContainText('selected period');
+  await expect(page.locator('.usage-report')).toContainText(
+    'Capacity reserved over the report period.',
+  );
   await expect(page.getByText(/completion estimate is not available/)).toBeVisible();
   await expect(page.locator('.usage-loading')).toHaveCount(0);
   await page.screenshot({ path: info.outputPath('range-preview.png'), fullPage: true });
