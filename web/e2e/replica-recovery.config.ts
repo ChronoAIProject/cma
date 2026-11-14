@@ -6,7 +6,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 
 export default defineConfig({
   testDir: '.',
-  testMatch: ['replica-recovery.check.ts', 'auth-recovery.check.ts'],
+  testMatch: ['replica-recovery.check.ts', 'auth-recovery.check.ts', 'recovery-healthy.check.ts'],
   workers: 1,
   retries: 0,
   maxFailures: 1,
