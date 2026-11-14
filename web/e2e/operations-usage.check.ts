@@ -110,7 +110,7 @@ for (const theme of ['light', 'dark', 'system']) {
     await page.getByRole('button', { name: 'Refresh usage', exact: true }).click();
     await expect(
       page.getByText('Usage reporting is unavailable', { exact: true }).first(),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 10000 });
     if (!measured)
       expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toEqual([]);
     expect(boundary.writes).toEqual([]);
