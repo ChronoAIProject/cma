@@ -53,6 +53,12 @@ impl RuntimeBackends {
 
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
+    fn desktop_ownership(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.for_handle(handle).ok()?.desktop_ownership(handle)
+    }
     fn capacity_recovery_transport(
         &self,
         handle: &RuntimeHandle,

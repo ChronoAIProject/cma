@@ -4,7 +4,7 @@ use layer2_core::sandbox_metrics::*;
 use layer3_adapter::agent_sandbox::MetricCandidate;
 use std::collections::BTreeSet;
 impl MetricsWorkers {
-    pub(super) async fn diagnostics(&self) -> Result<()> {
+    pub(super) async fn diagnostics(&self, holder: &str) -> Result<()> {
         let Some(native) = &self.native else {
             return Ok(());
         };
@@ -36,7 +36,7 @@ impl MetricsWorkers {
                     }
                 }
             }
-            let bindings = self.store.diagnostic_bindings(bindings).await?;
+            let bindings = self.store.diagnostic_bindings(holder, bindings).await?;
             let range = Range {
                 from: at.saturating_sub(120),
                 to: at,
@@ -105,7 +105,9 @@ impl MetricsWorkers {
             return Err(MetricsError::Unavailable);
         }
         tracing::info!(unassigned_count,unattributed_count,unproven_count=totals.unproven_count,state=%totals.state,"sandbox infrastructure diagnostics");
-        self.store.save_infrastructure(&totals, revision).await
+        self.store
+            .save_infrastructure(holder, &totals, revision)
+            .await
     }
 }
 fn binding(c: &MetricCandidate, kind: BindingKind, cluster: &str, at: u64) -> Binding {

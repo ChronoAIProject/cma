@@ -5,6 +5,7 @@ use mongodb::{
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
+pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     super::budget::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -134,6 +135,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::sandbox_mongo::SANDBOX_BILLING,
     super::sandbox_colors::COLLECTION,
     "sandbox_controls",
+    super::sandbox_credentials::issuance::COLLECTION,
     "sandbox_credential_revocations",
     "sandbox_credentials",
     "sandbox_events",
@@ -211,6 +213,7 @@ pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreErr
             || resource.get_str("db").ok() != Some(database)
             || (!collection.is_empty()
                 && !COLLECTIONS.contains(&collection)
+                && !replicas::COLLECTIONS.contains(&collection)
                 && collection != super::provenance_progress::COLLECTION)
         {
             return Err(denied());

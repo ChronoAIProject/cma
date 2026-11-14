@@ -78,6 +78,7 @@ impl SandboxWorker {
         };
         let mut request = RuntimeProvisionRequest::new(generation, spec);
         request.funded_until = funded_until;
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self.dependencies.adapter.provision_runtime(&request).await {
             Ok(handle) => {
                 timing.completed("runtime_provision");
@@ -143,6 +144,7 @@ impl SandboxWorker {
         }
         let request = super::initial_runtime::installation_request(&sandbox)
             .expect("execution policy was persisted");
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self
             .dependencies
             .adapter
@@ -278,6 +280,7 @@ impl SandboxWorker {
             value: RuntimeCredential::new(material.value.expose()),
             custody_generation: Some(pending.generation),
         };
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         if let Err(error) = self
             .dependencies
             .adapter

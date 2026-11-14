@@ -7,7 +7,6 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 impl MetricsWorkers {
     pub(super) async fn reports(&self, slot: u8) {
-        let holder = format!("report-{}-{slot}", uuid::Uuid::new_v4().simple());
         let slot = format!("report:{slot}");
         let mut work = self.store.report_work();
         let mut interval = tokio::time::interval(Duration::from_secs(2));
@@ -19,6 +18,7 @@ impl MetricsWorkers {
                 // during generation remain visible on the next iteration.
                 _ = work.changed() => {},
             }
+            let holder = format!("{slot}-{}", uuid::Uuid::new_v4().simple());
             match self.store.claim_report(&slot, &holder).await {
                 Ok(Some(lease)) => {
                     let start = std::time::Instant::now();

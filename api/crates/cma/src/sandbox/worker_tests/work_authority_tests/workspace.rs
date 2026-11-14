@@ -1,0 +1,160 @@
+use super::*;
+use crate::sandbox::workspace_worker::{WorkspaceWorker, WorkspaceWorkerDependencies};
+use layer2_core::sandbox::store::{WorkspaceStore, WorkspaceWorkerStore};
+use layer2_core::sandbox::{CreateWorkspace, WorkspaceService, WorkspaceWorkStep};
+use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
+use layer3_adapter::provider::ProviderSandboxRequest;
+use layer3_adapter::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
+use layer3_adapter::{AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeObservation};
+
+struct PendingPreparation {
+    backend: InMemoryHostedBackend,
+    entered: Notify,
+    release: Notify,
+}
+
+#[async_trait::async_trait]
+impl HostedBackend for PendingPreparation {
+    async fn provision(
+        &self,
+        request: ProviderSandboxRequest,
+    ) -> layer3_adapter::Result<RuntimeHandle> {
+        self.backend.provision(request).await
+    }
+    async fn adopt(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+    ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.backend.adopt(handle, request).await
+    }
+    async fn exchange(
+        &self,
+        handle: &RuntimeHandle,
+        request: RequestFrame,
+    ) -> layer3_adapter::Result<ResponseFrame> {
+        let prepare = matches!(request, RequestFrame::PrepareWorkspace(_));
+        let result = self.backend.exchange(handle, request).await;
+        if prepare {
+            self.entered.notify_one();
+            self.release.notified().await;
+        }
+        result
+    }
+    async fn open_agent(
+        &self,
+        handle: &RuntimeHandle,
+        launch: FencedRequest<AgentLaunch>,
+        resume: Option<String>,
+        settings: HostedAgentOpenSettings,
+        updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
+    ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        self.backend
+            .open_agent(handle, launch, resume, settings, updates)
+            .await
+    }
+    async fn teardown(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<()> {
+        self.backend.teardown(handle).await
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn composed_workspace_renews_while_preparation_response_is_pending() {
+    let h = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;
+    let parent = h.create().await;
+    let now = start_time(&parent);
+    h.drive_active(&parent.id, now).await;
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let profile = seed_workspace_profile(&profiles, 0).await;
+    let service = WorkspaceService::new(h.store.clone(), profiles);
+    let mut workspace = service
+        .create(
+            &caller("owner", [Capability::UseOwnSandboxes]),
+            &parent.id,
+            CreateWorkspace {
+                profile,
+                confirmed_digest: None,
+            },
+        )
+        .await
+        .unwrap();
+    let revision = workspace.revision;
+    workspace.work.authority_protocol = Some(WorkAuthorityProtocol::RenewedV1);
+    workspace.revision += 1;
+    h.store
+        .save_workspace(revision, workspace.clone())
+        .await
+        .unwrap();
+    let probe = Arc::new(PendingPreparation {
+        backend: h.backend.clone(),
+        entered: Notify::new(),
+        release: Notify::new(),
+    });
+    let worker = WorkspaceWorker::new(
+        WorkspaceWorkerDependencies {
+            store: h.store.clone(),
+            adapter: Arc::new(CodexAdapter::new(
+                probe.clone(),
+                CodexSandboxSpec::default(),
+            )),
+        },
+        WorkspaceWorkerConfig::new("renewed-child", "test")
+            .with_execution(Default::default())
+            .with_replicas(true),
+    );
+    let id = workspace.id.clone();
+    let running = tokio::spawn(async move { worker.run_one(&id, now).await });
+    probe.entered.notified().await;
+    let initial = h
+        .store
+        .get_workspace(&workspace.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .work
+        .lease
+        .unwrap();
+    for _ in 0..7 {
+        tokio::time::advance(Duration::from_secs(3)).await;
+        tokio::task::yield_now().await;
+    }
+    let extended = h
+        .store
+        .get_workspace(&workspace.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .work
+        .lease
+        .unwrap();
+    assert_eq!(
+        (&extended.holder, extended.fence),
+        (&initial.holder, initial.fence)
+    );
+    assert!(extended.expires_at > rfc3339_at(now + Duration::from_secs(21)));
+    assert!(h
+        .store
+        .claim_workspace_work(
+            &workspace.id,
+            "survivor",
+            rfc3339_at(now + Duration::from_secs(21)),
+            rfc3339_at(now + Duration::from_secs(36))
+        )
+        .await
+        .unwrap()
+        .is_none());
+    probe.release.notify_one();
+    assert_eq!(running.await.unwrap(), Ok(true));
+    let finished = h.store.get_workspace(&workspace.id).await.unwrap().unwrap();
+    assert_eq!(finished.work.step, WorkspaceWorkStep::Setup);
+    assert!(finished.work.lease.is_none());
+    assert_eq!(
+        h.backend
+            .requests()
+            .await
+            .iter()
+            .filter(|(_, frame)| matches!(frame, RequestFrame::PrepareWorkspace(_)))
+            .count(),
+        1
+    );
+}

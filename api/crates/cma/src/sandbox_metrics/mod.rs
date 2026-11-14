@@ -103,13 +103,19 @@ impl MetricsWorkers {
         }
     }
     async fn background(&self, task: &str) {
-        let holder = format!("metrics-{task}-{}", uuid::Uuid::new_v4().simple());
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if !self.store.lease(task, &holder, 70).await.unwrap_or(false) {
-                continue;
+            // A delayed cycle must never inherit a later cycle's authority.
+            let holder = format!("metrics-{task}-{}", uuid::Uuid::new_v4().simple());
+            match self.store.lease(task, &holder, 70).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    tracing::warn!(task, %error, "sandbox metrics lease unavailable");
+                    continue;
+                }
             }
             let start = std::time::Instant::now();
             let result = tokio::time::timeout(Duration::from_secs(60), async {
@@ -117,7 +123,7 @@ impl MetricsWorkers {
                     "observer" => self.observe(&holder).await,
                     "rollups" => self.collect(&holder, false).await,
                     "replay" => self.collect(&holder, true).await,
-                    _ => self.diagnostics().await,
+                    _ => self.diagnostics(&holder).await,
                 }
             })
             .await
@@ -131,7 +137,9 @@ impl MetricsWorkers {
             if let Err(error) = result {
                 tracing::warn!(task,error=%error,"sandbox metrics cycle incomplete");
             }
-            let _ = self.store.release(task, &holder).await;
+            if let Err(error) = self.store.release(task, &holder).await {
+                tracing::warn!(task, %error, "sandbox metrics lease release unconfirmed");
+            }
         }
     }
 }

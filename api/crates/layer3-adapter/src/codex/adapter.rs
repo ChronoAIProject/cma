@@ -2,6 +2,12 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn desktop_ownership(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.hosted.desktop_ownership(handle)
+    }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
         Some(&self.hosted)
     }
@@ -156,25 +162,21 @@ impl SandboxAdapter for CodexAdapter {
     ) -> crate::Result<crate::RuntimeFinalityReceipt> {
         self.hosted.finalize_runtime(original, operation_id).await
     }
-
     async fn runtime_termination(
         &self,
         handle: &RuntimeHandle,
     ) -> crate::Result<Option<crate::RuntimeTermination>> {
         self.hosted.runtime_termination(handle).await
     }
-
     async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
         self.hosted.runtime_inventory().await
     }
-
     async fn inspect_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
     ) -> crate::Result<Option<crate::RuntimeInspection>> {
         self.hosted.inspect_runtime(request).await
     }
-
     async fn inspect_runtime_after(
         &self,
         request: &RuntimeAdoptionRequest,
@@ -182,14 +184,12 @@ impl SandboxAdapter for CodexAdapter {
     ) -> crate::Result<Option<crate::RuntimeInspection>> {
         self.hosted.inspect_runtime_after(request, admission).await
     }
-
     async fn adopt_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
     ) -> crate::Result<Option<RuntimeObservation>> {
         self.hosted.adopt_runtime(request).await
     }
-
     async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> crate::Result<()> {
         self.hosted.reclaim_runtime(observation).await
     }
