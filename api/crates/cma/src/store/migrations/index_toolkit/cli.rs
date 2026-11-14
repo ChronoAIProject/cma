@@ -4,6 +4,7 @@ use std::time::Duration;
 
 pub(super) enum Operation {
     Catalog,
+    Preflight(Vec<Query>),
     Inspect {
         queries: Vec<Query>,
         verify: bool,
@@ -37,6 +38,7 @@ pub(super) fn parse(arguments: &[String]) -> Result<Operation> {
     let args = arguments.iter().map(String::as_str).collect::<Vec<_>>();
     match args.as_slice() {
         ["--index-catalog"] => Ok(Operation::Catalog),
+        ["--index-preflight", names] => Ok(Operation::Preflight(catalog::select(names)?)),
         ["--activity-index-size"] => Ok(Operation::Inspect {
             queries: vec![catalog::activity()],
             verify: false,
@@ -49,12 +51,12 @@ pub(super) fn parse(arguments: &[String]) -> Result<Operation> {
         }),
         ["--index-status", name] => Ok(Operation::Status(catalog::one(name)?)),
         ["--activity-index-build", checksum, image] => {
-            build("activity-first-page", checksum, image, "2100")
+            build("activity-first-page", checksum, image, "1800")
         }
         ["--activity-index-build", checksum, image, timeout] => {
             build("activity-first-page", checksum, image, timeout)
         }
-        ["--index-build", name, checksum, image] => build(name, checksum, image, "2100"),
+        ["--index-build", name, checksum, image] => build(name, checksum, image, "1800"),
         ["--index-build", name, checksum, image, timeout] => build(name, checksum, image, timeout),
         ["--index-abort", name, checksum, image, fence] => {
             let fence = fence
@@ -77,8 +79,8 @@ fn build(name: &str, checksum: &str, image: &str, timeout: &str) -> Result<Opera
     let timeout = timeout
         .parse::<u64>()
         .map_err(|_| "index timeout must be an integer")?;
-    if !(60..=3600).contains(&timeout) {
-        return Err("index timeout must be between 60 and 3600 seconds");
+    if !(60..=1800).contains(&timeout) {
+        return Err("index timeout must be between 60 and 1800 seconds");
     }
     Ok(Operation::Build {
         query: catalog::one(name)?,
@@ -96,6 +98,20 @@ mod tests {
     }
     #[test]
     fn names_mutation_scope_and_deadlines_are_bounded() {
+        assert!(
+            matches!(parse(&args(&["--index-preflight", "activity-first-page,agents-owner-page"])),
+            Ok(Operation::Preflight(queries)) if queries.len() == 2)
+        );
+        assert!(matches!(
+            parse(&args(&[
+                "--index-build",
+                "activity-first-page",
+                "sum",
+                "image",
+                "1800"
+            ])),
+            Ok(Operation::Build { timeout: 1800, .. })
+        ));
         assert!(matches!(
             parse(&args(&["--activity-index-size"])),
             Ok(Operation::Inspect { legacy: true, .. })
@@ -114,7 +130,7 @@ mod tests {
             .ok()
             .unwrap()
             .deadline(),
-            Duration::from_secs(2160)
+            Duration::from_secs(1860)
         );
         for query in catalog::all().into_iter().filter(|q| q.step.is_none()) {
             assert!(parse(&args(&["--index-size", query.name])).is_ok());
@@ -130,7 +146,7 @@ mod tests {
                 "activity-first-page",
                 "sum",
                 "image",
-                "3601",
+                "1801",
             ],
             vec!["--index-abort", "activity-first-page", "sum", "image", "0"],
             vec!["--index-abort", "activity-first-page", "sum", "image"],

@@ -31,6 +31,7 @@ pub(super) async fn command(arguments: &[String]) -> Result<Value> {
     tokio::time::timeout(deadline, async {
         match operation {
             Operation::Catalog => Ok(json!({"schema":"index-toolkit-catalog-v1", "queries":catalog::all().iter().map(catalog::Query::describe).collect::<Vec<_>>()})),
+            Operation::Preflight(queries) => authority::preflight(&queries).await,
             Operation::Inspect {queries, verify, legacy} => inspection::inspect(&queries, verify, legacy).await,
             Operation::Build {query, checksum, image, timeout} => build::build(&query, &checksum, &image, timeout).await,
             Operation::Abort {query, checksum, image, fence} => abort::abort(&query, &checksum, &image, fence).await,

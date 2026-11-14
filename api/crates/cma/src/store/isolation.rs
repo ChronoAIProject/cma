@@ -394,41 +394,11 @@ pub(crate) fn verify_index_operation_authority(
         cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema => {
             cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
                 .map_err(|error| StoreError::Unavailable(error.into()))?;
-            if has_target_drop_index(status, database, collections) {
-                return Err(StoreError::Unavailable(
-                    "index operation credential may not drop target indexes".into(),
-                ));
-            }
             Ok(())
         }
     }
 }
 
-fn has_target_drop_index(status: &Document, database: &str, collections: &[&str]) -> bool {
-    status
-        .get_document("authInfo")
-        .ok()
-        .and_then(|info| info.get_array("authenticatedUserPrivileges").ok())
-        .into_iter()
-        .flatten()
-        .filter_map(|grant| grant.as_document())
-        .any(|grant| {
-            grant.get_document("resource").ok().is_some_and(|resource| {
-                resource.get_str("db").ok() == Some(database)
-                    && resource
-                        .get_str("collection")
-                        .ok()
-                        .is_some_and(|collection| {
-                            collection.is_empty() || collections.contains(&collection)
-                        })
-                    && grant.get_array("actions").ok().is_some_and(|actions| {
-                        actions
-                            .iter()
-                            .any(|action| action.as_str() == Some("dropIndex"))
-                    })
-            })
-        })
-}
 #[cfg(test)]
 #[path = "agent_lifecycle_contract.rs"]
 pub(super) mod agent_lifecycle_contract;

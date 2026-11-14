@@ -38,10 +38,9 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
     match command(arguments).await {
         Ok(result) => {
             println!("{result}");
-            if result
-                .get("verification_passed")
-                .and_then(serde_json::Value::as_bool)
-                == Some(false)
+            if ["verification_passed", "preflight_passed"]
+                .into_iter()
+                .any(|field| result.get(field).and_then(serde_json::Value::as_bool) == Some(false))
             {
                 std::process::exit(1);
             }

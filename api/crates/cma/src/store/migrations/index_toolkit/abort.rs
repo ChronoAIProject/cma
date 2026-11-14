@@ -13,12 +13,8 @@ pub(super) async fn abort(query: &Query, checksum: &str, image: &str, fence: i64
         option_env!("CHRONO_BUILD_SHA").unwrap_or("development"),
         image,
     )?;
-    let (client, database, _) = open_database().await?;
-    let status = database
-        .run_command(doc! {"connectionStatus":1,"showPrivileges":true,"maxTimeMS":5000})
-        .await
-        .map_err(|_| "abort authority unavailable")?;
-    super::authority::verify_abort(&status, database.name(), query.collection)?;
+    let (client, database, mode) = open_database().await?;
+    super::authority::verify(&database, mode, &[query.collection], true).await?;
     execute(query, client, database, &identity, image, fence).await
 }
 
