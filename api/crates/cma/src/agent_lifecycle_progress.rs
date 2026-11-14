@@ -1,6 +1,9 @@
 //! Report observed provisioning gates without waiting for the whole Agent.
 use super::*;
 
+#[path = "agent_lifecycle_readiness.rs"]
+mod readiness;
+
 impl InlineAgentLifecycle {
     pub(super) async fn progress(
         &self,
@@ -38,36 +41,15 @@ impl InlineAgentLifecycle {
                 let changed = readiness.notified();
                 tokio::pin!(changed);
                 changed.as_mut().enable();
-                if let Some(id) = expected_workspace {
-                    let workspace = self
-                        .workspaces
-                        .read(caller, id)
-                        .await
-                        .map_err(workspace_error)?;
-                    if workspace.status == WorkspaceStatus::Failed {
-                        let detail = workspace
-                            .failed
-                            .filter(|failure| failure.class.starts_with("repository_"))
-                            .map(|failure| format!("{}: {}", failure.class, failure.detail))
-                            .unwrap_or_else(|| {
-                                "Workspace preparation failed. The task has not run.".into()
-                            });
-                        return Err(AgentLifecycleProvisioningError::Conflict(detail));
-                    }
-                }
-                let sandbox = self
-                    .sandbox
-                    .read(caller, sandbox_id)
-                    .await
-                    .map_err(sandbox_error)?;
-                if matches!(
-                    sandbox.status,
-                    SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
-                ) {
-                    return Err(AgentLifecycleProvisioningError::Conflict(
-                        "Sandbox provisioning failed".into(),
-                    ));
-                }
+                let observation = readiness::observe(
+                    &self.sandbox,
+                    &self.workspaces,
+                    caller,
+                    sandbox_id,
+                    expected_workspace,
+                )
+                .await?;
+                let sandbox = &observation.sandbox;
                 if !sandbox_ready
                     && (sandbox.runtime.is_some() || sandbox.status == SandboxStatus::Active)
                 {
@@ -100,18 +82,11 @@ impl InlineAgentLifecycle {
                     .await?;
                     key_ready = true;
                 }
-                if sandbox.status == SandboxStatus::Active {
-                    let page = self
-                        .workspaces
-                        .list(caller, sandbox_id, &Default::default())
-                        .await
-                        .map_err(workspace_error)?;
-                    if let Some(workspace) = page.items.into_iter().find(|workspace| {
-                        workspace.status == WorkspaceStatus::Ready
-                            && expected_workspace.is_none_or(|id| workspace.id == *id)
-                    }) {
-                        return Ok(workspace.id);
-                    }
+                if let Some(id) = observation
+                    .ready_workspace(&self.workspaces, caller)
+                    .await?
+                {
+                    return Ok(id);
                 }
                 tokio::select! {
                     _ = &mut changed => {},

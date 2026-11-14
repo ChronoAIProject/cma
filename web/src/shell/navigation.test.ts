@@ -128,7 +128,7 @@ describe('navigation hierarchy loading', () => {
     expect(readWorkspace).toHaveBeenCalledWith('wsp_1', expect.any(Object));
   });
 
-  it('coalesces foreground events within the automatic refresh window but immediately refreshes after a mutation', async () => {
+  it('coalesces focus events but immediately refreshes on visibility and after a mutation', async () => {
     vi.useFakeTimers();
     const listSandboxes = vi.fn().mockResolvedValue({ items: [sandboxFixture()] });
     const client = agentClient({ listSandboxes });
@@ -138,19 +138,23 @@ describe('navigation hierarchy loading', () => {
     for (let index = 0; index < 14; index += 1) {
       await act(() => vi.advanceTimersByTimeAsync(1000));
       await act(async () => {
-        hidden.mockReturnValue(true);
-        document.dispatchEvent(new Event('visibilitychange'));
-        hidden.mockReturnValue(false);
-        document.dispatchEvent(new Event('visibilitychange'));
+        window.dispatchEvent(new Event('focus'));
       });
     }
     expect(listSandboxes).toHaveBeenCalledOnce();
+    await act(async () => {
+      hidden.mockReturnValue(true);
+      document.dispatchEvent(new Event('visibilitychange'));
+      hidden.mockReturnValue(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
     await act(async () => result.current.refresh());
-    expect(listSandboxes).toHaveBeenCalledTimes(2);
-    await act(() => vi.advanceTimersByTimeAsync(14999));
-    expect(listSandboxes).toHaveBeenCalledTimes(2);
-    await act(() => vi.advanceTimersByTimeAsync(1));
     expect(listSandboxes).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(14999));
+    expect(listSandboxes).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(listSandboxes).toHaveBeenCalledTimes(4);
   });
 
   it('aborts hidden hierarchy reads before they can expand descendants and retains the visible hierarchy', async () => {

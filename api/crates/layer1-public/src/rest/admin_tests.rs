@@ -20,7 +20,7 @@ use layer2_core::sandbox::{
 };
 use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, ActivityStore,
-    Authorization, Capability, Page, PlatformSettings, PlatformSettingsService,
+    ActivityTarget, Authorization, Capability, Page, PlatformSettings, PlatformSettingsService,
     PlatformSettingsStore, ProviderInventory, RuntimeEntry, RuntimeInventory, RuntimeStatus,
     SandboxId, StoreError, StoredPlatformSettings, SubjectId,
 };

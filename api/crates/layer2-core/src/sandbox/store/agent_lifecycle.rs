@@ -242,6 +242,18 @@ pub trait AgentWorkerStore: Send + Sync {
         self.commit_agent_work(mutation).await
     }
 
+    /// Publish a metadata-only retry after verifying the supplied marker in the
+    /// same snapshot as the Agent CAS. Unsupported stores must fail closed.
+    async fn commit_agent_work_repeated_failure(
+        &self,
+        _retry: super::AgentRepeatedFailure,
+        _observed: Option<AgentRetryObservation>,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "repeated failure publication is unsupported",
+        ))
+    }
+
     /// Exact durable preparation authority for replaying a worktree/home pair.
     /// Stores without such evidence retain the ordinary individual work steps.
     async fn prepared_agent_replay_matches(

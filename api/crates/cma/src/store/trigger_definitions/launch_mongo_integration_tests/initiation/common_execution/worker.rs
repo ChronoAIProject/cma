@@ -125,7 +125,13 @@ async fn operator_stop_keeps_an_admitted_launch_and_common_first_message_exactly
     run_launch_after_admission(true).await;
 }
 
-async fn run_launch_after_admission(stopped: bool) {
+// This scenario nests the real worker, admission and output roots. Allocate its
+// state before polling so the test wrappers do not duplicate it on their stacks.
+fn run_launch_after_admission(stopped: bool) -> impl std::future::Future<Output = ()> {
+    Box::pin(run_launch_scenario(stopped))
+}
+
+async fn run_launch_scenario(stopped: bool) {
     let (f, launch, _) = pending().await;
     if stopped {
         use layer2_core::admission::AdmissionControlStore;

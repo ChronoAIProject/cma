@@ -3,6 +3,7 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../../test/agent';
 import { workspaceFixture } from '../../test/hierarchy';
 import { cursor, harness, incarnation, json, page } from './controller.fixture';
 import { loadV2Agent } from './load';
+import { readAgentProjections } from './projections';
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => {
@@ -10,7 +11,41 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('authorizes independent completed projections concurrently, then checks again after their callbacks', async () => {
+it('offers an already completed route transcript before metadata publication authorization starts', async () => {
+  const h = harness();
+  const session = (await h.client.agentTransport!.open('agt_1'))!;
+  await session.authorizeLoad(new AbortController().signal);
+  const reads = readAgentProjections(h.client, 'agt_1', new AbortController().signal);
+  await Promise.all([reads.hierarchy, reads.transcript, reads.usage]);
+  h.currentUser.mockClear();
+  const proofCounts: number[] = [];
+  const result = await loadV2Agent(
+    h.client,
+    'agt_1',
+    new AbortController().signal,
+    session,
+    true,
+    undefined,
+    undefined,
+    () => {
+      proofCounts.push(h.currentUser.mock.calls.length);
+    },
+    undefined,
+    async () => ({
+      owner: 'alice',
+      reads,
+      assertCurrent: () => {
+        session.journal.read();
+      },
+    }),
+  );
+  expect(proofCounts).toEqual([2, 2]);
+  expect(h.currentUser).toHaveBeenCalledTimes(3);
+  expect(result.historyLoading).toBe(false);
+  expect(h.post).not.toHaveBeenCalled();
+});
+
+it('batches completed projections behind one fresh check, then checks again after their callbacks', async () => {
   const h = harness();
   const session = (await h.client.agentTransport!.open('agt_1'))!;
   vi.useFakeTimers();
@@ -60,16 +95,20 @@ it('authorizes independent completed projections concurrently, then checks again
   expect(h.currentUser).toHaveBeenCalledOnce();
   expect(input).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(300);
-  // Each check begins after its own data is complete. None borrows an earlier
-  // in-flight identity request or waits for an unrelated publication check.
-  expect(h.currentUser).toHaveBeenCalledTimes(4);
+  // All three projections finished before this batch starts. They can share
+  // that proof, while the final check must still follow their callbacks.
+  expect(h.currentUser).toHaveBeenCalledTimes(2);
   expect(input).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(250);
+  // The later projection completions queue behind the already-started proof.
+  expect(input).toHaveBeenCalledTimes(1);
+  expect(h.currentUser).toHaveBeenCalledTimes(3);
   await vi.advanceTimersByTimeAsync(250);
   expect(input).toHaveBeenCalledTimes(3);
   expect(input.mock.calls.some(([ready]) => ready.conversation.agentCursor === cursor(0))).toBe(
     true,
   );
-  expect(h.currentUser).toHaveBeenCalledTimes(5);
+  expect(h.currentUser).toHaveBeenCalledTimes(4);
   expect(settled).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(249);
   expect(settled).not.toHaveBeenCalled();

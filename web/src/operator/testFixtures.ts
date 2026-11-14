@@ -200,6 +200,20 @@ export function operatorClient() {
       ],
       next: null,
     }),
+    listActivitySummary: vi.fn<OperatorClient['admin']['listActivitySummary']>().mockResolvedValue({
+      items: [
+        {
+          id: 'act-1',
+          at: now,
+          actor: 'operator-1',
+          actor_name: 'Morgan Park',
+          action: 'configure',
+          target: { kind: 'resource', id: 'platform' },
+          outcome: { status: 'succeeded' },
+        },
+      ],
+      next: null,
+    }),
   };
   return {
     readMeasuredUsage: vi.fn().mockResolvedValue(false),
