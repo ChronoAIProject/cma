@@ -16,11 +16,10 @@ function stubFetch(impl: (url?: unknown, init?: RequestInit) => Promise<Response
 }
 
 function jsonResponse(status: number, body: unknown): Response {
-  return {
-    ok: status >= 200 && status < 300,
+  return new Response(JSON.stringify(body), {
     status,
-    json: async () => body,
-  } as Response;
+    headers: { 'content-type': 'application/json' },
+  });
 }
 
 describe('handleFor', () => {
