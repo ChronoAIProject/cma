@@ -128,6 +128,11 @@ infra/web/secret.yaml
 infra/web/service.yaml
 infra/web/gcpbackendpolicy.yaml
 infra/api/Dockerfile
+infra/api/activity-index-build-job.yaml
+infra/api/activity-index-execution.md
+infra/api/activity-index-job.yaml
+infra/api/activity-index-postcheck-job.yaml
+infra/api/index-toolkit-job.yaml
 infra/api/deployment.yaml
 infra/api/hpa.yaml
 infra/api/pdb.yaml
@@ -163,7 +168,11 @@ infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
 ```
 
-No additional manifests, no Helm charts, no kustomize overlays.
+No additional manifests, no Helm charts, no kustomize overlays. The Activity
+index and named-query toolkit files are explicit operator Job templates and
+their execution contract; merging them does not run an index operation. The
+execution contract stays beside those templates as an operational documentation
+exception to the `docs/` rule below.
 
 The two `infra/storage/` manifests initialize the legacy persistent-home
 StorageClass, snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot.
