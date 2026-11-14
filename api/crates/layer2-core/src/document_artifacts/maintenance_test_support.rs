@@ -32,6 +32,7 @@ pub struct Store {
     pub judgements: AtomicUsize,
     pub refuse_claim: AtomicBool,
     pub claim_delay_ms: AtomicU64,
+    pub fail_backlog: AtomicBool,
 }
 impl Store {
     pub fn new(ready: bool) -> Self {
@@ -42,6 +43,7 @@ impl Store {
             judgements: 0.into(),
             refuse_claim: false.into(),
             claim_delay_ms: 0.into(),
+            fail_backlog: false.into(),
         }
     }
     pub async fn reserve(&self, source: DocumentSourceReservation, reserved_at: i64) {
@@ -109,19 +111,21 @@ impl DocumentReclaimStore for Store {
     ) -> Result<Vec<ObjectCandidate>, DocumentError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
         let data = self.data.lock().await;
-        let mut rows: Vec<_> = data
-            .rows
-            .values()
-            .filter(|row| {
-                row.state == State::Condemned
-                    || (matches!(row.state, State::Reserved | State::Baseline)
-                        && row.reserved_at < reserved_before)
-            })
-            .collect();
-        rows.sort_by_key(|row| row.state != State::Condemned);
-        Ok(rows
-            .into_iter()
+        let now = reserved_before.saturating_add(RECLAIM_GRACE.as_millis() as i64);
+        let condemned = data.rows.values().filter(|row| {
+            row.state == State::Condemned
+                && row
+                    .claim
+                    .as_ref()
+                    .is_none_or(|claim| claim.lease_until < now)
+        });
+        let reserved = data.rows.values().filter(|row| {
+            matches!(row.state, State::Reserved | State::Baseline)
+                && row.reserved_at < reserved_before
+        });
+        Ok(condemned
             .take(limit)
+            .chain(reserved.take(limit))
             .map(|row| ObjectCandidate {
                 source: row.source.clone(),
                 reservation_id: None,
@@ -236,6 +240,9 @@ impl DocumentReclaimStore for Store {
     }
     async fn backlog(&self, now: i64) -> Result<ReclaimBacklog, DocumentError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
+        if self.fail_backlog.load(Ordering::SeqCst) {
+            return Err(DocumentError::Unavailable);
+        }
         let data = self.data.lock().await;
         let pending: Vec<_> = data
             .rows
