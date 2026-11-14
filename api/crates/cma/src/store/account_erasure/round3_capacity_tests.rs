@@ -266,6 +266,117 @@ async fn retained_revision_pages_resume_with_a_scalar_position_instead_of_growin
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn protected_indexed_audit_pages_never_accumulate_exclusion_arrays() {
+    use layer2_core::{
+        resource_access::{
+            OrganizationOwnershipEvidence, ResourceActor, ResourceOwner, ResourcePolicyRecord,
+        },
+        ActivityAction, ActivityOutcome, ActivityRecord, ActivityStore, ActivityTarget,
+    };
+    let db = database().await;
+    sandbox(&db, "organization", "organization-root").await;
+    let root = db
+        .collection::<Document>("sandboxes")
+        .find_one(doc! {"_id":"organization-root"})
+        .await
+        .unwrap()
+        .unwrap();
+    let root = crate::store::sandboxes::read_sandbox(&root).unwrap();
+    let policy = ResourcePolicyRecord {
+        sandbox_id: root.id.clone(),
+        sandbox_created_at: root.created_at,
+        owner: ResourceOwner::Organization {
+            subject: root.owner,
+        },
+        organization_evidence: Some(OrganizationOwnershipEvidence {
+            issuer: "cma:authenticated-provider-binding-manager".into(),
+            organization: SubjectId::new("organization"),
+            admitted_by: ResourceActor::Api {
+                subject: SubjectId::new("a"),
+                delegation_id: None,
+            },
+            verified_at: NOW.into(),
+        }),
+        revision: 1,
+    };
+    put(
+        &db,
+        "resource_policies",
+        crate::store::resource_access::records::policy_document(&policy).unwrap(),
+    )
+    .await;
+    let store = crate::store::activity::MongoActivityStore::open(
+        db.client(),
+        db.name(),
+        std::time::Duration::from_secs(86400),
+    )
+    .await
+    .unwrap();
+    let record = ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded)
+        .by(SubjectId::new("a"))
+        .on(ActivityTarget::Resource(
+            "sandbox:organization-root:events".into(),
+        ));
+    store.append(&record).await.unwrap();
+    let activity = db.collection::<Document>("activity");
+    let base = activity.find_one(doc! {}).await.unwrap().unwrap();
+    activity
+        .insert_many((0..1100).map(|n| {
+            let mut row = base.clone();
+            let id = format!("act_protected_{n:05}");
+            row.insert("_id", &id);
+            row.get_document_mut("record").unwrap().insert("id", id);
+            row
+        }))
+        .await
+        .unwrap();
+    let subject = SubjectId::new("a");
+    let mut cursor = Cursor::default();
+    let mut inventory = ErasureInventory::default();
+    let mut complete = false;
+    for _ in 0..1000 {
+        let batch = erase_records(
+            &db,
+            &[Target {
+                subject: &subject,
+                inventory: &inventory,
+            }],
+            &mut cursor,
+            NOW,
+        )
+        .await
+        .unwrap();
+        progress::acknowledge(&mut inventory, &batch, subject.as_str());
+        assert!(
+            !matches!(cursor.after, Some(Bson::Array(_))),
+            "protected indexed audits must use bounded scalar continuation"
+        );
+        assert!(serde_json::to_vec(&cursor.after).unwrap().len() < 4096);
+        if !batch.has_more {
+            complete = true;
+            break;
+        }
+    }
+    assert!(complete);
+    assert_eq!(activity.count_documents(doc! {}).await.unwrap(), 1101);
+    assert_eq!(
+        activity
+            .count_documents(doc! {"record.actor":{"$ne":layer2_core::DELETED_ACCOUNT_SUBJECT}})
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(db
+        .collection::<Document>("sandboxes")
+        .find_one(doc! {"_id":"organization-root","owner":"organization"})
+        .await
+        .unwrap()
+        .is_some());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn profile_graph_capacity_is_charged_to_its_owner_instead_of_a_larger_resource_context() {
     let seed = seeded("round3_graph_attribution").await;
     let db = seed.client.database(&seed.database);

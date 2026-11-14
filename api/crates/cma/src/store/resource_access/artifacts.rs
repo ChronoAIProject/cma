@@ -215,7 +215,9 @@ fn binding_filter(binding: &ArtifactBinding) -> Result<Document, ResourceAccessS
     Ok(doc! {"agent_id":binding.agent_id.as_str(),
     "binding":record_bson(binding).map_err(|_| ResourceAccessStoreError::Corrupt)?})
 }
-fn document(record: &StoredAgentArtifact) -> Result<Document, ResourceAccessStoreError> {
+pub(in crate::store) fn document(
+    record: &StoredAgentArtifact,
+) -> Result<Document, ResourceAccessStoreError> {
     record.content()?;
     let mut document = binding_filter(&record.binding)?;
     document.insert("_id", &record.metadata.id);
@@ -226,7 +228,9 @@ fn document(record: &StoredAgentArtifact) -> Result<Document, ResourceAccessStor
     );
     Ok(document)
 }
-fn read(stored: &Document) -> Result<StoredAgentArtifact, ResourceAccessStoreError> {
+pub(in crate::store) fn read(
+    stored: &Document,
+) -> Result<StoredAgentArtifact, ResourceAccessStoreError> {
     let record = read_record(stored).map_err(|_| ResourceAccessStoreError::Corrupt)?;
     let expected = document(&record)?;
     if expected

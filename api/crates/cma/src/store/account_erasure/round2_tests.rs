@@ -86,6 +86,55 @@ async fn retained_profile_is_private_retired_and_contains_no_authoring_data() {
     db.drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn operator_activity_redacts_only_the_erased_subject_and_preserves_the_operator() {
+    use layer2_core::{
+        ActivityAction, ActivityOutcome, ActivityRecord, ActivityStore, ActivityTarget, DetailKey,
+    };
+    let db = database().await;
+    sandbox(&db, "a", "personal-sandbox").await;
+    let store = crate::store::activity::MongoActivityStore::open(
+        db.client(),
+        db.name(),
+        std::time::Duration::from_secs(86400),
+    )
+    .await
+    .unwrap();
+    let mut retained = ActivityRecord::new(ActivityAction::Delete, ActivityOutcome::Succeeded)
+        .by(SubjectId::new("operator"))
+        .on(ActivityTarget::Resource("sandbox:personal-sandbox".into()));
+    retained.detail.record(DetailKey::Subject, "a");
+    store.append(&retained).await.unwrap();
+    let mut other = retained.clone();
+    other.id.0.push_str("-other");
+    other.detail.record(DetailKey::Subject, "b");
+    store.append(&other).await.unwrap();
+    drain(&db, "a", &mut ErasureInventory::default()).await;
+    let cleaned = db
+        .collection::<Document>("activity")
+        .find_one(doc! {"_id":&retained.id.0})
+        .await
+        .unwrap()
+        .unwrap();
+    let cleaned: ActivityRecord = crate::store::sandbox_mongo::read_record(&cleaned).unwrap();
+    assert_eq!(cleaned.actor, retained.actor);
+    assert_eq!(cleaned.target, retained.target);
+    assert_eq!(
+        cleaned.detail.get(DetailKey::Subject),
+        Some(layer2_core::DELETED_ACCOUNT_SUBJECT)
+    );
+    let untouched = db
+        .collection::<Document>("activity")
+        .find_one(doc! {"_id":&other.id.0})
+        .await
+        .unwrap()
+        .unwrap();
+    let untouched: ActivityRecord = crate::store::sandbox_mongo::read_record(&untouched).unwrap();
+    assert_eq!(untouched, other);
+    db.drop().await.unwrap();
+}
+
 #[test]
 fn capacity_is_attributed_per_person_and_does_not_count_organization_children() {
     let mut contexts = vec![];

@@ -36,7 +36,7 @@ async fn row(db: &Database, collection: &str, id: &str) -> Document {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn document_references_are_redacted_without_changing_the_owner() {
+async fn references_are_redacted_in_other_owners_documents_and_shares() {
     let db = fixture().await;
     let store = MongoDocumentStore::new(db.clone());
     let document = document();
@@ -82,6 +82,28 @@ async fn document_references_are_redacted_without_changing_the_owner() {
         encoded.get_array("recipient_subjects").unwrap(),
         &vec!["other".into()]
     );
+    let share = share();
+    db.collection::<Document>("resource_shares")
+        .insert_one(share.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        redact(&db, "resource_shares", &share, &subjects())
+            .await
+            .unwrap(),
+        Redaction::Updated
+    );
+    let cleaned = row(&db, "resource_shares", "share-one").await;
+    let parsed = crate::store::resource_access::records::read_share(
+        &layer2_core::SandboxId("sbx-other".into()),
+        &cleaned,
+    )
+    .unwrap();
+    assert_eq!(
+        parsed.link.unwrap().accepted_subjects,
+        [SubjectId::new("other")]
+    );
+    assert_eq!(parsed.revision, 2);
     db.drop().await.unwrap();
 }
 
@@ -235,12 +257,49 @@ async fn redacted_document_and_revision_still_parse_with_current_readers() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn global_budget_overrides_are_redacted() {
+async fn shared_receipts_and_global_budget_overrides_are_redacted() {
     use layer2_core::{
         budget::{BudgetPolicy, OwnerBudgetPolicy},
+        resource_access::{ResourceActor, ShareMutationReceipt},
         PlatformSettings, PlatformSettingsStore,
     };
     let db = fixture().await;
+    let share_row = share();
+    let share =
+        mongodb::bson::deserialize_from_bson(share_row.get("record").unwrap().clone()).unwrap();
+    let receipt = ShareMutationReceipt {
+        operation_id: digest(b"operation"),
+        command_fingerprint: digest(b"share-command"),
+        sandbox_id: layer2_core::SandboxId("sbx-other".into()),
+        sandbox_created_at: AT.into(),
+        share,
+        actor: ResourceActor::Human {
+            subject: SubjectId::new("survivor"),
+        },
+        at: AT.into(),
+        policy_revision: 1,
+    };
+    receipt.validate().unwrap();
+    let receipt_row = doc! {"_id":&receipt.operation_id,"document_schema_version":1_i64,"share_id":&receipt.share.id,"sandbox_id":"sbx-other","record":mongodb::bson::serialize_to_bson(&receipt).unwrap()};
+    db.collection::<Document>("resource_share_commands")
+        .insert_one(receipt_row.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        redact(&db, "resource_share_commands", &receipt_row, &subjects())
+            .await
+            .unwrap(),
+        Redaction::Updated
+    );
+    let stored = row(&db, "resource_share_commands", &receipt.operation_id).await;
+    let parsed: ShareMutationReceipt =
+        mongodb::bson::deserialize_from_bson(stored.get("record").unwrap().clone()).unwrap();
+    parsed.validate().unwrap();
+    assert_eq!(
+        parsed.share.link.unwrap().accepted_subjects,
+        [SubjectId::new("other")]
+    );
+    assert_eq!(stored.get_i64("mutation_version").unwrap(), 1);
     let settings_store = crate::store::MongoPlatformSettingsStore::open(db.client(), db.name())
         .await
         .unwrap();
@@ -280,6 +339,50 @@ async fn global_budget_overrides_are_redacted() {
         cleaned.settings.model_budget.owners[0].owner,
         SubjectId::new("other")
     );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn erasing_last_explicit_share_recipient_preserves_a_revoked_readable_link() {
+    use layer2_core::resource_access::{AgentShareAudience, ResourceShare};
+    let db = fixture().await;
+    let mut original = share();
+    let mut record: ResourceShare =
+        mongodb::bson::deserialize_from_bson(original.get("record").unwrap().clone()).unwrap();
+    let link = record.link.as_mut().unwrap();
+    link.audience = AgentShareAudience::Users {
+        subjects: vec![SubjectId::new("erased")],
+    };
+    link.accepted_subjects = vec![SubjectId::new("erased")];
+    assert!(record.validate());
+    original.insert("accepted_subjects", vec!["erased"]);
+    original.insert("record", mongodb::bson::serialize_to_bson(&record).unwrap());
+    db.collection::<Document>("resource_shares")
+        .insert_one(original.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        redact(&db, "resource_shares", &original, &subjects())
+            .await
+            .unwrap(),
+        Redaction::Updated
+    );
+    let cleaned = row(&db, "resource_shares", "share-one").await;
+    let parsed = crate::store::resource_access::records::read_share(
+        &layer2_core::SandboxId("sbx-other".into()),
+        &cleaned,
+    )
+    .unwrap();
+    assert!(parsed.revoked_at.is_some());
+    let link = parsed.link.as_ref().unwrap();
+    assert!(matches!(&link.audience,AgentShareAudience::Users {subjects} if subjects.is_empty()));
+    assert!(link.accepted_subjects.is_empty());
+    assert!(!parsed.incoming_for(&SubjectId::new("erased"), &[]));
+    assert!(!parsed.incoming_for(&SubjectId::new("other"), &[]));
+    let mut invalid_active = parsed;
+    invalid_active.revoked_at = None;
+    assert!(!invalid_active.validate());
     db.drop().await.unwrap();
 }
 
