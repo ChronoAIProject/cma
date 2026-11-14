@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentOperationService, AgentUpdateRecorder, AgentWorkStep};
-use layer2_core::{rfc3339_at, AgentId};
+use layer2_core::{AgentId, rfc3339_at};
 use layer3_adapter::SandboxAdapter;
 
 use super::agent_skills::AgentSkillResolver;
