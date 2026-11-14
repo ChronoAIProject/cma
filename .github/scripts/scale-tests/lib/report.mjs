@@ -61,10 +61,10 @@ export async function saveReport(directory, report) {
     '', 'A unit-test pass is not a local-cluster acceptance pass. Failures and missing prerequisites remain in the matrix.', '',
     `results.json SHA-256: ${hash(json)}`, ''];
   if (report.performance?.length) {
-    lines.push('| Criterion / metric | Phase | N | Failed | p50 ms | p95 ms | p99 ms | Delta ms | Delta % | Noise ms | Result |',
-      '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|');
+    lines.push('| Criterion / metric | Phase | N | Failed | p50 ms | p95 ms | p99 ms | Delta ms | Delta % | Noise ms | A3 class | Allowance ms | Result |',
+      '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|');
     const fmt = (n) => n === null ? 'unmeasured' : n.toFixed(2);
-    for (const r of report.performance) lines.push(`| ${r.criterion_id ?? r.metric}: ${r.route ? `${r.method} ${r.route}` : r.metric} | ${r.phase} | ${r.n} | ${r.failed} | ${fmt(r.p50_ms)} | ${fmt(r.p95_ms)} | ${fmt(r.p99_ms)} | ${fmt(r.delta_ms)} | ${fmt(r.delta_percent)} | ${fmt(r.noise_ms)} | ${r.status} |`);
+    for (const r of report.performance) lines.push(`| ${r.criterion_id ?? r.metric}: ${r.route ? `${r.method} ${r.route}` : r.metric} | ${r.phase} | ${r.n} | ${r.failed} | ${fmt(r.p50_ms)} | ${fmt(r.p95_ms)} | ${fmt(r.p99_ms)} | ${fmt(r.delta_ms)} | ${fmt(r.delta_percent)} | ${fmt(r.noise_ms)} | ${r.tolerance_class ?? 'unclassified'} | ${fmt(r.tolerance_ms ?? null)} | ${r.status} |`);
   }
   await writeFile(join(directory, 'RESULTS.md'), lines.join('\n') + '\n', { mode: 0o600 });
 }

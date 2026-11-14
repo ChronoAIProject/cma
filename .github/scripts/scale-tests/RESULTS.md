@@ -2,7 +2,7 @@
 
 Overall: **NO-GO / incomplete**. No shared-Kubernetes acceptance scenario has
 passed. This record distinguishes harness validation from real application
-acceptance. Tracking issue: #1957. Base integration source:
+acceptance. Tracking issue: #1957. Historical base integration source:
 `d6fc953a6cb43f8d9c90337b4e4ce17ecb291fbc`.
 
 Investigated ownership dependency: `aadd212c2810fb12d443998e3cf75bab2fd670cf`.
@@ -15,11 +15,43 @@ that same application, retaining `routed_admission_unavailable` and fixture stag
 observations through the rejection check. Newer corrective candidates have
 not been exercised by this process fixture.
 
+## Current deadline gate and A3 comparison
+
+The owner-adopted 25 essentials control local N1/N2/2→4→2/kill by15 November
+01:30 SGT and final production verification by18:00. Older full-matrix counts
+below are historical/best-effort, not additional essentials blockers. Actual
+candidate image/configuration, usable fixture, coordinated window and executed
+essentials remain absent from this source packet. S3 still requires automatic
+HPA up/down with min2/max5 and independent lifecycle/capacity evidence.
+
+The comparator now pins the complete A3 table: critical uses qualified measured
+noise, UX uses at most10% p95 (5% aim), non-sensitive uses30ms. Confidence upper
+bounds must fit the one applicable allowance; absolute owner targets, unknown
+classes and all failure/incomplete denominators remain. Activity API<1s and
+page completion are separate pending evidence cells; no page ceiling is invented.
+This source delta has32 JavaScript tests passing,99.68% lines,97.96% branches
+and97.89% functions; the new policy module is100% for all three. ESLint/syntax
+and source-size checks pass.
+These are helper tests; no numerical application or production comparison ran.
+
+The separate EG lifecycle component at5fc00eba3c corrects architect EGL-001:
+an arbitrarily late timeout could previously qualify complete evidence.
+Its mandatory registered return bound retains a late timeout observation but
+prevents COMPLETE.20 pure/mocked tests pass; the original counterexample is
+retained. Architect01 closed EGL-001 on the corrected source. It supplies no watchdog, live
+execution, process death or no-late-effect proof.
+
+The current local per-request bootstrap has no qualified production driver/raw
+contract. One production post-window cannot satisfy the passive method's three
+baseline/three post-window requirement. A3 supplies no estimator substitution;
+that early statistical comparison remains INCONCLUSIVE without further qualified
+evidence. No overlapping window or local noise is promoted to production evidence.
+
 ## Executed local gates
 
 | Gate | Result | Evidence and limits |
 |---|---|---|
-| New JavaScript harness | PASS | 28 tests; 99.66% lines, 97.85% branches, 97.84% functions for lib/scenarios; ESLint and syntax checks pass. |
+| Historical JavaScript harness before A3 | PASS | 28 tests; 99.66% lines, 97.85% branches, 97.84% functions for lib/scenarios; ESLint and syntax checks pass. Current A3 gate is recorded above. |
 | N=1-only selection | PASS, implementation only | Three windows, no fault/scale/cross-replica calls; all 43 rows retained; missing/failed/unrendered cases and cleanup tested. Live driver still absent. |
 | Disposable Mongo runner | PASS, implementation only | Final 28 Python tests; three focused parser cases cover 23/23 executable lines. Prior c08 coverage: runner 93.78%, custody 87.74%. Includes real local descendants and full runner with mocked Docker; counts are separate. |
 | Pinned Rust formatting and touched-crate lint | PASS | Rust 1.96.1 fmt; cmaeg all-target/all-feature Clippy with warnings denied. |

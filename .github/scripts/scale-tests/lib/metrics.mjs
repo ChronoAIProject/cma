@@ -2,6 +2,7 @@ import { check, finite, isHash } from './checks.mjs';
 import { stats } from '../timing/lib/core.mjs';
 import { deltaInterval } from './confidence.mjs';
 import { userLimits, criterionFor } from './catalog.mjs';
+import { performanceClass, p95Allowance } from './performance-policy.mjs';
 export { userLimits } from './catalog.mjs';
 
 // Same nearest-rank definition as prod-verifier-02 timing-harness/lib/core.mjs.
@@ -52,6 +53,9 @@ export function compareCohorts(cohorts, requiredRoutes, minimumSamples = 100, ca
   const rows = [];
   for (const metric of [...Object.keys(userLimits), ...requiredRoutes]) {
     check(/^[a-zA-Z0-9_/:.-]{1,160}$/.test(metric), 'invalid_metric_label');
+    const criterion = criterionFor(metric);
+    check(criterion, 'performance_class_missing', true);
+    const classification = performanceClass('catalog', criterion.id);
     const stats = cohorts.map((cohort) => {
       const samples = cohort.samples?.[metric] ?? [];
       if (Object.hasOwn(userLimits, metric)) {
@@ -62,6 +66,7 @@ export function compareCohorts(cohorts, requiredRoutes, minimumSamples = 100, ca
     const baselines = cohorts.flatMap((c, i) => c.phase === 'n1' ? [stats[i]] : []);
     const completeBaselines = baselines.every((s) => s.n >= minimumSamples && s.failed === 0);
     const base = completeBaselines ? Math.min(...baselines.map((s) => s.p95_ms)) : null;
+    const positiveBaseline = base !== null && base > 0;
     const registration = calibration ?? calibrateNoise(baseline, requiredRoutes);
     const noise = registration[metric]?.allowanceMs;
     const calibrated = registration[metric]?.stable === true && Number.isFinite(noise) && noise >= 0;
@@ -69,22 +74,28 @@ export function compareCohorts(cohorts, requiredRoutes, minimumSamples = 100, ca
     for (let i = 0; i < cohorts.length; i++) {
       const value = stats[i];
       const limit = userLimits[metric] ?? null;
-      const sufficient = completeBaselines && value.n >= minimumSamples;
+      const sufficient = completeBaselines && positiveBaseline && value.n >= minimumSamples;
       const interval = sufficient && value.failed === 0 ? deltaInterval(
         cohorts[baselineIndex].samples[metric].map((s) => s.elapsedMs),
         cohorts[i].samples[metric].map((s) => s.elapsedMs)) : null;
-      const pass = sufficient && calibrated && value.failed === 0 && interval.upper_ms <= noise
+      const allowance = sufficient && calibrated ? p95Allowance({ kind: 'catalog', id: criterion.id }, base,
+        { noiseMs: noise, noiseQualified: calibrated }) : null;
+      const pass = sufficient && calibrated && value.failed === 0 && interval.upper_ms <= allowance.allowance_ms
         && (limit === null || value.max_ms <= limit);
-      const criterion = criterionFor(metric);
       rows.push({ metric, ...(criterion ? { criterion_id: criterion.id, method: criterion.method,
         route: criterion.route, completion_boundary: criterion.boundary } : {}),
+        tolerance_class: classification.class, tolerance_context: classification.context,
+        class_table_sha256: classification.class_table_sha256,
+        tolerance_ms: allowance?.allowance_ms ?? null,
+        optimization_note: pass && allowance.aim_ms !== null && interval.upper_ms > allowance.aim_ms
+          ? 'ux_above_five_percent_aim_within_ten_percent_cap' : null,
         phase: cohorts[i].phase, ...value, baseline_p95_ms: base,
         noise_ms: noise ?? null, delta_ms: base === null || value.p95_ms === null ? null : value.p95_ms - base,
         delta_percent: base === null || base === 0 || value.p95_ms === null ? null : 100 * (value.p95_ms - base) / base,
         confidence_interval: interval, limit_ms: limit,
         ...(['create', 'create_desktop'].includes(metric) ? {
           breaches_5s: (cohorts[i].samples[metric] ?? []).filter((s) => s.elapsedMs > 5000).length } : {}),
-        ...(!sufficient ? { code: 'metric_samples_missing' } : {}),
+        ...(!sufficient ? { code: positiveBaseline ? 'metric_samples_missing' : 'positive_baseline_missing' } : {}),
         status: sufficient && calibrated ? pass ? 'PASS' : 'FAIL' : 'BLOCKED' });
     }
   }
