@@ -191,6 +191,7 @@ def run_variant(kind, binding, fixture, folder, owner, mongo, private, key):
 
 def run(fixture, output):
     fixture = fixture.resolve()
+    output = output.resolve()
     repeat.private_json(fixture)
     output.mkdir(mode=0o700)
     private = output / "private"
@@ -211,7 +212,7 @@ def run(fixture, output):
         network_created = True
         docker("run", "--detach", "--pull", "never", "--name", mongo, "--hostname", mongo,
                "--label", f"{LABEL}={owner}", "--network", owner, "--cpus", "0.5",
-               "--memory", "768m", "--memory-swap", "768m", "--pids-limit", "128",
+               "--memory", "768m", "--memory-swap", "768m", "--pids-limit", "256",
                "--publish", "127.0.0.1:18917:27017", MONGO,
                "--bind_ip_all", "--replSet", "cma_memory_rca", "--wiredTigerCacheSizeGB", "0.25")
         mongo_created = True
