@@ -6,6 +6,7 @@ The controller owns policy approval, dry-run and the single-write transaction.
 import argparse
 import copy
 import datetime as dt
+from decimal import Decimal
 import hashlib
 import json
 import os
@@ -21,7 +22,9 @@ NAMESPACE='chrono-bot'
 K=['kubectl','--context',CONTEXT,'-n',NAMESPACE]
 TEAM='/Users/shining/.claude/skills/shining-tech-lead/scripts/team.sh'
 TARGETS={'cma-agent-manager':'api','cma-event-gateway':'cmaeg'}
-KINDS={'Deployment':('deployment','apps/v1','deployments'),'PodDisruptionBudget':('poddisruptionbudget','policy/v1','poddisruptionbudgets'),'HorizontalPodAutoscaler':('horizontalpodautoscaler','autoscaling/v2','horizontalpodautoscalers')}
+KINDS={'Deployment':('deployment','apps/v1','deployments'),'PodDisruptionBudget':('poddisruptionbudget','policy/v1','poddisruptionbudgets'),'HorizontalPodAutoscaler':('horizontalpodautoscaler','autoscaling/v2','horizontalpodautoscalers'),'ResourceQuota':('resourcequota','v1','resourcequotas')}
+QUOTA_BEFORE={'requests.cpu':'40','limits.cpu':'80'}
+QUOTA_AFTER={'requests.cpu':'64','limits.cpu':'128'}
 ENV={'POD_IP','CHRONO_AGENT_MANAGER_REPLICAS_ENABLED','CHRONO_AGENT_MANAGER_RELAY_ADDRESS','CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS','CMAEG_REPLICAS_ENABLED','CMAEG_REPLICA_ADDRESS'}
 SPEC_KEYS={'replicas','paused','strategy','minReadySeconds','progressDeadlineSeconds'}
 POD_KEYS={'terminationGracePeriodSeconds','affinity','topologySpreadConstraints'}
@@ -46,9 +49,18 @@ def binding(obj):
 def same(obj,b):
  require(obj is not None,'object_missing')
  require(binding(obj)==b,'identity_generation_or_full_spec_drift')
+def cpu(value):
+ require(isinstance(value,str) and re.fullmatch(r'[0-9]+(?:\.[0-9]+)?[mun]?',value) is not None,'invalid_CPU_quantity')
+ suffix=value[-1:];return Decimal(value[:-1] if suffix in ('m','u','n') else value)*{'m':Decimal('.001'),'u':Decimal('.000001'),'n':Decimal('.000000001')}.get(suffix,Decimal(1))
+def quota_cpu(spec, expected):
+ return all(cpu(spec.get('hard',{}).get(k))==cpu(v) for k,v in expected.items())
 def validate_operation(op):
  require(op.get('stage') in ('S1','S2','S3'),'stage_not_allowed')
  require(op.get('namespace')==NAMESPACE and op.get('context')==CONTEXT,'wrong_cluster_or_namespace')
+ if op.get('kind')=='ResourceQuota':
+  require(op.get('stage')=='S3' and op.get('name')=='sandbox-quota' and op.get('action')=='patch','quota_scope')
+  require(op.get('id') in ('s3-quota-raise','s3-quota-restore'),'quota_action')
+  return
  require(op.get('kind') in KINDS and op.get('name') in TARGETS,'wrong_resource')
  require(op.get('action') in ('patch','create','delete'),'wrong_action')
  if op['stage']=='S1':require(op['name']=='cma-agent-manager','S1_scope')
@@ -59,6 +71,16 @@ def validate_operation(op):
 
 def transform(obj,op):
  result=copy.deepcopy(obj);old=[];s=result['spec']
+ if op['kind']=='ResourceQuota':
+  validate_operation(op)
+  require(set(op.get('changes',{}))=={'cpu'} and set(op['changes']['cpu'])==set(QUOTA_AFTER),'quota_CPU_fields_only')
+  raising=op['id']=='s3-quota-raise'
+  require(quota_cpu(s,QUOTA_BEFORE if raising else QUOTA_AFTER),'quota_before_CPU_drift')
+  require(quota_cpu({'hard':op['changes']['cpu']},QUOTA_AFTER if raising else QUOTA_BEFORE),'quota_target_CPU_refused')
+  old.append({'path':['spec'],'present':True,'value':copy.deepcopy(s)})
+  s['hard'].update(op['changes']['cpu'])
+  if not raising:require(s==op.get('quota_before_spec'),'quota_restore_unrelated_spec_drift')
+  return result,old
  if op['kind']!='Deployment':
   require(set(op.get('changes',{}))=={'spec'},'nondeployment_spec_only')
   desired=copy.deepcopy(op['changes']['spec'])
@@ -128,6 +150,10 @@ def transform(obj,op):
  return result,old
 
 def patch_for(current,expected):
+ if current.get('kind')=='ResourceQuota':
+  m=current['metadata'];patch=[{'op':'test','path':'/metadata/uid','value':m['uid']},{'op':'test','path':'/metadata/resourceVersion','value':m['resourceVersion']},{'op':'test','path':'/spec','value':current['spec']}]
+  for key in QUOTA_AFTER:patch.append({'op':'replace','path':'/spec/hard/'+key,'value':expected['spec']['hard'][key]})
+  return patch
  m=current['metadata'];return [{'op':'test','path':'/metadata/uid','value':m['uid']},{'op':'test','path':'/metadata/resourceVersion','value':m['resourceVersion']},{'op':'test','path':'/metadata/generation','value':m['generation']},{'op':'test','path':'/spec','value':current['spec']},{'op':'replace','path':'/spec','value':expected['spec']}]
 
 def template_identity(template):

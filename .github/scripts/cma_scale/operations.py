@@ -148,6 +148,8 @@ def build(action, release, created=None, pause_plan=None, prepare_plan=None):
 
 def hpa(step, release, created):
     role, action = step.split('-', 1)
+    if role == 'quota':
+        return quota(action, created)
     g.require(role in ('am', 'eg'), 'wrong_HPA_role')
     name = 'cma-agent-manager' if role == 'am' else 'cma-event-gateway'
     if action == 'create':
@@ -156,8 +158,8 @@ def hpa(step, release, created):
         p95, lifetime = timing.get('handoff_p95_seconds'), timing.get('hard_lifetime_seconds')
         g.require(all(type(x) in (int, float) and math.isfinite(x) and x >= 0
                       for x in (p95, lifetime)) and lifetime > 0, 'qualified_p95_and_hard_lifetime_required')
-        period = 120 if p95 <= 90 else math.ceil(p95 + 30)
-        g.require(period <= 1800, 'HPA_period_unsupported_do_not_clamp')
+        period = 120
+        g.require(p95 <= 90, 'handoff_p95_incompatible_with_fixed_120s_cadence')
         limit = timing.get('capacity_processes_per_service')
         g.require(type(limit) is int and limit >= 5 + math.ceil(lifetime / period)
                   and timing.get('cpu_signal_qualified') is True, 'HPA_capacity_or_CPU_not_qualified')
@@ -192,6 +194,30 @@ def hpa(step, release, created):
     else:
         g.require(all(obj['spec'].get('behavior', {}).get(d, {}).get('selectPolicy') == 'Disabled'
                       for d in ('scaleUp', 'scaleDown')), 'freeze_both_HPA_directions_first')
+    return op
+
+
+def quota(action, created):
+    g.require(action in ('raise', 'restore'), 'unknown_quota_action')
+    op = dict(id='s3-quota-' + action, stage='S3', context=g.CONTEXT,
+              namespace=g.NAMESPACE, kind='ResourceQuota', name='sandbox-quota',
+              action='patch', changes={'cpu': dict(g.QUOTA_AFTER)})
+    if action == 'restore':
+        g.require(created is not None, 'quota_raise_result_required')
+        result = g.load(created)
+        prior = result.get('operation', {})
+        g.require(result.get('state') == 'APPLIED' and prior.get('id') == 's3-quota-raise'
+                  and prior.get('kind') == 'ResourceQuota' and prior.get('name') == 'sandbox-quota',
+                  'confirmed_quota_raise_required')
+        current = g.get('ResourceQuota', 'sandbox-quota')
+        g.require(current is not None and g.binding(current) == result.get('after'),
+                  'quota_identity_or_spec_changed_after_raise')
+        before = result.get('quota_before_spec')
+        g.require(isinstance(before, dict) and g.quota_cpu(before, g.QUOTA_BEFORE),
+                  'saved_quota_before_spec_required')
+        op['quota_before_spec'] = before
+        op['changes']['cpu'] = {k: before['hard'][k] for k in g.QUOTA_BEFORE}
+        op['expected_before'] = g.binding(current)
     return op
 
 

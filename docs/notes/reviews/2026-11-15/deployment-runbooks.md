@@ -271,3 +271,11 @@ of each already exceed CPU-limit quota; the illustrative G760/P120 envelope
 of twelve each also exceeds CPU-request quota and current eligible CPU. Refresh
 quota, eligible-node placement, actual memory and all terminating processes
 before each stage. Do not count tainted sandbox nodes or infer autoscaler capacity.
+
+The subsequent lead ruling selects an [S3 CPU-quota pre-step](s3-execution.md):
+requests 40→64 and limits 80→128, with a saved before-spec, server dry-run, exact
+S3 approval, two guarded field replacements and a usage-checked rollback. This
+is planned only; it does not revise the historical dry-run snapshot or add node
+capacity. HPA downscale is fixed at one Pod per 120s; actual/template grace must
+read back 760s before S3. All stage Deployment changes retain the existing
+guarded patches; never apply the historical full Deployment manifests.

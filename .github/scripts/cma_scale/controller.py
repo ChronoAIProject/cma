@@ -54,13 +54,32 @@ def context_for(plan):
             f'{plan["operation"]["id"]}/{g.hash_json(content)[:16]}')
 
 
-def stable_pair(name):
+def stable_pair(name, require_grace=False):
     obj = g.get('Deployment', name)
     g.require(obj is not None, 'stable_pair_required')
-    checkpoints.stable(obj, 2, distinct=True)
+    pods = checkpoints.stable(obj, 2, distinct=True)
+    if require_grace:
+        g.require(obj['spec']['template']['spec'].get('terminationGracePeriodSeconds') == 760
+                  and all(p['spec'].get('terminationGracePeriodSeconds') == 760 for p in pods),
+                  'S3_requires_actual_template_and_Pod_grace_760')
+
+
+def quota_checkpoint(obj, restoring=False):
+    g.require(obj is not None and obj.get('status', {}).get('hard') == obj['spec']['hard'],
+              'quota_status_hard_not_reconciled')
+    if restoring:
+        used = obj['status'].get('used', {})
+        g.require(all(g.cpu(used.get(k)) <= g.cpu(v) for k, v in g.QUOTA_BEFORE.items()),
+                  'quota_usage_above_saved_CPU_ceiling')
 
 
 def checkpoint(obj, op, release=None):
+    if op['kind'] == 'ResourceQuota':
+        quota_checkpoint(obj, op['id'] == 's3-quota-restore')
+        for name in g.TARGETS:
+            g.require(g.get('HorizontalPodAutoscaler', name) is None, 'quota_change_requires_no_HPAs')
+            stable_pair(name, require_grace=True)
+        return
     if op['kind'] == 'Deployment':
         for name in g.TARGETS:
             g.require(g.get('HorizontalPodAutoscaler', name) is None,
@@ -95,11 +114,14 @@ def checkpoint(obj, op, release=None):
                           for x in pods[0]['metadata'].get('ownerReferences', [])),
                       'abort_original_process_changed')
     elif op['action'] == 'create':
-        stable_pair(op['name'])
+        stable_pair(op['name'], require_grace=op['kind'] == 'HorizontalPodAutoscaler')
         if op['kind'] == 'HorizontalPodAutoscaler':
+            quota = g.get('ResourceQuota', 'sandbox-quota')
+            quota_checkpoint(quota)
+            g.require(g.quota_cpu(quota['spec'], g.QUOTA_AFTER), 'S3_CPU_quota_raise_required')
             for name in g.TARGETS:
                 if name != op['name']:
-                    stable_pair(name)
+                    stable_pair(name, require_grace=True)
     if release is not None and (op['kind'] == 'Deployment' or op['action'] == 'create') \
             and not op.get('abort_before_stop'):
         target = obj if op['kind'] == 'Deployment' else g.get('Deployment', op['name'])
@@ -209,6 +231,8 @@ def apply(plan_path, approval):
     write_window()
     result = dict(at=g.now(), state='WRITE_ATTEMPTED', source=value['release']['source'],
                   operation=op, before=value['before'], approval_context=value['approval_context'])
+    if op['kind'] == 'ResourceQuota':
+        result['quota_before_spec'] = fresh['spec']
     with open(output, 'x') as stream:
         json.dump(result, stream, indent=2)
         stream.flush()

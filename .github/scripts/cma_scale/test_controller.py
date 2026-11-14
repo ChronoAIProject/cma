@@ -83,11 +83,12 @@ class RulesTests(NoExternalCommands):
             o.build('s1-stop', value)
 
     def test_hpa_cadence_and_complete_lifetime_capacity(self):
-        value = release(); value['hpa']['am']['handoff_p95_seconds'] = 100.1
-        op = o.build('s3-am-create', value)
-        self.assertEqual(op['manifest']['spec']['behavior']['scaleDown']['policies'][0]['periodSeconds'], 131)
+        op = o.build('s3-am-create', release())
+        self.assertEqual(op['manifest']['spec']['behavior']['scaleDown']['policies'],
+                         [{'type': 'Pods', 'value': 1, 'periodSeconds': 120}])
         for key, bad in [('hard_lifetime_seconds', None), ('capacity_processes_per_service', 5),
-                         ('handoff_p95_seconds', float('nan')), ('handoff_p95_seconds', 1800)]:
+                         ('handoff_p95_seconds', float('nan')), ('handoff_p95_seconds', 100.1),
+                         ('handoff_p95_seconds', 1800)]:
             value = release(); value['hpa']['am'][key] = bad
             with self.subTest(key=key), self.assertRaises(RuntimeError):
                 o.build('s3-am-create', value)

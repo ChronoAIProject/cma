@@ -9,9 +9,14 @@ capacity with≥30% Mongo headroom, provider/node/quota budgets and calibrated
 useful CPU response. Configured grace760 does not prove G or measured p95.
 
 Keep min2/max5, AM60% of4CPU, EG200% of250m. Up: stabilization0,
-Max(+2pods,+100%)/60s. Down: stabilization300s, Min(−1pod)/P;
-P120 if p95≤90, otherwise ceil(p95+30), at most1800, never clamped.
-Without rollout, capacity must cover5+ceil(G/P) processes per service plus all
+Max(+2pods,+100%)/60s. Down: stabilization 300s, **Min(−1 Pod)/120s**.
+The lead fixed this cadence: measured handoff p95 must remain ≤90s; otherwise
+HOLD and report the incompatibility without changing the interval. Both staged
+Deployment templates and actual Pods must have **terminationGracePeriodSeconds:
+760** before S3. The 30s preStop delay is included in that grace period. Live
+Batch 8 was still 735s at the 14 November readback; S1/S2 guarded template
+patches establish 760s. Grace is not proof of a hard socket/client lifetime.
+Without rollout, capacity must cover 5+ceil(G/120) processes per service plus all
 other consumers; also qualify per-server pool/monitor sockets and fragmentation.
 Illustrative G760/P120→12/service is not a qualified budget. Each role's
 `release.json` HPA inputs must come from actual qualification.
@@ -37,6 +42,89 @@ availability. AM target is2.4cores/pod; EG500m/pod. Missing metrics, uncalibrate
 useful response or insufficient capacity is HOLD. Do not lower targets merely
 to manufacture a scale event. Use the existing owner observer for periodic
 metrics/Events/currentMetrics/desired/Ready/terminating capture.
+
+## S3 pre-step — raise CPU quota after lead approval
+
+The lead selected raising `ResourceQuota/sandbox-quota` in `chrono-bot`:
+**requests.cpu 40 → 64 cores; limits.cpu 80 → 128 cores**. This changes only
+admission ceilings, not requests/limits on running workloads. Memory and Pod
+quota remain unchanged. Execute before either HPA creation, after S1/S2 PASS
+and at the S3 approval boundary. The preparation instruction is not the write
+approval; use the exact single-use grant supplied by the lead at S3.
+
+Both services must be fixed at two healthy Pods with no terminating Pods, no
+HPAs, and actual/template grace 760s. The existing controller checks these at
+plan and again before the guarded write. It also requires quota `status.hard`
+to have reconciled to `spec.hard`. Current service, capacity and rollback
+preconditions from the common runbook still apply.
+
+```bash
+k get resourcequota sandbox-quota -o 'jsonpath={.spec}{"\n"}{.status}{"\n"}'
+k get deployment cma-agent-manager cma-event-gateway \
+  -o 'jsonpath={range .items[*]}{.metadata.name}{" grace="}{.spec.template.spec.terminationGracePeriodSeconds}{"\n"}{end}'
+k get pods -l 'app.kubernetes.io/name in (cma-agent-manager,cma-event-gateway)' \
+  -o 'jsonpath={range .items[*]}{.metadata.name}{" grace="}{.spec.terminationGracePeriodSeconds}{" deleting="}{.metadata.deletionTimestamp}{"\n"}{end}'
+plan_scale s3-quota-raise s3-quota-raise
+```
+
+The saved `s3-quota-raise.plan.json` contains the complete **before-spec** in
+`previous_fields[0].value`; this is quota configuration, without credentials.
+Keep the plan before requesting the grant. Planning performs a real server
+JSON-patch dry-run. It requires the observed CPU ceilings to still be 40/80 and
+prints the exact approval context. The mutation consists of UID, resourceVersion
+and full-spec tests followed by only two leaf replacements:
+`/spec/hard/requests.cpu` and `/spec/hard/limits.cpu`. No full-manifest apply.
+
+Only after the S3 grant:
+
+```bash
+apply_scale s3-quota-raise "${s3_quota_raise_approval:?exact S3 CPU-quota grant}"
+k get resourcequota sandbox-quota -o 'jsonpath={.spec.hard}{"\n"}{.status.hard}{"\n"}{.status.used}{"\n"}'
+```
+
+Read back 64/128 in **both spec.hard and status.hard** before creating either
+HPA. The HPA controller checkpoint refuses stale status or the old ceiling.
+The confirmed raise result also saves `quota_before_spec` for restoration.
+A conflict is HOLD; a timeout/unknown write must be reconciled against this
+exact object before proceeding or replanning. Never retry an ambiguous write.
+
+At 12 AM + 12 EG, the observed other usage gives 51.025 CPU requests / 120.25
+CPU limits, within the proposed 64/128 ceilings. That does not add node capacity:
+current eligible nodes total 47.67 CPU. Retain the actual placement, memory,
+termination/socket and other-consumer checks. The one-per-120s cadence limits
+removal rate; observe actual Pod/client exit and do not assume grace alone proves
+all termination bounds. No simultaneous rollout is permitted during S3.
+
+### Quota rollback — restore saved CPU ceilings
+
+For an aborted S3, first stop owned load, freeze/delete the exact created HPAs
+and finish the serial recovery below. Restore only once both services are fixed
+two, actual terminations are finished, HPAs are absent, quota status is current,
+and usage is **≤40 requested CPU and ≤80 limit CPU**. If these conditions fail,
+retain the raised ceilings while recovering workload; do not lower the quota
+and impede replacement admission. Lowering quota does not evict running Pods.
+
+Use the confirmed raise result, not a new baseline or a guessed full spec.
+Restoration preserves every unrelated field and refuses a replaced quota or
+intervening spec change. It also needs its own fresh exact rollback grant.
+
+```bash
+plan_scale s3-quota-restore s3-quota-restore \
+  --created "$scale_work/s3-quota-raise.plan.result.json"
+apply_scale s3-quota-restore "${s3_quota_restore_approval:?exact quota rollback grant}"
+k get resourcequota sandbox-quota -o 'jsonpath={.spec.hard}{"\n"}{.status.hard}{"\n"}{.status.used}{"\n"}'
+```
+
+Require the exact saved 40/80 CPU values in spec and reconciled status. If S3
+continues successfully, retain 64/128; do not restore quota automatically.
+
+Preparation validation, 14 November 18:19 SGT: the exact UID/RV/spec-guarded
+40/80→64/128 patch passed server dry-run against `sandbox-quota`; final readback
+remained 40/80. The before-spec and sanitized result are retained locally in
+`.github/.cmaeg-local/scale-quota-20261114/`. The actual rollback is prepared
+and tested offline; no quota increase or rollback was executed. Controller
+suite: 43 tests PASS, including quota identity/drift, CPU-only scope, saved-spec
+restoration, rollback usage, fixed cadence and actual 760s Pod grace.
 
 ## Create AM HPA, then EG HPA
 
@@ -111,7 +199,7 @@ provide a qualified confidence upper-bound method; its cycle result cannot
 substitute for the separate performance assessment.
 
 After removing only owned stress, keep the separately owned cooldown canary.
-At default P120,300s stabilization+three120s descents already takes11minutes
+At fixed P120,300s stabilization+three120s descents already takes11minutes
 before scheduling/metric/client tails; the driver's12-minute cap is not a
 guaranteed successful bound. Timeout/incomplete return is a reported failure,
 not permission to shorten cadence or manually manufacture automatic success.
@@ -185,12 +273,13 @@ and their 60%/200% targets, min 2/max 5 and structural P120 cadence. Metrics wer
 fresh; neither HPA was created. Steady AM5/EG5 fits the observed namespace quota
 and a 2/2/1 placement across three eligible shared hosts. This does not establish
 capacity during termination: 8 AM + 8 EG already requires 80.25 CPU limits versus 80;
-the illustrative 12+12 envelope requires 51.025 CPU requests versus 40 and 120.25 CPU
-limits versus 80. Twelve AM alone exceed all 47.67 eligible-node CPU.
+the illustrative 12+12 envelope requires 51.025 CPU requests and 120.25 CPU
+limits. The lead-selected pre-step raises those ceilings to 64/128, subject to
+the S3 grant and readback. Twelve AM alone still exceed all 47.67 eligible-node CPU.
 
 Before either HPA creation, require measured hard lifetime/cadence and a refreshed
 combined process budget that passes namespace quota, per-node placement, actual
 memory and all existing consumer/socket limits. If this does not fit, retain
-fixed two and escalate the specific cadence/capacity remedy for lead approval;
+fixed two and escalate the specific capacity remedy for lead approval;
 never treat maxReplicas 5 as a total live-process cap. Repeated dry-runs do not
 reserve quota. Keep CPU targets and stage schedule unchanged by this finding.
