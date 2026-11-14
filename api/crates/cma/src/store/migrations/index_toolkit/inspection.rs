@@ -82,12 +82,21 @@ async fn explain(database: &Database, query: &Query, filter: &Document) -> Resul
         )
         .await
         .map_err(|_| "query explain unavailable")?;
+    project_explain(query, &response)
+}
+
+fn project_explain(query: &Query, response: &Document) -> Result<Value> {
     let planner = response
         .get_document("queryPlanner")
         .map_err(|_| "query planner malformed")?;
     let stats = response
         .get_document("executionStats")
         .map_err(|_| "query execution stats malformed")?;
+    // A successful explain command can still contain failed execution and
+    // partial counters. Never accept its plan or forward the server error text.
+    if stats.get_bool("executionSuccess").ok() != Some(true) {
+        return Err("query explain execution did not succeed");
+    }
     let plan = planner
         .get_document("winningPlan")
         .map_err(|_| "query winning plan malformed")?;
@@ -124,6 +133,40 @@ pub(super) fn number(document: &Document, key: &str) -> Result<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explain_requires_successful_execution_without_exposing_error_text() {
+        use mongodb::bson::Bson;
+        let query = super::super::catalog::activity();
+        let response = doc! {
+            "queryPlanner":{"winningPlan":{"stage":"IXSCAN","indexName":query.index_name()}},
+            "executionStats":{"executionSuccess":true,"executionTimeMillis":7,"nReturned":51,
+                "totalKeysExamined":51,"totalDocsExamined":51,"errorMessage":"private-error-canary"}
+        };
+        let output = project_explain(&query, &response).unwrap();
+        assert_eq!(output["uses_expected_index"], true);
+        assert_eq!(output["execution_time_ms"], 7);
+        assert_eq!(output["returned"], 51);
+        assert!(!output.to_string().contains("private-error-canary"));
+        for success in [
+            None,
+            Some(Bson::Boolean(false)),
+            Some(Bson::Null),
+            Some(Bson::Int32(1)),
+            Some(Bson::String("true".into())),
+        ] {
+            let mut failed = response.clone();
+            let stats = failed.get_document_mut("executionStats").unwrap();
+            stats.remove("executionSuccess");
+            if let Some(success) = success {
+                stats.insert("executionSuccess", success);
+            }
+            assert_eq!(
+                project_explain(&query, &failed).unwrap_err(),
+                "query explain execution did not succeed"
+            );
+        }
+    }
+
     #[test]
     fn commands_are_bounded_and_unknown_inventory_fields_do_not_escape() {
         let q = super::super::catalog::activity();
