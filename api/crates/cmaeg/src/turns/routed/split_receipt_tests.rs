@@ -98,7 +98,7 @@ async fn partial_split_receipt_replays_after_restart_without_new_delivery_and_mi
         .await
         .is_err());
     assert_eq!(
-        ReplyStore(h.setup.journal().clone())
+        ReplyStore(h.setup.journal().clone(), None)
             .status(&h.setup.plan, h.setup.target())
             .await
             .unwrap(),

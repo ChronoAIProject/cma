@@ -43,6 +43,13 @@ pub(super) struct Effects {
 }
 impl Effects {
     pub fn new(fixture: &Fixture, gates: BTreeMap<String, Arc<Gate>>) -> Self {
+        Self::with_delays(fixture, gates, BTreeMap::new())
+    }
+    pub fn with_delays(
+        fixture: &Fixture,
+        gates: BTreeMap<String, Arc<Gate>>,
+        delays: BTreeMap<String, Duration>,
+    ) -> Self {
         use http_body_util::BodyExt;
         let state = fixture.state.clone();
         let kubernetes = fixture.kubernetes.clone();
@@ -57,6 +64,11 @@ impl Effects {
                 .lock()
                 .unwrap()
                 .push(format!("{method} {}", request.uri().path()));
+            let delay = if method == "GET" {
+                delays.get(request.uri().path()).copied()
+            } else {
+                None
+            };
             let gate = if method == "GET" {
                 pending_gates.lock().unwrap().remove(request.uri().path())
             } else {
@@ -67,6 +79,9 @@ impl Effects {
             async move {
                 if let Some(gate) = gate {
                     gate.block().await;
+                }
+                if let Some(delay) = delay {
+                    tokio::time::sleep(delay).await;
                 }
                 // Keep bootstrap's real upgrade handshake on the TCP fixture;
                 // ordinary resource reads remain independently gateable here.

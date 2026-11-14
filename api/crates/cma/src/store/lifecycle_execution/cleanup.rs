@@ -15,6 +15,7 @@ pub(super) async fn paths(
 ) -> Result<RetiredRuntimeCleanupPlan, SandboxStoreError> {
     let mut session = store.client.start_session().await.map_err(unavailable)?;
     start_transaction(&mut session).await.map_err(unavailable)?;
+    crate::store::work_publication::fence(store, &mut session).await?;
     let parent = store
         .sandboxes
         .find_one(doc! {"_id":sandbox.id.as_str()})
@@ -22,7 +23,8 @@ pub(super) async fn paths(
         .await
         .map_err(unavailable)?
         .ok_or(SandboxStoreError::NotFound)?;
-    if read_sandbox(&parent)? != *sandbox || parent.contains_key("channel_reuse_cleanup_execution")
+    if !crate::store::work_lease_update::sandbox_matches(Some(&read_sandbox(&parent)?), sandbox)
+        || parent.contains_key("channel_reuse_cleanup_execution")
     {
         return Err(SandboxStoreError::Conflict);
     }
@@ -48,7 +50,10 @@ pub(super) async fn paths(
     }
     let changed = store
         .sandboxes
-        .update_one(parent, doc! {"$inc":{"cleanup_restore_fence":1_i64}})
+        .update_one(
+            crate::store::work_schema::query(parent),
+            doc! {"$inc":{"cleanup_restore_fence":1_i64}},
+        )
         .session(&mut session)
         .await
         .map_err(unavailable)?;

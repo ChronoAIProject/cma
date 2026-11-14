@@ -22,6 +22,8 @@ use tokio::{
 };
 
 struct Production {
+    membership: Option<crate::replicas::membership::Membership>,
+    selection: super::selection::Selection,
     routing: Arc<crate::ingress::routed::RoutedIngress>,
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
@@ -30,12 +32,23 @@ struct Production {
     activity: Arc<dyn crate::turns::observer::ActivityObserver>,
 }
 impl SourcePort for Production {
+    fn replica_mode(&self) -> bool {
+        self.membership.is_some()
+    }
     fn revision<'a>(&'a self, record: &'a str) -> BoxFuture<'a, Result<String, GatewayError>> {
         Box::pin(async move {
             let current =
                 runtime_source::resolve(&self.records, &self.keys, &self.resolver, record).await?;
             if !self.routing.native_eligible(&current.channel.definition) {
                 return Err(GatewayError::InvalidConfiguration);
+            }
+            if let Some(membership) = &self.membership {
+                let assigned = membership
+                    .assignments(self.selection.records())
+                    .map_err(super::source_fence::failure)?;
+                if assigned.get(record) != Some(&membership.instance) {
+                    return Err(GatewayError::Authority);
+                }
             }
             Ok(current.revision)
         })
@@ -47,16 +60,32 @@ impl SourcePort for Production {
         status: StatusAttempt,
     ) -> BoxFuture<'a, Attempt> {
         Box::pin(async move {
-            let result = match DurableJournal::acquire_observed(
-                self.records.clone(),
-                self.keys.clone(),
-                record,
-                self.api.clone(),
-                self.activity.clone(),
-                status.clone(),
-            )
-            .await
-            {
+            let journal = match &self.membership {
+                Some(membership) => {
+                    DurableJournal::acquire_replicated(
+                        self.records.clone(),
+                        self.keys.clone(),
+                        record,
+                        self.api.clone(),
+                        self.activity.clone(),
+                        status.clone(),
+                        membership,
+                    )
+                    .await
+                }
+                None => {
+                    DurableJournal::acquire_observed(
+                        self.records.clone(),
+                        self.keys.clone(),
+                        record,
+                        self.api.clone(),
+                        self.activity.clone(),
+                        status.clone(),
+                    )
+                    .await
+                }
+            };
+            let result = match journal {
                 Ok(journal) => journal.run_connection(stop).await,
                 Err(error) => Err(error),
             };
@@ -113,6 +142,7 @@ pub(crate) struct Worker {
     task: Option<JoinHandle<bool>>,
 }
 impl Worker {
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         config: &NativeDiscordConfig,
         selection: super::selection::Selection,
@@ -121,6 +151,7 @@ impl Worker {
         keys: Arc<MasterKeyRing>,
         ingress: IngressState,
         readiness: Readiness,
+        membership: Option<crate::replicas::membership::Membership>,
     ) -> Result<Option<Self>, GatewayError> {
         // Authoring a native source does not activate sockets. The explicit
         // runtime gate plus explicit canaries or bounded discovery must be present.
@@ -137,6 +168,8 @@ impl Worker {
             return Err(GatewayError::InvalidConfiguration);
         }
         let port = Arc::new(Production {
+            membership,
+            selection: selection.clone(),
             routing: routing.clone(),
             records: records.clone(),
             keys: keys.clone(),
@@ -178,7 +211,7 @@ impl Worker {
                         port.clone(),
                         record,
                         stopped.clone(),
-                        Timing::default(),
+                        timing(port.replica_mode()),
                         statuses.clone(),
                     ));
                 }
@@ -271,6 +304,18 @@ async fn inbox_loop(
     }
 }
 
+pub(super) fn timing(replica: bool) -> Timing {
+    if replica {
+        Timing {
+            poll: Duration::from_secs(1),
+            retry: Duration::from_secs(1),
+            stop: Duration::from_secs(5),
+        }
+    } else {
+        Timing::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,7 +347,8 @@ mod tests {
                 RecordClient::new("http://127.0.0.1:1", "no-network-fixture").unwrap(),
                 f.fixture.store.keys.clone(),
                 f.state.clone(),
-                Readiness::initialized()
+                Readiness::initialized(),
+                None,
             )
             .unwrap()
             .is_none());
@@ -313,6 +359,8 @@ mod tests {
         use super::super::source_discovery::DiscoveryPort;
         let f = super::super::dispatch_fixture::Setup::new(true).await;
         let port = Production {
+            membership: None,
+            selection: super::super::selection::Selection::new(&NativeDiscordConfig::default()),
             records: f.fixture.store.channels.clone(),
             keys: f.fixture.store.keys.clone(),
             resolver: f.state.resolver.clone(),

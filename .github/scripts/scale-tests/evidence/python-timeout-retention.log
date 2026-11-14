@@ -1,0 +1,8 @@
+..............
+----------------------------------------------------------------------
+Ran 14 tests in 0.079s
+
+OK
+lines   cov%   module   (path)
+  185    94%   mongo-local   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/mongo-local.py)
+  194    99%   mongo_local_test   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/test/mongo_local_test.py)

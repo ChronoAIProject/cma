@@ -1,7 +1,9 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
 mod desktop;
-pub use desktop::{DesktopConnection, DesktopError, DesktopFrame, DesktopService};
+pub use desktop::{
+    DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
+};
 mod admin;
 mod agent;
 pub mod agent_artifacts;
@@ -190,8 +192,12 @@ mod service_trust;
 mod status;
 pub mod store;
 mod title;
+mod title_effect;
 mod title_sanitize;
 mod title_service;
+pub use title_effect::{
+    AgentTitleEffect, AgentTitleEffectIntent, AgentTitleEffectState, PreparedAgentTitle,
+};
 mod title_store;
 mod warmup;
 mod workspace;
@@ -264,7 +270,8 @@ pub use conversation::{
 };
 pub use conversation_recorder::{
     AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
-    AgentLiveSubscription, AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
+    AgentLivePublisher, AgentLiveSource, AgentLiveSubscription, AgentOutputCoalescePolicy,
+    DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -396,6 +403,8 @@ mod sandbox_usage_tests;
 mod service_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod title_effect_tests;
 #[cfg(test)]
 mod title_service_tests;
 #[cfg(test)]

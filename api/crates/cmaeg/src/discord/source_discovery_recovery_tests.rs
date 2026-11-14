@@ -43,6 +43,7 @@ impl SourcePort for RecoveringPort {
                     let _ = stop.changed().await;
                     journal.release().await.unwrap();
                     Ok(GatewayEnd {
+                        transport_closed: true,
                         reason: EndReason::Stopped,
                         checkpoint: None,
                         retry_after: Duration::ZERO,

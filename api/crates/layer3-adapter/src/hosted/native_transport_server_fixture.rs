@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) async fn serve_runtime(
-    mut stream: tokio::io::DuplexStream,
+    mut stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     mode: Mode,
     state: Arc<State>,
     token: String,
@@ -116,7 +116,15 @@ pub(super) async fn serve_runtime(
             _ => {}
         }
         if request.to_ascii_lowercase().contains("upgrade: websocket") {
-            assert!(request.starts_with("GET /runtime/agents/agent-a/conversation?outputAck=1 "));
+            if request.starts_with("GET /runtime/desktop ") {
+                assert!(request
+                    .to_ascii_lowercase()
+                    .contains("x-cma-desktop-owner:"));
+            } else {
+                assert!(
+                    request.starts_with("GET /runtime/agents/agent-a/conversation?outputAck=1 ")
+                );
+            }
             let key = request
                 .lines()
                 .find_map(|line| {
@@ -165,6 +173,28 @@ pub(super) async fn serve_runtime(
                     },
                 )
                 .unwrap()
+            } else if request.starts_with("POST /runtime/desktop/ownership/") {
+                use crate::desktop_ownership::wire::*;
+                let body = request.split_once("\r\n\r\n").unwrap().1;
+                if request.starts_with("POST /runtime/desktop/ownership/challenge ") {
+                    let _: DesktopChallengeRequest = serde_json::from_str(body).unwrap();
+                    serde_json::to_string(&crate::DesktopOwnershipChallenge {
+                        nonce: uuid::Uuid::new_v4().to_string(),
+                        valid_for_ms: 10000,
+                    })
+                    .unwrap()
+                } else {
+                    let ownership =
+                        if request.starts_with("POST /runtime/desktop/ownership/confirm ") {
+                            serde_json::from_str::<DesktopConfirmation>(body)
+                                .unwrap()
+                                .ownership
+                        } else {
+                            assert!(request.starts_with("POST /runtime/desktop/ownership/revoke "));
+                            serde_json::from_str(body).unwrap()
+                        };
+                    serde_json::to_string(&DesktopAcknowledgement { ownership }).unwrap()
+                }
             } else {
                 assert!(request.starts_with("GET /runtime/agents/agent-a/history "));
                 "{\"history\":[]}".into()
