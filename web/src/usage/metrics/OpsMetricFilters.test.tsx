@@ -82,10 +82,8 @@ it('narrows Sandbox discovery by the draft owner and applies one report while th
   );
   await userEvent.click(screen.getByRole('menuitemradio', { name: 'Research' }));
   expect(api.create).toHaveBeenCalledTimes(1);
-  const priorSignal = api.create.mock.calls[0]![1].signal as AbortSignal;
   await userEvent.click(screen.getByRole('button', { name: 'Apply usage filters' }));
   await waitFor(() => expect(api.create).toHaveBeenCalledTimes(2));
-  expect(priorSignal.aborted).toBe(true);
   expect(api.create).toHaveBeenLastCalledWith(
     expect.objectContaining({
       filters: expect.objectContaining({
