@@ -117,6 +117,7 @@ fn authority_bundle_refuses_duplicate_ids_keys_sources_and_target_substitution()
 #[tokio::test]
 async fn supported_admission_is_atomic_fenced_and_replays_after_bundle_removal() {
     let mut original = custom();
+    original.revision = 1;
     let store = Arc::new(InMemorySandboxStore::default());
     store.create_sandbox(original.clone()).await.unwrap();
     store
@@ -219,6 +220,18 @@ async fn supported_admission_is_atomic_fenced_and_replays_after_bundle_removal()
     altered.migration.target_image = image('c');
     assert!(closed
         .request(&operator, &original.id, altered)
+        .await
+        .is_err());
+    let mut changed_revision = command.clone();
+    changed_revision.expected_current_revision += 1;
+    assert!(closed
+        .request(&operator, &original.id, changed_revision)
+        .await
+        .is_err());
+    let mut changed_basis = admission(&value);
+    changed_basis.basis.approved_target = image('c');
+    assert!(store
+        .admit_custom_runtime_migration(changed_basis)
         .await
         .is_err());
     let mut wrong_authority = command.clone();
