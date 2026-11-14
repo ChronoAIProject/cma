@@ -4,13 +4,13 @@ use std::time::Duration;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
-mod activity_index_cli;
 mod activity_indexes;
 mod activity_inventory;
 mod activity_page_index;
 mod activity_plan;
 mod agent_log_segments;
 mod collection_indexes;
+mod index_toolkit;
 pub(in crate::store) mod opening_index;
 mod steps;
 use steps::Step;
@@ -24,7 +24,7 @@ const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
 
 pub(crate) fn is_command(arguments: &[String]) -> bool {
-    if activity_index_cli::is_command(arguments) {
+    if index_toolkit::is_command(arguments) {
         return true;
     }
     arguments.first().is_some_and(|argument| {
@@ -33,8 +33,8 @@ pub(crate) fn is_command(arguments: &[String]) -> bool {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
-    if activity_index_cli::is_command(arguments) {
-        return activity_index_cli::command(arguments).await;
+    if index_toolkit::is_command(arguments) {
+        return index_toolkit::command(arguments).await;
     }
     tokio::time::timeout(DEADLINE, execute(arguments))
         .await
