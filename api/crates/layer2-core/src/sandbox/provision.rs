@@ -52,6 +52,10 @@ pub struct SandboxWorkState {
     pub authority_protocol: Option<super::store::WorkAuthorityProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<super::ProvisioningExecution>,
+    /// A warm-pool installation proof carried through the owner claim. The
+    /// worker consumes it only after a fresh runtime inspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_installation_digest: Option<String>,
     pub step: SandboxWorkStep,
     pub ready_at: String,
     pub next_fence: u64,
@@ -65,6 +69,7 @@ impl SandboxWorkState {
         Self {
             authority_protocol: None,
             execution: None,
+            prepared_installation_digest: None,
             step,
             ready_at,
             next_fence: 1,
