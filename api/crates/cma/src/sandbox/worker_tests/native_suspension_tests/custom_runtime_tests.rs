@@ -97,6 +97,10 @@ async fn custom_runtime_invalid_authority_fails_before_provider_inspection() {
         .effective_image = image('d');
     let before = fixture.backend.calls.snapshot();
     let adoptions = fixture.backend.adoptions.load(Ordering::SeqCst);
+    assert!(
+        adoptions > 0,
+        "the valid fixture must exercise provider adoption"
+    );
     assert!(sandbox_spec(&queued, "test").is_err());
     assert!(crate::sandbox::runtime_attachment::adopt_bound_runtime(
         fixture.harness.adapter.as_ref(),
