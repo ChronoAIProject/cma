@@ -86,30 +86,19 @@ impl AgentWorker {
             let ready_at = SystemTime::now();
             let publish_ready_ms = publication_started.elapsed().as_millis() as u64;
             let startup_phases = self.take_startup_timing(&agent.id);
-            let store = self.dependencies.store.clone();
-            let agent_for_event = agent.clone();
-            tokio::spawn(async move {
-                let admission = store
-                    .agent_create_admission(&agent_for_event)
-                    .await
-                    .ok()
-                    .flatten();
-                super::create_completion::emit(
-                    &agent_for_event,
-                    "prepared",
-                    "warm",
-                    super::create_completion::CompletionTiming {
-                        admission_ms: admission.as_ref().map(|value| value.admitted_at_ms),
-                        admitted_desktop: admission.as_ref().and_then(|value| value.desktop),
-                        admitted_machine_included: admission
-                            .as_ref()
-                            .and_then(|value| value.machine_included),
-                        ready_at,
-                        publish_ready_ms,
-                        startup_phases,
-                    },
-                );
-            });
+            self.schedule_completion_event(
+                agent.clone(),
+                "prepared",
+                "warm",
+                super::create_completion::CompletionTiming {
+                    admission_ms: None,
+                    admitted_desktop: None,
+                    admitted_machine_included: None,
+                    ready_at,
+                    publish_ready_ms,
+                    startup_phases,
+                },
+            );
         }
         Ok(committed)
     }

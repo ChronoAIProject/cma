@@ -8,6 +8,7 @@ use layer2_core::sandbox::store::{
     PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
 };
 use mongodb::bson::{doc, Bson};
+use std::time::Duration;
 
 use super::child_writer_claims::{persist, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
@@ -28,6 +29,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                 doc! { "created_at": 1, "owner": 1, "input.request.desktop": 1,
                 "input.request.machine_included": 1 },
             )
+            .max_time(Duration::from_millis(200))
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         else {
