@@ -209,6 +209,8 @@ impl AgentWorker {
                 }),
                 agent_logs: logs,
             })
-            .await
+            .await?;
+        super::create_completion::emit(&agent, "ordinary", "unknown");
+        Ok(())
     }
 }
