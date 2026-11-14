@@ -392,6 +392,58 @@ async fn indexed_history_batches_have_bounded_execution_stats() {
     db.drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn nonbilling_error_preserves_earlier_redaction_counts() {
+    let db = database().await;
+    for (id, revision) in [("share-a", 1_i64), ("share-z", 99_i64)] {
+        let mut row = super::reference_tests::fixtures::share();
+        row.insert("_id", id);
+        row.insert("revision", revision);
+        row.get_document_mut("record").unwrap().insert("id", id);
+        put(&db, "resource_shares", row).await;
+    }
+    let owner = SubjectId::new("erased");
+    let inventory = ErasureInventory::default();
+    let mut cursor = Cursor::default();
+    let error = loop {
+        match erase_records(
+            &db,
+            &[Target {
+                subject: &owner,
+                inventory: &inventory,
+            }],
+            &mut cursor,
+            NOW,
+        )
+        .await
+        {
+            Ok(batch) => assert!(batch.has_more),
+            Err(error) => break error,
+        }
+    };
+    match error {
+        Error::Interrupted { batch, .. } => {
+            assert_eq!(batch.redacted.get("resource_shares"), Some(&1))
+        }
+        error => panic!("successful redaction count was lost: {error:?}"),
+    }
+    let first = db
+        .collection::<Document>("resource_shares")
+        .find_one(doc! {"_id":"share-a"})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.get_i64("revision").unwrap(), 2);
+    db.collection::<Document>("resource_shares")
+        .delete_one(doc! {"_id":"share-z"})
+        .await
+        .unwrap();
+    let counts = drain(&db, "erased", &mut ErasureInventory::default()).await;
+    assert_eq!(counts.values().sum::<u64>(), 0);
+    db.drop().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn overlapping_usage_deletion_is_not_a_billing_block() {

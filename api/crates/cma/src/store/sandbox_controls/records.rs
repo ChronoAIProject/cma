@@ -4,7 +4,9 @@ use mongodb::bson::{doc, Document};
 use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 
-pub(super) fn document(record: &SandboxControlRecord) -> Result<Document, SandboxControlError> {
+pub(in crate::store) fn document(
+    record: &SandboxControlRecord,
+) -> Result<Document, SandboxControlError> {
     record.validate()?;
     Ok(doc! {
         "_id": record.envelope.command_id.as_str(),
@@ -19,7 +21,9 @@ pub(super) fn document(record: &SandboxControlRecord) -> Result<Document, Sandbo
     })
 }
 
-pub(super) fn read(value: &Document) -> Result<SandboxControlRecord, SandboxControlError> {
+pub(in crate::store) fn read(
+    value: &Document,
+) -> Result<SandboxControlRecord, SandboxControlError> {
     let record: SandboxControlRecord =
         read_record(value).map_err(|_| SandboxControlError::Corrupt)?;
     let expected = document(&record)?;
