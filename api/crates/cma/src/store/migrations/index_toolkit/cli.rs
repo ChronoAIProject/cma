@@ -116,6 +116,12 @@ mod tests {
             .deadline(),
             Duration::from_secs(2160)
         );
+        for query in catalog::all().into_iter().filter(|q| q.step.is_none()) {
+            assert!(parse(&args(&["--index-size", query.name])).is_ok());
+            assert!(parse(&args(&["--index-status", query.name])).is_err());
+            assert!(parse(&args(&["--index-build", query.name, "sum", "image"])).is_err());
+            assert!(parse(&args(&["--index-abort", query.name, "sum", "image", "1"])).is_err());
+        }
         for invalid in [
             vec!["--index-size", "unknown"],
             vec!["--index-build", "activity-first-page", "sum", "image", "59"],

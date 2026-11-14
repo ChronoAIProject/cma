@@ -5,7 +5,8 @@ use mongodb::{bson::doc, Client, Database};
 use serde_json::{json, Value};
 
 pub(super) async fn abort(query: &Query, checksum: &str, image: &str, fence: i64) -> Result<Value> {
-    if checksum != query.step.checksum() {
+    let step = query.migration()?;
+    if checksum != step.checksum() {
         return Err("abort manifest checksum mismatch");
     }
     let identity = ledger::Identity::new(
@@ -29,10 +30,11 @@ pub(super) async fn execute(
     image: &str,
     previous_fence: i64,
 ) -> Result<Value> {
+    let step = query.migration()?;
     crate::store::sandbox_mongo::require_transaction_topology(&database)
         .await
         .map_err(|_| "index abort requires supported transactional topology")?;
-    let ledger = ledger::Ledger::for_step(client, database.clone(), query.step);
+    let ledger = ledger::Ledger::for_step(client, database.clone(), step);
     ledger.preflight().await?;
     let status = ledger.status().await?;
     previous_attempt(&status, image, previous_fence)?;
@@ -56,13 +58,13 @@ pub(super) async fn execute(
         ledger.renew(&lease).await?;
         tracing::warn!(
             query = query.name,
-            migration = query.step.id(),
+            migration = step.id(),
             fence = lease.fence,
             phase = "abort_started",
             "Dropping the exact approved incomplete index"
         );
         let response = database
-            .run_command(drop_command(query))
+            .run_command(drop_command(query)?)
             .await
             .map_err(|_| "index drop outcome uncertain; reconcile server and receipt")?;
         if response.contains_key("writeConcernError") {
@@ -88,7 +90,7 @@ pub(super) async fn execute(
         .await?;
     outcome?;
     Ok(
-        json!({"migration":query.step.id(),"query":query.name,"outcome":"drop_acknowledged",
+        json!({"migration":step.id(),"query":query.name,"outcome":"drop_acknowledged",
         "fence":lease.fence,"manifest_completed":false,"server_reconciliation_required":true}),
     )
 }
@@ -110,9 +112,12 @@ fn previous_attempt(status: &Value, image: &str, fence: i64) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn drop_command(query: &Query) -> mongodb::bson::Document {
-    doc! {"dropIndexes":query.collection,"index":query.index_name(),"maxTimeMS":5000,
-    "writeConcern":{"w":"majority","wtimeout":5000},"comment":query.step.id()}
+pub(super) fn drop_command(query: &Query) -> Result<mongodb::bson::Document> {
+    let step = query.migration()?;
+    Ok(
+        doc! {"dropIndexes":query.collection,"index":query.index_name(),"maxTimeMS":5000,
+        "writeConcern":{"w":"majority","wtimeout":5000},"comment":step.id()},
+    )
 }
 
 #[cfg(test)]
@@ -127,7 +132,7 @@ mod tests {
         let mut completed = status.clone();
         completed["completed"] = true.into();
         assert!(previous_attempt(&completed, "image", 8).is_err());
-        let command = drop_command(&super::super::catalog::activity());
+        let command = drop_command(&super::super::catalog::activity()).unwrap();
         assert_eq!(
             command.get_str("index").unwrap(),
             "activity_recorded_at_id_desc"

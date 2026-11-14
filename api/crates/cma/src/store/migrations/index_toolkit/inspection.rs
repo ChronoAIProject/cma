@@ -25,7 +25,9 @@ pub(super) async fn inspect(queries: &[Query], verify: bool, legacy: bool) -> Re
     if verify {
         result["verification_passed"] =
             Value::Bool(result["queries"].as_array().unwrap().iter().all(|r| {
-                r["index_present"] == true && r["first_page_explain"]["uses_expected_index"] == true
+                r["inspection_only"] == false
+                    && r["index_present"] == true
+                    && r["first_page_explain"]["uses_expected_index"] == true
             }));
     }
     Ok(result)
@@ -44,14 +46,9 @@ pub(super) async fn inspect_query(database: &Database, query: &Query) -> Result<
         .map_err(|_| "query index inventory unavailable")?;
     let indexes = index_inventory::entries(&response)?;
     let pending = index_inventory::strict_missing(&indexes, &query.index)?;
-    let explain = if let Some(filter) = resolve_filter(database, query).await? {
+    let explain = if let Some(filter) = super::binding::resolve(database, query).await? {
         let mut explain = explain(database, query, &filter).await?;
-        explain["filter_binding"] = if query.sample_equality.is_some() {
-            "one sampled equality value; not all owner strata"
-        } else {
-            "static catalog filter"
-        }
-        .into();
+        explain["filter_binding"] = query.qualification.into();
         explain["filter_sha256"] = format!(
             "{:x}",
             Sha256::digest(
@@ -66,7 +63,7 @@ pub(super) async fn inspect_query(database: &Database, query: &Query) -> Result<
     };
     Ok(
         json!({"schema":"index-query-sizing-v1","query":query.name,"collection":query.collection,
-        "read_only":true,"server_bound_ms":5000,"index_present":pending.is_empty(),
+        "read_only":true,"inspection_only":query.step.is_none(),"qualification":query.qualification,"server_bound_ms":5000,"index_present":pending.is_empty(),
         "metadata":{"document_count":number(&stats,"count")?,"logical_bytes":number(&stats,"size")?,
             "storage_bytes":number(&stats,"storageSize")?,"index_bytes":number(&stats,"totalIndexSize")?},
         "indexes":sanitize_indexes(&indexes,query)?,"first_page_explain":explain}),
@@ -76,50 +73,6 @@ pub(super) async fn inspect_query(database: &Database, query: &Query) -> Result<
 pub(super) fn find(query: &Query, filter: &Document) -> Document {
     doc! {"find":query.collection,"filter":filter.clone(),"sort":query.sort.clone(),
     "projection":query.projection.clone(),"limit":query.limit,"batchSize":query.limit+1,"maxTimeMS":5000}
-}
-
-async fn resolve_filter(database: &Database, query: &Query) -> Result<Option<Document>> {
-    let Some(field) = query.sample_equality else {
-        return Ok(Some(query.filter.clone()));
-    };
-    // Bind a real equality value internally. Never print a synthetic query as a
-    // production plan or return this owner identifier in the inspection output.
-    let mut predicate = Document::new();
-    predicate.insert(field, doc! {"$type":"string"});
-    let mut projection = doc! {"_id":0};
-    projection.insert(field, 1);
-    let response = database
-        .run_command(
-            doc! {"find":query.collection,"filter":predicate,"sort":{"_id":1},
-            "projection":projection,"limit":1,"batchSize":1,"singleBatch":true,"maxTimeMS":5000},
-        )
-        .await
-        .map_err(|_| "representative query value unavailable")?;
-    let cursor = response
-        .get_document("cursor")
-        .map_err(|_| "query sample cursor malformed")?;
-    if cursor.get_i64("id").ok() != Some(0) {
-        return Err("query sample cursor exceeds bound");
-    }
-    let rows = cursor
-        .get_array("firstBatch")
-        .map_err(|_| "query sample rows malformed")?;
-    if rows.len() > 1 {
-        return Err("query sample exceeds bound");
-    }
-    let Some(row) = rows.first() else {
-        return Ok(None);
-    };
-    let value = row
-        .as_document()
-        .and_then(|doc| doc.get_str(field).ok())
-        .ok_or("query sample value malformed")?;
-    if value.is_empty() || value.len() > 1024 {
-        return Err("query sample value outside bound");
-    }
-    let mut filter = query.filter.clone();
-    filter.insert(field, value);
-    Ok(Some(filter))
 }
 
 async fn explain(database: &Database, query: &Query, filter: &Document) -> Result<Value> {

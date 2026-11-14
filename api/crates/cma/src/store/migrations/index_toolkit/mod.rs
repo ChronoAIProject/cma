@@ -6,7 +6,9 @@ use std::time::Duration;
 
 mod abort;
 mod authority;
+mod binding;
 mod build;
+mod candidates;
 mod catalog;
 mod cli;
 mod inspection;
@@ -35,7 +37,7 @@ pub(super) async fn command(arguments: &[String]) -> Result<Value> {
             Operation::Status(query) => {
                 let (client,database,mode)=open_database().await?;
                 authority::verify(&database,mode,&[query.collection],true).await?;
-                let ledger=ledger::Ledger::for_step(client,database,query.step);
+                let ledger=ledger::Ledger::for_step(client,database,query.migration()?);
                 ledger.preflight().await?;
                 ledger.status().await
             }

@@ -2,6 +2,8 @@ use super::*;
 use cma_service_auth::mongodb_authority::MongoAuthorityMode;
 use mongodb::bson::{doc, Document};
 
+mod candidates;
+
 #[test]
 fn query_operation_roles_preserve_runtime_and_keep_abort_separate() {
     let status = |privileges| doc! {"authInfo":{"authenticatedUsers":[{"user":"fixture","db":"fixture"}],"authenticatedUserPrivileges":privileges}};
@@ -178,7 +180,8 @@ async fn named_query_inspection_build_verify_and_completed_abort_refusal() {
 async fn exact_index_after_lost_completion_reconciles_through_new_engine() {
     let (client, database) = fixture().await;
     let query = catalog::activity();
-    let ledger = ledger::Ledger::for_step(client.clone(), database.clone(), query.step);
+    let ledger =
+        ledger::Ledger::for_step(client.clone(), database.clone(), query.migration().unwrap());
     ledger.initialize().await.unwrap();
     let lease = ledger.claim(&identity()).await.unwrap();
     database
@@ -202,7 +205,8 @@ async fn exact_index_after_lost_completion_reconciles_through_new_engine() {
 async fn abort_fences_predecessor_drops_only_target_and_preserves_failed_history() {
     let (client, database) = fixture().await;
     let query = catalog::activity();
-    let ledger = ledger::Ledger::for_step(client.clone(), database.clone(), query.step);
+    let ledger =
+        ledger::Ledger::for_step(client.clone(), database.clone(), query.migration().unwrap());
     ledger.initialize().await.unwrap();
     let lease = ledger.claim(&identity()).await.unwrap();
     database.run_command(doc!{"createIndexes":"activity","indexes":[query.index.clone(),{"name":"retained","key":{"other":1}}]}).await.unwrap();
@@ -357,7 +361,8 @@ async fn lost_lease_cannot_complete_and_reconciled_operation_can_resume() {
         .await
         .unwrap();
     assert!(running.await.unwrap().is_err());
-    let ledger = ledger::Ledger::for_step(client.clone(), database.clone(), query.step);
+    let ledger =
+        ledger::Ledger::for_step(client.clone(), database.clone(), query.migration().unwrap());
     assert!(!ledger.completed().await.unwrap());
     // The test's bounded failpoint has ended before a new attempt is allowed.
     tokio::time::sleep(Duration::from_secs(5)).await;

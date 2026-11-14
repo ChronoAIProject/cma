@@ -14,7 +14,8 @@ pub(super) async fn build(
     image: &str,
     timeout_seconds: u64,
 ) -> Result<Value> {
-    if checksum != query.step.checksum() {
+    let step = query.migration()?;
+    if checksum != step.checksum() {
         return Err("Query index manifest checksum mismatch");
     }
     let source = option_env!("CHRONO_BUILD_SHA").unwrap_or("development");
@@ -31,10 +32,11 @@ pub(super) async fn execute(
     identity: &ledger::Identity,
     timeout_seconds: u64,
 ) -> Result<Value> {
+    let step = query.migration()?;
     crate::store::sandbox_mongo::require_transaction_topology(&database)
         .await
         .map_err(|_| "Query index build requires a supported replica set or mongos")?;
-    let ledger = ledger::Ledger::for_step(client, database.clone(), query.step);
+    let ledger = ledger::Ledger::for_step(client, database.clone(), step);
     ledger.preflight().await?;
     ledger.initialize().await?;
     if ledger.completed().await? {
@@ -45,14 +47,14 @@ pub(super) async fn execute(
             return Err("completed Query index manifest drifted");
         }
         return Ok(json!({
-            "migration":query.step.id(),
+            "migration":step.id(),
             "outcome":"already_completed",
             "online":true,
         }));
     }
     let lease = ledger.claim(identity).await?;
     tracing::info!(
-        migration = query.step.id(),
+        migration = step.id(),
         phase = "inventory",
         fence = lease.fence,
         timeout_seconds,
@@ -66,7 +68,7 @@ pub(super) async fn execute(
         }
         if pending.is_empty() {
             tracing::info!(
-                migration = query.step.id(),
+                migration = step.id(),
                 phase = "verified",
                 created = false,
                 "Query index already exists; completing reconciled manifest"
@@ -76,7 +78,7 @@ pub(super) async fn execute(
         ledger.renew(&lease).await?;
         let started = Instant::now();
         tracing::info!(
-            migration = query.step.id(),
+            migration = step.id(),
             phase = "build_started",
             timeout_seconds,
             "Query index online build started"
@@ -97,7 +99,7 @@ pub(super) async fn execute(
             return Err("Query index postcondition unavailable");
         }
         tracing::info!(
-            migration = query.step.id(),
+            migration = step.id(),
             phase = "verified",
             elapsed_ms = started.elapsed().as_millis() as u64,
             "Query index online build verified"
@@ -108,7 +110,7 @@ pub(super) async fn execute(
     ledger.finish(&lease, outcome).await?;
     let created = outcome?;
     Ok(json!({
-        "migration":query.step.id(),
+        "migration":step.id(),
         "outcome":"completed",
         "created_indexes":created,
         "online":true,
@@ -126,6 +128,7 @@ async fn create_online(
     timeout_seconds: u64,
     started: Instant,
 ) -> Result<bool> {
+    let step = query.migration()?;
     let timeout_ms = i32::try_from(timeout_seconds.saturating_mul(1_000))
         .map_err(|_| "Query index timeout is too large")?;
     let command = async {
@@ -136,7 +139,7 @@ async fn create_online(
                 "maxTimeMS":timeout_ms,
                 "writeConcern":{"w":"majority","wtimeout":timeout_ms},
                 // Modern MongoDB builds indexes online; omit removed `background`.
-                "comment":query.step.id(),
+                "comment":step.id(),
             })
             .await
     };
@@ -152,7 +155,7 @@ async fn create_online(
             }
             _ = progress.tick() => {
                 tracing::info!(
-                    migration = query.step.id(),
+                    migration = step.id(),
                     phase = "build_progress",
                     elapsed_ms = started.elapsed().as_millis() as u64,
                     timeout_seconds,
@@ -174,7 +177,7 @@ async fn create_online(
         return Err("Query index result count inconsistent");
     }
     tracing::info!(
-        migration = query.step.id(),
+        migration = step.id(),
         phase = "build_finished",
         elapsed_ms = started.elapsed().as_millis() as u64,
         created = after > before,
