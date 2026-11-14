@@ -20,28 +20,33 @@ impl WorkspaceWorker {
             claiming,
         )
         .with_parent(parent)?;
+        // Keep the authority scope's stack frame bounded: workspace execution
+        // is a large state machine and must not be embedded in the renewal loop.
+        let work = Box::pin(self.execute(workspace.clone(), now));
         let result = self
             .dependencies
             .store
             .scope_workspace_publication(Box::pin(async {
                 authority
-                    .run(self.execute(workspace.clone(), now), || async {
-                        let at = now + claiming.elapsed();
-                        let grant = self
-                            .dependencies
-                            .store
-                            .renew_workspace_authority(
-                                &workspace,
-                                &rfc3339_at(at),
-                                &rfc3339_at(at + Duration::from_secs(WORK_LEASE_SECONDS)),
-                            )
-                            .await?;
-                        if let Some(grant) = &grant {
-                            tracing::debug!(workspace_id = %workspace.id,
-                                valid_for_ms = grant.valid_for.as_millis() as u64,
-                                "Workspace work authority renewed");
-                        }
-                        Ok(grant)
+                    .run(work, || {
+                        Box::pin(async {
+                            let at = now + claiming.elapsed();
+                            let grant = self
+                                .dependencies
+                                .store
+                                .renew_workspace_authority(
+                                    &workspace,
+                                    &rfc3339_at(at),
+                                    &rfc3339_at(at + Duration::from_secs(WORK_LEASE_SECONDS)),
+                                )
+                                .await?;
+                            if let Some(grant) = &grant {
+                                tracing::debug!(workspace_id = %workspace.id,
+                                    valid_for_ms = grant.valid_for.as_millis() as u64,
+                                    "Workspace work authority renewed");
+                            }
+                            Ok(grant)
+                        })
                     })
                     .await
                     .map(|()| true)

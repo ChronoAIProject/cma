@@ -57,6 +57,8 @@ pub(crate) struct DesktopReceiver {
     // this set while a caller waits, so cancellation cannot detach old I/O.
     tasks: tokio::sync::Mutex<JoinSet<()>>,
     changed: watch::Sender<()>,
+    #[cfg(test)]
+    persisted: std::sync::atomic::AtomicUsize,
 }
 
 impl DesktopReceiver {
@@ -79,6 +81,8 @@ impl DesktopReceiver {
             }),
             tasks: tokio::sync::Mutex::new(JoinSet::new()),
             changed: watch::channel(()).0,
+            #[cfg(test)]
+            persisted: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -112,10 +116,18 @@ impl DesktopReceiver {
         // The supervisor is the sole writer under this state lock. Every
         // transition compares the retained floor; never repair custody loss.
         self.verify(state)?;
+        // Stream completion and explicit revoke may retire the same owner.
+        // Equality avoids a second sync only after checking durable custody.
+        if state.record.as_ref() == Some(&record) {
+            return Ok(());
+        }
         if persistence::save(&self.root, &record).is_err() {
             self.poison(state);
             return Err(unavailable());
         }
+        #[cfg(test)]
+        self.persisted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         state.record = Some(record);
         state.legacy_closed = true;
         Ok(())

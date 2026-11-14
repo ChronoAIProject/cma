@@ -1,0 +1,126 @@
+build-slot: all 6 slots busy; waiting for the first free slot
+build-slot: acquired slot 2/6 (CARGO_BUILD_JOBS=4)
+test_cleanup_distinguishes_absence_from_daemon_failure (mongo_local_test.FixtureRunnerTests) ... ok
+test_cleanup_does_not_delete_an_unowned_container (mongo_local_test.FixtureRunnerTests) ... ok
+test_existing_evidence_is_not_overwritten (mongo_local_test.FixtureRunnerTests) ... ok
+test_exited_parent_does_not_override_unconfirmed_group (mongo_local_test.FixtureRunnerTests) ... ok
+test_failure_keeps_only_numeric_and_fixed_diagnostics (mongo_local_test.FixtureRunnerTests) ... ok
+test_mongo_readiness_deadline_has_setup_phase_and_no_test_output (mongo_local_test.FixtureRunnerTests) ... ok
+test_partial_container_creation_is_cleaned_after_run_fails (mongo_local_test.FixtureRunnerTests) ... ok
+test_remote_published_endpoint_is_refused_before_binary_start (mongo_local_test.FixtureRunnerTests) ... ok
+test_setup_timeout_is_separate_from_test_deadline (mongo_local_test.FixtureRunnerTests) ... ok
+test_spawn_error_has_no_false_test_outcome (mongo_local_test.FixtureRunnerTests) ... ok
+test_success_has_owned_cleanup_exact_count_and_no_credential_argv (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeout_keeps_partial_whitelisted_output_and_never_claims_completion (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeouts_terminate_owned_process_group_and_clean_container (mongo_local_test.FixtureRunnerTests) ... ok
+test_unconfirmed_exit_retains_latest_partial_output_and_incomplete_cleanup (mongo_local_test.FixtureRunnerTests) ... ok
+test_unexpected_pipe_error_still_cleans_group_before_disposal (mongo_local_test.FixtureRunnerTests) ... ok
+test_zero_or_multiple_selected_tests_cannot_pass (mongo_local_test.FixtureRunnerTests) ... ok
+test_auto_reaping_or_threaded_callers_are_refused_before_spawn (owned_process_test.OwnedGroupTests) ... ok
+test_early_failed_parent_still_requires_descendant_cleanup (owned_process_test.OwnedGroupTests) ... ok
+test_failed_snapshot_attempts_termination_but_cannot_claim_absence (owned_process_test.OwnedGroupTests) ... ok
+test_lost_reservation_never_signals_a_reused_group (owned_process_test.OwnedGroupTests) ... ok
+test_normal_completion_and_already_absent_group_are_idempotent (owned_process_test.OwnedGroupTests) ... ok
+test_runner_early_failure_disposes_only_after_real_descendant_is_gone (owned_process_test.OwnedGroupTests) ... ok
+test_snapshot_rejects_failed_and_invalid_numeric_output (owned_process_test.OwnedGroupTests) ... ok
+test_term_exited_parent_with_file_backed_descendant_is_killed_and_observed (owned_process_test.OwnedGroupTests) ... ok
+
+----------------------------------------------------------------------
+Ran 24 tests in 11.898s
+
+OK
+lines   cov%   module   (path)
+   26    19%   _bootlocale   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/_bootlocale.py)
+  659     2%   _collections_abc   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/_collections_abc.py)
+  150     5%   _weakrefset   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/_weakrefset.py)
+   48    16%   abc   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/abc.py)
+ 1447    28%   argparse   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/argparse.py)
+   36    94%   asyncio.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/__init__.py)
+ 1268    14%   asyncio.base_events   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_events.py)
+   45    24%   asyncio.base_futures   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_futures.py)
+  208    19%   asyncio.base_subprocess   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_subprocess.py)
+   65    10%   asyncio.base_tasks   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/base_tasks.py)
+   10   100%   asyncio.constants   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/constants.py)
+  168    26%   asyncio.coroutines   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/coroutines.py)
+  355    47%   asyncio.events   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/events.py)
+   27    66%   asyncio.exceptions   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/exceptions.py)
+   52    21%   asyncio.format_helpers   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/format_helpers.py)
+  233    25%   asyncio.futures   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/futures.py)
+  212    21%   asyncio.locks   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/locks.py)
+    3   100%   asyncio.log   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/log.py)
+   46    69%   asyncio.protocols   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/protocols.py)
+  137    32%   asyncio.queues   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/queues.py)
+   38    15%   asyncio.runners   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/runners.py)
+  827    14%   asyncio.selector_events   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/selector_events.py)
+  412    17%   asyncio.sslproto   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/sslproto.py)
+   63    25%   asyncio.staggered   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/staggered.py)
+  407    19%   asyncio.streams   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/streams.py)
+  188    21%   asyncio.subprocess   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/subprocess.py)
+  513    15%   asyncio.tasks   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/tasks.py)
+   10    60%   asyncio.threads   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/threads.py)
+  128    41%   asyncio.transports   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/transports.py)
+  146    35%   asyncio.trsock   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/trsock.py)
+  955    17%   asyncio.unix_events   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/asyncio/unix_events.py)
+  317    14%   base64   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/base64.py)
+   33    27%   bisect   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/bisect.py)
+  415     2%   codecs   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/codecs.py)
+  854     8%   collections.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/collections/__init__.py)
+    1   100%   concurrent.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/concurrent/__init__.py)
+   16    37%   concurrent.futures.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/concurrent/futures/__init__.py)
+  347    29%   concurrent.futures._base   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/concurrent/futures/_base.py)
+  311    12%   contextlib   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py)
+    2   100%   contextvars   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextvars.py)
+ 1501    28%   datetime   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/datetime.py)
+  601    48%   enum   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/enum.py)
+  108    43%   fnmatch   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/fnmatch.py)
+  568     3%   functools   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/functools.py)
+   74    36%   genericpath   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/genericpath.py)
+  527    13%   gettext   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/gettext.py)
+  131    48%   hashlib   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/hashlib.py)
+  103    29%   hmac   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/hmac.py)
+ 1885     7%   inspect   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/inspect.py)
+   99    45%   json.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/__init__.py)
+  217    25%   json.decoder   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/decoder.py)
+  265    68%   json.encoder   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/encoder.py)
+   60    16%   json.scanner   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/scanner.py)
+ 1283     1%   locale   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/locale.py)
+  983    35%   logging.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/logging/__init__.py)
+  193    93%   mongo-local   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/mongo-local.py)
+  212    99%   mongo_local_test   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/test/mongo_local_test.py)
+  471    10%   ntpath   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/ntpath.py)
+  602     3%   os   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/os.py)
+  106    87%   owned_process   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/owned_process.py)
+  135    98%   owned_process_test   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/test/owned_process_test.py)
+  943    45%   pathlib   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/pathlib.py)
+  321    31%   posixpath   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/posixpath.py)
+  387    28%   random   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/random.py)
+  152    12%   re   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/re.py)
+   23    60%   secrets   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/secrets.py)
+  369    40%   selectors   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/selectors.py)
+  831     6%   shutil   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/shutil.py)
+   57     7%   signal   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/signal.py)
+  586    16%   socket   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/socket.py)
+  597    56%   sre_compile   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/sre_compile.py)
+  880    38%   sre_parse   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/sre_parse.py)
+  895    35%   ssl   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/ssl.py)
+  146    32%   string   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/string.py)
+ 1153    32%   subprocess   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/subprocess.py)
+  447    37%   tempfile   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/tempfile.py)
+  700     0%   threading   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/threading.py)
+  301     1%   traceback   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/traceback.py)
+  195     6%   types   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/types.py)
+ 1101     8%   typing   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/typing.py)
+   10   100%   unittest.__main__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/__main__.py)
+  839    18%   unittest.case   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/case.py)
+  342    25%   unittest.loader   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/loader.py)
+  191    53%   unittest.main   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/main.py)
+ 1687    38%   unittest.mock   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/mock.py)
+  140    20%   unittest.result   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/result.py)
+  165    50%   unittest.runner   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/runner.py)
+   48     2%   unittest.signals   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/signals.py)
+  258    39%   unittest.suite   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/suite.py)
+  129     1%   unittest.util   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/util.py)
+    1   100%   urllib.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/urllib/__init__.py)
+  629    26%   urllib.parse   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/urllib/parse.py)
+  358    11%   warnings   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/warnings.py)
+  435     7%   weakref   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/weakref.py)

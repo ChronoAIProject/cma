@@ -1,4 +1,7 @@
 //! Real executable, signed HTTP callback and process-signal evidence for runner composition.
+#[path = "replica_process.rs"]
+mod replicas;
+
 use super::{
     fake_provider::{FakeProvider, FakeProviderConfig},
     runner_process::Process,
@@ -393,6 +396,3 @@ async fn relay_video_with_sender_facts_reaches_provider_when_media_enabled() {
     );
     provider.close().await;
 }
-
-#[path = "replica_process.rs"]
-mod replicas;
