@@ -19,6 +19,7 @@ struct Entry {
     media_responses: bool,
     original_terminal: Option<OriginalTerminal>,
     relayed_cursor: Option<u64>,
+    monitored: bool,
 }
 struct OriginalTerminal {
     name: &'static str,
@@ -92,6 +93,7 @@ impl SyncRegistry {
                 media_responses,
                 original_terminal: None,
                 relayed_cursor: None,
+                monitored: false,
             },
         );
         Some((
@@ -198,6 +200,22 @@ impl SyncRegistry {
         }
         entry.relayed_cursor = Some(cursor);
         true
+    }
+
+    pub(crate) fn monitor(&self, waiter: &str) -> bool {
+        let mut waiters = self.waiters.lock().unwrap();
+        let Some(entry) = waiters.get_mut(waiter) else {
+            return false;
+        };
+        if entry.monitored || entry.media_responses {
+            return false;
+        }
+        entry.monitored = true;
+        true
+    }
+
+    pub(crate) fn contains(&self, waiter: &str) -> bool {
+        self.waiters.lock().unwrap().contains_key(waiter)
     }
 
     /// Bounds only explicitly opted-in continuation streams. It never extends
