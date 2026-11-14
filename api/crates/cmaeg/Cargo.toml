@@ -29,6 +29,7 @@ dashmap = { workspace = true }
 futures-util = { workspace = true }
 governor = { workspace = true }
 metrics = { workspace = true }
+mimalloc = { workspace = true }
 mongodb = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 # Speech-to-text uploads are multipart forms.
