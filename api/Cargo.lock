@@ -535,7 +535,6 @@ dependencies = [
  "meteroid-utoipa",
  "metrics",
  "metrics-exporter-prometheus",
- "mimalloc",
  "moka",
  "mongodb",
  "pulldown-cmark",
