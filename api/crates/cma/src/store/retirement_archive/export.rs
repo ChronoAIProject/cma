@@ -10,16 +10,6 @@ const MAX_DOCUMENTS: u64 = 2_000_000;
 const MAX_BYTES: u64 = 32 * 1024 * 1024 * 1024;
 const CHUNK: usize = 4 * 1024 * 1024;
 
-pub(crate) fn schema_sha256() -> String {
-    digest(
-        format!(
-            "archive-census-v2\n{:?}\n{}",
-            super::census_catalog::AUDIT,
-            super::super::isolation::COLLECTIONS.join("\n")
-        )
-        .as_bytes(),
-    )
-}
 pub(crate) async fn capture(
     store: &ArchiveStore,
     request: &Request,
