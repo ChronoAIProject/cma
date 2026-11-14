@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "legacy_census.rs"]
+mod legacy;
+
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn legacy_archive_readback_survives_upgrade_without_omitting_new_owned_data() {
@@ -12,18 +15,19 @@ async fn legacy_archive_readback_survives_upgrade_without_omitting_new_owned_dat
     let audit: Vec<_> = super::super::census_catalog::AUDIT
         .iter()
         .copied()
-        .filter(|(name, _)| *name != crate::store::allocation_buckets::COLLECTION)
+        .filter(|(name, _)| legacy::COLLECTIONS.contains(name))
         .collect();
     let names: Vec<_> = crate::store::isolation::COLLECTIONS
         .iter()
         .copied()
-        .filter(|name| *name != crate::store::allocation_buckets::COLLECTION)
+        .filter(|name| legacy::COLLECTIONS.contains(name))
         .collect();
     let mut old = current.clone();
     old.schema_sha256 =
         digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes());
+    assert_eq!(old.schema_sha256, legacy::SHA256);
     old.database
-        .retain(|r| r.collection != crate::store::allocation_buckets::COLLECTION);
+        .retain(|r| legacy::COLLECTIONS.contains(&r.collection.as_str()));
     let receipt = custody
         .retain(&request.operation_id, serde_json::to_vec(&old).unwrap())
         .await
