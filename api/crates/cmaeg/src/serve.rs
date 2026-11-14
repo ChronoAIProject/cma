@@ -35,6 +35,7 @@ pub(crate) async fn serve(
     telegram_media_effects: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let replicas = crate::replicas::config::Config::from_env()?;
+    config.console.validate_replica_mode(replicas.enabled)?;
     let discord_media_edits = config.native_discord_media_card_edits_enabled && discord_card_edits;
     let discord_media_replacements =
         config.native_discord_media_card_replacements_enabled && discord_media_edits;
@@ -43,6 +44,7 @@ pub(crate) async fn serve(
     service_auth.bearer().await?;
     let (records, creator_auth, browser) =
         crate::serve_storage::compose(&config, service_auth.clone()).await?;
+    let console_sessions = console::prepare_sessions(&config.console, &records).await?;
     // Install before constructing instrumented pools and queues.
     let metrics = telemetry::install()?;
     let providers = Arc::new(
@@ -140,7 +142,8 @@ pub(crate) async fn serve(
     let tool_providers = Arc::new(config.media.tool_providers.clone());
     // After the recorder, which registers its gauge. `None` while
     // CMAEG_CONSOLE_ENABLED is off: then no /console route exists.
-    let console = console::compose(&config, &state, observers.queue.take())?;
+    let console =
+        console::compose(&config, &state, observers.queue.take(), console_sessions).await?;
     // Before the listener binds: a configured transformer must pass its
     // sandbox self-check, or the gateway does not start.
     let transformer = media::transform::setup::start_configured(&config).await?;
