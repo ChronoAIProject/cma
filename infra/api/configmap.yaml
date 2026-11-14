@@ -144,6 +144,8 @@ data:
   CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED: "false"
   CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED: "false"
   # Retained usage writers and warming require separate staged owner approval.
+  # Incremental allocation cache reads and maintenance require separate approval.
+  CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED: "false"
   CHRONO_USAGE_REPORT_VIEWS_ENABLED: "false"
   CHRONO_USAGE_REPORT_VIEW_SCOPES: "[]"
   CHRONO_USAGE_REPORT_FRESH_SECONDS: "300"

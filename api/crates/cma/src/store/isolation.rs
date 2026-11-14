@@ -10,6 +10,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::sandbox_metric_bindings::COLLECTION,
     super::sandbox_metric_rollups::COLLECTION,
     super::sandbox_usage_rollups::COLLECTION,
+    super::allocation_buckets::COLLECTION,
     super::usage_reports::JOBS,
     super::usage_reports::ROWS,
     super::usage_reports::CHARTS,
@@ -158,6 +159,9 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspaces",
     "worktrees",
 ];
+// These derived stores are activated separately. Existing credentials must
+// still start while the feature is disabled; partial grants remain invalid.
+pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[super::allocation_buckets::COLLECTION];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
@@ -176,26 +180,28 @@ const ACTIONS: &[&str] = &[
 // writes. Ordinary startup keeps the original runtime role below.
 const ACTIVITY_INSPECTION_ACTIONS: &[&str] = &["collStats"];
 pub(crate) fn role(database: &str) -> Document {
-    role_with_index_operation(database, &[], false)
+    role_with_index_operation(database, &[], false, true)
 }
 
 #[cfg(test)]
 pub(crate) fn activity_index_inspection_role(database: &str) -> Document {
-    role_with_index_operation(database, &["activity"], false)
+    role_with_index_operation(database, &["activity"], false, true)
 }
 
 #[cfg(test)]
 pub(crate) fn activity_index_job_role(database: &str) -> Document {
-    role_with_index_operation(database, &["activity"], true)
+    role_with_index_operation(database, &["activity"], true, true)
 }
 
 fn role_with_index_operation(
     database: &str,
     metadata_collections: &[&str],
     migration_ledger: bool,
+    include_optional: bool,
 ) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
+        .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
             let mut actions = ACTIONS.to_vec();
             if *name == "binding_conversations" {
@@ -307,9 +313,10 @@ fn validate_index_role(
         return Err(denied());
     }
     if !COLLECTIONS.iter().all(|name| {
-        ACTIONS
-            .iter()
-            .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
+        (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
+            || ACTIONS
+                .iter()
+                .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
     }) || !metadata_collections.iter().all(|collection| {
         grants.get(*collection).is_some_and(|actions| {
             ACTIVITY_INSPECTION_ACTIONS
@@ -329,6 +336,9 @@ fn validate_index_role(
         return Err(denied());
     }
     Ok(())
+}
+fn required_role(database: &str) -> Document {
+    role_with_index_operation(database, &[], false, false)
 }
 #[cfg(test)]
 pub(crate) async fn verify(database: &Database) -> Result<(), StoreError> {
@@ -357,7 +367,7 @@ pub(crate) async fn verify_with_authority(
             cma_service_auth::mongodb_authority::verify_shared_schema(
                 &status,
                 database.name(),
-                &role(database.name()),
+                &required_role(database.name()),
             )
             .map_err(|error| StoreError::Unavailable(error.into()))
         }
@@ -386,7 +396,7 @@ pub(crate) fn verify_index_operation_authority(
             "index operation collection is outside the AM schema".into(),
         ));
     }
-    let role = role_with_index_operation(database, collections, build);
+    let role = role_with_index_operation(database, collections, build, false);
     match authority {
         cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated => {
             validate_index_role(status, database, collections, build)
@@ -402,6 +412,9 @@ pub(crate) fn verify_index_operation_authority(
 #[cfg(test)]
 #[path = "agent_lifecycle_contract.rs"]
 pub(super) mod agent_lifecycle_contract;
+#[cfg(test)]
+#[path = "isolation/allocation_tests.rs"]
+mod allocation_tests;
 #[cfg(test)]
 #[path = "lifecycle_children_contract.rs"]
 mod lifecycle_children_contract;
