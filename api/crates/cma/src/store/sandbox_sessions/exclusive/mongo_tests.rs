@@ -19,6 +19,10 @@ impl Fixture {
         let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
         let left = Client::with_uri_str(&uri).await.unwrap();
         let right = Client::with_uri_str(&uri).await.unwrap();
+        Self::with_clients(left, right).await
+    }
+
+    async fn with_clients(left: Client, right: Client) -> Self {
         let name = format!("cma_desktop_replicas_{}", uuid::Uuid::new_v4().simple());
         let db = left.database(&name);
         let left = MongoSandboxStore::open(&left, &name).await.unwrap();
@@ -62,6 +66,8 @@ impl Fixture {
         }
     }
 }
+
+mod command_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
