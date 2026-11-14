@@ -3,6 +3,8 @@ use std::time::{Duration, SystemTime};
 
 mod credential_tests;
 mod floor_tests;
+#[cfg(unix)]
+mod process_loss;
 mod publication_tests;
 mod renewal_tests;
 mod snapshot_tests;
