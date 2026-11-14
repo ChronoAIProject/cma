@@ -199,6 +199,7 @@ async fn cursor_bindings_independently_guard_a_compatible_shared_scan_resume() {
             .unwrap();
         super::progress::bind(&mut cursor, &operations);
         cursor.billing_checked = true;
+        cursor.delegations_checked = true;
         cursor.after = Some(Bson::String("event-0499".into()));
         match mismatch {
             Some("catalog_digest") => cursor.catalog_digest.push_str("-stale"),

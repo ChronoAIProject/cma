@@ -273,6 +273,11 @@ pub(super) fn handoff(contexts: &[Context], targets: &[Target<'_>], batch: &mut 
 }
 #[cfg(test)]
 pub(super) fn acknowledge(inventory: &mut ErasureInventory, batch: &Batch, subject: &str) {
+    for debt in batch.pending_delegations.get(subject).into_iter().flatten() {
+        if !inventory.pending_delegations.contains(debt) {
+            inventory.pending_delegations.push(debt.clone());
+        }
+    }
     if let Some(delta) = batch.discovered.get(subject) {
         macro_rules! merge { ($($field:ident),+) => { $(for id in &delta.$field { if !inventory.$field.contains(id) {inventory.$field.push(id.clone());}})+ }; }
         merge!(sandboxes, workspaces, worktrees, agents, launches, bindings, triggers, documents);

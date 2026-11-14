@@ -69,6 +69,7 @@ pub(crate) async fn erase_records(
             if !batch.deleted.is_empty()
                 || !batch.redacted.is_empty()
                 || !batch.pending_key_ids.is_empty()
+                || !batch.pending_delegations.is_empty()
                 || !batch.discovered.is_empty() =>
         {
             batch.has_more = true;
@@ -144,6 +145,9 @@ async fn run(
     )
     .await?;
     progress::handoff(contexts, targets, batch);
+    if !super::delegation_debts::page(db, targets, cursor, batch).await? {
+        return Ok(());
+    }
     if batch.waiting {
         return Ok(());
     }
