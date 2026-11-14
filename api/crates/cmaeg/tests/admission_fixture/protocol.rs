@@ -53,6 +53,7 @@ fn sign(event: &str) -> Signed {
         300,
         now.unix_timestamp(),
     );
+    callback["jti"] = payload["correlation_id"].clone();
     callback["message_id"] = event.into();
     callback["body_sha256"] = hash(&body).into();
     Signed {
