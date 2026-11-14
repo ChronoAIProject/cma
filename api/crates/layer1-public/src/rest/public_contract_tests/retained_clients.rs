@@ -5,6 +5,8 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::{replay_corpus, Corpus};
+mod desktop_privacy;
+mod desktop_privacy_tests;
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -35,6 +37,7 @@ fn corpora() -> Vec<Corpus> {
     assert_eq!(manifest.version, 1);
     assert_eq!(manifest.releases.len(), 2);
     let mut corpora = Vec::new();
+    let mut privacy_additions = 0;
     for release in manifest.releases {
         let expected = match release.name.as_str() {
             "previous" => "93d4a199a3d36d47f5a89f9117d2bc735900bf4c",
@@ -47,7 +50,7 @@ fn corpora() -> Vec<Corpus> {
             assert!(!fixture.file.contains('/'));
             let bytes = std::fs::read(directory().join(&fixture.file)).unwrap();
             assert_eq!(format!("{:x}", Sha256::digest(&bytes)), fixture.sha256);
-            let corpus: Corpus = serde_json::from_slice(&bytes).unwrap();
+            let mut corpus: Corpus = serde_json::from_slice(&bytes).unwrap();
             assert_eq!(corpus.version, 1);
             assert_eq!(corpus.cases.len(), fixture.cases);
             assert_eq!(
@@ -63,6 +66,10 @@ fn corpora() -> Vec<Corpus> {
                 .cases
                 .iter()
                 .all(|case| !case.operation.ends_with("/desktop/ws")));
+            // Verify immutable release bytes before adding reviewed privacy
+            // expectations. Replay still compares the complete response exactly.
+            privacy_additions +=
+                desktop_privacy::apply(&release.source_commit, &fixture.file, &mut corpus);
             corpora.push(corpus);
         }
     }
@@ -73,6 +80,7 @@ fn corpora() -> Vec<Corpus> {
             .sum::<usize>(),
         112
     );
+    assert_eq!(privacy_additions, 12);
     corpora
 }
 
