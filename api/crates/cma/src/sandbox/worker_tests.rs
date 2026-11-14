@@ -66,6 +66,7 @@ mod retirement_checkpoint_tests;
 mod reviewer_boundary_diagnostics;
 mod runtime_attachment_tests;
 mod warmup_tests;
+mod warmup_transfer_tests;
 mod work_authority_tests;
 mod workspace_adoption_tests;
 mod workspace_prepare_recovery_tests;
