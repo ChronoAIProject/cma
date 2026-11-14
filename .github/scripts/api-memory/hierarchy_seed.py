@@ -107,8 +107,16 @@ print('seeded');
         for kind, config in configs.items():
             checks[kind] = {}
             for route in routes:
-                body = repeat.get(config['origin'], route)
-                validate_body(route, body)
+                body = None
+                try:
+                    body = repeat.get(config['origin'], route)
+                    validate_body(route, body)
+                except Exception as error:
+                    error.safe_details = {'boundary': 'fixture_read', 'variant': kind, 'route': route,
+                                          'failure_type': type(error).__name__,
+                                          'http_status': getattr(error, 'status', 200 if body is not None else None),
+                                          'body_bytes': getattr(error, 'body_bytes', len(body) if body is not None else None)}
+                    raise
                 checks[kind][route] = {'http_200': True, 'identity_and_hierarchy_match': True, 'bytes': len(body)}
         script = r'''
 const input=JSON.parse(require('fs').readFileSync(0,'utf8'));

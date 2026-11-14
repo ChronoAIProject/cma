@@ -11,6 +11,17 @@ import hierarchy_seed as fixture
 
 
 class AllocatorQualificationTests(unittest.TestCase):
+    def test_fixture_refusal_retains_status_without_body_or_subject(self):
+        error = driver.repeat.HttpResponseError(401, 37)
+        with patch.object(fixture.repeat, 'get', side_effect=error):
+            with self.assertRaises(driver.repeat.HttpResponseError) as caught:
+                fixture.Fixture().check({'zig': {'origin': 'http://127.0.0.1:18981'}}, 'unused')
+        details = caught.exception.safe_details
+        self.assertEqual(details['http_status'], 401)
+        self.assertEqual(details['body_bytes'], 37)
+        self.assertEqual(details['route'], fixture.SANDBOX_ROUTE)
+        self.assertNotIn(fixture.SUBJECT, json.dumps(details))
+
     def test_nearest_rank_is_not_interpolated(self):
         values = list(range(20, 0, -1))
         self.assertEqual(driver.nearest_rank(values, .5), 10)

@@ -246,6 +246,8 @@ def run(output, *, image_bindings=None, fixture=None, measurement=measure, contr
         result["outcome"] = "completed"
     except BaseException as error:
         result["failure_type"] = type(error).__name__
+        if hasattr(error, "safe_details"):
+            result["failure_details"] = error.safe_details
         result["failure_location"] = [{"file": Path(frame.filename).name, "line": frame.lineno, "function": frame.name}
                                       for frame in traceback.extract_tb(error.__traceback__)]
         if isinstance(error, subprocess.CalledProcessError):

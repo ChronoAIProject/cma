@@ -56,12 +56,15 @@ def request_loop(config, start, output, stop):
             try:
                 body = repeat.get(config['origin'], route)
                 row['duration_seconds'] = time.monotonic() - began
+                row['http_status'] = 200
                 hierarchy_seed.validate_body(route, body)
                 row.update(outcome='completed', bytes=len(body))
                 del body
             except Exception as error:
                 row.setdefault('duration_seconds', time.monotonic() - began)
                 row.update(outcome='failed', failure_type=type(error).__name__)
+                if hasattr(error, 'status'):
+                    row['http_status'] = error.status
             rows.append(row)
             journal.write(json.dumps(row) + '\n')
             journal.flush()

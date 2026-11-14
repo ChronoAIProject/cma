@@ -19,6 +19,13 @@ METRICS = ("cma_runtime_alive_tasks", "cma_runtime_global_queue_depth",
 MAX_BODY = 8 * 1024 * 1024
 
 
+class HttpResponseError(RuntimeError):
+    def __init__(self, status, body_bytes):
+        super().__init__("control response status/size mismatch")
+        self.status = status
+        self.body_bytes = body_bytes
+
+
 def local_origin(value):
     parsed = urlsplit(value)
     if (parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port
@@ -72,7 +79,7 @@ def get(origin, path, expected=200):
         response = connection.getresponse()
         body = response.read(MAX_BODY + 1)
         if response.status != expected or len(body) > MAX_BODY:
-            raise RuntimeError("control response status/size mismatch")
+            raise HttpResponseError(response.status, len(body))
         return body
     finally:
         connection.close()
