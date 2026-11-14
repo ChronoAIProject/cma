@@ -380,13 +380,32 @@ async fn unsupported_context_corrupt_log_and_overflow_stay_unknown() {
         "sbx_activity_overflow",
     );
     store.create_sandbox(empty.clone()).await.unwrap();
+    let row = |i| {
+        let workspace = crate::store::sandbox_mongo_integration_tests::ready_workspace(
+            &empty,
+            &format!("wks_overflow_{i:04}"),
+            &format!("overflow-{i:04}"),
+        );
+        let document = crate::store::workspaces::workspace_document(&workspace).unwrap();
+        assert_eq!(
+            crate::store::workspaces::read_workspace(&document).unwrap(),
+            workspace
+        );
+        document
+    };
     store
         .workspaces
-        .insert_many(
-            (0..=RUNTIME_ACTIVITY_MAX_ROWS).map(
-                |i| doc! {"_id":format!("wks_overflow_{i:04}"), "sandbox_id":empty.id.as_str()},
-            ),
-        )
+        .insert_many((0..RUNTIME_ACTIVITY_MAX_ROWS).map(row))
+        .await
+        .unwrap();
+    // Valid quiet rows must produce a complete snapshot at the bound; otherwise
+    // malformed fixture metadata could masquerade as the overflow refusal.
+    let at_limit = observe(&store, &empty.id).await;
+    assert_eq!(at_limit.vector.workspaces.len(), RUNTIME_ACTIVITY_MAX_ROWS);
+    assert!(!at_limit.has_activity());
+    store
+        .workspaces
+        .insert_one(row(RUNTIME_ACTIVITY_MAX_ROWS))
         .await
         .unwrap();
     assert!(matches!(
@@ -394,7 +413,7 @@ async fn unsupported_context_corrupt_log_and_overflow_stay_unknown() {
             .observe_runtime_activity(&empty.id, &context(&store))
             .await
             .unwrap(),
-        RuntimeActivityObservation::Unknown(_)
+        RuntimeActivityObservation::Unknown(RuntimeActivityUnknownReason::IncompleteCoverage)
     ));
     client.database(&name).drop().await.unwrap();
 }
