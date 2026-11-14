@@ -1,6 +1,6 @@
 //! A single authenticated hop to the current front-target owner. A transport
 //! timeout is uncertainty, never permission to issue another external send.
-mod codec;
+pub(super) mod codec;
 #[cfg(test)]
 mod codec_tests;
 #[cfg(test)]
@@ -101,8 +101,15 @@ impl RoutedToolReplies {
     }
     pub fn replica_relay_router(self: Arc<Self>) -> Router {
         Router::new()
-            .route(PATH, post(receive))
-            .layer(RequestBodyLimitLayer::new(codec::BODY_LIMIT))
+            .route(
+                PATH,
+                post(receive).layer(RequestBodyLimitLayer::new(codec::BODY_LIMIT)),
+            )
+            .route(
+                super::stream_relay::PATH,
+                post(super::stream_relay::receive)
+                    .layer(RequestBodyLimitLayer::new(codec::STREAM_BODY_LIMIT)),
+            )
             .with_state(self)
     }
     pub(super) async fn forward_reply(
