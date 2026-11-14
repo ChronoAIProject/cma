@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
-use layer2_core::sandbox::store::{AgentLifecycleStore, SandboxStoreError};
+use layer2_core::sandbox::store::{AgentCreateAdmission, AgentLifecycleStore, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentOperationService, AgentUpdateRecorder, AgentWorkStep};
 use layer2_core::{rfc3339_at, AgentId};
 use layer3_adapter::SandboxAdapter;
@@ -45,6 +47,12 @@ const DEFAULT_OPEN_TIMEOUT: Duration = Duration::from_secs(120);
 const DEFAULT_SIGN_IN_TIMEOUT: Duration = Duration::from_secs(17 * 60);
 const CREATE_COMPLETION_ADMISSION_SLOTS: usize = 32;
 const CREATE_COMPLETION_ADMISSION_TIMEOUT: Duration = Duration::from_millis(250);
+
+type CompletionAdmissionFuture =
+    Pin<Box<dyn Future<Output = Result<Option<AgentCreateAdmission>, SandboxStoreError>> + Send>>;
+
+#[cfg(test)]
+type CompletionAdmissionLookup = Arc<dyn Fn(Agent) -> CompletionAdmissionFuture + Send + Sync>;
 
 pub(crate) struct AgentWorkerDependencies {
     pub store: Arc<dyn AgentLifecycleStore>,
@@ -142,6 +150,8 @@ pub(crate) struct AgentWorker {
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
     startup_timings: Mutex<HashMap<AgentId, startup_timing::StartupPhaseDurations>>,
     completion_admission_slots: Arc<Semaphore>,
+    #[cfg(test)]
+    completion_admission_lookup: Mutex<Option<CompletionAdmissionLookup>>,
 }
 
 impl AgentWorker {
@@ -160,7 +170,55 @@ impl AgentWorker {
             capacity_restart,
             startup_timings: Mutex::new(HashMap::new()),
             completion_admission_slots: Arc::new(Semaphore::new(CREATE_COMPLETION_ADMISSION_SLOTS)),
+            #[cfg(test)]
+            completion_admission_lookup: Mutex::new(None),
         })
+    }
+
+    fn completion_admission(&self, agent: Agent) -> CompletionAdmissionFuture {
+        #[cfg(test)]
+        if let Some(lookup) = self
+            .completion_admission_lookup
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+        {
+            return lookup(agent);
+        }
+        let store = self.dependencies.store.clone();
+        Box::pin(async move { store.agent_create_admission(&agent).await })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_completion_admission_lookup<F, Fut>(&self, lookup: F)
+    where
+        F: Fn(Agent) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<AgentCreateAdmission>, SandboxStoreError>>
+            + Send
+            + 'static,
+    {
+        let lookup: CompletionAdmissionLookup = Arc::new(move |agent| Box::pin(lookup(agent)));
+        *self
+            .completion_admission_lookup
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(lookup);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn schedule_completion_event_for_test(&self, agent: Agent) {
+        self.schedule_completion_event(
+            agent,
+            "ordinary",
+            "unknown",
+            create_completion::CompletionTiming {
+                admission_ms: None,
+                admitted_desktop: None,
+                admitted_machine_included: None,
+                ready_at: SystemTime::now(),
+                publish_ready_ms: 0,
+                startup_phases: None,
+            },
+        );
     }
 
     fn schedule_completion_event(
@@ -183,35 +241,33 @@ impl AgentWorker {
                 return;
             }
         };
-        let store = self.dependencies.store.clone();
+        let admission_lookup = self.completion_admission(agent.clone());
         tokio::spawn(async move {
             let _permit = permit;
-            let admission = match tokio::time::timeout(
-                CREATE_COMPLETION_ADMISSION_TIMEOUT,
-                store.agent_create_admission(&agent),
-            )
-            .await
-            {
-                Ok(Ok(admission)) => admission,
-                Ok(Err(_)) => {
-                    tracing::debug!(
-                        target: "agent_create_completion_lookup",
-                        parent: None,
-                        outcome = "admission_lookup_failed",
-                        "Agent create completion admission lookup failed"
-                    );
-                    None
-                }
-                Err(_) => {
-                    tracing::debug!(
-                        target: "agent_create_completion_lookup",
-                        parent: None,
-                        outcome = "admission_lookup_timeout",
-                        "Agent create completion admission lookup timed out"
-                    );
-                    None
-                }
-            };
+            let admission =
+                match tokio::time::timeout(CREATE_COMPLETION_ADMISSION_TIMEOUT, admission_lookup)
+                    .await
+                {
+                    Ok(Ok(admission)) => admission,
+                    Ok(Err(_)) => {
+                        tracing::debug!(
+                            target: "agent_create_completion_lookup",
+                            parent: None,
+                            outcome = "admission_lookup_failed",
+                            "Agent create completion admission lookup failed"
+                        );
+                        None
+                    }
+                    Err(_) => {
+                        tracing::debug!(
+                            target: "agent_create_completion_lookup",
+                            parent: None,
+                            outcome = "admission_lookup_timeout",
+                            "Agent create completion admission lookup timed out"
+                        );
+                        None
+                    }
+                };
             create_completion::emit(
                 &agent,
                 ready_path,
