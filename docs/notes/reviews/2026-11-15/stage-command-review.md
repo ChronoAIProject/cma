@@ -8,6 +8,8 @@ The lead20:30 schedule, with engineer02's reported20:45 amendment, sets B9 API�
 
 This20:30 schedule supersedes all earlier stage times, including the19:56 U/S timeline. The18:00 final deadline and current K01–K25/A3 behavior criteria remain. Essentials removes inherited repetition gates; the revised M3 scope below remains the local qualification contract, without a new campaign. A2 supplies compatible cutover/capacity definitions where consistent with later lead selections.
 
+**Later lead21:38 S1 startup instruction:** verifier02 has prestaged actual B9 API inputs. Consume the existing final owner cohort on the lead S1 call and target dispatch readiness within300s of the web checkpoint. Add no new N1 baseline sampling, review, test suite or repeated B9 dependency-alert loop. Missing prior baseline stays explicit; this startup instruction does not manufacture comparison or replacement-source evidence. Existing stage grants, incident/rollback controls and observation ownership remain.
+
 ## Usage and replica stage order
 
 The20:30 schedule plus engineer02's reported lead20:45 B10 amendment controls these planned times. Engineer01 records it in `.github/.cmaeg-local/scale-stages-20261115/TIMELINE.md` and `s1-execution-packet.json` in its `cma-cmaeg-release` worktree. Developer13 owns the shared [stage timeline](stage-timeline.md); engineer02 owns B9/B10/Activity/U1–U3, engineer01 S1–S3. Engineer02 reports B9 approval for21:00; actual component outcomes still require observation. B10 deploy approval/image/actuals remain unset. Existing fresh stage/per-operation controls continue.
@@ -58,7 +60,7 @@ The following qualification and observation requirements remain open at this upd
 | B3 · K22/K24 | Actual CMA/GKE/NEG no-overlap/restoration proof <120s, concurrent-writer/restart/interrupted-cutover cases; separately authorized recovery from failed start or unhealthy owners. Kind1.34 pause containers prove only their controller observations. | deployment-engineer-01 + local verifier |
 | B4 · K13 | Secure early EG drain: authenticated mechanism, helper credential isolation, bounded success/failure, socket close before exact-token release, independent TERM handling. Native sleep30 alone does not close this gate. | developer-15/08 + developer-16 + architect-04 |
 | B5 · K13/K14/K25 | Bind qualified handoff p95≤90s/P120, distinct hard G and actual/template grace760s separately to actual post-B10 API and B9 EG lifetimes. No pooled B9/B10 timing. Combined client/node/provider capacity and≥30% Mongo headroom remain required; quota64/128 needs its S3 grant/readback. Grace760 alone proves no lifetime bound. | debugger-03 + developer-16/17 + lead |
-| B6 · K02–K08/K16–K21/K23/K25 | Before S1: bind log01's21:30 Batch9-image AM1 baseline/queries, actual source/config/state coverage, ledger duplicate check and failure/rollback path. Before advancement: actual traffic/latency/error and READ-only detail/transcript/usage24h/7d/30d results; disclose low-N acceptance. Preserve cumulative N/errors, actual E+15 and S2 reconciliation/24h monitor. Activity/U1/U2 occur after the blackout. Neither exception passes an observed failure. | engineer02 + log-engineer-01 + production verifiers + analyst02 + engineer01 |
+| B6 · K02–K08/K16–K21/K23/K25 | Use prestaged API inputs plus the existing final owner cohort on the S1 call; no new N1 baseline/review/test wait. Bind log01 queries, actual coverage, ledger duplicate check and failure path; retain prior-baseline gaps explicitly. Stage results still require actual traffic/error and READ-only range results, with low-N policy, cumulative errors and E+15 unchanged. Startup permission is not a comparison PASS. | engineer02 + log-engineer-01 + production verifiers + analyst02 + engineer01 |
 
 Before each stage the reviewer records closures or reports `BLOCKED: URGENT — Bn, missing result or binding, owner`; continue independent preparation. The00:00 freeze fixes checklist criteria; it is not a write blackout and does not prohibit the lead-selected00:30 S2 under its fresh grant. The actual no-write window is02:00–02:59, with the controller's01:58 margin. Final source, passing/failing tests and a brief stage result supply closure; do not turn historical FAILs into PASS.
 
@@ -164,12 +166,39 @@ TL_HOME='/Users/shining/code/work/tech-lead' \
 
 Delivery exit0 is transport success, not executor acknowledgement. Deployment-engineer-01 acknowledges the incident and its promotion/compatible-recovery action or status; the failure remains open until that reply. A rejected/failed delivery or missing acknowledgement immediately escalates through the already-issued urgent lead-pane report and health-monitor copy, with delivery/no-ACK status explicit. Never bypass a directed-grant rejection. Deployment-engineer-01 alone invokes approved compatible rollback; observation ownership grants no mutation authority. Missing coverage remains UNKNOWN, not a fabricated failure or clean result.
 
-## S1 read sampler
+## S1 prestaged dispatch
 
-Prod-verifier-02 is the sole execution owner, working in `/Users/shining/code/work/tech-lead.staff/prod-verifier-02`. Its `deadline-20261115/S1-REAL-TRAFFIC-CHECKLIST.md` supplies the full read contract. Use `deadline-20261115/soak-session.example.json`, schema `cma-m8-read-session-v3`, with actual source/images/config and a distinct `[S_read,E_read)` of exactly1800s. **The former14Nov21:30–22:00 N1 proposal is pending rebinding after actual B9 API/EG/web outcomes; it is not an executable slot.** Engineer02/01 supply the actual component state and full read window; start/end remain unset until supplied, with no invented replacement or compressed/overlapping run. Release the shared lock before cutover arming and retain≥90s sample spacing. Bind observed N1 before and actual S1 AM2/EG1 after convergence; operation start does not launch either session. `release.source_sha` identifies the selected API source; retain separate EG/web image/source joins in the deployment packet. Validate offline; run only in the owner's authorized window:
+Owner/workspace: prod-verifier-02, `/Users/shining/code/work/tech-lead.staff/prod-verifier-02`. The active interface is `deadline-20261115/s1-prestage/README.md`. API anchor: generation200, source `67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6`, image `us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8`. Owner reports retained attempt2 APIcheckpoint PASS at14Nov21:40:03.187916SGT. Historical gen198/199 failure remains historical, not active readiness. EG73/image1b304d8a is only prefill; final EG/web observations still come from the existing owner packet.
+
+On the lead call, fill only final EG/web images/generations, whole-cohort observed UTC, actual AM1/EG1/controls, arming/window/clock bounds in `cutover-input.example.json`. API source/image/gen200 are already pinned in `cutover-session.staged.json`. The binder validates offline, refuses a changed anchor/incomplete cohort and prints a new mode0600 session path without importing a broker/runner or launching anything:
 
 ```bash
-: "${s1_read_session:?absolute path to actual v3 read-session JSON}"
+: "${s1_cutover_input:?actual owner cutover-input JSON}"
+node deadline-20261115/s1-prestage/bind.mjs --cutover "$s1_cutover_input"
+# Use the exact path printed by the binder, then validate before authorized arming.
+: "${s1_cutover_session:?exact printed validated session path}"
+node deadline-20261115/cutover-capture.mjs --validate "$s1_cutover_session"
+node deadline-20261115/cutover-capture.mjs --arm "$s1_cutover_session"
+```
+
+Arming is an execution action within the owner's actual window, not part of offline preparation. `RUN_ID` comes only from `operator_trigger_ready`; engineer01/architect03 supplies the actual withdrawal bracket under the existing observer contract:
+
+```bash
+: "${s1_cutover_run_id:?RUN_ID from operator_trigger_ready}"
+: "${s1_withdrawal:?actual observer withdrawal JSON}"
+node deadline-20261115/cutover-capture.mjs --trigger "$s1_cutover_run_id" "$s1_withdrawal"
+```
+
+No full30-minute N1 read run precedes arming. Preserve the shared lock and retained90s clock; do not remove another live lock. Missing earlier baseline evidence remains explicit. Pre-arm API200 is not post-cutover generation or replacement-service proof; the probe retains `replacement_source_qualified=false` until the external observer joins actual serving evidence. No arming, trigger or sample was executed for this document. Owner reports4/4 focused offline binder checks; existing21 runner checks stand, with no new review/test gate.
+
+## S1 read sampler
+
+After S1 serving stabilizes, prod-verifier02 fills `s1-prestage/read-input.example.json` with observed post-S1 APIgeneration>200, actual AM2/EG1/controls, final EG/web, whole-cohort observed UTC and read start. The staged session keeps the same selected API source/image and derives exactly1800s/120slots/all3ranges. The former21:30–22:00 N1 proposal is historical and supplies no startup prerequisite. Actual post-change generation/window remain unset until observed. `release.source_sha` is the API source; retain separate component joins. From the verifier workspace:
+
+```bash
+: "${s1_read_input:?actual owner post-S1 read-input JSON}"
+node deadline-20261115/s1-prestage/bind.mjs --read "$s1_read_input"
+: "${s1_read_session:?exact validated session path printed by binder}"
 node deadline-20261115/read-capture.mjs --validate "$s1_read_session"
 # Execution owner only, at the bound read window; not a second collector.
 node deadline-20261115/read-capture.mjs --run "$s1_read_session"
@@ -193,6 +222,6 @@ The earlier fixed morning HTTP windows are superseded. S1/S2 observations bind t
 
 Immediate ABORT for stale/wrong-owner committed effect, duplicate external action, lost accepted custody/terminal/receipt, dual desktop/bot authority, auth bypass, epoch/cursor regression or incompatible receiver. Stop promotion/admission using approved controls; preserve custody; if rollback risks duplicates, remain safely quiesced with compatible fences and escalate.
 
-Availability/capacity ABORT: zero healthy canonical backends outside the approved cutover; no restored service at120s within it; same-work sustained recovery>30s; OOM/repeated crash/permanent renewal failure; process/client/provider cap breach or Mongo headroom<30%. Widespread timeouts/5xx and the S1 accepted-work/absolute failures above do not wait for performance windows. Other performance-only supported failures across two consecutive five-minute windows trigger recovery; any failing whole30-minute comparison fails the stage. Missing data, unbound configuration, invalid/unmatched baseline or Unknown means HOLD. Statistical sample inadequacy follows the narrow K21 rule; missing real work and absolute failures never receive that exception.
+Availability/capacity ABORT: zero healthy canonical backends outside the approved cutover; no restored service at120s within it; same-work recovery>30s; OOM/repeated crash/permanent renewal failure; process/client/provider cap breach or Mongo headroom<30%. Widespread timeouts/5xx and S1 work/absolute failures do not wait for performance windows. Other supported performance failures across two consecutive five-minute windows trigger recovery; a failing whole-soak comparison fails the stage. Missing/unmatched baseline leaves that comparison unqualified; under21:38 it adds no new N1 sampling wait before S1 startup. Unknown safety/effects or unbound runtime inputs remain explicit and cannot be marked PASS. Retain the narrow K21/low-N policies without hiding actual failures.
 
 Each stage result records source/controller commit, images/configuration, exact operation/approval outcome, UTC/SGT interval and both outage/ready clocks, separate statistical/policy verdicts and K-row results with denominators, route confidence, peak process/socket/headroom, PDB/HPA/backend history and actual recovery. Engineer attests observations; lead grants each next stage only after prior success. Failure invokes approved rollback and immediate report for lead re-slotting. S2 records provider reconciliation and assigned24-hour monitoring. M8 uses prod-verifier-01's kit plus log/read/client evidence09:00–16:00 on15Nov for the18:00 final report.
