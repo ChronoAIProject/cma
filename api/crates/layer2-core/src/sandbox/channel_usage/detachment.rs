@@ -50,6 +50,7 @@ pub fn plan_retained_channel_detachment(
         predecessor: None,
         before: before.clone(),
         after,
+        retained_digest: None,
     };
     event.validate()?;
     Ok(event)
