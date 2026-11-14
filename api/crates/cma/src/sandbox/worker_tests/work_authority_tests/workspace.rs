@@ -241,11 +241,11 @@ async fn two_instance_workspace_owner_abort_is_taken_over_after_fifteen_seconds_
     assert!(owner_task.await.unwrap_err().is_cancelled());
     tokio::time::advance(Duration::from_secs(WORK_LEASE_SECONDS)).await;
     tokio::task::yield_now().await;
-    let takeover_at = tokio::time::Instant::now();
     assert!(successor
         .run_one(&workspace.id, now + Duration::from_secs(WORK_LEASE_SECONDS))
         .await
         .unwrap());
+    let takeover_at = tokio::time::Instant::now();
     assert!(takeover_at - fault_at <= Duration::from_secs(WORK_LEASE_SECONDS));
     let finished = h.store.get_workspace(&workspace.id).await.unwrap().unwrap();
     assert_eq!(finished.work.step, WorkspaceWorkStep::Setup);
