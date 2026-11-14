@@ -52,7 +52,8 @@ it.each([false, true].flatMap((admin) => ranges.map((range) => ({ admin, range }
         expect(url.searchParams.get('window')).toBe(range);
         expect(url.searchParams.has('from')).toBe(range === 'custom');
         expect(url.searchParams.has('to')).toBe(range === 'custom');
-        expect(url.searchParams.get('refresh')).toBe('true');
+        expect(url.searchParams.get('refresh')).toBe('false');
+        expect(url.searchParams.has('step_seconds')).toBe(false);
         return Response.json({
           schema_version: 1,
           window: range,
@@ -95,6 +96,8 @@ it.each([
 ])(
   'keeps SDK $status refusal/fallback boundaries (fallback=$fallback)',
   async ({ status, body, fallback }) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
     const report = snapshot(true, defaultSelection);
     const transport = vi.fn<typeof fetch>(async (input): Promise<Response> => {
       const url = new URL(String(input));
@@ -107,11 +110,12 @@ it.each([
     const api = client(true, transport);
     const hook = renderHook(() => useUsageReport(api, defaultSelection, true, true, owner));
     const shouldFallback = Boolean(api.latest) && fallback;
-    await waitFor(() => {
+    await act(async () => vi.advanceTimersByTimeAsync(7000));
+    {
       if (shouldFallback) expect(hook.result.current.report?.report_id).toBe(report.report_id);
       else expect(hook.result.current.error).toBeDefined();
-    });
-    expect(transport).toHaveBeenCalledTimes(shouldFallback ? 2 : 1);
+    }
+    expect(transport).toHaveBeenCalledTimes(shouldFallback ? 2 : status === 503 ? 4 : 1);
     if (!shouldFallback) expect(hook.result.current.report).toBeUndefined();
   },
 );
@@ -152,6 +156,6 @@ it('polls pending through the real SDK without overlapping requests', async () =
   await act(async () => vi.advanceTimersByTimeAsync(999));
   expect(transport).toHaveBeenCalledTimes(1);
   await act(async () => vi.advanceTimersByTimeAsync(1));
-  expect(transport).toHaveBeenCalledTimes(2);
+  expect(transport).toHaveBeenCalledTimes(api.latest ? 3 : 2);
   expect(hook.result.current.report?.report_id).toBe(ready.report_id);
 });
