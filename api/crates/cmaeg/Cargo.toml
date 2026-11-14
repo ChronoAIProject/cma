@@ -1,5 +1,6 @@
 [package]
 name = "cmaeg"
+default-run = "cmaeg"
 version.workspace = true
 edition.workspace = true
 publish = false
@@ -58,6 +59,13 @@ zip = { workspace = true }
 name = "cmaeg-media-probe"
 path = "tests/support/media_probe.rs"
 test = false
+doc = false
+bench = false
+
+# Isolated admission diagnostic fixture; production images build --bin cmaeg.
+[[bin]]
+name = "cmaeg-admission-fixture"
+path = "tests/admission_fixture/fixture.rs"
 doc = false
 bench = false
 
