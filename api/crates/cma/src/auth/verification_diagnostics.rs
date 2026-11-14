@@ -11,7 +11,7 @@ pub(super) enum Endpoint {
 }
 
 impl Endpoint {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Discovery => "discovery",
             Self::Userinfo => "userinfo",
@@ -34,7 +34,7 @@ pub(super) enum Stage {
 }
 
 impl Stage {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::ResponseHeaders => "response_headers",
             Self::Status => "status",
@@ -66,7 +66,7 @@ pub(super) enum Reason {
 }
 
 impl Reason {
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Self::Timeout => "timeout",
             Self::Connection => "connection",
@@ -97,6 +97,7 @@ pub(super) fn record(
         Error::Rejected(_) => "rejected",
         Error::Unavailable(_) => "unavailable",
         Error::Transient(_) => "transient",
+        Error::RateLimited(_) => "rate_limited",
     };
     // Single-flight leaders emit the actual provider failure in their request
     // context. Shared callers retain the existing final dependency counter.

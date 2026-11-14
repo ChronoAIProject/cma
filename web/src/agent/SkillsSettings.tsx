@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule } from './transport/readRetry';
 import { useEffect, useRef, useState } from 'react';
 import { useCmaClient, useProfileViewsClient } from '../api/context';
 import type { AgentSkillsView } from '../api/client';
@@ -38,12 +40,11 @@ export function SkillsSettings({
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
     if (!active || !client.readAgentSkills) return;
-    const request = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    let failures = 0;
+    const observer = observeRead(async (signal) => {
       try {
-        const value = await client.readAgentSkills!(agentId, { signal: request.signal });
-        if (request.signal.aborted) return;
+        const value = await client.readAgentSkills!(agentId, { signal: signal });
+        if (signal.aborted) return;
         setSaved(value);
         setError(undefined);
         setIntent((current) =>
@@ -57,21 +58,19 @@ export function SkillsSettings({
             ? undefined
             : current,
         );
-        if (value.pending) timer = setTimeout(() => void poll(), 1000);
+        failures = 0;
+        if (value.pending) return { next: 1000, cooldown: 1000 };
       } catch (cause) {
-        if (!request.signal.aborted)
+        if (!signal.aborted)
           setError(
             cause instanceof Error
               ? cause.message
               : 'Skill installation status could not be loaded.',
           );
+        if (!signal.aborted) return retrySchedule(cause, ++failures);
       }
-    };
-    void poll();
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-    };
+    });
+    return () => observer.dispose();
   }, [active, agentId, busy, client, reload]);
   useEffect(() => {
     if (!active || !catalog) return;

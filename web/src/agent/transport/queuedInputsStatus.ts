@@ -1,3 +1,4 @@
+import { rateLimitDelay } from './readRetry';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError } from '@chronoai/cma-sdk';
 import type { AgentV2Session } from './client';
@@ -89,6 +90,7 @@ export function useQueuedInputs(
   useEffect(() => {
     if (!session || !enabled) return;
     let retry = 1000;
+    let failures = 0;
     const observer = observeRead(async (signal) => {
       const observedGeneration = generation.current;
       try {
@@ -133,6 +135,7 @@ export function useQueuedInputs(
             }
           } catch (error) {
             if (signal.aborted || onIdentityChange(error)) return;
+            throw error;
           }
         }
         if (observedGeneration !== generation.current) {
@@ -141,6 +144,7 @@ export function useQueuedInputs(
         }
         setStored({ session, items });
         bump();
+        failures = 0;
         retry = 2000;
         return {
           next: items.length > 0 ? retry : active.current ? 10000 : undefined,
@@ -158,7 +162,8 @@ export function useQueuedInputs(
           error: 'The message queue could not be refreshed. Your messages are retained.',
         }));
         retry = Math.min(retry * 2, 10000);
-        return { next: retry, cooldown: retry, failed: true };
+        const next = rateLimitDelay(error, retry, ++failures);
+        return { next, cooldown: next, failed: true };
       }
     });
     schedule.current = observer;
