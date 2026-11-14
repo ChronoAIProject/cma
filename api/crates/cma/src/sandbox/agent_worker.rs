@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
@@ -166,7 +168,22 @@ impl AgentWorker {
             .await
     }
 
-    pub async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    /// Keep the startup/cleanup execution state machine behind a boxed boundary
+    /// so callers do not inherit its large stack frame during fixture startup.
+    pub fn run_one(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, SandboxStoreError>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move { self.run_one_inner(&id, now).await })
+    }
+
+    async fn run_one_inner(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
         if let Some(coordinator) = &self.config.ownership {
             let Some(authority) = coordinator
                 .acquire(id)
@@ -176,7 +193,7 @@ impl AgentWorker {
                 return Ok(false);
             };
             let result = authority
-                .run(self.run_claimed(id, now))
+                .run(Box::pin(self.run_claimed(id, now)))
                 .await
                 .map_err(|_| SandboxStoreError::Conflict)?;
             if result.is_ok()
@@ -197,7 +214,7 @@ impl AgentWorker {
             }
             return result;
         }
-        self.run_claimed(id, now).await
+        Box::pin(self.run_claimed(id, now)).await
     }
 
     async fn run_claimed(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
@@ -298,25 +315,39 @@ impl AgentWorker {
         }
         let started = tokio::time::Instant::now();
         let claimed = agent.clone();
-        let result = match agent.work.step {
-            AgentWorkStep::InstallSkill => self.install_skill(agent, now).await,
-            AgentWorkStep::WaitForWorkspace => self.wait_for_workspace(agent, now).await,
-            AgentWorkStep::AddWorktree => self.add_worktree(agent, now).await,
-            AgentWorkStep::MaterializeHome => self.materialize_home(agent, now).await,
-            AgentWorkStep::OpenConversation => self.open_conversation(agent, now).await,
-            AgentWorkStep::PublishReady => self.publish_ready(agent, now).await,
-            AgentWorkStep::PublishConnection => self.publish_connection(agent, now).await,
-            AgentWorkStep::DispatchFirstMessage => self.dispatch_first_message(agent, now).await,
-            AgentWorkStep::FenceInteraction => self.fence_interaction(agent, now).await,
-            AgentWorkStep::CloseProcess => self.close_process(agent, now).await,
-            AgentWorkStep::PublishStopped => self.publish_stopped(agent, now).await,
-            AgentWorkStep::EnsureProcessClosed => self.ensure_process_closed(agent, now).await,
-            AgentWorkStep::RemoveHome => self.remove_home(agent, now).await,
-            AgentWorkStep::RemoveWorktree => self.remove_worktree(agent, now).await,
-            AgentWorkStep::PublishDeleted => self.publish_deleted(agent, now).await,
-            AgentWorkStep::None => Err(SandboxStoreError::Conflict),
-        };
+        let result = self.execute_step(agent, now).await;
         self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
             .await
+    }
+
+    /// Keep the per-step futures behind individual heap boundaries. The
+    /// combined match future otherwise contains every startup and cleanup
+    /// state machine and overflows the default test/runtime thread stack before
+    /// the selected step is even polled.
+    fn execute_step(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<(), SandboxStoreError>> + Send + '_>> {
+        match agent.work.step {
+            AgentWorkStep::InstallSkill => Box::pin(self.install_skill(agent, now)),
+            AgentWorkStep::WaitForWorkspace => Box::pin(self.wait_for_workspace(agent, now)),
+            AgentWorkStep::AddWorktree => Box::pin(self.add_worktree(agent, now)),
+            AgentWorkStep::MaterializeHome => Box::pin(self.materialize_home(agent, now)),
+            AgentWorkStep::OpenConversation => Box::pin(self.open_conversation(agent, now)),
+            AgentWorkStep::PublishReady => Box::pin(self.publish_ready(agent, now)),
+            AgentWorkStep::PublishConnection => Box::pin(self.publish_connection(agent, now)),
+            AgentWorkStep::DispatchFirstMessage => {
+                Box::pin(self.dispatch_first_message(agent, now))
+            }
+            AgentWorkStep::FenceInteraction => Box::pin(self.fence_interaction(agent, now)),
+            AgentWorkStep::CloseProcess => Box::pin(self.close_process(agent, now)),
+            AgentWorkStep::PublishStopped => Box::pin(self.publish_stopped(agent, now)),
+            AgentWorkStep::EnsureProcessClosed => Box::pin(self.ensure_process_closed(agent, now)),
+            AgentWorkStep::RemoveHome => Box::pin(self.remove_home(agent, now)),
+            AgentWorkStep::RemoveWorktree => Box::pin(self.remove_worktree(agent, now)),
+            AgentWorkStep::PublishDeleted => Box::pin(self.publish_deleted(agent, now)),
+            AgentWorkStep::None => Box::pin(async { Err(SandboxStoreError::Conflict) }),
+        }
     }
 }

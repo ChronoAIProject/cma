@@ -22,7 +22,11 @@ pub(super) fn emit(agent: &Agent, ready_path: &'static str, runtime_path: &'stat
             .map_or(
                 "plain",
                 |message| {
-                    if message.desktop { "desktop" } else { "plain" }
+                    if message.desktop {
+                        "desktop"
+                    } else {
+                        "plain"
+                    }
                 },
             ),
     };
