@@ -203,6 +203,8 @@ pub struct SandboxLifecycleState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_update: Option<super::SandboxRuntimeUpdateState>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_runtime: Option<Box<super::SandboxCustomRuntimeState>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unpublished_recovery: Option<Box<super::SandboxUnpublishedRecoveryState>>,
     /// Remains set until this recovery incident succeeds or is explicitly retired.
     #[serde(default, skip_serializing_if = "recovery_not_attempted")]
@@ -238,6 +240,7 @@ impl Default for SandboxLifecycleState {
             paused_notice: None,
             rotation: SandboxRotationAccounting::default(),
             runtime_update: None,
+            custom_runtime: None,
             unpublished_recovery: None,
             unpublished_recovery_attempted: false,
         }
@@ -247,6 +250,7 @@ impl Default for SandboxLifecycleState {
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
         sandbox.validate_retirement_archive()?;
+        sandbox.validate_custom_runtime()?;
         sandbox.validate_suspended_runtime()?;
         if let Some(failed) = &self.failed_provision {
             failed.validate_for(sandbox)?;
