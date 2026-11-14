@@ -9,12 +9,15 @@ use crate::ids::AgentId;
 use crate::seconds_from_rfc3339;
 
 use super::*;
+use crate::sandbox::{AgentTitleEffect, AgentTitleEffectIntent, AgentTitleEffectState};
+mod custody;
 use crate::sandbox::{AgentLogEntry, AgentLogKind};
 
 /// Transactional in-memory reference for the agent-title store contract.
 #[derive(Clone, Default)]
 pub struct InMemoryAgentTitleStore {
     state: Arc<Mutex<MemoryState>>,
+    custody_enabled: bool,
     lose_next_completion_response: Arc<AtomicBool>,
 }
 
@@ -28,6 +31,7 @@ struct MemoryAgent {
     logs: Vec<AgentLogEntry>,
     title: Option<StoredAgentTitle>,
     work: TitleWork,
+    effect: AgentTitleEffectState,
 }
 
 #[derive(Default)]
@@ -46,6 +50,11 @@ struct CompletedClaim {
 }
 
 impl InMemoryAgentTitleStore {
+    pub fn with_title_effect_custody(mut self, enabled: bool) -> Self {
+        self.custody_enabled = enabled;
+        self
+    }
+
     pub fn register_agent(&self, id: AgentId) -> Result<(), AgentTitleStoreError> {
         let mut state = self.lock();
         if state.agents.contains_key(&id) {
@@ -98,6 +107,43 @@ impl InMemoryAgentTitleStore {
 
 #[async_trait]
 impl AgentTitleStore for InMemoryAgentTitleStore {
+    async fn agent_title_effect(
+        &self,
+        id: &AgentId,
+    ) -> Result<AgentTitleEffectState, AgentTitleStoreError> {
+        let state = self.lock();
+        let agent = state.agents.get(id).ok_or(AgentTitleStoreError::NotFound)?;
+        Ok(
+            if self.custody_enabled && agent.effect == AgentTitleEffectState::Legacy {
+                AgentTitleEffectState::Ready
+            } else {
+                agent.effect.clone()
+            },
+        )
+    }
+    async fn begin_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &AgentTitleEffectIntent,
+    ) -> Result<bool, AgentTitleStoreError> {
+        self.mutate_effect(claim, intent, None)
+    }
+    async fn validate_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &AgentTitleEffectIntent,
+    ) -> Result<bool, AgentTitleStoreError> {
+        self.validate_effect(claim, intent)
+    }
+    async fn accept_agent_title_effect(
+        &self,
+        claim: &AgentTitleClaim,
+        intent: &AgentTitleEffectIntent,
+        title: &AgentTitle,
+    ) -> Result<bool, AgentTitleStoreError> {
+        self.mutate_effect(claim, intent, Some(title))
+    }
+
     async fn agent_title_candidates(
         &self,
         page: &PageRequest,
@@ -131,6 +177,7 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
                     .title
                     .as_ref()
                     .is_none_or(|title| title.source == AgentTitleSource::Fallback)
+                    && !agent.effect.unknown()
                     && !agent.work.settled
                     && agent
                         .work
@@ -182,15 +229,28 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
             }
         }
 
-        if agent.work.settled || agent.work.next_attempt_at.is_some_and(|at| at > now) {
+        if agent.effect.unknown() {
             return Ok(None);
         }
-        let mode = if agent.work.attempts >= super::super::AGENT_TITLE_MAX_ATTEMPTS {
+        let accepted = agent.effect.accepted().is_some();
+        if !accepted
+            && (agent.work.settled || agent.work.next_attempt_at.is_some_and(|at| at > now))
+        {
+            return Ok(None);
+        }
+        let mode = if !accepted && agent.work.attempts >= super::super::AGENT_TITLE_MAX_ATTEMPTS {
             AgentTitleClaimMode::FallbackOnly
         } else {
-            agent.work.attempts += 1;
+            agent.work.attempts += u32::from(!accepted);
             AgentTitleClaimMode::Generate
         };
+        if self.custody_enabled && agent.effect == AgentTitleEffectState::Legacy {
+            agent.effect = if agent.work.attempted {
+                AgentTitleEffectState::LegacyUnknown
+            } else {
+                AgentTitleEffectState::Ready
+            };
+        }
         agent.work.attempted = true;
         let claim = AgentTitleClaim::acquired(request.clone(), mode, now, expires_at)
             .with_attempts(agent.work.attempts);
@@ -235,7 +295,11 @@ impl AgentTitleStore for InMemoryAgentTitleStore {
                 && lease.token() == claim.token()
                 && lease.mode() == claim.mode()
         });
-        if !exact_lease {
+        if !exact_lease
+            || !agent.effect.permits_title(title, source)
+            || (agent.effect != AgentTitleEffectState::Legacy
+                && claim.expires_at() <= SystemTime::now())
+        {
             return Ok(false);
         }
         let active_mode = agent

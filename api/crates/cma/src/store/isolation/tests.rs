@@ -126,6 +126,26 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
             .unwrap_err();
         assert!(matches!(error.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==13));
     }
+    // Existing isolated grants remain sufficient while the switch is off.
+    // Operators can install the additive grants before enabling ownership.
+    use cma_service_auth::mongodb_authority::MongoAuthorityMode;
+    assert!(
+        replicas::verify(&isolated, MongoAuthorityMode::Isolated, true)
+            .await
+            .is_err()
+    );
+    let mut upgraded = doc! {"updateRole": "cma_am_runtime"};
+    let mut grants = replicas::role(&name, true);
+    grants.remove("createRole");
+    upgraded.extend(grants);
+    db.run_command(upgraded).await.unwrap();
+    verify(&isolated).await.unwrap();
+    replicas::verify(&isolated, MongoAuthorityMode::Isolated, true)
+        .await
+        .unwrap();
+    super::super::agent_ownership::MongoAgentOwnership::open(&runtime, &name)
+        .await
+        .unwrap();
     db.drop().await.unwrap();
 }
 #[test]

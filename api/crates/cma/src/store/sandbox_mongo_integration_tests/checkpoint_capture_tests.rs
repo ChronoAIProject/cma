@@ -1,3 +1,4 @@
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox::store::{
     SandboxLifecycleAgentScope, SandboxLifecycleExecutionStore, SandboxLifecycleMutation,
     SandboxMutationGuard,
@@ -89,7 +90,7 @@ async fn runtime_writer_claims_require_persisted_parent_authority() {
     );
     assert_eq!(
         store
-            .claim_workspace_work(&workspace.id, "writer", NOW.into(), MINUTE.into())
+            .claim_workspace_work(&workspace.id, "writer", NOW.into(), work_lease_deadline())
             .await,
         Err(SandboxStoreError::NotFound)
     );
@@ -308,12 +309,12 @@ async fn checkpoint_capture_holds_every_writer_until_exact_resume_acknowledgemen
     advance_capture(&store, &mut current, complete).await;
     assert!(current.lifecycle.checkpoint_capture.is_none());
     assert!(store
-        .claim_sandbox_work(&current.id, "normal", NOW.into(), MINUTE.into())
+        .claim_sandbox_work(&current.id, "normal", NOW.into(), work_lease_deadline())
         .await
         .unwrap()
         .is_some());
     assert!(store
-        .claim_workspace_work(&workspace.id, "normal", NOW.into(), MINUTE.into())
+        .claim_workspace_work(&workspace.id, "normal", NOW.into(), work_lease_deadline())
         .await
         .unwrap()
         .is_some());
@@ -336,7 +337,7 @@ async fn assert_no_writer_claims(
             &parent.id,
             "writer",
             TWO_MINUTES.into(),
-            "2026-09-05T00:03:00Z".into()
+            work_lease_deadline()
         )
         .await
         .unwrap()
@@ -346,7 +347,7 @@ async fn assert_no_writer_claims(
             &workspace.id,
             "writer",
             TWO_MINUTES.into(),
-            "2026-09-05T00:03:00Z".into()
+            work_lease_deadline()
         )
         .await
         .unwrap()

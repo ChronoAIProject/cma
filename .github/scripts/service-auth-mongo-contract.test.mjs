@@ -20,6 +20,13 @@ const selections = [
   ['package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))', 'only', false],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~binary::compiled_binary_)', 'all', true],
   ['package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::tool_relay::mongo_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::tool_effects::mongo_)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::media_effects::tests::)', 'only', true],
   ['package(=cma) and test(~gateway::tests::)', 'only', false],
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
 ];
@@ -76,7 +83,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 14);
+      assert.equal(selections.length, 21);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -153,6 +160,6 @@ print(json.dumps({"baseline": len(proof["SERVICE_AUTH_BASELINE_COMMANDS"]),
                   "actual": parse(pathlib.Path(sys.argv[2]), "nextest_build ")}))
 `, script, runner], { encoding: 'utf8', env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'} });
   const result = JSON.parse(value);
-  assert.equal(result.baseline, 14);
+  assert.equal(result.baseline, 21);
   assert.deepEqual(result.actual.map(args => args[args.indexOf('-E') + 1]), selections.map(([expression]) => expression));
 });

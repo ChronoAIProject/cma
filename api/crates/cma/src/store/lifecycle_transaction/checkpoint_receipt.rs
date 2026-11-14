@@ -114,8 +114,10 @@ pub(super) async fn matches(
         let Some(row) = row else {
             return Ok(false);
         };
-        if crate::store::workspaces::read_workspace(&row)? != *workspace
-            || row.get_i64("checkpoint_capture_fence").ok() != Some(*fence)
+        if !crate::store::work_lease_update::workspace_matches(
+            Some(&crate::store::workspaces::read_workspace(&row)?),
+            workspace,
+        ) || row.get_i64("checkpoint_capture_fence").ok() != Some(*fence)
         {
             return Ok(false);
         }

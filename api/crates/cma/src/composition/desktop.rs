@@ -21,7 +21,10 @@ pub(crate) fn router(
         }
     }
     layer1_public::rest::desktop_router_with_origins(
-        Arc::new(layer2_core::sandbox::DesktopService::new(reads, adapter)),
+        Arc::new(
+            layer2_core::sandbox::DesktopService::new(reads, adapter)
+                .with_replicas_enabled(config.agent_manager_replicas.is_some()),
+        ),
         origins,
     )
 }

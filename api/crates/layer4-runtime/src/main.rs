@@ -15,6 +15,7 @@ mod command;
 mod config;
 mod control_auth;
 mod conversation;
+mod desktop_ownership;
 mod desktop_process;
 mod failure;
 mod fs_durability;
@@ -31,6 +32,7 @@ mod ledger_import;
 mod ledger_reclamation;
 mod ledger_storage;
 mod link;
+mod manager_ownership;
 mod mutation_authority;
 #[cfg(test)]
 #[allow(dead_code)]

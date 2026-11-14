@@ -1,0 +1,59 @@
+{
+  "recorded_at_utc": "2026-11-13T18:48:08.767748+00:00",
+  "tooling_and_fixture_source": "0dd2db92962eecea55ea70b21953ffbc92d49796",
+  "compiled_fixture_source": "6f580ea84e48e1fde58990bb16dbc4834ae48aef",
+  "application_integration": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+  "sources": {
+    ".github/scripts/scale-tests/mongo-local.py": "28b05beb792731a6ef3a7285d8bec6e7860aaede49043b8921b01f29b0ff8f81",
+    ".github/scripts/scale-tests/replica_observations.py": "03fa0f2dcc1ec57c29d7810083ab3ba4b59f84c947827167b523ac2b0ab9a90d",
+    ".github/scripts/scale-tests/test/mongo_local_test.py": "5054395723f18254f79494c0f57bc3dd51b3558e0af6d89d7253c854bc9f9c27",
+    ".github/scripts/scale-tests/test/replica_observations_test.py": "fffde034a27f5146dc4f0e8170c58b6c6329e9f6fda81bfcc411a43f58772665",
+    "api/crates/cmaeg/tests/relay/replica_process.rs": "66c7caabd28f4e11ec323d9b406c955961d42a8a92a80f5f9212ebef3ee810fa",
+    "api/crates/cmaeg/tests/relay/replica_trace.rs": "e90f0f3b2d2b220396f9c634d24489c5f0ee651af4df32b22d132f6d48657b92"
+  },
+  "binaries": {
+    "test": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/deps/relay_ingress-4ffc7afe85db2aba",
+      "sha256": "e81f4e575c90a00364a03f5fa048d0edfe0e615c99fd3b91b4d1449997deddb7"
+    },
+    "application": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/cmaeg",
+      "sha256": "54cbd773129c6f0bc3b98fd3900b9d5508ea0d0d76a6f1eca31c7ff0d933ece0"
+    }
+  },
+  "custody_sha256": "3fd09309fb6a0127d4d641e7ce7f96156bf6fb4e2936e9677ecba76ec80d045d",
+  "reviews": {
+    "architect": {
+      "path": "/Users/shining/code/work/tech-lead.staff/solution-architect-04/reviews/scale-tests-0dd2db929.md",
+      "sha256": "bb6c9f7e8398ef6d778f79631d7f90f0a8363da3c4103542c1d4488e03e8ae7c"
+    },
+    "developer13": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-13/runner-0dd-review.json",
+      "sha256": "014f734ff09f52d7bccac0d34672c68f3c44095f5458b8218448aa89028f57f1"
+    },
+    "debugger03": {
+      "path": "/Users/shining/code/work/tech-lead.staff/debugger-03/review-1982-0dd2db9/review.md",
+      "sha256": "06c4250292f726c3caa35eb811105f947f414a5a20ca42e875a7dfd6092ede01"
+    }
+  },
+  "standing_task": {
+    "path": "/Users/shining/code/work/tech-lead/team/briefs/developer-17/20261113-230309-send.md",
+    "sha256": "f74f20e4c677f53fe32f3fc89b0c4015dec09c48f366d4d157dd5c39d04fb996",
+    "scope": "build and run local verification; same original disposable candidate/fixture/resources under normal slot; review grants no additional scope"
+  },
+  "environment": {
+    "docker_context": "desktop-linux",
+    "docker_socket_sha256": "5aa61f171c27b612dfbe906965e4375533faab9cf859f3f0a03f7e3c14a0e962",
+    "load_1m": 6.8955078125
+  },
+  "command": [
+    "python3",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/mongo-local.py",
+    "--binary",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/deps/relay_ingress-4ffc7afe85db2aba",
+    "--out",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/integration-aadd212/stages-0dd"
+  ],
+  "test_deadline_seconds": 120,
+  "execution": "PREPARED; one original-candidate diagnostic to resolve censored phase; no cluster/load or newer application"
+}

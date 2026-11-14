@@ -60,6 +60,7 @@ impl ReplyGate {
     fn live(&self) -> bool {
         let now = (self.store.0.clock)();
         !self.cancelled.load(Ordering::SeqCst)
+            && self.claim.live_partition()
             && self.deadline > Instant::now()
             && self.expires_at > now
             && self.claim.until() > now

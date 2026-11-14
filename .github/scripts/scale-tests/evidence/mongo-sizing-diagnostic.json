@@ -1,0 +1,23 @@
+{
+  "environment": "local_disposable_mongo",
+  "status": "FAIL",
+  "cleanup": true,
+  "binary_sha256": "ae16b0adaff62349f2fe5d10a8ab4009453326e71ccf18a766321ec81f9bf7e7",
+  "test_name": "runner_binary::executable_accepts_signed_custom_events_and_curl_streams_through_completion",
+  "exit_code": 101,
+  "output_sha256": "19b197d61fea41bd3ef39b3497085d745d03f16523af3212d7cc7974f2b8f354",
+  "tests_expected": 1,
+  "tests_passed": 0,
+  "numeric_assertions": [],
+  "migration_diagnostics": [
+    {
+      "stage": "index",
+      "code": 14031,
+      "kind": "disk_space"
+    }
+  ],
+  "failure_codes": [
+    "fixture_migration_failed"
+  ],
+  "elapsed_seconds": 6.9213165420000005
+}
