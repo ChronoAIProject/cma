@@ -43,15 +43,22 @@ An existing output/journal is never overwritten. It creates no Pod or fixture.
 The plan has schema `eg_lifecycle_plan_v1`, UUIDv4 `run_id` and `cohort_id`,
 replicas 1 or 2, full Git `candidate_commit` and `candidate_tree`, SHA-256
 `bindings` for application_image/namespace/config/fixture/tools/owner_window,
-per-phase positive integer `budgets_ms` (at most 120000), nullable
+per-phase positive integer `budgets_ms` (at most 120000), mandatory per-phase
+integer `return_bounds_ms` (at least that phase's budget, at most 120000), nullable
 `expected_timeout_phase`, and `departing_instances` (container-instance hashes).
-Budgets are registered inputs, not a change to the historical 120-second harness.
+Both maps must be registered before execution. The difference is the explicit
+timeout-enforcement/return allowance; there is no implicit or result-driven
+tolerance. These bounds do not change the historical 120-second harness.
 No WIP driver budget is supplied as a measured result.
 
 The owner runner imports `Lifecycle`, creates a new evidence directory, calls
 `start(phase)` before its real operation and `end(phase, status, receipt_sha256)`
 after return. Status is ok/failed/timed_out. A timeout before its registered
-budget is rejected; a late ok return becomes late_return. A failed workload must
+budget is rejected. Every status exceeding its complete return bound becomes
+late_return; ok/failed also remain late after the operation budget. Each end
+retains observed_status separately, both bounds, duration and whether return met
+the complete bound. A late timed_out observation cannot qualify COMPLETE even if
+cleanup later succeeds. A failed workload must
 still proceed through terminal accounting and custody checks. The run owner
 controls the next action; this library does not start another cohort.
 
@@ -73,7 +80,8 @@ unresolved custody prevents COMPLETE. The inner oracle owns per-event/target
 and effect joins; aggregate arithmetic cannot establish their truth.
 
 A registered controlled stall can produce registered_stall_observed, with normal
-boundaries false. It requires the actual elapsed bound and later confirmed
+boundaries false. It requires a timeout between the registered operation and
+return bounds, plus later confirmed
 cleanup. Pure clock tests do not prove that the old fixture's post-marker Drop
 or accumulated resource ownership follows this mechanism. Bind the actual owner
 shutdown/transition implementation and failure-injection seam before claiming

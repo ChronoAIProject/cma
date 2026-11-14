@@ -55,7 +55,7 @@ def identifier(value):
 def validate_plan(plan):
     require(isinstance(plan, dict) and set(plan) == {
         "schema", "run_id", "cohort_id", "replicas", "candidate_commit", "candidate_tree",
-        "bindings", "budgets_ms", "expected_timeout_phase", "departing_instances",
+        "bindings", "budgets_ms", "return_bounds_ms", "expected_timeout_phase", "departing_instances",
     }, "invalid_plan_fields")
     require(plan["schema"] == "eg_lifecycle_plan_v1", "invalid_plan_schema")
     identifier(plan["run_id"])
@@ -72,6 +72,11 @@ def validate_plan(plan):
             "invalid_phase_budgets")
     for value in plan["budgets_ms"].values():
         require(type(value) is int and 0 < value <= 120000, "invalid_phase_budget")
+    require(isinstance(plan["return_bounds_ms"], dict) and set(plan["return_bounds_ms"]) == set(PHASES),
+            "invalid_return_bounds")
+    for phase, value in plan["return_bounds_ms"].items():
+        require(type(value) is int and plan["budgets_ms"][phase] <= value <= 120000,
+                "invalid_return_bound")
     require(plan["expected_timeout_phase"] is None or plan["expected_timeout_phase"] in PHASES,
             "invalid_expected_timeout")
     require(isinstance(plan["departing_instances"], list)
@@ -125,11 +130,13 @@ class Lifecycle:
         self.last = value
         return value
 
-    def _event(self, phase, boundary, elapsed, status, receipt=None):
+    def _event(self, phase, boundary, elapsed, status, receipt=None, observed_status=None):
         row = {"schema": "eg_lifecycle_event_v1", "run_id": self.plan["run_id"],
                "cohort_id": self.plan["cohort_id"], "sequence": self.sequence,
                "monotonic_ms": elapsed, "utc": self.utc(), "phase": phase,
                "boundary": boundary, "status": status, "receipt_sha256": receipt}
+        if observed_status is not None:
+            row["observed_status"] = observed_status
         self.stream.write(json.dumps(row, separators=(",", ":")) + "\n")
         self.stream.flush()
         os.fsync(self.stream.fileno())
@@ -152,13 +159,19 @@ class Lifecycle:
         digest(receipt_sha256)
         elapsed = self._now()
         duration = elapsed - self.active[1]
-        # Expected timeout is evidence only when the registered bound elapsed.
+        observed_status = status
+        budget = self.plan["budgets_ms"][phase]
+        return_bound = self.plan["return_bounds_ms"][phase]
+        # A timeout occurrence does not prove that control returned on time.
+        # Its enforcement allowance is explicit in the immutable input plan.
         if status == "timed_out":
-            require(duration >= self.plan["budgets_ms"][phase], "premature_timeout_claim")
-        elif duration > self.plan["budgets_ms"][phase]:
+            require(duration >= budget, "premature_timeout_claim")
+        if duration > return_bound or (status != "timed_out" and duration > budget):
             status = "late_return"
-        self._event(phase, "end", elapsed, status, receipt_sha256)
+        self._event(phase, "end", elapsed, status, receipt_sha256, observed_status)
         self.completed.append({"phase": phase, "status": status, "duration_ms": duration,
+                               "observed_status": observed_status, "budget_ms": budget,
+                               "return_bound_ms": return_bound, "returned_within_bound": duration <= return_bound,
                                "receipt_sha256": receipt_sha256})
         self.active = None
 

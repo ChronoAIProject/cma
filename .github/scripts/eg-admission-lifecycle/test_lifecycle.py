@@ -22,6 +22,7 @@ def plan():
     return {"schema": "eg_lifecycle_plan_v1", "run_id": str(uuid.uuid4()), "cohort_id": str(uuid.uuid4()),
             "replicas": 2, "candidate_commit": "c" * 40, "candidate_tree": "d" * 40,
             "bindings": dict.fromkeys(BINDINGS, H), "budgets_ms": dict.fromkeys(PHASES, 100),
+            "return_bounds_ms": dict.fromkeys(PHASES, 110),
             "expected_timeout_phase": None, "departing_instances": [INSTANCE]}
 
 
@@ -50,12 +51,12 @@ class LedgerTests(unittest.TestCase):
         self.addCleanup(ledger.close)
         return ledger
 
-    def finish(self, ledger, failed=None):
+    def finish(self, ledger, failed=None, timeout_seconds=0.101):
         for phase in PHASES:
             if phase == "local_destroy":
                 ledger.confirm_custody(custody())
             ledger.start(phase)
-            self.now += 0.101 if phase == failed else 0.001
+            self.now += timeout_seconds if phase == failed else 0.001
             ledger.end(phase, "timed_out" if phase == failed else "ok", H)
 
     def test_complete_receipts_do_not_automatically_accept_application(self):
@@ -89,6 +90,9 @@ class LedgerTests(unittest.TestCase):
         self.assertTrue(result["registered_stall_observed"])
         self.assertFalse(result["normal_boundaries_observed"])
         self.assertEqual(result["evidence_status"], "COMPLETE")
+        timeout = next(row for row in result["phases"] if row["phase"] == "child_wait")
+        self.assertEqual(timeout["observed_status"], "timed_out")
+        self.assertTrue(timeout["returned_within_bound"])
         early = self.ledger(); early.start("prepare")
         with self.assertRaisesRegex(EvidenceError, "premature_timeout"): early.end("prepare", "timed_out", H)
 
@@ -102,6 +106,42 @@ class LedgerTests(unittest.TestCase):
         ledger = self.ledger(); ledger.start("prepare"); self.now += 0.2
         ledger.end("prepare", "ok", H)
         self.assertEqual(ledger.completed[0]["status"], "late_return")
+
+    def test_vastly_late_timeout_is_observed_but_cannot_complete_evidence(self):
+        value = plan(); value["expected_timeout_phase"] = "child_wait"
+        ledger = self.ledger(value); self.finish(ledger, "child_wait", timeout_seconds=3600)
+        proof = custody(); proof["resources_disposed"] = True
+        result = ledger.finalize(accounting(), proof)
+        timeout = next(row for row in result["phases"] if row["phase"] == "child_wait")
+        self.assertEqual(timeout["observed_status"], "timed_out")
+        self.assertEqual(timeout["status"], "late_return")
+        self.assertFalse(timeout["returned_within_bound"])
+        self.assertFalse(result["registered_stall_observed"])
+        self.assertTrue(result["custody_confirmed"])
+        self.assertEqual(result["evidence_status"], "INCOMPLETE")
+        events = [json.loads(line) for line in (ledger.directory / "events.jsonl").read_text().splitlines()]
+        end = next(row for row in events if row["phase"] == "child_wait" and row["boundary"] == "end")
+        self.assertEqual((end["observed_status"], end["status"]), ("timed_out", "late_return"))
+
+    def test_return_bound_is_explicit_and_does_not_extend_success_budget(self):
+        for status, seconds, expected in (("timed_out", .125, "timed_out"),
+                                          ("timed_out", .25, "timed_out"),
+                                          ("timed_out", .251, "late_return"),
+                                          ("ok", .2, "late_return"), ("failed", .251, "late_return")):
+            with self.subTest(status=status, seconds=seconds):
+                self.now = 0.0
+                value = plan(); value["budgets_ms"]["prepare"] = 125
+                value["return_bounds_ms"]["prepare"] = 250
+                ledger = self.ledger(value); ledger.start("prepare"); self.now = seconds
+                ledger.end("prepare", status, H)
+                self.assertEqual(ledger.completed[0]["status"], expected)
+        for invalid in (None, {}, dict.fromkeys(PHASES, 99), dict.fromkeys(PHASES, 120001),
+                        dict.fromkeys(PHASES, True)):
+            value = plan(); value["return_bounds_ms"] = invalid
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(EvidenceError, "return_bound"):
+                validate_plan(value)
+        value = plan(); del value["return_bounds_ms"]
+        with self.assertRaisesRegex(EvidenceError, "plan_fields"): validate_plan(value)
 
     def test_disposal_requires_independent_registered_custody(self):
         ledger = self.ledger()
