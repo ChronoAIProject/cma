@@ -64,6 +64,11 @@ When only the source head advances, a bounded revision query reads appended
 events in the same report snapshot and replays them with the prepared prefix.
 It never combines independently rounded totals. Missing prefix coverage or
 unsupported overlap falls back to the original raw query.
+Supported ledger rebaselining can change complete lifecycle coverage to
+incomplete at a newer monotonic source revision. That transition discards the
+prepared coverage for reading and uses the raw calculation until maintenance
+rebuilds it under the existing publication fence. Owner/identity changes,
+same-revision drift and backwards source metadata still refuse.
 Malformed cache evidence is refused. Current report ownership and membership
 are still verified independently of these source projections.
 
