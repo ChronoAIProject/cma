@@ -17,8 +17,13 @@ AM manifests are `infra/api/{deployment,pdb,hpa}.yaml`; EG manifests are
 `infra/cmaeg/{deployment,pdb,hpa}.yaml`. Release publication does not apply them:
 `docs/Release.md` defines explicit promotion; workflows validate/package images.
 Live image pins can be newer than checked-in Deployment pins. **Never apply an
-entire Deployment or directory for this change.** Use the tested narrow patch
-projection below and install the HPA files only in S3. Apply individual PDB files. PDB `unhealthyPodEvictionPolicy: AlwaysAllow`
+entire Deployment or directory for this change.** The sole execution path is the guarded controller in the
+[common operator setup](notes/reviews/2026-11-15/deployment-runbooks.md),
+[S1 commands](notes/reviews/2026-11-15/s1-execution.md),
+[S2 commands](notes/reviews/2026-11-15/s2-execution.md) and
+[S3 commands](notes/reviews/2026-11-15/s3-execution.md).
+Those operations use guarded field patches and absence-guarded PDB/HPA creation;
+full-manifest apply and the former direct mutation examples are retired. PDB `unhealthyPodEvictionPolicy: AlwaysAllow`
 lets a non-Ready pod be evicted without indefinitely blocking node drain;
 `minAvailable:1` protects the healthy survivor. Both topology constraints use
 `matchLabelKeys: [pod-template-hash]` to count each rollout revision separately.
@@ -33,18 +38,25 @@ builds locally under approved build authority, without waiting for/polling CI.
 Before each gated write, deployment engineers reread
 `team.sh policy show ChronoAIProject/cma` and consume a fresh
 `team.sh policy-check deploy --approval <step-id> --context <release-SHA>` grant.
-The observed route is `reviewed-release-controller`: submit these exact narrow
-command payloads through that reviewed controller. They are **not** a bypass.
-Direct commands require the lead to record `owner-authorized-direct`, deploy/skip-ci
-allow and matching per-step approvals. A refusal stops the step; never edit policy.
+The selected route is `reviewed-release-controller`: use only the linked
+`plan_scale`/`apply_scale` operations, each with its printed operation-bound
+approval context. A refusal stops the step; never edit policy or substitute a
+raw mutation command.
 Obtain explicit rollback permissions before starting. Server dry-run does not
 replace permission, application tests or live backend verification.
 
-Lead stage starts are 15 Nov S1 06:00, S2 08:30 and S3 10:30 SGT, with final
-production verification 13:00–17:00 and owner report by 18:00. No writes
-02:00–02:59, including rollback. Existing operation approvals still apply.
-Recheck time immediately before every write; do not
-start an operation whose bounded duration can cross a prohibited window.
+The binding 14 Nov 20:30 [timeline](notes/reviews/2026-11-15/stage-timeline.md)
+plans Batch9 at 14 Nov 21:00 (N=1, shipped defaults, 15-minute checkpoint and
+auto-rollback), S1 approximately 22:30 after checkpoint and #2043 dry-run PASS,
+S2 approximately 15 Nov 00:30 fully soaked before 02:00, and S3 approximately
+05:30–06:00 (quota 64/128 → HPA → S3b once #2038 merges). Log01's Batch9 S1
+baseline is 21:30–22:30. Activity → U1 → U2 begins 03:00; U2 starts before 04:30
+or after actual S3 success. U3 needs `pass_complete` and at least 15 minutes
+from every confirmed S-stage start. M8 uses prod-verifier01's kit 09:00–16:00;
+final report remains due 15 Nov 18:00. Each stage needs observed prior success
+and a fresh lead grant. On failure, roll back compatibly, report and let the
+lead re-slot. No writes 02:00–02:59, including recovery; preserve the controller's
+01:58 margin and never begin a bounded write that can cross the blackout.
 
 ## Release packet and local preparation
 
@@ -53,93 +65,16 @@ for every relevant head, locally built immutable AM/EG/runtime image digests,
 build provenance, additive schema/role receipts, retained-runtime image/protocol
 and exact challenge/lease-duration compatibility floor,
 all local correctness/performance/fault evidence, approved max-owned-Agent value,
-capacity receipts, chosen HPA cadence and per-stage/per-step approvals. No moving
+capacity receipts, fixed HPA cadence and per-stage/per-step approvals. No moving
 tag or invented digest is acceptable. An unresolved item is HOLD.
 
-From the exact approved checkout, use Bash, scoped variables and an owned receipt
-directory. All git/gh commands require active `chronoai-shining`; do not switch.
-The patch generator makes no cluster calls and retains image/configuration fields.
-
-```bash
-set -euo pipefail
-gh auth status --active
-# Stop if the active account is not chronoai-shining.
-: "${manifest_sha:?exact reviewed manifest commit required}"
-: "${release_sha:?exact integrated source commit required}"
-: "${am_image:?reviewed immutable AM reference required}"
-: "${eg_image:?reviewed immutable EG reference required}"
-: "${owned_agents:?reviewed positive per-AM capacity required}"
-: "${scale_receipts:?owned absolute receipt directory required}"
-test "$(git rev-parse HEAD)" = "$manifest_sha"
-python3 - "$release_sha" "$am_image" "$eg_image" "$owned_agents" <<'PY'
-import re, sys
-assert re.fullmatch(r'[0-9a-f]{40}', sys.argv[1]), 'source SHA required'
-assert all(re.fullmatch(r'[^\s]+@sha256:[0-9a-f]{64}', v) for v in sys.argv[2:4]), 'immutable images required'
-assert sys.argv[4].isdigit() and int(sys.argv[4]) > 0, 'owned Agent bound required'
-PY
-mkdir -p "$scale_receipts"
-scale_context=gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke
-scale_namespace=chrono-bot
-k() { kubectl --context "$scale_context" -n "$scale_namespace" "$@"; }
-# The reviewed execution controller also bounds transport/request duration.
-# Reserve that duration before02:00; checking the current hour alone is unsafe.
-outside_blackout() {
-  : "${max_write_seconds:?reviewed dispatch/request bound required}"
-  python3 - "$max_write_seconds" <<'PYTIME'
-import datetime, sys, zoneinfo
-bound = int(sys.argv[1])
-assert 0 < bound < 86400
-now = datetime.datetime.now(zoneinfo.ZoneInfo('Asia/Singapore'))
-end = now + datetime.timedelta(seconds=bound)
-for day in (now.date(), end.date()):
-    start = datetime.datetime.combine(day, datetime.time(2), now.tzinfo)
-    stop = start + datetime.timedelta(hours=1)
-    assert not (now < stop and end >= start), 'write may overlap02:00-02:59'
-PYTIME
-}
-fence_patch() {
-  local service="$1" file="$2" version
-  version="$(k get deployment "$service" -o jsonpath='{.metadata.resourceVersion}')"
-  test -n "$version"
-  python3 - "$file" "$version" <<'PY'
-import json, pathlib, sys
-path = pathlib.Path(sys.argv[1])
-patch = json.loads(path.read_text())
-patch['metadata'] = {'resourceVersion': sys.argv[2]}
-path.write_text(json.dumps(patch, indent=2) + '\n')
-PY
-}
-ruby .github/scripts/cma-scale-manifest-contract.rb
-ruby .github/scripts/cma-scale-manifest-tests.rb
-ruby .github/scripts/cma-scale-manifest-contract.rb --patch api 0 > "$scale_receipts/am-stage.json"
-ruby .github/scripts/cma-scale-manifest-contract.rb --patch cmaeg 0 > "$scale_receipts/eg-stage.json"
-```
-
-Construct the image/switch fields locally, leaving production ConfigMaps intact:
-
-```bash
-python3 - "$scale_receipts" "$am_image" "$eg_image" "$owned_agents" <<'PY'
-import json, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-for role, image in [('am', sys.argv[2]), ('eg', sys.argv[3])]:
-    path = root / (role + '-stage.json')
-    patch = json.loads(path.read_text())
-    c = patch['spec']['template']['spec']['containers'][0]
-    c['image'] = image
-    if role == 'am':
-        c['env'] = [
-            {'name': 'POD_IP', 'valueFrom': {'fieldRef': {'fieldPath': 'status.podIP'}}},
-            {'name': 'CHRONO_AGENT_MANAGER_RELAY_ADDRESS', 'value': 'http://$(POD_IP):8080'},
-            {'name': 'CHRONO_AGENT_MANAGER_REPLICAS_ENABLED', 'value': 'true'},
-            {'name': 'CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS', 'value': sys.argv[4]}]
-    else:
-        c['env'] = [
-            {'name': 'POD_IP', 'valueFrom': {'fieldRef': {'fieldPath': 'status.podIP'}}},
-            {'name': 'CMAEG_REPLICA_ADDRESS', 'value': 'http://$(POD_IP):8090'},
-            {'name': 'CMAEG_REPLICAS_ENABLED', 'value': 'true'}]
-    path.write_text(json.dumps(patch, indent=2) + '\n')
-PY
-```
+From the exact approved checkout, follow the linked common operator setup and
+populate its release input from qualified source/image/capacity evidence. The
+controller creates each narrow plan from fresh state, performs a server dry-run,
+and binds the resulting plan to one approval. Its allowlisted transformations
+preserve unrelated environment, resources and template fields. The former Ruby
+patch renderer and local mutation helpers are not an execution route.
+All git/gh commands require active `chronoai-shining`; do not switch.
 
 EG address and switch names are developer-15's source contract pending exact
 integrated-SHA review. Confirm the existing EG listen port8090 (`CMAEG_LISTEN` and named `http`
@@ -149,13 +84,14 @@ before S2. The advertised address must be a literal Pod IP/direct origin, never
 a Service address. Neither this patch nor drain204 proves sockets/leases handed
 off. Reconcile any final reviewed binary contract change before sealing the packet.
 
-Existing named env entries must have the expected source/type; if a valueFrom
-already exists for an overridden literal, add a reviewed removal in the patch.
-Compare live topology first: production had none at initial inspection. If newer
-constraints exist, merge by topologyKey/whenUnsatisfiable under review instead
-of discarding them. Add the fresh Deployment `metadata.resourceVersion` to each
-final patch immediately before its approved preparation step; failure on concurrent mutation means
-reinspect, not retry with a new version silently. Read back each mutation.
+Existing named env entries must have the expected source/type. Preparation
+merges topology constraints by `(topologyKey, whenUnsatisfiable)`, preserves
+unrelated entries and fields, and replaces only `lifecycle.preStop`, retaining
+`postStart`. Duplicate topology identities or unrecognized lifecycle shapes
+refuse preparation. Saved previous fields retain their exact presence/value for
+pre-stop restoration. The controller tests the fresh Deployment UID, resource
+version, generation and full spec immediately before each guarded patch. Drift
+requires inspection and a new plan; read back every mutation.
 
 Before any write, capture only images, replica/status counts, strategy, resources,
 probes, grace/hooks, topology, named nonsecret replica controls, resourceVersion
@@ -217,13 +153,15 @@ Use at least three baseline repeats, preregister measured noise and confidence
 criteria before N2; report N, errors, missing completions, p50/p95 and p99 only
 when N>=1000. Missing/unstable data is INCONCLUSIVE. Do not generate production
 canary traffic or faults without separately scoped authorization. Analyst02's
-three final-candidate production N1 windows require stable matching service by
-01:30 (windows01:30–03:00, read-only during blackout). This cutover does not add
-an ON1 stage to satisfy that schedule. If unavailable, obtain authorized matching
-ON1/ON2 fixture proof from the verifier or HOLD; do not compress windows or use
-batch4 noise. N1 modeOFF versus N2 modeON is a configuration confounder.
+final-candidate baseline packet must be rebound to the revised timeline.
+Log01 supplies the 60-minute 21:30–22:30 Batch9 N1 baseline and retains the standing
+24h context; the existing 1800-second synthetic READ session is a separate bound
+window. Superseded morning windows do not establish matching coverage. Preserve
+actual counts, failures and missing boundaries without fabricating extra windows
+or compressing the statistical method. N1 modeOFF versus N2 modeON remains a
+configuration confounder, with the existing statistical/policy distinction.
 
-Resource dry-run/read-only commands, within the permitted release route:
+Read-only resource checks, after the linked common operator setup:
 
 ```bash
 k get deployment cma-agent-manager cma-event-gateway \
@@ -231,12 +169,9 @@ k get deployment cma-agent-manager cma-event-gateway \
 k get hpa,pdb,resourcequota,limitrange
 kubectl --context "$scale_context" get apiservice v1beta1.metrics.k8s.io
 k top pod -l 'app.kubernetes.io/name in (cma-agent-manager,cma-event-gateway)' --containers
-k patch deployment cma-agent-manager --type=strategic --patch-file "$scale_receipts/am-stage.json" --dry-run=server -o name
-k patch deployment cma-event-gateway --type=strategic --patch-file "$scale_receipts/eg-stage.json" --dry-run=server -o name
-k apply --dry-run=server -f infra/api/pdb.yaml -o name
-k apply --dry-run=server -f infra/cmaeg/pdb.yaml -o name
 ```
 
+Use each stage's `plan_scale` for server dry-run of its exact guarded operation.
 These dry-runs do not establish membership/capacity. Prove the AM image-contained
 `/usr/local/bin/cma --agent-manager-drain` hook under non-root/read-only filesystem:
 authenticated loopback, idempotent, <=25s, early irreversible readiness withdrawal
@@ -253,8 +188,9 @@ fits the grace; these sums are not measured process/client lifetime bounds.
 ## Controller and route packet: prepare before the outage
 
 Retain each canonical Deployment UID/selector, four Service aliases, Gateway,
-HTTPRoute, NEG identity and backend policies. No routing, affinity, HPA target,
-backend drain or health-check change is proposed. Include exact Route parents,
+HTTPRoute, NEG identity and backend policies. No routing, affinity,
+backend drain or health-check change is proposed. The only temporary HPA-target
+exception is the separately granted S3b exercise linked below. Include exact Route parents,
 backendRefs/ports, Service selectors/targetPorts, endpoint/NEG membership and
 backend health source in the lead-approved packet. Console/legacy-console are
 reachable EG routes. GCP backendServices list permission was denied to the
@@ -285,33 +221,16 @@ can reappear and no candidate starts before the no-legacy-effects gate. API
 server dry-run alone cannot prove this. Capture only narrow nonsecret fields;
 never persist a whole raw Deployment/Secret to construct a template.
 
-The following are **proposed payloads**, pending lead route/order approval and
-exact-version architect review with actual-controller evidence. The execution
-controller must bind UID/resourceVersion/expected spec, stage grants, blackout
-duration and rollback at every write. They are not an approved unattended script.
+Use the linked S1/S2 pause and prepare operations. Before pause, the controller
+saves only the original Deployment/ReplicaSet/Pod UIDs, template identity and
+container IDs, restart counts, start times and image IDs. It rechecks that
+incarnation before pause and before pre-stop restoration, including after the
+approval call. A same-name recreated Deployment, replacement RS/Pod or restarted
+container refuses the pre-stop branch. Old plans without the saved identity
+cannot be used; never capture a replacement process as the original.
 
-```bash
-: "${stage_service:?cma-agent-manager or cma-event-gateway}"
-: "${stage_patch:?reviewed am-stage.json or eg-stage.json}"
-case "$stage_service" in cma-agent-manager|cma-event-gateway) ;; *) exit 1 ;; esac
-# HPA absent, legacy desired1/Ready1; capture exact rollback and parent UID first.
-outside_blackout
-k patch deployment "$stage_service" --type=merge -p '{"spec":{"paused":true}}'
-# Use a preparation copy: keep replicas1 while installing the future template.
-python3 - "$stage_patch" "$scale_receipts/prepare.json" <<'PYPREP'
-import json, pathlib, sys
-patch = json.loads(pathlib.Path(sys.argv[1]).read_text())
-assert patch['spec']['replicas'] == 0
-patch['spec']['replicas'] = 1
-pathlib.Path(sys.argv[2]).write_text(json.dumps(patch) + '\n')
-PYPREP
-fence_patch "$stage_service" "$scale_receipts/prepare.json"
-k patch deployment "$stage_service" --type=strategic --patch-file "$scale_receipts/prepare.json" --dry-run=server -o name
-outside_blackout
-k patch deployment "$stage_service" --type=strategic --patch-file "$scale_receipts/prepare.json" -o name
-# STOP: prove paused controller holds only old1; no new pod or shared mode change.
-# Final pod-template/cache/node/rollback receipts ready; no prepared RS0 claim.
-```
+Preparation must leave only the original serving process, the controller paused
+at one, and the new template inactive. It does not establish prepared RS0.
 
 ## S1/S2: proposed controller-owned old1->0, new0->2
 
@@ -319,26 +238,15 @@ S1 requires the complete retained-receiver exact image/challenge-duration floor
 and negative tests **before** zeroing AM; EG stays at its proven state. S2 needs
 S1 PASS plus every enabled provider/partition/console path's custody, shared
 session/CSRF/refresh/logout and close-before-release proof. Both require explicit
-owner outage approval (proposed03:15/04:15), source/image/cache/node readiness and
+owner outage approval for the current stage window, source/image/cache/node readiness and
 an exact compatible recovery branch. The pending order exception above must be
 approved first; a zero-sized RS contains no running warm application.
 
-```bash
-# Individually approved payloads, with fresh controller identity/spec fences.
-outside_blackout
-k scale "deployment/$stage_service" --current-replicas=1 --replicas=0
-# Observe old RS0 and all old processes/sockets stopped or safely revoked/expired.
-# Pod deletion alone is not proof of no legacy effects; never force-delete.
-# Only the qualified no-legacy-effects receipt permits the next operation.
-outside_blackout
-k patch deployment "$stage_service" --type=merge -p '{"spec":{"paused":false}}'
-# Let the Deployment controller create newRS0, then verify exact owned template
-# and both old/new desired0; no legacy ReplicaSet may restart.
-outside_blackout
-k scale "deployment/$stage_service" --current-replicas=0 --replicas=2
-# Observe both exact-image pods independently serving, membership, Ready,
-# canonical endpoints/NEG/backend health, distinct hosts and owner fencing.
-```
+Follow the linked S1/S2 guarded stop, unpause-zero and start-two operations.
+After old1→0, prove all legacy processes/sockets stopped or their authority was
+safely revoked/expired. Pod deletion alone does not prove this. Only that proof
+permits unpause at zero and exact controller-owned RS0 verification, then start
+at two. Never force-delete or manufacture an RS to shorten the interval.
 
 Measure from loss of the last healthy legacy backend to restored successful
 user service; record both-new-pods-ready separately. Target **<120s outage**.
@@ -348,16 +256,9 @@ An old process that cannot safely stop in time is a preflight failure; deadlines
 never shorten leases/grace. Once new authority has been used, normal recovery
 retains modeON and compatible image/receiver floor. No automatic legacy restart.
 
-After **both** new pods/backends qualify, apply only that stage's PDB:
-
-```bash
-: "${stage_pdb:?infra/api/pdb.yaml or infra/cmaeg/pdb.yaml}"
-k apply --dry-run=server -f "$stage_pdb" -o name
-outside_blackout
-k apply -f "$stage_pdb" -o name
-k get deployment "$stage_service" -o custom-columns=DESIRED:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
-k get pdb "$stage_service"
-```
+After **both** new pods/backends qualify, use that stage's guarded `s1-pdb` or
+`s2-pdb` creation operation. It refuses an existing same-name object and verifies
+the stable pair before creation; reconcile a name conflict before proceeding.
 
 Require readiness false before joined/renewed membership and immediately on drain;
 liveness is separate. Each replica must independently serve; an idle EG member
@@ -377,29 +278,28 @@ must be absent; otherwise capture/review its exact ownership before proceeding.
 The release packet binds complete uncensored successful cohorts and the largest
 qualified p95 from drain initiation through all-owner handoff AND successor
 service. Missing timing HOLDs S3; p95 is never the hard client lifetime bound.
-Use period120 if p95<=90s, else ceil(p95+30); values>1800 HOLD, never clamp.
-Render and review both exact candidate specs, even when the initial120s remains:
+Scale-down is fixed at **one Pod per 120 seconds**, with **300 seconds** of
+stabilization. Unknown p95 or p95>90s holds S3; never widen the interval. Both
+templates and every actual Pod must have **760 seconds** of termination grace,
+including preStop, before S3. Grace is not a measured hard process/socket bound.
 
-```bash
-: "${qualified_handoff_p95_seconds:?reviewed complete timing cohort required}"
-ruby .github/scripts/cma-scale-manifest-contract.rb --hpa api "$qualified_handoff_p95_seconds" > "$scale_receipts/am-hpa.json"
-ruby .github/scripts/cma-scale-manifest-contract.rb --hpa cmaeg "$qualified_handoff_p95_seconds" > "$scale_receipts/eg-hpa.json"
-k apply --dry-run=server -f "$scale_receipts/am-hpa.json" -o name
-k apply --dry-run=server -f "$scale_receipts/eg-hpa.json" -o name
-outside_blackout
-k apply -f "$scale_receipts/am-hpa.json" -o name
-k get hpa cma-agent-manager -o jsonpath='{.spec}{"\n"}{.status}{"\n"}'
-# Require usable fresh metrics/conditions and stable idle behavior before EG.
-outside_blackout
-k apply -f "$scale_receipts/eg-hpa.json" -o name
-k get hpa cma-event-gateway -o jsonpath='{.spec}{"\n"}{.status}{"\n"}'
-```
+Use the guarded S3 quota raise (CPU requests40→64, limits80→128 with saved
+before-spec), then the separate AM/EG HPA creation plans and approvals in the
+linked S3 runbook. Each HPA is min2/max5, up0 Max(+2,+100%)/60s, down300 -1/120s.
+Creation requires absence, fresh metrics/capacity qualification and stable
+pairs; server dry-run and quota admission alone do not prove runtime capacity.
+
+The lead-selected [S3b scale/drain exercise](notes/reviews/2026-11-15/s3b-execution.md)
+uses existing real traffic and sequential guarded AM/EG target lower/restore
+operations. It changes no Deployment replica count directly and keeps the
+original scaling policy. Report observed transition/drain evidence separately
+from useful-load/max-five qualification; the exercise cannot supply those claims.
 
 Using separately approved load, observe real metric-triggered2→4→5 for each
 (Max of+2/+100% per60s, up stabilization0),
 then together after capacity proof. A manual replicas patch does not prove HPA.
 Independent correctness also covers N3. Reduce only owned load; observe the
-full300s down stabilization and -1 per qualified period (initial120s),
+full300s down stabilization and exactly -1 per120s,
 all Ready/terminating/live-client counts, successful early drain and handoff,
 until stable two. Demonstrate no missing-metric downscale in isolated tests.
 Start the final30-minute soak only after actual terminating processes are gone.
@@ -478,51 +378,24 @@ and pages the lead; reconcile within the approved observation window or invoke
 compatible recovery. Continue assigned24h post-go-live monitoring with these
 triggers even beyond15Nov13:00.
 
-**S3 rollback first freezes HPA, then removes only S3-created objects:**
+**S3 rollback uses only the linked guarded freeze/delete/descent operations.**
+Freeze both directions of each exact stage-created HPA, then remove only those
+UID-bound objects using the saved creation results. Verify HPA absence and
+stable desired counts before any Deployment descent; an in-flight controller
+write may settle late. Each operation needs its own plan and approval.
 
-```bash
-outside_blackout
-k patch hpa cma-agent-manager --type=merge -p '{"spec":{"behavior":{"scaleUp":{"selectPolicy":"Disabled"},"scaleDown":{"selectPolicy":"Disabled"}}}}'
-outside_blackout
-k patch hpa cma-event-gateway --type=merge -p '{"spec":{"behavior":{"scaleUp":{"selectPolicy":"Disabled"},"scaleDown":{"selectPolicy":"Disabled"}}}}'
-# Read back both Disabled policies; each delete needs its own approval.
-# Reviewed tool supplies canonical URI and DeleteOptions with UID/resourceVersion
-# of the exact S3-created HPA, after a server dryRun delete. Name alone is unsafe.
-: "${am_hpa_delete_uri:?reviewed canonical URI required}"
-: "${am_hpa_delete_options:?reviewed UID/RV DeleteOptions required}"
-: "${eg_hpa_delete_uri:?reviewed canonical URI required}"
-: "${eg_hpa_delete_options:?reviewed UID/RV DeleteOptions required}"
-outside_blackout
-k delete --raw "$am_hpa_delete_uri" -f "$am_hpa_delete_options"
-outside_blackout
-k delete --raw "$eg_hpa_delete_uri" -f "$eg_hpa_delete_options"
-# Verify absence and stable desired counts; an in-flight controller write may settle late.
-```
-
-Keep a safe serving count for current demand. Descend **one at a time**, separately
-approved, with expected current replicas to detect a race:
-
-```bash
-: "${rollback_service:?canonical AM or EG deployment required}"
-: "${current_replicas:?fresh observed serving count required}"
-case "$rollback_service" in cma-agent-manager|cma-event-gateway) ;; *) exit 1 ;; esac
-test "$current_replicas" -gt 2
-# Reviewed controller MUST freshly recheck Ready/Available/observedGeneration,
-# zero previous terminations and survivor capacity immediately before dispatch.
-# A Deployment spec/replica fence alone does not fence pod/status changes.
-next_replicas=$((current_replicas - 1))
-outside_blackout
-k scale "deployment/$rollback_service" --current-replicas="$current_replicas" --replicas="$next_replicas"
-k rollout status "deployment/$rollback_service" --timeout=35m
-# Independently wait until ALL departing processes finish; rollout status alone is insufficient.
-# Verify survivor traffic/ownership and fresh capacity before the next approved decrement.
-```
+Keep a safe serving count for current demand. Descend one at a time through
+`s3-am-descend` / `s3-eg-descend`, with fresh identity/spec guards, survivor
+capacity and Ready/Available/observed-generation checks. Wait for every departing
+process to finish and verify survivor traffic/ownership before the next
+separately approved decrement. Rollout status alone does not prove termination.
 
 Stop at fixed two with S1/S2 switches/images/PDBs retained, or retain a higher safe
 count if demand requires it. Observe30 minutes of recovered performance. For S1
-or S2 failure at two, the approved safe rollback is `scale --current-replicas=2
---replicas=1` for that service after HPA absence is proven, with actual drain and
-survivor proof; PDB minAvailable1 remains. Keep AM ownership ON and a tested
+or S2 failure at two, use the corresponding guarded healthy recovery branch
+(`s1-one` / `s2-one`) only after HPA absence, actual drain and survivor capacity
+are proven; PDB minAvailable1 remains. Unsafe service uses that stage's approved
+quiesce/compatible-recovery branch. Keep AM ownership ON and a tested
 protocol-compatible image. EG image recovery is **forward-fix-only** unless an
 exact older digest has explicit retained-record compatibility proof/approval.
 

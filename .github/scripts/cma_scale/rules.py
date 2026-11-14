@@ -69,6 +69,21 @@ def validate_operation(op):
  if op['kind']=='HorizontalPodAutoscaler':require(op['stage']=='S3','HPA_only_S3')
  if op['action']=='create':require(op['kind'] in ('PodDisruptionBudget','HorizontalPodAutoscaler'),'create_scope')
 
+def merge_topology(existing, desired):
+ def keyed(rows):
+  require(isinstance(rows,list),'topology_list_required')
+  result={}
+  for row in rows:
+   require(isinstance(row,dict) and isinstance(row.get('topologyKey'),str) and row['topologyKey']
+           and row.get('whenUnsatisfiable') in ('DoNotSchedule','ScheduleAnyway'),'topology_identity_required')
+   key=(row['topologyKey'],row['whenUnsatisfiable'])
+   require(key not in result,'duplicate_topology_identity')
+   result[key]=copy.deepcopy(row)
+  return result
+ merged=keyed(existing)
+ for key,row in keyed(desired).items():merged[key]={**merged.get(key,{}),**row}
+ return list(merged.values())
+
 def transform(obj,op):
  result=copy.deepcopy(obj);old=[];s=result['spec']
  if op['kind']=='ResourceQuota':
@@ -112,11 +127,21 @@ def transform(obj,op):
    old.append({'path':prefix+[key],'present':key in target,'value':copy.deepcopy(target.get(key))})
    target[key]=copy.deepcopy(value)
  set_keys(s,changes.get('deployment',{}),SPEC_KEYS,['spec'])
- ps=s['template']['spec'];set_keys(ps,changes.get('pod',{}),POD_KEYS,['spec','template','spec'])
+ # DeploymentSpec.paused is omitted by the API when false; match its wire form.
+ if changes.get('deployment',{}).get('paused') is False:s.pop('paused',None)
+ ps=s['template']['spec'];pv=copy.deepcopy(changes.get('pod',{}))
+ if 'topologySpreadConstraints' in pv:
+  pv['topologySpreadConstraints']=merge_topology(ps.get('topologySpreadConstraints',[]),pv['topologySpreadConstraints'])
+ set_keys(ps,pv,POD_KEYS,['spec','template','spec'])
  indices=[i for i,c in enumerate(ps['containers']) if c['name']==TARGETS[op['name']]]
  require(len(indices)==1,'container_not_unique');i=indices[0];c=ps['containers'][i]
- cv=changes.get('container',{})
+ cv=copy.deepcopy(changes.get('container',{}))
  if 'lifecycle' in cv and op['name']=='cma-event-gateway':require(cv['lifecycle']=={'preStop':{'sleep':{'seconds':30}}},'EG_exec_hook_prohibited')
+ if 'lifecycle' in cv:
+  prior=c.get('lifecycle',{})
+  require(isinstance(prior,dict) and set(prior)<={'preStop','postStart'}
+          and isinstance(cv['lifecycle'],dict) and set(cv['lifecycle'])=={'preStop'},'lifecycle_preStop_only')
+  cv['lifecycle']={**prior,**cv['lifecycle']}
  if 'image' in cv:
   image_repo='cma-api' if op['name']=='cma-agent-manager' else 'cma-cmaeg'
   require(re.fullmatch(r'us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/'+image_repo+r'@sha256:[0-9a-f]{64}',cv['image']) is not None,'image_not_pinned_or_wrong_service')
@@ -166,7 +191,7 @@ def deployment_checkpoint(obj,op):
  if op.get('requires_zero'):require(s.get('replicas')==0,'recovery_requires_zero')
  flags=any(e['name'].endswith('REPLICAS_ENABLED') for e in changes.get('env',[]))
  if phase=='prepare-template':require(op.get('a2_prepare_paused_template') is True and s.get('paused') is True and s.get('replicas')==1,'prepare_requires_paused_one')
- if phase=='pause-legacy':require(s.get('replicas')==1,'pause_requires_legacy_one')
+ if phase=='pause-legacy':require(s.get('replicas')==1 and not s.get('paused',False),'pause_requires_unpaused_legacy_one')
  if phase=='stop-legacy':require(s.get('paused') is True and s.get('replicas')==1,'stop_requires_paused_one')
  if phase=='unpause-zero':require(s.get('paused') is True and s.get('replicas')==0,'unpause_requires_paused_zero')
  need_zero=(flags and not op.get('a2_prepare_paused_template')) or phase=='unpause-zero' or op.get('a2_cutover_start') is True

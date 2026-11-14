@@ -1,4 +1,4 @@
-# S3 — automatic scaling, 15 November 10:30 SGT
+# S3 — automatic scaling, 15 November approximately 05:30–06:00 SGT
 
 Use [common setup/safety/acceptance](deployment-runbooks.md). Require signed
 S1/S2 PASS; both fixed2, zero terminating processes/clients, real backends and
@@ -7,6 +7,14 @@ K12–K15/K25 require actual local scale/kill, secure drain, ≤30s same-work re
 complete handoff p95, separate hard effective lifetime G, all-process/per-server
 capacity with≥30% Mongo headroom, provider/node/quota budgets and calibrated
 useful CPU response. Configured grace760 does not prove G or measured p95.
+
+The [20:30 timeline revision](stage-timeline.md) orders CPU quota 64/128, HPA
+and the separately granted S3b exercise once #2038 is merged. Bind the final
+merged controller retaining #2043; the S3b source GO alone is not a merge or
+execution grant. Complete required drain/observation/soak before reporting S3
+success. If early U2 missed 04:30, engineer02 starts it only after that actual
+success and a fresh grant. Failures invoke approved rollback, reporting and lead
+re-slotting. U3 must remain at least 15 minutes from the confirmed S3 start.
 
 Keep min2/max5, AM60% of4CPU, EG200% of250m. Up: stabilization0,
 Max(+2pods,+100%)/60s. Down: stabilization 300s, **Min(−1 Pod)/120s**.
@@ -39,8 +47,10 @@ k get deployment cma-agent-manager cma-event-gateway \
 
 Verify PodMetrics timestamp/window freshness and actual requests, not only API
 availability. AM target is2.4cores/pod; EG500m/pod. Missing metrics, uncalibrated
-useful response or insufficient capacity is HOLD. Do not lower targets merely
-to manufacture a scale event. Use the existing owner observer for periodic
+useful response or insufficient capacity is HOLD for that qualification. The
+lead-selected [S3b scale/drain exercise](s3b-execution.md) temporarily lowers
+one target through guarded controller operations; it does not establish
+useful-load or max-five performance qualification. Use the existing owner observer for periodic
 metrics/Events/currentMetrics/desired/Ready/terminating capture.
 
 ## S3 pre-step — raise CPU quota after lead approval
@@ -154,7 +164,22 @@ If either creation fails/has UNKNOWN outcome, reconcile the named object first.
 If only one HPA exists, recover only the actual created UID; never invent a
 creation result or delete an object owned by another operation.
 
-## Owned useful load and actual automatic return
+## S3b — existing-traffic scale and drain exercise
+
+Lead 14 November 19:33 selected debugger04's sequential AM-then-EG exercise.
+Follow [the S3b operator commands](s3b-execution.md) after HPA creation and the
+stable-pair baseline. Each temporary target and exact restore uses the merged
+controller with a separate operation grant and UID/RV/generation/full-spec tests;
+only the CPU target leaf changes. No synthetic writes or direct replica patches.
+Observe real third-Pod traffic, restore the original target, wait for actual
+automatic return and zero terminations, then ten minutes stable before EG.
+Keep down300 -1/120 and actual/template grace760. Missing traffic/drain joins
+remain unresolved. The draft's raw patch commands are superseded by this route.
+
+The separate useful-load qualification below remains scoped to its own profile
+and lead grant; S3b does not authorize it or turn its unqualified results into PASS.
+
+## Separately qualified useful load and actual automatic return
 
 Load owner: debugger-04/developer-17, with developer-16 metrics calibration.
 Developer-16 reports8 network-free safety regressions PASS after debugger-04's
@@ -210,7 +235,8 @@ Once both actually return2, with no terminating process/client and canonical
 service/membership stable, declare S/E for a fresh30-minute final soak. Use the
 common acceptance policy and preserve transition failures separately. The
 actual stage packet must include replaced/restarted/terminating identities.
-M8 verification13:00–17:00 and provider24-hour monitoring remain separate.
+M8 verification09:00–16:00 uses prod-verifier01's kit; final report is due18:00.
+Provider24-hour monitoring remains separate.
 
 ## Recovery — freeze, delete exact HPAs, descend serially
 
@@ -282,4 +308,5 @@ combined process budget that passes namespace quota, per-node placement, actual
 memory and all existing consumer/socket limits. If this does not fit, retain
 fixed two and escalate the specific capacity remedy for lead approval;
 never treat maxReplicas 5 as a total live-process cap. Repeated dry-runs do not
-reserve quota. Keep CPU targets and stage schedule unchanged by this finding.
+reserve quota. This capacity finding does not authorize target/schedule changes;
+the only selected temporary target exception is the separately approved S3b leg.
