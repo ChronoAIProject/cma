@@ -8,8 +8,6 @@ use tokio::time::{timeout, Instant};
 
 use super::{
     identity::{self, VerifiedSubject},
-    identity_fallback::CredentialPurpose,
-    permissions::PermissionEvidence,
     verification_error::ProviderVerificationError as Error,
     AuthState, ProviderMetadata,
 };
@@ -22,7 +20,6 @@ pub(super) async fn verify(
     auth: &AuthState,
     metadata: Option<&ProviderMetadata>,
     token: &str,
-    purpose: CredentialPurpose,
     expiry: Option<SystemTime>,
     expected_subject: Option<&str>,
     budget: Duration,
@@ -43,14 +40,36 @@ pub(super) async fn verify(
                 error,
             )
         })?;
-    let key = auth.identity_store.key(purpose, token);
-    let epoch = auth.identity_store.epoch();
+    let live_key = auth.identity_store.key(token);
+    let token_epoch = auth.identity_store.token_epoch(&live_key).ok_or_else(|| {
+        let error = Error::Unavailable("identity verification fence capacity exhausted".into());
+        record(
+            Endpoint::Verification,
+            Stage::Admission,
+            Reason::Capacity,
+            None,
+            &error,
+        );
+        error
+    })?;
+    let stop = Instant::now() + budget.min(DEADLINE);
     let result = timeout(budget.min(DEADLINE), async {
         let mut last = Error::Transient("deadline");
         for attempt in 0..ATTEMPTS {
             if attempt > 0 {
                 let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]) % 31;
-                tokio::time::sleep(Duration::from_millis(40 * (1 << (attempt - 1)) + jitter)).await;
+                let backoff = Duration::from_millis(40 * (1 << (attempt - 1)) + jitter);
+                let delay = match &last {
+                    Error::RateLimited(hint) => hint.remaining().max(backoff),
+                    _ => backoff,
+                };
+                // Reserve a complete attempt inside the caller budget. Starting
+                // a partial attempt at its edge can lose the typed throttle to
+                // the outer caller deadline before projecting Retry-After.
+                if delay.saturating_add(ATTEMPT) >= stop.saturating_duration_since(Instant::now()) {
+                    return Err(last);
+                }
+                tokio::time::sleep(delay).await;
             }
             let started = Instant::now();
             let deadline = started + ATTEMPT;
@@ -68,7 +87,7 @@ pub(super) async fn verify(
             }
             .await;
             match result {
-                Err(error @ Error::Transient(_)) => {
+                Err(error @ (Error::Transient(_) | Error::RateLimited(_))) => {
                     tracing::warn!(
                         event = "identity_verification_retry",
                         attempt = attempt + 1,
@@ -96,23 +115,28 @@ pub(super) async fn verify(
             &error,
         );
         Err(error)
-    })
-    .map(Arc::new);
-    match &result {
-        Ok(evidence) if matches!(evidence.permissions, PermissionEvidence::Active(_)) => {
-            let expiry = match (expiry, evidence.token_expires_at) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
-            if let Some(expiry) = expiry {
-                auth.identity_store
-                    .remember(key, &epoch, evidence.clone(), expiry);
-            } else {
-                auth.identity_store.invalidate(&key);
-            }
+    });
+    let result = match result {
+        Ok(mut evidence) => {
+            let completed = auth
+                .identity_store
+                .finish_verification(&live_key, &token_epoch)
+                .ok_or_else(|| {
+                    Error::Unavailable("identity evidence invalidated during verification".into())
+                })?;
+            let lifetime = [expiry, evidence.token_expires_at, evidence.api_expires_at]
+                .into_iter()
+                .flatten()
+                .min();
+            evidence.verification = Some(super::identity_lifetime::VerificationLifetime::new(
+                live_key, completed, lifetime,
+            )?);
+            Ok(Arc::new(evidence))
         }
-        Err(Error::Transient(_)) => {}
-        _ => auth.identity_store.invalidate_token(token),
+        Err(error) => Err(error),
+    };
+    if matches!(&result, Err(Error::Rejected(_) | Error::Unavailable(_))) {
+        auth.identity_store.invalidate_token(token);
     }
     result
 }
