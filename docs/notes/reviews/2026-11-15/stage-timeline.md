@@ -73,7 +73,7 @@ state segmentation never resets the stage's cumulative failures or denominator.
 S1's existing real-production-traffic/read-only policy, N<20 same-observation
 extension and disclosed low-N suite-plus-zero-error acceptance remain unchanged.
 Prod-verifier02 rebinds the owned READ window to the revised stage packet;
-the existing NyxID slot and pacing remain. The1800-second synthetic read session
+the existing NyxID slot and pacing remain. The 1800-second synthetic read session
 never extends/restarts automatically and is distinct from the 60-minute log baseline.
 Any actual safety/accepted-work/absolute failure still triggers the immediate
 log01→engineer01 incident/ACK route and the approved compatible recovery.

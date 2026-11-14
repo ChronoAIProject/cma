@@ -81,7 +81,7 @@ Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; 
 | Up | stabilization0; Max of +2 pods/60s and +100%/60s |
 | Down | stabilization300s; Min, −1 Pod/120s fixed; handoff p95>90s or missing/censored timing ⇒ HOLD, never change cadence silently |
 
-Use the separately approved S3b exercise after #2038 merges to prove useful **automatic** up/down for each service within capacity. Claim exercised5 only if observed5; configured ceiling capacity remains K14, useful automatic up/down remains K25. Manual replica patches do not satisfy K25. Remove only owned load, observe full down stabilization/cadence, handoff and actual exits to2. Record transitions, failures and peak clients; a PDB does not cap HPA terminations.
+Run the separately approved S3b exercise after #2038 merges for observed automatic scale/drain evidence. It does not establish useful-load calibration or max-five performance acceptance; those qualifications remain separate. Claim exercised5 only if observed5; configured ceiling capacity remains K14, useful automatic up/down remains K25. Manual replica patches do not satisfy K25. Remove only owned load, observe full down stabilization/cadence, handoff and actual exits to2. Record transitions, failures and peak clients; a PDB does not cap HPA terminations.
 
 **30-minute final soak — K02–K21/K24/K25**
 
