@@ -63,19 +63,33 @@ async fn exercise(a: &MongoSessionBackend, b: &MongoSessionBackend, db: &mongodb
     assert_eq!(original.expires_ms - original.created_ms, 600_000);
     assert_eq!(original.access_expires_ms - original.created_ms, 90_000);
     let (left, right) = tokio::join!(
-        a.compare_exchange(&sid, &original.payload, vec![3], Some(120_000)),
-        b.compare_exchange(&sid, &original.payload, vec![4], Some(120_000))
+        a.compare_exchange(
+            &sid,
+            &original.payload,
+            vec![3],
+            Some(original.now_ms + 120_000)
+        ),
+        b.compare_exchange(
+            &sid,
+            &original.payload,
+            vec![4],
+            Some(original.now_ms + 120_000)
+        )
     );
     assert_eq!(
         usize::from(left.unwrap().is_some()) + usize::from(right.unwrap().is_some()),
         1
     );
     let retained = a.load(&sid, false).await.unwrap().unwrap();
+    assert_eq!(retained.access_expires_ms, original.now_ms + 120_000);
+    assert!(a.admit(&sid, &retained.payload).await.unwrap());
+    assert!(!b.admit(&sid, &original.payload).await.unwrap());
     assert_eq!(
         b.revoke(&sid).await.unwrap(),
         Some(retained.payload.clone())
     );
     assert!(a.load(&sid, true).await.unwrap().is_none());
+    assert!(!a.admit(&sid, &retained.payload).await.unwrap());
     assert!(a
         .compare_exchange(&sid, &retained.payload, vec![5], None)
         .await
@@ -107,6 +121,16 @@ async fn exercise(a: &MongoSessionBackend, b: &MongoSessionBackend, db: &mongodb
         .unwrap()
         .is_none());
     assert!(b.load(&expired, true).await.unwrap().is_none());
+
+    let near_expiry = id();
+    a.create(&near_expiry, &subject, vec![61], 31_000, &settings)
+        .await
+        .unwrap();
+    // A live session with a token whose useful lifetime cannot cover the
+    // bounded acknowledgement delay is not an admitted request.
+    assert!(b.load(&near_expiry, false).await.unwrap().is_some());
+    assert!(!b.admit(&near_expiry, &[61]).await.unwrap());
+    a.revoke(&near_expiry).await.unwrap();
 
     let cap = SessionLimits {
         max: 2,
