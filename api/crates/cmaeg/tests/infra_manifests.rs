@@ -360,6 +360,15 @@ fn the_runtime_image_ships_the_self_tested_ffmpeg_in_the_documented_dir() {
 }
 
 #[test]
+fn release_build_qualifies_the_allocator_in_the_shipped_executable() {
+    let build = stage(DOCKERFILE, "build");
+    assert!(build.contains(&"RUN --network=none /out/cmaeg --allocator-self-test"));
+    assert!(
+        stage(DOCKERFILE, "runtime").contains(&"COPY --from=build /out/cmaeg /usr/local/bin/cmaeg")
+    );
+}
+
+#[test]
 fn the_ffmpeg_build_is_hash_pinned_and_lgpl_only() {
     let build = stage(DOCKERFILE, "ffmpeg-build");
     assert!(
