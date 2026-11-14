@@ -7,6 +7,12 @@ capacity, no HPAs or other rollout writer, EG proven healthy at1, canonical
 backend observer, qualified <120s no-overlap variant and both recovery branches.
 No final image, timing proof or production approval is supplied by this file.
 
+The lead has approved read-only cutover observations. Use the agreed
+[S1 observer commands and timing bounds](s1-observation.md). Canonical
+Service/EndpointSlice/NEG annotation mapping is observed; successful Compute
+health access/resource mapping and the cutover-specific user-service invocation
+remain technical HOLDs. Generic read-only approval need not be requested again.
+
 Bind the actual selected images from the completed local release input:
 
 ```bash
@@ -44,6 +50,9 @@ python3 -B "$scale_tools/observe.py" check --service am --count 1 \
 ```
 
 3. Confirm the independent service observer and recovery operator are ready.
+Require successful mapped Compute reads and the bound cutover probe; refresh
+the old Pod UID/restart/image cohort after M4. Follow the observer's query
+brackets and conservative deadline, not a first-absent timestamp.
 Stop legacy1→0. This is the last safe boundary for branch A. Observe actual old
 backend withdrawal; start the strict clock from that observation. All previous
 process, socket and effect authority must end or be safely revoked/expired.
@@ -65,8 +74,9 @@ plan_scale s1-unpause s1-unpause
 apply_scale s1-unpause "${s1_unpause_approval:?exact unpause-zero grant}"
 ```
 
-5. Start0→2 through the A2 cutover exception. Observe first successful user
-service before120s; also record when both are Ready/Available, serving through
+5. Start0→2 through the A2 cutover exception. Observe qualified full user-service
+completion with a defensible outage upper bound strictly below120s; also record
+when both are Ready/Available, serving through
 canonical backends, independent members and on distinct hosts. Readiness alone
 does not end the outage. Branch C handles failed start; branch B requires two
 healthy owners and fresh survivor capacity.
