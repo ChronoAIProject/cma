@@ -39,11 +39,16 @@ spec:
           # API image that contains these CLI modes before creating the Job.
           image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36
           imagePullPolicy: IfNotPresent
-          command: ["/usr/local/bin/cma", "--activity-index-size"]
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              /usr/local/bin/cma --index-preflight activity-first-page
+              exec /usr/local/bin/cma --activity-index-size
           envFrom:
-            # These are the same references as the serving API. Secret values
-            # remain in the cluster and are never copied into this manifest or
-            # printed by the CLI.
+            # Rendering MUST copy the live cma-agent-manager api container's
+            # envFrom and env in memory, preserving Secret references exactly.
+            # These checked-in references are placeholders, never read Secrets.
+            # Append only the non-secret operation controls below, if present.
             - configMapRef:
                 name: cma-agent-manager
             - secretRef:

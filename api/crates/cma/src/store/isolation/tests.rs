@@ -318,7 +318,7 @@ fn activity_operation_roles_require_their_explicit_additional_grants() {
 }
 
 #[test]
-fn activity_operation_authority_rejects_activity_drop_index_in_shared_mode() {
+fn activity_operation_authority_accepts_app_user_drop_index_in_shared_mode() {
     let mut grants = activity_index_job_role("cma")
         .get_array("privileges")
         .unwrap()
@@ -337,7 +337,7 @@ fn activity_operation_authority_rejects_activity_drop_index_in_shared_mode() {
         cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema,
         true,
     )
-    .is_err());
+    .is_ok());
 }
 
 fn progress_grant(database: &str) -> Document {

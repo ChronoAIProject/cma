@@ -5,71 +5,93 @@ use mongodb::bson::{doc, Document};
 mod candidates;
 
 #[test]
-fn query_operation_roles_preserve_runtime_and_keep_abort_separate() {
-    let status = |privileges| doc! {"authInfo":{"authenticatedUsers":[{"user":"fixture","db":"fixture"}],"authenticatedUserPrivileges":privileges}};
-    let mut grants = crate::store::isolation::activity_index_job_role("fixture")
-        .get_array("privileges")
-        .unwrap()
-        .clone();
-    let base = status(grants.clone());
-    for mode in [
+fn app_user_preflight_proves_build_and_abort_without_exposing_grants() {
+    let mode = MongoAuthorityMode::SharedSchema;
+    let query = catalog::activity();
+    let status = |grants| doc! {"authInfo":{"authenticatedUsers":[{"user":"private-user-canary","db":"fixture"}],"authenticatedUserPrivileges":grants}};
+    let actions = vec![
+        "find",
+        "insert",
+        "update",
+        "remove",
+        "createCollection",
+        "createIndex",
+        "listIndexes",
+        "collMod",
+        "collStats",
+        "dropIndex",
+        "listCollections",
+    ];
+    let grant = |actions| doc! {"resource":{"db":"fixture","collection":""},"actions":actions};
+    let full = status(vec![grant(actions.clone())]);
+    let good = authority::preflight_report(&full, "fixture", mode, std::slice::from_ref(&query));
+    assert_eq!(good["preflight_passed"], true);
+    assert_eq!(good["checks"][0]["create_index"], true);
+    assert_eq!(good["checks"][0]["drop_index"], true);
+    assert!(!good.to_string().contains("private-user-canary"));
+    assert!(authority::verify_effective(&full, "fixture", mode, &["activity"], true).is_ok());
+    // Explicit shared-schema admission does not weaken the isolated runtime contract.
+    assert!(authority::verify_effective(
+        &full,
+        "fixture",
         MongoAuthorityMode::Isolated,
-        MongoAuthorityMode::SharedSchema,
+        &["activity"],
+        true
+    )
+    .is_err());
+    for missing in ["createIndex", "dropIndex", "collStats", "insert"] {
+        let narrowed = actions
+            .iter()
+            .copied()
+            .filter(|a| *a != missing)
+            .collect::<Vec<_>>();
+        let denied = status(vec![grant(narrowed)]);
+        let output =
+            authority::preflight_report(&denied, "fixture", mode, std::slice::from_ref(&query));
+        assert_eq!(output["preflight_passed"], false);
+        assert_eq!(
+            output["blocked_collections"],
+            serde_json::json!(["activity"])
+        );
+        assert!(
+            authority::verify_effective(&denied, "fixture", mode, &["activity"], true).is_err()
+        );
+    }
+    let list_only = status(vec![grant(vec!["listIndexes"])]);
+    let output = authority::preflight_report(&list_only, "fixture", mode, &[query]);
+    assert_eq!(output["checks"][0]["create_index"], false);
+    assert_eq!(output["checks"][0]["drop_index"], false);
+    let mut other_collection = grant(actions.clone());
+    other_collection
+        .get_document_mut("resource")
+        .unwrap()
+        .insert("collection", "agents");
+    let wrong_target = authority::preflight_report(
+        &status(vec![other_collection]),
+        "fixture",
+        mode,
+        &[catalog::activity()],
+    );
+    assert_eq!(wrong_target["checks"][0]["create_index"], false);
+    assert_eq!(
+        wrong_target["blocked_collections"],
+        serde_json::json!(["activity"])
+    );
+    for resource in [
+        doc! {"db":"foreign","collection":""},
+        doc! {"anyResource":true},
     ] {
-        assert!(crate::store::isolation::verify_index_operation_authority(
-            &base,
+        let mut invalid = grant(actions.clone());
+        invalid.insert("resource", resource);
+        assert!(authority::verify_effective(
+            &status(vec![invalid]),
             "fixture",
             mode,
             &["activity"],
             true
         )
-        .is_ok());
-        assert!(crate::store::isolation::verify_index_operation_authority(
-            &base,
-            "fixture",
-            mode,
-            &["agents"],
-            true
-        )
         .is_err());
     }
-    let target = grants
-        .iter_mut()
-        .find(|g| {
-            g.as_document()
-                .unwrap()
-                .get_document("resource")
-                .unwrap()
-                .get_str("collection")
-                .unwrap()
-                == "activity"
-        })
-        .unwrap()
-        .as_document_mut()
-        .unwrap();
-    target
-        .get_array_mut("actions")
-        .unwrap()
-        .push("dropIndex".into());
-    assert!(crate::store::isolation::verify_index_operation_authority(
-        &status(grants),
-        "fixture",
-        MongoAuthorityMode::SharedSchema,
-        &["activity"],
-        true
-    )
-    .is_err());
-    assert!(authority::verify_abort(&base, "fixture", "activity").is_err());
-    let role = authority::abort_role("fixture", "activity");
-    let mut abort_grants = role.get_array("privileges").unwrap().clone();
-    assert!(authority::verify_abort(&status(abort_grants.clone()), "fixture", "activity").is_ok());
-    abort_grants[0]
-        .as_document_mut()
-        .unwrap()
-        .get_document_mut("resource")
-        .unwrap()
-        .insert("collection", "");
-    assert!(authority::verify_abort(&status(abort_grants), "fixture", "activity").is_err());
 }
 
 #[test]

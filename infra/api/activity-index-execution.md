@@ -1,330 +1,130 @@
-# Named-query index toolkit execution packet
+# Named-query index execution
 
-Execution: deployment-engineer-02 under lead approval; deployment-engineer-01 coordinates release gates. Issue #2005 / PR #2008. Activity is the first catalog entry. `agents-owner-page` adds the analyst-ranked
-nonunique `{owner:1,_id:1}` access path through `am-agent-owner-page-index-v1`.
-The catalog also includes inspection-only usage and claim candidates from the
-analyst ranking. This packet supplies no operation approval. All production
-builds are scheduled for 15 November 03:00–05:00 SGT under lead approval.
-Never run production writes 02:00–02:59.
+Issue #2005 / PR #2008. Deployment-engineer-02 executes under fresh lead approval.
+The lead's 14 November ruling controls this route; it replaces the earlier
+separate-DBA-credential and capacity-budget packet requirements. This source
+change does not itself execute or approve production DDL.
 
-## Reusable command contract
+## Credential and first-step preflight
 
-The API dispatches these commands before serving. No request, worker, startup or
-readiness path invokes the toolkit. `--index-catalog` prints the compiled names,
-collection/filter/sort/projection/limit definitions and exact index/manifest
-checksums. Runtime input selects names; it cannot supply arbitrary Mongo commands,
-filters, collection names or index options. Add a reviewed catalog entry and its
-complete one-index manifest to support another index. Never change an already
-recorded manifest's checksum. Activity aliases retain the existing manifest.
+Render each Job with the qualified API release image. Copy **exactly** the live
+`cma-agent-manager` Deployment's `api` container `envFrom` and `env` in memory,
+preserving `secretRef` and `secretKeyRef` names/key layout. Append only the Job's
+non-secret operation controls. Do not read Secret objects, print values, copy
+credentials into files, substitute a separate DBA credential, or change authority
+mode. Checked-in env references and image digests are rendering placeholders.
+Bind the same actual image in the container and `INDEX_RELEASE_IMAGE`.
+
+Every Job starts with this read-only command before its selected operation:
+
+```text
+cma --index-preflight activity-first-page
+```
+
+A comma-separated selection is supported. `connectionStatus` uses a five-second
+server bound and proves **effective** `createIndex` and `dropIndex` grants on each
+selected collection, plus the existing metadata/ledger operation requirements.
+A successful `listIndexes` alone never qualifies either DDL action. Output contains
+only named queries/collections and boolean checks; no raw privileges or identities.
+Missing grants return `preflight_passed:false`, `blocked_collections`, and exit 1.
+STOP and report `BLOCKED: URGENT` with those collection names; the lead escalates
+to the owner. An unavailable authority response also stops the Job. No mutation
+or grant/role change is made by preflight. Build and abort recheck the same
+credential before writes. Ordinary runtime/startup authority is unchanged.
+Shared-schema permits the app user's other same-database grants; cross-database
+and global grants remain refused. Isolated mode retains its explicit role checks.
+
+## Named commands and order
 
 ```text
 cma --index-catalog
-cma --index-size activity-first-page,agents-owner-page
-cma --index-verify activity-first-page
+cma --index-size activity-first-page
 cma --index-build activity-first-page CHECKSUM IMMUTABLE_IMAGE [SECONDS]
 cma --index-status activity-first-page
+cma --index-verify activity-first-page
 cma --index-abort activity-first-page CHECKSUM IMMUTABLE_IMAGE PREVIOUS_FENCE
 ```
 
-The Agent owner query samples one owner string internally from the first matching
-Agent in `_id` order, using a bounded projection. It outputs only a filter digest,
-never the owner value. Compare that digest before/after; a different owner is a
-different cohort. One sampled owner does not establish all-owner performance.
-An empty collection has no representative owner explain and cannot pass automatic
-verification. Activity uses its exact unfiltered first-page query. The interval,
-partial-report, worker and small-pool research candidates are not build targets;
-the analyst identifies possible sorts/write costs that still need evidence.
+Use `infra/api/index-toolkit-job.yaml` with a fresh immutable name per operation
+and attempt. `INDEX_OPERATION` selects preflight/size/build/status/verify/abort;
+`INDEX_QUERIES` selects compiled names. No arbitrary commands, collections,
+filters, index options, wildcard drops or automatic retries are accepted. Job
+logs contain the sanitized preflight JSON followed by the operation result.
+Legacy Activity Jobs and CLI aliases retain the same Activity manifest.
 
-Sizing/verification accept at most eight distinct comma-separated catalog names.
-Build, status and abort accept exactly one. Each read command has a five-second
-server bound; a query inspection has a 30-second outer allowance. Unknown index
-names/keys are redacted or hashed; no document values, planner text, hosts,
-shard names, connection strings or credential values are output. Sizing executes
-the bounded unhinted query with executionStats and returns no source documents.
-The automatic verification exit is nonzero unless the exact index exists and
-every supported plan branch reaches it, without COLLSCAN/SORT, missing children,
-unknown topology or incomplete markers. Preserve its JSON on failure. This is a
-planner gate; it does not establish HTTP or page-usable latency.
+After Batch 9 N1/OFF and its 30-minute stable soak, run Activity first, then the
+next build-supported analyst entry, **one at a time during 15 November
+03:00–05:00 SGT**. Never write during 02:00–02:59. Size first, retain the unhinted
+explain, and obtain the lead's go decision before building. Existing Activity
+indexes are verified/reconciled; never build a duplicate.
 
-The compiled catalog is ordered Activity, usage, list, then claim discovery:
-
-| Named query | Candidate index | Execution scope |
+| Named query | Candidate keys | Build support |
 | --- | --- | --- |
-| `activity-first-page` | `{recorded_at:-1,_id:-1}` | Size/build/status/abort/verify; existing manifest |
-| `usage-event-interval` | `{sandbox_id:1,ended_at:1,started_at:1,revision:1}` | Inspection only; may introduce a blocking sort |
-| `usage-reserved-expiry` | `{logical_expires_at:1}`, partial `reserved:true` | Inspection only; full prune OR query |
-| `usage-reserved-retire` | `{kind:1,retire_after:1}`, partial `reserved:true` | Inspection only; same full prune OR query |
-| `agents-owner-page` | `{owner:1,_id:1}` | Size/build/status/abort/verify; new manifest |
-| `sandboxes-pending-claim` | `{work_ready_at:1,_id:1,work_lease_expires_at:1}`, partial `work_pending:true` | Inspection only; preserves retirement/lease predicates |
-| `workspaces-pending-claim` | Same key and partial filter on workspaces | Inspection only; preserves lease predicates |
+| `activity-first-page` | `{recorded_at:-1,_id:-1}` | Existing `am-activity-page-index-v1`, first build |
+| `agents-owner-page` | `{owner:1,_id:1}` | New `am-agent-owner-page-index-v1`, next build |
+| `usage-event-interval` | `{sandbox_id:1,ended_at:1,started_at:1,revision:1}` | Inspection only; possible blocking sort |
+| `usage-reserved-expiry` | `{logical_expires_at:1}`, partial `reserved:true` | Inspection only; complete prune OR predicate |
+| `usage-reserved-retire` | `{kind:1,retire_after:1}`, partial `reserved:true` | Inspection only; same OR predicate |
+| `sandboxes-pending-claim` | `{work_ready_at:1,_id:1,work_lease_expires_at:1}`, partial `work_pending:true` | Inspection only; lease/retirement predicates retained |
+| `workspaces-pending-claim` | Same keys/partial predicate on workspaces | Inspection only; lease predicates retained |
 | `native-ready-agent-claim` | `{kind:1,state:1,_id:1}` | Inspection only; agent channel, limit 2 |
 
-Conditional specs have no migration and refuse build/status/abort before database
-access. Their verification output cannot pass the automatic acceptance gate even
-if an index already exists. Promote a candidate only through a separately reviewed
-manifest after read/write evidence supports it. No query is hinted and no claim or
-update is executed. The usage interval binds one sampled sandbox and its event's
-UTC day, with integer-second ranges and the source's sandbox/revision sort. Its
-51-event prefix is shape evidence, not a complete usage report or a 7d/30d test.
-Prune and pending-work filters bind inspection time; changing filter digests means
-the before/after cohorts differ. Partial indexes are compared exactly and cannot
-silently match a different partial predicate. Extra indexes add insert/delete and
-key-update work; claim candidates also add lease-update cost.
+The six conditional research candidates have no migration; build/status/abort
+refuse before database access and automatic verification cannot pass. Preflight
+reports grants separately from `build_supported`. Their read/write tradeoffs
+still require evidence before a new reviewed manifest enables DDL. Usage explain
+binds one sampled sandbox/UTC day and a 51-event prefix with integer-second time
+bounds; it does not establish 7d/30d report latency. Agent owner inspection samples
+one private owner value. Only the filter digest is emitted; changed digests mean
+different cohorts. Sizing returns count/storage/index metadata and projected plan
+structure/numeric counters, never source rows or planner/server error text.
 
-## Render and approve each Job
+## Online build, thresholds and fenced abort
 
-`infra/api/index-toolkit-job.yaml` defaults to read-only sizing and uses the
-Deployment's ConfigMap, Secret references and service account. Render a fresh
-explicit Job name for each size/build/status/verify/abort attempt; never mutate a
-created Job's pod template or delete an active Job to reuse its name. Bind the
-same approved immutable image in the container image and `INDEX_RELEASE_IMAGE`,
-plus its actual compiled source and registry compatibility. The inherited image
-is a placeholder, not release evidence. The image CLI argument is an operator
-assertion, not independent image attestation.
+Build timeout is **60–1800 seconds, default 1800**; outer timeout adds 60 seconds
+and the Job deadline is 1900 seconds. MongoDB's modern online build is used without
+the legacy `background` option. A 30-second durable server-time lease renews every
+five seconds. Progress every 30 seconds means the client is alive, not a server
+percentage. Exact name, ordered keys, options and default collation are checked
+before DDL. An exact preexisting index can reconcile an incomplete manifest with
+zero changes; a completed receipt with drift refuses.
 
-Set `INDEX_OPERATION`, `INDEX_QUERIES`, and (for writes) the selected manifest
-checksum. `INDEX_BUILD_TIMEOUT_SECONDS` defaults to 2100 and accepts 60–3600.
-Build progress records the query/manifest, fence and elapsed time. The 30-second
-server-time lease renews every five seconds; a heartbeat every 30 seconds means
-the client is alive, not a server build percentage. The outer build allowance is
-the chosen timeout plus 60 seconds; the Job deadline is 3900 seconds. There is no
-automatic Job retry. Timeouts, lost acknowledgements and lease loss do not prove
-that MongoDB stopped its submitted command.
+The operator monitors user-route baseline and final 5xx counts during the build.
+Invoke the approved exact-target abort when **any** lead threshold is reached:
 
-The database owner must provide the approved operation/abort Secret reference
-names and key layout (never values), effective-grant confirmation, and current
-CPU, lag, disk and duration budgets. These are unresolved release inputs, not
-values supplied or inferred by this source packet. The deployment engineer
-supplies the qualified release image and rendered artifacts after integration.
+- API user-route p95 exceeds **2× baseline for two consecutive minutes**.
+- Final **5xx exceeds 20 in five minutes**.
+- The build is **not complete within 30 minutes**.
 
-Bind the reviewed controller version/verdict and exact create, stop,
-Job-status and sanitized-log readback handles in the release record. The kubectl
-shapes below are not a substitute for an approved controller route. No Secret
-read, copied URI or pod exec is required. Attest effective grants internally:
-ordinary runtime authority is unchanged; sizing adds collStats on selected AM
-collections, build/status use the explicit ledger role. Use `--index-status` for the matching
-operation credential; the older generic migration-status role is a separate contract. Shared-schema remains a
-database-scoped authority model, not isolated least privilege, and refuses
-dropIndex on selected collections or database-wide. Isolated operation roles
-must match exactly; do not change a live isolated runtime's grants as a workaround.
+Check replication lag only where visible to the app user. The CLI does not infer
+route latency/error rates or claim that its timeout cancels server-side DDL.
 
-## Exact-target abort through the toolkit
+Stop the build client, prevent concurrent invocations, and reconcile the server
+operation and matching durable attempt. Wait for its lease to expire, then run
+abort using the **same live Deployment credential references** and the approved
+manifest checksum/image/previous fence from status. Abort requires an incomplete
+manifest, matching predecessor image/fence and the next global fenced lease.
+Live executors, intervening attempts, completed manifests and inventory drift
+refuse. It issues only `dropIndexes` for the selected visible index, bounded to
+five seconds with majority acknowledgement; no wildcard, document/collection drop,
+TTL/index-family removal, killOp or receipt editing is allowed. Missing/in-progress
+inventory that cannot be matched exactly requires lead escalation, not an alternate
+credential or blind retry. An acknowledged drop records a failed build attempt;
+it does not certify server quiescence. Reconcile before resume. A completed
+manifest requires reviewed forward recovery, never automatic rollback deletion.
 
-The abort operation deliberately refuses ordinary build credentials. A separate
-approved operator credential must have only listIndexes/dropIndex on the selected
-collection and find/insert/update/createCollection on the migration ledger. It
-cannot have database-wide drops or unrelated runtime authority. Reference the
-approved credential in a separately rendered abort Job; never extract its value.
-The release owner must approve the conditional drop and its controller route
-before admitting the build.
+## Postcheck
 
-Stop the build client, prevent other invocations, reconcile actual server DDL,
-and wait for the durable lease to expire. Obtain the matching attempt fence from
-sanitized progress/status. Abort validates that manifest is incomplete and the
-latest attempt matches the approved image/fence, then acquires the next global
-fence transactionally. A live executor, concurrent completion or intervening
-migration refuses. Key/name/options/default-collation drift refuses before DDL.
-The command drops only the selected visible index with maxTimeMS=5000 and
-majority acknowledgement; absence before drop is a refusal requiring server
-reconciliation. It never drops TTL/unique/partial indexes or uses wildcards.
+Create a separately named verification Job using the same release and live env
+references. Verification requires `executionStats.executionSuccess` exactly true,
+the exact index present, and every complete supported plan branch using it without
+COLLSCAN/SORT, missing children or malformed topology. Missing/wrong-type/failed
+execution refuses with a fixed safe diagnostic. Failed verification exits nonzero.
+Retain sanitized preflight/status/size/verify output and the operator measurements.
 
-An acknowledged drop is recorded as a FAILED build attempt and leaves the
-manifest incomplete; it never erases receipts or certifies server quiescence.
-The prior executor cannot publish completion after the new fence. Reconcile
-server build state and exact inventory after any drop/timeout before considering
-resume. If completion already won, ordinary abort refuses: use a reviewed
-manifest-forward recovery. Keep the exact operator image/registry compatible
-with all recorded migrations. Do not substitute killOp or restart MongoDB.
-
-## Activity acceptance and scheduling
-
-Activity's API acceptance is p95 <1 second, as stated in the original lead task;
-collect at least 20 natural requests and retain errors and full denominators.
-K19 additionally requires page completion: correct first-page rows or verified
-empty state, loading cleared, and usable filters/pagination. No numeric page
-ceiling is supplied; API p95 does not establish that client boundary. Under A3,
-Activity API and page are UX-AFFECTING: the confidence upper bound on p95
-regression must fit +10% of the matched N1 baseline, aiming for <=5%, while API
-p95 remains <1s. Do not add noise to the percentage. Critical enclosing journeys
-retain their own absolute targets and noise-only allowance. K25 automatic
-production HPA remains a separate release obligation.
-
-Size first. A collection being <=5M documents and having a <=30-minute approved
-estimate does not automatically classify it as small. Deployment must explicitly
-classify it using live size, topology and resource/duration evidence. All builds stay in 03:00–05:00; the serial soak/build/repeat schedule requires an
-approved arrangement preserving K21; do not compress or borrow noise windows.
-Use the Activity-specific gates and retained command shapes below for its first
-catalog entry. All numbers are go/no-go inputs, never inferred production facts.
-
-The candidate index is nonunique, visible and unfiltered:
-
-```javascript
-{
-  name: "activity_recorded_at_id_desc",
-  key: { recorded_at: -1, _id: -1 }
-}
-```
-
-The manifest is `am-activity-page-index-v1`, checksum
-`64811936c3025cefcb9ff7210c1994986fcfe491152e05f0eee2cef0ecb91c8b`.
-The API build uses MongoDB's online index-build behavior; it deliberately omits
-the removed legacy `background` option. The build command is bounded to 2,100
-seconds by the Job and reports sanitized inventory, start, 30-second heartbeat,
-finish and verification phases. The outer Job deadline is 3,900 seconds.
-
-The sizing Job at `infra/api/activity-index-job.yaml`, build Job at
-`infra/api/activity-index-build-job.yaml`, and postcheck Job at
-`infra/api/activity-index-postcheck-job.yaml` are separately named, immutable
-one-off operations. Each references the serving API's `cma-agent-manager`
-ConfigMap and Secret through `envFrom`, uses `chrono-bot-ksa`, and contains no
-credential values. The release owner must replace the image and
-`ACTIVITY_INDEX_RELEASE_IMAGE` in the build Job with the same immutable API
-image that contains the CLI modes before creating either Job.
-
-## 1. Size before any build
-
-1. Confirm the release image digest, source SHA, database name, MongoDB version,
-   replica-set or mongos topology, and the operator approval ID. Confirm that
-   the deployment's database credential has the explicit Activity-operation
-   grants: Activity `collStats` for sizing, and `find`, `insert`, `update`, and
-   `createCollection` on `agent_manager_migrations` for build mode, alongside
-   ordinary runtime authority. In isolated mode the effective grants must match
-   the checked-in operation role exactly; in shared-schema mode retain an
-   effective-grant receipt and reject Activity or database-wide `dropIndex`.
-   Do not copy or print the URI or any secret.
-2. Apply the sizing Job unchanged:
-
-   ```sh
-   kubectl -n chrono-bot apply -f infra/api/activity-index-job.yaml
-   kubectl -n chrono-bot logs job/cma-activity-index-size
-   ```
-
-   The single JSON result contains only the Activity document count, logical,
-   storage and index bytes, sanitized index definitions, and the unhinted
-   first-page explain. Every server command has `maxTimeMS=5000`. A sizing error
-   or timeout is a no-go; do not create the build Job.
-3. Retain the sanitized output with the candidate image digest, source SHA,
-   database/cluster identifier, UTC time, and command result. Never retain raw
-   documents, connection strings, authenticated usernames or secret values.
-
-## 2. Go/no-go gate
-
-Proceed only when all of these are recorded and approved:
-
-| Check | Go threshold | No-go action |
-| --- | --- | --- |
-| `metadata.document_count` | `<= 5,000,000` retained Activity documents | Do not build; obtain a larger-window plan |
-| Estimated online build duration | `<= 30 minutes`, based on approved same-topology evidence or a reviewed capacity estimate | Do not build; obtain a bounded strategy |
-| Disk headroom | Enough for the reported current storage plus the estimated new index bytes, temporary build space and a 30% safety reserve | Do not build |
-| Primary CPU and write load | Within the release budget, with at least 30% CPU headroom and no active incident | Defer to a quieter window |
-| Replica lag | Below the release budget and stable during the preflight observation | Defer; do not trade durability for speed |
-| Planner | Explain is read-only and the current plan is retained for comparison | Refuse if explain is unavailable or malformed |
-| Existing index state | No key, name, collation, unique, sparse, partial or hidden drift; no competing DDL | Reconcile the conflict before build |
-
-The 2,100-second command bound is a failure limit, not evidence that a build
-fits the 30-minute estimate. The sizing CLI does not invent a duration from
-query latency. A production estimate must include the collection scan, index
-entry creation, temporary disk, commit-quorum and replication work.
-
-## 3. Start the bounded online build
-
-After a fresh go decision, update only the build Job's non-secret release values:
-
-```yaml
-ACTIVITY_INDEX_MANIFEST_CHECKSUM: "64811936c3025cefcb9ff7210c1994986fcfe491152e05f0eee2cef0ecb91c8b"
-ACTIVITY_INDEX_RELEASE_IMAGE: "<the exact immutable API image digest>"
-ACTIVITY_INDEX_BUILD_TIMEOUT_SECONDS: "2100"
-```
-
-The image field and `ACTIVITY_INDEX_RELEASE_IMAGE` must identify the same API
-release. Apply the reviewed build Job once:
-
-```sh
-kubectl -n chrono-bot apply -f infra/api/activity-index-build-job.yaml
-kubectl -n chrono-bot logs job/cma-activity-index-build
-```
-
-`backoffLimit: 0` prevents an automatic second DDL attempt. The command acquires
-the existing migration lease, verifies
-the exact manifest and options, and records a durable attempt. A repeated
-successful invocation returns `already_completed`; a completed manifest with a
-missing or drifted index refuses. It never changes Activity documents or the TTL
-index.
-
-The build requires a supported replica set or mongos topology for the durable
-lease transaction. While MongoDB builds the index, the CLI renews that lease
-every five seconds so a second operator cannot claim the migration; progress
-heartbeats remain at 30-second intervals.
-
-Watch the sanitized log phases and the Job deadline. Do not sum heartbeat
-intervals into build duration. Do not blindly retry after a timeout, lease loss,
-write-concern error or client disconnect: the server command may still be
-running, and the durable attempt may be unfinished or failed.
-
-## 4. Abort and recovery
-
-The ordinary operation credential has no `dropIndex` privilege on Activity.
-Use the exact-target abort contract above: stop the build client, prevent other
-invocations, reconcile server state and the latest attempt, then wait for its
-lease to expire. Render a separately approved operator Job with
-`INDEX_OPERATION=abort`, `INDEX_QUERIES=activity-first-page`, the approved
-manifest checksum/image and `INDEX_PREVIOUS_FENCE` from status. Its narrow role
-must be supplied by Secret reference without reading the value.
-
-The toolkit claims the next fence and refuses a completed manifest before
-issuing this exact underlying command (shown for review, not as an alternate
-unfenced execution route):
-
-```javascript
-{
-  dropIndexes: "activity",
-  index: "activity_recorded_at_id_desc",
-  maxTimeMS: 5000,
-  writeConcern: { w: "majority", wtimeout: 5000 }
-}
-```
-
-No wildcard, collection drop, TTL/actor/action index drop or receipt editing is
-allowed. A missing target or uncertain drop requires the separately approved DBA
-status/recovery route; the toolkit does not claim cancellation. Confirm server
-build state and exact inventory after the command before considering resume.
-
-If the manifest was already marked completed and the index is later dropped,
-ordinary reapply must refuse completed-manifest postcondition drift. Use a
-separately reviewed manifest-forward recovery procedure. For an unfinished or
-failed attempt, reconcile the durable attempt, lease fence and index state before
-resuming the same manifest. Retain the new migration-capable executable after a
-manifest is recorded because older migration registries reject the new history.
-
-## 5. Verify the result and release
-
-1. Run the existing migration status command with the exact manifest ID and
-   inspect the sanitized completed receipt. Apply the separately named
-   postcheck Job, then retain its post-build inventory and explain:
-
-   ```sh
-   kubectl -n chrono-bot apply -f infra/api/activity-index-postcheck-job.yaml
-   kubectl -n chrono-bot logs job/cma-activity-index-postcheck
-   ```
-
-   Never delete or mutate an active Job to reuse its pod template. If a new
-   postcheck is needed, render this reviewed manifest with a fresh explicit
-   `metadata.name` and retain the rendered artifact before applying it.
-2. The unhinted explain for the Activity first page must use
-   `activity_recorded_at_id_desc`, examine approximately `limit+1` keys/docs, and
-   contain no blocking `COLLSCAN` or `SORT`. Preserve the before/after explain
-   artifacts.
-3. With exact API and Web release identities bound, run at least 20 natural
-   Activity requests covering the unfiltered first page and normal navigation.
-   The release gate is Activity API p95 below 1 second, with no elevated error
-   rate, write pressure or replica lag. The previous production baseline was
-   p50 2.561 s and p95 2.780 s (batch 7, n=5); it is a comparison point, not a
-   causal before/after pair for this packet.
-4. Confirm full Activity responses still include detail when no summary view is
-   requested, retention and existing indexes are unchanged, and the operational
-   read-sampling switch remains false. Roll back API and Web together if the API
-   version does not accept the summary query parameter used by the new Web.
-
-Retain the sanitized sizing/build/status/verification outputs and the operator
-approval IDs in the release record. No production build, drop or sampling
-activation is implied by merging the implementation PR.
+Activity API p95 must be **below one second** and satisfy the current owner
+regression allowance. Page completion additionally means correct rows or verified
+empty state, loading cleared and usable filters/pagination; API p95 alone does not
+prove it. The source fixtures demonstrate query work reduction, not production
+build duration or production acceptance. Keep the compatible migration binary
+when rolling back an application: older registries reject newly recorded manifests.

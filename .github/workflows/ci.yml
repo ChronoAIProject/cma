@@ -349,6 +349,7 @@ jobs:
         run: |
           node --test .github/scripts/agent-sandbox-preflight.test.mjs
           ruby .github/scripts/agent-sandbox-manifest-contract.rb
+          ruby .github/scripts/index-toolkit-job-contract.rb
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)
