@@ -59,6 +59,7 @@ export const requiredPrefixes = [
   'store::sandbox_mongo_integration_tests::command_ledger_tests::',
   'store::sandbox_mongo_integration_tests::resource_access_tests::',
   'store::sandbox_maintenance::mongo_integration_tests::',
+  'store::sandbox_maintenance::runtime_activity::mongo_tests::',
   'store::sandbox_maintenance::consented::scope_tests::',
   'store::sandbox_reconciliation::mongo_integration_tests::',
   'sandbox::agent_worker_tests::sdk_conformance_tests::mongo_tests::',

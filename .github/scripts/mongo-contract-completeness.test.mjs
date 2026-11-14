@@ -5,6 +5,7 @@ import test from 'node:test';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 
 const taskHome = 'sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::';
+const runtimeActivity = 'store::sandbox_maintenance::runtime_activity::mongo_tests::';
 const child = `${taskHome}subprocess::task_home_create_child`;
 const caseMetadata = (selected, ignored = true) => ({
   ignored, 'filter-match': {status: selected ? 'matches' : 'mismatch'},
@@ -46,6 +47,8 @@ test('metadata completeness catches omitted task-home and newly introduced modul
   for (const name of [
     `${taskHome}subprocess::initial_task_public_service_process_exit_preserves_admission`,
     'a_new_contract_module::new_mongo_contract',
+    `${runtimeActivity}admission_compares_original_vector_and_fences_without_refreshing_proof`,
+    `${runtimeActivity}generation::collection_replacement_refuses_old_proof_even_with_identical_rows`,
     `${child}_another_contract`,
   ]) {
     const metadata = inventory();
@@ -96,7 +99,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 134);
+  assert.equal(new Set(requiredPrefixes).size, 135);
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
   assert.ok(requiredPrefixes.includes('store::agent_ownership::mongo_tests::'));
@@ -104,6 +107,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   assert.ok(requiredPrefixes.includes('store::sandbox_sessions::exclusive::'));
   assert.ok(requiredPrefixes.includes('store::allocation_buckets::'));
   assert.ok(requiredPrefixes.includes(taskHome));
+  assert.ok(requiredPrefixes.includes(runtimeActivity));
   assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
