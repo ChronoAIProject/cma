@@ -96,13 +96,14 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 132);
+  assert.equal(new Set(requiredPrefixes).size, 133);
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
   assert.ok(requiredPrefixes.includes('store::agent_ownership::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('auth::desktop::tests::'));
   assert.ok(requiredPrefixes.includes('store::sandbox_sessions::exclusive::'));
   assert.ok(requiredPrefixes.includes(taskHome));
+  assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
