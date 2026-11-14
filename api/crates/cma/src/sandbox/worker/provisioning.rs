@@ -34,7 +34,8 @@ impl SandboxWorker {
                 .await;
         }
         timing.completed("home_preparation");
-        let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
+        let spec = sandbox_spec(&sandbox, &self.config.deployment_id)
+            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         if sandbox.work.execution.is_none() {
             let expected = sandbox.revision;
             sandbox.work.execution = Some(self.config.execution);
@@ -88,7 +89,8 @@ impl SandboxWorker {
                 timing.completed("runtime_provision");
                 let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
                     self.dependencies.adapter.as_ref(),
-                    &sandbox_spec(&sandbox, &self.config.deployment_id),
+                    &sandbox_spec(&sandbox, &self.config.deployment_id)
+                        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
                     &handle,
                     generation,
                 )
