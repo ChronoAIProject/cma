@@ -60,7 +60,10 @@ different floating-point calculation. A rolling 30-day request can cross
 31 UTC dates: the bound is interior daily totals and at most two boundary
 computations, not a claim of at most 30 physical Mongo documents. Missing coverage,
 changed source evidence or incomplete backfill never silently becomes zero.
-Incomplete or stale boundary coverage falls back to the original raw query.
+When only the source head advances, a bounded revision query reads appended
+events in the same report snapshot and replays them with the prepared prefix.
+It never combines independently rounded totals. Missing prefix coverage or
+unsupported overlap falls back to the original raw query.
 Malformed cache evidence is refused. Current report ownership and membership
 are still verified independently of these source projections.
 
@@ -84,6 +87,14 @@ until in-flight fenced work has completed or expired. Buckets are disposable
 with a 32-day TTL, and disabling the switch does not rewrite or delete raw
 ledger entries, report pointers, report children or reservations. Stop the
 retained warmer first if rolling back its independently approved writer scope.
+
+The new namespace has an explicit optional Agent Manager grant and archive
+census entry. Existing credentials can start with the switch off; activation
+requires its full confined grant. Keep a compatible release for archive tooling
+after granting the namespace or producing new census manifests: old isolated
+credentials and old archive verifiers do not understand the expanded census.
+Disabling the switch is a supported rollback of cache use and maintenance,
+not permission to roll back the binary below that compatibility floor.
 
 Observe an admitted report by its immutable report ID. A failed retained job
 is retired immediately and normally returns `410 report_expired`; terminal
