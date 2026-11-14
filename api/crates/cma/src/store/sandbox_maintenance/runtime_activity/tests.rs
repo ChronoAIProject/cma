@@ -126,3 +126,35 @@ fn observation_projections_never_select_prompt_or_credential_payloads() {
     assert!(!projection::log_tail().contains_key("record.kind"));
     assert!(projection::workspace().contains_key("record.ready_at"));
 }
+
+#[test]
+fn terminal_command_dispatch_is_history_but_lease_or_pending_status_is_active() {
+    let base = doc! {"_id":"cmd_history", "document_schema_version":1_i64,
+    "agent_id":"agt_history", "agent_order":1_i64, "revision":1_i64,
+    "status":"completed", "record":{"revision":1_i64, "status":"completed",
+        "receipt":{"envelope":{"command_id":"cmd_history", "agent_id":"agt_history"}, "agent_order":1_i64},
+        "work":{"dispatch":{"delivery":"execution_observed"}}}};
+    assert!(!records::command(&base).unwrap().active);
+    for status in ["queued", "in_progress", "waiting_action"] {
+        let mut row = base.clone();
+        row.insert("status", status);
+        row.get_document_mut("record")
+            .unwrap()
+            .insert("status", status);
+        assert!(records::command(&row).unwrap().active);
+    }
+    let mut lease = base.clone();
+    lease
+        .get_document_mut("record")
+        .unwrap()
+        .get_document_mut("work")
+        .unwrap()
+        .insert("lease", doc! {"holder":"fixture"});
+    assert!(records::command(&lease).unwrap().active);
+    let mut invalid = base;
+    invalid
+        .get_document_mut("record")
+        .unwrap()
+        .insert("status", "queued");
+    assert!(records::command(&invalid).is_err());
+}
