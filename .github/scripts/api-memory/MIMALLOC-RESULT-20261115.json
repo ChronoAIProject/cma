@@ -1,0 +1,493 @@
+{
+  "verdict": "PASS",
+  "scope": "Completed local API memory and latency qualification; no production authorization or rollout claim",
+  "execution_and_independent_analysis_owner": "debugger-02",
+  "harness_owner": "developer-01",
+  "implementation_pr": "https://github.com/ChronoAIProject/cma/pull/2060",
+  "implementation_merge": "14a1a7ec3e4828064627bac8df9e24a7c8b323d5",
+  "eg_revert_pr": "https://github.com/ChronoAIProject/cma/pull/2062",
+  "eg_revert_merge": "6b9a3a4183a8297b8b6814e12da2d337be0eb123",
+  "application_base": "67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6",
+  "allocator_commit": "1075a8c1374e878adcf168c8cd135f9c0fe9d5eb",
+  "harness_commit": "27b6bf60231bbdb5d1832fd2e194d4c59071850b",
+  "fixture_sha256": "afb8b2826df75cd9494d16370ded44ae98f872d1ceebbc136e183f5706667396",
+  "image_bindings": {
+    "mimalloc": {
+      "source": "dfc2e7ba55b337b169ec9de749224d95cc6a6631",
+      "docker_image_id": "sha256:ed9ccc89aa766fa7abfa272ff57c83d813a9e9cd66d5e0d20e7dc90fd359e848",
+      "manifest_digest": "sha256:ed9ccc89aa766fa7abfa272ff57c83d813a9e9cd66d5e0d20e7dc90fd359e848",
+      "config_digest": "sha256:e39a42383f4cc20445ad9c5b518489ff7a55762424871e3e7b23087444944d6c"
+    },
+    "zig": {
+      "source": "67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6",
+      "docker_image_id": "sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8",
+      "manifest_digest": "sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8",
+      "config_digest": "sha256:599ca9467f6813bcdf7146f5dc173787fe2aaaa5e672e1bb85f75124e86e3c33"
+    }
+  },
+  "selected_eg": "sha256:67d1defc107395c4738977d6f495acc9df59b12071e753881c211dff31d3a063",
+  "loop_started_sgt": "2026-11-15T01:59:59.896978+08:00",
+  "loop_ended_sgt": "2026-11-15T02:20:00.111976+08:00",
+  "cleanup_ended_sgt": "2026-11-15T02:20:13.651503+08:00",
+  "actual_loop_seconds": 1200.20824225,
+  "aggregate_latency_ratios": {
+    "p50_ms": 0.9663325526845387,
+    "p95_ms": 0.9785269224240032
+  },
+  "route_latency_ratios": {
+    "/livez": {
+      "p50_ms": 0.9727358708153525,
+      "p95_ms": 0.8539712564195246
+    },
+    "/ready": {
+      "p50_ms": 0.9593874989581628,
+      "p95_ms": 0.9724541974963961
+    },
+    "/openapi.json": {
+      "p50_ms": 0.996683134219257,
+      "p95_ms": 0.984794911814233
+    },
+    "/api/v1/sandboxes/sbx_allocator_read": {
+      "p50_ms": 0.9903989881225942,
+      "p95_ms": 0.9636042102781814
+    },
+    "/api/v1/workspaces/wks_allocator_read": {
+      "p50_ms": 0.9917759871328385,
+      "p95_ms": 0.9428076447618425
+    }
+  },
+  "variants": {
+    "mimalloc": {
+      "source": "dfc2e7ba55b337b169ec9de749224d95cc6a6631",
+      "image": "sha256:ed9ccc89aa766fa7abfa272ff57c83d813a9e9cd66d5e0d20e7dc90fd359e848",
+      "requests": 1200,
+      "aggregate_latency": {
+        "N": 1200,
+        "p50_ms": 6.447249999951055,
+        "p95_ms": 12.406416999965586,
+        "max_ms": 18.045791000002254
+      },
+      "route_latency": {
+        "/livez": {
+          "N": 240,
+          "p50_ms": 2.055958000028113,
+          "p95_ms": 5.800458000010167,
+          "max_ms": 10.968624999975418
+        },
+        "/ready": {
+          "N": 240,
+          "p50_ms": 1.8081250000250293,
+          "p95_ms": 3.334666999990077,
+          "max_ms": 7.985582999936014
+        },
+        "/openapi.json": {
+          "N": 240,
+          "p50_ms": 6.998999999950684,
+          "p95_ms": 11.593374999989692,
+          "max_ms": 17.305957999951715
+        },
+        "/api/v1/sandboxes/sbx_allocator_read": {
+          "N": 240,
+          "p50_ms": 9.980415999962133,
+          "p95_ms": 14.786707999974169,
+          "max_ms": 18.045791000002254
+        },
+        "/api/v1/workspaces/wks_allocator_read": {
+          "N": 240,
+          "p50_ms": 7.707959000001097,
+          "p95_ms": 10.680124999908003,
+          "max_ms": 14.244249999990188
+        }
+      },
+      "fits": {
+        "full": {
+          "rss_kib": {
+            "samples": 41,
+            "duration_seconds": 1200.2484084579999,
+            "start_utc": "2026-11-14T17:59:59.769704+00:00",
+            "end_utc": "2026-11-14T18:20:00.024993+00:00",
+            "first_mib": 176.0234375,
+            "peak_mib": 187.06640625,
+            "last_mib": 179.6875,
+            "delta_mib": 3.6640625,
+            "slope_mib_min": -0.2525710576096408,
+            "r_squared": 0.1351327446867917
+          },
+          "anonymous_kib": {
+            "samples": 41,
+            "duration_seconds": 1200.2484084579999,
+            "start_utc": "2026-11-14T17:59:59.769704+00:00",
+            "end_utc": "2026-11-14T18:20:00.024993+00:00",
+            "first_mib": 104.48828125,
+            "peak_mib": 115.21875,
+            "last_mib": 107.83984375,
+            "delta_mib": 3.3515625,
+            "slope_mib_min": -0.2547494852504877,
+            "r_squared": 0.13772187650938206
+          }
+        },
+        "after_process_age_10min": {
+          "rss_kib": {
+            "samples": 21,
+            "duration_seconds": 599.9983776659998,
+            "start_utc": "2026-11-14T18:10:00.022989+00:00",
+            "end_utc": "2026-11-14T18:20:00.024993+00:00",
+            "first_mib": 181.23046875,
+            "peak_mib": 187.06640625,
+            "last_mib": 179.6875,
+            "delta_mib": -1.54296875,
+            "slope_mib_min": -0.7999004869800945,
+            "r_squared": 0.29072171403589936
+          },
+          "anonymous_kib": {
+            "samples": 21,
+            "duration_seconds": 599.9983776659998,
+            "start_utc": "2026-11-14T18:10:00.022989+00:00",
+            "end_utc": "2026-11-14T18:20:00.024993+00:00",
+            "first_mib": 109.3828125,
+            "peak_mib": 115.21875,
+            "last_mib": 107.83984375,
+            "delta_mib": -1.54296875,
+            "slope_mib_min": -0.7999004869800947,
+            "r_squared": 0.2907217140358994
+          }
+        }
+      },
+      "max_sample_gap_seconds": 30.249746458,
+      "max_request_lag_seconds": 0.011712541999941095,
+      "late_over_one_second": 0,
+      "bytes_by_route": {
+        "/livez": 480,
+        "/ready": 519841,
+        "/openapi.json": 100444800,
+        "/api/v1/sandboxes/sbx_allocator_read": 341280,
+        "/api/v1/workspaces/wks_allocator_read": 85920
+      },
+      "process_identity": [
+        "3d4539ea181688252ca1f800cd9581bcd078d18b259152b3b00612c979cfe217",
+        "sha256:ed9ccc89aa766fa7abfa272ff57c83d813a9e9cd66d5e0d20e7dc90fd359e848",
+        "0",
+        "2026-11-14T17:59:42.902008797Z",
+        "true",
+        "2000000000",
+        "2147483648",
+        "0-7",
+        "11354204"
+      ],
+      "quiescent": {
+        "utc": "2026-11-14T18:20:12.293083+00:00",
+        "process_started_utc": "2026-11-14T17:59:42.902008797Z",
+        "process_age_seconds": 1229.391075,
+        "elapsed_seconds": 1212.6443802499998,
+        "phase": "quiescent",
+        "round": 41,
+        "rss_kib": 185700,
+        "anonymous_kib": 112128,
+        "threads": 10,
+        "cpu_affinity": "0-7",
+        "cma_runtime_alive_tasks": 46.0,
+        "cma_runtime_global_queue_depth": 0.0,
+        "cma_public_streams_active": 0.0,
+        "cma_http_in_flight": 0.0,
+        "cma_runtime_workers": 8.0,
+        "swap_readback": {
+          "process_vm_swap_kib": 0,
+          "cgroup_memory_swap_current_bytes": 0,
+          "cgroup_memory_swap_max_bytes": 0,
+          "diagnostic_duration_seconds": 0.04346270799987906
+        }
+      },
+      "swap_readbacks": {
+        "initial": {
+          "process_vm_swap_kib": 0,
+          "cgroup_memory_swap_current_bytes": 0,
+          "cgroup_memory_swap_max_bytes": 0,
+          "diagnostic_duration_seconds": 0.040286916999999534
+        },
+        "quiescent": {
+          "process_vm_swap_kib": 0,
+          "cgroup_memory_swap_current_bytes": 0,
+          "cgroup_memory_swap_max_bytes": 0,
+          "diagnostic_duration_seconds": 0.04346270799987906
+        }
+      }
+    },
+    "zig": {
+      "source": "67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6",
+      "image": "sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8",
+      "requests": 1200,
+      "aggregate_latency": {
+        "N": 1200,
+        "p50_ms": 6.671875000009209,
+        "p95_ms": 12.678667000017185,
+        "max_ms": 17.88666700000263
+      },
+      "route_latency": {
+        "/livez": {
+          "N": 240,
+          "p50_ms": 2.1135829999821,
+          "p95_ms": 6.792334000010669,
+          "max_ms": 10.868666000021676
+        },
+        "/ready": {
+          "N": 240,
+          "p50_ms": 1.8846659999098847,
+          "p95_ms": 3.429125000000255,
+          "max_ms": 7.90291700002399
+        },
+        "/openapi.json": {
+          "N": 240,
+          "p50_ms": 7.022291999987829,
+          "p95_ms": 11.77237500002093,
+          "max_ms": 17.237166999962028
+        },
+        "/api/v1/sandboxes/sbx_allocator_read": {
+          "N": 240,
+          "p50_ms": 10.077167000019926,
+          "p95_ms": 15.345208999974602,
+          "max_ms": 17.88666700000263
+        },
+        "/api/v1/workspaces/wks_allocator_read": {
+          "N": 240,
+          "p50_ms": 7.771875000003092,
+          "p95_ms": 11.328000000048633,
+          "max_ms": 14.615667000015264
+        }
+      },
+      "fits": {
+        "full": {
+          "rss_kib": {
+            "samples": 41,
+            "duration_seconds": 1200.208294125,
+            "start_utc": "2026-11-14T17:59:59.896652+00:00",
+            "end_utc": "2026-11-14T18:20:00.111732+00:00",
+            "first_mib": 180.3671875,
+            "peak_mib": 204.9609375,
+            "last_mib": 204.9609375,
+            "delta_mib": 24.59375,
+            "slope_mib_min": 1.1370335030765855,
+            "r_squared": 0.9414964721086531
+          },
+          "anonymous_kib": {
+            "samples": 41,
+            "duration_seconds": 1200.208294125,
+            "start_utc": "2026-11-14T17:59:59.896652+00:00",
+            "end_utc": "2026-11-14T18:20:00.111732+00:00",
+            "first_mib": 103.63671875,
+            "peak_mib": 127.54296875,
+            "last_mib": 127.54296875,
+            "delta_mib": 23.90625,
+            "slope_mib_min": 1.1234221169438918,
+            "r_squared": 0.944038974585322
+          }
+        },
+        "after_process_age_10min": {
+          "rss_kib": {
+            "samples": 21,
+            "duration_seconds": 600.0014615,
+            "start_utc": "2026-11-14T18:10:00.106631+00:00",
+            "end_utc": "2026-11-14T18:20:00.111732+00:00",
+            "first_mib": 198.6953125,
+            "peak_mib": 204.9609375,
+            "last_mib": 204.9609375,
+            "delta_mib": 6.265625,
+            "slope_mib_min": 0.5293153410078111,
+            "r_squared": 0.95549860511883
+          },
+          "anonymous_kib": {
+            "samples": 21,
+            "duration_seconds": 600.0014615,
+            "start_utc": "2026-11-14T18:10:00.106631+00:00",
+            "end_utc": "2026-11-14T18:20:00.111732+00:00",
+            "first_mib": 121.27734375,
+            "peak_mib": 127.54296875,
+            "last_mib": 127.54296875,
+            "delta_mib": 6.265625,
+            "slope_mib_min": 0.5293153410078111,
+            "r_squared": 0.9554986051188301
+          }
+        }
+      },
+      "max_sample_gap_seconds": 30.20631425,
+      "max_request_lag_seconds": 0.01153537499999402,
+      "late_over_one_second": 0,
+      "bytes_by_route": {
+        "/livez": 480,
+        "/ready": 518717,
+        "/openapi.json": 100444800,
+        "/api/v1/sandboxes/sbx_allocator_read": 341280,
+        "/api/v1/workspaces/wks_allocator_read": 85920
+      },
+      "process_identity": [
+        "e62402a36becccad7f6903cad0a7b53ed9443329c2217f1327175d03205d0c08",
+        "sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8",
+        "0",
+        "2026-11-14T17:59:44.609197047Z",
+        "true",
+        "2000000000",
+        "2147483648",
+        "0-7",
+        "11354375"
+      ],
+      "quiescent": {
+        "utc": "2026-11-14T18:20:12.416738+00:00",
+        "process_started_utc": "2026-11-14T17:59:44.609197047Z",
+        "process_age_seconds": 1227.807541,
+        "elapsed_seconds": 1212.7680385419999,
+        "phase": "quiescent",
+        "round": 41,
+        "rss_kib": 209952,
+        "anonymous_kib": 130676,
+        "threads": 10,
+        "cpu_affinity": "0-7",
+        "cma_runtime_alive_tasks": 47.0,
+        "cma_runtime_global_queue_depth": 0.0,
+        "cma_public_streams_active": 0.0,
+        "cma_http_in_flight": 0.0,
+        "cma_runtime_workers": 8.0,
+        "swap_readback": {
+          "process_vm_swap_kib": 0,
+          "cgroup_memory_swap_current_bytes": 0,
+          "cgroup_memory_swap_max_bytes": 0,
+          "diagnostic_duration_seconds": 0.038498582999864084
+        }
+      },
+      "swap_readbacks": {
+        "initial": {
+          "process_vm_swap_kib": 0,
+          "cgroup_memory_swap_current_bytes": 0,
+          "cgroup_memory_swap_max_bytes": 0,
+          "diagnostic_duration_seconds": 0.04007945899999754
+        },
+        "quiescent": {
+          "process_vm_swap_kib": 0,
+          "cgroup_memory_swap_current_bytes": 0,
+          "cgroup_memory_swap_max_bytes": 0,
+          "diagnostic_duration_seconds": 0.038498582999864084
+        }
+      }
+    }
+  },
+  "cleanup_verification": {
+    "at": "2026-11-14T18:20:33.137775+00:00",
+    "owner": "cma-memory-rca-1e8176b662c4",
+    "containers": [],
+    "networks": [],
+    "ports_closed": {
+      "18980": true,
+      "18981": true,
+      "18991": true,
+      "18992": true,
+      "18917": true
+    },
+    "supervisor_pid": 80246,
+    "supervisor_absent": true,
+    "slot2_lockholders": [],
+    "campaign_ended_utc": "2026-11-14T18:20:13.651503+00:00",
+    "method": "Exact ownership label readback; loopback port connects; supervisor PID and slot2 open-holder readback. No cleanup mutation."
+  },
+  "evidence_verification": {
+    "handoff_sha256": "3a09da1c087e2d38b7af36b4031c0a1d598823c2a2423c0298b71b7a323ec2d0",
+    "all_evidence_hashes_match": true,
+    "checked": 18,
+    "files": [
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/qualification-analysis.json",
+        "sha256": "ccd5c58209eba172c32c1be5d0da9eac5866b459dc8b2141a719c88307a0092d",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/analysis-contract.json",
+        "sha256": "40207a872e36d3e70cb0c75ef644fa894a671b3d70a1a653b59a4f54f086e0d6",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/harness-binding.json",
+        "sha256": "d8776ae95bdfc6917e7959bdb03100ac56e5401159d16cf123cf3a042a163446",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/owner-image-bindings.json",
+        "sha256": "9edfc6b86c8264bd1f2ee00bdf1270551773da126cb3aa2b5a44a8bafc2b2110",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/api-static-handoff-verification.json",
+        "sha256": "a934c8e0766ce647b69402188e685e426c27d69ff3ee82ae6e130c29a85cd3ff",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/REPORT.md",
+        "sha256": "c9e512a6c08b2360484dd785e4d8b0573b6aa59b5c3da5c149bf9132f1af5312",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/qualification.json",
+        "sha256": "ea59f41ea3bab26bd563150e151507995ad589faa092501a26994580d5cfcd8a",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/cleanup-verification.json",
+        "sha256": "f86e077912da1172c9a3e45f66bc49d35b3a41e99a750ca522465b275f7dcbf8",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/configuration-equality.json",
+        "sha256": "5ba4e2260f35abf9676d00a9daf4f09763cb4a971872bc1152fff0e8bc6e66ca",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/fixture-before.json",
+        "sha256": "663536de02a8857befe7f1c45d015f485c1fa07728ecd46dd0316aaf71a488d1",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/fixture-after.json",
+        "sha256": "663536de02a8857befe7f1c45d015f485c1fa07728ecd46dd0316aaf71a488d1",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/resource-ready-campaign2.json",
+        "sha256": "08861083deb61e773184f09168ae4b26dd2456a4c9e785d53de78d923926471e",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/campaign.json",
+        "sha256": "16713b150c2c82fff0c7d31c7f137752d2f502b207bb9c8f4836eddc0e7e71a2",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/measurement.json",
+        "sha256": "0c56a24f62d14105a1b4d25be76e6bf5e17ca07a72bf46396b3ac2625908c694",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/mimalloc/samples.jsonl",
+        "sha256": "1ea93faad355be1d557f3dc6c40bc8180cfbbaa3f7f46ad3464aefdbae6ceb9f",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/mimalloc/requests.jsonl",
+        "sha256": "38c348d14b596d2cb6c1cf756ed1f8373214b31cc21d28db8f96c264f4b571d1",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/zig/samples.jsonl",
+        "sha256": "f75a2a68a14334f9983f55c1baa80e0bee1bbe0e0c353a0d0fda08d03623b106",
+        "match": true
+      },
+      {
+        "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/campaign-2/zig/requests.jsonl",
+        "sha256": "41c69321094da1466081a0970a7e9d99f556124d3e559ab941adcde0eec0dd3d",
+        "match": true
+      }
+    ]
+  },
+  "limitations": [
+    "Dormant failed Sandbox and ready Workspace; no active provider/runtime workload.",
+    "Twenty-minute local one-request-per-second mix does not establish production-load latency or unlimited-lifetime leak freedom.",
+    "Mimalloc EG failed its mandatory sandbox check under the unchanged 384 MiB address-space limit and is excluded."
+  ],
+  "prior_attempt": "campaign-1 preserved INCOMPLETE before HTTP readiness; missing durable provider choice corrected in fixture only.",
+  "handoff_path": "/Users/shining/code/work/tech-lead.staff/debugger-02/api-mimalloc-20261115/HANDOFF.json"
+}
