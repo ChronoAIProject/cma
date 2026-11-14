@@ -181,6 +181,18 @@ fn immutable_coverage_reuses_later_heads_but_rejects_same_revision_drift() {
     next = s.clone();
     next.revision -= 1;
     assert!(!b.validate_source(&next).unwrap());
+
+    next = s.clone();
+    next.complete_lifecycle = false;
+    assert!(b.validate_source(&next).is_err());
+    next.revision += 1;
+    assert!(!b.validate_source(&next).unwrap());
+    next.source_seq -= 1;
+    assert!(b.validate_source(&next).is_err());
+    assert!(b.baseline_matches(s.revision - 1, false).is_err());
+    let mut incomplete = b;
+    incomplete.complete_lifecycle = false;
+    assert!(incomplete.baseline_matches(s.revision + 1, true).is_err());
 }
 
 #[test]
