@@ -331,7 +331,7 @@ The qualified hard lifetime must be >=actual760s; p95 remains <=90s.
 | `s3-eg-only-restore-target` | `--created` exact lower result; restores only original CPU target |
 | `s3-eg-only-freeze` | `--created` latest confirmed create/lower/restore result; disables both scaling directions |
 | `s3-eg-only-delete` | `--created` exact freeze result; UID/RV-guarded removal |
-| `s3-eg-only-quota-restore` | `--created` owned quota-raise result; no HPAs, fixed topology and usage below saved ceiling |
+| `s3-eg-only-quota-restore` | `--created` owned quota-raise result; no HPAs, original UID/spec at fixed topology, current generation bound anew, usage below saved ceiling |
 
 Activation rechecks actual/template literal AMOFF/EGON, selected images,
 distinct EG hosts, actual/template EGgrace760, PDB, fresh complete EG PodMetrics

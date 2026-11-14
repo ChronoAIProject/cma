@@ -295,8 +295,17 @@ class EGOnlyTests(NoExternalCommands):
             path = Path(root) / 'quota.json'
             g.save(path, {'state': 'APPLIED', 'source': self.release['source'], 'operation': op,
                           'quota_before_spec': before['spec'], 'after': g.binding(after)})
+            # A completed HPA cycle returns the exact spec but advances generation.
+            self.dep('eg')['metadata']['generation'] += 2
+            self.dep('eg')['status']['observedGeneration'] += 2
             restore = self.build('quota-restore', path)
             c.checkpoint(after, restore, self.release)
+            self.dep('eg')['metadata']['generation'] += 1
+            self.dep('eg')['status']['observedGeneration'] += 1
+            with self.assertRaisesRegex(RuntimeError, 'topology_changed'):
+                c.checkpoint(after, restore, self.release)
+            self.dep('eg')['metadata']['generation'] -= 1
+            self.dep('eg')['status']['observedGeneration'] -= 1
             restored, _ = o.transformed(after, restore)
             self.assertEqual(restored['spec'], before['spec'])
             self.objects[('HorizontalPodAutoscaler', e.NAMES['eg'])] = hpa('eg')

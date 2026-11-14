@@ -87,7 +87,7 @@ def cohort_binding(pods):
     return g.hash_json(sorted(identities, key=lambda row: row[0]))
 
 
-def topology(release):
+def topology(release, quota_restoring=False):
     s2 = qualification(release)
     g.require(g.get('HorizontalPodAutoscaler', NAMES['am']) is None, 'EG_only_AM_HPA_prohibited')
     bindings, cohorts = {}, {}
@@ -95,7 +95,14 @@ def topology(release):
         obj = g.get('Deployment', NAMES[role])
         g.require(obj is not None and type(obj['metadata'].get('generation')) is int
                   and obj['metadata']['generation'] > 0, 'EG_only_Deployment_generation_required')
-        g.same(obj, s2.get('deployments', {}).get(role))
+        saved = s2.get('deployments', {}).get(role)
+        if quota_restoring:
+            # An HPA cycle advances generation even after the exact fixed spec returns.
+            # Bind the current generation below; historical UID/spec must still match.
+            g.require(isinstance(saved, dict) and all(g.binding(obj)[key] == saved.get(key)
+                      for key in ('uid_sha256', 'spec_sha256')), 'EG_only_S2_identity_or_spec_drift')
+        else:
+            g.same(obj, saved)
         pods = checkpoints.stable(obj, count, distinct=role == 'eg')
         spec = obj['spec']['template']['spec']
         g.require(container(spec, role).get('image') == release['images'][role],
@@ -175,7 +182,7 @@ def build(action, release, created, hpa_builder, quota_builder):
                 op['changes'] = {'spec': spec}
     op['eg_only'] = action
     if action not in RECOVERY:
-        bindings, _ = topology(release)
+        bindings, _ = topology(release, quota_restoring=action == 'quota-restore')
         op['topology_bindings'] = bindings
     return op
 
@@ -190,7 +197,7 @@ def checkpoint(obj, op, release, quota_checkpoint):
         g.same(obj, op['expected_before'])
         # Incident recovery depends on owned identity/spec, never on healthy telemetry.
         return
-    bindings, cohorts = topology(release)
+    bindings, cohorts = topology(release, quota_restoring=action == 'quota-restore')
     g.require(bindings == op['topology_bindings'], 'EG_only_topology_changed_after_plan')
     quota = obj if op['kind'] == 'ResourceQuota' else g.get('ResourceQuota', 'sandbox-quota')
     quota_checkpoint(quota, action == 'quota-restore')
