@@ -11,7 +11,7 @@ and the retained unit gates do not qualify a cluster invocation or provider effe
 
 `.github/scripts/eg-admission/records-fault/build_patch.py` reads an immutable
 40-character Git revision and verifies every relevant object against
-`source-base.json` (reference `6b1ace3e12aaabef592875cc851dbd7af763b670`). It refuses
+`source-base.json` (reference `1630d06798cbb148d11cad68f9fc43b1f05f280c`). It refuses
 changed records, root/store/queue or dependency objects. Equal objects may carry
 this patch across a normal composition; that check is not an application review.
 The original `aadd212` source is rejected. Original-path reproduction requires a
@@ -41,7 +41,7 @@ Generate outside the repository (substitute actual paths and immutable revision)
 ```sh
 python3 .github/scripts/eg-admission/records-fault/build_patch.py \
   --repository /absolute/owned/checkout \
-  --revision 6b1ace3e12aaabef592875cc851dbd7af763b670 \
+  --revision 1630d06798cbb148d11cad68f9fc43b1f05f280c \
   --config /absolute/private/case.json \
   --output /absolute/private/new-packet
 ```
