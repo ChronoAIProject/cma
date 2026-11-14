@@ -6468,7 +6468,8 @@ filters, within the five-minute cache lifetime and report expiry. Label it **Sho
 Last 24 hours**, **Showing Last 7 days**, or **Showing Last 30 days**, explicitly state
 that it is not the requested period, and show its actual period and As-of time.
 Every summary, chart, page and detail remains attached to that preview's immutable
-report ID. Disable workload actions and Agent selection while previewing another
+report ID. Captions say **report period**, including resource-hour cards, inventory,
+charts and history disclosures, so preview values never imply the selected period. Disable workload actions and Agent selection while previewing another
 range. A preview does not count as requested-range completion.
 
 Retry classified transient transport, timeout, capacity and dependency failures
@@ -6510,3 +6511,5 @@ selected charts, available labels and two animation frames. Retained stale
 same-range display is a separate measurement stratum.
 
 | 2026-11-14 | Correct preset bucket selection, bound long-range report observation and transient retries, label neighboring committed previews, and sequentially warm seven-day/thirty-day views with exact-ID polling and cancellable ownership (#2013). |
+
+| 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
