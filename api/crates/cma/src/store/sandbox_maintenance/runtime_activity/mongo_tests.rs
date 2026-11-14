@@ -157,7 +157,7 @@ async fn read_only_observer_uses_snapshot_watermark_and_content_free_queries() {
     let commands = trace.lock().unwrap().clone();
     let first = commands
         .iter()
-        .find(|(_, command)| command.get_bool("startTransaction") == Ok(true))
+        .find(|(_, command)| matches!(command.get_bool("startTransaction"), Ok(true)))
         .unwrap();
     let lower = first
         .1
@@ -287,7 +287,7 @@ async fn concurrent_parent_or_agent_writer_conflicts_with_admission_fence() {
         )
         .await;
         assert!(
-            matches!(result, Err(ApplyError::Driver(ref error)) if crate::store::sandbox_mongo_transactions::is_transient(error)),
+            matches!(result, Err(ApplyError::Driver(ref error)) if crate::store::sandbox_mongo::is_transient(error)),
             "{result:?}"
         );
         session.abort_transaction().await.unwrap();
