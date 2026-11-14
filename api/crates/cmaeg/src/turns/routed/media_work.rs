@@ -249,7 +249,7 @@ fn validate_head(
     }
     head.schedule.validate(plan, target)
 }
-fn id(target: &StoredTarget) -> String {
+pub(super) fn id(target: &StoredTarget) -> String {
     storage::identifier(&(KIND, &target.id))
 }
 fn admission_error(error: ExecutionError) -> AdmissionError {

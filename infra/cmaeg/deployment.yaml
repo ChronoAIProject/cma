@@ -201,6 +201,8 @@ spec:
             limits:
               cpu: "2"
               memory: 2Gi
+          # Replica Custom streams use an authenticated, bounded internal relay
+          # on this same HTTP listener; keep direct peer Pod connectivity.
           # The compatible EG image must include replica-participation readiness
           # and reject /readyz before joining and throughout lease handoff.
           readinessProbe:

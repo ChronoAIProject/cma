@@ -329,6 +329,7 @@ impl AgentSandboxPools {
         actual: DynamicObject,
         desired: &DynamicObject,
     ) -> Result<DynamicObject> {
+        super::target_fence::allow_unversioned(&actual, target(desired)?)?;
         let mut prior = desired.clone();
         prior.data["spec"]["replicas"] = json!(target(&actual)?);
         model::verify(&actual, &prior)?;

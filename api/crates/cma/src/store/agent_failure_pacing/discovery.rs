@@ -6,6 +6,27 @@ pub(in crate::store) fn pipeline(
     now: &str,
     limit: u16,
 ) -> Vec<Document> {
+    build(store, now, limit, None, false)
+}
+
+/// Ownership recovery may replace a previous epoch's live worker claim. Keep
+/// the same pacing/wakeup predicates and paginate before choosing local owners.
+pub(in crate::store) fn owned_pipeline(
+    store: &MongoSandboxStore,
+    now: &str,
+    limit: u16,
+    after: Option<&str>,
+) -> Vec<Document> {
+    build(store, now, limit, after, true)
+}
+
+fn build(
+    store: &MongoSandboxStore,
+    now: &str,
+    limit: u16,
+    after: Option<&str>,
+    include_claimed: bool,
+) -> Vec<Document> {
     let latest = layer2_core::seconds_from_rfc3339(now)
         .map(|seconds| {
             layer2_core::rfc3339_at(
@@ -24,12 +45,23 @@ pub(in crate::store) fn pipeline(
         {"$gt": [format!("{hint}.until"), now]},
         {"$lte": [format!("{hint}.until"), &latest]},
     ]};
-    let available = doc! {
+    let mut available = doc! {
         // Discovery supplies candidates only. The claim path validates the
         // exact envelope and current parents before granting a writer lease.
         "document_schema_version": {"$in": [1_i64, 2_i64]}, "work_pending": true,
-        "$or": [{"work_lease_expires_at": Bson::Null}, {"work_lease_expires_at": {"$lte": now}}],
     };
+    if !include_claimed {
+        available.insert(
+            "$or",
+            vec![
+                doc! {"work_lease_expires_at": Bson::Null},
+                doc! {"work_lease_expires_at": {"$lte": now}},
+            ],
+        );
+    }
+    if let Some(after) = after {
+        available.insert("_id", doc! {"$gt": after});
+    }
     let mut ordinary = available.clone();
     ordinary.insert("work_ready_at", doc! {"$lte": now});
     ordinary.insert("$expr", doc! {"$not": [candidate.clone()]});
@@ -65,7 +97,8 @@ pub(in crate::store) fn pipeline(
         let output = format!("pacing_{name}");
         wake.push(doc! {"$lookup": {
             "from": collection.name(), "localField": format!("record.{name}_id"), "foreignField": "_id",
-            "pipeline": [{"$match": {"document_schema_version": DOCUMENT_SCHEMA_VERSION}},
+            "pipeline": [{"$match": crate::store::work_schema::for_collection(collection,
+                doc! {"document_schema_version": DOCUMENT_SCHEMA_VERSION})},
                 {"$project": {"revision": 1, "record.revision": 1}}], "as": &output,
         }});
         for path in ["revision", "record.revision"] {

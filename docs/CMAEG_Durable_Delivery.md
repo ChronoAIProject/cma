@@ -172,3 +172,34 @@ missing and slow readers, process/worker loss around enqueue, real webhook
 transport signing, separate mixed outcomes, settled webhook reuse and uncertain
 network-intent fencing. All transports remain local fixtures; no external
 message is sent.
+
+## Replica-mode supplementary media
+
+With replica ownership enabled, the existing media index scanner only admits a
+stable, distinct media work item to the original conversation FIFO. The main
+partition driver invokes `MediaWorker` through `EffectExecutor`; composition can
+use `RoutedToolReplies::replica_effect_executor_with_media`. Legacy mode keeps the
+original media scheduler. The scanner repairs admission from the retained media
+index, while the combined effect recovery callback repairs tool roots.
+
+Media claims, response state, text chunks and stream closure retain the captured
+partition lease and write through the transactional partition guard. Renewals
+between settled stages extend only the same live generation. A successor may
+replace an old media sublease only while holding a different currently guarded
+partition generation. Changing only its deadline does not grant a second writer.
+The serialized fence is evidence of the earlier claim, never authority by itself.
+
+Enabled writers retain complete native receipts, including confirmed parts of
+partial delivery. Cancelled or ambiguous attempts remain at the FIFO front for
+reconciliation; expiry or revocation cannot erase that evidence or authorize a
+resend. A fenced completion marker precedes retirement of the media index. An
+absent index entry alone never proves completion. These optional fields and
+completion records are written only in replica mode and require a compatible
+fenced reader on rollback, under the replica protocol floor.
+
+Local authenticated Mongo tests cover scanner-only admission, confirmed receipt
+retention and completion, cancellation during a send, independent-client owner
+takeover, exact 80-part partial retention, and refusal to dispatch later FIFO
+work while ambiguity remains. Their provider snapshot and delivery sink are
+synthetic. They do not qualify process/node loss, real provider delivery, service
+composition, cross-process Sync output, or end-to-end recovery and latency.
