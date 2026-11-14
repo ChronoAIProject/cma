@@ -1,6 +1,6 @@
 use super::*;
 
-async fn retired(fixture: &Fixture) {
+pub(super) async fn retired(fixture: &Fixture) {
     tokio::time::timeout(Duration::from_secs(1), async {
         while !fixture
             .receiver

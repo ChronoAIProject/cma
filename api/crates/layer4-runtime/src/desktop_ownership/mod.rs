@@ -57,6 +57,8 @@ pub(crate) struct DesktopReceiver {
     // this set while a caller waits, so cancellation cannot detach old I/O.
     tasks: tokio::sync::Mutex<JoinSet<()>>,
     changed: watch::Sender<()>,
+    #[cfg(test)]
+    persisted: std::sync::atomic::AtomicUsize,
 }
 
 impl DesktopReceiver {
@@ -79,6 +81,8 @@ impl DesktopReceiver {
             }),
             tasks: tokio::sync::Mutex::new(JoinSet::new()),
             changed: watch::channel(()).0,
+            #[cfg(test)]
+            persisted: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -116,6 +120,9 @@ impl DesktopReceiver {
             self.poison(state);
             return Err(unavailable());
         }
+        #[cfg(test)]
+        self.persisted
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         state.record = Some(record);
         state.legacy_closed = true;
         Ok(())

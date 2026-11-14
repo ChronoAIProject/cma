@@ -54,6 +54,9 @@ impl DesktopReceiver {
         let owner = confirmation.ownership;
         self.check_owner(&owner)?;
         let mut tasks = self.tasks.lock().await;
+        // Completed handles no longer own I/O. Reap them while holding the
+        // admission lock before deciding whether a persisted drain is needed.
+        while tasks.try_join_next().is_some() {}
         let (deadline, renewal) = {
             let mut state = self.state.lock().unwrap();
             self.verify(&mut state)?;
@@ -86,21 +89,25 @@ impl DesktopReceiver {
                 {
                     return Err(refused());
                 }
-                // Install a tombstone before cancelling prior streams. A crash
-                // or cancelled drain cannot reopen legacy or this new epoch.
+                // A pending drain needs a tombstone before its first await:
+                // cancellation cannot reopen legacy or retry this epoch. With
+                // no prior tasks, the final durable write can install directly
+                // while this same admission lock excludes new registrations.
                 state.deadline = None;
                 state.revision = state.revision.checked_add(1).ok_or_else(refused)?;
                 state.challenges.clear();
                 self.changed.send_replace(());
-                self.persist(
-                    &mut state,
-                    Record {
-                        version: 1,
-                        receiver: self.identity.clone(),
-                        owner: owner.clone(),
-                        retired: true,
-                    },
-                )?;
+                if !tasks.is_empty() {
+                    self.persist(
+                        &mut state,
+                        Record {
+                            version: 1,
+                            receiver: self.identity.clone(),
+                            owner: owner.clone(),
+                            retired: true,
+                        },
+                    )?;
+                }
             }
             (challenge.deadline, renewal)
         };
