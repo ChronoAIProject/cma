@@ -23,11 +23,17 @@ use std::sync::{atomic::AtomicUsize, Arc, Mutex};
 #[tokio::test]
 #[ignore = "requires authenticated disposable Mongo replica set"]
 async fn remote_executor_delivers_once_to_original_stream_over_authenticated_http() {
-    run(false).await;
-    run(true).await;
+    run(false, false).await;
+    run(true, false).await;
 }
 
-async fn run(drop_ack: bool) {
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn terminal_hop_failure_before_enqueue_closes_original_stream_with_uncertainty() {
+    run(false, true).await;
+}
+
+async fn run(drop_ack: bool, fail_before_enqueue: bool) {
     let database = Fixture::new().await;
     let nodes = [database.node(31).await, database.node(32).await];
     let instances: Vec<_> = nodes
@@ -121,6 +127,16 @@ async fn run(drop_ack: bool) {
             ),
         )
     };
+    if fail_before_enqueue {
+        super::monitor::StreamMonitor::new(
+            nodes[origin].journal(),
+            CustomDelivery::new(
+                "https://replica-fixture.invalid".into(),
+                registries[origin].clone(),
+            ),
+        )
+        .start(&plan);
+    }
     let receiver = Arc::new(
         RoutedToolReplies::new(
             nodes[origin].plans(),
@@ -140,6 +156,9 @@ async fn run(drop_ack: bool) {
         .replica_relay_router()
         .layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                if fail_before_enqueue {
+                    return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
                 let response = next.run(request).await;
                 if drop_ack {
                     tokio::time::sleep(WINDOW + Duration::from_secs(1)).await;
@@ -189,7 +208,7 @@ async fn run(drop_ack: bool) {
             .as_ref()
             .unwrap()
             .local,
-        Some(if drop_ack {
+        Some(if drop_ack || fail_before_enqueue {
             LocalStreamOutcome::Lost
         } else {
             LocalStreamOutcome::Buffered
@@ -203,8 +222,15 @@ async fn run(drop_ack: bool) {
     .unwrap()
     .unwrap();
     let text = std::str::from_utf8(&text).unwrap();
-    assert_eq!(text.matches("event: cmaeg.completed").count(), 1);
-    assert!(text.contains("remote answer"));
+    if fail_before_enqueue {
+        assert_eq!(text.matches("event: cmaeg.failed").count(), 1);
+        assert!(text.contains("sync_delivery_lost"));
+        assert!(!text.contains("remote answer"));
+        assert!(!text.contains("event: cmaeg.completed"));
+    } else {
+        assert_eq!(text.matches("event: cmaeg.completed").count(), 1);
+        assert!(text.contains("remote answer"));
+    }
     delivery
         .deliver_frame(&plan.identity, &target.id, &mut lease, &frame, effect)
         .await

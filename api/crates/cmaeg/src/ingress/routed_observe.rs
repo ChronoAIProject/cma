@@ -26,6 +26,11 @@ impl RoutedIngress {
                 (cmaeg_core::seal::ReplyAddress::Sync { waiter: incoming },
                  cmaeg_core::seal::ReplyAddress::Sync { waiter: retained }) if incoming == retained
             ));
+        if sync_waiter_attached {
+            if let Some(monitor) = &self.stream_monitor {
+                monitor.start(&committed);
+            }
+        }
         observer.admitted(&committed.identity.record_id, &committed.activity);
         for target in &committed.targets {
             let mut change = crate::activity::Change::state(

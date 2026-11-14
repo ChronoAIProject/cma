@@ -97,6 +97,10 @@ pub(crate) async fn compose(
         } else {
             Default::default()
         };
+    let stream_monitor = deps
+        .partitions
+        .as_ref()
+        .map(|_| crate::turns::routed::StreamMonitor::new(journal.clone(), deps.custom.clone()));
     let coordinator = DeliveryCoordinator::new(deps.delivery).with_custom_stream(deps.custom);
     let mut media_effects: Option<Arc<dyn crate::replicas::effects::EffectExecutor>> = None;
     let media_scheduler = if media_ready {
@@ -232,6 +236,7 @@ pub(crate) async fn compose(
         .with_admissions_enabled(config.routing.admission_enabled)
         .with_quoted_context(config.routing.quoted_context_enabled)
         .with_sync_delivery(true)
+        .with_stream_monitor(stream_monitor)
         .with_custom_media_providers(state.custom_existing_agent_media_providers.clone()),
     );
     Ok(Some(Composition {

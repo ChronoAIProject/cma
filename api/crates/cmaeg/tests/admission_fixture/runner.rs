@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "runner_poll.rs"]
+mod poll;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
@@ -103,34 +106,12 @@ pub async fn run(shared: Arc<Shared>, input: Run) -> Result<Value, &'static str>
     let requests = futures_util::future::join_all(futures).await;
     // Refused and timed-out HTTP calls still reach the independent terminal oracle.
     let oracle_started = started.elapsed().as_millis();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    let (durable, terminal_wait_expired) = loop {
-        let observation = tokio::time::timeout_at(
-            deadline.min(tokio::time::Instant::now() + Duration::from_secs(3)),
-            shared
-                .oracle
-                .observe(&identity, shared.config.replicas_enabled),
-        )
-        .await;
-        let durable = match observation {
-            Ok(Ok(value)) => value,
-            Ok(Err(_)) => json!({"oracle_error":"read_failed"}),
-            Err(_) => json!({"oracle_error":"read_timeout"}),
-        };
-        let complete = durable["targets"]
-            .as_array()
-            .is_some_and(|rows| !rows.is_empty() && rows.iter().all(|x| x["complete"] == true));
-        if complete {
-            break (durable, false);
-        }
-        if tokio::time::Instant::now() >= deadline {
-            break (durable, true);
-        }
-        tokio::time::sleep_until(
-            deadline.min(tokio::time::Instant::now() + Duration::from_millis(100)),
-        )
-        .await;
-    };
+    let observation = poll::observe(Duration::from_secs(30), || {
+        shared
+            .oracle
+            .observe(&identity, shared.config.replicas_enabled)
+    })
+    .await;
     let ledger = shared
         .ledger
         .lock()
@@ -138,8 +119,11 @@ pub async fn run(shared: Arc<Shared>, input: Run) -> Result<Value, &'static str>
         .snapshot();
     let result = json!({"schema":"eg_fixture_case_v1","case_sha256":case_sha256,"event_label":input.event,
         "event_sha256":hash(identity.event_id.as_str().as_bytes()),"cohort_clock":"case_local_monotonic","requests":requests,
-        "oracle_start_ms":oracle_started,"oracle_end_ms":started.elapsed().as_millis(),"terminal_wait_expired":terminal_wait_expired,
-        "durable":durable,"ledger":ledger,"status":"OBSERVED_NOT_ACCEPTANCE","http_timeout_ms":25000,"terminal_timeout_ms":30000});
+        "oracle_start_ms":oracle_started,"oracle_end_ms":started.elapsed().as_millis(),"terminal_wait_expired":observation.expired,
+        "oracle_observation_count":observation.attempts,
+        "oracle_last_successful":observation.last_successful,
+        "oracle_last_successful_after_start_ms":observation.last_successful_ms,
+        "durable":observation.durable,"ledger":ledger,"status":"OBSERVED_NOT_ACCEPTANCE","http_timeout_ms":25000,"terminal_timeout_ms":30000});
     super::config::private_json(
         &shared
             .config
