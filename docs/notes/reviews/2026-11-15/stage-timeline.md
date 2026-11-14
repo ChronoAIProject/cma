@@ -1,27 +1,51 @@
-# Combined U1–U3 / S1–S3 timeline — lead ruling 14 November 19:56
+# Combined Batch9 / U1–U3 / S1–S3 timeline — lead ruling 14 November 20:30
 
-All times are SGT on15 November. Deployment-engineer02 owns U1–U3 and the
-M4/index sequence; deployment-engineer01 owns S1–S3. **Every U and S stage needs
-its own fresh lead approval at execution time.** This schedule supplies neither
-a grant nor an actual start/end. The 02:00–02:59 blackout remains in force.
+All times are Asia/Singapore (SGT), with dates explicit across midnight.
+This binding revision supersedes the earlier morning S1/S2/S3 schedule.
+Deployment-engineer02 owns Batch9, Activity and U1–U3; deployment-engineer01
+owns S1–S3. **Every stage needs its own fresh lead approval and observed prior
+success criteria.** Planned times supply neither a grant nor actual start/end.
+If a stage fails, perform approved rollback, report and let the lead re-slot it.
+The final deadline remains **15 November 18:00**.
 
-| Time / condition | Owner | Operation and required ordering |
+| Planned time / condition | Owner | Operation and required ordering |
 |---|---|---|
-| 03:00 | engineer02 | Batch9, then its image soak, then the Activity index. |
-| After successful Activity index | engineer02 | U1 collection-and-index Job only. Credential grant is `GRANT_NOOP`: the AM credential already has `readWrite` + `dbAdmin`; no new credential/role action. |
-| U1 succeeds and U2 can start **before04:30** | engineer02 | Start U2 immediately under its own fresh grant. Exactly04:30 or later uses the fallback. |
-| 06:00 | engineer01 | S1 starts on schedule using the merged fixed controller, including when U2 remains active. Replica maintenance is lease-fenced; active backfill alone does not delay S1. |
-| 06:45 fallback, after S1 soak | engineer02 | If the early U2 start was missed, start U2 after S1's actual soak ends, targeting06:45. Preserve the existing S1 low-N extension: if it reaches past06:45, wait for that actual end and the fresh U2 grant. Do not launch during the protected soak to satisfy a nominal time. |
-| After U2 `pass_complete`, outside S-stage exclusions | engineer02 | U3 may start only after actual successful U2 completion and outside the ±15-minute start exclusions below. |
-| 08:30 | engineer01 | S2, subject to its own prerequisites/PASS and fresh grant. |
-| 10:30 | engineer01 | S3, subject to its own prerequisites/PASS and fresh grant; includes the separately granted sequential S3b exercise. |
-| 13:00–17:00; report by18:00 | assigned verification owners | Final production verification and owner report. Each soak report is also due at its actual E+15. |
+| 14 Nov 21:00 | engineer02 | Batch9 primary rollout at N=1 with shipped defaults: multi-replica false, rollups OFF, web recovery OFF. Report preflight ready for the lead's deploy approval. Use the standard 15-minute checkpoint and auto-rollback; retain actual checkpoint result. |
+| 14 Nov 21:30–22:30 | log01 | S1 60-minute baseline on the actual Batch9 image at N=1. Bind actual source/image/state and coverage; retain the standing 24h context. |
+| 14 Nov approximately 22:30 | engineer01 | S1 AM=2 plus PDB only after the Batch9 checkpoint and S1 dry-run projections PASS using merged #2043 controller develop `9be345523fd2768d8e8daf1c0f4ccd487191f9b0` or a descendant retaining its correction. Observe real production traffic under the existing low-N rule. |
+| 15 Nov approximately 00:30 | engineer01 | S2 EG=2 only after S1 success. Complete cutover and the full soak before 02:00; reserve recovery time and retain the controller's 01:58 write margin. If the remaining time cannot satisfy the criteria, report for lead re-slotting. |
+| 15 Nov 02:00–02:59 | all operators | No writes, including recovery. The blackout is unchanged. |
+| 15 Nov 03:00 onward | engineer02 | Activity index → U1 collection/index Job → U2, each after the preceding success and a fresh grant. U1 credential grant is `GRANT_NOOP`: existing AM readWrite+dbAdmin requires no new role/credential operation. |
+| U1 succeeds and U2 can start strictly before 15 Nov 04:30 | engineer02 | Start U2 under its own fresh grant. Exactly 04:30 or later uses the fallback after actual S3 success. |
+| 15 Nov approximately 05:30–06:00 | engineer01 | S3 CPU quota 64/128 → HPA → sequential S3b exercise once #2038 is merged. Bind the final merged controller, observed prior success and separate grants; complete all required observation/drain/soak without compressing them. |
+| After actual S3 success, if early U2 was missed | engineer02 | Start U2 under a fresh grant. Nominal S3 start/end is not completion evidence. |
+| After U2 `pass_complete` | engineer02 | U3 starts only at least 15 minutes away from every actual/planned S-stage start, confirmed with engineer01 and recomputed whenever the lead re-slots a stage. |
+| 15 Nov 09:00–16:00 | prod-verifier01 | M8 production verification using the existing kit, after observed prerequisite success and the fresh stage grant. |
+| 15 Nov 18:00 | all reporting owners / lead | Final report due. Stage reports remain due by actual soak end E+15. |
 
-U3 **launch** exclusions are05:45–06:15 around S1,08:15–08:45 around S2,
-and10:15–10:45 around S3. Treat the boundaries conservatively as excluded.
-Recompute these intervals if the lead changes any S-stage start; engineer02
-must confirm the current S schedule with engineer01 before launching U3.
-This rule does not claim that U3 has completed or that U2 is `pass_complete`.
+U3 requires an absolute separation of at least 15 minutes from each S-stage
+start. Confirm the chosen S3 start within its 05:30–06:00 planning range before
+U3 scheduling; do not treat an unresolved range as a measured timestamp.
+Every actual timestamp and result stays pending until observed. Re-slotting a
+stage also rebinds its baseline, read windows and U3 separation; it never erases
+previous failures or grants automatic advancement.
+
+## Baseline packet times
+
+Each log before interval is `[actual_operation_start - 60 minutes, actual_operation_start)`
+on the actual serving image. The following are planned packet bounds; actual observations remain pending:
+
+| Stage | Planned before interval, SGT |
+|---|---|
+| S1 | 14 Nov 21:30–22:30, on the Batch9 image |
+| S2 | 14 Nov 23:30–15 Nov 00:30 |
+| S3 at 05:30 | 15 Nov 04:30–05:30 |
+| S3 at 06:00 | 15 Nov 05:00–06:00 |
+
+Log01 rebinds the interval when the actual operation start moves. Existing
+source/image/state matching, retained failures and coverage uncertainty remain.
+These 60-minute log windows do not replace or extend prod-verifier02's 1800-second
+READ session. The read owner supplies its actual scheduled bounds separately.
 
 ## Match S1 observations to backfill state
 
@@ -34,8 +58,9 @@ as actuals. The source/image/replica join must describe the serving processes.
 Log01 tags every S1 latency/error comparison with `backfill_active` as true,
 false or unknown, plus its observed interval/source. The AM1 baseline must be
 from the **same backfill state** as the compared S1 cohort. Retain the standing
-24h baseline and refresh the existing60-minute before-window immediately before
-S1's actual operation start. A quiet pre-backfill baseline cannot qualify an
+24h baseline and use the 21:30–22:30 Batch9 60-minute before-window for the
+planned 22:30 S1 start. If the lead re-slots S1, refresh/rebind that before-window
+to the actual operation start. A quiet pre-backfill baseline cannot qualify an
 active-backfill comparison. Missing state or matched baseline remains explicit.
 
 If backfill starts or completes within a window, split latency/error results at
@@ -47,7 +72,9 @@ state segmentation never resets the stage's cumulative failures or denominator.
 
 S1's existing real-production-traffic/read-only policy, N<20 same-observation
 extension and disclosed low-N suite-plus-zero-error acceptance remain unchanged.
-The owned1800-second synthetic read session never extends/restarts automatically.
+Prod-verifier02 rebinds the owned READ window to the revised stage packet;
+the existing NyxID slot and pacing remain. The 1800-second synthetic read session
+never extends/restarts automatically and is distinct from the 60-minute log baseline.
 Any actual safety/accepted-work/absolute failure still triggers the immediate
 log01→engineer01 incident/ACK route and the approved compatible recovery.
 

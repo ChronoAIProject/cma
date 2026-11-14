@@ -1,4 +1,4 @@
-# S3 — automatic scaling, 15 November 10:30 SGT
+# S3 — automatic scaling, 15 November approximately 05:30–06:00 SGT
 
 Use [common setup/safety/acceptance](deployment-runbooks.md). Require signed
 S1/S2 PASS; both fixed2, zero terminating processes/clients, real backends and
@@ -7,6 +7,14 @@ K12–K15/K25 require actual local scale/kill, secure drain, ≤30s same-work re
 complete handoff p95, separate hard effective lifetime G, all-process/per-server
 capacity with≥30% Mongo headroom, provider/node/quota budgets and calibrated
 useful CPU response. Configured grace760 does not prove G or measured p95.
+
+The [20:30 timeline revision](stage-timeline.md) orders CPU quota 64/128, HPA
+and the separately granted S3b exercise once #2038 is merged. Bind the final
+merged controller retaining #2043; the S3b source GO alone is not a merge or
+execution grant. Complete required drain/observation/soak before reporting S3
+success. If early U2 missed 04:30, engineer02 starts it only after that actual
+success and a fresh grant. Failures invoke approved rollback, reporting and lead
+re-slotting. U3 must remain at least 15 minutes from the confirmed S3 start.
 
 Keep min2/max5, AM60% of4CPU, EG200% of250m. Up: stabilization0,
 Max(+2pods,+100%)/60s. Down: stabilization 300s, **Min(−1 Pod)/120s**.
@@ -227,7 +235,8 @@ Once both actually return2, with no terminating process/client and canonical
 service/membership stable, declare S/E for a fresh30-minute final soak. Use the
 common acceptance policy and preserve transition failures separately. The
 actual stage packet must include replaced/restarted/terminating identities.
-M8 verification13:00–17:00 and provider24-hour monitoring remain separate.
+M8 verification09:00–16:00 uses prod-verifier01's kit; final report is due18:00.
+Provider24-hour monitoring remains separate.
 
 ## Recovery — freeze, delete exact HPAs, descend serially
 
