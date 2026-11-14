@@ -143,7 +143,14 @@ data:
   CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED: "false"
   CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED: "false"
   CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED: "false"
-  CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED: "false"
+  # Retained usage writers and warming require separate staged owner approval.
+  CHRONO_USAGE_REPORT_VIEWS_ENABLED: "false"
+  CHRONO_USAGE_REPORT_VIEW_SCOPES: "[]"
+  CHRONO_USAGE_REPORT_FRESH_SECONDS: "300"
+  CHRONO_USAGE_REPORT_RETAIN_SECONDS: "86400"
+  CHRONO_USAGE_REPORT_WARMER_ENABLED: "false"
+  CHRONO_USAGE_REPORT_WARM_SCOPES: "[]"
+  CHRONO_USAGE_REPORT_WARM_SECONDS: "300"
   CHRONO_RESPONSE_PAGED_EVENTS_ENABLED: "false"
   # Retained-context lookup remains opt-in until the compatible API path is
   # deployed and its latency and authorization evidence is reviewed.
@@ -317,6 +324,8 @@ data:
   # TTL applies to existing Activity records; lowering it can remove history.
   CHRONO_ACTIVITY_RETENTION_DAYS: "90"
   CHRONO_ACTIVITY_ASYNC_ENABLED: "false"
+  # Requires explicit owner approval: loses individual successful operational-read evidence.
+  CHRONO_ACTIVITY_OPERATIONAL_READ_SAMPLING_ENABLED: "false"
   # Canonical platform origin for scoped runtime service proxying.
   CHRONO_PLATFORM_BASE_URL: "https://nyx-api.chrono-ai.fun"
   # Durable personal documents use the existing S3-backed storage service.

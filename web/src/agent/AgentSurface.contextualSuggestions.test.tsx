@@ -292,7 +292,7 @@ it('counts visible exposure and confirmed send separately from the bound task ou
     ...saved,
     set: { ...saved.set, id: 'metric-set', items: [{ ...saved.set.items[0]!, id: 'metric-item' }] },
   };
-  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
   const metrics: unknown[] = [];
   let intersect: (() => void) | undefined;
   const listener = (event: Event) => metrics.push((event as CustomEvent).detail);
@@ -311,6 +311,7 @@ it('counts visible exposure and confirmed send separately from the bound task ou
     const { fixture } = await setup(async () => metricSet);
     const button = await screen.findByRole('button', { name: saved.set.items[0]!.text });
     await waitFor(() => expect(intersect).toBeDefined());
+    visibility.mockReturnValue('hidden');
     await act(async () => {
       intersect!();
       expect(metrics).toEqual([]);

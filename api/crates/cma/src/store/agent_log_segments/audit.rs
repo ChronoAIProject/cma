@@ -137,6 +137,11 @@ pub(crate) async fn run_unit(
         return Ok(progress.status);
     }
     result?;
+    super::telemetry::lag(
+        "audit",
+        progress.completed.checked_entries,
+        progress.through_seq,
+    );
     Ok(progress.status)
 }
 

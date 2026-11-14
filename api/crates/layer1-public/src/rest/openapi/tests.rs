@@ -185,6 +185,14 @@ fn every_admin_route_is_documented_and_authenticated() {
     assert!(document.paths.paths["/api/v1/admin/admission/ceilings"]
         .put
         .is_some());
+    let view = document.paths.paths["/api/v1/admin/usage/metrics/view"]
+        .get
+        .as_ref()
+        .expect("retained admin usage view is documented");
+    assert_eq!(
+        serde_json::to_value(&view.security).unwrap(),
+        serde_json::json!([{"bearerAuth": []}, {"sessionCookie": []}])
+    );
     assert!(document.paths.paths["/api/v1/admin/admission"]
         .get
         .is_some());
