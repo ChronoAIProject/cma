@@ -1,0 +1,152 @@
+//! Diagnostic build artifact only; absent from the healthy application tree.
+use super::{
+    AttemptError, Observation, Phase, RecordError, ReplicaKind, ReplicaWrite, INTERACTIONS,
+};
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[path = "mongo_diagnostic_config.rs"]
+mod config;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    PreSubmitRefusal,
+    PreSubmitStall,
+    PostCommitUnknown,
+}
+
+impl Action {
+    const fn from_id(id: u8) -> Self {
+        match id {
+            0 => Self::PreSubmitRefusal,
+            1 => Self::PreSubmitStall,
+            2 => Self::PostCommitUnknown,
+            _ => panic!("invalid generated diagnostic action"),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::PreSubmitRefusal => "pre_submit_refusal",
+            Self::PreSubmitStall => "pre_submit_stall",
+            Self::PostCommitUnknown => "post_commit_unknown",
+        }
+    }
+}
+
+struct Fixture {
+    database_sha256: &'static str,
+    admission_sha256: &'static str,
+    case_sha256: &'static str,
+    fixture_sha256: &'static str,
+    action: Action,
+    fired: AtomicBool,
+}
+
+impl Fixture {
+    fn matches(&self, database: &str, writes: &[ReplicaWrite]) -> bool {
+        let [write] = writes else { return false };
+        // Expiring writes select INTERACTIONS in the real replica_record path.
+        let collection = if write.expires_at.is_some() {
+            INTERACTIONS
+        } else {
+            ""
+        };
+        collection == INTERACTIONS
+            && database.starts_with("eg_diag_")
+            && database.len() == 40
+            && digest(database.as_bytes()) == self.database_sha256
+            && digest(write.id.as_bytes()) == self.admission_sha256
+            && write.expected.is_none()
+            && write.channel.is_none()
+            && write.guard.is_none()
+            && write.condition.is_none()
+            && write.expires_at.is_some_and(|expiry| expiry > 0)
+            && write
+                .projection
+                .as_ref()
+                .is_some_and(|value| matches!(value.kind, ReplicaKind::Admission) && value.active)
+    }
+
+    fn claim(&self) -> bool {
+        self.fired
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    }
+
+    fn emit(&self, boundary: &'static str, commit_class: &'static str) {
+        // No payload, database name, root ID, URI, credentials or error text.
+        tracing::warn!(
+            event = "eg_fixture_record_fault",
+            fixture_sha256 = self.fixture_sha256,
+            case_sha256 = self.case_sha256,
+            database_sha256 = self.database_sha256,
+            admission_sha256 = self.admission_sha256,
+            action = self.action.name(),
+            boundary,
+            commit_class,
+            "Diagnostic record fault fired"
+        );
+    }
+}
+
+pub(super) struct Armed<'a>(&'a Fixture);
+
+pub(super) fn select(database: &str, writes: &[ReplicaWrite]) -> Option<Armed<'static>> {
+    config::FIXTURE
+        .matches(database, writes)
+        .then_some(Armed(&config::FIXTURE))
+}
+
+impl Armed<'_> {
+    pub(super) async fn before_submission(
+        &self,
+        observation: &Observation,
+    ) -> Result<(), AttemptError> {
+        if self.0.action == Action::PostCommitUnknown || !self.0.claim() {
+            return Ok(());
+        }
+        observation.phase(Phase::Validate);
+        self.0.emit("before_submission", "not_submitted");
+        match self.0.action {
+            Action::PreSubmitRefusal => {
+                Err(RecordError::Unavailable("diagnostic pre-submit refusal".into()).into())
+            }
+            // The existing enclosing retry deadline cancels this future. Never
+            // invent a rollback from cancellation or add another time budget.
+            Action::PreSubmitStall => std::future::pending().await,
+            Action::PostCommitUnknown => unreachable!(),
+        }
+    }
+
+    pub(super) fn after_commit(&self, observation: &Observation) -> Result<(), AttemptError> {
+        if self.0.action != Action::PostCommitUnknown || !self.0.claim() {
+            return Ok(());
+        }
+        // Caller reaches here only after its real commit_transaction returned Ok.
+        // This is an injected client acknowledgement failure, not a server label.
+        self.0.emit("after_commit_ack", "acknowledged");
+        let error = unknown_commit();
+        observation.mongo_error(&error);
+        Err(error.into())
+    }
+}
+
+fn digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn unknown_commit() -> mongodb::error::Error {
+    let concern: mongodb::error::WriteConcernError = serde_json::from_value(serde_json::json!({
+        "code": 91,
+        "codeName": "DiagnosticAcknowledgementLost",
+        "errorLabels": ["UnknownTransactionCommitResult"],
+    }))
+    .expect("fixed diagnostic Mongo error");
+    mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteConcernError(concern))
+        .into()
+}
+
+#[cfg(test)]
+#[path = "mongo_diagnostic_fault_tests.rs"]
+mod tests;
