@@ -32,6 +32,7 @@ pub(super) struct NativeBackend {
     pub run_before_suspend: Arc<AtomicBool>,
     pub interrupted_workspace: Arc<AtomicBool>,
     pub calls: ActionLog,
+    pub adoptions: Arc<AtomicUsize>,
     pub inputs: Arc<Mutex<Vec<layer3_adapter::ConversationInput>>>,
     pub inspected_generations: Arc<Mutex<Vec<u64>>>,
 }
@@ -274,6 +275,7 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
     ) -> layer3_adapter::Result<Option<RuntimeObservation>> {
+        self.adoptions.fetch_add(1, Ordering::SeqCst);
         let rows = self.row.lock().await;
         let Some(row) = rows.as_ref() else {
             return Ok(None);

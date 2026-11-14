@@ -96,6 +96,7 @@ async fn custom_runtime_invalid_authority_fails_before_provider_inspection() {
         .unwrap()
         .effective_image = image('d');
     let before = fixture.backend.calls.snapshot();
+    let adoptions = fixture.backend.adoptions.load(Ordering::SeqCst);
     assert!(sandbox_spec(&queued, "test").is_err());
     assert!(crate::sandbox::runtime_attachment::adopt_bound_runtime(
         fixture.harness.adapter.as_ref(),
@@ -105,6 +106,7 @@ async fn custom_runtime_invalid_authority_fails_before_provider_inspection() {
     .await
     .is_err());
     assert_eq!(fixture.backend.calls.snapshot(), before);
+    assert_eq!(fixture.backend.adoptions.load(Ordering::SeqCst), adoptions);
     assert_eq!(fixture.harness.stored(&active.id).await, active);
 }
 
