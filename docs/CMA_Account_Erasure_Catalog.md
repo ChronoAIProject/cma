@@ -1,45 +1,40 @@
-# Account erasure catalog ownership evidence (C2)
+# Account erasure catalog ownership evidence
 
-This audit names every collection in `store/isolation.rs` exactly once. Source
-paths are relative to `api/crates/cma/src/store/` unless another crate is named.
-The executable catalog is `store/account_erasure/catalog.rs`. The table records
-ownership/reference classification and writer/index evidence; a reference rule
-does not imply that every staged transformation is enabled in this slice.
+This audit names every collection in `store/isolation.rs` once. Source paths below
+are relative to `api/crates/cma/src/store/` unless they name another crate or
+`document_artifacts/`. The executable catalog is `store/account_erasure/catalog.rs`.
+A selector is indexed only when an existing index has its matching field as a
+leading key (or uses the exact `_id`). Partial indexes do not establish support for
+historical rows outside the partial predicate. Unindexed rules use the shared page
+scan. The erasure executor installs the documented discovery indexes once at
+first cohort load; indexed effect classifications remain conservative. See the
+second-review migration in CMA_Account_Deletion.md.
 
-`Owner` compares exact personal subjects. `Linked` uses verified live and durable
-historical ownership and acknowledged inventory. Exact composed keys and
-delimited Agent-turn keys preserve complete identities. Activity actors never
-claim their resource targets. Organization roots and descendants remain
-protected independently of whether identity rewriting is available.
+## Reading the policies
 
-An index supports a selector only when its leading keys cover the complete
-historical range. Partial indexes do not establish historical coverage. The
-executor installs documented discovery/effect indexes idempotently, keeps one
-bounded exact selector position, and reuses frozen native Agent log indexes.
-Absent native carriers remain absent. Shared unindexed scans cover at most 64
-subjects, and one invocation consumes at most 500 nonempty effect rows.
+`Owner` compares exact subject strings. `Linked` compares typed resource IDs from
+the live and durable historical closure, unioned with previously inventoried IDs. `SubjectPrefix` denotes
+an exact composed key, such as `owner:<subject>`, rather than an unbounded prefix.
+`LinkedKey` matches a literal prefix followed by a whole resource ID and `:`.
+`VisitorDay` matches the numeric UTC-day prefix and the complete subject suffix.
+`RequestLimit` computes each of the three subject bucket keys using the writer's
+`sha256("subject:<subject>")` encoding. A reference policy may appear twice when
+its indexed projection and unindexed embedded references need separate passes.
+For resource shares, the indexed pass covers accepted recipients and the shared
+scan also removes unaccepted explicit audience subjects. Personal resource closure
+excludes all
+Sandboxes whose `resource_policies.owner_kind` is `organization`; their descendants
+and policy/share records remain, while personal references are redacted.
 
-`Custody`, `Sealed`, and `ObjectAccounting` remain declarations for subsequent
-credential/object steps and preserve cleanup authority. The deletion receipt and
-events remain under their existing retention contract. Mixed global controls
-are preserved; only matching diagnostic bindings are removed. Supported foreign
-document references and global model-budget overrides use exact revision checks.
-
-C2 implements publisher majority fences, the durable transaction cleanup drain,
-checkpointed exact reference discovery, immutable Profile retention, canonical
-Trigger publisher tombstones, and their strict readers/admission checks.
-Required retained Profile revisions preserve exact transitive pins; unused
-publisher data is removed. New manual references refuse fences, while proven
-surviving exact declarations may finish after canonical retention. These are
-pending product-policy decisions and do not establish a complete deletion job.
-
-Surviving foreign/organization identity, actor, channel, Bot custody and explicit
-share-recipient references permanently refuse with
-`IdentityRedactionPending { collection }` in this slice. The executor and public
-reference facade preserve all affected sources. Generic share/receipt recipient
-handling remains blocked through that facade until C3. Organization ownership
-protection is active now; canonical audit identity rewriting and personal
-delegation debt handoff are delivered together in C3.
+`Custody`, `Sealed`, and `ObjectAccounting` are declarations for subsequent steps.
+`EraseRecords` skips them. Checkpoint manifests and object tombstones are deferred
+alongside document quotas because their exact object keys and cleanup authority
+must survive until external object absence is confirmed. Account-deletion records
+and events retain the deletion receipt and restore authority under the documented
+expiry policy. The reporting control collection mixes deployment-wide scan positions/leases
+with `diagnostic:` bindings containing account and Sandbox identity; only the
+matching diagnostic rows are removed. The platform settings singleton is a reference policy
+because its model budget owner overrides do contain subjects.
 
 ## Audited collections
 
@@ -68,7 +63,7 @@ delegation debt handoff are delivered together in C3.
 | `agent_suggestions` | `Linked(Agents, &["agent_id"])`; `Owner(&["owner"])` | no; yes | suggestions.rs projection; owner-leading index, no agent_id-leading index; suggestions.rs write projection and owner/agent/answer/version index |
 | `agent_command_orders` | `Linked(Agents, &["_id"])` | yes | agent_commands/reserve.rs _id = agent.id |
 | `agent_commands` | `Linked(Agents, &["agent_id"])`; `Reference(Identities)` | yes; no | agent_commands/records.rs projection and agent_id/order indexes |
-| `agent_creation_provenance` | `Linked(Agents, &["_id"])`; `Reference(Identities)` | yes; no | agent_provenance.rs record_creation uses Agent ID as _id; no secondary owner index; surviving audit-actor rewriting is deferred to C3 |
+| `agent_creation_provenance` | `Linked(Agents, &["_id"])`; `Reference(Identities)` | yes; no | agent_provenance.rs record_creation uses Agent ID as _id; no secondary index; retained foreign/organization creation actors receive exact CAS identity rewrites |
 | `agent_access_tools` | `Linked(Agents, &["agent_id"])` | yes | agent_access_tools/records.rs persist projection; sandbox_mongo.rs agent_id/conversation index |
 | `agent_access_requests` | `Linked(Sandboxes, &["record.requester.sandbox_id"])` | yes | agent_access_requests/records.rs and agent_access_requests.rs requester sandbox/phase index |
 | `agent_log` | `Linked(Agents, &["agent_id"])` | yes | agent_log_codec.rs log_document; agent_log.rs agent_id/sequence index |
@@ -97,7 +92,7 @@ delegation debt handoff are delivered together in C3.
 | `binding_event_media_uploads` | `Linked(Agents, &["record.agent_id"])` | no | media_uploads.rs record_bson; cma/src/media_continuations/model.rs MediaUploadRecord agent_id; no selector index |
 | `bot_setups` | `Sealed` | no | bot_setups.rs encrypted setup envelope, actor key is not human subject; execution belongs to credential cleanup |
 | `bot_setup_contexts` | `Sealed` | no | bot_setup_contexts.rs encrypted payload and digest(binding,conversation,event); no plaintext owner; execution belongs to credential cleanup |
-| `bots` | `Custody(&["owner"])`; `Reference(Identities)` | yes; no | bots.rs BotDocument owner projection and owner/creation-key index; custody remains for credential cleanup; surviving identity/delegation rewriting is deferred to C3 |
+| `bots` | `Custody(&["owner"])`; `Reference(Identities)` | yes; no | bots.rs BotDocument owner projection and owner/creation-key index; Bot cleanup/revocation precedes credential deletion |
 | `bridge_allocation_heads` | `ProvenAbsent(LEGACY_OWNER_PATHS)` | no | No current writer/typed decoder remains; only isolation.rs and retirement census register this namespace; candidate owner/owner_subject/subject/record.owner/record.owner.subject/record.owner_subject/record.subject selectors require operator confirmation |
 | `bridge_allocations` | `ProvenAbsent(LEGACY_ALLOCATION_PATHS)` | no | legacy_history.rs reads record.owner and placement; legacy_reuse_lifecycle.rs/channel_storage_retention.rs retain partial readers, no complete ownership decoder; candidate owner/owner_subject/subject/record.owner/record.owner.subject/record.owner_subject/record.subject selectors require operator confirmation |
 | `bridge_callback_dispositions` | `ProvenAbsent(LEGACY_OWNER_PATHS)` | no | No current writer/typed decoder remains; only isolation.rs and retirement census register this namespace; candidate owner/owner_subject/subject/record.owner/record.owner.subject/record.owner_subject/record.subject selectors require operator confirmation |
@@ -168,9 +163,9 @@ delegation debt handoff are delivered together in C3.
 | `provider_binding_preparations` | `Owner(&["owner"])` | no | bindings/reprovision.rs receipt_document owner projection; no owner index |
 | `provider_tool_opens` | `Linked(Agents, &["record.scope.agent_id"])` | no | bindings/tools.rs OpenRecord and bindings/tools/validation.rs Scope; no matching index |
 | `provider_tool_relays` | `Linked(Agents, &["agent_id"])` | no | bindings/tools/relay.rs write projection; no agent_id-leading index |
-| `resource_policies` | `Linked(Sandboxes, &["_id"])`; `Reference(Identities)` | yes; no | resource_access/records.rs policy_document; parent closure excludes owner_kind organization; retained policy-actor rewriting is deferred to C3 |
-| `resource_share_commands` | `Linked(Sandboxes, &["sandbox_id"])`; `Reference(ShareReceipts)`; `Reference(Identities)` | no; no; no | resource_access/records.rs receipt_document; embedded share recipients and actor attribution; no sandbox_id-leading receipt index; the identity-aware facade permanently refuses affected retained rows until C3 |
-| `resource_shares` | `Linked(Sandboxes, &["sandbox_id"])`; `Reference(Shares)`; `Reference(Shares)`; `Reference(Identities)` | yes; yes; no; no | resource_access/records.rs share_document and sandbox selector index; accepted_subjects has a leading index; embedded audience subjects use shared scanning; recipient/actor handling through the facade is deferred to C3 |
+| `resource_policies` | `Linked(Sandboxes, &["_id"])`; `Reference(Identities)` | yes; no | resource_access/records.rs policy_document; parent closure excludes owner_kind organization; retained organization evidence actors use exact CAS tombstones |
+| `resource_share_commands` | `Linked(Sandboxes, &["sandbox_id"])`; `Reference(ShareReceipts)`; `Reference(Identities)` | no; no; no | resource_access/records.rs receipt_document; no sandbox_id-leading receipt index; preserve foreign/organization audit rows and canonically redact personal actors; resource_access/records.rs embeds record.share.link.accepted_subjects; embedded share revision preserved; outer mutation_version increments with exact original-record CAS, requiring absent mutation_version on the first rewrite |
+| `resource_shares` | `Linked(Sandboxes, &["sandbox_id"])`; `Reference(Shares)`; `Reference(Shares)`; `Reference(Identities)` | yes; yes; no; no | resource_access/records.rs share_document + resource_access.rs sandbox selector index; accepted_subjects projection has a leading index; unaccepted record.link.audience.subjects has no index and uses the shared scan |
 | `sandbox_admissions` | `OwnerKey(Subject)` | yes | sandbox_admission.rs owner fence _id = subject; global::admit key is preserved |
 | `sandbox_billing_state` | `Linked(Sandboxes, &["_id"])`; `Owner(&["owner_id"])` | yes; no | sandbox_billing.rs serializes funding/model.rs SandboxBillingState with owner_id and _id = sandbox_id; the erasure migration installs a leading owner_id index for orphan discovery; pending claims and retained windows block before any usage deletion, while a stopped settled current receipt is historical evidence |
 | `sandbox_colors` | `OwnerKey(Subject)` | yes | sandbox_colors.rs Palette _id = owner |
@@ -199,7 +194,6 @@ delegation debt handoff are delivered together in C3.
 | `workspaces` | `Linked(Sandboxes, &["sandbox_id"])` | yes | workspaces.rs workspace_document + nonpartial sandbox_id index |
 | `worktrees` | `Linked(Sandboxes, &["sandbox_id"])` | yes | worktrees.rs worktree_document + sandbox_id index |
 
-
 ## Legacy read-only confirmation
 
 `ProvenAbsent` is a conservative refusal, not a declaration that production has
@@ -222,19 +216,136 @@ legacy allocation and cleanup readers, operators must also resolve `allocation_i
 deleting account's live/inventoried closure. New evidence must update this catalog
 before it authorizes destructive handling.
 
-## Billing and deployment boundary
+## Pending product decisions
 
-Unsettled funding and undelivered billing claims block usage erasure. Billing
-enabled also requires delivery of unclaimed usage events; disabled billing may
-erase unclaimed events. Orphan billing state remains attributable through
-`owner_id`; a stopped settled state may retain its historical current receipt.
-Partial progress always accompanies a later error. Deterministic unattributable
-corruption is a permanent cohort block; clock/driver failure remains retryable.
+Billing and usage default to erasure after all delivery claims settle (pending
+product decision). Billing states remain attributable by `owner_id` even when their
+Sandbox and inventory entry are absent. Pending reservation requests and retained
+settlement windows block usage erasure. A stopped state with no pending request or
+retained windows is settled even when `current` still holds the confirmed receipt:
+`funding/evidence.rs` removes delivered windows without clearing `current`. Comments authored on another owner's document are removed, and
+their receipts retain a `deleted-account` author with an empty body (pending product
+decision). Deleted publishers leave redacted Trigger revision tombstones so completed visitor Launches and accepted Launches with an already committed
+Agent keep their retained resource path; Draft and Agent-less accepted Launches
+return typed retired/unavailable (pending product decision). Organization-owned
+resources remain organization property and only personal references are removed
+(pending product decision).
 
-This catalog is a reviewable persistence implementation, not evidence of a
-production census, completed account deletion, remote revocation, or zero
-residue. Worker scheduling and the full pipeline remain later deliveries. See
-the C2 migration/reader-floor section in
-[CMA Account Deletion](CMA_Account_Deletion.md). Preserve exact compatible
-executables, indexes, markers, cursors and cleanup authority during recovery.
-No downgrade below the recorded C2 floor is certified after its writes.
+## Review-round execution amendments
+
+The history closure uses durable ownership sources, cached for one resumable
+cohort, with pages of 500 rows and a per-person 20,000-ID / 512 KiB identity /
+128 KiB live Sandbox snapshot ceiling. Projected ownership-query results also have a
+1 MiB ceiling. Organization descendants do not consume those
+limits. Incoming inventory is checked against current roots and durable sidecar
+ownership in pages of 500 before charging personal capacity. Serialized cursors
+have a separate 1 MiB ceiling. Resource and Profile state share a 768 KiB
+serialized per-person budget, leaving headroom even with the separate live
+snapshots. Capacity and corrupt
+record blocks include the responsible subject hash. New caller inventory is unioned; current foreign roots and
+Launch/input-protocol or binding/conversation sidecars veto stale ownership.
+Historical sources survive the ordinary child pass and are returned for durable
+inventory acknowledgement before deletion. Indexed effect selection sorts `_id`
+only within an exact selector range supported by a full
+`{selector_field: 1, _id: 1}` compound index. Versioned Agent log carriers reuse
+their existing full native indexes with one bounded tuple position; absent
+carriers remain absent, partial explicit migrations remain restartable, and their
+frozen DDL inventory is unchanged.
+Unindexed scans remain shared across
+up to 64 subjects.
+
+`sandbox_usage_report_control` is mixed state: only `diagnostic:` rows with a
+matching `record.owner_subject` or known `record.sandbox_id` are deleted. Ordinary
+global controls remain intact. `agent_creation_provenance` uses its `_id` Agent
+identity index, not an invented secondary owner index.
+
+Organization resources and attributable operator audits retain canonical
+`deleted-account` actors, including policy evidence, manager/creation actors,
+commands, controls, artifacts, channel usage, Bot custody references and explicit
+activity resource targets. Personal feedback and suggestions are deleted.
+Generic HTTP activity templates cannot establish a concrete organization target.
+Actor attribution never grants personal ownership of a resource target. Activity
+target candidates preserve organization audits only after a matching typed
+organization policy is found; rootless foreign targets do not enter inventory.
+Legacy organization share snapshots receive precise recipient/actor rewrites;
+ordinary share creation validation is unchanged. Bot key/debt identifiers survive;
+personal delegation debt is handed off before identity rewriting. These rules
+are pending product decision; reassignment and remote revocation are not supplied
+by the record executor.
+
+Referenced Profiles retain only required immutable revisions and exact transitive
+pins. Their aggregate owner becomes `deleted-account`; visibility is private,
+retirement is permanent, names/descriptions are empty, and authoring drafts and
+fork identity are absent. Existing availability policy remains readable. New
+references and forks refuse even though existing exact pins remain available.
+This policy is pending product decision.
+
+A surviving Trigger publisher's exact frozen target remains an existing
+reference when another Profile author's account is erased. Its accepted Launch
+effects wait until the required tree is canonically retained, then may continue
+only with transactional proof of the durable Launch, exact live effect, input
+receipt, surviving revision and resource lineage. A manual reference or an erased
+Trigger publisher cannot use this continuation path.
+Trust disclosures use neutral `Sandbox` and `Workspace` labels for canonical
+retained metadata while preserving exact commands, digests and confirmation.
+This does not restore stored authoring metadata or admit manual references.
+
+The erasure side majority-writes Profile/Trigger fences with server timestamps,
+then waits `max(ceil(1.5 * transactionLifetimeLimitSeconds) + 10 seconds,
+configured floor)` before checkpointed shared reference discovery. The cleanup
+period can extend an expired transaction by half its lifetime; ten seconds cover
+scheduling jitter. The configured floor defaults to 120 seconds and remains in
+force when the parameter is readable. If it is unreadable, the fallback must
+cover that same cleanup bound on every server. Never increase the lifetime during
+an active drain. Each call scans at most one ordered page of 500 reference rows;
+the cursor stores its stage and last identity. No record effects precede a
+complete validated closure. Admission transactions read
+fences without writing catalogue counters. Unpublished counter fields are removed.
+Reference/history sources are streamed once and cached; refresh uses indexed root
+and sidecar lookups instead of repeatedly walking an organization subtree.
+Operator audits with a personal `detail.subject` redact that field while retaining
+the operator and resource target for every admin target shape (`profiles`,
+`profile:<kind>:<id>`, `sandboxes`, Sandbox and event targets), pending product
+decision.
+
+Personal-share recipient removal first reserves the matching policy revision
+with exact CAS, then changes the share with exact CAS. The full access reader's
+policy fence remains valid in every intermediate state. A conflicting share
+writer cannot overwrite concurrent recipients; a reservation may safely remain
+after conflict. Live Sandbox/policy lineage must agree, while a missing Sandbox
+and policy permit the existing orphan-audit rewrite. Policy reservations are
+concurrency fences rather than redacted-content counters.
+
+Billing-enabled callers must block on every undelivered usage event, including
+unclaimed events. Disabled billing permits unclaimed events to be erased, while
+existing undelivered claims and unsettled funding still block. Block errors
+carry the responsible subject hash. All partial effects accompany any subsequent
+error, and overlapping erasure workers reconcile absence by querying survivors.
+Cursors bind catalog digest, collection name, indexed flag, subject set and
+billing mode; mismatches restart safely.
+
+Existing durable Sandbox and Workspace snapshots authorize only their exact
+declared child pins, including Agents declared by a frozen Trigger Workspace.
+The admission transaction validates the parent, snapshot, index, digest and
+lineage; manual new references remain refused throughout erasure and retirement.
+Organization binding ownership follows `metadata.owner.subject` through the
+binding to `Sandbox.owner`; the manager remains a separate audit actor. These
+organization resources and their descendants establish surviving Profile roots.
+Indexed unchanged pages retain the exact selector and scalar `_id` or native tuple
+position; protected rows never trigger a collection-wide fallback. Each indexed page call
+probes at most eight empty selectors; the executor reads at most one nonempty
+effect page of 500 rows per invocation. Capacity attribution
+includes the responsible member's Profile graph and retained-pin contribution;
+clock and driver failures remain retryable without account attribution.
+Deterministic unassigned corruption is a typed permanent cohort block; invalid
+readable lifetime values or unsupported drain configuration require operator
+intervention rather than repeated retries. The separate graph-byte counter is
+removed; serialized member and cursor budgets remain authoritative.
+
+Pending exact child pins require a surviving parent. Active deletion evidence or
+owner-specific Profile fences keep a deleting personal parent's continuation
+Pending until canonical retention; a verified organization policy overrides any
+subject-string overlap. Canonical retained pins and surviving roots still finish
+their precise declarations. See the fourth-review migration in
+[CMA Account Deletion](CMA_Account_Deletion.md#fourth-review-selector-and-permanent-refusal-migration)
+for the compound-index set, cursor reader floor and permanent cohort-block contract.
