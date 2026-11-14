@@ -277,6 +277,18 @@ pub trait HostedBackend: Send + Sync {
         Ok(None)
     }
 
+    /// Opt-in preparation must gate all binding, assignment and status dispatch.
+    async fn inspect_native_runtime_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        admission.wait().await?;
+        self.inspect_native_runtime(handle, request, home).await
+    }
+
     /// Fresh observation only; this must never bind or start a runtime process.
     async fn inspect_nonexecuting_runtime(
         &self,

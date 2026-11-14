@@ -6,6 +6,9 @@ use crate::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "backend_inspection_admission_tests.rs"]
+mod inspection_admission;
+
 #[path = "backend_policy_read_tests.rs"]
 mod policy_reads;
 

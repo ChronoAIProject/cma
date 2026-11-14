@@ -46,6 +46,8 @@ mod home_snapshot_job;
 mod home_snapshot_view;
 mod home_volume;
 mod home_volume_router;
+mod inspection_admission;
+pub use inspection_admission::{InspectionAdmission, InspectionRelease};
 mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
 pub mod ingress_budget;

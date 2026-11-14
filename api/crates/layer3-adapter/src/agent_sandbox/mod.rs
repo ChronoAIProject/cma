@@ -17,6 +17,7 @@ pub use claim_guard::NativeClaimGuardReason;
 mod readiness_observation;
 pub use readiness_observation::NativeReadinessObservation;
 mod native_runtime_proof;
+pub(crate) use native_runtime_proof::NativeRuntimeProof;
 mod network_policy;
 mod nonexecuting;
 mod observation;
