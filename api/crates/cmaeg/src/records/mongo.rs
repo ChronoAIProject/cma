@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 #[path = "mongo_admission_index.rs"]
 mod admission_index;
+#[path = "mongo_replica_observation.rs"]
+mod replica_observation;
 #[path = "mongo_replica_retry.rs"]
 mod replica_retry;
 #[path = "mongo_replicas.rs"]

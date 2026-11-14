@@ -1,5 +1,6 @@
 //! Durable scheduling is part of acceptance when replica ownership is enabled.
 use super::{AdmissionError, AdmittedPlan, PlanStore};
+use crate::ingress::admission_trace::{self as trace, Stage};
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
 
@@ -31,19 +32,21 @@ impl PlanStore {
     ) -> Result<AdmittedPlan, AdmissionError> {
         if let Some(queue) = &self.admission_queue {
             let result = async {
-                queue.enqueue(&plan).await?;
+                trace::admission(Stage::Enqueue, queue.enqueue(&plan)).await?;
                 if let Some(deployment) = queue.index_deployment() {
                     // Queue custody already exists. Clearing this hint never
                     // changes the immutable root or its version-one reader contract.
-                    self.records
-                        .finish_admission_index(
+                    trace::record(
+                        Stage::IndexRetire,
+                        self.records.finish_admission_index(
                             &plan.admission_id,
                             &plan.identity.owner,
                             1,
                             deployment,
-                        )
-                        .await
-                        .map_err(|_| AdmissionError::Unavailable)?;
+                        ),
+                    )
+                    .await
+                    .map_err(|_| AdmissionError::Unavailable)?;
                 }
                 Ok::<_, AdmissionError>(())
             }
