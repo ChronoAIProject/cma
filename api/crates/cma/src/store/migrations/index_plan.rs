@@ -70,6 +70,8 @@ pub(super) fn sanitize(plan: &Document, target_index: &str, safe_fields: &[&str]
             if incomplete {
                 output.insert("incomplete".into(), Value::Bool(true));
             }
+        } else if plan.contains_key(key) {
+            output.insert("incomplete".into(), Value::Bool(true));
         }
     }
     if let Ok(shards) = plan.get_array("shards") {
@@ -251,6 +253,32 @@ mod tests {
             "activity_recorded_at_id_desc",
             &["recorded_at", "_id"],
         )
+    }
+
+    #[test]
+    fn malformed_array_children_cannot_become_a_verified_leaf() {
+        use mongodb::bson::Bson;
+        let target = "activity_recorded_at_id_desc";
+        let leaf = doc! {"stage":"IXSCAN","indexName":target};
+        assert!(super::verifies(&sanitize(&leaf), target));
+        for field in ["inputStages", "children"] {
+            let mut valid = doc! {"stage":"OR"};
+            valid.insert(field, vec![leaf.clone()]);
+            assert!(super::verifies(&sanitize(&valid), target));
+            for malformed in [
+                Bson::Document(doc! {"stage":"COLLSCAN"}),
+                Bson::Null,
+                Bson::Int32(1),
+                Bson::String("private-child-canary".into()),
+            ] {
+                let mut plan = leaf.clone();
+                plan.insert(field, malformed);
+                let output = sanitize(&plan);
+                assert_eq!(output["incomplete"], true);
+                assert!(!super::verifies(&output, target));
+                assert!(!output.to_string().contains("private-child-canary"));
+            }
+        }
     }
 
     #[test]
