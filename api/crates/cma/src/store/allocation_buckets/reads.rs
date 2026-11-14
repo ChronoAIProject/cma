@@ -73,10 +73,10 @@ impl ReportingStore {
         states: &[SandboxUsage],
         range: Range,
     ) -> Result<BTreeMap<(String, u64), DayBucket>> {
-        if states.len() > 200 || range.seconds() > 30 * DAY || range.from >= range.to {
+        if states.len() > 200 || range.seconds() > 30 * DAY || range.from > range.to {
             return Err(MetricsError::Busy);
         }
-        if states.is_empty() {
+        if states.is_empty() || range.from == range.to {
             return Ok(BTreeMap::new());
         }
         let ids: Vec<_> = states
