@@ -242,6 +242,8 @@ data:
   CMAEG_DRAIN_SECONDS: "660"
   CMAEG_BUSY_RETRY_MAX_MS: "180000"
   CMAEG_CONSOLE_ENABLED: "true"
+  # Activate only after owner-approved Console migration and legacy-process exclusion.
+  CMAEG_CONSOLE_SHARED_SESSIONS: "false"
   CMAEG_CONSOLE_CLIENT_ID: "85619590-ec86-40bb-a96b-657bb89b4aa8"
   CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE: "60"
   CMAEG_CONSOLE_SESSION_TTL_MS: "28800000"
