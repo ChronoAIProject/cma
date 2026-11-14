@@ -82,6 +82,9 @@ async fn bucket_ranges_equal_raw_for_all_presets_edges_and_live_tails() {
         states.push(s);
     }
     for range in [
+        // Finalization can leave no eligible seconds. The raw report still
+        // publishes its explicit no-finalized-samples state in this case.
+        Range { from: end, to: end },
         Range {
             from: end - DAY,
             to: end,
