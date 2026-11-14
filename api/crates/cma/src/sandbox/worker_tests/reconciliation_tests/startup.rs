@@ -5,20 +5,26 @@ use fixture::fixture;
 
 #[tokio::test(start_paused = true)]
 async fn startup_thirty_four_bindings_finish_before_orphan_and_home_cleanup() {
-    let fixture = fixture(34, Some(34), None, Duration::from_secs(3)).await;
-    let started = tokio::time::Instant::now();
-    fixture
-        .reconciler
-        .initialize_before_workers(fixture.now)
-        .await
-        .unwrap();
-    assert_eq!(started.elapsed(), Duration::from_secs(15));
-    assert_eq!(fixture.control.started.load(Ordering::SeqCst), 34);
-    assert_eq!(fixture.control.settled.load(Ordering::SeqCst), 34);
-    assert_eq!(fixture.control.peak.load(Ordering::SeqCst), 8);
-    assert_eq!(fixture.control.cleanup.load(Ordering::SeqCst), 1);
-    assert_eq!(fixture.control.homes.load(Ordering::SeqCst), 1);
-    assert_eq!(fixture.control.cancelled.load(Ordering::SeqCst), 0);
+    for (exclusive, peak, seconds) in [(false, 1, 102), (true, 8, 15)] {
+        let fixture = fixture(34, Some(34), None, Duration::from_secs(3)).await;
+        let started = tokio::time::Instant::now();
+        if exclusive {
+            fixture
+                .reconciler
+                .initialize_before_workers(fixture.now)
+                .await
+                .unwrap();
+        } else {
+            fixture.reconciler.initialize(fixture.now).await.unwrap();
+        }
+        assert_eq!(started.elapsed(), Duration::from_secs(seconds));
+        assert_eq!(fixture.control.started.load(Ordering::SeqCst), 34);
+        assert_eq!(fixture.control.settled.load(Ordering::SeqCst), 34);
+        assert_eq!(fixture.control.peak.load(Ordering::SeqCst), peak);
+        assert_eq!(fixture.control.cleanup.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.control.homes.load(Ordering::SeqCst), 1);
+        assert_eq!(fixture.control.cancelled.load(Ordering::SeqCst), 0);
+    }
 }
 
 #[tokio::test]
