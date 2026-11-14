@@ -25,6 +25,9 @@ MESSAGES = {
     ),
     "cmaeg::ingress::routed::problem": ("Admission error mapped to public refusal",),
     "cmaeg::records::mongo::replica_observation": ("replica persistence observation",),
+    "cmaeg::records::mongo::replicas::diagnostic_fault": (
+        "Diagnostic record fault fired",
+    ),
 }
 
 
@@ -94,6 +97,10 @@ def parse_line(line):
         raise ValueError("unapproved observation message")
     event, _ = fields(tail[len(message) :])
     validate_event(event)
+    if (event["event"] == "eg_fixture_record_fault") != (
+        target == "cmaeg::records::mongo::replicas::diagnostic_fault"
+    ):
+        raise ValueError("fixture target mismatch")
     if (event["event"] == "eg_admission_record") != (
         target == "cmaeg::records::mongo::replica_observation"
     ):
@@ -138,6 +145,11 @@ def parse_line(line):
         raise ValueError("missing stage identity")
     if operations and not attempts:
         raise ValueError("operation ancestry lacks its admission identity")
+    if event["event"] == "eg_fixture_record_fault":
+        if not attempts or not operations or operations[-1]["stage"] != "root_write":
+            raise ValueError("fixture fault lacks direct admission root ancestry")
+        if event["admission_sha256"] != attempt["admission_sha256"]:
+            raise ValueError("fixture fault admission differs from its parent")
     request_sha256 = None
     if requests:
         request_id = requests[0].get("request_id")
@@ -162,7 +174,7 @@ def collect(raw, pod_uid_sha256):
     rejected = 0
     for ordinal, line in enumerate(raw.splitlines(keepends=True), 1):
         # Other application logs may contain private data; never retain them.
-        if b'event="eg_admission_' not in line:
+        if b'event="eg_admission_' not in line and b'event="eg_fixture_' not in line:
             continue
         try:
             event = parse_line(line.decode("utf-8"))
