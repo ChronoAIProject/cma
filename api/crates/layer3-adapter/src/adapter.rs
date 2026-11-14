@@ -1,11 +1,8 @@
 //! The kernel-neutral sandbox adapter contract.
-
 use crate::desktop_ownership::{challenge, open, DesktopOwnedRuntime};
 use tokio::sync::mpsc;
-
 mod runtime_inspection;
 mod runtime_provision;
-
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
@@ -16,7 +13,6 @@ use crate::{
     RuntimeProvisionRequest, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
-
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
 #[async_trait::async_trait]
 pub trait SandboxAdapter: Send + Sync {
@@ -159,12 +155,10 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<Option<crate::RuntimeTermination>> {
         Ok(None)
     }
-
     /// Observe the complete provider inventory or refuse the whole result.
     async fn runtime_inventory(&self) -> Result<Vec<RuntimeObservation>> {
         Err(unsupported("runtime inventory is not supported"))
     }
-
     /// Attach local runtime state only after proving one exact provider row.
     async fn adopt_runtime(
         &self,
@@ -172,7 +166,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<Option<RuntimeObservation>> {
         Err(unsupported("runtime adoption is not supported"))
     }
-
     /// Collect adoption and process status within one call. Implementations may
     /// share fresh predicates inside this call; effects still obtain fresh fences.
     async fn inspect_runtime(
@@ -181,7 +174,15 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<Option<crate::RuntimeInspection>> {
         runtime_inspection::inspect(self, request).await
     }
-
+    /// Optional independent read preparation; default adapters remain serial.
+    async fn inspect_runtime_after(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        admission.wait().await?;
+        self.inspect_runtime(request).await
+    }
     /// Reclaim one exact provider observation without trusting a reused handle.
     async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(unsupported("observed runtime reclamation is not supported"))
@@ -488,7 +489,6 @@ pub trait SandboxAdapter: Send + Sync {
     }
 
     async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> Result<()>;
-
     async fn resources(&self, handle: &RuntimeHandle) -> Result<ResourceReading>;
 
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()>;
