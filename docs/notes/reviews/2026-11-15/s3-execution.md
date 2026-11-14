@@ -39,8 +39,10 @@ k get deployment cma-agent-manager cma-event-gateway \
 
 Verify PodMetrics timestamp/window freshness and actual requests, not only API
 availability. AM target is2.4cores/pod; EG500m/pod. Missing metrics, uncalibrated
-useful response or insufficient capacity is HOLD. Do not lower targets merely
-to manufacture a scale event. Use the existing owner observer for periodic
+useful response or insufficient capacity is HOLD for that qualification. The
+lead-selected [S3b scale/drain exercise](s3b-execution.md) temporarily lowers
+one target through guarded controller operations; it does not establish
+useful-load or max-five performance qualification. Use the existing owner observer for periodic
 metrics/Events/currentMetrics/desired/Ready/terminating capture.
 
 ## S3 pre-step — raise CPU quota after lead approval
@@ -154,7 +156,22 @@ If either creation fails/has UNKNOWN outcome, reconcile the named object first.
 If only one HPA exists, recover only the actual created UID; never invent a
 creation result or delete an object owned by another operation.
 
-## Owned useful load and actual automatic return
+## S3b — existing-traffic scale and drain exercise
+
+Lead 14 November 19:33 selected debugger04's sequential AM-then-EG exercise.
+Follow [the S3b operator commands](s3b-execution.md) after HPA creation and the
+stable-pair baseline. Each temporary target and exact restore uses the merged
+controller with a separate operation grant and UID/RV/generation/full-spec tests;
+only the CPU target leaf changes. No synthetic writes or direct replica patches.
+Observe real third-Pod traffic, restore the original target, wait for actual
+automatic return and zero terminations, then ten minutes stable before EG.
+Keep down300 -1/120 and actual/template grace760. Missing traffic/drain joins
+remain unresolved. The draft's raw patch commands are superseded by this route.
+
+The separate useful-load qualification below remains scoped to its own profile
+and lead grant; S3b does not authorize it or turn its unqualified results into PASS.
+
+## Separately qualified useful load and actual automatic return
 
 Load owner: debugger-04/developer-17, with developer-16 metrics calibration.
 Developer-16 reports8 network-free safety regressions PASS after debugger-04's
@@ -282,4 +299,5 @@ combined process budget that passes namespace quota, per-node placement, actual
 memory and all existing consumer/socket limits. If this does not fit, retain
 fixed two and escalate the specific capacity remedy for lead approval;
 never treat maxReplicas 5 as a total live-process cap. Repeated dry-runs do not
-reserve quota. Keep CPU targets and stage schedule unchanged by this finding.
+reserve quota. This capacity finding does not authorize target/schedule changes;
+the only selected temporary target exception is the separately approved S3b leg.

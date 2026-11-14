@@ -6,6 +6,7 @@ from pathlib import Path
 
 import rules as g
 import checkpoints
+import hpa_exercise
 
 TEMPLATES = Path(__file__).with_name('templates')
 SUFFIXES = {'pause': 'pause', 'prepare': 'prepare-template.template',
@@ -146,6 +147,8 @@ def hpa(step, release, created):
         return quota(action, created)
     g.require(role in ('am', 'eg'), 'wrong_HPA_role')
     name = 'cma-agent-manager' if role == 'am' else 'cma-event-gateway'
+    if action in ('lower-target', 'restore-target'):
+        return hpa_exercise.build(role, action, release, created)
     if action == 'create':
         op = g.load(TEMPLATES / ('S3-api-hpa.json' if role == 'am' else 'S3-cmaeg-hpa.json'))
         timing = release.get('hpa', {}).get(role, {})
