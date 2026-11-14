@@ -112,6 +112,8 @@ impl ReportingStore {
                     || old.complete_lifecycle != bucket.complete_lifecycle
                     || old.revision > bucket.revision
                     || old.last_observed_at > bucket.last_observed_at
+                    || old.source_seq > bucket.source_seq
+                    || old.source_revision > bucket.source_revision
                 {
                     return Err(MetricsError::Unavailable);
                 }

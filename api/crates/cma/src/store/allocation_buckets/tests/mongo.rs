@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::Arc;
 
-async fn fixture() -> Arc<ReportingStore> {
+pub(super) async fn fixture() -> Arc<ReportingStore> {
     let store = ReportingStore::connect(
         &std::env::var("CHRONO_TEST_MONGODB_URI").unwrap(),
         &format!("allocation_buckets_{}", uuid::Uuid::new_v4().simple()),
@@ -12,7 +12,7 @@ async fn fixture() -> Arc<ReportingStore> {
     store.initialize_allocation_buckets(true).await.unwrap();
     store
 }
-async fn ready(store: &ReportingStore, lane: Lane) {
+pub(super) async fn ready(store: &ReportingStore, lane: Lane) {
     store
         .collection(CONTROL)
         .update_one(
@@ -24,7 +24,7 @@ async fn ready(store: &ReportingStore, lane: Lane) {
         .await
         .unwrap();
 }
-async fn seed(store: &ReportingStore, states: &[SandboxUsage]) {
+pub(super) async fn seed(store: &ReportingStore, states: &[SandboxUsage]) {
     store
         .collection(super::super::super::sandbox_usage::STATES)
         .insert_many(
@@ -35,7 +35,7 @@ async fn seed(store: &ReportingStore, states: &[SandboxUsage]) {
         .await
         .unwrap();
 }
-async fn checkpoint(store: &ReportingStore, lane: Lane) -> Document {
+pub(super) async fn checkpoint(store: &ReportingStore, lane: Lane) -> Document {
     store
         .collection(CONTROL)
         .find_one(doc! {"_id":lane.key()})
@@ -43,7 +43,7 @@ async fn checkpoint(store: &ReportingStore, lane: Lane) -> Document {
         .unwrap()
         .unwrap()
 }
-fn progress(from: u64) -> worker::Progress {
+pub(super) fn progress(from: u64) -> worker::Progress {
     // Serialize through the actual durable contract, including unknown-field refusal.
     serde_json::from_value(serde_json::json!({"day":from,"cutoff":from+DAY,
         "after":null,"pass_complete":true}))
@@ -118,6 +118,10 @@ async fn lease_expiry_takeover_and_release_fence_data_and_progress() {
     )
     .unwrap();
     ready(&store, Lane::Backfill).await;
+    assert!(store
+        .publish_allocation_buckets(&old, std::slice::from_ref(&bucket), &progress(from))
+        .await
+        .is_err());
     let next = store
         .claim_allocation_buckets(Lane::Backfill)
         .await
@@ -220,7 +224,8 @@ async fn publication_failure_rolls_back_earlier_bucket_and_checkpoint() {
 async fn multi_replica_backfill_resumes_pages_and_reuses_unchanged_history() {
     let store = fixture().await;
     let from = (super::super::super::usage_reports::now() / DAY - 1) * DAY;
-    let states: Vec<_> = (1..=6).map(|id| state(id, from)).collect();
+    let page = worker::PAGE_SIZE as usize;
+    let states: Vec<_> = (1..=page + 2).map(|id| state(id as u64, from)).collect();
     seed(&store, &states).await;
     let other = ReportingStore::connect(
         &std::env::var("CHRONO_TEST_MONGODB_URI").unwrap(),
@@ -235,7 +240,7 @@ async fn multi_replica_backfill_resumes_pages_and_reuses_unchanged_history() {
         other.maintain_allocation_buckets(true, Lane::Backfill)
     );
     let (a, b) = (a.unwrap(), b.unwrap());
-    assert_eq!(a.written + b.written, 4);
+    assert_eq!(a.written + b.written, page);
     assert_eq!(usize::from(a.claimed) + usize::from(b.claimed), 1);
     ready(&other, Lane::Backfill).await;
     let second = other
@@ -249,7 +254,7 @@ async fn multi_replica_backfill_resumes_pages_and_reuses_unchanged_history() {
             .count_documents(doc! {})
             .await
             .unwrap(),
-        6
+        page as u64 + 2
     );
     // Reset only test progress to repeat yesterday; stable state avoids raw reads.
     store
@@ -267,7 +272,7 @@ async fn multi_replica_backfill_resumes_pages_and_reuses_unchanged_history() {
         .unwrap();
     assert_eq!(
         (repeat.reused, repeat.written, repeat.source_rows),
-        (4, 0, 0)
+        (page, 0, 0)
     );
     store.db.drop().await.unwrap();
 }

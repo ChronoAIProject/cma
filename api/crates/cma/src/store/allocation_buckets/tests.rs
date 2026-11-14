@@ -3,6 +3,7 @@ use layer2_core::sandbox_usage::{UsageEvent, UsageEventKind, UsageTotals};
 use layer2_core::{SandboxId, SubjectId};
 
 mod mongo;
+mod recovery;
 
 fn state(id: u64, created_at: u64) -> SandboxUsage {
     SandboxUsage {
