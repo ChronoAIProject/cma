@@ -91,7 +91,16 @@ impl Sandbox {
         if (self.status == SandboxStatus::Failed) != self.failure.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.failure"));
         }
-        if !self.credential.validate() || self.work.next_fence == 0 {
+        if !self.credential.validate()
+            || self.work.next_fence == 0
+            || (self.work.prepared_installation_digest.is_some()
+                && self.work.authority_protocol.is_none())
+            || self
+                .work
+                .prepared_installation_digest
+                .as_ref()
+                .is_some_and(|digest| !super::store::valid_admission_fingerprint(digest))
+        {
             return Err(SandboxModelError::invalid_value(
                 "sandbox.credential_or_work",
             ));

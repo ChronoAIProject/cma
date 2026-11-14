@@ -52,6 +52,10 @@ pub struct SandboxWorkState {
     pub authority_protocol: Option<super::store::WorkAuthorityProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<super::ProvisioningExecution>,
+    /// A warm-pool installation proof carried through the owner claim. The
+    /// worker consumes it only after a fresh runtime inspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_installation_digest: Option<String>,
     pub step: SandboxWorkStep,
     pub ready_at: String,
     pub next_fence: u64,
@@ -65,6 +69,7 @@ impl SandboxWorkState {
         Self {
             authority_protocol: None,
             execution: None,
+            prepared_installation_digest: None,
             step,
             ready_at,
             next_fence: 1,
@@ -146,5 +151,36 @@ impl SandboxWorkState {
         self.ready_at = ready_at;
         self.lease = None;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacySandboxWorkState {
+        #[serde(default)]
+        authority_protocol: Option<super::super::store::WorkAuthorityProtocol>,
+        #[serde(default)]
+        execution: Option<super::super::ProvisioningExecution>,
+        step: SandboxWorkStep,
+        ready_at: String,
+        next_fence: u64,
+        attempts: u32,
+        #[serde(default)]
+        lease: Option<SandboxWorkLease>,
+    }
+
+    #[test]
+    fn prepared_proof_is_rejected_by_the_legacy_strict_reader() {
+        let mut state = SandboxWorkState::new(SandboxWorkStep::ProvisionRuntime, "now".into());
+        state.authority_protocol = Some(super::super::store::WorkAuthorityProtocol::RenewedV1);
+        state.prepared_installation_digest = Some("a".repeat(64));
+        let encoded = serde_json::to_value(state).unwrap();
+        assert!(serde_json::from_value::<LegacySandboxWorkState>(encoded).is_err());
     }
 }
