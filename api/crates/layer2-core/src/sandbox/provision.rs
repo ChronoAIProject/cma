@@ -153,3 +153,34 @@ impl SandboxWorkState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LegacySandboxWorkState {
+        #[serde(default)]
+        authority_protocol: Option<super::super::store::WorkAuthorityProtocol>,
+        #[serde(default)]
+        execution: Option<super::super::ProvisioningExecution>,
+        step: SandboxWorkStep,
+        ready_at: String,
+        next_fence: u64,
+        attempts: u32,
+        #[serde(default)]
+        lease: Option<SandboxWorkLease>,
+    }
+
+    #[test]
+    fn prepared_proof_is_rejected_by_the_legacy_strict_reader() {
+        let mut state = SandboxWorkState::new(SandboxWorkStep::ProvisionRuntime, "now".into());
+        state.authority_protocol = Some(super::super::store::WorkAuthorityProtocol::RenewedV1);
+        state.prepared_installation_digest = Some("a".repeat(64));
+        let encoded = serde_json::to_value(state).unwrap();
+        assert!(serde_json::from_value::<LegacySandboxWorkState>(encoded).is_err());
+    }
+}
