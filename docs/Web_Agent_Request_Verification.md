@@ -298,3 +298,65 @@ After merging develop through `12c74bd8f`, the shared-helper extraction preserve
 merged tree passed 304 affected tests across 28 files, Web lint, typecheck, e2e
 typecheck and composer formatting. The twelve-minute browser figures above
 precede integration and isolate #1802 from #1888's separate navigation reduction.
+
+## Replica recovery build policy (#1967)
+
+`CHRONO_WEB_REPLICA_RECOVERY_ENABLED` is a strict **build-time** boolean. It
+accepts only `true` or `false` and defaults to `false` in Vite and both web image
+stages. It controls new automatic recovery of journaled v2 Send and Cancel;
+read-only stream reconnect/polling and explicit pending-request recovery retain
+their own policies. It does not enable retries of approval, steering, compound
+interruption, queued-input mutation or desktop input.
+
+An enabled action shares four transient retries and a 25-second recovery budget,
+including fresh identity checks. SDK request headers have at most five seconds
+per attempt within that budget. Existing Send admission-contention retries are
+separately capped at three across the action, with the same key. Transport errors
+and HTTP 429/502/503/504 can recover; generic 409, authentication refusal and
+malformed responses cannot. Shared retry pacing preserves Retry-After as a
+floor. A floor beyond the remaining budget ends automatic recovery and retains
+the pending request. A network fault followed by an admission refusal does not
+prove the original request was never admitted. Navigation cancels retry sleeps
+and IO, but never converts uncertain admission into a new intent.
+
+Fresh browser identity and journal-epoch checks surround each request. Retained
+body, key and target/revision must still match after those checks. A known
+receipt needs only fresh confirmation, without a second POST; a lost receipt
+uses the original submission endpoint and original key/body. HTTP receipt is
+admission evidence, while terminal UI state still comes from durable replay.
+Internal AM owner-epoch takeover does not change browser identity authority.
+
+The artifact emits `recovery-info.json` with the exact `version`, `revision` and
+`local` fields from `build-info.json`, plus boolean `replicaRecoveryEnabled`.
+The image records the same build argument in
+`io.chronoai.web.replica-recovery-enabled`. Verify actual served evidence, exact
+source and image identity before an owner-approved activation. Runtime
+ConfigMaps, URL parameters and browser storage cannot activate an OFF bundle.
+Deploying an OFF bundle is a compatible rollback with no journal migration;
+already-open ON tabs keep their compiled policy until they load the new bundle.
+
+Run `e2e/replica-recovery.config.ts` against an optimized local preview using
+`CMA_E2E_BROWSER_PATH` for installed Chrome. `CMA_RECOVERY_ENABLED` describes the
+expected bundle for the test; it cannot change the app. The fixture cuts an HTTP
+stream mid-frame, switches ingress, rejects a reconnect with 429/503, and loses
+Send/Cancel receipts after synthetic admission. It checks exclusive resume from
+the last applied durable cursor, complete ordered messages, exact-intent replay,
+Retry-After floors and terminal truth. OFF and ON bundles must both pass.
+
+Auth problems add a backward-compatible boolean `retryable`: explicit temporary
+`identity_unavailable` responses set it true, while generic `store_failed` sets
+it false because invalid provider evidence can reach that response. The browser
+requires literal true with HTTP 429/502/503/504 before retaining a typed API
+failure and its validated Retry-After floor. Missing, false or malformed hints
+stay fail-closed; 401/403 remain signed out. Known fetch network failures and
+local timeouts preserve a fixed transport category, while explicit cancellation
+cannot permit retry. No raw response, credential or identity data enters this
+metadata, and strings never determine retry permission. Compiled browser cases
+exercise identity outages before submission and during receipt confirmation,
+plus contradictory metadata on 401/403.
+
+These listeners share a synthetic ledger. They qualify browser/HTTP recovery,
+not server cross-pod Mongo deduplication, desktop exclusivity, live owner relay,
+production latency or the full cma-scale availability gate. Real shared-Mongo and
+deployed qualification remain separate under the cma-scale contract and
+#1541/#1957.

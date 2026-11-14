@@ -1,5 +1,5 @@
 {
-  "reference_commit": "6b1ace3e12aaabef592875cc851dbd7af763b670",
+  "reference_commit": "1630d06798cbb148d11cad68f9fc43b1f05f280c",
   "source_sha256": {
     "api/crates/cmaeg/src/records/mongo.rs": "b5821d76b3f389dcbc484c8ed16b628d2b4386b806f099de6f1d8d1d481f172b",
     "api/crates/cmaeg/src/records/mongo_replicas.rs": "4140c1c78e410583abe9bee0029e278f08adeb78e86562a6579c4fb42de8a34d",
@@ -11,6 +11,6 @@
     "api/crates/cmaeg/src/ingress/routing_store/queue.rs": "bc937989ab98a845bdff6c7cbea7997a0b300c52e6768c82291dd5f5f7a732ea",
     "api/Cargo.toml": "5bed84f1beab232e8814c24933380e3a53afb007699fb6943e187699633c1529",
     "api/Cargo.lock": "8f797fba38e2f04276e92067f5f55ab7a79f48f26550d68de9ebd1eb8f096c3e",
-    "api/crates/cmaeg/Cargo.toml": "0f1b0dd026069fc0f0bcabc7bbeb010a27d7b46e2eaa08b0fd0a2499f69cb885"
+    "api/crates/cmaeg/Cargo.toml": "17d5f55827b0a82227f31ae69e05b154d7e43c2d876b23362e1498a4c2280c2a"
   }
 }

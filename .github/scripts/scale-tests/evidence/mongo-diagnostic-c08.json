@@ -1,0 +1,69 @@
+{
+  "environment": "local_disposable_mongo",
+  "status": "BLOCKED",
+  "cleanup": true,
+  "binary_sha256": "67e7e9fc04bf52340c62ec200340f216d22dee1877fb0870ed65c4ac38fc0e82",
+  "test_name": "runner_binary::replicas::",
+  "mongo_image": "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c",
+  "started_at": "2026-11-13T18:24:08.997431+00:00",
+  "mongo_limits": {
+    "cpus": 1,
+    "memory_mib": 1024,
+    "db_tmpfs_mib": 1024,
+    "oplog_mib": 64
+  },
+  "timed_out": true,
+  "censored": true,
+  "failure_phase": "test_wait",
+  "error_class": "fixture_error",
+  "exit_code": -15,
+  "termination_signal": 15,
+  "output_sha256": "22cff1b5eabdf83549ae21709f6d430b37714c4a92871d08ba6326a406420fc5",
+  "code": "process_test_deadline",
+  "process_group_cleanup": true,
+  "group_term_sent": true,
+  "group_kill_sent": false,
+  "group_observation_failed": false,
+  "tests_expected": 1,
+  "tests_passed": 0,
+  "numeric_assertions": [],
+  "completed_replica_counts": [
+    1,
+    1,
+    2,
+    2,
+    3
+  ],
+  "completed_ownership_cohorts": [
+    {
+      "replicas": 1,
+      "enabled": false
+    },
+    {
+      "replicas": 1,
+      "enabled": true
+    },
+    {
+      "replicas": 2,
+      "enabled": false
+    },
+    {
+      "replicas": 2,
+      "enabled": true
+    },
+    {
+      "replicas": 3,
+      "enabled": false
+    }
+  ],
+  "ingress_rejections": [],
+  "failed_cohort_observations": [],
+  "migration_diagnostics": [],
+  "failure_codes": [],
+  "test_parent_cleanup": true,
+  "process_cleanup": true,
+  "fixture_directory_retained": false,
+  "container_cleanup": true,
+  "elapsed_seconds": 124.64299712500001,
+  "finished_at": "2026-11-13T18:26:13.614117+00:00"
+}
