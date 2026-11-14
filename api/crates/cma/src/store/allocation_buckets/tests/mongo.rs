@@ -276,8 +276,10 @@ async fn multi_replica_backfill_resumes_pages_and_reuses_unchanged_history() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn maintained_30_day_history_matches_raw_and_new_heads_replace_projected_tails() {
     let original = fixture().await;
-    let mut policy = crate::config::report_views::ViewPolicy::default();
-    policy.allocation_rollups_enabled = true;
+    let policy = crate::config::report_views::ViewPolicy {
+        allocation_rollups_enabled: true,
+        ..Default::default()
+    };
     let store = original.with_view_policy(policy);
     let today = super::super::super::usage_reports::now() / DAY * DAY;
     let from = today - 30 * DAY;

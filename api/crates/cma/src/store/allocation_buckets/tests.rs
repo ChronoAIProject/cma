@@ -233,7 +233,15 @@ fn schema_digest_and_order_checks_refuse_corrupt_evidence() {
 fn compact_daily_summary_is_exact_and_independently_validated() {
     let from = 100 * DAY;
     let s = state(1, from);
-    let bucket = materialize::build(&s, &[], Range { from, to: from + DAY }).unwrap();
+    let bucket = materialize::build(
+        &s,
+        &[],
+        Range {
+            from,
+            to: from + DAY,
+        },
+    )
+    .unwrap();
     let full = bucket.document().unwrap();
     let mut projected = full.clone();
     projected.remove("record");
@@ -243,7 +251,13 @@ fn compact_daily_summary_is_exact_and_independently_validated() {
     assert!(summary.validate_source(&s).unwrap());
     assert_projection(&summary.total.projection, &bucket.total.projection);
     assert!(DayBucket::read(&projected).is_err());
-    for field in ["summary_record", "summary_sha256", "document_schema_version", "owner", "day"] {
+    for field in [
+        "summary_record",
+        "summary_sha256",
+        "document_schema_version",
+        "owner",
+        "day",
+    ] {
         let mut corrupt = projected.clone();
         corrupt.remove(field);
         assert!(DayBucket::read_summary(&corrupt).is_err(), "{field}");

@@ -100,8 +100,12 @@ fn decode<T: serde::de::DeserializeOwned>(document: &Document) -> Result<T> {
         return Err(MetricsError::Unavailable);
     }
     mongodb::bson::deserialize_from_bson(
-        document.get("record").cloned().ok_or(MetricsError::Unavailable)?,
-    ).map_err(unavailable)
+        document
+            .get("record")
+            .cloned()
+            .ok_or(MetricsError::Unavailable)?,
+    )
+    .map_err(unavailable)
 }
 
 #[cfg(test)]
