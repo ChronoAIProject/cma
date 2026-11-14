@@ -124,6 +124,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
             paths.insert(format!("{prefix}{suffix}"), json!({method:operation}));
         }
     }
-    let schemas = schemas();
+    let mut schemas = schemas();
+    super::view_openapi::extend(&mut paths, &mut schemas);
     serde_json::from_value(json!({"openapi":"3.1.0","info":{"title":"Measured Sandbox usage","version":"1"},"paths":paths,"components":{"schemas":schemas}})).expect("static usage OpenAPI")
 }

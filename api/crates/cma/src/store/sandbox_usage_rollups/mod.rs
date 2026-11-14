@@ -76,7 +76,10 @@ impl ReportingStore {
         }
         let mut events = BTreeMap::<String, Vec<UsageEvent>>::new();
         let mut cursor=self.collection(super::sandbox_usage::EVENTS).find(doc!{"sandbox_id":{"$in":&missing},"ended_at":{"$gt":range.from as i64},"started_at":{"$lt":range.to as i64}})
-            .sort(doc!{"sandbox_id":1,"revision":1}).batch_size(200).max_time(DB_DEADLINE).session(&mut *session).await.map_err(unavailable)?;
+            .sort(doc!{"sandbox_id":1,"revision":1}).batch_size(2_000).max_time(DB_DEADLINE).session(&mut *session).await.map_err(unavailable)?;
+        // The complete bounded day is already retained for exact revision-order
+        // projection. Avoid a network round trip for every 200 small events;
+        // Mongo still caps each reply at 16 MiB and the 100k event cap is unchanged.
         let mut count = 0;
         while let Some(d) = cursor
             .next(&mut *session)
