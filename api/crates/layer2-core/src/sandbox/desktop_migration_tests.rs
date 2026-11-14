@@ -1,5 +1,5 @@
 use super::*;
-use crate::sandbox::store::{SandboxSessionStore, SandboxStore};
+use crate::sandbox::store::{SandboxLifecycleCommandStore, SandboxSessionStore, SandboxStore};
 use crate::sandbox::{runtime_desktop_activity_snapshot, try_acquire_runtime_migration_guard};
 use std::sync::atomic::Ordering;
 
@@ -134,22 +134,32 @@ async fn migration_guard_blocks_new_native_opens_from_distinct_service_instances
 #[tokio::test]
 async fn desktop_revalidates_active_state_and_exact_runtime_after_earlier_authorization() {
     for paused in [false, true] {
-        let fixture = Fixture::new().await;
+        let fixture = Fixture::with_generation(None).await;
         let (id, runtime) = fixture
             .service
             .authorize(&fixture.owner, &fixture.agent_id)
             .await
             .unwrap();
         let migration = try_acquire_runtime_migration_guard(&id).unwrap();
-        let mut current = fixture.store.get_sandbox(&id).await.unwrap().unwrap();
-        let revision = current.revision;
         if paused {
-            current.status = SandboxStatus::Paused;
+            fixture
+                .store
+                .schedule_sandbox_lifecycle(crate::sandbox::SandboxLifecycleCommand::pause(
+                    id.clone(),
+                    fixture.owner.subject.clone(),
+                    crate::now_rfc3339(),
+                    None,
+                ))
+                .await
+                .unwrap();
         } else {
-            current.runtime.as_mut().unwrap().runtime_id = "successor-runtime".into();
+            let mut current = fixture.store.get_sandbox(&id).await.unwrap().unwrap();
+            let revision = current.revision;
+            current
+                .record_adopted_runtime_generation(&runtime, 1, crate::now_rfc3339())
+                .unwrap();
+            fixture.store.save_sandbox(revision, current).await.unwrap();
         }
-        current.revision += 1;
-        fixture.store.save_sandbox(revision, current).await.unwrap();
         drop(migration);
         // Resume the real open path from its previously successful authorization.
         assert!(matches!(
