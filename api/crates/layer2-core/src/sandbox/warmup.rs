@@ -215,6 +215,10 @@ impl WarmSandbox {
             .home
             .as_ref()
             .filter(|home| home.native_pool.is_some() && home.attachment().is_some())
+            // The proof adds a field to the strict work envelope. Carry it
+            // only on the already-promoted authority protocol so legacy
+            // readers continue to reject no new version-one shape.
+            .filter(|_| sandbox.work.authority_protocol.is_some())
             .and_then(|_| self.installed_request_sha256.clone());
         next.validate()
             .map_err(|error| corrupt(&error.to_string()))?;
