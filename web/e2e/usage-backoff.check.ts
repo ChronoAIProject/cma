@@ -34,7 +34,11 @@ for (const admin of [false, true]) {
       await page.getByRole('menuitem', { name: 'Usage', exact: true }).click();
     }
     await expect(page.getByRole('button', { name: 'Research Sandbox', exact: true })).toBeVisible();
-    await page.clock.install();
+    // Freeze before the failure so navigation/click time cannot consume the
+    // final millisecond of the server's 30-second Retry-After floor.
+    const clockStart = await page.evaluate(() => Date.now());
+    await page.clock.install({ time: clockStart - 60_000 });
+    await page.clock.pauseAt(clockStart);
     failure = 429;
     await page.getByRole('button', { name: 'Refresh usage', exact: true }).click();
     await expect(page.getByText('Retrying usage automatically…', { exact: true })).toBeVisible();
