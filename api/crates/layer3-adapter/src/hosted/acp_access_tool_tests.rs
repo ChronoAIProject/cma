@@ -130,6 +130,50 @@ async fn prepared_conversation_load_survives_the_ordinary_rpc_deadline() {
     prepared_conversation(true).await;
 }
 
+#[tokio::test]
+async fn prepared_conversation_refuses_owner_credential_rebind_before_close() {
+    let (client, mut server) = socket_pair().await;
+    send_ready(&mut server, "agent-1").await;
+    let serving = tokio::spawn(async move {
+        let initialize = receive_json(&mut server).await;
+        reject(&mut server, &initialize).await;
+        // Owner credentials are never transferred into a neutral prepared
+        // session. The guard must stop before it can close or load the held
+        // conversation, leaving the prepared reservation retryable.
+        while let Some(Ok(frame)) = server.next().await {
+            assert!(!matches!(frame, Message::Binary(_)));
+            let value = frame
+                .to_text()
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok());
+            assert!(!value.as_ref().is_some_and(|value| {
+                matches!(
+                    value.get("method").and_then(serde_json::Value::as_str),
+                    Some("session/close" | "session/load")
+                )
+            }));
+        }
+    });
+    let (updates, _receiver) = tokio::sync::mpsc::channel(8);
+    let mut configured = settings(None, true);
+    configured.access_tool = Some(
+        binding(None)
+            .with_prepared_conversation("prepared-conversation")
+            .unwrap(),
+    );
+    let result = Bridge::open(
+        client,
+        "agent-1",
+        "/workspace".into(),
+        configured,
+        Some("prepared-conversation".into()),
+        updates,
+    )
+    .await;
+    assert!(matches!(result, Err(crate::AdapterError::Rejected(_))));
+    serving.await.unwrap();
+}
+
 async fn prepared_conversation(slow_load: bool) {
     let (client, mut server) = socket_pair().await;
     send_ready(&mut server, "agent-1").await;
