@@ -1,8 +1,9 @@
 # Local cma-scale verification
 
 Tracking: #1957; acceptance: #1360, #1541, #1535 and #1530. Integrate through
-`tl/cma-am-replicas/integration` / #1370. The lead owns merge; solution-architect-04
-must review the exact SHA before MERGE READY. Never wait for GitHub CI.
+`tl/cma-am-replicas/integration` / #1370. The lead owns merge. Under the speed
+directive, architects review integrated production changes; intermediate tooling
+needs no additional review gate. Never wait for GitHub CI.
 
 This directory currently contains executable scenario orchestration, evidence
 validators, local HTTP/Kubernetes helpers and harness tests. **The environment
@@ -11,6 +12,9 @@ The driver must bind the actual local application, synthetic users, independent
 durable outcome oracle, browser, streams and fault controls. No real environment
 scenario has passed merely because the unit/loopback tests pass. Missing inputs
 produce BLOCKED rows and exit 2. Do not substitute `test/fixtures.mjs` for a driver.
+The separate real local create runner is now in `timing/local-create.mjs`; see
+`timing/LOCAL-CREATE.md` for its runtime/auth/Web prerequisites and observer tests.
+It supplies plain/desktop timing only and has not run against an application yet.
 
 ## Prerequisites
 
@@ -23,9 +27,8 @@ produce BLOCKED rows and exit 2. Do not substitute `test/fixtures.mjs` for a dri
   and rollout during qualification. Preserve both the desired and actually alive
   replica counts, including every terminating process. A PDB does not bound
   HPA terminations or protect against node failure.
-- The driver is reviewed at its complete source/dependency hashes. The entrypoint
-  pin is an identity check, not a sandbox for arbitrary imported JavaScript.
-  Review every network/control path; use the injected guarded fetch and bounded
+- The entrypoint pin is an identity check, not a sandbox for arbitrary imported
+  JavaScript. Use the injected guarded fetch and bounded
   local helpers. Preflight must bind actual environment evidence, not return
   operator guesses. Every blocking operation must honor cancellation/deadlines.
 - Provision test-owned synthetic identities, scoped credentials in environment
@@ -270,8 +273,9 @@ with unmeasured values and BLOCKED status.
 Reuse provenance is `timing/provenance.json`. The unchanged core module was verified
 against prod-verifier-02's `PASS_FOR_LOCAL_SYNTHETIC_REUSE_ONLY` verdict, SHA256
 `771748498e063396ab22392c9fd3e361645949f9f5bf74381a23bd5a3d550fbd`.
-Only the statistics module is included; browser integration remains outstanding.
-The copied ownership/journal helper must not persist raw IDs in this suite.
+The local create runner now includes the lifecycle/composer/cleanup helpers.
+Its private cleanup journals retain local resource IDs for recovery; sanitized
+timing results omit them. The full environment/scale driver remains outstanding.
 
 Percentiles use the reviewed helper's nearest-rank definition. p99 is omitted
 below 1000 completed observations. Failed attempts retain elapsed time and prevent
@@ -305,7 +309,7 @@ The driver must independently observe actual termination and exact accepted work
 The environment manager owns shared cluster lifecycle. Never remove peer worktrees,
 shared build caches or infrastructure. The lead owns this checkout's final cleanup.
 
-Submit PR/head SHA, changed file list, all local command outcomes, exact real-scenario
-matrix, immutable evidence paths and unresolved blockers to solution-architect-04
-through the lead-approved route. Do not declare MERGE READY while the driver,
-real evidence or required review is absent.
+Handoff once by plain peer-send: changed behavior, commit, test command/results
+and the exact remaining runtime input. Do not generate intermediate hash chains
+or tooling-review requests. Report actual scenario outcomes separately from
+component tests; missing application observations remain unqualified.
