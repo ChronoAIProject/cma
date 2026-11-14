@@ -57,6 +57,7 @@ impl Fixture {
         let store = Arc::new(InMemorySandboxStore::default());
         let mut sandbox = crate::sandbox::tests::sandbox();
         sandbox.id = SandboxId::generate();
+        sandbox.profile.content.runtime_image = Some(format!("runtime@sha256:{}", "a".repeat(64)));
         sandbox
             .profile
             .content
@@ -83,6 +84,8 @@ impl Fixture {
         let mut agent = crate::sandbox::tests::agent();
         agent.sandbox_id = id.clone();
         agent.status = AgentStatus::Ready;
+        agent.conversation.conversation_id = Some("desktop-conversation".into());
+        agent.conversation.runtime_generation = Some(1);
         agent.work.step = AgentWorkStep::None;
         let agent_id = agent.id.clone();
         store.create_agent(agent).await.unwrap();
@@ -91,7 +94,7 @@ impl Fixture {
             AgentReadService::new(store.clone(), Arc::new(Resources)).with_sessions(store.clone()),
             probe.clone(),
         ));
-        Self {
+        let fixture = Self {
             service,
             store,
             probe,
@@ -101,7 +104,13 @@ impl Fixture {
                 SubjectId("owner".into()),
                 Authorization::new([Capability::UseOwnSandboxes]),
             ),
-        }
+        };
+        fixture
+            .service
+            .authorize(&fixture.owner, &fixture.agent_id)
+            .await
+            .expect("valid authorized desktop fixture");
+        fixture
     }
     pub fn start(
         &self,
