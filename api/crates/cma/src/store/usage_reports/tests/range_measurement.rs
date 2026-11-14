@@ -35,7 +35,14 @@ async fn retained_ranges_measure_421_members_over_31_days_with_exact_first_pages
             )
             .await
             .unwrap();
-        prepare_days(&original, &s, &events, from, to).await;
+        // At UTC midnight the live worker prepares the first hour's tail
+        // inputs even before a complete hour exists. Exercise that same case.
+        let prepared_to = if to.is_multiple_of(DAY) {
+            to + 3600
+        } else {
+            to
+        };
+        prepare_days(&original, &s, &events, from, prepared_to).await;
         states.push(s);
     }
     seed(&original, &states).await;
@@ -123,6 +130,9 @@ async fn retained_ranges_measure_421_members_over_31_days_with_exact_first_pages
             store.finish_report(&lease, report, success).await.unwrap();
             let finalization_us = finalize.elapsed().as_micros();
             let event_reads = commands.event_reads.load(Ordering::SeqCst);
+            if bucketed {
+                assert_eq!(event_reads, 0, "prepared {window} reread raw history");
+            }
             if !success {
                 eprintln!("range_measurement window={window} bucketed={bucketed} status=failed admission_us={admission_us} generation_us={generation_us} finalization_us={finalization_us} event_reads={event_reads}");
                 continue;
