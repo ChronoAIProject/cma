@@ -18,11 +18,14 @@ impl DayBucket {
             "expires_at": expires(self.day + 32 * DAY), "record": record,
         };
         document.extend(self.summary_document()?);
+        if let Some(boundary) = &self.boundary {
+            document.extend(boundary.document(self, &document)?);
+        }
         Ok(document)
     }
 
     pub(super) fn read(document: &Document) -> Result<Self> {
-        let bucket: Self = decode(document)?;
+        let mut bucket: Self = decode(document)?;
         let expected = bucket.document()?;
         for field in [
             "_id",
@@ -39,6 +42,7 @@ impl DayBucket {
                 return Err(MetricsError::Unavailable);
             }
         }
+        bucket.boundary = boundary::Boundary::read(document, &bucket)?;
         Ok(bucket)
     }
 

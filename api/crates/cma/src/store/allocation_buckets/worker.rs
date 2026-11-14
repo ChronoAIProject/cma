@@ -59,7 +59,10 @@ impl Progress {
         }
         Ok(Self {
             day: first_day,
-            cutoff: (first_day + DAY).min(lease.at / HOUR * HOUR),
+            // The first UTC hour still needs boundary inputs. Its speculative
+            // total is marked by the raw projector's explicit tail fields;
+            // public ranges are bounded separately and use the exact input fold.
+            cutoff: (first_day + DAY).min((lease.at / HOUR * HOUR).max(first_day + HOUR)),
             after: None,
             pass_complete: false,
         })
@@ -193,7 +196,10 @@ impl ReportingStore {
                 .map_err(unavailable)?;
             if let Some(cached) = cached {
                 let bucket = DayBucket::read(&cached)?;
-                if bucket.validate_source(state)? && bucket.total.range.to >= range.to {
+                if bucket.validate_source(state)?
+                    && bucket.total.range.to >= range.to
+                    && bucket.boundary_prepared(state)
+                {
                     result.reused += 1;
                     continue;
                 }
@@ -206,18 +212,25 @@ impl ReportingStore {
             missing.push(state);
         }
         let ids: Vec<_> = missing.iter().map(|s| s.sandbox_id.as_str()).collect();
-        let events = self.allocation_events(&mut snapshot, &ids, range).await?;
+        let source_range = Range {
+            from: range.from,
+            to: range.from + DAY,
+        };
+        let events = self
+            .allocation_events(&mut snapshot, &ids, source_range)
+            .await?;
         result.source_rows = events.values().map(Vec::len).sum();
         let buckets = missing
             .into_iter()
             .map(|state| {
-                materialize::build(
+                materialize::build_covered(
                     state,
                     events
                         .get(state.sandbox_id.as_str())
                         .map(Vec::as_slice)
                         .unwrap_or_default(),
                     range,
+                    source_range.to,
                 )
             })
             .collect::<Result<Vec<_>>>()?;
