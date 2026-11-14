@@ -1,0 +1,701 @@
+{
+  "generated_utc": "2026-11-14T16:36:30.878558+00:00",
+  "source": "67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6",
+  "harness_head": "549fc1aa9bc449dbc3459ffb883fc392d742ea17",
+  "loop_started_utc": "2026-11-14T16:16:08.156726+00:00",
+  "loop_ended_utc": "2026-11-14T16:36:08.334237+00:00",
+  "loop_seconds": 1200.169742708,
+  "cleanup_ended_utc": "2026-11-14T16:36:21.175724+00:00",
+  "images": {
+    "musl": {
+      "id": "sha256:8a09ee166cd7ec8a850fadef00b5beae8d62aa742e6080644f7e7c54813a2540",
+      "descriptor": {
+        "annotations": {
+          "config.digest": "sha256:2a8c21da475b6b3d9d4518dca3b865e88db03697bffdb22e602a1b802e1d6686"
+        },
+        "digest": "sha256:8a09ee166cd7ec8a850fadef00b5beae8d62aa742e6080644f7e7c54813a2540",
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "size": 1440
+      },
+      "architecture": "amd64",
+      "source": "67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6"
+    },
+    "zig": {
+      "id": "sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8",
+      "descriptor": {
+        "annotations": {
+          "config.digest": "sha256:599ca9467f6813bcdf7146f5dc173787fe2aaaa5e672e1bb85f75124e86e3c33"
+        },
+        "digest": "sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8",
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "size": 1440
+      },
+      "architecture": "amd64",
+      "source": "67b3fbc5df5f09fcecd9ddbbba723ae010df9cc6"
+    }
+  },
+  "variants": {
+    "musl": {
+      "validation": {
+        "full_1200_requests": true,
+        "all_requests_completed": true,
+        "all_41_samples": true,
+        "full_20min_samples": true,
+        "quiescent_sample": true,
+        "one_process_start": true,
+        "same_cpu_affinity_workers": true,
+        "no_observation_errors": true,
+        "final_streams_inflight_zero": true,
+        "400_per_route": true,
+        "runner_fit_reproduced": true,
+        "runner_counts_reproduced": true
+      },
+      "validation_pass": true,
+      "routes": {
+        "/livez": {
+          "offered": 400,
+          "completed": 400,
+          "failed": 0
+        },
+        "/ready": {
+          "offered": 400,
+          "completed": 400,
+          "failed": 0
+        },
+        "/openapi.json": {
+          "offered": 400,
+          "completed": 400,
+          "failed": 0
+        }
+      },
+      "counts": {
+        "planned": 1200,
+        "offered": 1200,
+        "completed": 1200,
+        "failed": 0,
+        "bytes": 168276768,
+        "late_over_one_second": 0,
+        "routes": {
+          "/livez": {
+            "offered": 400,
+            "completed": 400,
+            "failed": 0
+          },
+          "/ready": {
+            "offered": 400,
+            "completed": 400,
+            "failed": 0
+          },
+          "/openapi.json": {
+            "offered": 400,
+            "completed": 400,
+            "failed": 0
+          }
+        },
+        "not_offered": 0,
+        "ended_utc": "2026-11-14T16:36:07.170647+00:00"
+      },
+      "full_rss_fit": {
+        "samples": 41,
+        "mib_per_minute": -0.11137814901178524,
+        "r_squared": 0.4328222205934016,
+        "first_utc": "2026-11-14T16:16:08.071503+00:00",
+        "last_utc": "2026-11-14T16:36:08.253379+00:00",
+        "duration_seconds": 1200.1740814580003,
+        "first_mib": 126.44921875,
+        "peak_mib": 127.71484375,
+        "last_mib": 124.14453125,
+        "delta_mib": -2.3046875
+      },
+      "full_anonymous_fit": {
+        "samples": 41,
+        "mib_per_minute": -0.014583903418963927,
+        "r_squared": 0.15805027471359195,
+        "first_utc": "2026-11-14T16:16:08.071503+00:00",
+        "last_utc": "2026-11-14T16:36:08.253379+00:00",
+        "duration_seconds": 1200.1740814580003,
+        "first_mib": 57.95703125,
+        "peak_mib": 58.91015625,
+        "last_mib": 58.11328125,
+        "delta_mib": 0.15625
+      },
+      "after_first_loop_minute_rss_fit": {
+        "samples": 39,
+        "mib_per_minute": -0.12288722600484162,
+        "r_squared": 0.4652673830327613,
+        "first_utc": "2026-11-14T16:17:08.273085+00:00",
+        "last_utc": "2026-11-14T16:36:08.253379+00:00",
+        "duration_seconds": 1139.9729086660002,
+        "first_mib": 127.63671875,
+        "peak_mib": 127.71484375,
+        "last_mib": 124.14453125,
+        "delta_mib": -3.4921875
+      },
+      "after_process_age_10min_rss_fit": {
+        "samples": 21,
+        "mib_per_minute": -0.31880936162873963,
+        "r_squared": 0.6242139801921978,
+        "first_utc": "2026-11-14T16:26:08.253025+00:00",
+        "last_utc": "2026-11-14T16:36:08.253379+00:00",
+        "duration_seconds": 599.9963770000003,
+        "first_mib": 126.93359375,
+        "peak_mib": 127.0546875,
+        "last_mib": 124.14453125,
+        "delta_mib": -2.7890625
+      },
+      "after_process_age_10min_anonymous_fit": {
+        "samples": 21,
+        "mib_per_minute": -0.0008422319850079975,
+        "r_squared": 0.0056576419646966235,
+        "first_utc": "2026-11-14T16:26:08.253025+00:00",
+        "last_utc": "2026-11-14T16:36:08.253379+00:00",
+        "duration_seconds": 599.9963770000003,
+        "first_mib": 58.12890625,
+        "peak_mib": 58.25,
+        "last_mib": 58.11328125,
+        "delta_mib": -0.015625
+      },
+      "first_half_rss_fit": {
+        "samples": 21,
+        "mib_per_minute": -0.04191542966975105,
+        "r_squared": 0.16163769096603556,
+        "first_utc": "2026-11-14T16:16:08.071503+00:00",
+        "last_utc": "2026-11-14T16:26:08.253025+00:00",
+        "duration_seconds": 600.177704458,
+        "first_mib": 126.44921875,
+        "peak_mib": 127.71484375,
+        "last_mib": 126.93359375,
+        "delta_mib": 0.484375
+      },
+      "second_half_rss_fit": {
+        "samples": 21,
+        "mib_per_minute": -0.31880936162873963,
+        "r_squared": 0.6242139801921978,
+        "first_utc": "2026-11-14T16:26:08.253025+00:00",
+        "last_utc": "2026-11-14T16:36:08.253379+00:00",
+        "duration_seconds": 599.9963770000003,
+        "first_mib": 126.93359375,
+        "peak_mib": 127.0546875,
+        "last_mib": 124.14453125,
+        "delta_mib": -2.7890625
+      },
+      "sample_interval_seconds": {
+        "minimum": 29.957517457999927,
+        "maximum": 30.173321707999996
+      },
+      "gauge_ranges": {
+        "threads": [
+          10,
+          11
+        ],
+        "cma_runtime_alive_tasks": [
+          46.0,
+          47.0
+        ],
+        "cma_runtime_global_queue_depth": [
+          0.0,
+          0.0
+        ],
+        "cma_public_streams_active": [
+          0.0,
+          0.0
+        ],
+        "cma_http_in_flight": [
+          0.0,
+          0.0
+        ],
+        "cma_runtime_workers": [
+          8.0,
+          8.0
+        ]
+      },
+      "final_quiescent": {
+        "utc": "2026-11-14T16:36:20.434560+00:00",
+        "process_started_utc": "2026-11-14T16:15:52.759750135Z",
+        "process_age_seconds": 1227.67481,
+        "elapsed_seconds": 1212.4550073340001,
+        "phase": "quiescent",
+        "round": 41,
+        "rss_kib": 127152,
+        "anonymous_kib": 59536,
+        "threads": 10,
+        "cpu_affinity": "0-7",
+        "cma_runtime_alive_tasks": 47.0,
+        "cma_runtime_global_queue_depth": 0.0,
+        "cma_public_streams_active": 0.0,
+        "cma_http_in_flight": 0.0,
+        "cma_runtime_workers": 8.0
+      },
+      "startup_attempts": [
+        {
+          "utc": "2026-11-14T16:15:53.592444+00:00",
+          "outcome": "failed",
+          "process": {
+            "VmRSS": 65104,
+            "RssAnon": 27680,
+            "Threads": 11,
+            "Cpus_allowed_list": "0-7",
+            "start_ticks": 10731194
+          },
+          "failure_type": "RemoteDisconnected"
+        },
+        {
+          "utc": "2026-11-14T16:15:54.691604+00:00",
+          "outcome": "ready",
+          "process": {
+            "VmRSS": 124712,
+            "RssAnon": 55572,
+            "Threads": 11,
+            "Cpus_allowed_list": "0-7",
+            "start_ticks": 10731194
+          }
+        }
+      ],
+      "process_identity": [
+        "e4348ecb44ccd24fba75563440a91fa4a462edb0cc61145f905bf28d98256a3b",
+        "sha256:8a09ee166cd7ec8a850fadef00b5beae8d62aa742e6080644f7e7c54813a2540",
+        "0",
+        "2026-11-14T16:15:52.759750135Z",
+        "true",
+        "2000000000",
+        "2147483648",
+        "0-7",
+        "10731194"
+      ]
+    },
+    "zig": {
+      "validation": {
+        "full_1200_requests": true,
+        "all_requests_completed": true,
+        "all_41_samples": true,
+        "full_20min_samples": true,
+        "quiescent_sample": true,
+        "one_process_start": true,
+        "same_cpu_affinity_workers": true,
+        "no_observation_errors": true,
+        "final_streams_inflight_zero": true,
+        "400_per_route": true,
+        "runner_fit_reproduced": true,
+        "runner_counts_reproduced": true
+      },
+      "validation_pass": true,
+      "routes": {
+        "/livez": {
+          "offered": 400,
+          "completed": 400,
+          "failed": 0
+        },
+        "/ready": {
+          "offered": 400,
+          "completed": 400,
+          "failed": 0
+        },
+        "/openapi.json": {
+          "offered": 400,
+          "completed": 400,
+          "failed": 0
+        }
+      },
+      "counts": {
+        "planned": 1200,
+        "offered": 1200,
+        "completed": 1200,
+        "failed": 0,
+        "bytes": 168277028,
+        "late_over_one_second": 0,
+        "routes": {
+          "/livez": {
+            "offered": 400,
+            "completed": 400,
+            "failed": 0
+          },
+          "/ready": {
+            "offered": 400,
+            "completed": 400,
+            "failed": 0
+          },
+          "/openapi.json": {
+            "offered": 400,
+            "completed": 400,
+            "failed": 0
+          }
+        },
+        "not_offered": 0,
+        "ended_utc": "2026-11-14T16:36:07.170603+00:00"
+      },
+      "full_rss_fit": {
+        "samples": 41,
+        "mib_per_minute": -0.19639921602780508,
+        "r_squared": 0.014334029737064671,
+        "first_utc": "2026-11-14T16:16:08.156449+00:00",
+        "last_utc": "2026-11-14T16:36:08.333983+00:00",
+        "duration_seconds": 1200.169757833,
+        "first_mib": 164.68359375,
+        "peak_mib": 184.3671875,
+        "last_mib": 153.75390625,
+        "delta_mib": -10.9296875
+      },
+      "full_anonymous_fit": {
+        "samples": 41,
+        "mib_per_minute": 0.9944930420383314,
+        "r_squared": 0.9705540865499578,
+        "first_utc": "2026-11-14T16:16:08.156449+00:00",
+        "last_utc": "2026-11-14T16:36:08.333983+00:00",
+        "duration_seconds": 1200.169757833,
+        "first_mib": 90.13671875,
+        "peak_mib": 110.98046875,
+        "last_mib": 110.98046875,
+        "delta_mib": 20.84375
+      },
+      "after_first_loop_minute_rss_fit": {
+        "samples": 39,
+        "mib_per_minute": -0.353341960062905,
+        "r_squared": 0.04120990637935047,
+        "first_utc": "2026-11-14T16:17:08.356270+00:00",
+        "last_utc": "2026-11-14T16:36:08.333983+00:00",
+        "duration_seconds": 1139.970319458,
+        "first_mib": 167.10546875,
+        "peak_mib": 184.3671875,
+        "last_mib": 153.75390625,
+        "delta_mib": -13.3515625
+      },
+      "after_process_age_10min_rss_fit": {
+        "samples": 21,
+        "mib_per_minute": -2.9730079753047196,
+        "r_squared": 0.47362546024198166,
+        "first_utc": "2026-11-14T16:26:08.334034+00:00",
+        "last_utc": "2026-11-14T16:36:08.333983+00:00",
+        "duration_seconds": 599.9959615000001,
+        "first_mib": 177.8984375,
+        "peak_mib": 184.3671875,
+        "last_mib": 153.75390625,
+        "delta_mib": -24.14453125
+      },
+      "after_process_age_10min_anonymous_fit": {
+        "samples": 21,
+        "mib_per_minute": 0.7713123409032832,
+        "r_squared": 0.9041357873282122,
+        "first_utc": "2026-11-14T16:26:08.334034+00:00",
+        "last_utc": "2026-11-14T16:36:08.333983+00:00",
+        "duration_seconds": 599.9959615000001,
+        "first_mib": 102.9140625,
+        "peak_mib": 110.98046875,
+        "last_mib": 110.98046875,
+        "delta_mib": 8.06640625
+      },
+      "first_half_rss_fit": {
+        "samples": 21,
+        "mib_per_minute": 1.188803846103338,
+        "r_squared": 0.942442536882597,
+        "first_utc": "2026-11-14T16:16:08.156449+00:00",
+        "last_utc": "2026-11-14T16:26:08.334034+00:00",
+        "duration_seconds": 600.1737963329999,
+        "first_mib": 164.68359375,
+        "peak_mib": 177.8984375,
+        "last_mib": 177.8984375,
+        "delta_mib": 13.21484375
+      },
+      "second_half_rss_fit": {
+        "samples": 21,
+        "mib_per_minute": -2.9730079753047196,
+        "r_squared": 0.47362546024198166,
+        "first_utc": "2026-11-14T16:26:08.334034+00:00",
+        "last_utc": "2026-11-14T16:36:08.333983+00:00",
+        "duration_seconds": 599.9959615000001,
+        "first_mib": 177.8984375,
+        "peak_mib": 184.3671875,
+        "last_mib": 153.75390625,
+        "delta_mib": -24.14453125
+      },
+      "sample_interval_seconds": {
+        "minimum": 29.945269125000095,
+        "maximum": 30.170968374999998
+      },
+      "gauge_ranges": {
+        "threads": [
+          10,
+          11
+        ],
+        "cma_runtime_alive_tasks": [
+          46.0,
+          48.0
+        ],
+        "cma_runtime_global_queue_depth": [
+          0.0,
+          0.0
+        ],
+        "cma_public_streams_active": [
+          0.0,
+          0.0
+        ],
+        "cma_http_in_flight": [
+          0.0,
+          0.0
+        ],
+        "cma_runtime_workers": [
+          8.0,
+          8.0
+        ]
+      },
+      "final_quiescent": {
+        "utc": "2026-11-14T16:36:20.514533+00:00",
+        "process_started_utc": "2026-11-14T16:15:53.535875969Z",
+        "process_age_seconds": 1226.978658,
+        "elapsed_seconds": 1212.534971791,
+        "phase": "quiescent",
+        "round": 41,
+        "rss_kib": 157480,
+        "anonymous_kib": 113680,
+        "threads": 10,
+        "cpu_affinity": "0-7",
+        "cma_runtime_alive_tasks": 46.0,
+        "cma_runtime_global_queue_depth": 0.0,
+        "cma_public_streams_active": 0.0,
+        "cma_http_in_flight": 0.0,
+        "cma_runtime_workers": 8.0
+      },
+      "startup_attempts": [
+        {
+          "utc": "2026-11-14T16:15:53.592603+00:00",
+          "outcome": "failed",
+          "process": {
+            "VmRSS": 14596,
+            "RssAnon": 5128,
+            "Threads": 9,
+            "Cpus_allowed_list": "0-7",
+            "start_ticks": 10731271
+          },
+          "failure_type": "RemoteDisconnected"
+        },
+        {
+          "utc": "2026-11-14T16:15:54.693802+00:00",
+          "outcome": "failed",
+          "process": {
+            "VmRSS": 126212,
+            "RssAnon": 67616,
+            "Threads": 12,
+            "Cpus_allowed_list": "0-7",
+            "start_ticks": 10731271
+          },
+          "failure_type": "RemoteDisconnected"
+        },
+        {
+          "utc": "2026-11-14T16:15:55.794739+00:00",
+          "outcome": "ready",
+          "process": {
+            "VmRSS": 163696,
+            "RssAnon": 88188,
+            "Threads": 12,
+            "Cpus_allowed_list": "0-7",
+            "start_ticks": 10731271
+          }
+        }
+      ],
+      "process_identity": [
+        "6890c65d483079ba984f75a63232ba6b6af8b4aba69b054ae290fa0f303efb67",
+        "sha256:322f08a15db3026560193e22eae6c590549366c2758edae2dff9b22be8ffa9e8",
+        "0",
+        "2026-11-14T16:15:53.535875969Z",
+        "true",
+        "2000000000",
+        "2147483648",
+        "0-7",
+        "10731271"
+      ]
+    }
+  },
+  "context": {
+    "recorded_utc": "2026-11-14T16:22:36.240300+00:00",
+    "source": "environment02 peer scheduler update under direct LEAD 00:17",
+    "quiet_exclusive_window": false,
+    "overlap": {
+      "EG_native_soak": {
+        "active_at_api_start": true,
+        "owner_reported_release_sgt": "2026-11-15T00:18:46.867761+08:00"
+      },
+      "runtime_build": {
+        "authorized_sgt": "2026-11-15T00:17:00+08:00",
+        "lane": "NORMAL3",
+        "actual_start": "not independently observed by API runner",
+        "runtime_order": [
+          "BASE",
+          "OMARCHY",
+          "DESKTOP"
+        ],
+        "compiler_jobs_max": 4,
+        "rust_jobs": 2
+      },
+      "runtime_base_service": {
+        "reserved_lane": "NORMAL1",
+        "cpu": 2,
+        "memory_gib": 1,
+        "start": "when image available; not independently observed by API runner"
+      }
+    },
+    "api_contract_changed": false,
+    "context_limitation": "Shared Docker VM and host resources; simultaneous pair experiences shared contention. No production resource parity claim."
+  },
+  "configuration_comparison": {
+    "recorded_utc": "2026-11-14T16:24:32.920784+00:00",
+    "same_environment_field_names": true,
+    "environment_field_count": 32,
+    "differing_environment_fields": [
+      "CHRONO_MONGODB_DATABASE",
+      "CHRONO_MONGODB_URI"
+    ],
+    "database_names_distinct": true,
+    "mongo_uri_same_credentials_host_path_and_other_query": true,
+    "all_other_environment_values_equal": true,
+    "values_disclosed": false,
+    "runtime_config": {
+      "musl": {
+        "NanoCpus": 2000000000,
+        "Memory": 2147483648,
+        "MemorySwap": 2147483648,
+        "PidsLimit": 256,
+        "CpusetCpus": "0-7",
+        "PortBindings": {
+          "8080/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "18980"
+            }
+          ],
+          "9091/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "18991"
+            }
+          ]
+        },
+        "LogConfig": {
+          "Type": "local",
+          "Config": {}
+        }
+      },
+      "zig": {
+        "NanoCpus": 2000000000,
+        "Memory": 2147483648,
+        "MemorySwap": 2147483648,
+        "PidsLimit": 256,
+        "CpusetCpus": "0-7",
+        "PortBindings": {
+          "8080/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "18981"
+            }
+          ],
+          "9091/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "18992"
+            }
+          ]
+        },
+        "LogConfig": {
+          "Type": "local",
+          "Config": {}
+        }
+      },
+      "mongo": {
+        "NanoCpus": 500000000,
+        "Memory": 805306368,
+        "MemorySwap": 805306368,
+        "PidsLimit": 256,
+        "CpusetCpus": "",
+        "PortBindings": {
+          "27017/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "18917"
+            }
+          ]
+        },
+        "LogConfig": {
+          "Type": "local",
+          "Config": {}
+        }
+      }
+    },
+    "same_api_cpu_memory_swap_pids_cpuset_logging": true
+  },
+  "criteria": {
+    "authority": "LEAD 00:41 binding acceptance, relayed by debugger-02",
+    "effective_sgt": "2026-11-15T00:41:00+08:00",
+    "corrected_full_rss_slope_mib_min_strictly_below": 1,
+    "accepted_comparison": "Stable corrected total RSS and anonymous memory versus positive old-control anonymous-memory slope.",
+    "basis": {
+      "musl_anonymous_mib_min": -0.014583903418963927,
+      "zig_anonymous_mib_min": 0.9944930420383314,
+      "zig_anonymous_r_squared": 0.9705540865499578,
+      "musl_total_rss_mib_min": -0.11137814901178524
+    }
+  },
+  "old_control_review": "Accepted under the LEAD 00:41 ruling using positive anonymous-memory growth (+0.994493 MiB/min, R2 0.970554) against stable musl anonymous memory (-0.014584 MiB/min) and corrected RSS. The old full-window total-RSS slope remains -0.196399 MiB/min; the original RSS-only NOT_PASS/NONREPRODUCTION disposition is preserved as superseded.",
+  "paired_verdict": "PASS",
+  "evidence_hashes": {
+    "musl/samples.jsonl": "196d6a2c7dcd98b855c22d4377e7c0575ae28158959c5992fa780c78e836fe0e",
+    "musl/requests.jsonl": "355dc3ca64b354f689d0fc9d0b46546818de344e86fe38252cf7bda9c0280cb5",
+    "musl/startup.json": "cec41f053904e1772b0196f9ba6661a392dfec10052b0fb8deff95c31d45ad3e",
+    "zig/samples.jsonl": "d49a811a60ea0cb9582682248edfd9f829e1fa76511772fc5077b69abbe1d17a",
+    "zig/requests.jsonl": "6d8028b142782fe354824fb1a8c28078fd12e4db9b38240615c2dd20fdde31a3",
+    "zig/startup.json": "749c4e442bcff20b9e4bbae7de263a16ebfe6f4f91b357f74cde6122c4a570b7",
+    "measurement.json": "1827f70a85eaf08fb6f95c28840364146af859c4edb200dfab1922e64b2a012a",
+    "campaign.json": "bf0726dba7390eb789f11ed975a47e201b91cf2f414e0ad483f89246972e72bf",
+    "campaign-start.json": "e5fb4d1fcf49f4db30c10319b56f09a05f74ae5313707cca71954c1054a30c6f",
+    "loop-start.json": "a59c6ed37882b9f8e1f0c5336a5bd95b3721e79e7568222c7d447e3f41d77ac8",
+    "measurement-context.json": "6b57c19ab21bb39602f263d8f347cd53b804ef9710c1a337aa5f69e4b939894a",
+    "configuration-comparison.json": "e3834f809b96fcdbcad4572ae462ce635bcd68a839502535e15ab7e38809c965",
+    "cleanup-verification.json": "3a02bf4ad2a07d76777d454d15e0419889e57acbd8f7e914d541cf9255f0f203"
+  },
+  "corrected_gate": "PASS",
+  "cleanup": [
+    "cma-memory-rca-d93d9822572f-zig",
+    "cma-memory-rca-d93d9822572f-musl",
+    "cma-memory-rca-d93d9822572f-mongo"
+  ],
+  "old_control_clear_positive_total_rss": false,
+  "lead_paired_gate": "PASS",
+  "reviewed_utc": "2026-11-14T16:43:16.563296+00:00",
+  "cleanup_verification": {
+    "verified_utc": "2026-11-14T16:37:09.587010+00:00",
+    "owner": "cma-memory-rca-d93d9822572f",
+    "remaining_owned_containers": [],
+    "remaining_owned_networks": [],
+    "pass": true,
+    "campaign_exit_code": 0
+  },
+  "historical_dispositions": [
+    {
+      "status": "SUPERSEDED",
+      "criterion_source": "LEAD 23:55 total-RSS-only paired rule",
+      "criteria": {
+        "corrected_full_rss_slope_mib_min_strictly_below": 1,
+        "old_control": "clear positive growth under identical loop; explicit review required"
+      },
+      "corrected_gate": "PASS",
+      "paired_verdict": "NONREPRODUCTION",
+      "lead_paired_gate": "NOT_PASS",
+      "old_control_review": "NOT ESTABLISHED: full-window old RSS slope -0.196399 MiB/min (R\u00b2 0.014334), initial 164.684 -> peak 184.367 -> final 153.754 MiB. At 00:33:38 SGT total RSS falls 31.664 MiB while anonymous RSS increases 0.109 MiB, with stable process identity. Full anonymous slope +0.994493 MiB/min (R\u00b2 0.970554) supports retained anonymous memory but cannot replace the predeclared total-RSS criterion. Every sample and the full 20-minute window are retained.",
+      "reviewed_utc": "2026-11-14T16:37:09.553223+00:00",
+      "superseded_by": "2026-11-15T00:41:00+08:00"
+    }
+  ],
+  "lead_ruling": {
+    "ruling_sgt": "2026-11-15T00:41:00+08:00",
+    "ruling_time_precision": "minute as stated by lead",
+    "authority": "LEAD 00:41 binding acceptance, relayed by debugger-02",
+    "source": "Debugger debugger-02 peer message in this conversation",
+    "decision": "Accept API9r memory PASS using anonymous slope musl -0.014584 vs Zig +0.994493 / R2 0.970554 plus stable corrected RSS.",
+    "recorded_utc": "2026-11-14T16:43:16.563296+00:00",
+    "scope": "Acceptance disposition of the existing completed same-source API comparison; no new run or raw measurement change."
+  },
+  "active_verdict": "PASS",
+  "raw_evidence_revalidation": {
+    "checked_utc": "2026-11-14T16:43:16.563296+00:00",
+    "files": 13,
+    "all_hashes_match": true,
+    "raw_measurements_changed": false
+  }
+}
