@@ -12,8 +12,8 @@ use mongodb::options::IndexOptions;
 use mongodb::{Collection, IndexModel};
 
 use super::sandbox_mongo::{
-    i64_field_matches, is_duplicate_key, nullable, read_record, record_bson, signed,
-    string_field_matches, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
+    i64_field_matches, is_duplicate_key, nullable, record_bson, signed, string_field_matches,
+    MongoSandboxStore,
 };
 
 pub(super) fn sandbox_indexes() -> Vec<IndexModel> {
@@ -195,7 +195,7 @@ fn raw_sandbox_document(
     let lease_expires_at = sandbox.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": sandbox.id.as_str(),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "document_schema_version": super::work_schema::version(sandbox.work.authority_protocol),
         "owner": sandbox.owner.as_str(),
         "name": &sandbox.name,
         "origin_type": origin_type,
@@ -222,7 +222,8 @@ fn raw_sandbox_document(
 }
 
 pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreError> {
-    let sandbox: Sandbox = read_record(document).map_err(SandboxStoreError::Corrupt)?;
+    let sandbox: Sandbox =
+        super::work_schema::read(document).map_err(SandboxStoreError::Corrupt)?;
     sandbox.validate().map_err(|error| {
         SandboxStoreError::Corrupt(format!("stored sandbox is invalid: {error}"))
     })?;

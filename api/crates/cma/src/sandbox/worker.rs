@@ -16,6 +16,7 @@ use super::live_agents::LiveAgentRegistry;
 #[cfg(test)]
 use layer2_core::sandbox::SandboxPolicy;
 
+mod authority;
 mod execute;
 mod home;
 mod initial_runtime;
@@ -89,6 +90,7 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub renewable_work: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
@@ -119,6 +121,7 @@ impl SandboxWorkerConfig {
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Self {
         Self {
+            renewable_work: false,
             home_policy: None,
             work_retry_policy_enabled: false,
             native_create_retry_enabled: false,
@@ -132,14 +135,25 @@ impl SandboxWorkerConfig {
         }
     }
 
+    pub fn with_replicas(mut self, enabled: bool) -> Self {
+        self.renewable_work = enabled;
+        if enabled {
+            self.lease_duration =
+                Duration::from_secs(layer2_core::sandbox::store::WORK_LEASE_SECONDS);
+        }
+        self
+    }
+
     pub fn with_execution(
         mut self,
         execution: layer2_core::sandbox::ProvisioningExecution,
     ) -> Self {
         self.execution = execution;
-        self.lease_duration = self.lease_duration.max(Duration::from_secs(
-            layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
-        ));
+        if !self.renewable_work {
+            self.lease_duration = self.lease_duration.max(Duration::from_secs(
+                layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
+            ));
+        }
         self
     }
 
@@ -207,6 +221,7 @@ impl SandboxWorker {
     }
 
     pub async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let stamp = rfc3339_at(now);
         let due = self
             .dependencies
@@ -216,7 +231,12 @@ impl SandboxWorker {
         let mut completed = 0;
         let mut first_error = None;
         for id in due {
-            match self.run_scheduled(&id, now).await {
+            let at = if self.config.renewable_work {
+                now + started.elapsed()
+            } else {
+                now
+            };
+            match self.run_scheduled(&id, at).await {
                 Ok(true) => completed += 1,
                 Ok(false) => {}
                 Err(error) => {
@@ -235,14 +255,30 @@ impl SandboxWorker {
         let claiming = tokio::time::Instant::now();
         let now_stamp = rfc3339_at(now);
         let lease_expires = rfc3339_at(now + self.config.lease_duration);
-        let Some(sandbox) = self
-            .dependencies
-            .store
-            .claim_sandbox_work(id, &self.config.holder, now_stamp, lease_expires)
-            .await?
-        else {
+        let claiming_work = self.dependencies.store.claim_sandbox_work(
+            id,
+            &self.config.holder,
+            now_stamp,
+            lease_expires,
+        );
+        let granted = if self.config.renewable_work {
+            tokio::time::timeout(
+                Duration::from_secs(layer2_core::sandbox::store::WORK_RENEW_SECONDS),
+                claiming_work,
+            )
+            .await
+            .map_err(|_| {
+                SandboxStoreError::Unavailable("work acquisition acknowledgement timed out".into())
+            })??
+        } else {
+            claiming_work.await?
+        };
+        let Some(sandbox) = granted else {
             return Ok(false);
         };
+        if self.config.renewable_work || sandbox.work.authority_protocol.is_some() {
+            return self.run_renewable(sandbox, now, claiming).await;
+        }
         let claim_ms = claiming.elapsed().as_millis() as u64;
         layer2_core::agent_ownership::transport_observation_scope(
             self.run_claimed(sandbox, now, claim_ms),
@@ -298,7 +334,9 @@ impl SandboxWorker {
             let Some(current) = self.dependencies.store.get_sandbox(&claimed.id).await? else {
                 return Ok(false);
             };
-            if current.work.lease != claimed.work.lease
+            if !matches!((&current.work.lease, &claimed.work.lease),
+                (Some(current), Some(original)) if current.holder == original.holder
+                    && current.fence == original.fence && current.expires_at >= original.expires_at)
                 || current.work.step != claimed.work.step
                 || current.lifecycle.operation != claimed.lifecycle.operation
                 || current.runtime != claimed.runtime

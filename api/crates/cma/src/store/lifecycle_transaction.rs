@@ -167,6 +167,10 @@ pub(super) async fn apply_lifecycle(
     mutation: &SandboxLifecycleMutation,
     mut scope: TransactionScope<'_>,
 ) -> Result<LifecycleReceipt, ApplyError> {
+    scope
+        .fence_ordinary_work(store)
+        .await
+        .map_err(ApplyError::Domain)?;
     let current = load_sandbox(store, &mutation.guard.sandbox_id, &mut scope).await?;
     let agents =
         super::agent_capacity_recovery::lineage::agents(store, &current.id, &mut scope).await?;
@@ -401,14 +405,22 @@ async fn advance_sandbox(
     let advanced = store
         .sandboxes
         .update_one(
-            doc! {
-                "_id": current.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "revision": signed(current.revision, "sandbox lifecycle revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! { "$set": sandbox_replacement_fields(next).map_err(ApplyError::Domain)? },
+            crate::store::work_schema::query(
+                crate::store::work_publication::sandbox(
+                    doc! {
+                        "_id": current.id.as_str(),
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "channel_reuse_cleanup_execution": { "$exists": false },
+                        "revision": signed(current.revision, "sandbox lifecycle revision")
+                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                    },
+                    current.id.as_str(),
+                )
+                .map_err(ApplyError::Domain)?,
+            ),
+            crate::store::work_lease_update::replacement(
+                sandbox_replacement_fields(next).map_err(ApplyError::Domain)?,
+            ),
         )
         .session(&mut *session)
         .await

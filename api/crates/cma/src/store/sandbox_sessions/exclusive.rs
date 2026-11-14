@@ -121,7 +121,10 @@ async fn apply(
     // snapshot transaction. A phantom session cannot slip between proof and pause.
     let row = store
         .sandboxes
-        .find_one_and_update(filter, doc! { "$inc": increments })
+        .find_one_and_update(
+            crate::store::work_schema::query(filter),
+            doc! { "$inc": increments },
+        )
         .projection(doc! { "desktop_session_epoch": 1, "authority_now": "$$NOW" })
         .return_document(ReturnDocument::After)
         .session(&mut *session)

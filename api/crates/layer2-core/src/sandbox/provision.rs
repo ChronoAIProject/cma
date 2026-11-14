@@ -47,6 +47,9 @@ pub struct SandboxWorkLease {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxWorkState {
+    /// Retained after switch-off; older strict readers cannot interpret this work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_protocol: Option<super::store::WorkAuthorityProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<super::ProvisioningExecution>,
     pub step: SandboxWorkStep,
@@ -60,6 +63,7 @@ pub struct SandboxWorkState {
 impl SandboxWorkState {
     pub fn new(step: SandboxWorkStep, ready_at: String) -> Self {
         Self {
+            authority_protocol: None,
             execution: None,
             step,
             ready_at,

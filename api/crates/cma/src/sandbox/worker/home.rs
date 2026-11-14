@@ -121,7 +121,10 @@ impl SandboxWorker {
                     previous.revision = sandbox.revision;
                     previous.updated_at = sandbox.updated_at.clone();
                     previous.last_activity_at = sandbox.last_activity_at.clone();
-                    if previous != *sandbox {
+                    if !layer2_core::sandbox::store::sandbox_content_matches(
+                        Some(&previous),
+                        sandbox,
+                    ) {
                         return Err(SandboxStoreError::Conflict);
                     }
                     *sandbox = current;

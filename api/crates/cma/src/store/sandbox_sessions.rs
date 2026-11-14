@@ -181,11 +181,11 @@ async fn fence_active_sandbox(
     let changed = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": sandbox_id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "status": "active",
-            },
+            }),
             doc! { "$inc": { "desktop_activity_fence": 1_i64 } },
         )
         .await

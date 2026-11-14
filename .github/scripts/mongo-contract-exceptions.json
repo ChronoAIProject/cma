@@ -1,4 +1,16 @@
 {
+  "auth::keys::fixture_contract_tests::executable_provider_accepts_exact_production_grants_without_hiding_repeated_posts": {
+    "kind": "fixture",
+    "reason": "Requires Node.js executable counting-provider fixture; local HTTP only, no MongoDB or external provider."
+  },
+  "auth::keys::fixture_contract_tests::executable_provider_can_accept_after_client_cancellation_and_an_empty_listing": {
+    "kind": "fixture",
+    "reason": "Requires Node.js executable counting-provider fixture; local HTTP only, no MongoDB or external provider."
+  },
+  "auth::keys::fixture_contract_tests::executable_provider_lost_response_keeps_one_effect_through_metadata_observations": {
+    "kind": "fixture",
+    "reason": "Requires Node.js executable counting-provider fixture; local HTTP only, no MongoDB or external provider."
+  },
   "auth::resource_request::tests::paired::real_nyxid_keys_and_egress_authorize_only_current_owner_reads": {
     "kind": "fixture",
     "reason": "Requires the real NyxID loopback acceptance fixture and dedicated MongoDB."
