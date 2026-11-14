@@ -11,6 +11,7 @@ const SHA256_SEPARATOR: &str = "@sha256:";
 /// Deployment-owned endpoints and runtime identity validated at startup.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
+    pub migration: super::runtime_migration::RuntimeMigrationConfig,
     pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
@@ -234,6 +235,7 @@ impl RuntimeConfig {
         }
 
         Ok(Self {
+            migration: super::runtime_migration::RuntimeMigrationConfig::from_lookup(lookup)?,
             agent_sandbox,
             agent_sandbox_connection,
             agent_sandbox_runtime_transport,

@@ -112,7 +112,9 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 }
 
 fn unknown_version_filter(collection: &str) -> Document {
-    let versions = if matches!(collection, "agents" | "agent_reuse_bindings") {
+    let versions = if collection == "sandboxes" {
+        vec![1_i64, 3, 4, super::work_schema::RUNTIME_MIGRATION_VERSION]
+    } else if matches!(collection, "agents" | "agent_reuse_bindings") {
         vec![1_i64, 2]
     } else if matches!(
         collection,
@@ -158,7 +160,7 @@ mod tests {
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
         assert_eq!(
             versions("sandboxes"),
-            mongodb::bson::bson!([1_i64, 3_i64, 4_i64])
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64, 5_i64])
         );
         assert_eq!(
             versions("workspaces"),

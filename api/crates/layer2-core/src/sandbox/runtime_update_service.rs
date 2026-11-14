@@ -49,6 +49,9 @@ impl SandboxRuntimeUpdateService {
     }
 
     pub fn can_update(&self, sandbox: &Sandbox) -> bool {
+        if sandbox.profile.content.runtime_image.is_some() {
+            return false;
+        }
         if self.recovery.is_some() && sandbox.unpublished_recovery_candidate() {
             return true;
         }
@@ -113,7 +116,7 @@ impl SandboxRuntimeUpdateService {
         let target = sandbox
             .automatic_unpublished_recovery_target()
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
-        if target != self.latest_version
+        if (target != self.latest_version && !sandbox.supports_retained_custom_runtime_recovery())
             || sandbox.lifecycle.unpublished_recovery_attempted
             || sandbox.lifecycle.unpublished_recovery.is_some()
         {
@@ -179,6 +182,12 @@ impl SandboxRuntimeUpdateService {
                 .map_err(store_error)?
                 .filter(|sandbox| owner.is_none_or(|owner| sandbox.owner == *owner))
                 .ok_or(SandboxRuntimeUpdateError::NotFound)?;
+            // Custom authority is admitted only by the operator migration path,
+            // including recovery. The ordinary latest-image route cannot select
+            // a target before the custom model's stronger admission runs.
+            if sandbox.profile.content.runtime_image.is_some() {
+                return Err(SandboxRuntimeUpdateError::NotAvailable);
+            }
             let pinned = sandbox.runtime_update_request().is_some_and(|request| {
                 request.completed_at.is_none() && request.target_version == target_version
             });

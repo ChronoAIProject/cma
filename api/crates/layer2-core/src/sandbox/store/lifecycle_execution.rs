@@ -443,6 +443,9 @@ fn validate_next_sandbox(
         || next.name != current.name
         || next.origin != current.origin
         || next.profile != current.profile
+        || next.lifecycle.runtime_migration_admission
+            != current.lifecycle.runtime_migration_admission
+        || !custom_authority_preserved(current, next)
         || next.limits != current.limits
         || next.created_at != current.created_at
         || (next.lifecycle.next_authority != current.lifecycle.next_authority
@@ -471,4 +474,19 @@ fn validate_next_sandbox(
 
 const fn invalid(detail: &'static str) -> SandboxStoreError {
     SandboxStoreError::InvalidTransaction(detail)
+}
+
+fn custom_authority_preserved(current: &Sandbox, next: &Sandbox) -> bool {
+    match (
+        &current.lifecycle.custom_runtime,
+        &next.lifecycle.custom_runtime,
+    ) {
+        (None, None) => true,
+        (Some(current), Some(next)) => {
+            current.migration == next.migration
+                && current.source_generation == next.source_generation
+                && current.admission_basis == next.admission_basis
+        }
+        _ => false,
+    }
 }

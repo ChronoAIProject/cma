@@ -160,6 +160,8 @@ pub use retained_recovery::{
     RetainedRecoveryInspector, RetainedRecoveryService, RetainedRecoverySnapshot,
     RetainedRecoverySource,
 };
+mod runtime_migration;
+pub use runtime_migration::*;
 mod custom_runtime;
 pub use custom_runtime::{
     SandboxCustomRuntimeMigration, SandboxCustomRuntimeOrigin, SandboxCustomRuntimeState,

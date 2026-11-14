@@ -41,6 +41,8 @@ pub struct SandboxCustomRuntimeState {
     pub source_generation: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_basis: Option<Box<super::store::RuntimeMigrationAdmissionBasis>>,
 }
 
 impl SandboxCustomRuntimeOrigin {
@@ -164,6 +166,6 @@ mod recovery_tests;
 #[cfg(test)]
 mod refusal_tests;
 #[cfg(test)]
-mod test_support;
+pub(in crate::sandbox) mod test_support;
 #[cfg(test)]
 mod tests;
