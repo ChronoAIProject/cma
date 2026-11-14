@@ -2,7 +2,7 @@
 use super::*;
 use domain::{
     capacity_prefix,
-    checkpoint::{read, replay, replay_at_anchor, write, Authority},
+    checkpoint::{read, replay, replay_at_anchor, write, write_from_row, Authority},
 };
 use layer2_core::sandbox::{store::AgentMessageCheckpoint, AgentUpdateOutcome};
 
@@ -62,7 +62,7 @@ pub(in crate::store) async fn apply(
         if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
-        write(store, current, Some(next), scope.session()).await?;
+        write_from_row(store, current, &row, Some(next), scope.session()).await?;
         return Ok((next.outcome.clone(), None));
     }
     if let Some(outcome) = replay(actual.as_ref(), next).map_err(ApplyError::Domain)? {
@@ -106,7 +106,13 @@ pub(in crate::store) async fn apply(
         }
         current
     };
-    write(store, updated, Some(next), scope.session()).await?;
+    if mutation.is_some() {
+        // Publication can adopt or advance the log envelope. Its original row
+        // cannot certify the new format/head; retain the post-publication read.
+        write(store, updated, Some(next), scope.session()).await?;
+    } else {
+        write_from_row(store, updated, &row, Some(next), scope.session()).await?;
+    }
     if let Some(proof) = capacity {
         // Replace the active checkpoint with the compact receipt before adding
         // the retained prefix, avoiding two large checkpoints in one document.

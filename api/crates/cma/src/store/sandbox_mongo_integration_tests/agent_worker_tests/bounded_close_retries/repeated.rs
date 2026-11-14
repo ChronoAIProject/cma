@@ -96,4 +96,5 @@ mod segmented;
 
 mod lifecycle;
 
+mod capacity_settlement;
 mod conflict_invalidation;

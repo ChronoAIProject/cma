@@ -95,9 +95,17 @@ async fn verify_optional_metadata(
         Ok(result) => result.clone(),
         Err(_) => {
             auth.identity_store.invalidate_token(credential);
-            Err(ProviderVerificationError::Unavailable(
-                "identity caller deadline elapsed".into(),
-            ))
+            let error =
+                ProviderVerificationError::Unavailable("identity caller deadline elapsed".into());
+            use super::verification_diagnostics::{record, Endpoint, Reason, Stage};
+            record(
+                Endpoint::Verification,
+                Stage::Deadline,
+                Reason::CallerDeadline,
+                None,
+                &error,
+            );
+            Err(error)
         }
     };
     if flight.initialized() {

@@ -74,17 +74,23 @@ async fn observe_assignment(
     // The controller can assign warm capacity just after Claim creation. Observe
     // only this persisted receipt briefly before yielding to durable retry;
     // dependency and identity errors still leave immediately through `?`.
+    let readiness = layer3_adapter::agent_sandbox::NativeReadinessObservation::default();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let assigned = pools.observe_claim(original).await?;
-            if assigned.sandbox_name.is_some() {
+            if let Some(assigned) = readiness
+                .observe(async {
+                    let assigned = pools.observe_claim(original).await?;
+                    Ok(assigned.sandbox_name.is_some().then_some(assigned))
+                })
+                .await?
+            {
                 return Ok(assigned);
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     })
     .await
-    .map_err(|_| AdapterError::Unavailable("native claim assignment remains pending".into()))?
+    .map_err(|_| readiness.timeout())?
 }
 
 pub(super) async fn next_cleanup(
