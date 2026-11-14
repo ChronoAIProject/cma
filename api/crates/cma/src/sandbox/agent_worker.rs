@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 
@@ -165,7 +167,22 @@ impl AgentWorker {
             .await
     }
 
-    pub async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    /// Keep the startup/cleanup execution state machine behind a boxed boundary
+    /// so callers do not inherit its large stack frame during fixture startup.
+    pub fn run_one(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, SandboxStoreError>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move { self.run_one_inner(&id, now).await })
+    }
+
+    async fn run_one_inner(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Result<bool, SandboxStoreError> {
         if let Some(coordinator) = &self.config.ownership {
             let Some(authority) = coordinator
                 .acquire(id)
@@ -175,7 +192,7 @@ impl AgentWorker {
                 return Ok(false);
             };
             let result = authority
-                .run(self.run_claimed(id, now))
+                .run(Box::pin(self.run_claimed(id, now)))
                 .await
                 .map_err(|_| SandboxStoreError::Conflict)?;
             if result.is_ok()
@@ -196,7 +213,7 @@ impl AgentWorker {
             }
             return result;
         }
-        self.run_claimed(id, now).await
+        Box::pin(self.run_claimed(id, now)).await
     }
 
     async fn run_claimed(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
