@@ -32,9 +32,10 @@ separate work. The gated reclaim worker below handles ledgered orphan sources.
 
 Agent Manager owns `cma_document_quotas`, added to its exact schema/role registry
 and startup version guard even while the feature is off. Rows use schema version
-1 with the `_id` and `{kind: 1, state: 1, reserved_at: 1}` indexes: one activation marker, one owner aggregate, one
-document reservation per owner/document and one object reservation per
-owner/document/digest. Owner identifiers are SHA-256 digests. Object rows retain
+1 with the `_id`, `{kind: 1, state: 1, reserved_at: 1}` and
+`{kind: 1, state: 1, delete_lease_until: 1}` indexes: one activation marker, one
+owner aggregate, one document reservation per owner/document and one object
+reservation per owner/document/digest. Owner identifiers are SHA-256 digests. Object rows retain
 only the charged length; no source text, title, credential or grant is copied.
 Existing document, revision, receipt, object-key and storage-generation formats
 are unchanged. Reclaim removes only condemned object reservations after successful
@@ -237,7 +238,21 @@ writing any row:
 Before activation, deploy this release's reservation-ID writer to every reserving
 process and drain older reservers. The PR-3 commit marker remains the minimum
 metadata publication contract; same-key incarnation fencing additionally requires
-this release's reservation writer.
+this release's reservation writer. Confirm both candidate indexes have completed
+creation on `cma_document_quotas` before enabling reclaim:
+
+| Index name | Ordered keys | Candidate query |
+|---|---|---|
+| `kind_1_state_1_reserved_at_1` | `{kind: 1, state: 1, reserved_at: 1}` | Old reserved or missing-state objects |
+| `kind_1_state_1_delete_lease_until_1` | `{kind: 1, state: 1, delete_lease_until: 1}` | Condemned objects with expired or missing leases |
+
+Use `db.cma_document_quotas.getIndexes()` to verify the names and ordered key
+patterns against this table. Both indexes are non-unique, non-sparse, non-partial
+and non-TTL so legacy rows without a lease remain selectable. The existing
+document-store startup initializer creates them idempotently, outside user
+requests and readiness retries. Retain the age index when adding the lease
+index. Index creation has no proved fixed completion deadline; keep reclaim
+disabled until creation is complete and the deployed indexes are verified.
 
 A missing prerequisite records a blocked reason without candidate scans,
 condemnation, deletion or accounting changes. In particular, unsupported deletion
@@ -246,7 +261,18 @@ The worker shares the process background budget, waits 30 seconds after startup,
 and gives each admitted step a 30-second deadline. Discovery and deletion have
 separate bounded candidate allowances: at most 64 old reservations and 64
 condemned rows per step. Candidate selection excludes condemned rows whose
-deletion lease has not strictly expired. A step attempts at most 64 deletions,
+deletion lease has not strictly expired. Condemned queries hint the lease index;
+reserved queries retain the age index. A result limit alone does not bound
+documents scanned: applying lease eligibility through the age index can scan
+every active lease before discovery continues. The lease index supplies separate
+missing-lease and strictly expired date ranges. Disposable Mongo regressions
+replay the actual commands with `executionStats`, growing active leases from 256
+to 512 with four eligible rows and also checking 72 eligible rows. They require
+keys/documents examined to stay within `min(eligible, 64) + 4`. The allowance
+covers range seek/end overhead and extra FETCH accounting for the two
+missing-lease rows in the small fixture, rather than active leases. These
+fixtures verify access bounds, not a production latency guarantee.
+A step attempts at most 64 deletions,
 with at most four in flight. A full discovery batch that advances object states,
 or a full deletion batch that makes progress without failure, yields through
 `BackgroundWork` before continuing; its positive jittered delay is 188-250
@@ -409,6 +435,12 @@ plus condemned), `cma_document_orphan_oldest_age_seconds` and
 not a second durable ledger. No online request gains a metrics query. Blocked
 rounds leave backlog observations unknown or at their last successful sample;
 consult blocked status before interpreting them.
+
+The existing backlog observation still aggregates all matching pending rows.
+Faster continuation can repeat this global aggregation every 188-250 milliseconds
+and increase its database cost. The lease candidate index does not establish a
+bound for that aggregation. Measure it under the deployed backlog and budget;
+this correction leaves its query and observation frequency unchanged.
 
 Alert when orphan age exceeds 86,400 seconds or blocked status persists after
 activation. Check E1/E2, activation, all-writer versions, budget pressure and

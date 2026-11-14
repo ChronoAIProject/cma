@@ -57,14 +57,15 @@ impl MongoDocumentStore {
                 .await
                 .map_err(|_| DocumentError::Unavailable)?;
         }
-        self.quota_rows()
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"kind": 1, "state": 1, "reserved_at": 1})
-                    .build(),
-            )
-            .await
-            .map_err(|_| DocumentError::Unavailable)?;
+        for keys in [
+            doc! {"kind": 1, "state": 1, "reserved_at": 1},
+            doc! {"kind": 1, "state": 1, "delete_lease_until": 1},
+        ] {
+            self.quota_rows()
+                .create_index(IndexModel::builder().keys(keys).build())
+                .await
+                .map_err(|_| DocumentError::Unavailable)?;
+        }
         Ok(())
     }
 }

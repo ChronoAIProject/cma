@@ -54,10 +54,15 @@ impl MongoDocumentReclaimStore {
         limit: usize,
         condemned: bool,
     ) -> Result<Vec<ObjectCandidate>, DocumentError> {
+        let index = if condemned {
+            doc! {"kind":1,"state":1,"delete_lease_until":1}
+        } else {
+            doc! {"kind":1,"state":1,"reserved_at":1}
+        };
         let rows: Vec<Document> = self
             .rows
             .find(filter)
-            .hint(Hint::Keys(doc! {"kind":1,"state":1,"reserved_at":1}))
+            .hint(Hint::Keys(index))
             .limit(limit as i64)
             .batch_size(limit as u32)
             .max_time(IO)

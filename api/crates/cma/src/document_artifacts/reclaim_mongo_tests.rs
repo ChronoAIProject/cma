@@ -13,6 +13,9 @@ use delete::{claimed, unclaimed};
 #[path = "reclaim_fairness_mongo_tests.rs"]
 mod fairness;
 
+#[path = "reclaim_index_mongo_tests.rs"]
+mod indexes;
+
 async fn fixture() -> (Database, MongoDocumentQuotaStore, MongoDocumentReclaimStore) {
     let uri =
         std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo replica set required");

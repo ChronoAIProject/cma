@@ -303,8 +303,11 @@ that outcome.
   `2026-11-13-am-document-source-commit-state` and the separately scoped storage
   maintenance client. This record grants no production deletion authority.
 - **Stores and formats:** existing `cma_document_quotas`, schema version 1;
-  startup adds the non-unique `{kind: 1, state: 1, reserved_at: 1}` index through
-  the existing document-store index initializer. No collection or TTL is added.
+  startup creates the non-unique `{kind: 1, state: 1, reserved_at: 1}` and
+  `{kind: 1, state: 1, delete_lease_until: 1}` indexes through the existing
+  document-store index initializer. The lease index is an additive fairness
+  correction; retain the age index for reserved candidates. Neither index is
+  sparse, partial or TTL. No collection is added.
   The reclaim judgement writer conditionally changes reserved or missing-state
   object rows to `committed` or `condemned`; new object rows also receive a unique
   `reservation_id`. Judgement, finalization and unknown-commit readback match that
@@ -315,7 +318,8 @@ that outcome.
   lease is claimable only after strict expiry. Finalization must match both holder
   and fence as well as the reservation incarnation, so an expired holder cannot
   release a row after takeover. Missing fields on legacy condemned rows require
-  a first claim before deletion; no backfill or new index is needed.
+  a first claim before deletion; no field backfill is needed. The lease index
+  includes these missing-lease rows.
   Legacy rows match only a missing reservation ID. Condemnation writes server
   `condemned_at`. New baseline owner rows add immutable `baseline_documents`,
   `baseline_bytes`, `baseline_objects`; the ready transition adds server
@@ -331,11 +335,17 @@ that outcome.
   activation; a grace period is no
   substitute. Retain the all-writer census and drain proof. Reclaim requires
   `CHRONO_DOCUMENT_RECLAIM_ENABLED=true`, enabled ready quotas, and proved
-  maintenance deletion support. All feature switches remain default-off in code
+  maintenance deletion support. Before enabling reclaim, verify completed index
+  creation with `db.cma_document_quotas.getIndexes()`: names
+  `kind_1_state_1_reserved_at_1` and `kind_1_state_1_delete_lease_until_1` must have
+  the ordered key patterns above. All feature switches remain default-off in code
   and manifests. E1/E2 storage/finality/scope evidence is still external.
 - **Migration and work bounds:** existing index creation is idempotent, outside
   user requests and readiness retries; it has no new DDL completion guarantee.
-  Candidate queries have a three-second maximum and indexed state selection,
+  Keep reclaim disabled until both indexes are complete and verified; there is
+  no proved fixed DDL completion time. Candidate queries have a three-second
+  maximum and hint the age index for reserved rows or the lease index for
+  condemned rows, bounding lease qualification through missing/expired ranges,
   with independent limits of 64 old reservations and 64 condemned rows; active
   deletion leases are excluded from the latter. Startup waits 30 seconds. Each
   slice uses the shared background budget with a 30-second deadline, no queued
@@ -347,7 +357,10 @@ that outcome.
   retry delay without pausing discovery or extending the existing delay. Backlog
   consisting only of active leases or paused deletes does not trigger fast
   continuation. No transaction contains storage I/O. This scheduling correction
-  adds no durable fields, indexes, collections or reader-floor requirement.
+  adds only the dedicated lease index above, with no new durable fields,
+  collections or reader-floor requirement. The existing global backlog
+  aggregation remains unchanged; faster slices can amplify its database cost
+  and its scan cost is not bounded by the candidate limits.
   Every deletion claims independently, including newly condemned rows. It starts
   only when the remaining lease exceeds the 30-second storage operation budget
   plus a five-second margin. Failed, cancelled or short-budget claims remain
@@ -378,13 +391,15 @@ that outcome.
   call, and incomplete or unsupported checks are `NOT_CHECKED`. Reports contain
   hashes/keys and aggregates, never subjects, titles or source text.
 - **Rollback:** disable `CHRONO_DOCUMENT_RECLAIM_ENABLED` and restart to stop new
-  rounds. Preserve the index, activation and ledger rows. A closed switch cannot
-  restore objects already deleted. Restoring any object/reference/accounting
+  rounds. Preserve both candidate indexes, activation and ledger rows. A closed
+  switch cannot restore objects already deleted. Restoring any object/reference/accounting
   unit needs an independently verified recovery procedure; do not reset owner
   counters or re-enable pre-PR-3 writers.
 - **Completion:** local unit and disposable-replica-set tests must verify
   writer/judge serialization, exactly-once release across stores, reserve/finalize
   owner fencing, condemned retry, negative-count refusal, indexed selection,
+  idempotent creation of both candidate indexes and actual-command
+  `executionStats` scan counts that stay bounded as active leases grow,
   report invariants/resume/privacy and cleanup refusals. Production completion
   remains blocked on E1/E2/E3, approval of automatic cleanup, qualified backups
   and actual deployed writer/storage evidence. Do not substitute fixture PASS
