@@ -9,9 +9,11 @@ use crate::sandbox::store::SandboxStoreError;
 use crate::sandbox::AgentCreationProvenance;
 
 mod detachment;
+mod erasure;
 mod service;
 mod transition;
 pub use detachment::plan_retained_channel_detachment;
+pub use erasure::{same_creation_identity, same_usage_state};
 pub use service::{AgentChannelUsageReading, AgentChannelUsageService};
 pub use transition::{plan_channel_usage, ChannelUsageMutation};
 
@@ -213,10 +215,13 @@ pub struct ChannelUsageEvent {
     pub predecessor: Option<ChannelBindingReference>,
     pub before: AgentChannelUsageState,
     pub after: AgentChannelUsageState,
+    #[serde(skip)]
+    retained_digest: Option<erasure::RetainedDigest>,
 }
 
 impl ChannelUsageEvent {
     pub fn validate(&self) -> Result<(), SandboxStoreError> {
+        self.validate_retained_digest()?;
         if !digest(&self.operation_id) || !digest(&self.fingerprint) {
             return Err(corrupt());
         }
@@ -277,7 +282,10 @@ impl ChannelUsageEvent {
         Ok(())
     }
     pub fn digest(&self) -> String {
-        hash(self)
+        self.retained_digest
+            .as_ref()
+            .filter(|retained| retained.content == hash(self))
+            .map_or_else(|| hash(self), |retained| retained.original.clone())
     }
 }
 
@@ -291,7 +299,9 @@ pub struct StoredAgentChannelUsage {
 impl StoredAgentChannelUsage {
     pub fn validate_latest(&self, event: &ChannelUsageEvent) -> Result<(), SandboxStoreError> {
         event.validate()?;
-        if self.state != event.after || self.latest_event_digest != event.digest() {
+        if !same_usage_state(&self.state, &event.after)
+            || self.latest_event_digest != event.digest()
+        {
             return Err(corrupt());
         }
         Ok(())

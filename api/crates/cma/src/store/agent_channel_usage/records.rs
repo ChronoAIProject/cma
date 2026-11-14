@@ -7,7 +7,9 @@ fn corrupt() -> SandboxStoreError {
     SandboxStoreError::Corrupt("channel usage document or index is inconsistent".into())
 }
 
-pub(super) fn event_document(event: &ChannelUsageEvent) -> Result<Document, SandboxStoreError> {
+pub(in crate::store) fn event_document(
+    event: &ChannelUsageEvent,
+) -> Result<Document, SandboxStoreError> {
     event.validate()?;
     let mut document = doc! {
         "_id":&event.operation_id, "document_schema_version":DOCUMENT_SCHEMA_VERSION,
@@ -20,8 +22,25 @@ pub(super) fn event_document(event: &ChannelUsageEvent) -> Result<Document, Sand
     Ok(document)
 }
 
-pub(super) fn read_event(document: &Document) -> Result<ChannelUsageEvent, SandboxStoreError> {
-    let event: ChannelUsageEvent = read_record(document).map_err(|_| corrupt())?;
+pub(in crate::store) fn read_event(
+    document: &Document,
+) -> Result<ChannelUsageEvent, SandboxStoreError> {
+    let mut event: ChannelUsageEvent = read_record(document).map_err(|_| corrupt())?;
+    match document.get("erased_identity") {
+        None if !document.contains_key("redacted_digest") => {}
+        Some(mongodb::bson::Bson::Boolean(true))
+            if document
+                .get_i64("mutation_version")
+                .ok()
+                .is_some_and(|n| n > 0) =>
+        {
+            event.retain_erased_identity_digest(
+                document.get_str("digest").map_err(|_| corrupt())?,
+                document.get_str("redacted_digest").map_err(|_| corrupt())?,
+            )?;
+        }
+        _ => return Err(corrupt()),
+    }
     let expected = event_document(&event)?;
     if expected
         .iter()
@@ -33,7 +52,7 @@ pub(super) fn read_event(document: &Document) -> Result<ChannelUsageEvent, Sandb
     Ok(event)
 }
 
-pub(super) fn state_document(
+pub(in crate::store) fn state_document(
     stored: &StoredAgentChannelUsage,
 ) -> Result<Document, SandboxStoreError> {
     stored.state.validate()?;
@@ -47,7 +66,9 @@ pub(super) fn state_document(
     })
 }
 
-fn read_state(document: &Document) -> Result<StoredAgentChannelUsage, SandboxStoreError> {
+pub(in crate::store) fn read_state(
+    document: &Document,
+) -> Result<StoredAgentChannelUsage, SandboxStoreError> {
     let stored = read_record(document).map_err(|_| corrupt())?;
     let expected = state_document(&stored)?;
     if expected
