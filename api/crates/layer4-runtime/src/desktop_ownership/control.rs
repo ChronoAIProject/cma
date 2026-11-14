@@ -117,11 +117,13 @@ impl DesktopReceiver {
             while tasks.join_next().await.is_some() {}
         }
         let mut state = self.state.lock().unwrap();
-        self.verify(&mut state)?;
         if deadline <= Instant::now() || (renewal && !self.live(&state, &owner)) {
+            // Refusal must still detect and poison lost durable custody.
+            self.verify(&mut state)?;
             return Err(refused());
         }
         let old_deadline = state.deadline;
+        // persist verifies custody before publication under this same guard.
         self.persist(
             &mut state,
             Record {
