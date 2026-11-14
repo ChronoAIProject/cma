@@ -44,7 +44,7 @@ async fn fifo_head_uses_connection_namespace_and_sealing() {
     });
     let records = RecordClient::new(
         &format!("http://{address}"),
-        &super::super::bootstrap::random_secret().unwrap(),
+        super::super::bootstrap::random_secret().unwrap(),
     )
     .unwrap();
     let receipts = std::env::temp_dir().join(format!("eg-oracle-{}", uuid::Uuid::new_v4()));
