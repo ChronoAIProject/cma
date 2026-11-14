@@ -109,7 +109,6 @@ impl ReportingStore {
                 if old.owner != bucket.owner
                     || old.created_at != bucket.created_at
                     || old.tracking_started_at != bucket.tracking_started_at
-                    || old.complete_lifecycle != bucket.complete_lifecycle
                     || old.revision > bucket.revision
                     || old.last_observed_at > bucket.last_observed_at
                     || old.source_seq > bucket.source_seq
@@ -117,7 +116,9 @@ impl ReportingStore {
                 {
                     return Err(MetricsError::Unavailable);
                 }
-                if old.total.range.to > bucket.total.range.to {
+                let baseline_matches =
+                    old.baseline_matches(bucket.revision, bucket.complete_lifecycle)?;
+                if baseline_matches && old.total.range.to > bucket.total.range.to {
                     // A concurrent lane has already prepared more coverage.
                     // Keep it; the reader still verifies its captured revision.
                     continue;
