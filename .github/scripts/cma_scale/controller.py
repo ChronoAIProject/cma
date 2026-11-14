@@ -45,7 +45,7 @@ def policy(approval=None, context=None):
 def controller_code():
     return g.hash_bytes(b''.join(Path(__file__).with_name(name).read_bytes()
                                 for name in ('controller.py', 'operations.py', 'rules.py',
-                                             'checkpoints.py', 'hpa_exercise.py')))
+                                             'checkpoints.py', 'hpa_exercise.py', 'eg_hpa.py')))
 
 
 def context_for(plan):
@@ -74,6 +74,9 @@ def quota_checkpoint(obj, restoring=False):
 
 
 def checkpoint(obj, op, release=None):
+    if op.get('eg_only'):
+        ops.eg_hpa.checkpoint(obj, op, release, quota_checkpoint)
+        return
     if op.get('hpa_exercise'):
         ops.hpa_exercise.checkpoint(obj, op, release)
         return
@@ -158,7 +161,7 @@ def payload(current, op, dry_run=False):
                  '--patch-file=/dev/stdin', '-o', 'json']
     if dry_run:
         cmd += ['--dry-run=server']
-    patch = g.patch_for(current, expected)
+    patch = g.patch_for(current, expected, kind=op['kind'])
     if op.get('hpa_exercise'):
         patch[-1] = dict(op='replace', path=ops.hpa_exercise.TARGET_PATH,
                          value=expected['spec']['metrics'][0]['resource']['target']['averageUtilization'])
