@@ -168,7 +168,8 @@ async fn capture_agent_sources(
     .await?;
     let mut last_order = 0_i64;
     if let Some(order) = orders.first() {
-        let lane = command_lane(order, id)?;
+        let lane =
+            crate::store::agent_commands::read_command_lane(order, id).map_err(|_| invalid())?;
         last_order = i64::try_from(lane.last_order).map_err(|_| invalid())?;
         vector
             .command_orders
@@ -177,10 +178,26 @@ async fn capture_agent_sources(
     // Stable last-order/next-fence plus qualified writer policy covers transient
     // command admission/execution. Retain all current work and the final order;
     // never scan prompt bodies or an unbounded lifetime ledger.
-    let commands = bounded_find(&store.agent_commands,
-        doc! {"$and":[{"$or":[{"agent_id":id},{"record.receipt.envelope.agent_id":id}]},
-            {"$or":[{"status":{"$in":["queued","in_progress","waiting_action"]}},{"agent_order":last_order}]}]},
-        projection::command(), session, snapshot_read).await?;
+    let scope = doc! {"$or":[{"agent_id":id},{"record.receipt.envelope.agent_id":id}]};
+    let filter = if last_order == 0 {
+        scope
+    } else {
+        // Select malformed/unknown states as well as pending work. Looking only
+        // at a positive pending-state allowlist could hide an inconsistent row.
+        doc! {"$and":[scope, {"$or":[
+            {"status":{"$nin":["completed","failed","cancelled"]}},
+            {"record.status":{"$nin":["completed","failed","cancelled"]}},
+            {"agent_order":{"$gte":last_order}}
+        ]}]}
+    };
+    let commands = bounded_find(
+        &store.agent_commands,
+        filter,
+        projection::command(),
+        session,
+        snapshot_read,
+    )
+    .await?;
     if last_order > 0
         && !commands
             .iter()
@@ -191,6 +208,8 @@ async fn capture_agent_sources(
     for command_row in commands {
         if vector.commands.len() == RUNTIME_ACTIVITY_MAX_ROWS
             || text(&command_row, "agent_id")? != id
+            || last_order == 0
+            || number(&command_row, "agent_order")? > last_order as u64
         {
             return Err(invalid());
         }
@@ -264,43 +283,4 @@ async fn storage_incarnation(store: &MongoSandboxStore) -> Result<String, ApplyE
         store.sandboxes.namespace().db,
     ))
     .map_err(|_| invalid())
-}
-
-fn command_lane(
-    row: &Document,
-    id: &str,
-) -> Result<layer2_core::sandbox::agent_io::CommandLane, ApplyError> {
-    use layer2_core::sandbox::agent_io::CommandLane;
-    crate::store::sandbox_mongo::require_version(row).map_err(|_| invalid())?;
-    let last_order = number(row, "last_order")?;
-    let next_fence = if row.contains_key("next_fence") {
-        number(row, "next_fence")?
-    } else {
-        1
-    };
-    let lease: Option<layer2_core::sandbox::agent_io::CommandLease> = if present(row, "lease") {
-        Some(
-            mongodb::bson::deserialize_from_bson(row.get("lease").ok_or_else(invalid)?.clone())
-                .map_err(|_| invalid())?,
-        )
-    } else {
-        None
-    };
-    if text(row, "_id")? != id
-        || last_order == 0
-        || next_fence == 0
-        || lease.as_ref().is_some_and(|lease| {
-            lease.claim.agent_id.as_str() != id
-                || lease.claim.fence == 0
-                || lease.claim.fence >= next_fence
-                || layer2_core::seconds_from_rfc3339(&lease.expires_at).is_none()
-        })
-    {
-        return Err(invalid());
-    }
-    Ok(CommandLane {
-        last_order,
-        next_fence,
-        lease,
-    })
 }

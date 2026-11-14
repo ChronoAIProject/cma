@@ -224,8 +224,7 @@ pub(super) fn capture(
                 AgentResponseStatus::Queued
                     | AgentResponseStatus::InProgress
                     | AgentResponseStatus::WaitingAction
-            ) || command.work.lease.is_some()
-                || command.work.dispatch.is_some(),
+            ) || command.work.lease.is_some(),
         )?);
     }
     for ((sandbox_id, session), expires) in &state.sandbox_sessions {
