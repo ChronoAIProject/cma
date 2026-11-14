@@ -1,19 +1,19 @@
-# S1 — 15 Nov 2026, 06:00 SGT — AM fixed two
+# S1 — 14 Nov 2026, ~22:30 SGT — AM fixed two
 
 Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; manifest reviewer **developer-16**; GO/advancement **lead**. Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016). Frozen preparation is not execution approval. Blank evidence = **HOLD**. Use the [command contract and open bindings](stage-command-review.md) and [frozen sources](stage-review-sources.md); no CI wait.
 
 **Pre-checks — initial every box with source, results and actual observations before stopping legacy AM**
 
-- [ ] K01/K15: exact integrated source and AM/EG/runtime digests; [revised M3(a)–(d) plus architect04 source GO](stage-command-review.md#revised-m3-merge-gate), with each Mongo suite result explicit; M4 Batch9 N1/OFF 30-minute soak PASS. Bind schema/roles and retained receiver image/protocol/challenge duration. Missing local real-runtime/auth/provider adapter is not a merge blocker.
+- [ ] K01/K15: exact source and AM/EG/runtime digests; retain [M3(a)–(d) and source GO](stage-command-review.md#revised-m3-merge-gate). Batch9 primary rollout targets14Nov21:00 at N1 with shipped defaults: multi-replica false, rollups OFF, web recovery OFF. Engineer02 reports preflight ready for the fresh B9 approval, executes the standard15-minute checkpoint/auto-rollback, and supplies observed checkpoint PASS before S1. Bind schema/roles and retained receiver image/protocol/challenge duration.
 - [ ] K03–K08/K13: log-engineer-01's read-only queries cover the actual release, both replicas, matched baseline and30-minute S1 interval, with logical command/effect identity. Bind its immediate failure-notification path to deployment-engineer-01 and approved compatible rollback; never defer failure notification to E+15. Accepted work comes from **real production traffic**. No synthetic WRITE executor, broker creates/sends or NyxID slot change. Local host/component scope remains explicit.
 - [ ] K14: reviewed placement constraints, eligible distinct hosts, local placement proof, survivor-load and transition capacity qualified; refresh actual AM memory headroom (3273.7MiB observed versus256MiB requested). Count all active/surge/terminating clients with ≥30% per-server Mongo headroom. Direct relay uses Pod IP:8080. EG stays one; neither service has an HPA or competing release writer.
-- [ ] K16–K21: final-N1 baseline matches actual `backfill_active` state; retain standing24h and refresh60min immediately before actual S1 operation. Engineer02 supplies actual Activity result, U1 status and observed U2 state/times under the [19:56 U/S ordering](stage-command-review.md#usage-and-replica-stage-order). S1 stays06:00 with lease-fenced U2 active; active backfill alone does not delay it. Keep frozen A3 classes and separate statistical/policy verdicts; missing state/matched baseline stays explicit.
-- [ ] K22/K24: approved route, selected controller/source and exact operations, current per-step grants, explicit outage approval, controller-order proof, real backend/NEG health access, pre-pulled images, and recovery for **both** failed cutover and healthy 2→1. No production writes 02:00–02:59. Old unbound A2-r5 plans are not executable.
-- [ ] Coordinate actual U/S schedule with engineer02: each U/S stage needs its own fresh grant. Early U2 starts only after U1 success and strictly before04:30; fallback targets06:45 after actual S1 soak, including any extension. U3 needs U2 `pass_complete` and cannot launch within inclusive05:45–06:15; recompute if S1 start changes.
+- [ ] K16–K21: log01 captures the60-minute AM1 baseline from14Nov21:30 on the actual Batch9 image, targeting21:30–22:30. Bind source/config/backfill state and frozen A3 classes; retain separate statistical/policy verdicts. Activity/U1/U2 now follow S2 and the blackout under the [20:30 U/S ordering](stage-command-review.md#usage-and-replica-stage-order); no Activity/U1 completion prerequisite is added to evening S1.
+- [ ] K22/K24: S1 dry-run projections PASS using the #2043 controller from develop9be345523 or later containing the fix. Bind exact controller/release/operations, current fresh grants, outage authority, actual backend/user-service observation and recovery for failed cutover and healthy2→1. Images are pre-pulled. No production writes15Nov02:00–02:59; old unbound A2-r5 plans are not executable.
+- [ ] Fresh S1 approval follows observed B9 checkpoint success and projection PASS. Each later stage waits for the preceding stage's observed success. U3 requires U2 `pass_complete` and at least15min separation from every selected S start; recompute after any lead re-slot. On failure invoke approved rollback, report immediately and let the lead re-slot; never advance on a nominal time.
 
 **GO sequence — per-operation prepare/review/execute/readback; no write loop**
 
-`s1-pause → s1-prepare → s1-stop → s1-unpause → s1-start → s1-pdb`. Keep canonical selectors/routes. Prepare ON template while paused1; stop old1→0; prove all legacy effect/socket authority stopped or safely revoked/expired; unpause at0 and verify controller-owned candidate RS0; only then start0→2. RS0-after-stop requires the explicit lead-approved controller variant. Verify each pod serves, both backends healthy and actual pair on distinct hosts, then PDB `minAvailable:1`, `AlwaysAllow`, exact AM selector. A PDB does not prevent scale-to-zero or Deployment deletion.
+`s1-pause → s1-prepare → s1-stop → s1-unpause → s1-start → s1-pdb`. Use the selected #2043 controller and successful projections with fresh operation grants. Keep canonical selectors/routes. Prepare ON template while paused1; stop old1→0; prove all legacy effect/socket authority stopped or safely revoked/expired; unpause0 and verify controller-owned candidate RS0; only then start0→2. Verify each pod serves, both backends healthy and actual pair on distinct hosts, then PDB `minAvailable:1`, `AlwaysAllow`, exact AM selector. A PDB does not prevent scale-to-zero or Deployment deletion.
 
 **No-overlap clock:** last healthy old backend withdrawal → first successful user service on a qualified new backend **<120 seconds**; record both-ready separately. At120 seconds abort promotion even if a long kubectl wait remains. Never overlap legacy/owned writers or shorten leases/grace to meet time.
 
@@ -29,7 +29,7 @@ Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; 
 
 <div style="page-break-after: always;"></div>
 
-# S2 — 15 Nov 2026, 08:30 SGT — EG fixed two
+# S2 — 15 Nov 2026, ~00:30 SGT — EG fixed two
 
 Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; manifest reviewer **developer-16**; GO/advancement **lead**. Frozen preparation is not execution approval. Blank evidence = **HOLD**. Use the [command contract](stage-command-review.md) and [sources](stage-review-sources.md); no CI wait.
 
@@ -40,7 +40,7 @@ Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; 
 - [ ] K04/K07/K10/K11: shared console auth/logout, dedupe, global Identify/reconnect/provider budgets; original idempotency and uncertain-outcome custody survive handoff. Approved canaries cover every enabled provider; monitor/reconciler and 24-hour post-go-live on-call named before GO.
 - [ ] K14/K16–K21: survivor/transition capacity including AM2, all clients/terminations and ≥30% Mongo headroom; reviewed placement constraints, eligible distinct hosts and local proof. Matched baseline, A3 classes and separate statistical/policy verdicts bound; apply only the narrow K21 CRITICAL exception in B6. Pod-IP EG origin:8090 matches final binary.
 - [ ] K22/K24: selected controller/release/operations/route, per-step/outage/rollback approvals, actual controller/NEG proof and <120-second restoration evidence. Pre-pull is not application readiness. Both failed-cutover and healthy 2→1 recovery branches are bound. No production writes 02:00–02:59.
-- [ ] Confirm current S2 start with engineer02: U3 requires actual U2 `pass_complete` and no launch within inclusive08:15–08:45; recompute±15min if S2 start changes. U and S approvals remain separate.
+- [ ] Finish S2 and its full30-minute soak before02:00. Confirm enough time for actual termination, observation and approved recovery before the controller's01:58 write guard; never shorten them. If this cannot fit, hold/report for the lead to re-slot. U3 requires U2 `pass_complete` and at least15min from the selected S2 start; U/S grants remain separate.
 
 **GO sequence — separate guarded operation and readback at each checkpoint**
 
@@ -55,11 +55,11 @@ Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; 
 
 **Abort/recovery:** wrong/stale/dual owner, duplicate effect, lost custody/receipt, auth bypass ⇒ immediate stop. Unknown/Partial ⇒ HOLD/page; unresolved at cohort deadline ⇒ compatible recovery, never blind resend. Apply S1's availability/capacity/performance abort rules. Healthy `s2-one` keeps EG modeON/fences/PDB and AM2; wait survivor reconnect and reconciliation. EG image recovery is forward-fix-only unless an exact older digest has explicit retained-record compatibility approval. No default pre-stage image undo; failed-start/unhealthy-owner branch must be separately bound.
 
-**Decision:** GO/HOLD/ABORT ___; executor ___; reviewer ___; lead ___; release/receipts ___; soak ___→___; provider reconciliation/monitor ___ . Only signed S2 PASS permits S3.
+**Decision:** GO/HOLD/ABORT ___; executor ___; reviewer ___; lead ___; release/results ___; soak ___→___ before02:00; provider reconciliation/monitor ___ . Observed S2 PASS precedes the blackout and subsequent03:00 Activity/U1/U2 work; S3 still needs its own prerequisites and fresh approval. Any failure rolls back/reports for lead re-slotting.
 
 <div style="page-break-after: always;"></div>
 
-# S3 — 15 Nov 2026, 10:30 SGT — both HPAs, min2/max5
+# S3 — 15 Nov 2026, ~05:30–06:00 SGT — both HPAs, min2/max5
 
 Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; load/scale evidence **developer-17**; manifest reviewer **developer-16**; GO **lead**. Frozen preparation is not activation. Use the [command contract](stage-command-review.md); missing evidence = HOLD. No CI wait.
 
@@ -70,9 +70,9 @@ Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; 
 - [ ] K14: qualify combined active+surge+terminating processes, all consumers, node loss/provider limits and ≥30% Mongo headroom against the selected64/128 CPU ceilings and actual nodes/memory. Illustrative G760/P120 gives12/service: it fits raised quota but exceeds47.67 eligible-node CPU. G remains unqualified; raising quota supplies no node or socket capacity.
 - [ ] K21/K25: fresh v2 resource metrics, useful-load response, CPU idle/knee qualification and matched N1/N2/scaling evidence. AM60% of4CPU=2.4 cores; EG200% of250m=500m. CPU-only that cannot add useful capacity ⇒ HOLD for reviewed metric design. No assumed custom metrics API.
 - [ ] Exact release/HPA payload and controller commit, route/per-operation grants, owned-load scope, freeze/delete/descent recovery and observation window bound. No production writes 02:00–02:59. Schedule leaves time for stabilization, full termination, final soak and M8; deadline cannot shorten them.
-- [ ] Confirm current S3 start with engineer02: U3 requires actual U2 `pass_complete` and no launch within inclusive10:15–10:45; recompute±15min if S3 start changes. U and S approvals remain separate.
+- [ ] Confirm observed prior-stage success and fresh S3 grant. After03:00 engineer02 runs Activity→U1→U2; if U2 cannot start strictly before04:30, it waits until after successful S3 and a fresh U2 grant. S3b requires #2038 merged and its qualified execution inputs/approval. U3 needs U2 `pass_complete` and at least15min from the actual selected S3 start; do not guess a fixed exclusion for the05:30–06:00 target range.
 
-**GO sequence — granted quota pre-step, then AM HPA and EG HPA**
+**GO sequence — CPU quota64/128 → HPAs → S3b after #2038 merges**
 
 `s3-quota-raise → s3-am-create → s3-eg-create`. Before either HPA, use the exact S3 grant to change only `chrono-bot/sandbox-quota` CPU ceilings40/80→64/128. Save complete before-spec and confirmed result; require64/128 in both spec/status. Preserve memory/Pod limits. Each HPA targets its canonical Deployment; verify min2/max5, fresh metrics/generation and scaling conditions. Unknown writes require reconciliation.
 
@@ -81,12 +81,12 @@ Checklist owner **solution-architect-03**; executor **deployment-engineer-01**; 
 | Up | stabilization0; Max of +2 pods/60s and +100%/60s |
 | Down | stabilization300s; Min, −1 Pod/120s fixed; handoff p95>90s or missing/censored timing ⇒ HOLD, never change cadence silently |
 
-Prove useful **automatic** up/down for each service under approved load within capacity. Claim exercised5 only if observed5; configured ceiling capacity remains K14, useful automatic up/down remains K25. Manual replica patches do not satisfy K25. Remove only owned load, observe full down stabilization/cadence, handoff and actual exits to2. Record transitions, failures and peak clients; a PDB does not cap HPA terminations.
+Run the separately approved S3b exercise after #2038 merges for observed automatic scale/drain evidence. It does not establish useful-load calibration or max-five performance acceptance; those qualifications remain separate. Claim exercised5 only if observed5; configured ceiling capacity remains K14, useful automatic up/down remains K25. Manual replica patches do not satisfy K25. Remove only owned load, observe full down stabilization/cadence, handoff and actual exits to2. Record transitions, failures and peak clients; a PDB does not cap HPA terminations.
 
 **30-minute final soak — K02–K21/K24/K25**
 
 - [ ] Start after both return stable2, zero terminating, healthy backends/membership; changes restart it. Declare E=start+30min; report by E+15. Keep ramp/downscale strata separate. Each minute: metrics freshness/recommendations, useful throughput, owners/custody/streams/desktop/provider outcomes, process/client bounds, CPU/OOM, checkout/headroom and ≥2 background cycles. No oscillation or missing-metric downscale.
-- [ ] All K16–K21 absolute/A3 acceptance checks pass at N2 and scaling; no unobserved route PASS. Report statistical/policy verdicts separately; only valid matched CRITICAL observations meeting B6 may receive the exception. Bind logs plus NyxID/client evidence for M8 13:00–17:00 and final18:00 report. Provider 24-hour monitoring continues beyond that deadline.
+- [ ] All K16–K21 absolute/A3 acceptance checks pass at N2 and scaling; no unobserved route PASS. Report statistical/policy verdicts separately; only valid matched CRITICAL observations meeting B6 may receive the exception. Bind logs/read/client evidence to prod-verifier-01's M8 kit for15Nov09:00–16:00 and the final18:00 report. Provider24-hour monitoring continues beyond that deadline. Failure invokes compatible rollback, immediate report and lead re-slotting.
 
 **Abort/recovery:** any S1/S2 safety, availability, capacity or supported performance trigger ⇒ stop promotion; halt only owned load. Generate/readback **both** HPA directions Disabled, then UID/resourceVersion-bound delete of only S3-created HPAs. Account for in-flight controller writes. With HPA absent, healthy survivors and zero prior terminations, descend **one at a time** to2, retaining PDBs/modeON/compatible images/custody. If demand requires >2, hold that safe fixed count and report autoscaling not delivered. Run fresh30-minute recovery soak; no image/mode downgrade or bulk5→2.
 

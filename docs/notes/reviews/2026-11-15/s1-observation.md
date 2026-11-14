@@ -13,7 +13,7 @@ Observer: solution-architect-03; cutover executor: deployment-engineer-01; user-
 | Selector/ports | `app.kubernetes.io/name=cma-agent-manager`; Service80 → EndpointSlice8080 |
 | Canonical NEG annotation | `k8s1-002d2683-chrono-bot-cma-agent-manager-80-620084a5` |
 | Annotated zones | `asia-northeast1-a`, `asia-northeast1-b`, `asia-northeast1-c` |
-| EndpointSlice | One ready/serving/nonterminating endpoint in zone C at preparation; refresh old/new identities after M4. |
+| EndpointSlice | One ready/serving/nonterminating endpoint in zone C at preparation; refresh old/new identities after the observed Batch9 checkpoint PASS. |
 | Compatibility alias | `cma-api` selects the workload but has no NEG annotation; never use it as canonical external-health evidence. |
 | Ingress | No Ingress objects in `chrono-bot`; repository HTTPRoute targets the canonical Service through the shared Gateway. |
 | Compute result | All three NEG reads using `--project=example-project-02` returned403, missing `compute.networkEndpointGroups.get`, under inherited gcloud authentication. Failed commands also printed `[]`: that is UNKNOWN, not an empty NEG. |
@@ -100,7 +100,7 @@ Validate all expected groups/zones/endpoints and health states against the mappi
 
 ## Events and strict120-second bound
 
-Before S1 step3, refresh the outgoing cohort after M4, prove canonical health and arm the independent observer/recovery operator. Agree a bounded sampling cadence and measured query latency that fit the outage budget. The10-second command limit is a maximum wait, not a measured interval or an extension of120s. No slow/missed query is continuous coverage.
+Before S1 step3, refresh the outgoing cohort after the observed Batch9 checkpoint PASS, prove canonical health and arm the independent observer/recovery operator. Agree a bounded sampling cadence and measured query latency that fit the outage budget. The10-second command limit is a maximum wait, not a measured interval or an extension of120s. No slow/missed query is continuous coverage.
 
 Keep four events distinct:
 
