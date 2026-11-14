@@ -8,10 +8,14 @@ complete handoff p95, separate hard effective lifetime G, all-process/per-server
 capacity with≥30% Mongo headroom, provider/node/quota budgets and calibrated
 useful CPU response. Configured grace760 does not prove G or measured p95.
 
-The [20:30 timeline revision](stage-timeline.md) orders CPU quota 64/128, HPA
-and the separately granted S3b exercise once #2038 is merged. Bind the final
-merged controller retaining #2043; the S3b source GO alone is not a merge or
-execution grant. Complete required drain/observation/soak before reporting S3
+The [revised timeline](stage-timeline.md) orders CPU quota 64/128, HPA and the
+separately granted S3b exercise from merged #2038. The reported 20:45 amendment
+places Batch10 API-only rolling at AM2/PDB before Activity/U work, targeting 03:00.
+For S3, bind observed post-B10 API and B9 EG source/image/replica lifetimes from
+engineer02's actual cohort packet. Keep baseline/post cohorts matched, separate
+rollout transitions and retain unknown coverage; no planned rollout timestamp
+supplies an actual boundary. Bind the final merged controller retaining #2043;
+source GO and merge do not supply a production execution grant. Complete required drain/observation/soak before reporting S3
 success. If early U2 missed 04:30, engineer02 starts it only after that actual
 success and a fresh grant. Failures invoke approved rollback, reporting and lead
 re-slotting. U3 must remain at least 15 minutes from the confirmed S3 start.

@@ -45,13 +45,17 @@ raw mutation command.
 Obtain explicit rollback permissions before starting. Server dry-run does not
 replace permission, application tests or live backend verification.
 
-The binding 14 Nov 20:30 [timeline](notes/reviews/2026-11-15/stage-timeline.md)
-plans Batch9 at 14 Nov 21:00 (N=1, shipped defaults, 15-minute checkpoint and
-auto-rollback), S1 approximately 22:30 after checkpoint and #2043 dry-run PASS,
+The 14 Nov 20:30 [timeline](notes/reviews/2026-11-15/stage-timeline.md)
+with the reported 20:45 amendment plans Batch9 at 14 Nov 21:00: N=1/shipped defaults,
+API → EG → web with a separate 15-minute checkpoint/auto-rollback EACH. S1 targets
+22:30 after ALL component checkpoints and #2043 dry-run PASS,
 S2 approximately 15 Nov 00:30 fully soaked before 02:00, and S3 approximately
-05:30–06:00 (quota 64/128 → HPA → S3b once #2038 merges). Log01's Batch9 S1
-baseline is 21:30–22:30. Activity → U1 → U2 begins 03:00; U2 starts before 04:30
-or after actual S3 success. U3 needs `pass_complete` and at least 15 minutes
+05:30–06:00 (quota 64/128 → HPA → merged #2038 S3b). Log01's Batch9 S1
+baseline is 21:30–22:30. Queue Batch10 API-only build/push at source
+`47809dbcf2193b4e28fca679f1b84bd0c27ac82c` only after ALL B9 checkpoints PASS.
+At 15 Nov 03:00 target a separately approved API-only rolling rollout at AM2/PDB,
+retaining B9 EG/web. Activity → U1 → U2 follows observed Batch10 success; its
+exact start remains pending. U2 starts before 04:30 or after actual S3 success. U3 needs `pass_complete` and at least 15 minutes
 from every confirmed S-stage start. M8 uses prod-verifier01's kit 09:00–16:00;
 final report remains due 15 Nov 18:00. Each stage needs observed prior success
 and a fresh lead grant. On failure, roll back compatibly, report and let the
@@ -159,7 +163,9 @@ Log01 supplies the 60-minute 21:30–22:30 Batch9 N1 baseline and retains the st
 window. Superseded morning windows do not establish matching coverage. Preserve
 actual counts, failures and missing boundaries without fabricating extra windows
 or compressing the statistical method. N1 modeOFF versus N2 modeON remains a
-configuration confounder, with the existing statistical/policy distinction.
+configuration confounder, with the existing statistical/policy distinction. For S3,
+use actual post-B10 API and B9 EG source/image/replica lifetimes; separate rollout
+transitions and never substitute planned boundaries or pool unlike cohorts.
 
 Read-only resource checks, after the linked common operator setup:
 

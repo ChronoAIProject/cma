@@ -1,13 +1,14 @@
 # Production scale execution — 14–15 November 2026
 
 Executor: deployment-engineer-01. GO, advancement and failure re-slotting: lead.
-The binding 20:30 [combined timeline](stage-timeline.md) plans Batch9 at 14 Nov 21:00,
+The 20:30 [combined timeline](stage-timeline.md) plans Batch9 at 14 Nov 21:00,
 [S1 approximately 22:30](s1-execution.md), [S2 approximately 15 Nov 00:30](s2-execution.md),
 and [S3 approximately 05:30–06:00](s3-execution.md). M8 uses prod-verifier01's kit
 09:00–16:00; the final owner report remains due 15 Nov 18:00. Each stage requires
 observed prior success and a fresh lead grant. On failure, perform approved
 rollback, report and let the lead re-slot; do not advance by the clock.
-Engineer02 owns Batch9/Activity/U1–U3, engineer01 owns S1–S3. U3 requires U2
+Engineer02 owns Batch9/Batch10/Activity/U1–U3, engineer01 owns S1–S3. The
+reported 20:45 amendment adds Batch10 before Activity and a checkpoint per B9 component. U3 requires U2
 `pass_complete` and at least 15 minutes from every confirmed S-stage start.
 Source/checklist freeze is not a write blackout and does not prohibit the
 lead-selected 00:30 S2. The actual no-write window remains 02:00–02:59, with the
@@ -36,18 +37,23 @@ GO completes the merge gate. Missing local runtime/auth/provider bindings do
 not block that gate; unrun local end-to-end rows remain unrun.
 
 Before stopping either legacy process, obtain the final integrated source,
-revised M3 results and architect04 GO, actual AM/EG image digests, Batch9 N1
-checkpoint PASS and schema/retained-receiver compatibility. Engineer02 runs
+revised M3 results and architect04 GO, actual AM/EG image digests, ALL Batch9 N1 component
+checkpoints PASS and schema/retained-receiver compatibility. Engineer02 runs
 Batch9 at 14 Nov 21:00 with shipped defaults: multi-replica false, rollups OFF and
-web recovery OFF, the standard 15-minute checkpoint and auto-rollback. It reports
-preflight ready before the lead issues deploy approval. S1 additionally requires
+web recovery OFF, sequential API → EG → web, and a separate 15-minute checkpoint
+with auto-rollback for each component. Engineer02 reports lead approval for the
+21:00 target; bind actual approval and component results in its owner packet. S1 additionally requires
 dry-run projections PASS using merged #2043 controller develop
 `9be345523fd2768d8e8daf1c0f4ccd487191f9b0` or a descendant retaining the correction.
-Activity runs separately from 15 Nov 03:00, followed by U1 then U2. U1's credential
-grant is `GRANT_NOOP`. U2 starts after U1 success strictly before 04:30, otherwise
+Only after ALL B9 component checkpoints PASS, engineer02 queues the Batch10
+API-only build/push at source `47809dbcf2193b4e28fca679f1b84bd0c27ac82c`.
+The 15 Nov 03:00 target now starts separately approved Batch10 API rolling at
+AM=2/PDB; EG and web retain B9. Selected B10 image, grant and actual boundaries
+remain pending until bound. Activity starts after observed B10 success, then
+U1 (`GRANT_NOOP`) and U2. U2 starts strictly before 04:30 after U1 success, otherwise
 after actual S3 success. Activity/U completion is not an earlier S1 prerequisite
 under this revised ordering. U3 requires `pass_complete` and the timeline's
-start separation. Engineer02 remains the sole Batch9/index/U operator.
+start separation. Engineer02 remains the sole Batch9/Batch10/index/U operator.
 
 The lead must select this controller implementation and the RS0-after-old-stop
 variant. Qualification must demonstrate actual CMA/GKE/NEG no-overlap and
@@ -240,6 +246,9 @@ compatible rollback. This exception does not change other stage windows.
 The prior morning HTTP windows are superseded. Prod-verifier02 binds each
 existing 1800-second READ session to the revised stage packet, preserving its
 NyxID slot, pacing and sole ownership; no automatic session restart/extension.
+For S3, bind the observed post-B10 API and retained B9 EG source/image/replica
+lifetimes from engineer02's actual cohort packet. Do not pool rollout transitions
+or use planned times as actual boundaries. Missing matching coverage stays explicit.
 Log01's separate 60-minute S1 baseline is 21:30–22:30 on the actual Batch9 image;
 refresh/rebind if the lead re-slots S1. After evidence covers actual S–E. Analyst
 owns reduction and exact query inventory; reuse existing coverage. Optional31min

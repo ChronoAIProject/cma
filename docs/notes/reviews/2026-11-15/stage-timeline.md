@@ -1,8 +1,10 @@
-# Combined Batch9 / U1–U3 / S1–S3 timeline — lead ruling 14 November 20:30
+# Combined Batch9/Batch10 / U1–U3 / S1–S3 timeline — 14 November amendments
 
 All times are Asia/Singapore (SGT), with dates explicit across midnight.
-This binding revision supersedes the earlier morning S1/S2/S3 schedule.
-Deployment-engineer02 owns Batch9, Activity and U1–U3; deployment-engineer01
+The lead 20:30 revision supersedes the earlier morning schedule. Engineer01
+records engineer02's reported lead 20:45 amendment for component checkpoints and
+Batch10 before Activity; its approval/actuals remain in the execution owner packet.
+Deployment-engineer02 owns Batch9/Batch10, Activity and U1–U3; deployment-engineer01
 owns S1–S3. **Every stage needs its own fresh lead approval and observed prior
 success criteria.** Planned times supply neither a grant nor actual start/end.
 If a stage fails, perform approved rollback, report and let the lead re-slot it.
@@ -10,14 +12,16 @@ The final deadline remains **15 November 18:00**.
 
 | Planned time / condition | Owner | Operation and required ordering |
 |---|---|---|
-| 14 Nov 21:00 | engineer02 | Batch9 primary rollout at N=1 with shipped defaults: multi-replica false, rollups OFF, web recovery OFF. Report preflight ready for the lead's deploy approval. Use the standard 15-minute checkpoint and auto-rollback; retain actual checkpoint result. |
+| 14 Nov 21:00 | engineer02 | Batch9 primary rollout at N=1 with shipped defaults: multi-replica false, rollups OFF, web recovery OFF. Engineer02 reports lead approval for the 21:00 target; actual rollout/cohort results remain pending until observed. Roll API → EG → web sequentially, with a separate 15-minute checkpoint and auto-rollback for EACH component. Retain all three actual results. |
+| After ALL Batch9 component checkpoints PASS | engineer02 | Queue Batch10 API-only build/push at source `47809dbcf2193b4e28fca679f1b84bd0c27ac82c`. This build ordering supplies no deployment grant. |
 | 14 Nov 21:30–22:30 | log01 | S1 60-minute baseline on the actual Batch9 image at N=1. Bind actual source/image/state and coverage; retain the standing 24h context. |
-| 14 Nov approximately 22:30 | engineer01 | S1 AM=2 plus PDB only after the Batch9 checkpoint and S1 dry-run projections PASS using merged #2043 controller develop `9be345523fd2768d8e8daf1c0f4ccd487191f9b0` or a descendant retaining its correction. Observe real production traffic under the existing low-N rule. |
+| 14 Nov approximately 22:30 | engineer01 | S1 AM=2 plus PDB only after ALL Batch9 component checkpoints and S1 dry-run projections PASS using merged #2043 controller develop `9be345523fd2768d8e8daf1c0f4ccd487191f9b0` or a descendant retaining its correction. Observe real production traffic under the existing low-N rule. |
 | 15 Nov approximately 00:30 | engineer01 | S2 EG=2 only after S1 success. Complete cutover and the full soak before 02:00; reserve recovery time and retain the controller's 01:58 write margin. If the remaining time cannot satisfy the criteria, report for lead re-slotting. |
 | 15 Nov 02:00–02:59 | all operators | No writes, including recovery. The blackout is unchanged. |
-| 15 Nov 03:00 onward | engineer02 | Activity index → U1 collection/index Job → U2, each after the preceding success and a fresh grant. U1 credential grant is `GRANT_NOOP`: existing AM readWrite+dbAdmin requires no new role/credential operation. |
+| 15 Nov 03:00 target | engineer02 | Separately approved Batch10 API-only rolling rollout at AM=2/PDB, with EG/web retained on Batch9. Bind selected image and actual start/end/results; they remain unset until supplied. |
+| After observed Batch10 API success | engineer02 | Activity index → U1 collection/index Job → U2, each after predecessor success and a fresh grant. Activity's exact start is pending Batch10 success, not fixed 03:00. U1 credential grant remains `GRANT_NOOP`. |
 | U1 succeeds and U2 can start strictly before 15 Nov 04:30 | engineer02 | Start U2 under its own fresh grant. Exactly 04:30 or later uses the fallback after actual S3 success. |
-| 15 Nov approximately 05:30–06:00 | engineer01 | S3 CPU quota 64/128 → HPA → sequential S3b exercise once #2038 is merged. Bind the final merged controller, observed prior success and separate grants; complete all required observation/drain/soak without compressing them. |
+| 15 Nov approximately 05:30–06:00 | engineer01 | S3 CPU quota 64/128 → HPA → sequential S3b exercise from merged #2038. Bind the final selected controller, observed prior success and separate grants; complete all required observation/drain/soak without compressing them. |
 | After actual S3 success, if early U2 was missed | engineer02 | Start U2 under a fresh grant. Nominal S3 start/end is not completion evidence. |
 | After U2 `pass_complete` | engineer02 | U3 starts only at least 15 minutes away from every actual/planned S-stage start, confirmed with engineer01 and recomputed whenever the lead re-slots a stage. |
 | 15 Nov 09:00–16:00 | prod-verifier01 | M8 production verification using the existing kit, after observed prerequisite success and the fresh stage grant. |
@@ -41,6 +45,11 @@ on the actual serving image. The following are planned packet bounds; actual obs
 | S2 | 14 Nov 23:30–15 Nov 00:30 |
 | S3 at 05:30 | 15 Nov 04:30–05:30 |
 | S3 at 06:00 | 15 Nov 05:00–06:00 |
+
+For S3, engineer02 supplies observed post-Batch10 API and retained Batch9 EG
+source/image/replica lifetimes. Keep rollout boundaries explicit and compare
+matching serving cohorts; do not pool pre/post-rollout measurements or populate
+actuals from the 03:00 target. A missing matching interval remains explicit.
 
 Log01 rebinds the interval when the actual operation start moves. Existing
 source/image/state matching, retained failures and coverage uncertainty remain.
