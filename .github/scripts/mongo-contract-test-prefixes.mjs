@@ -7,6 +7,7 @@ export const requiredPrefixes = [
   'store::agent_lifecycle_operations::lease_tests::',
   'store::sandbox_mongo_integration_tests::command_ledger_tests::operator_stop_tests::',
   'store::usage_reports::tests::',
+  'store::allocation_buckets::',
   'sandbox::funding::tests::mongo::',
   'agent_manager::relay::tests::mongo::',
   'store::agent_ownership::mongo_tests::',
