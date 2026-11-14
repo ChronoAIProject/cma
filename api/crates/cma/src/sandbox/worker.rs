@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -247,7 +249,18 @@ impl SandboxWorker {
         first_error.map_or(Ok(completed), Err)
     }
 
-    pub async fn run_one(
+    /// Run one claimed item behind a boxed boundary so callers do not inherit
+    /// the full execution and renewal state-machine stack frame.
+    pub fn run_one(
+        &self,
+        id: &SandboxId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, SandboxStoreError>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move { self.run_one_inner(&id, now).await })
+    }
+
+    async fn run_one_inner(
         &self,
         id: &SandboxId,
         now: SystemTime,
@@ -277,12 +290,12 @@ impl SandboxWorker {
             return Ok(false);
         };
         if self.config.renewable_work || sandbox.work.authority_protocol.is_some() {
-            return self.run_renewable(sandbox, now, claiming).await;
+            return Box::pin(self.run_renewable(sandbox, now, claiming)).await;
         }
         let claim_ms = claiming.elapsed().as_millis() as u64;
-        layer2_core::agent_ownership::transport_observation_scope(
+        layer2_core::agent_ownership::transport_observation_scope(Box::pin(
             self.run_claimed(sandbox, now, claim_ms),
-        )
+        ))
         .await
     }
 
