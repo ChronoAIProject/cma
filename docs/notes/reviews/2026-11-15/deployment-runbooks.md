@@ -15,8 +15,19 @@ without changing statistical verdicts or absolute targets.
 
 ## Execution inputs and explicit holds
 
+The lead's revised #1370 M3 merge gate requires (a) local source/resource checks,
+including placement, PDB and readiness; (b) the retained f6 host cross-ingress
+N1/N2 OFF/ON diagnostic; (c) all required multi-instance suites at integration
+5cfd or newer against one real Mongo; and (d) environment01 EG fixture cases.
+The lead accepts (a), (b) and (d). Verifier02 reports (c) per suite: killed-owner
+takeover, leases/fencing/no duplicate effects, recovery leases, title custody,
+desktop exclusive sessions, and EG delivery/SSE. Record each tested SHA, command,
+count, result and actual multi-instance scope. Architect04's final integrated
+GO completes the merge gate. Missing local runtime/auth/provider bindings do
+not block that gate; unrun local end-to-end rows remain unrun.
+
 Before stopping either legacy process, obtain the final integrated source,
-local M3 N1/N2/2→4→2/kill results, actual AM/EG image digests, Batch9 N1/OFF
+revised M3 results and architect04 GO, actual AM/EG image digests, Batch9 N1/OFF
 deployment and stable-soak result, schema/retained-receiver compatibility and
 Activity postcheck. Engineer02 is the sole Batch9/index operator. Its sequence
 remains after03:00: Batch9 plus30-minute soak, then separately approved indexes.
@@ -42,6 +53,17 @@ downscale, and K13 secure EG drain before S2. Native EG sleep30 is propagation
 only. S3 additionally needs complete-cohort handoff p95, a distinct hard
 process/socket/client lifetime, all-consumer capacity and calibrated useful load.
 No fallback to old modeOFF writers or historical EG shell hooks is supported.
+
+**S1 execution HOLD:** engineer01 and prod-verifier02 have confirmed that no
+selected accepted-work executor/private configuration is currently available.
+The lead must assign/provide that binding; engineer01 binds it to the actual
+release, bounded S–E workload and immediate compatible rollback. The required
+interface includes validate/run/stop/reconcile/owned-cleanup, real auth/runtime/
+provider and client/frame paths, both-ingress owner/fence attribution, independent
+effect/terminal accounting and immediate incident delivery to the recovery
+operator. The GET sampler does not supply it. Historical stopped broker mutation
+commands and the old copied browser profile remain unavailable. This is an S1
+execution input, not an additional local M3 or tooling-review gate.
 
 ## Operator setup and one-operation transaction
 
@@ -181,8 +203,18 @@ Image/config/count changes restart stability; retain full-stage failures.
 S3's S is after actual automatic return to2. Existing monitors supply per-minute
 capacity/ownership/custody and two five-minute background cycles. The authorized
 NyxID owner runs existing detail/transcript and retained24h usage reads during
-S–E, against the matched final-N1 profile; no Activity/create/send/stop/refresh
-mutation is added. Body timing does not prove browser rendering or user journeys.
+S–E, against the matched final-N1 profile. That sampler remains GET-only; body
+timing does not prove browser rendering or accepted-work completion. S1 also
+requires the [real-runtime accepted-work sequence](s1-execution.md#mandatory-real-runtime-accepted-work-soak)
+using synthetic owner-account traffic for the full 30-minute window. Passive
+reads alone cannot satisfy it.
+
+The supplemental read runner holds its owned `.capture-lock` for its entire
+run. Use one coordinated scheduler/lane or explicitly nonoverlapping ownership;
+do not start independent overlapping 30-minute read and accepted-work runners.
+Stop only the exact owned read PID with SIGINT/SIGTERM, retain partial evidence
+and wait for its lock release. Never remove another process's lock or bypass
+pacing. The existing read cadence grants no mutation cadence.
 
 Before HTTP windows in SGT: S1 05:28–05:58, S2 07:58–08:28, S3 09:58–10:28.
 After is actual S–E. Analyst owns capture and the exact query inventory; reuse
@@ -226,7 +258,12 @@ backend outside approved cutover, outage≥120s, same-work recovery>30s,
 OOM/repeated crash/permanent renewal failure, process/client/provider bound
 breach or Mongo headroom<30%. Do not wait for a full statistical window.
 Performance-only supported failure in two consecutive5min windows or a failing
-whole-soak comparison triggers recovery. Unknown outcomes retain original keys
+whole-soak comparison triggers recovery. **S1 accepted-work failures and failed
+absolute completion targets require immediate stop and compatible rollback;
+the two-window rule must not delay this action.** Broken auth/runtime/provider,
+unreconciled terminal/effect failure or unbounded work also triggers that path.
+Record detection, rollback dispatch, restored successful service and final
+reconciliation times separately. Unknown outcomes retain original keys
 and custody; never blindly resend. If safe takeover is impossible, remain
 quiesced with compatible fences and escalate.
 
@@ -243,7 +280,12 @@ Deployment scale-to-zero, involuntary loss or HPA Pod removal.
 Report source/controller commit, image refs, actual operation outcomes and
 S/E/outage clocks, essentials PASS/FAIL/NOT_RUN/INCONCLUSIVE, per-route counts,
 failed/incomplete outcomes, peak processes/clients and headroom, HPA transitions,
-recovery and next-stage lead decision. No intermediate seals/hash inventories.
+recovery and next-stage lead decision. For S1, include the actual accepted-work
+command/private configuration path, journey boundaries and disjoint
+accepted = terminal + reconciled + unresolved accounting, with zero unresolved,
+lost, duplicate or stale effects required for PASS. Reconciled failures remain
+failures; balanced accounting alone is not acceptance. No intermediate
+seals/hash inventories.
 
 Local verification of this implementation:
 

@@ -2,10 +2,19 @@
 
 Use [common setup, policy, observations and acceptance](deployment-runbooks.md)
 first. Executor deployment-engineer-01; lead owns GO. Preconditions are K01–K25
-as applicable, final M3/M4 results, compatible retained receiver/schema, survivor
+as applicable, the revised M3 gate and architect04 GO, final M4 results,
+compatible retained receiver/schema, survivor
 capacity, no HPAs or other rollout writer, EG proven healthy at1, canonical
 backend observer, qualified <120s no-overlap variant and both recovery branches.
 No final image, timing proof or production approval is supplied by this file.
+
+S1 supplies the real-runtime accepted-work coverage deferred by the lead's
+revised local M3 ruling. **Execution remains HOLD until the lead assigns/provides
+the accepted-work executor and owner-private configuration.** Engineer01 and
+prod-verifier02 confirm their existing GET sampler does not supply this binding;
+the stopped historical broker mutation path and old copied browser profile
+cannot be reused. This S1 input does not restore the superseded local M3 adapter
+requirement. The mandatory sequence and required interface are below.
 
 The lead has approved read-only cutover observations. Use the agreed
 [S1 observer commands and timing bounds](s1-observation.md). Canonical
@@ -103,9 +112,79 @@ k get pdb cma-agent-manager -o 'jsonpath={.spec}{"\n"}{.status}{"\n"}'
 ```
 
 Declare actual soak S/E, update actual source/Pod packets, and follow common
-30-minute measurement/acceptance. Capture cross-ingress, background work,
-fences/custody, desktop exclusion and all applicable route/client targets.
+30-minute measurement/acceptance and the mandatory accepted-work sequence below.
+Capture cross-ingress, background work, fences/custody, desktop exclusion and
+all applicable route/client targets.
 Lead's signed S1 PASS permits S2; no automatic advancement.
+
+## Mandatory real-runtime accepted-work soak
+
+Deployment-engineer01 owns execution and immediate compatible recovery. Run
+continuous synthetic owner-account traffic through actual production
+authentication, AM, runtime and provider for the full 30-minute S1 soak. The
+acceptance clock starts only after the complete path is usable and the intended
+replica count, backends, membership and handoffs are stable. Health/readiness,
+read-only NyxID sampling and local component tests do not supply this evidence.
+
+1. Before cutover, bind the selected source/API/runtime/receiver images and
+   switches to the owner's bounded workload command and private configuration.
+   Record its validate/run/stop/reconcile/owned-cleanup interface, actual
+   half-open S–E window, attempt/cadence caps, both-ingress routing and independent
+   terminal/effect oracle. Keep credentials, account/resource identities,
+   request content and browser state in private files. Bind immediate incident
+   delivery/acknowledgment to the recovery operator, and have the exact compatible
+   branch and operation grants ready before traffic. A final report or periodic
+   pane check is not the immediate failure interface.
+2. Exercise create/open/workspace/send/stream/interrupt through the real public
+   API and client. Include plain/desktop create to usable Ready/frame, Send
+   through provider/runtime execution and terminal delivery, interrupt
+   acknowledgment, open to usable history/composer, and usage through coherent
+   first page/render. Record supported client boundaries explicitly; an unbound
+   required frame or render path remains NOT_RUN and prevents S1 PASS.
+3. Exercise both serving AM instances and cross-ingress admission/reconnect
+   without relying on stickiness. Join each logical operation to its durable
+   identity, actual ingress, current owner/fence, client completion and
+   independent terminal/effect result. For any owner-loss/handoff already
+   included in the approved S1 controls, follow the same accepted work through
+   successor recovery and require sustained successful service within 30 s.
+   This sequence adds no unapproved fault operation.
+4. Retain offered, accepted, refused, failed, completed, reconciled and unresolved
+   counts plus completed observations per journey. Partition accepted work as
+   `accepted = terminal + reconciled + unresolved`, with mutually exclusive
+   categories and independent effect counts. Require zero accepted loss,
+   duplicate committed effects and stale-owner effects. Retain every failure,
+   timeout, reconnect gap and incomplete attempt; retries never replace the
+   original outcome. Reconciled failures remain failures; balanced counts alone
+   do not establish PASS.
+5. Apply unchanged A3 classes and absolute targets to actual client boundaries:
+   create≤5s, open/Send/interrupt≤1s, usage≤2s, plus the common applicable route
+   limits. Keep headers, complete bodies and rendering distinct. Missing or
+   incomplete observations and observed absolute failures cannot receive PASS
+   through the CRITICAL statistical-INCONCLUSIVE exception.
+6. **Immediately stop new synthetic admissions and dispatch the preapproved
+   compatible rollback** on accepted-work loss, duplicate/stale effects,
+   authorization breach, dual desktop authority, broken auth/runtime/provider,
+   unresolved terminal/effect failure, unbounded work, a failed in-contract
+   journey or a failed absolute completion/recovery/availability target. Do not
+   wait for soak end or two consecutive five-minute performance windows.
+   Preserve custody and original operation keys; never blindly resend/delete
+   unknown work. Branch B requires healthy owners and fresh survivor capacity;
+   otherwise use approved branch C and retain receiver/ownership/record floors.
+   Record detection, rollback dispatch, restored successful user service and
+   final reconciliation as separate times.
+
+The executor stops new admissions at E even if the campaign is incomplete.
+Continue only bounded observation/reconciliation and approved owned cleanup;
+unknown accepted work retains custody. Coordinate supplemental reads through
+the common scheduler/lock rules. No independent overlapping 30-minute read
+runner may compete with this campaign.
+
+S1 passes only after the full 30-minute window and final reconciliation satisfy
+every required journey and accounting condition. Report the actual command and
+private configuration path, selected images, S/E, per-ingress/journey counts,
+failed/incomplete outcomes, A3/absolute results and any recovery by E+15 minutes.
+Missing/unresolved outcomes prevent PASS. Existing per-operation production
+authority, compatible rollback and the 02:00–02:59 SGT no-write rule remain.
 
 ## Recovery A — before old stop, original one still serving
 
