@@ -1,9 +1,7 @@
 //! The kernel-neutral sandbox adapter contract.
-
 use tokio::sync::mpsc;
 
 mod runtime_inspection;
-
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
@@ -174,6 +172,15 @@ pub trait SandboxAdapter: Send + Sync {
         runtime_inspection::inspect(self, request).await
     }
 
+    /// Optional independent read preparation; default adapters remain serial.
+    async fn inspect_runtime_after(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        admission.wait().await?;
+        self.inspect_runtime(request).await
+    }
     /// Reclaim one exact provider observation without trusting a reused handle.
     async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(unsupported("observed runtime reclamation is not supported"))

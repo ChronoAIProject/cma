@@ -175,6 +175,14 @@ impl SandboxAdapter for CodexAdapter {
         self.hosted.inspect_runtime(request).await
     }
 
+    async fn inspect_runtime_after(
+        &self,
+        request: &RuntimeAdoptionRequest,
+        admission: &crate::InspectionAdmission,
+    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        self.hosted.inspect_runtime_after(request, admission).await
+    }
+
     async fn adopt_runtime(
         &self,
         request: &RuntimeAdoptionRequest,

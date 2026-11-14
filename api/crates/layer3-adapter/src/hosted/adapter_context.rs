@@ -12,6 +12,15 @@ impl HostedAdapter {
         &self,
         adoption: &RuntimeAdoptionRequest,
     ) -> crate::Result<Option<RuntimeInspection>> {
+        self.inspect_exact_after(adoption, &crate::InspectionAdmission::ready())
+            .await
+    }
+
+    pub(super) async fn inspect_exact_after(
+        &self,
+        adoption: &RuntimeAdoptionRequest,
+        admission: &crate::InspectionAdmission,
+    ) -> crate::Result<Option<RuntimeInspection>> {
         if let Some(home) = adoption
             .spec
             .home_volume
@@ -40,8 +49,12 @@ impl HostedAdapter {
             if let Some(inspection) = inspection_timing::measure(
                 &adoption.spec.sandbox_id,
                 "native_observation",
-                self.backend
-                    .inspect_native_runtime(&adoption.handle, &request, home),
+                self.backend.inspect_native_runtime_after(
+                    &adoption.handle,
+                    &request,
+                    home,
+                    admission,
+                ),
             )
             .await?
             {
@@ -69,11 +82,13 @@ impl HostedAdapter {
                     self.verify_home(home),
                 )
                 .await?;
+                admission.wait().await?;
                 self.attach_adopted_state(adoption.handle.clone(), &adoption.spec, expected)
                     .await?;
                 return Ok(Some(inspection));
             }
         }
+        admission.wait().await?;
         let Some(observation) = self.adopt_exact(adoption).await? else {
             return Ok(None);
         };
