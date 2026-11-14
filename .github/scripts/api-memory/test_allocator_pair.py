@@ -11,6 +11,21 @@ import hierarchy_seed as fixture
 
 
 class AllocatorQualificationTests(unittest.TestCase):
+    def test_retained_fixture_has_durable_choice_without_runtime_or_migration_marker(self):
+        documents = fixture.documents()
+        route, = documents['runtime_backend_routes']
+        self.assertEqual(route['_id'], '82b34f23e1d29e2cd07e521c87856af544ecc1cfc160e6c2065abd82f34c2a8e')
+        self.assertEqual(route['generation'], {'$numberLong': '1'})
+        self.assertEqual(route['document_schema_version'], {'$numberLong': '1'})
+        self.assertEqual(route['backend'], 'agent-sandbox')
+        self.assertEqual(route['sandbox_id'], documents['sandboxes'][0]['_id'])
+        self.assertEqual(route['deployment'], driver.pair.environment('subject', 'mongo', 'db', 'key')['CHRONO_DEPLOYMENT_ID'])
+        parent = documents['sandboxes'][0]
+        self.assertEqual(parent['status'], 'failed')
+        self.assertFalse(parent['work_pending'])
+        self.assertNotIn('runtime', parent['record'])
+        self.assertEqual(parent['record']['work']['step'], {'kind': 'none'})
+
     def test_initial_final_swap_readback_preserves_units_and_unavailable(self):
         observer = driver.repeat.Observer({'container': 'owned'})
         with patch.object(observer, 'docker', return_value='32768\n0\n') as read:

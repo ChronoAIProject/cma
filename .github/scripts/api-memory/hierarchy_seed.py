@@ -1,4 +1,4 @@
-"""Two dormant synthetic records, matching the exact-67b Mongo envelopes.
+"""Two dormant synthetic records and their exact-67b durable provider choice.
 
 No exporter, provider, credentials, runtime binding, Agent or event history.
 The actual API's decoder and owner hierarchy GETs must accept both records before
@@ -15,6 +15,15 @@ WORKSPACE = 'wks_allocator_read'
 SUBJECT = 'synthetic-allocator-reader'
 SANDBOX_ROUTE = '/api/v1/sandboxes/' + SANDBOX
 WORKSPACE_ROUTE = '/api/v1/workspaces/' + WORKSPACE
+DEPLOYMENT = 'cma-memory-rca'
+
+
+def runtime_route():
+    # runtime_routing.rs::key uses provider_finality.rs::provider_request_digest.
+    identity = json.dumps([DEPLOYMENT, SANDBOX, 1], separators=(',', ':')).encode()
+    return {'_id': hashlib.sha256(b'cma-provider-effect-v1\0' + identity).hexdigest(),
+            'document_schema_version': {'$numberLong': '1'}, 'sandbox_id': SANDBOX,
+            'generation': {'$numberLong': '1'}, 'deployment': DEPLOYMENT, 'backend': 'agent-sandbox'}
 
 
 def documents():
@@ -55,7 +64,7 @@ def documents():
                   retired_at=None, purge_after=None, last_seq={'$numberLong': '0'}, record=sandbox)
     child = dict(common, _id=WORKSPACE, sandbox_id=SANDBOX, origin_index=None,
                  status='ready', removed_at=None, next_worktree_number={'$numberLong': '1'}, record=workspace)
-    return {'sandboxes': [parent], 'workspaces': [child]}
+    return {'sandboxes': [parent], 'workspaces': [child], 'runtime_backend_routes': [runtime_route()]}
 
 
 def validate_body(route, body):
@@ -89,7 +98,7 @@ const input=JSON.parse(require('fs').readFileSync(0,'utf8'));
 if(!/^cma_memory_rca_[a-z0-9_]+$/.test(input.database))throw Error('scope');
 const target=db.getSiblingDB(input.database);
 const records=EJSON.parse(input.records,{relaxed:false});
-for(const name of ['sandboxes','workspaces','worktrees','agents','agent_log'])
+for(const name of ['sandboxes','workspaces','worktrees','agents','agent_log','runtime_backend_routes'])
  if(target.getCollection(name).countDocuments({})!==0)throw Error('nonempty fixture');
 for(const [name,rows] of Object.entries(records)) target.getCollection(name).insertMany(rows);
 print('seeded');
@@ -122,21 +131,28 @@ const input=JSON.parse(require('fs').readFileSync(0,'utf8'));
 const result=[];
 for(const name of input.databases){
  const target=db.getSiblingDB(name);
- const counts=Object.fromEntries(['sandboxes','workspaces','worktrees','agents','agent_log'].map(k=>[k,target[k].countDocuments({})]));
+ const counts=Object.fromEntries(['sandboxes','workspaces','worktrees','agents','agent_log','runtime_backend_routes'].map(k=>[k,target[k].countDocuments({})]));
  const pending=['sandboxes','workspaces'].reduce((n,k)=>n+target[k].countDocuments({work_pending:true}),0);
  const parent=target.sandboxes.findOne({});const child=target.workspaces.findOne({});
+ const route=EJSON.parse(input.route,{relaxed:false});
+ const routeMatches=target.runtime_backend_routes.countDocuments(route)===1;
+ const initialized=target.runtime_backend_routes.countDocuments({_id:'provider-routing-initialized:'+route.deployment,
+   deployment:route.deployment,document_schema_version:Long(1)})===1;
  result.push({counts,pending_work:pending,parent_status:parent.status,workspace_status:child.status,
    no_runtime:parent.record.runtime==null,no_credentials:parent.record.credential.current==null&&parent.record.credential.pending==null,
-   parent_revision:Number(parent.revision),workspace_revision:Number(child.revision)});
+   parent_revision:Number(parent.revision),workspace_revision:Number(child.revision),
+   provider_choice_matches:routeMatches,provider_routing_initialized:initialized});
 }
 print(JSON.stringify(result));
 '''
         states = json.loads(pair.docker('exec', '-i', mongo, 'mongosh', '--quiet', '--eval', script,
-                                       input=json.dumps({'databases': self.databases})))
-        expected = {'sandboxes': 1, 'workspaces': 1, 'worktrees': 0, 'agents': 0, 'agent_log': 0}
+                                       input=json.dumps({'databases': self.databases, 'route': json.dumps(runtime_route())})))
+        expected = {'sandboxes': 1, 'workspaces': 1, 'worktrees': 0, 'agents': 0, 'agent_log': 0,
+                    'runtime_backend_routes': 2}
         if len(states) != 2 or any(s['counts'] != expected or s['pending_work'] or s['parent_status'] != 'failed'
                                  or s['workspace_status'] != 'ready' or not s['no_runtime'] or not s['no_credentials']
-                                 or s['parent_revision'] != 1 or s['workspace_revision'] != 1 for s in states):
+                                 or s['parent_revision'] != 1 or s['workspace_revision'] != 1
+                                 or not s['provider_choice_matches'] or not s['provider_routing_initialized'] for s in states):
             raise RuntimeError('fixture acquired lifecycle work or changed')
         return {'fixture_sha256': self.digest, 'reads': checks, 'states': states,
                 'limitation': 'Dormant failed parent and ready workspace; no live runtime, Agents or provider traffic.'}
