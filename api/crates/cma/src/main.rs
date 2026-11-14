@@ -44,6 +44,7 @@ mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
 mod startup;
+mod startup_timing;
 mod store;
 mod telemetry;
 mod trigger;

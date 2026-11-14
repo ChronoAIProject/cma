@@ -295,7 +295,7 @@ impl SandboxLifecycleComposition {
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {
         self.reconciliation
-            .initialize(std::time::SystemTime::now())
+            .initialize_before_workers(std::time::SystemTime::now())
             .await
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }

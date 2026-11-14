@@ -416,3 +416,5 @@ async fn equal_generation_remains_protected_before_initial_binding_publication()
 
 mod inventory;
 pub(super) use inventory::InventoryProbe;
+
+mod startup;
