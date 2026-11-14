@@ -11,7 +11,7 @@ export async function saveSamples(directory, cohort, index) {
   check(Number.isSafeInteger(index) && index >= 0, 'invalid_cohort_index');
   check(['n1', 'n2', 'scaling', 'fault', 'rollout'].includes(cohort.phase), 'invalid_cohort_phase');
   const value = { phase: cohort.phase, index, catalog_sha256: catalogSha256, samples: {} };
-  check([1, 2, '2-5-2'].includes(cohort.observedReplicas), 'cohort_replica_evidence_missing', true);
+  check([1, 2, '2-4-2', '2-5-2'].includes(cohort.observedReplicas), 'cohort_replica_evidence_missing', true);
   value.observedReplicas = cohort.observedReplicas;
   for (const field of ['startedAt', 'finishedAt']) {
     check(typeof cohort[field] === 'string' && Number.isFinite(Date.parse(cohort[field])),
@@ -61,10 +61,10 @@ export async function saveReport(directory, report) {
     '', 'A unit-test pass is not a local-cluster acceptance pass. Failures and missing prerequisites remain in the matrix.', '',
     `results.json SHA-256: ${hash(json)}`, ''];
   if (report.performance?.length) {
-    lines.push('| Criterion / metric | Phase | N | Failed | p50 ms | p95 ms | p99 ms | Delta ms | Delta % | Noise ms | Result |',
-      '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|');
+    lines.push('| Criterion / metric | Phase | N | Failed | p50 ms | p95 ms | p99 ms | Delta ms | Delta % | Noise ms | A3 class | Allowance ms | Result |',
+      '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---|');
     const fmt = (n) => n === null ? 'unmeasured' : n.toFixed(2);
-    for (const r of report.performance) lines.push(`| ${r.criterion_id ?? r.metric}: ${r.route ? `${r.method} ${r.route}` : r.metric} | ${r.phase} | ${r.n} | ${r.failed} | ${fmt(r.p50_ms)} | ${fmt(r.p95_ms)} | ${fmt(r.p99_ms)} | ${fmt(r.delta_ms)} | ${fmt(r.delta_percent)} | ${fmt(r.noise_ms)} | ${r.status} |`);
+    for (const r of report.performance) lines.push(`| ${r.criterion_id ?? r.metric}: ${r.route ? `${r.method} ${r.route}` : r.metric} | ${r.phase} | ${r.n} | ${r.failed} | ${fmt(r.p50_ms)} | ${fmt(r.p95_ms)} | ${fmt(r.p99_ms)} | ${fmt(r.delta_ms)} | ${fmt(r.delta_percent)} | ${fmt(r.noise_ms)} | ${r.tolerance_class ?? 'unclassified'} | ${fmt(r.tolerance_ms ?? null)} | ${r.status} |`);
   }
   await writeFile(join(directory, 'RESULTS.md'), lines.join('\n') + '\n', { mode: 0o600 });
 }

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { check, hash, isHash } from './checks.mjs';
 import { catalogSha256 } from './catalog.mjs';
+import { scalingSequence } from './replicas.mjs';
 
 export function localUrl(value) {
   let url;
@@ -16,6 +17,7 @@ export function validateConfig(config) {
   check(config.context === 'kind-cma-scale' && config.namespace === 'cma-scale', 'cluster_scope_refused', true);
   check(config.isolated === true, 'isolated_environment_required', true);
   check(config.catalogSha256 === catalogSha256, 'frozen_catalog_required', true);
+  scalingSequence(config.scalingPeak);
   check(config.endpoints && Object.keys(config.endpoints).length >= 1, 'endpoints_required', true);
   for (const endpoint of Object.values(config.endpoints)) {
     const url = localUrl(endpoint);

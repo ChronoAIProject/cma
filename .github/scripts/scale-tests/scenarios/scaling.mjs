@@ -1,5 +1,6 @@
 import { check, clock, count, isHash, reconcile, waitFor } from '../lib/checks.mjs';
 import { connectedWorkload } from '../lib/load.mjs';
+import { scalingSequence } from '../lib/replicas.mjs';
 
 export function checkSnapshot(snapshot, users) {
   check(snapshot && isHash(snapshot.evidenceHash), 'cluster_snapshot_missing', true);
@@ -20,11 +21,15 @@ export function checkSnapshot(snapshot, users) {
 
 export async function autoscale(driver, config, { users = 2, time = clock } = {}) {
   check(users === 2 || users === 100, 'invalid_user_cohort');
+  const peak = config.scalingPeak ?? 4;
+  const sequence = scalingSequence(peak);
   let cohort; let stress;
   const observations = [];
   const sample = async (remaining) => {
     const value = checkSnapshot(await driver.snapshot(cohort, { timeoutMs: remaining }), users);
     observations.push(value);
+    check(['am', 'eg'].every((role) => value[role].ready <= peak && value[role].desired <= peak),
+      'scaling_peak_exceeded');
     return value;
   };
   const both = (row, accept) => ['am', 'eg'].every((role) => accept(row[role]));
@@ -32,8 +37,8 @@ export async function autoscale(driver, config, { users = 2, time = clock } = {}
     cohort = await driver.connectUsers({ ...connectedWorkload, users, streams: users });
     const initial = await sample(config.scaleTimeoutMs);
     check(both(initial, (role) => role.ready === 2 && role.desired === 2), 'initial_replicas_not_two', true);
-    stress = await driver.startStress(cohort);
-    await waitFor(sample, (row) => both(row, (role) => role.ready === 5 && role.desired === 5),
+    stress = await driver.startStress(cohort, { targetReplicas: peak });
+    await waitFor(sample, (row) => both(row, (role) => role.ready === peak && role.desired === peak),
       { timeoutMs: config.scaleTimeoutMs, intervalMs: 1000, time });
     await driver.stopStress(stress); stress = null;
     // Connected users and canaries continue through the downscale stabilization window.
@@ -49,7 +54,7 @@ export async function autoscale(driver, config, { users = 2, time = clock } = {}
       'lc16_workload_not_maintained');
     }
     reconcile(await driver.reconcile(cohort));
-    return { users, observations: observations.length, requests: final.attemptedRequests,
+    return { users, sequence, observations: observations.length, requests: final.attemptedRequests,
       failed: final.failedRequests, peak_am: Math.max(...observations.map((o) => o.am.ready)),
       peak_eg: Math.max(...observations.map((o) => o.eg.ready)), final_am: final.am.ready, final_eg: final.eg.ready };
   } finally {
