@@ -188,6 +188,8 @@ pub(super) fn store_failure() -> Response {
             "status": 503,
             "detail": "Authentication authority is temporarily unavailable.",
             "code": "store_failed",
+            // Invalid provider evidence also reaches this response. A 503 alone
+            // must not authorize automatic browser identity retries.
             "retryable": false,
         })),
     )
@@ -482,3 +484,7 @@ mod tests {
             .expect("request builds")
     }
 }
+
+#[cfg(test)]
+#[path = "error_metadata_tests.rs"]
+mod error_metadata_tests;

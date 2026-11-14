@@ -1,8 +1,24 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
-import { readRetryDelay } from './readRetry';
+import { rateLimitDelay, readRetryDelay } from './readRetry';
 
 afterEach(() => vi.restoreAllMocks());
+it.each([408, 429, 500, 502, 503, 504])('honors an explicit retry floor on %s', (status) => {
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  expect(rateLimitDelay(new ApiError(status, 'Retry later', undefined, undefined, 1000), 250)).toBe(
+    1000,
+  );
+});
+
+it.each([undefined, 0, -1, NaN, Infinity, 2_147_483_648])(
+  'keeps the fallback for an absent or invalid server floor %s',
+  (server) => {
+    expect(
+      rateLimitDelay(new ApiError(503, 'Unavailable', undefined, undefined, server), 375),
+    ).toBe(375);
+  },
+);
+
 it('backs off with positive jitter while never shortening server Retry-After', () => {
   vi.spyOn(Math, 'random').mockReturnValue(0.5);
   expect(readRetryDelay(new Error('offline'), 1)).toBe(1125);
