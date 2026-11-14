@@ -33,6 +33,26 @@ pub(crate) fn is_command(arguments: &[String]) -> bool {
     })
 }
 
+/// Keep CLI output and exit semantics separate from the API startup path.
+pub(crate) async fn run_command_line(arguments: &[String]) {
+    match command(arguments).await {
+        Ok(result) => {
+            println!("{result}");
+            if result
+                .get("verification_passed")
+                .and_then(serde_json::Value::as_bool)
+                == Some(false)
+            {
+                std::process::exit(1);
+            }
+        }
+        Err(reason) => {
+            eprintln!("migration refused: {reason}");
+            std::process::exit(2);
+        }
+    }
+}
+
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
     if index_toolkit::is_command(arguments) {
         return index_toolkit::command(arguments).await;
