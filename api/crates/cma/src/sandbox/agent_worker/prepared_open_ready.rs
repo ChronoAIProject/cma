@@ -81,7 +81,7 @@ impl AgentWorker {
             })
             .await?;
         if committed {
-            super::create_completion::emit(&agent, "prepared", "warm");
+            super::create_completion::emit(agent, "prepared", "warm");
         }
         Ok(committed)
     }
