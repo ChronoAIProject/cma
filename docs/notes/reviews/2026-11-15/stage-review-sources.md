@@ -1,28 +1,30 @@
 # Stage checklist references and verification
 
-Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016). Owner: solution-architect-03. **Frozen 14 November 2026, 16:17 SGT**, before 15 November 00:00. Deliverables: [three stage pages](stage-go-checklists.md) and [command/rollback details](stage-command-review.md). The lead retains GO and stage advancement; deployment-engineer-01 executes.
+Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016). Owner: solution-architect-03. **Initial freeze 14 November 2026, 16:17 SGT**, before 15 November 00:00; updated the same day for the later lead soak ruling and controller preparation. Deliverables: [three stage pages](stage-go-checklists.md) and [command/rollback details](stage-command-review.md). The lead retains GO and stage advancement; deployment-engineer-01 executes.
 
 ## Controlling references
 
 - Lead plan: `/Users/shining/code/work/tech-lead/notes/2026-11-14-hard-deadline-plan.md`. S1 06:00, S2 08:30, S3 10:30, final 18:00 SGT; no writes 02:00–02:59. Local gates and admin integration; no CI wait.
 - Architect-04: `/Users/shining/code/work/tech-lead.staff/solution-architect-04/`, files `production-stages.md`, `essentials.md`, `contract-addendum-a2.md`, `contract-addendum-a3.md` and `contract-addendum-work-recovery-20261114.md`. Current K01–K25 and A3 supersede old full-matrix repetitions, schedules and blanket noise rules.
 - Manifest baseline #1968: `d38966aab5c77fa2262da2d14ffba0da84cd958c`; corrected EG native sleep #1996: `37f2bedbfce3be4fe5b8bd1370ba2c81cd872be5`. Inspected integration: `15306eed8aacb67964f95442c1f29ba47d161502`. This identifies source, not final production images or runtime qualification.
-- Engineer packet root: `/Users/shining/code/work/.tl-worktrees/cma-cmaeg-release/.github/.cmaeg-local/cma-scale-20261113/`. Current runbook/templates are `bindings/corrected-eg-37f2bedbf-deadline-r1`; historical helper interface is `frozen/a2-r5`. The corrected packet has no helper scripts and cannot be an executable root. Historical EG exec derivatives remain withdrawn.
+- Current execution preparation: engineer commit `08ce4653d5777ca766ab449d9e7ec6b1e6acf983`, [deployment-runbooks.md](https://github.com/ChronoAIProject/cma/blob/08ce4653d5777ca766ab449d9e7ec6b1e6acf983/docs/notes/reviews/2026-11-15/deployment-runbooks.md) and the adjacent S1/S2/S3 pages. It supplies controller commands and recovery branches; lead selection, actual qualification and operation approvals remain required. Historical A2-r5 commands are superseded. Its corrected metadata-only predecessor is not an executable root; EG exec derivatives remain withdrawn.
 - Developer-16 input: `/Users/shining/code/work/tech-lead.staff/developer-16/deadline-20261115/stage-checklist-handoff-r1/HANDOFF.md`. Correction source and operation identities were checked against this handoff.
-- Engineer's later planning memo: `supplements/measurement-decision-20261114-r1/decision-memo.md` under the engineer packet root. Longer S1/S2 observations are proposed, not approved: stabilization by 06:02/08:32, observation ends 07:50/10:20, reports 08:05/10:25. Current passive comparison requires three baseline and three post windows. These times alone prove neither independence nor adequate samples. Retain the after03:00 index order unless the lead changes it.
+- Later lead ruling: `/Users/shining/code/work/tech-lead.staff/performance-analyst-02/cma-scale/hard-deadline/lead-soak-ruling.md`, also incorporated in current architect-04 essentials K21/K23. Keep30-minute soaks, E+15 reports and separate statistical/policy verdicts. Valid matched CRITICAL INCONCLUSIVE may receive policy PASS only with assessed no adverse signal and passing applicable absolute checks. Missing/invalid/incomplete observations and UX/background are excluded. Longer-soak requests are closed. Retain after03:00 index order; engineer02 is sole M4/index operator.
 
 ## Review and checks
 
-Deployment-engineer-01 read the complete three-file draft. Its review is retained at `reviews/architect03-stage-checklist-r1/review.md` under the engineer packet root. Incorporated all concrete corrections: actual distinct-host placement is checked after start-two; the metadata packet cannot be an executable root; one post-soak window is insufficient for the current confidence method; observing five is necessary only for a claim that five was exercised. K14 still covers configured maximum capacity; K25 still requires useful automatic up/down. Developer-16 supplied the exact manifest/operation and capacity handoff.
+Deployment-engineer-01 read the initial three-file draft. Incorporated its concrete corrections: actual distinct-host placement is checked after start-two; metadata is not an executable root; one post window does not create a statistical PASS; observing five is necessary only to claim five was exercised. K14 still covers maximum capacity and K25 useful automatic up/down. Developer-16 supplied the manifest/operation and capacity handoff. The later lead ruling changes stage acceptance, not the statistical result. No new tooling review was performed for the follow-up.
 
-Completed local checks on 14 November:
+Completed checks at initial freeze on 14 November:
 
 - Manifest contract: both roles PASS. Existing manifest suite: **21 tests, 120 assertions, 0 failures/errors/skips**.
 - Corrected operation comparison: **15 of 16 unchanged**; sole delta is EG exec → native sleep30. Both prepare projections preserve fields/env and do not write replicas. All 14 copied manifest/build inputs match the correction commit.
-- Complete new runbook and execution metadata read. The supported controller route, failed-start recovery, final images, K13 early drain, qualified handoff/lifetime and full capacity remain missing. No additional documentary approval closes these product/execution gaps.
+- At initial freeze no controller or failed-start commands were supplied. Engineer commit `08ce4653d` now supplies both; actual controller/cutover qualification and authorized backend/user-service observation remain open, along with final images, K13, lifetime/capacity and calibrated load. Another documentary approval cannot close these execution gaps.
 - Final document checks PASS: three stage pages, four quoted Bash blocks syntax-valid, eight local links resolve, all K01–K25 mapped, every file below500 lines, and no whitespace errors. Shell checks are syntax only; no production commands were executed.
 
 The lead's speed directive applies: evidence is source, tests, commit and concise results. No further intermediate sealing, checksum handoffs or unchanged-byte review rounds are required. No application build, container, production query, server dry-run, helper execution or activation was performed for this task.
+
+Follow-up verification: current lead ruling and essentials K21/K23 read; current action names checked against the engineer's stage pages. Three pages, K01–K25 mapping, local links, the single current Bash example's syntax, line limits and whitespace pass. Engineer-reported33 controller tests and eight driver tests remain author evidence; this update does not rerun or qualify those tools.
 
 ## Essential ownership and stage coverage
 

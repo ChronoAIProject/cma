@@ -1,6 +1,6 @@
 # Stage command review and execution bindings
 
-Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016), reviewer solution-architect-03. Companion to the three [stage go/no-go pages](stage-go-checklists.md). **Documentary freeze may PASS while S1/S2/S3 execution remains HOLD.** The lead alone advances stages; deployment-engineer-01 executes. Developer-16 reviews exact manifest/projection bytes. This review ran no production commands, server dry-runs, builds or workloads.
+Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016), reviewer solution-architect-03. Companion to the three [stage go/no-go pages](stage-go-checklists.md). **Documentary freeze may PASS while S1/S2/S3 execution remains HOLD.** The lead alone advances stages; deployment-engineer-01 executes. Developer-16 supplies manifest and capacity input. This review ran no production commands, server dry-runs, builds or workloads.
 
 ## Authority, dates and evidence precedence
 
@@ -10,16 +10,16 @@ These replace the old03:15/04:15/05:30 schedule and13:00 final deadline. Essenti
 
 ## Open execution bindings at preparation freeze
 
-All entries below are **HOLD / NOT SUPPLIED IN THE REVIEWED PACKET**, not proof that a teammate has done no subsequent work. Close each with an exact reviewed receipt before the affected stage. Recheck material production changes; reuse unchanged evidence.
+The following qualification and observation requirements remain open at this update. Close the applicable entries with source, passing/failing results and the required production approvals before advancing. Recheck material production changes; reuse unchanged evidence.
 
 | ID / rows | Required closure | Responsible handoff |
 | --- | --- | --- |
-| B1 · K01/K15 | Final integrated #1370/EG source; local gates and image provenance; all retained receiver durations/floors; schema/role and configured capacity bindings. Current checked integration `15306eed8` is source provenance only. | developer-13, local verifiers, release engineer |
-| B2 · K22/K24 | Lead-approved supported-controller variant and selected route; exact release-bound commands, grants and live-checkpoint dry-runs; canonical backend/NEG observer access. Current policy is `reviewed-release-controller`; A2-r5 direct executor refuses it and implements no controller route. | lead + deployment-engineer-01 |
+| B1 · K01/K15 | Final integrated #1370/EG source; local gates and image provenance; all retained receiver durations/floors; schema/role and configured capacity bindings. Intermediate integration heads are source provenance only. | developer-13, local verifiers, release engineer |
+| B2 · K22/K24 | Select and qualify controller `08ce4653d` and RS0-after-stop variant; bind final release and per-operation grants/dry-runs. Concrete next dependency: authorized canonical backend/NEG plus user-service observer invocation and old/new mapping. Historical A2-r5 cannot execute the current route. | lead + deployment-engineer-01 |
 | B3 · K22/K24 | Actual CMA/GKE/NEG no-overlap/restoration proof <120s, concurrent-writer/restart/interrupted-cutover cases; separately authorized recovery from failed start or unhealthy owners. Kind1.34 pause containers prove only their controller observations. | deployment-engineer-01 + local verifier |
 | B4 · K13 | Secure early EG drain: authenticated mechanism, helper credential isolation, bounded success/failure, socket close before exact-token release, independent TERM handling. Native sleep30 alone does not close this gate. | developer-15/08 + developer-16 + architect-04 |
 | B5 · K13/K14/K25 | Complete-cohort handoff p95; distinct hard effective lifetime G; all-process/per-server client/node/quota/provider inventory and ≥30% headroom; CPU calibration and actual metrics API. G760/P120→12 is illustrative, not an approved maximum. | debugger-03 + developer-16/17 + lead |
-| B6 · K16–K21/K23/K25 | Three adequate final-N1 repeats, frozen classes/noise, current app/client telemetry and scoped canary/load permission; approved confidence method with adequate post windows; S2 reconciliation and named24h monitor. Current passive comparison needs ≥3 baseline AND ≥3 post windows: one31-minute post window cannot supply its bound by actual soak end+15minutes. Measurement-tool GO alone is not production evidence. | performance-analyst-02 + production verifiers + engineer |
+| B6 · K16–K21/K23/K25 | Matched final-N1 comparisons, frozen classes/noise, observed client/absolute checks and approved measurement scope; S2 reconciliation and named24h monitor. Keep30-minute soaks and E+15 reporting. Statistical INCONCLUSIVE may receive CRITICAL policy PASS only under the later K21 conditions below; no exception for missing data or UX/background. | performance-analyst-02 + production verifiers + engineer |
 
 Before each stage the reviewer records closures or reports `BLOCKED: URGENT — Bn, missing receipt, owner`; continue independent preparation. The00:00 freeze fixes the checklist criteria. Final source, passing/failing tests and a brief stage result supply closure; do not turn historical FAILs into PASS.
 
@@ -33,102 +33,43 @@ HPAs target canonical Deployments, min2/max5; CPU AM60% of4CPU and EG200% of250m
 
 For each Mongo server: other consumers + Σ(max service processes × Σ(actual client pool cap + monitoring/topology sockets)) ≤0.70×verified server limit. Include jobs/startup/terminating processes; historical AM30+30+4+6 and illustrative EG10 are not final receipts. Historical40/80 requested/limit CPU quota fails the illustrative12/service envelope (51.025/120.25 cores including the captured other consumer). No quota/node change is authorized by these arithmetic examples.
 
-## Exact command interface — execution HOLD until B1–B6 close
+## Current execution commands — selection and qualification still required
 
-The following interface is transcribed from reviewed A2-r5. **Do not run its frozen old EG payload.** The corrected84-artifact engineer packet `bindings/corrected-eg-37f2bedbf-deadline-r1` is metadata/templates only: it has neither `scale_guard.py` nor `rollback_ops.py` and **cannot be `scale_root`, including after documentary PASS**. Deployment-engineer-01 must supply a separately reviewed executable packet with final operation/release bindings. `scale_root` must name that approved executable packet, not silently point to historical A2-r5. Retain old snapshots/hashes; never bind into frozen originals. For the selected reviewed-controller route, the engineer must provide the reviewed controller invocation for the same payloads. The direct helper below is usable only if the lead explicitly selects its permitted route and grants the exact operation; it cannot bypass the current route refusal.
+Engineer commit `08ce4653d5777ca766ab449d9e7ec6b1e6acf983` supplies the [execution runbook](https://github.com/ChronoAIProject/cma/blob/08ce4653d5777ca766ab449d9e7ec6b1e6acf983/docs/notes/reviews/2026-11-15/deployment-runbooks.md), with complete `s1-execution.md`, `s2-execution.md` and `s3-execution.md` pages beside it. Use those canonical commands after lead selection and actual qualification. This checklist update is not a tooling review or execution grant. The engineer reports33 offline tests passing; they do not prove CMA/GKE/NEG cutover or user service.
+
+The new `.github/scripts/cma_scale/controller.py` implements one-operation plan/server dry-run, context-bound approval, CAS apply and readback for `reviewed-release-controller`. The historical A2-r5 direct-helper commands are superseded here. The old corrected metadata directory still contains no helpers; never use it as an executable root or reuse old EG exec derivatives.
 
 ```bash
 set -euo pipefail
-umask 077
-scale_context=gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke
-scale_namespace=chrono-bot
-k() { kubectl --context "$scale_context" -n "$scale_namespace" "$@"; }
-: "${scale_root:?approved corrected immutable operation packet}"
-: "${scale_receipts:?new private receipt directory}"
-: "${scale_review:?complete exact packet/tool/operation PASS file}"
-: "${scale_review_sha256:?SHA256 of that verdict}"
-: "${scale_op:?one approved operation JSON, never a directory}"
-: "${scale_plan:?new plan file for this checkpoint}"
-: "${scale_authorization:?fresh exact operation authorization JSON}"
-TL_HOME='/Users/shining/code/work/tech-lead' \
-  '/Users/shining/.claude/skills/shining-tech-lead/scripts/team.sh' \
-  policy show ChronoAIProject/cma
-python3.14 -B "$scale_root/scale_guard.py" prepare \
-  --operation "$scale_op" --plan "$scale_plan"
-shasum -a 256 "$scale_op" "$scale_plan" "$scale_root/scale_guard.py"
-# Lead reviews the plan and supplies its authorization before this invocation.
-python3.14 -B "$scale_root/scale_guard.py" execute \
-  --plan "$scale_plan" --authorization "$scale_authorization" \
-  --review "$scale_review" --review-sha256 "$scale_review_sha256"
+: "${scale_tools:?selected controller source directory}"
+: "${scale_release:?qualified release JSON}"
+: "${scale_action:?one action from the stage runbook}"
+: "${scale_plan:?new plan path for the current checkpoint}"
+# plan reads production and performs server dry-run; observation authority is required.
+python3 -B "$scale_tools/controller.py" plan --action "$scale_action" \
+  --release "$scale_release" --out "$scale_plan"
+# Lead grants the exact printed context before apply; one grant per operation.
+: "${scale_approval:?fresh exact operation approval}"
+python3 -B "$scale_tools/controller.py" apply \
+  --plan "$scale_plan" --approval "$scale_approval"
 ```
 
-The executor's single-use policy check binds context `cma-scale/<release_sha>/<stage>/<operation_id>`, not just a bare release SHA. It must retain exact image, plan, guard, verdict and authorization hashes; UID/resourceVersion/spec tests; fresh checkpoint status; write intent and readback. The A2-r5 implementation refuses01:58–02:59:59 to reserve command time; reserve complete stage/recovery duration separately. A timeout/readback mismatch is an uncertain mutation: reconcile reads before any retry. Spec drift stops; never regenerate around it silently. Fresh state-dependent dry-runs cannot be pre-completed against the wrong checkpoint. No Secret reads, pod exec, whole-object exports, hand-created ReplicaSets, generic rollout undo or directory-wide apply.
+Stage-specific extra arguments, especially recovery `--created` and pre-stop restoration inputs, come from the canonical stage page. Do not run a sequence/write loop. Every checkpoint rechecks actual object identity/generation/spec, observed state, images, ownership and prior terminations. An uncertain write stops progression; reconcile it before a new plan. A new approval cannot justify replay of an ambiguous mutation. The controller refuses writes01:58–02:59 SGT, including recovery; reserve full recovery time separately.
 
-### S1/S2 operation names and actual IDs
-
-These are historical interface names for reviewed replacements, **not ready-to-execute files**. Prefix `S` is S1 or S2; lowercase `s` is s1 or s2.
-
-| Operation file | Actual JSON ID | Checkpoint/readback |
+| Purpose | Current action names | Required evidence |
 | --- | --- | --- |
-| `S-pause.json` | `s-pause` | legacy desired1, pausedtrue, no HPA/competing writer; observed generation current |
-| `S-prepare-template.json` | `s-prepare-paused-template` | release-bound final image/modeON only in inactive paused template; old process unchanged |
-| `S-stop-legacy.json` | `s-stop-legacy` | approved1→0; no old/terminating processes or outstanding legacy authority |
-| `S-unpause-zero.json` | `s-unpause-zero` | controller creates candidate RS0 after old stop; explicit variant approval; all owned RS0 |
-| `S-start-two.json` | `s-start-two` | A2 exception0→2; exact template; independent service, both backends/owners/distinct hosts |
-| `S-pdb.json` | `s-pdb` | install only after qualifiedtwo; exact absent-or-reviewed existing object and selector |
-| `S-rollback-one.json` | `s-rollback-one` | healthy2→1 only; modeON, compatible image/PDB, no prior terminations, fresh survivor capacity |
+| S1/S2 progression | `s1-pause`, `s1-prepare`, `s1-stop`, `s1-unpause`, `s1-start`, `s1-pdb`; corresponding `s2-` actions | Qualified old1; inactive ON template; old0 and authority cessation; controller candidate RS0; new2 on distinct hosts with real service; then PDB. |
+| Abort before old stop | `s1-abort-before-stop`, `s2-abort-before-stop` | Original serving state still qualified; exact original template inputs; uncertain abort reconciled before any stop. |
+| Healthy recovery | `s1-one`, `s2-one` | Current Ready/Available generation, no prior terminations, survivor capacity≤120s old; retain compatible mode/image/floors/PDB. |
+| Failed-start/unhealthy recovery | `s1-quiesce`, `s1-recovery-image`, `s1-unpause`, `s1-recover-one`; corresponding `s2-` actions | Separately authorized outage; all-stop and proven authority cessation; qualified compatible ON image; controller-owned restart; real survivor service and fresh soak. |
+| S3 creation | `s3-am-create`, then `s3-eg-create` | Both fixed2, timing/capacity qualified, no rollout, valid metrics and exact final HPA policy. |
+| S3 recovery | `s3-am-freeze`, `s3-eg-freeze`; then their `delete`; then one `descend` at a time | Both directions Disabled; exact-created UID/RV deletion using actual creation results; HPA absence and in-flight-write reconciliation; survivor proof and actual exit between decrements. |
 
-Pause is not a replica lock. Bind controller ownership, eliminate other release/scale writers and verify every checkpoint. No shared ConfigMap activation under live legacy processes. Preserve canonical Service/Gateway/HTTPRoute/NEG identities; changed route needs a separate reviewed diff. Both AM/EG direct origins use Pod IP (8080/8090), with downward API `POD_IP` before address expansion.
+Pause is not a replica lock. Reserve one release/scale writer, preserve canonical Service/Gateway/HTTPRoute/NEG identities, and never hand-create/adopt a ReplicaSet. No shared ConfigMap activation under live legacy processes. Both direct origins use Pod IP (AM8080/EG8090). No Secret reads, pod exec, whole-object exports, generic rollout undo, unverified modeOFF or bulk downscale.
 
-Outage observer independently measures last old healthy backend withdrawal → successful user service on qualified replacement. At120s without restored service, abort promotion and use approved recovery even if a20m pod-deletion or35m rollout wait is outstanding. Neither wait extends the budget. Old socket/authority expiry must be proven independently of pod disappearance. Recovery may remain quiesced to preserve fences if safe takeover is impossible; report the breached interval, do not restart stale legacy writers.
+The concrete observer invocation and old/new backend mapping are still absent. EndpointSlice or Pod Ready cannot establish successful user service. Independently time last old healthy backend withdrawal → successful service on a qualified replacement, strictly<120s; record both-ready separately. At120s without restoration, abort promotion and use approved compatible recovery even if a long controller wait remains. Do not shorten grace/authority or force-delete. Pod disappearance alone does not prove remote authority cessation.
 
-### Recovery commands and limitations
-
-S1/S2 normal recovery uses the exact `s1-rollback-one`/`s2-rollback-one` operation through the same per-operation contract. Fresh prepare/execute require every owner Ready/Available, generation current, no prior termination, survivor capacity ≤120s old. Therefore these operations **cannot stand in for failed-start/unhealthy-owner recovery**. Bind the separate compatible branch and outage authority before the first stop; missing branch is B3 HOLD. AM modeOFF requires all-stop, revoked/expired transport authority and authenticated exact-token receiver reset preserving epochs, with a separately reviewed tool. EG image downgrade requires explicit compatible retained-writer/record proof; routine repair is forward-only. M8 fixes are forward-only.
-
-For S3, these generator commands only prepare operations from live reads. Each resulting write still needs the full policy/review/prepare/execute contract, and a unique output path; execute neither a write loop nor a bulk decrement.
-
-```bash
-: "${scale_hpa_name:?cma-agent-manager or cma-event-gateway}"
-: "${scale_hpa_create_receipt:?actual S3 HPA creation readback receipt}"
-: "${scale_freeze_op:?new freeze operation path}"
-python3.14 -B "$scale_root/rollback_ops.py" freeze --name "$scale_hpa_name" \
-  --created-receipt "$scale_hpa_create_receipt" --out "$scale_freeze_op"
-# Review/authorize/execute; repeat for the other S3-created HPA before deletion.
-: "${scale_delete_op:?new deletion operation path}"
-python3.14 -B "$scale_root/rollback_ops.py" delete --name "$scale_hpa_name" \
-  --created-receipt "$scale_hpa_create_receipt" --out "$scale_delete_op"
-# Review/authorize/execute exact UID/RV deletion; confirm HPA absence.
-: "${scale_descent_op:?new one-owner descent operation path}"
-python3.14 -B "$scale_root/rollback_ops.py" descend --name "$scale_hpa_name" \
-  --out "$scale_descent_op"
-```
-
-IDs are `s3-freeze-<name>`, `s3-delete-<name>`, `s3-descend-<name>-<n>-to-<n-1>`. Freeze **both directions** Disabled for both installed HPAs; delete only exact S3-created UIDs after server DELETE dry-run; account for last in-flight controller writes. No Deployment replicas patch with an HPA present. Descend only after prior actual termination and survivor proof; retain >2 if current demand requires it. Preserve PDBs, compatible images, modeON and custody. Fresh30-minute recovery soak is mandatory; fixed replicas are not autoscaling PASS.
-
-### HPA rendering and readbacks
-
-The following local renderer is already part of the repository; do not invent another policy generator. Use an approved exact source snapshot with the corrected hook, not a moving checkout. Bind its JSON into each separate reviewed S3 HPA operation; rendering is not a create approval.
-
-```bash
-: "${scale_source:?approved exact manifest source snapshot}"
-: "${qualified_handoff_p95_seconds:?complete qualified cohort p95}"
-ruby "$scale_source/.github/scripts/cma-scale-manifest-contract.rb" \
-  --hpa api "$qualified_handoff_p95_seconds" > "$scale_receipts/api-hpa-qualified.json"
-ruby "$scale_source/.github/scripts/cma-scale-manifest-contract.rb" \
-  --hpa cmaeg "$qualified_handoff_p95_seconds" > "$scale_receipts/cmaeg-hpa-qualified.json"
-```
-
-The historical create IDs are `s3-api-hpa` / `s3-cmaeg-hpa`; bound files are `S3-api-hpa.bound.json` / `S3-cmaeg-hpa.bound.json`. AM create/idle readback precedes EG. Read only scoped fields, retain aggregates/hash-only identities:
-
-```bash
-k get deployment cma-agent-manager cma-event-gateway \
-  -o custom-columns=NAME:.metadata.name,GEN:.metadata.generation,OBSERVED:.status.observedGeneration,DESIRED:.spec.replicas,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas
-k get pdb cma-agent-manager cma-event-gateway -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{.spec}{"\n"}{.status}{"\n"}{end}'
-k get hpa cma-agent-manager cma-event-gateway -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{.spec}{"\n"}{.status}{"\n"}{end}'
-```
-
-Absent HPA before S3 is expected, not a healthy HPA result. EndpointSlice readiness cannot replace canonical external backend/NEG health. The authorized observer must bind the exact backend name and use the reviewed GCP health path; permission denial or unknown mapping is HOLD. Do not print raw endpoint/user identities or scrape a Secret to fill a capacity gap.
+S3 freeze/delete/descent preserves modeON, compatible images, custody and PDBs. Do not patch Deployment replicas while HPA exists. If demand needs>2, retain the safe fixed count and report autoscaling incomplete. A fresh30-minute recovery soak follows. Eight author driver tests are preparation evidence; the proposed8RPS workload remains uncalibrated and needs its distinct load approval. Engineer02 alone owns M4/index operations.
 
 ## Soak evidence and verdict rules
 
@@ -136,14 +77,16 @@ Start30 minutes only after intended Ready/Available, backend/NEG, membership and
 
 K16–K19: usable plain/desktop create ≤5s, full open ≤1s, shown durable send ≤1s, delivered/UI-acknowledged interrupt ≤1s, rendered usage summary/page ≤2s. Activity API p95 <1s; Activity page completion is measured separately with no invented absolute page ceiling. K20: request p95≤500ms/p99≤2s, stream-header p99≤2s, terminal p99≤5s/every terminal≤30s; EG checkout p99≤50ms, ordinary event≤50 Mongo operations and ≤10% same-fixture cost regression. Count failed, refused, timed-out and incomplete journeys separately; missing terminal fails.
 
-K21 A3: CRITICAL within preregistered measured noise; UX-AFFECTING ≤+10%p95 (aim≤5%); detached NON-SENSITIVE ≤+30ms. The upper confidence bound must fit; no extra noise allowance on10%/30ms, no post-result reclassification. User-waited background/relay work inherits the critical boundary. Retain every43 catalog membership and distinct route/mode; no pooled PASS. Three matched final-N1 windows; final-N1 versus approved release, N2/scaling/fault versus matching N1; p99 needs≥1000/stratum. Inadequate samples are INCONCLUSIVE, not zero failures. Full-matrix repetition counts are not reintroduced.
+K21 keeps statistical and acceptance verdicts separate. CRITICAL uses measured noise; UX p95≤+10% (aim≤5%); detached NON-SENSITIVE p95≤+30ms, with the existing confidence methods. No added noise allowance, result-driven reclassification or borrowed local noise. User-waited background/relay work inherits the critical boundary. Keep every catalog membership and route/mode separate; p99 needs≥1000/stratum.
 
-The current passive bootstrap requires **at least three comparable baseline AND three post windows**. A single31-minute post window cannot supply its confidence bound by actual soak end E+15minutes. No qualified production-method substitute is supplied. A30-minute soak is the stability minimum, not automatic statistical acceptance. Bind an approved matched driver/confidence method and raw receipts or a preregistered adequate longer arrangement before execution; otherwise report INCONCLUSIVE on time. Record actual stabilization R and soak end E; never extend them retrospectively, treat overlapping windows as independent, invent a new estimator or borrow local noise. Preserve early-stage failures in full-stage denominators.
+**Later lead ruling, S1/S2/S3 only:** a valid observed matched CRITICAL statistical INCONCLUSIVE may receive policy PASS when the signal is explicitly assessed as no adverse signal and all applicable absolute checks pass. Statistical INCONCLUSIVE remains visible. Beyond-noise signal, failed/incomplete observations or absolute failure means FAIL. Missing observations are NOT_RUN; invalid data INVALID; unassessed context/signal INCONCLUSIVE. No exception applies to UX/background, missing client boundaries, empty denominators or M3 local gates.
 
-M4 retains the lead's after03:00 Activity order. The preferred31-minute baseline proposal needs final candidate/configuration and index postcheck stationary by03:55, warm-up to04:05, then04:05–04:36 /04:38–05:09 /05:11–05:42 and validated handoff05:55. It is a conditional scheduling proposal, not an observation grant or feasibility receipt. Actual valid midpoint coverage must be≥1800s per window; timing alone proves neither independence nor matched work. A pre-blackout index needs an explicit lead sequence change. Neither option moves S1 or authorizes shortening/making up windows. B6 remains HOLD until the actual schedule, method and authority are bound.
+**Keep30-minute soaks; report by actual E+15minutes.** The longer-soak request is closed. Three baseline/post windows remain requirements of the existing statistical method, not an independent reason to block the expressly permitted CRITICAL policy PASS. Do not change the estimator, expand measured noise or relabel statistical results. Record actual stable start S and declare E=S+30min; changes restart stability, with all earlier failures retained.
+
+Before HTTP/resource windows are S1 05:28–05:58, S2 07:58–08:28 and S3 09:58–10:28 SGT. After evidence covers actual S–E. Optional31-minute direct metrics adds scrape coverage without extending E. The existing authorized NyxID harness reads Agent detail/transcript and retained usage24h against the same final-N1 profile; it adds no create/send/stop/refresh mutation. HTTP body timing does not prove browser rendering or unmeasured client journeys. Retain the after03:00 Batch9/soak/index order; engineer02 is its sole operator.
 
 Immediate ABORT for stale/wrong-owner committed effect, duplicate external action, lost accepted custody/terminal/receipt, dual desktop/bot authority, auth bypass, epoch/cursor regression or incompatible receiver. Stop promotion/admission using approved controls; preserve custody; if rollback risks duplicates, remain safely quiesced with compatible fences and escalate.
 
-Availability/capacity ABORT: zero healthy canonical backends outside the approved cutover; no restored service at120s within it; same-work sustained recovery>30s; OOM/repeated crash/permanent renewal failure; process/client/provider cap breach or Mongo headroom<30%. Widespread timeouts/5xx do not wait for performance windows. Performance-only supported class/absolute failure across two consecutive five-minute windows triggers recovery; any failing whole30-minute comparison fails the stage. Missing data, unbound configuration, unstable/low-sample baseline or Unknown outcome means HOLD; the approved cohort window expiry selects compatible recovery, not silent promotion.
+Availability/capacity ABORT: zero healthy canonical backends outside the approved cutover; no restored service at120s within it; same-work sustained recovery>30s; OOM/repeated crash/permanent renewal failure; process/client/provider cap breach or Mongo headroom<30%. Widespread timeouts/5xx do not wait for performance windows. Performance-only supported class/absolute failure across two consecutive five-minute windows triggers recovery; any failing whole30-minute comparison fails the stage. Missing data, unbound configuration, invalid/unmatched baseline or Unknown outcome means HOLD. Statistical sample inadequacy follows the narrow K21 policy rule above; the approved cohort window expiry selects compatible recovery, not silent promotion.
 
-Each stage receipt records source/image/config/tool/operation/review hashes, approval context, UTC/SGT interval and both outage/ready clocks, K-row PASS/FAIL/NOT_RUN/INCONCLUSIVE with sample denominators, per-route confidence results, peak process/socket/headroom, PDB/HPA/backend history and actual recovery actions. Review owner initials every gate; engineer attests observations; lead signs GO/next stage. S2 also records every provider's accepted/terminal/reconciled/unresolved counts and assigned24-hour monitoring. M8 logs plus NyxID read/client evidence complete production verdicts by17:00 for18:00 reporting.
+Each stage result records source/controller commit, images/configuration, exact operation/approval outcome, UTC/SGT interval and both outage/ready clocks, separate statistical/policy verdicts and K-row PASS/FAIL/NOT_RUN/INVALID/INCONCLUSIVE with sample denominators, per-route confidence results, peak process/socket/headroom, PDB/HPA/backend history and actual recovery actions. Review owner initials every gate; engineer attests observations; lead signs GO/next stage. S2 also records every provider's accepted/terminal/reconciled/unresolved counts and assigned24-hour monitoring. M8 logs plus NyxID read/client evidence complete production verdicts by17:00 for18:00 reporting.
