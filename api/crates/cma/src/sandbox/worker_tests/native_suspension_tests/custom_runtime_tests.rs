@@ -107,3 +107,6 @@ async fn custom_runtime_invalid_authority_fails_before_provider_inspection() {
     assert_eq!(fixture.backend.calls.snapshot(), before);
     assert_eq!(fixture.harness.stored(&active.id).await, active);
 }
+
+#[path = "custom_runtime_lifecycle_tests.rs"]
+mod lifecycle;
