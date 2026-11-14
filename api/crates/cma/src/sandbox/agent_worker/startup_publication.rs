@@ -158,6 +158,8 @@ impl AgentWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let expected = agent.revision;
+        let first_ready = agent.ready_at.is_none();
+        let publication_started = tokio::time::Instant::now();
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let stamp = rfc3339_at(now);
         agent
@@ -210,7 +212,31 @@ impl AgentWorker {
                 agent_logs: logs,
             })
             .await?;
-        super::create_completion::emit(&agent, "ordinary", "unknown");
+        if first_ready {
+            let ready_at = SystemTime::now();
+            let publish_ready_ms = publication_started.elapsed().as_millis() as u64;
+            let startup_phases = self.take_startup_timing(&agent.id);
+            let runtime_path = super::create_completion::runtime_path(&agent, &context.sandbox);
+            let store = self.dependencies.store.clone();
+            tokio::spawn(async move {
+                let admission = store.agent_create_admission(&agent).await.ok().flatten();
+                super::create_completion::emit(
+                    &agent,
+                    "ordinary",
+                    runtime_path,
+                    super::create_completion::CompletionTiming {
+                        admission_ms: admission.as_ref().map(|value| value.admitted_at_ms),
+                        admitted_desktop: admission.as_ref().and_then(|value| value.desktop),
+                        admitted_machine_included: admission
+                            .as_ref()
+                            .and_then(|value| value.machine_included),
+                        ready_at,
+                        publish_ready_ms,
+                        startup_phases,
+                    },
+                );
+            });
+        }
         Ok(())
     }
 }

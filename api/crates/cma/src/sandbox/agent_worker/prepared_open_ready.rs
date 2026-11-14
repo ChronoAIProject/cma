@@ -27,6 +27,8 @@ impl AgentWorker {
         attachment: &LiveAgentAttachment,
         now: SystemTime,
     ) -> Result<bool, SandboxStoreError> {
+        let first_ready = agent.ready_at.is_none();
+        let publication_started = tokio::time::Instant::now();
         let identity = attachment.identity();
         if agent.work.warm_conversation_id.as_deref() != Some(identity.conversation_id.as_str())
             || agent.conversation.settings.is_some()
@@ -80,8 +82,34 @@ impl AgentWorker {
                 }
             })
             .await?;
-        if committed {
-            super::create_completion::emit(&agent, "prepared", "warm");
+        if committed && first_ready {
+            let ready_at = SystemTime::now();
+            let publish_ready_ms = publication_started.elapsed().as_millis() as u64;
+            let startup_phases = self.take_startup_timing(&agent.id);
+            let store = self.dependencies.store.clone();
+            let agent_for_event = agent.clone();
+            tokio::spawn(async move {
+                let admission = store
+                    .agent_create_admission(&agent_for_event)
+                    .await
+                    .ok()
+                    .flatten();
+                super::create_completion::emit(
+                    &agent_for_event,
+                    "prepared",
+                    "warm",
+                    super::create_completion::CompletionTiming {
+                        admission_ms: admission.as_ref().map(|value| value.admitted_at_ms),
+                        admitted_desktop: admission.as_ref().and_then(|value| value.desktop),
+                        admitted_machine_included: admission
+                            .as_ref()
+                            .and_then(|value| value.machine_included),
+                        ready_at,
+                        publish_ready_ms,
+                        startup_phases,
+                    },
+                );
+            });
         }
         Ok(committed)
     }
