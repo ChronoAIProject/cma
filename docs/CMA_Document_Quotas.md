@@ -130,10 +130,12 @@ only if there is no main document, no lifecycle row and no other object row.
 Already claimed reclaim deletes can overlap purge safely: deletion is idempotent
 and actual row removal determines the single accounting release.
 Candidate discovery excludes purge-owned documents through the lifecycle primary
-key before applying its 64-row result limit. The state/age index and three-second
-query deadline remain in force. Rejecting handed-off rows can inspect more than
-64 rows; the output limit is not a scan bound or a progress guarantee for an
-arbitrarily large backlog. Transactional ownership checks still fence races
+key before applying each class's 64-row result limit. Condemned queries hint the
+lease index and reserved queries hint the age index; the three-second query
+deadline remains in force. The complete aggregate retains the ownership lookup,
+filter and final limit. Cursor prefetch and rejecting handed-off rows can inspect
+more than 64 rows; the output limit is not a scan bound or a progress guarantee
+for an arbitrarily large backlog. Transactional ownership checks still fence races
 after discovery.
 
 Unproved maintenance deletion records
@@ -168,9 +170,10 @@ not reverse a tombstone or refund pending charges. See migration
 
 Agent Manager owns `cma_document_quotas`, added to its exact schema/role registry
 and startup version guard even while the feature is off. Rows use schema version
-1 with the `_id` and `{kind: 1, state: 1, reserved_at: 1}` indexes: one activation marker, one owner aggregate, one
-document reservation per owner/document and one object reservation per
-owner/document/digest. Owner identifiers are SHA-256 digests. Object rows retain
+1 with the `_id`, `{kind: 1, state: 1, reserved_at: 1}` and
+`{kind: 1, state: 1, delete_lease_until: 1}` indexes: one activation marker, one
+owner aggregate, one document reservation per owner/document and one object
+reservation per owner/document/digest. Owner identifiers are SHA-256 digests. Object rows retain
 only the charged length; no source text, title, credential or grant is copied.
 Existing document, revision, receipt, object-key and storage-generation formats
 are unchanged. Reclaim removes only condemned object reservations after successful
@@ -373,16 +376,62 @@ writing any row:
 Before activation, deploy this release's reservation-ID writer to every reserving
 process and drain older reservers. The PR-3 commit marker remains the minimum
 metadata publication contract; same-key incarnation fencing additionally requires
-this release's reservation writer.
+this release's reservation writer. Confirm both candidate indexes have completed
+creation on `cma_document_quotas` before enabling reclaim:
+
+| Index name | Ordered keys | Candidate query |
+|---|---|---|
+| `kind_1_state_1_reserved_at_1` | `{kind: 1, state: 1, reserved_at: 1}` | Old reserved or missing-state objects |
+| `kind_1_state_1_delete_lease_until_1` | `{kind: 1, state: 1, delete_lease_until: 1}` | Condemned objects with expired or missing leases |
+
+Use `db.cma_document_quotas.getIndexes()` to verify the names and ordered key
+patterns against this table. Both indexes are non-unique, non-sparse, non-partial
+and non-TTL so legacy rows without a lease remain selectable. The existing
+document-store startup initializer creates them idempotently, outside user
+requests and readiness retries. Retain the age index when adding the lease
+index. Index creation has no proved fixed completion deadline; keep reclaim
+disabled until creation is complete and the deployed indexes are verified.
 
 A missing prerequisite records a blocked reason without candidate scans,
 condemnation, deletion or accounting changes. In particular, unsupported deletion
 must never leave a reservation condemned and permanently refuse a same-key save.
 The worker shares the process background budget, waits 30 seconds after startup,
-and runs a bounded 30-second step every five minutes. Budget denial skips that
-round without queuing database work. It processes at most 64 rows per round and
-at most four object deletes concurrently. A deletion failure stops new deletes
-in that batch, retains condemned rows, and respects a longer `Retry-After`.
+and gives each admitted step a 30-second deadline. Discovery and deletion have
+separate bounded candidate allowances: at most 64 old reservations and 64
+condemned rows per step. Candidate selection excludes condemned rows whose
+deletion lease has not strictly expired. Condemned queries hint the lease index;
+reserved queries retain the age index. A result limit alone does not bound
+documents scanned: applying lease eligibility through the age index can scan
+every active lease before discovery continues. The lease index supplies separate
+missing-lease and strictly expired date ranges. Disposable Mongo regressions
+replay the actual aggregate commands, including the full ownership lookup, with
+`executionStats`. Active leases grow from 256 to 512 with four eligible rows;
+a separate sample has 72 eligible rows. Unlike PR-5's `find` with an early limit,
+PR-6 can prefetch eligible rows before ownership filtering and its final limit.
+The cursor key allowance is the fixture's eligible plus purge-owned rows plus
+four. Missing-lease rows pass both a residual FETCH and the outer FETCH, counting
+twice in examined-document statistics. The document allowance includes one extra
+FETCH for each missing lease, plus two; with four eligible rows and no purge-owned
+rows it remains eight. These bounds exclude active leases. Samples with 32 and
+96 purge-owned rows record the added cursor scans and indexed lifecycle lookup
+cost explicitly. This is a fixture access bound, not a fixed fleet scan limit
+or a production latency guarantee.
+A step attempts at most 64 deletions,
+with at most four in flight. A full discovery batch that advances object states,
+or a full deletion batch that makes progress without failure, yields through
+`BackgroundWork` before continuing; its positive jittered delay is 188-250
+milliseconds. The combined worker schedules the next reclaim slice after 250
+milliseconds, keeping earlier purge deadlines visible to the outer scheduler
+instead of waiting inside reclaim. Idle, blocked,
+unavailable and budget-denied rounds retain five-minute pacing. Denied work never
+queues for database admission. A deletion failure stops replenishing that batch
+and retains its condemned rows and leases. The worker remembers the dependency's
+`Retry-After` (five minutes when absent) as a minimum pause for new deletions;
+discovery continues during that pause and does not extend it. Total backlog,
+including active leases or paused deletions, is not itself a reason to keep
+yielding. Purge retains its independent deadline and runs before each due reclaim
+slice; resumable reclaim yields positively without holding its budget permit.
+Continuous purge and runnable reclaim therefore both get scheduling turns.
 
 The object state machine is `reserved -> committed` in the metadata transaction,
 or `reserved -> condemned -> deleted` through reclaim. Legacy rows without a
@@ -428,8 +477,22 @@ inventory before certifying a complete sweep.
 
 Release means finality was proved, followed by accounting settlement. Under a
 healthy dependency and a batch without backlog, grace plus interval plus step
-is about 36 minutes. Larger queues, denied budget or dependency backoff can take
-longer; the metric age is the operational evidence, not a fixed completion SLA.
+is about 36 minutes. This estimate does not cover a queued sweep. With 32,768
+eligible objects, a single 64-object batch every five minutes requires 512
+batches: the 511 gaps alone take 153,300 seconds (42 hours 35 minutes), plus
+startup and actual batch execution time. Larger queues, denied budget or
+dependency backoff can take longer; the metric age is the operational evidence,
+not a fixed completion SLA.
+
+The deterministic maximum-owner regression uses 32,768 distinct eight-byte source
+reservations for one owner, all already past grace, and a healthy in-memory
+deletion fixture returning confirmed absence. It runs the real paced worker with
+paused time: 512 batches judge and delete all 32,768 objects by the 157.75-second
+checkpoint, including the 30-second startup wait and 511 explicit 250-millisecond
+clock advances. The fixture has zero storage or database latency. These are
+finite queue and scheduling results, not production throughput qualification or
+the TC-058, TC-063 and 24-hour orphan-identification journeys. Arbitrary fleet
+scale, dependency recovery and production load still require their own evidence.
 Referenced revisions remain retained. Removing an Agent still does not remove
 its independent documents.
 
@@ -520,6 +583,12 @@ plus condemned), `cma_document_orphan_oldest_age_seconds` and
 not a second durable ledger. No online request gains a metrics query. Blocked
 rounds leave backlog observations unknown or at their last successful sample;
 consult blocked status before interpreting them.
+
+The existing backlog observation still aggregates all matching pending rows.
+Faster continuation can repeat this global aggregation every 188-250 milliseconds
+and increase its database cost. The lease candidate index does not establish a
+bound for that aggregation. Measure it under the deployed backlog and budget;
+this correction leaves its query and observation frequency unchanged.
 
 Alert when orphan age exceeds 86,400 seconds or blocked status persists after
 activation. Check E1/E2, activation, all-writer versions, budget pressure and

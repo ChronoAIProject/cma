@@ -139,24 +139,30 @@ impl DocumentMaintenanceWorker {
                 next_purge = tokio::time::Instant::now() + RECLAIM_INTERVAL;
             }
             if tokio::time::Instant::now() >= next_reclaim {
-                let mut retry_after = None;
+                let mut more_work = false;
                 if let Some(maintenance) = &self.maintenance {
+                    let mut observed = None;
                     let result = reclaim
-                        .run(|| async {
-                            maintenance
+                        .run_resumable(|| async {
+                            let outcome = maintenance
                                 .reclaim_step(mongodb::bson::DateTime::now().timestamp_millis())
                                 .await
                                 .map_err(|_| {
                                     SandboxStoreError::Unavailable(
                                         "document reclaim unavailable".into(),
                                     )
-                                })
+                                })?;
+                            let complete = !outcome.has_more;
+                            observed = Some(outcome);
+                            Ok(complete)
                         })
                         .await;
+                    more_work = matches!(result, Ok(Some(false)));
                     match result {
-                        Ok(Some(outcome)) => {
+                        Ok(Some(_)) => {
+                            let outcome =
+                                observed.expect("an admitted reclaim step records its outcome");
                             emit(&outcome);
-                            retry_after = outcome.retry_after;
                             if outcome.blocked {
                                 record_blocked(
                                     &mut blocked_reason,
@@ -180,7 +186,7 @@ impl DocumentMaintenanceWorker {
                         Err(_) => record_blocked(&mut blocked_reason, "reclaim_unavailable"),
                     }
                 }
-                next_reclaim = tokio::time::Instant::now() + next_delay(retry_after);
+                next_reclaim = tokio::time::Instant::now() + next_delay(more_work);
             }
             tokio::time::sleep_until(next_purge.min(next_reclaim)).await;
         }
@@ -242,8 +248,14 @@ impl DocumentMaintenanceWorker {
         }
     }
 }
-fn next_delay(retry: Option<Duration>) -> Duration {
-    retry.unwrap_or_default().max(RECLAIM_INTERVAL)
+// Schedule beyond BackgroundWork's maximum resumable yield so its internal
+// wait cannot hide an earlier purge deadline from the outer scheduler.
+fn next_delay(more_work: bool) -> Duration {
+    if more_work {
+        Duration::from_millis(250)
+    } else {
+        RECLAIM_INTERVAL
+    }
 }
 fn record_blocked(previous: &mut Option<&'static str>, reason: &'static str) {
     metrics::gauge!("cma_document_reclaim_blocked").set(1);
