@@ -46,6 +46,7 @@ mod queued_inputs;
 mod queued_inputs_tests;
 mod suggestions;
 use events::{append_sandbox_event, bounded_events};
+mod custom_runtime;
 #[cfg(test)]
 mod launch_command_tests;
 mod lifecycle;
@@ -68,6 +69,7 @@ mod retained_recovery_tests;
 mod retained_reopen;
 #[cfg(test)]
 mod retained_reopen_tests;
+mod runtime_activity;
 mod sandbox_controls;
 mod sessions;
 mod targeted_controls;
@@ -128,6 +130,13 @@ impl SandboxStore for InMemorySandboxStore {
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
+        if sandbox.lifecycle.custom_runtime.is_some()
+            || sandbox.lifecycle.runtime_migration_admission.is_some()
+        {
+            return Err(SandboxStoreError::InvalidTransaction(
+                "custom runtime authority requires retained migration admission",
+            ));
+        }
         if !sandbox.credential.service_grants.is_empty()
             || sandbox.credential.service_scope.is_some()
         {
@@ -165,6 +174,9 @@ impl SandboxStore for InMemorySandboxStore {
         let mut state = self.lock();
         if state.sandboxes.get(&id).is_some_and(|current| {
             current.owner != sandbox.owner
+                || current.lifecycle.custom_runtime != sandbox.lifecycle.custom_runtime
+                || current.lifecycle.runtime_migration_admission
+                    != sandbox.lifecycle.runtime_migration_admission
                 || current
                     .validate_retirement_archive_successor(&sandbox)
                     .is_err()
