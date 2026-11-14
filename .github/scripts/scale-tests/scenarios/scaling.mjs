@@ -28,6 +28,8 @@ export async function autoscale(driver, config, { users = 2, time = clock } = {}
   const sample = async (remaining) => {
     const value = checkSnapshot(await driver.snapshot(cohort, { timeoutMs: remaining }), users);
     observations.push(value);
+    check(['am', 'eg'].every((role) => value[role].ready <= peak && value[role].desired <= peak),
+      'scaling_peak_exceeded');
     return value;
   };
   const both = (row, accept) => ['am', 'eg'].every((role) => accept(row[role]));
