@@ -18,6 +18,7 @@ mod cleanup_publication;
 mod connection;
 mod connection_output;
 mod connection_retry;
+mod create_completion;
 mod first_message;
 mod first_message_publication;
 mod ledger_retry;
