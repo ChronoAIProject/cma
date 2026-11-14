@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('source_sha')
@@ -40,5 +41,16 @@ for (name, container), image in zip(targets, images):
     subprocess.run(k + ['patch', 'deployment', name, '--type=strategic', '-p', json.dumps(patch)], check=True)
 subprocess.run(k + ['rollout', 'status', *(f'deployment/{n}' for n, _ in targets),
                     '--timeout=840s'], check=True)
+# Deployment availability can succeed while old Pods still drain. Measurements
+# must wait for their actual deletion, rather than treating rollout status as finality.
+deadline = time.monotonic() + 840
+while True:
+    pods = json.loads(subprocess.check_output(k + ['get', 'pods', '-o', 'json'], text=True))['items']
+    owned = [p for p in pods if p['metadata'].get('labels', {}).get('app.kubernetes.io/name') in dict(targets)]
+    if len(owned) == 4 and not any(p['metadata'].get('deletionTimestamp') for p in owned):
+        break
+    if time.monotonic() >= deadline:
+        raise SystemExit('Previous application Pods did not terminate within840s')
+    time.sleep(5)
 subprocess.run(['python3', str(root / 'scripts/observe-deployment.py'),
                 args.source_sha, '--record'], check=True)

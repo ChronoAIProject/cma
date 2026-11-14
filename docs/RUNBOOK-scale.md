@@ -71,7 +71,7 @@ python3 scripts/rollout-local-images.py "$CANDIDATE"
 
 The helper comes from local-env-manager-01 and automatically uses the normal shared build-slot. Honor an announced exclusive quiet window before starting another build. This toolchain already has x86_64-musl stdlib; no install is required. Native Mac compilation is faster than the initial Docker build; Linux amd64 execution is emulated on arm64 kind nodes. Match architecture and resource settings between performance cohorts. EG media transformation is disabled in these local images and is not qualified.
 
-The rollout command checks image source labels/platform, requires fixed2 and no owned HPA, loads into kind, and patches only application image/source fields. It preserves private configuration. It allows840s for retained production-like termination grace. Before invoking it, finish any active scenario and wait for previous Pods to terminate. It then calls the observer below. Do not use the helper's full-manifest deployment path over an active fixture.
+The rollout command checks image source labels/platform, requires fixed2 and no owned HPA, loads into kind, and patches only application image/source fields. It preserves private configuration. It allows840s for rollout and explicitly waits for old Pod deletion before the final observation; Kubernetes rollout success alone can precede final termination. Before invoking it, finish any active scenario and wait for previous Pods to terminate. It then calls the observer below. Do not use the helper's full-manifest deployment path over an active fixture.
 
 ```sh
 python3 scripts/observe-deployment.py "$CANDIDATE" --record
