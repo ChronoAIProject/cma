@@ -1,5 +1,14 @@
 """Closed vocabularies for the admission diagnostic, never arbitrary log data."""
 
+import re
+
+FAULT_HASHES = ("fixture_sha256", "case_sha256", "database_sha256", "admission_sha256")
+FAULT_BOUNDARIES = {
+    "pre_submit_refusal": ("before_submission", "not_submitted"),
+    "pre_submit_stall": ("before_submission", "not_submitted"),
+    "post_commit_unknown": ("after_commit_ack", "acknowledged"),
+}
+
 STAGES = frozenset(
     "root_lookup chunk_write chunk_read root_write root_readback enqueue index_retire".split()
 )
@@ -71,7 +80,21 @@ def integer(value, lower, upper):
 
 def validate_event(event):
     kind = event.get("event")
-    if kind in ("eg_admission_attempt", "eg_admission_stage"):
+    if kind == "eg_fixture_record_fault":
+        exact_keys(
+            event, {"event", "action", "boundary", "commit_class"} | set(FAULT_HASHES)
+        )
+        for field in FAULT_HASHES:
+            if not isinstance(event[field], str) or not re.fullmatch(
+                r"[0-9a-f]{64}", event[field]
+            ):
+                raise ValueError("invalid fixture digest")
+        if FAULT_BOUNDARIES.get(event["action"]) != (
+            event["boundary"],
+            event["commit_class"],
+        ):
+            raise ValueError("invalid fixture boundary")
+    elif kind in ("eg_admission_attempt", "eg_admission_stage"):
         exact_keys(event, ("event", "boundary", "class", "elapsed_ms"))
         if (
             event["boundary"] not in ("start", "end", "cancelled")
