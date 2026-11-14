@@ -9,7 +9,7 @@ use axum::{
 use layer2_core::{
     ids::{AgentCommandId, AgentResponseId},
     sandbox::{
-        agent_io::{CommandReceiptView, CommandSubmissionSource},
+        agent_io::{CommandStatusView, CommandSubmissionSource},
         AgentEventStreamAuthorization,
     },
     AgentId,
@@ -273,7 +273,14 @@ async fn submit(
         Ok(value) => value,
         Err(value) => return error::read(value),
     };
-    super::stream::open(state, authorization, admitted.receipt, None).await
+    super::stream::open(
+        state,
+        authorization,
+        admitted.receipt,
+        None,
+        Some(admitted.turn_sequence.is_some()),
+    )
+    .await
 }
 
 #[utoipa::path(get, path = "/api/v2/responses/{response_id}", tag = "responses v2", params(("response_id" = String, Path)), responses((status = 200, body = super::V2ResponseObject), (status = 404, body = Value)))]
@@ -287,11 +294,11 @@ pub(super) async fn retrieve(
         return error::unauthenticated();
     };
     match query { Ok(Query(query)) if query.is_empty() => {}, _ => return error::field("query", "responses_field_unsupported", "Retrieve the durable response without query parameters. Use the documented events extension for replay.") }
-    let (authorization, receipt) = match authorize(&state, &auth, &AgentResponseId(id)).await {
+    let (authorization, status) = match authorize(&state, &auth, &AgentResponseId(id)).await {
         Ok(value) => value,
         Err(value) => return *value,
     };
-    match super::stream::snapshot(&state, &authorization, &receipt).await {
+    match super::stream::snapshot(&state, &authorization, &status.receipt).await {
         Ok((response, _)) => Json(response).into_response(),
         Err(value) => value,
     }
@@ -353,15 +360,19 @@ pub(super) async fn replay(
             "The query cursor and Last-Event-ID must agree.",
         );
     }
-    let (authorization, receipt) = match authorize(&state, &auth, &AgentResponseId(id)).await {
+    let (authorization, status) = match authorize(&state, &auth, &AgentResponseId(id)).await {
         Ok(value) => value,
         Err(value) => return *value,
     };
     super::stream::open(
         state,
         authorization,
-        receipt,
+        status.receipt,
         query.starting_after.or(header),
+        // Replay is already an established read path. Preserve its legacy
+        // cursor error contract while allowing submit to use the unbound
+        // header fast path; a bound replay still carries the known hint.
+        status.turn_sequence.map(|_| true),
     )
     .await
 }
@@ -369,7 +380,7 @@ async fn authorize(
     state: &ResponsesV2State,
     auth: &AuthenticatedResourceCaller,
     id: &AgentResponseId,
-) -> Result<(AgentEventStreamAuthorization, CommandReceiptView), Box<Response>> {
+) -> Result<(AgentEventStreamAuthorization, CommandStatusView), Box<Response>> {
     let credential = auth.credential.as_ref().map(|value| value.value());
     let value = state
         .commands
@@ -381,7 +392,7 @@ async fn authorize(
         .authorize_event_stream(&auth.context, credential, &value.receipt.agent_id)
         .await
         .map_err(|value| Box::new(error::read(value)))?;
-    Ok((authorization, value.receipt))
+    Ok((authorization, value))
 }
 
 #[utoipa::path(get, path = "/api/v2", tag = "responses v2", responses((status = 200, body = Value)))]
