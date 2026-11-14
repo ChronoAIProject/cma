@@ -141,7 +141,8 @@ pub(super) async fn stalled(
     assert_eq!(snapshot.runtime_generation().unwrap(), 1);
     assert_eq!(snapshot.sandbox.lifecycle.runtime_generation_high_water, 2);
     if let Some(generation) = provider_generation {
-        let spec = crate::sandbox::runtime_mapping::sandbox_spec(&snapshot.sandbox, "test");
+        let spec =
+            crate::sandbox::runtime_mapping::sandbox_spec(&snapshot.sandbox, "test").unwrap();
         let request = CodexSandboxSpec::default()
             .deployment
             .render_runtime(&spec, generation)

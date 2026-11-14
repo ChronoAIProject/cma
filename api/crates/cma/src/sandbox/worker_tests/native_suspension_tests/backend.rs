@@ -246,7 +246,12 @@ impl HostedBackend for NativeBackend {
             .into_iter()
             .find(|row| row.handle == pod)
             .unwrap();
-        observation.handle = RuntimeHandle::new("agent-sandbox:retained-crd:original-uid");
+        observation.handle = RuntimeHandle::new(if self.pools.is_some() {
+            // Match the original native Claim/Sandbox authority returned by Pools.
+            "agent-sandbox:warm-member:member-uid"
+        } else {
+            "agent-sandbox:retained-crd:original-uid"
+        });
         let handle = observation.handle.clone();
         *rows = Some(Row {
             request,
