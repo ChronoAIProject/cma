@@ -25,8 +25,10 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Output {
 #[test]
 fn startup_phase_counts_and_outcomes_do_not_inherit_caller_payload() {
     let output = Output::default();
+    // Production uses the text formatter, which honors explicit root events.
+    // tracing-subscriber's JSON formatter can include an ambient span anyway.
     let subscriber = tracing_subscriber::fmt()
-        .json()
+        .with_ansi(false)
         .without_time()
         .with_writer(output.clone())
         .finish();
@@ -41,21 +43,22 @@ fn startup_phase_counts_and_outcomes_do_not_inherit_caller_payload() {
     });
     let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
     assert!(!text.contains("startup-private-canary"));
-    let rows: Vec<serde_json::Value> = text
-        .lines()
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect();
+    let rows: Vec<_> = text.lines().collect();
     assert_eq!(rows.len(), 3);
     for row in &rows {
-        assert_eq!(row["target"], "cma_startup");
-        assert!(row.get("span").is_none());
-        assert!(row.get("spans").is_none());
+        assert!(row.contains("INFO cma_startup:"));
+        assert!(!row.contains("caller"));
     }
-    assert_eq!(rows[0]["fields"]["item_count"], 34);
-    assert_eq!(rows[0]["fields"]["count_known"], true);
-    assert!(rows[0]["fields"]["elapsed_ms"].as_u64().unwrap() >= 3000);
-    assert_eq!(rows[1]["fields"]["outcome"], "error");
-    assert_eq!(rows[1]["fields"]["count_known"], false);
-    assert_eq!(rows[2]["fields"]["outcome"], "cancelled");
-    assert_eq!(rows[2]["fields"]["count_known"], false);
+    assert!(rows[0].contains("item_count=34 count_known=true"));
+    let elapsed: u64 = rows[0]
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("elapsed_ms="))
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(elapsed >= 3000);
+    assert!(rows[1].contains("outcome=\"error\""));
+    assert!(rows[1].contains("item_count=0 count_known=false"));
+    assert!(rows[2].contains("outcome=\"cancelled\""));
+    assert!(rows[2].contains("item_count=0 count_known=false"));
 }
