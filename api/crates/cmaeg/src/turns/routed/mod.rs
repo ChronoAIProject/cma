@@ -53,6 +53,7 @@ mod replay_projection;
 pub mod scheduler;
 mod storage;
 mod stream_relay;
+pub(crate) use stream_relay::monitor::StreamMonitor;
 mod tool_effects;
 mod tool_operation;
 mod tool_relay;
