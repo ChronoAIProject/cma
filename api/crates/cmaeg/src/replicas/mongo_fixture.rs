@@ -17,6 +17,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use cmaeg_core::seal::MasterKeyRing;
 use mongodb::{
     bson::doc,
+    event::{command::CommandEvent, EventHandler},
     options::{ClientOptions, Credential},
     Client,
 };
@@ -115,6 +116,13 @@ impl Fixture {
         fixture
     }
     async fn client(&self, user: &str) -> Client {
+        self.client_with_handler(user, None).await
+    }
+    async fn client_with_handler(
+        &self,
+        user: &str,
+        handler: Option<EventHandler<CommandEvent>>,
+    ) -> Client {
         let mut options = ClientOptions::parse(&self.uri)
             .await
             .unwrap_or_else(|_| panic!("fixture options failed"));
@@ -126,11 +134,19 @@ impl Fixture {
                 .build(),
         );
         options.max_pool_size = Some(4);
+        options.command_event_handler = handler;
         Client::with_options(options)
             .unwrap_or_else(|_| panic!("fixture client configuration failed"))
     }
     pub async fn node(&self, index: u16) -> Node {
-        let client = self.client("runtime").await;
+        self.node_with_handler(index, None).await
+    }
+    pub async fn node_with_handler(
+        &self,
+        index: u16,
+        handler: Option<EventHandler<CommandEvent>>,
+    ) -> Node {
+        let client = self.client_with_handler("runtime", handler).await;
         let mongo = MongoRecords::open(client.database(&self.database))
             .await
             .unwrap_or_else(|_| panic!("runtime grant check failed"));
