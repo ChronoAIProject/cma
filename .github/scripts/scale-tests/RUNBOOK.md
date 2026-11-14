@@ -151,6 +151,31 @@ and execution scope; these reviews supply no new allowance or deadline increase.
 
 ## Run
 
+The owner-adopted 25 essentials and A3 class table control the deadline gate.
+The historical `all` selector is a full-matrix implementation, including old
+trial counts and an unconditional external-qualification blocker. It is not the
+M3 essentials adjudicator. M3 uses N1/N2/2→4→2/kill; production automatic HPA
+min2/max5 remains a separate required S3 observation. No old matrix row supplies
+an additional promotion prerequisite beyond its applicable essential.
+
+`performance-classes-a3.json` preserves the exact decoded architect A3 inventory:
+43 catalog memberships, 80 observed routes and 18 operation families. The
+published copy compacts rows; its SHA256 is pinned in `performance-policy.mjs`,
+alongside the original artifact hash. Each comparison retains the class, context,
+table hash, allowance and original error/incomplete denominator. Critical paths
+use preregistered measured noise; UX uses 10% of the fixed baseline p95 (5% aim);
+non-sensitive work uses 30ms. Do not add noise to percentage or millisecond caps.
+An awaited critical dependency inherits CRITICAL; an unknown class is blocked.
+Absolute owner targets and the upper-confidence-bound comparison still apply.
+
+This updates the 43-row comparator, not the missing application driver or the
+supplemental Activity collector. Activity API p95 must be strictly below 1s;
+page completion remains separately measured with no invented absolute ceiling.
+Baseline stability/noise registration remains required; the legacy zero default
+noise ceiling is conservative and is not a measured noise allowance. A3 must
+not be used to declare a noisy/inadequate sample suitable or widen a critical
+allowance after seeing its comparison. Exact-source tool review precedes use.
+
 Copy `config.example.json` to `config.local.json`, fill the exact reviewed local
 handoff and pin the driver. Place no credential values in that file. Then:
 
@@ -249,9 +274,14 @@ Three baseline windows precede N=2. `preregistered-noise/` is written before
 candidate measurement. There is no approved numerical noise ceiling: current
 default is zero; nonzero baseline variance is BLOCKED. The comparator reports a
 95% circular-block-bootstrap interval (block 10, 1000 deterministic draws) for p95
-difference; its upper bound must fit the registered noise. The analyst/architect
+difference; its upper bound must fit the fixed A3 class allowance. The analyst/architect
 must review dependence, sample size and the frozen policy before acceptance.
 Do not tune block size, tolerance, sample window or exclusions after seeing N=2.
+This local per-request method has no qualified production driver/raw-receipt
+contract. It cannot replace the analyst's passive repeat-window method, whose
+three baseline and three post-window requirement is not met by one post-soak
+window. A3 changes neither estimator nor evidence adequacy. Keep that early
+production comparison INCONCLUSIVE until its applicable method is qualified.
 
 ## Cleanup and review handoff
 
