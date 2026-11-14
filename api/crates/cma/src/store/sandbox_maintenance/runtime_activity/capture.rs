@@ -41,7 +41,7 @@ pub(super) async fn current(
     snapshot_read: bool,
 ) -> Result<Captured, ApplyError> {
     let started = now_ms()?;
-    let storage_incarnation = storage_incarnation(store).await?;
+    let storage_incarnation = storage::incarnation(store).await?;
     let before = desktop(id)?;
     if before.process_incarnation != context.process_incarnation {
         return Err(invalid());
@@ -137,7 +137,7 @@ pub(super) async fn current(
     if before != after {
         return Err(invalid());
     }
-    if storage_incarnation != self::storage_incarnation(store).await? {
+    if storage_incarnation != storage::incarnation(store).await? {
         return Err(invalid());
     }
     vector.validate().map_err(ApplyError::Domain)?;
@@ -265,22 +265,4 @@ async fn capture_agent_sources(
         }
     }
     Ok(())
-}
-
-async fn storage_incarnation(store: &MongoSandboxStore) -> Result<String, ApplyError> {
-    let hello = store
-        .client
-        .database("admin")
-        .run_command(doc! {"hello":1})
-        .await
-        .map_err(ApplyError::Driver)?;
-    let process = get(&hello, "topologyVersion.processId")
-        .and_then(mongodb::bson::Bson::as_object_id)
-        .ok_or_else(invalid)?;
-    layer2_core::profiles::content_digest(&(
-        text(&hello, "setName")?,
-        process.to_hex(),
-        store.sandboxes.namespace().db,
-    ))
-    .map_err(|_| invalid())
 }

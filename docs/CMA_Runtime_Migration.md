@@ -104,6 +104,26 @@ baseline. Database and desktop process/tracker replacement invalidate continuity
 The original final vector must remain unchanged through transactional admission;
 30 seconds is a ceiling, never an allowed evidence gap or extra waiting period.
 
+The Mongo adapter binds a complete UUID inventory for `sandboxes`, `workspaces`,
+`agents`, `agent_command_orders`, `agent_commands`, `agent_log`, `agent_log_heads`
+and `sandbox_sessions`, alongside the replica-set name, server process identity
+and database name. It reads metadata only for those exact collection names,
+before and after each capture and again during admission; it retains only the
+identity digest. Missing collections/UUIDs, duplicate identities, unsupported
+collection kinds, metadata overflow or unavailable catalog access remain UNKNOWN.
+The observer creates no collections. Even a legacy-only fixture/source must have
+the existing additive log schema installed before this complete inventory can
+qualify. Collection replacement invalidates continuity despite identical rows.
+
+Qualification covers the selected supported admission/publication writers; it
+must explicitly exclude generic create/reparent ports and direct database tools
+throughout observation and admission. Those lower-level paths do not universally
+fence a parent against phantom membership. A restore that preserves collection
+UUIDs requires a fresh operator source/policy generation and new observation
+baseline, even if every stored counter matches. Change the configured source
+`policy_id` or `source_revision` consistently through the approved configuration
+path; never rewrite an existing proof or inherit its interval across the change.
+
 The common desktop gate starts before native-open effects. In-flight opens and
 connections retain a shared permit through their complete lifetime; migration
 holds the exclusive permit. The process-local activity epoch records attempted,
