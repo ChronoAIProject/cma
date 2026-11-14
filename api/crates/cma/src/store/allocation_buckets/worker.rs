@@ -1,0 +1,205 @@
+use super::*;
+
+pub(super) const PAGE_SIZE: i64 = 4;
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Lane {
+    Live,
+    Backfill,
+}
+impl Lane {
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            Self::Live => "allocation-buckets-v1:live",
+            Self::Backfill => "allocation-buckets-v1:backfill",
+        }
+    }
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Backfill => "backfill",
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Progress {
+    day: u64,
+    cutoff: u64,
+    after: Option<String>,
+    pub(super) pass_complete: bool,
+}
+impl Progress {
+    fn select(lease: &publication::Lease) -> Result<Self> {
+        let today = lease.at / DAY * DAY;
+        let first_day = match lease.lane {
+            Lane::Live => today,
+            Lane::Backfill => today.saturating_sub(DAY),
+        };
+        if let Some(saved) = &lease.progress {
+            if !saved.day.is_multiple_of(DAY)
+                || !saved.cutoff.is_multiple_of(HOUR)
+                || saved.cutoff < saved.day
+                || saved.cutoff > saved.day + DAY
+                || saved
+                    .after
+                    .as_ref()
+                    .is_some_and(|s| s.is_empty() || s.len() > 256)
+            {
+                return Err(MetricsError::Unavailable);
+            }
+            if !saved.pass_complete
+                && saved.day >= today.saturating_sub(30 * DAY)
+                && saved.day <= first_day
+            {
+                return Ok(saved.clone());
+            }
+        }
+        Ok(Self {
+            day: first_day,
+            cutoff: (first_day + DAY).min(lease.at / HOUR * HOUR),
+            after: None,
+            pass_complete: false,
+        })
+    }
+    fn next(&self, lane: Lane, at: u64, last: Option<String>, more: bool) -> Self {
+        if more {
+            return Self {
+                after: last,
+                ..self.clone()
+            };
+        }
+        let oldest = (at / DAY * DAY).saturating_sub(30 * DAY);
+        match lane {
+            Lane::Backfill if self.day > oldest => Self {
+                day: self.day - DAY,
+                cutoff: self.day,
+                after: None,
+                pass_complete: false,
+            },
+            _ => Self {
+                after: None,
+                pass_complete: true,
+                ..self.clone()
+            },
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Maintenance {
+    pub claimed: bool,
+    pub states: usize,
+    pub source_rows: usize,
+    pub reused: usize,
+    pub written: usize,
+    pub pass_complete: bool,
+}
+
+impl ReportingStore {
+    pub(crate) async fn maintain_allocation_buckets(
+        &self,
+        enabled: bool,
+        lane: Lane,
+    ) -> Result<Maintenance> {
+        if !enabled {
+            return Ok(Maintenance::default());
+        }
+        self.check_circuit(super::super::usage_reports::now())?;
+        let Some(lease) = self.claim_allocation_buckets(lane).await? else {
+            return Ok(Maintenance::default());
+        };
+        let progress = Progress::select(&lease)?;
+        let mut result = Maintenance {
+            claimed: true,
+            ..Default::default()
+        };
+        if progress.cutoff == progress.day {
+            let next = progress.next(lane, lease.at, None, false);
+            self.publish_allocation_buckets(&lease, &[], &next).await?;
+            result.pass_complete = next.pass_complete;
+            return Ok(result);
+        }
+        let mut snapshot = self.snapshot().await?;
+        let mut filter = Document::new();
+        if let Some(after) = &progress.after {
+            filter.insert("_id", doc! {"$gt":after});
+        }
+        let mut cursor = self
+            .collection(super::super::sandbox_usage::STATES)
+            .find(filter)
+            .sort(doc! {"_id":1})
+            .limit(PAGE_SIZE + 1)
+            .batch_size((PAGE_SIZE + 1) as u32)
+            .max_time(DB_DEADLINE)
+            .session(&mut snapshot)
+            .await
+            .map_err(unavailable)?;
+        let mut states = Vec::new();
+        while let Some(document) = cursor
+            .next(&mut snapshot)
+            .await
+            .transpose()
+            .map_err(unavailable)?
+        {
+            states.push(super::super::sandbox_usage::read_state(&document).map_err(unavailable)?);
+        }
+        let more = states.len() > PAGE_SIZE as usize;
+        states.truncate(PAGE_SIZE as usize);
+        let last = states.last().map(|s| s.sandbox_id.to_string());
+        result.states = states.len();
+        let range = Range {
+            from: progress.day,
+            to: progress.cutoff,
+        };
+        let mut missing = Vec::new();
+        for state in &states {
+            if state.created_at >= range.to {
+                continue;
+            }
+            let key = format!("{}:{}", state.sandbox_id, progress.day);
+            let cached = self
+                .collection(COLLECTION)
+                .find_one(doc! {"_id":key})
+                .max_time(DB_DEADLINE)
+                .session(&mut snapshot)
+                .await
+                .map_err(unavailable)?;
+            if let Some(cached) = cached {
+                let bucket = DayBucket::read(&cached)?;
+                if bucket.validate_source(state)? && bucket.total.range.to >= range.to {
+                    result.reused += 1;
+                    continue;
+                }
+                if bucket.revision > state.revision
+                    || bucket.last_observed_at > state.last_observed_at
+                {
+                    return Err(MetricsError::Unavailable);
+                }
+            }
+            missing.push(state);
+        }
+        let ids: Vec<_> = missing.iter().map(|s| s.sandbox_id.as_str()).collect();
+        let events = self.allocation_events(&mut snapshot, &ids, range).await?;
+        result.source_rows = events.values().map(Vec::len).sum();
+        let buckets = missing
+            .into_iter()
+            .map(|state| {
+                materialize::build(
+                    state,
+                    events
+                        .get(state.sandbox_id.as_str())
+                        .map(Vec::as_slice)
+                        .unwrap_or_default(),
+                    range,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+        result.written = buckets.len();
+        let next = progress.next(lane, lease.at, last, more);
+        result.pass_complete = next.pass_complete;
+        self.publish_allocation_buckets(&lease, &buckets, &next)
+            .await?;
+        Ok(result)
+    }
+}
