@@ -27,9 +27,10 @@ let epoch,counts={};
 createInterface({input:process.stdin}).on("line",line=>{
  const frame=JSON.parse(line), config=JSON.parse(readFileSync(${JSON.stringify(control)},"utf8"));
  if(epoch!==config.epoch){epoch=config.epoch;counts={};}
- const kind=frame.method==="skills/list"&&!frame.params?.forceReload?"commands":frame.method==="thread/goal/get"?"goal":null;
+ const kind=frame.method==="skills/list"&&!frame.params?.forceReload?"commands":frame.method==="thread/goal/get"?"goal":
+  ({"model/list":"models","thread/start":"open","thread/name/set":"persist","thread/read":"history"})[frame.method]??null;
  if(kind&&config[kind]&&(counts[kind]??0)<(config.limit??Infinity)){counts[kind]=(counts[kind]??0)+1;pending.set(frame.id,{kind,delay:config[kind]});}
- appendFileSync(${JSON.stringify(trace)},JSON.stringify({event:"request",method:frame.method,optional:kind,forced:frame.params?.forceReload===true})+"\\n");
+ appendFileSync(${JSON.stringify(trace)},JSON.stringify({event:"request",method:frame.method,optional:kind==="commands"||kind==="goal"?kind:null,forced:frame.params?.forceReload===true})+"\\n");
  child.stdin.write(line+"\\n");
 });
 createInterface({input:child.stdout}).on("line",line=>{
