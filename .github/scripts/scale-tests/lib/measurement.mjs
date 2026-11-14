@@ -1,6 +1,7 @@
 import { check } from './checks.mjs';
 import { calibrateNoise, compareCohorts, summarize } from './metrics.mjs';
 import { criteria, requiredRoutes, userLimits } from './catalog.mjs';
+import { expectedReplicas } from './replicas.mjs';
 
 export async function measurePerformance(driver, config, report, { checkpoint, samples, baselineOnly = false }) {
   check(typeof checkpoint === 'function', 'noise_preregistration_required', true);
@@ -13,7 +14,7 @@ export async function measurePerformance(driver, config, report, { checkpoint, s
     for (const key of ['hardwareHash', 'fixtureHash', 'workloadHash', 'sourceHash', 'imagesHash']) {
       check(cohort[key] === config[key], 'measurement_provenance_changed', true);
     }
-    check(cohort.observedReplicas === (phase === 'n1' ? 1 : phase === 'n2' ? 2 : '2-5-2'),
+    check(cohort.observedReplicas === expectedReplicas(phase, config.scalingPeak),
       'cohort_replica_evidence_missing', true);
     report.sample_artifacts.push(await samples(cohort, cohorts.length));
     cohorts.push(cohort);
@@ -45,7 +46,8 @@ export async function measurePerformance(driver, config, report, { checkpoint, s
   }
   await checkpoint(report);
   for (const phase of ['n2', 'scaling']) await measure(phase);
-  report.performance = compareCohorts(cohorts, requiredRoutes, 100, report.calibration);
+  report.performance = compareCohorts(cohorts, requiredRoutes, 100, report.calibration,
+    { scalingPeak: config.scalingPeak });
   check(!report.performance.some((row) => row.status === 'BLOCKED'), 'performance_measurement_unstable', true);
   check(report.performance.every((row) => row.status === 'PASS'), 'performance_regression');
   return { rows: report.performance.length };

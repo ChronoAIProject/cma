@@ -5,7 +5,7 @@ import { catalogSha256, requiredRoutes } from '../lib/catalog.mjs';
 export const config = {
   schema: 'cma-scale-v1', environment: 'local', context: 'kind-cma-scale', namespace: 'cma-scale',
   isolated: true, endpoints: { am: 'http://127.0.0.1:18080' }, recoveryMs: 30000, scaleTimeoutMs: 1000,
-  requiredRoutes, catalogSha256,
+  requiredRoutes, catalogSha256, scalingPeak: 4,
   ...Object.fromEntries(['hardwareHash', 'fixtureHash', 'workloadHash', 'sourceHash', 'imagesHash']
     .map((key) => [key, hash(key)])),
 };
@@ -24,7 +24,7 @@ export const snapshot = (ready = 2, users = 100) => ({ evidenceHash: hash('snaps
   minimumConnectedUsers: users, minimumOpenStreams: users });
 export const cohort = (phase, elapsedMs = 100) => ({ ...config, phase,
   startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T00:01:00Z',
-  observedReplicas: phase === 'n1' ? 1 : phase === 'n2' ? 2 : '2-5-2',
+  observedReplicas: phase === 'n1' ? 1 : phase === 'n2' ? 2 : '2-4-2',
   samples: Object.fromEntries([...Object.keys(userLimits), ...config.requiredRoutes].map((metric) =>
     [metric, Array.from({ length: 100 }, () => ({ ok: true, elapsedMs, rendered: true }))])) });
 
@@ -32,7 +32,7 @@ export const contractProof = () => ({ passed: true, productionPath: true, mongoR
   processHashes: [hash('process-a'), hash('process-b')], clientHashes: [hash('client-a'), hash('client-b')],
   evidenceHash: hash('contract'), acceptedLost: 0, duplicateEffects: 0, staleWrites: 0 });
 
-export function fakeDriver() {
+export function fakeDriver(scalingPeak = 4) {
   let observations = 0;
   return {
     cleaned: 0, closed: false, stopped: 0,
@@ -52,11 +52,12 @@ export function fakeDriver() {
       processDeathObserved: true, evidenceHash: hash('loss') }; },
     async observeRecovery() { return { clientRecovered: true, sustainedSuccess: true, accounted: true }; },
     async connectUsers() { observations = 0; return {}; },
-    async snapshot() { return snapshot([2, 5, 2][observations++]); },
+    async snapshot() { return snapshot([2, scalingPeak, 2][observations++]); },
     async startStress() { return {}; },
     async stopStress() { this.stopped++; },
     async finishUsers() { return snapshot(); },
-    async measureCohort(phase) { return cohort(phase); },
+    async measureCohort(phase) { return { ...cohort(phase),
+      ...(phase === 'scaling' ? { observedReplicas: `2-${scalingPeak}-2` } : {}) }; },
     async contractCase() { return contractProof(); },
     async lossTrial({ mode, trial }) { return { ...contractProof(), trialHash: hash(`${mode}:${trial}`),
       faultKind: mode, nodeLossObserved: mode === 'node', recoveryMs: 1000, sustainedSuccess: true, oracle: oracle() }; },

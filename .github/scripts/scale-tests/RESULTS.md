@@ -33,6 +33,9 @@ This source delta has32 JavaScript tests passing,99.68% lines,97.96% branches
 and97.89% functions; the new policy module is100% for all three. ESLint/syntax
 and source-size checks pass.
 These are helper tests; no numerical application or production comparison ran.
+The subsequent M3 sequence correction passes35 JavaScript tests: defaults to
+2→4→2, retains explicit2→5→2 support, rejects a mismatched sequence, and fails
+on downscale canary errors. Lint/syntax/source-size checks pass.
 
 The separate EG lifecycle component at5fc00eba3c corrects architect EGL-001:
 an arbitrarily late timeout could previously qualify complete evidence.

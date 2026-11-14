@@ -11,7 +11,7 @@ export async function saveSamples(directory, cohort, index) {
   check(Number.isSafeInteger(index) && index >= 0, 'invalid_cohort_index');
   check(['n1', 'n2', 'scaling', 'fault', 'rollout'].includes(cohort.phase), 'invalid_cohort_phase');
   const value = { phase: cohort.phase, index, catalog_sha256: catalogSha256, samples: {} };
-  check([1, 2, '2-5-2'].includes(cohort.observedReplicas), 'cohort_replica_evidence_missing', true);
+  check([1, 2, '2-4-2', '2-5-2'].includes(cohort.observedReplicas), 'cohort_replica_evidence_missing', true);
   value.observedReplicas = cohort.observedReplicas;
   for (const field of ['startedAt', 'finishedAt']) {
     check(typeof cohort[field] === 'string' && Number.isFinite(Date.parse(cohort[field])),
