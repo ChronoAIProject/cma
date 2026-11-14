@@ -157,7 +157,8 @@ async fn unavailable_history_provider_does_not_fall_back_to_another_provider() {
     for native_missing in [true, false] {
         let backend = RuntimeBackends {
             home_routes: None,
-            agent_sandbox: (!native_missing).then(|| native(transport.clone())),
+            agent_sandbox: (!native_missing)
+                .then(|| native(transport.clone()) as Arc<dyn HostedBackend>),
             opensandbox: native_missing.then(|| legacy(transport.clone())),
             allocate_agent_sandbox: !native_missing,
             routing: Arc::new(ExistingRuntimeRoutes),
