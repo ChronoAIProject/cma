@@ -86,6 +86,7 @@ async fn custom_runtime_supported_paused_migration_preserves_home_and_conversati
     );
     f.backend.lose_resume.store(true, Ordering::SeqCst);
     let mut bound_before_publication = false;
+    let mut published_before_pause = false;
     let mut steps = 0;
     let updated = loop {
         steps += 1;
@@ -96,12 +97,28 @@ async fn custom_runtime_supported_paused_migration_preserves_home_and_conversati
         if current.status == SandboxStatus::Paused {
             break current;
         }
-        assert_eq!(
-            current.status,
-            SandboxStatus::Rotating,
-            "{:?}",
-            current.failure
-        );
+        let migration = current.lifecycle.custom_runtime.as_ref().unwrap();
+        if current.status == SandboxStatus::Pausing {
+            // Publication restores the original pause intent as a new operation.
+            assert!(matches!(
+                current.lifecycle.operation,
+                Some(layer2_core::sandbox::SandboxLifecycleOperation::Pause { .. })
+            ));
+            assert!(migration.completed_at.is_some());
+            assert!(current.failure.is_none(), "{:?}", current.failure);
+            assert_eq!(
+                current.effective_custom_runtime_image(),
+                Some(image('b').as_str())
+            );
+            assert_eq!(
+                current.retained_runtime_binding().unwrap().runtime_version,
+                image('b')
+            );
+            published_before_pause = true;
+            continue;
+        }
+        assert_eq!(current.status, SandboxStatus::Rotating);
+        assert!(migration.completed_at.is_none());
         if current
             .runtime
             .as_ref()
@@ -119,6 +136,7 @@ async fn custom_runtime_supported_paused_migration_preserves_home_and_conversati
         }
     };
     assert!(bound_before_publication);
+    assert!(published_before_pause);
     assert_eq!(
         updated.effective_custom_runtime_image(),
         Some(image('b').as_str())
