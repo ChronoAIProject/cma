@@ -6,6 +6,11 @@ use std::collections::BTreeSet;
 #[path = "legacy_census.rs"]
 mod legacy;
 
+#[cfg(test)]
+pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
+#[cfg(test)]
+pub(super) const LEGACY_SHA256: &str = legacy::SHA256;
+
 pub(crate) fn schema_sha256() -> String {
     digest(
         format!(
