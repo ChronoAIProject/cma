@@ -81,35 +81,32 @@ impl DayBucket {
     }
 
     fn validate_slice(&self, slice: &Slice) -> Result<()> {
-            let p = &slice.projection.period;
-            if [
-                p.uptime_seconds,
-                p.disk_retained_seconds,
-                p.cpu_core_hours,
-                p.memory_gib_hours,
-                p.disk_gib_hours,
-            ]
-            .iter()
-            .any(|v| !v.is_finite() || *v < 0.0)
-                || p.unknown_seconds > slice.range.seconds()
-                || p.projected_tail_seconds > slice.range.seconds()
-                || (p.complete && p.unknown_seconds != 0)
-            {
+        let p = &slice.projection.period;
+        if [
+            p.uptime_seconds,
+            p.disk_retained_seconds,
+            p.cpu_core_hours,
+            p.memory_gib_hours,
+            p.disk_gib_hours,
+        ]
+        .iter()
+        .any(|v| !v.is_finite() || *v < 0.0)
+            || p.unknown_seconds > slice.range.seconds()
+            || p.projected_tail_seconds > slice.range.seconds()
+            || (p.complete && p.unknown_seconds != 0)
+        {
+            return Err(MetricsError::Unavailable);
+        }
+        let mut end = slice.range.from.max(self.created_at).min(slice.range.to);
+        for expectation in &slice.projection.expectations {
+            if expectation.from != end || expectation.to <= end || expectation.to > slice.range.to {
                 return Err(MetricsError::Unavailable);
             }
-            let mut end = slice.range.from.max(self.created_at).min(slice.range.to);
-            for expectation in &slice.projection.expectations {
-                if expectation.from != end
-                    || expectation.to <= end
-                    || expectation.to > slice.range.to
-                {
-                    return Err(MetricsError::Unavailable);
-                }
-                end = expectation.to;
-            }
-            if end != slice.range.to {
-                return Err(MetricsError::Unavailable);
-            }
+            end = expectation.to;
+        }
+        if end != slice.range.to {
+            return Err(MetricsError::Unavailable);
+        }
         Ok(())
     }
 }

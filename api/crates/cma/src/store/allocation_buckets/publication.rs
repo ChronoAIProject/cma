@@ -120,16 +120,15 @@ impl ReportingStore {
                     // Keep it; the reader still verifies its captured revision.
                     continue;
                 }
-                if old.revision == bucket.revision {
-                    if old.source_seq != bucket.source_seq
+                if old.revision == bucket.revision
+                    && (old.source_seq != bucket.source_seq
                         || old.source_revision != bucket.source_revision
                         || old.allocation != bucket.allocation
                         || old.last_observed_at != bucket.last_observed_at
                         || (old.total.range == bucket.total.range
-                            && existing.get("content_sha256") != document.get("content_sha256"))
-                    {
-                        return Err(MetricsError::Unavailable);
-                    }
+                            && existing.get("content_sha256") != document.get("content_sha256")))
+                {
+                    return Err(MetricsError::Unavailable);
                 }
             }
             document.insert("publication_lane", lease.lane.key());
