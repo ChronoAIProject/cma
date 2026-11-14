@@ -144,7 +144,12 @@ class FixtureProcess:
         started = time.monotonic()
         graceful = False
         observation_failed = False
-        self.record("shutdown_start", reason=self.reason or "outer_failure")
+        evidence_failed = False
+        try:
+            self.record("shutdown_start", reason=self.reason or "outer_failure")
+        except OSError:
+            # Failed evidence storage must not strand an owned child.
+            evidence_failed = True
         try:
             if self.process is not None:
                 # Keep draining during TERM grace; a full pipe must not turn a
@@ -162,14 +167,18 @@ class FixtureProcess:
         except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
             observation_failed = True
         cleanup = self.group.cleanup(self.process, grace=0, kill_wait=2)
-        self.drain()
+        try:
+            self.drain()
+        except OSError:
+            evidence_failed = True
         exited = self.process is not None and self.process.poll() is not None
         code = self.process.returncode if exited else None
         if self.process is not None:
             self.process.stdout.close()
         cleanup_ok = cleanup["process_group_cleanup"] and not observation_failed
         lifecycle_ok = (self.reason == "operator_stop" and self.ready and self.stopped
-                        and graceful and exited and code == 0 and cleanup_ok and not self.error_observed)
+                        and graceful and exited and code == 0 and cleanup_ok
+                        and not self.error_observed and not evidence_failed)
         self.result = {"status": "COMPLETE" if lifecycle_ok else "INCOMPLETE",
                        "reason": self.reason or "outer_failure", "ready_observed": self.ready,
                        "stopped_marker_observed": self.stopped, "error_marker_observed": self.error_observed,
@@ -177,17 +186,27 @@ class FixtureProcess:
                        "fixture_exit_within_shutdown_budget": graceful,
                        "shutdown_elapsed_ms": (time.monotonic() - started) * 1000,
                        "fixture_process_cleanup": cleanup_ok, **cleanup,
+                       "evidence_recording_failed": evidence_failed,
                        "gateway_process_finality": "NOT_OBSERVED", "application_acceptance": "NOT_EVALUATED",
                        "database_and_fixture_files_retained": True}
-        self.record("shutdown_end", status=self.result["status"], parent_exit_observed=exited,
-                    fixture_process_cleanup=cleanup_ok)
-        with (self.output / "process-result.json").open("x", encoding="utf8") as stream:
-            os.chmod(stream.name, 0o600)
-            json.dump(self.result, stream, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        self.events.close()
+        try:
+            self.record("shutdown_end", status=self.result["status"], parent_exit_observed=exited,
+                        fixture_process_cleanup=cleanup_ok)
+        except OSError:
+            self.result.update(status="INCOMPLETE", evidence_recording_failed=True)
+        try:
+            self.events.close()
+        except OSError:
+            self.result.update(status="INCOMPLETE", evidence_recording_failed=True)
+        try:
+            with (self.output / "process-result.json").open("x", encoding="utf8") as stream:
+                os.chmod(stream.name, 0o600)
+                json.dump(self.result, stream, indent=2)
+                stream.write("\n")
+                stream.flush()
+                os.fsync(stream.fileno())
+        except OSError:
+            self.result.update(status="INCOMPLETE", evidence_recording_failed=True)
         return self.result
 
     def run(self):

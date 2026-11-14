@@ -5,6 +5,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from fixture_process import FixtureProcess, ProcessError
 
@@ -90,6 +91,18 @@ class FixtureProcessTests(unittest.TestCase):
         self.assertTrue(result["group_kill_sent"])
         self.assertTrue(result["fixture_process_cleanup"])
         self.assertEqual(result["exit_code"], 3)
+
+    def test_evidence_write_failure_cannot_skip_process_cleanup(self):
+        launcher = self.launcher_for('signal.signal(signal.SIGTERM, signal.SIG_IGN)\n' + READY +
+                                     '\nwhile True: time.sleep(.01)', shutdown_seconds=.1)
+        self.ready(launcher); launcher.request_stop(); launcher.poll()
+        with patch.object(launcher, "record", side_effect=OSError("private filesystem detail")):
+            result = launcher.finish()
+        self.assertEqual(result["status"], "INCOMPLETE")
+        self.assertTrue(result["evidence_recording_failed"])
+        self.assertTrue(result["fixture_process_cleanup"])
+        self.assertEqual(result["exit_code"], -signal.SIGKILL)
+        self.assertNotIn("private filesystem detail", str(result))
 
     def test_run_enforces_lifetime_without_an_operator_stop(self):
         launcher = self.launcher_for('signal.signal(signal.SIGTERM, signal.SIG_IGN)\n' + READY +
