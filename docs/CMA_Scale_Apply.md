@@ -179,8 +179,9 @@ fits the grace; these sums are not measured process/client lifetime bounds.
 ## Controller and route packet: prepare before the outage
 
 Retain each canonical Deployment UID/selector, four Service aliases, Gateway,
-HTTPRoute, NEG identity and backend policies. No routing, affinity, HPA target,
-backend drain or health-check change is proposed. Include exact Route parents,
+HTTPRoute, NEG identity and backend policies. No routing, affinity,
+backend drain or health-check change is proposed. The only temporary HPA-target
+exception is the separately granted S3b exercise linked below. Include exact Route parents,
 backendRefs/ports, Service selectors/targetPorts, endpoint/NEG membership and
 backend health source in the lead-approved packet. Console/legacy-console are
 reachable EG routes. GCP backendServices list permission was denied to the
@@ -278,6 +279,12 @@ before-spec), then the separate AM/EG HPA creation plans and approvals in the
 linked S3 runbook. Each HPA is min2/max5, up0 Max(+2,+100%)/60s, down300 -1/120s.
 Creation requires absence, fresh metrics/capacity qualification and stable
 pairs; server dry-run and quota admission alone do not prove runtime capacity.
+
+The lead-selected [S3b scale/drain exercise](notes/reviews/2026-11-15/s3b-execution.md)
+uses existing real traffic and sequential guarded AM/EG target lower/restore
+operations. It changes no Deployment replica count directly and keeps the
+original scaling policy. Report observed transition/drain evidence separately
+from useful-load/max-five qualification; the exercise cannot supply those claims.
 
 Using separately approved load, observe real metric-triggered2→4→5 for each
 (Max of+2/+100% per60s, up stabilization0),
