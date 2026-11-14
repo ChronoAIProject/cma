@@ -6,6 +6,26 @@ use std::time::Duration;
 mod support;
 use support::*;
 
+#[tokio::test]
+async fn document_reclaim_discovery_is_not_starved_by_another_owners_condemned_batch() {
+    let (store, blobs, maintenance) = fixture();
+    for index in 0..RECLAIM_BATCH {
+        store.reserve(source(index), 0).await;
+        store.set_state(&source(index), State::Condemned).await;
+    }
+    let mut other = source(RECLAIM_BATCH);
+    other.owner_hash = digest(b"other-maintenance-owner");
+    store.reserve(other.clone(), 0).await;
+    // Retaining every condemned row models another worker's active leases.
+    store.refuse_claim.store(true, Ordering::SeqCst);
+    for _ in 0..3 {
+        maintenance.reclaim_step(NOW).await.unwrap();
+    }
+    assert_eq!(store.state(&other).await, Some(State::Condemned));
+    assert_eq!(store.judgements.load(Ordering::SeqCst), 1);
+    assert_eq!(blobs.calls.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test(start_paused = true)]
 async fn reclaim_deletes_only_after_exclusive_claim() {
     for already_condemned in [false, true] {
@@ -157,13 +177,55 @@ async fn delete_failure_keeps_condemned_and_reports_retry_after() {
     assert_eq!(outcome.backlog.pending_objects, 1);
     assert!(blobs.contains(&source).await);
     assert_eq!(store.counters().await, [1, source.bytes as i64, 1]);
-    // A failed delete retains its exclusive lease until it strictly expires.
+    // Neither an active lease nor its expiry cancels the longer retry pause.
     assert_eq!(maintenance.reclaim_step(NOW).await.unwrap().released, 0);
-    let retried = maintenance
+    tokio::time::advance(DELETE_LEASE + Duration::from_millis(1)).await;
+    assert_eq!(
+        maintenance
+            .reclaim_step(NOW + DELETE_LEASE.as_millis() as i64 + 1)
+            .await
+            .unwrap()
+            .released,
+        0
+    );
+    assert_eq!(blobs.calls.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(900) - DELETE_LEASE).await;
+    let retried = maintenance.reclaim_step(NOW + 900_001).await.unwrap();
+    assert_eq!((retried.judged, retried.released), (0, 1));
+}
+
+#[tokio::test(start_paused = true)]
+async fn retry_pause_survives_backlog_failure_without_blocking_discovery() {
+    let (store, blobs, maintenance) = fixture();
+    store.reserve(source(1), 0).await;
+    blobs
+        .fail(BlobMaintenanceError {
+            error: DocumentError::Unavailable,
+            retry_after: Some(Duration::from_secs(900)),
+        })
+        .await;
+    store.fail_backlog.store(true, Ordering::SeqCst);
+    assert_eq!(
+        maintenance.reclaim_step(NOW).await,
+        Err(DocumentError::Unavailable)
+    );
+    store.fail_backlog.store(false, Ordering::SeqCst);
+    store.reserve(source(2), 0).await;
+    tokio::time::advance(DELETE_LEASE + Duration::from_millis(1)).await;
+    let discovery = maintenance
         .reclaim_step(NOW + DELETE_LEASE.as_millis() as i64 + 1)
         .await
         .unwrap();
-    assert_eq!((retried.judged, retried.released), (0, 1));
+    assert_eq!(
+        (discovery.judged, discovery.condemned, discovery.released),
+        (1, 1, 0)
+    );
+    assert!(!discovery.has_more);
+    assert_eq!(blobs.calls.load(Ordering::SeqCst), 1);
+    tokio::time::advance(Duration::from_secs(900) - DELETE_LEASE).await;
+    let resumed = maintenance.reclaim_step(NOW + 900_001).await.unwrap();
+    assert_eq!(resumed.released, 2);
+    assert_eq!(blobs.calls.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
@@ -232,8 +294,13 @@ async fn reclaim_honours_strict_grace_and_batch_with_condemned_rows_first() {
         .await;
     let candidates = store.candidates(cutoff, RECLAIM_BATCH).await.unwrap();
     assert!(candidates[0].condemned);
-    assert_eq!(candidates.len(), RECLAIM_BATCH);
+    assert_eq!(
+        candidates.iter().filter(|row| !row.condemned).count(),
+        RECLAIM_BATCH
+    );
+    assert_eq!(candidates.len(), RECLAIM_BATCH + 1);
     let outcome = maintenance.reclaim_step(NOW).await.unwrap();
+    assert_eq!(outcome.judged, RECLAIM_BATCH as u64);
     assert_eq!(outcome.released, RECLAIM_BATCH as u64);
     assert_eq!(store.state(&source(0)).await, Some(State::Reserved));
     assert_eq!(outcome.backlog.pending_objects, 2);

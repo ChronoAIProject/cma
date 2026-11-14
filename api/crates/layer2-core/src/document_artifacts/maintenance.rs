@@ -4,7 +4,10 @@ use super::{
 };
 use futures_util::{stream::FuturesUnordered, StreamExt};
 use std::collections::VecDeque;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 pub const RECLAIM_GRACE: Duration = Duration::from_secs(30 * 60);
 pub const RECLAIM_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -57,13 +60,16 @@ pub struct ReclaimOutcome {
     pub blocked: bool,
     pub blocked_reason: Option<&'static str>,
     pub retry_after: Option<Duration>,
+    /// A bounded slice made progress and may have more immediately runnable work.
+    pub has_more: bool,
     pub backlog: ReclaimBacklog,
 }
 #[async_trait::async_trait]
 pub trait DocumentReclaimStore: Send + Sync {
     /// True only while the quota switch is enabled and the ledger is ready.
     async fn ready(&self) -> Result<bool, DocumentError>;
-    /// Return condemned rows first, followed by reservations older than the cutoff.
+    /// Return at most `limit` rows per class: claimable condemned rows, then old
+    /// reservations. Lease eligibility uses the cutoff plus `RECLAIM_GRACE`.
     async fn candidates(
         &self,
         reserved_before: i64,
@@ -87,6 +93,7 @@ pub struct DocumentMaintenance {
     blobs: Arc<dyn DocumentBlobMaintenance>,
     enabled: bool,
     delete_holder: String,
+    delete_pause: Mutex<Option<(tokio::time::Instant, Duration)>>,
 }
 impl DocumentMaintenance {
     pub fn new(
@@ -100,6 +107,7 @@ impl DocumentMaintenance {
             enabled,
             // Constructed once for each maintenance worker during process startup.
             delete_holder: uuid::Uuid::new_v4().to_string(),
+            delete_pause: Mutex::new(None),
         }
     }
     /// Run one bounded batch. `now` is Unix milliseconds.
@@ -129,9 +137,16 @@ impl DocumentMaintenance {
         let candidates = self.store.candidates(cutoff, RECLAIM_BATCH).await?;
         let mut outcome = ReclaimOutcome::default();
         let mut condemned = VecDeque::new();
-        for candidate in candidates.into_iter().take(RECLAIM_BATCH) {
+        let mut retries = 0;
+        for candidate in candidates.into_iter().take(RECLAIM_BATCH * 2) {
             if candidate.condemned {
-                condemned.push_back(candidate);
+                if retries < RECLAIM_BATCH {
+                    retries += 1;
+                    condemned.push_back(candidate);
+                }
+                continue;
+            }
+            if outcome.judged >= RECLAIM_BATCH as u64 {
                 continue;
             }
             outcome.judged += 1;
@@ -144,10 +159,39 @@ impl DocumentMaintenance {
                 Judgement::Skipped => (),
             }
         }
-        self.delete_condemned(condemned, &mut outcome, clock)
-            .await?;
+        let full_delete_batch = condemned.len() >= RECLAIM_BATCH;
+        condemned.truncate(RECLAIM_BATCH);
+        outcome.retry_after = self.delete_delay();
+        if outcome.retry_after.is_none() {
+            self.delete_condemned(condemned, &mut outcome, clock)
+                .await?;
+        }
+        outcome.has_more = (outcome.judged == RECLAIM_BATCH as u64
+            && outcome.committed + outcome.condemned > 0)
+            || (full_delete_batch && outcome.deleted > 0 && outcome.delete_failed == 0);
         outcome.backlog = self.store.backlog(now).await?;
         Ok(outcome)
+    }
+
+    fn delete_delay(&self) -> Option<Duration> {
+        let mut pause = self.delete_pause.lock().unwrap();
+        let remaining = pause.map(|(started, delay)| delay.saturating_sub(started.elapsed()));
+        if remaining == Some(Duration::ZERO) {
+            *pause = None;
+            None
+        } else {
+            remaining
+        }
+    }
+
+    fn pause_deletes(&self, delay: Duration) {
+        let mut pause = self.delete_pause.lock().unwrap();
+        let remaining = pause.map_or(Duration::ZERO, |(started, delay)| {
+            delay.saturating_sub(started.elapsed())
+        });
+        if delay >= remaining {
+            *pause = Some((tokio::time::Instant::now(), delay));
+        }
     }
 
     async fn delete_condemned(
@@ -216,6 +260,9 @@ impl DocumentMaintenance {
         candidate: ObjectCandidate,
         clock: ReclaimClock,
     ) -> DeleteAttempt {
+        if self.delete_delay().is_some() {
+            return Ok(None);
+        }
         let Some(claim) = self
             .store
             .claim_delete(&candidate, &self.delete_holder, clock.now())
@@ -227,6 +274,7 @@ impl DocumentMaintenance {
         // completions. Do not send a request with an almost expired lease.
         if claim.lease_until.saturating_sub(clock.now())
             <= (DELETE_OPERATION_TIMEOUT + DELETE_LEASE_MARGIN).as_millis() as i64
+            || self.delete_delay().is_some()
         {
             return Ok(None);
         }
@@ -235,6 +283,11 @@ impl DocumentMaintenance {
             .delete(&candidate.source.object_key())
             .await
             .map(|_| ());
+        if let Err(error) = &result {
+            // Remember the pause before draining other effects or reading the
+            // backlog, so cancellation cannot discard an observed retry delay.
+            self.pause_deletes(error.retry_after.unwrap_or(RECLAIM_INTERVAL));
+        }
         Ok(Some((claim, result)))
     }
 }
