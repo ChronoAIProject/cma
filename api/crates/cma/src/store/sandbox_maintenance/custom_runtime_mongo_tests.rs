@@ -8,6 +8,37 @@ use layer2_core::sandbox::{
 };
 use mongodb::bson::Document;
 
+struct ConfiguredAuthority(layer2_core::sandbox::RuntimeMigrationPolicy);
+
+#[async_trait::async_trait]
+impl layer2_core::sandbox::RuntimeMigrationAuthority for ConfiguredAuthority {
+    fn policy(&self) -> &layer2_core::sandbox::RuntimeMigrationPolicy {
+        &self.0
+    }
+    async fn resolve(
+        &self,
+        _: &SandboxId,
+    ) -> Result<layer2_core::sandbox::RuntimeMigrationAuthorityEntry, SandboxStoreError> {
+        panic!("store admission and exact replay must not reload the bundle")
+    }
+}
+
+fn install_policy(store: &mut MongoSandboxStore, request: &SandboxCustomRuntimeMigrationAdmission) {
+    store.runtime_migration_authority = Some(std::sync::Arc::new(ConfiguredAuthority(
+        layer2_core::sandbox::RuntimeMigrationPolicy {
+            schema_version: 1,
+            policy_id: request.basis.policy_id.clone(),
+            deployment_id: "local-mongo-fixture".into(),
+            scoped_sandboxes: vec![request.sandbox_id().clone()],
+            targets: vec![layer2_core::sandbox::RuntimeMigrationTarget {
+                repository: "registry.example/runtime".into(),
+                image: request.migration.target_image.clone(),
+            }],
+            qualified_sources: vec![],
+        },
+    )));
+}
+
 fn image(digit: char) -> String {
     format!(
         "registry.example/runtime@sha256:{}",
@@ -93,6 +124,18 @@ async fn custom_migration_mongo_is_atomic_and_retains_writer_floor_and_exact_rep
     let original = paused("sbx_custom_atomic");
     store.create_sandbox(original.clone()).await.unwrap();
     let request = admission(&original);
+    // Even the typed store port cannot admit without the installed policy.
+    assert!(store
+        .admit_custom_runtime_migration(request.clone())
+        .await
+        .is_err());
+    install_policy(&mut store, &request);
+    let mut unqualified = request.clone();
+    unqualified.basis.policy_id = "uninstalled-policy".into();
+    assert!(store
+        .admit_custom_runtime_migration(unqualified)
+        .await
+        .is_err());
     let mut expired = request.clone();
     expired.basis.authority_expires_at_ms = expired.basis.authority_issued_at_ms - 1;
     assert!(store.admit_custom_runtime_migration(expired).await.is_err());
@@ -143,6 +186,7 @@ async fn custom_migration_mongo_is_atomic_and_retains_writer_floor_and_exact_rep
         .unwrap()
         .is_some());
     store.runtime_migration_enabled = false;
+    store.runtime_migration_authority = None;
     assert_eq!(
         store
             .admit_custom_runtime_migration(request.clone())
@@ -193,6 +237,7 @@ async fn custom_migration_mongo_conflicts_with_parent_change_after_snapshot() {
     let original = paused("sbx_custom_conflict");
     store.create_sandbox(original.clone()).await.unwrap();
     let request = admission(&original);
+    install_policy(&mut store, &request);
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     store
@@ -243,6 +288,7 @@ async fn custom_migration_mongo_unknown_commit_reconciles_one_admission() {
     let original = paused("sbx_custom_unknown");
     store.create_sandbox(original.clone()).await.unwrap();
     let request = admission(&original);
+    install_policy(&mut store, &request);
     admin.database("admin").run_command(doc! {"configureFailPoint":"failCommand","mode":{"times":5_i32},"data":{
         "failCommands":["commitTransaction"],"appName":&app_name,"writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"injected ambiguous custom migration commit"}
     }}).await.unwrap();
