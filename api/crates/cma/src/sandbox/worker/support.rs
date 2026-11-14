@@ -146,6 +146,7 @@ impl SandboxWorker {
     ) -> Result<(), SandboxStoreError> {
         let decision = self.retry_decision(&sandbox, &failure, self.config.retry_delay);
         let telemetry = self.retry_telemetry(&sandbox, &failure, decision, now);
+        let native_retry = self.native_retry_class(&sandbox, &failure);
         let expected_revision = sandbox.revision;
         let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
@@ -169,6 +170,7 @@ impl SandboxWorker {
             },
         )
         .await?;
+        super::retry::native_retry_published(native_retry);
         if let Some(telemetry) = telemetry {
             telemetry.published();
         }
@@ -215,6 +217,17 @@ pub(super) fn runtime(sandbox: &Sandbox) -> Option<RuntimeHandle> {
 }
 
 pub(super) fn operation_id(sandbox: &Sandbox) -> String {
+    if sandbox.work.authority_protocol.is_some() {
+        // A new claimant continues the same effect. Runtime and credential
+        // generations distinguish later obligations without using lease fences.
+        return format!(
+            "sandbox-work-v1:{}:{:?}:{}:{}",
+            sandbox.id,
+            sandbox.work.step,
+            sandbox.lifecycle.runtime_generation_high_water,
+            sandbox.credential.key_generation
+        );
+    }
     let fence = sandbox.work.lease.as_ref().map_or(0, |lease| lease.fence);
     format!("{}:{:?}:{fence}", sandbox.id, sandbox.work.step)
 }
@@ -273,6 +286,7 @@ pub(super) struct WorkerFailure {
     detail: String,
     retryable: bool,
     retry_kind: WorkRetryFailure,
+    pub(super) native_claim_pending: bool,
 }
 
 impl WorkerFailure {
@@ -314,6 +328,7 @@ impl WorkerFailure {
             class,
             detail: safe_detail(detail),
             retryable,
+            native_claim_pending: false,
             retry_kind: if retryable {
                 WorkRetryFailure::Transient
             } else {
@@ -353,8 +368,12 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
         } else {
             WorkRetryFailure::Transient
         }),
-        AdapterError::NativeClaimNotReady(_) => {
-            WorkerFailure::retryable("native claim is not ready; original identity retained")
+        AdapterError::NativeClaimNotReady(reason) => {
+            let mut failure =
+                WorkerFailure::retryable("native claim is not ready; original identity retained");
+            failure.native_claim_pending =
+                reason == layer3_adapter::agent_sandbox::NativeClaimGuardReason::Pending;
+            failure
         }
         AdapterError::RuntimeLedgerHold(_) => {
             WorkerFailure::retryable("runtime mutation ledger capacity requires recovery")
@@ -403,6 +422,9 @@ pub(super) fn install_failure(error: AdapterError) -> WorkerFailure {
 
 pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
     match error {
+        CredentialError::Uncertain => {
+            WorkerFailure::waiting("credential issuance is uncertain; reconciliation will retry")
+        }
         CredentialError::ServiceNotGranted(service) => {
             WorkerFailure::service_not_granted(service.as_str())
         }
@@ -472,20 +494,4 @@ fn safe_detail(detail: &str) -> String {
 }
 
 #[cfg(test)]
-mod claim_guard_tests {
-    use super::*;
-    use layer3_adapter::agent_sandbox::NativeClaimGuardReason;
-
-    #[test]
-    fn readiness_guard_remains_retryable_without_replacement_authority() {
-        for reason in [
-            NativeClaimGuardReason::TimedOut,
-            NativeClaimGuardReason::CrashLoop,
-            NativeClaimGuardReason::Restarting,
-        ] {
-            let failure = adapter_failure(AdapterError::NativeClaimNotReady(reason));
-            assert!(failure.retryable);
-            assert_eq!(failure.retry_kind(), WorkRetryFailure::Transient);
-        }
-    }
-}
+mod claim_guard_tests;

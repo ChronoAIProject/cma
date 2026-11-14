@@ -146,6 +146,8 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_billing_state", Sandbox(&["_id"])),
     ("sandbox_colors", Empty),
     ("sandbox_controls", Sandbox(&["sandbox_id"])),
+    // Legacy archive/restore cannot retire a retained no-resend obligation.
+    ("sandbox_credential_issuance", Empty),
     ("sandbox_credential_revocations", Sandbox(&["sandbox_id"])),
     ("sandbox_credentials", Sandbox(&["sandbox_id"])),
     ("sandbox_events", Sandbox(&["sandbox_id"])),

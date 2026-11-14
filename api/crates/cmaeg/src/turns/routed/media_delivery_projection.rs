@@ -45,6 +45,11 @@ pub(in crate::turns::routed) fn summary(state: &MediaResponseState) -> &'static 
             "confirmed"
         }
     } else {
+        if state.native_receipt.as_ref().is_some_and(|receipt| {
+            receipt.has_parts() && !matches!(receipt.delivery, DeliveryOutcome::Confirmed { .. })
+        }) {
+            return "unknown";
+        }
         match &state.native {
             NativeOutcome::NotStarted => "pending",
             NativeOutcome::Settled {

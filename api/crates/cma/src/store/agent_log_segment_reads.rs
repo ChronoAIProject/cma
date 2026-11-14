@@ -82,7 +82,7 @@ pub(super) async fn projected_usage(
     session: &mut ClientSession,
 ) -> Result<Option<AgentUsageReading>, SandboxStoreError> {
     let Some(_) = segmented_source(store, expected, session, true).await? else {
-        return Ok(None);
+        return super::agent_opening_reads::usage(store, expected, session).await;
     };
     let source = segments::capture::capture(
         store,

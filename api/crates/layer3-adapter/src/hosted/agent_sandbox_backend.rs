@@ -55,6 +55,12 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn desktop_ownership(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.transport.desktop_ownership()
+    }
     fn capacity_recovery_transport(
         &self,
         _handle: &RuntimeHandle,

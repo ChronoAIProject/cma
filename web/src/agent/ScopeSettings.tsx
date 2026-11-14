@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule } from './transport/readRetry';
 import { useEffect, useRef, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { AgentDetail } from '../api/types';
@@ -57,30 +59,28 @@ export function ScopeSettings({
   });
   useEffect(() => {
     if (!active || !intent?.requestId || result?.status === 'failed') return;
-    const controller = new AbortController();
     const started = performance.now();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const poll = async () => {
+    let failures = 0;
+    const observer = observeRead(async (signal) => {
       try {
-        const requests = await accessRequests.list(detail.id, controller.signal);
-        if (controller.signal.aborted) return;
+        const requests = await accessRequests.list(detail.id, signal);
+        if (signal.aborted) return;
         const request = requests.find(({ id }) => id === intent.requestId);
         if (request) {
           observeRef.current(request);
           if (['succeeded', 'failed', 'denied'].includes(request.status)) return;
         }
         setError(undefined);
+        failures = 0;
       } catch (cause) {
-        if (controller.signal.aborted) return;
+        if (signal.aborted) return;
         setError(cause instanceof Error ? cause.message : 'The update could not be checked.');
+        return retrySchedule(cause, ++failures);
       }
-      timer = setTimeout(() => void poll(), performance.now() - started < 5000 ? 500 : 2000);
-    };
-    void poll();
-    return () => {
-      controller.abort();
-      clearTimeout(timer);
-    };
+      const next = performance.now() - started < 5000 ? 500 : 2000;
+      return { next, cooldown: next };
+    });
+    return () => observer.dispose();
   }, [active, detail.id, intent?.requestId, result?.status]);
 
   const save = async () => {

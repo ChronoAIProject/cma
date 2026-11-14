@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::{config::Config, store::MongoStores};
 
 pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String> {
-    let mut stores = MongoStores::connect_with_authority(
+    let mut stores = MongoStores::connect_with_policy(
         &config.mongodb_uri,
         &config.mongodb_database,
         &config.deployment_id,
@@ -14,7 +14,10 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             &config.runtime.sandbox_image,
             config.runtime.home_policy.as_ref(),
         ),
-        config.mongodb_authority,
+        crate::store::mongo::MongoConnectionPolicy {
+            authority: config.mongodb_authority,
+            agent_manager_replicas: config.agent_manager_replicas.is_some(),
+        },
     )
     .await
     .map_err(|error| format!("durable stores are not usable: {error}"))?;
@@ -27,11 +30,13 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         (*stores.sandbox_model)
             .clone()
             .with_runtime_loss_bounded_proof(config.features.runtime_loss_bounded_proof_enabled)
+            .with_renewable_work(config.agent_manager_replicas.is_some())
             .with_global_sandbox_limit(config.global_sandbox_limit)
             .with_platform_counter_shards(config.features.platform_counter_shards)
             .with_bounded_close_retries(config.features.bounded_close_retries)
             .with_retry_single_marker(config.features.retry_single_marker_enabled)
             .with_scan_cooperation(config.features.agent_log_scan_cooperative_enabled)
+            .with_agent_connection_observations(config.features.agent_connection_observations)
             .with_bounded_approval_reads(config.features.bounded_approval_reads)
             .with_fleet_log_percentage(config.agent_log_fleet_percent)
             .with_segment_adoption_enabled(config.features.segment_adoption_enabled)
@@ -46,8 +51,19 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .prepare_bounded_admission(&config.bounded_admission_agents)
             .await?,
     );
+    if config.agent_manager_replicas.is_some() {
+        stores.sandbox_model = Arc::new(
+            (*stores.sandbox_model)
+                .clone()
+                .enable_agent_ownership(uuid::Uuid::new_v4().to_string())
+                .await
+                .map_err(|_| "Agent Manager ownership store is unavailable")?,
+        );
+    }
     Ok(Arc::new(
-        stores.with_writer_policy(config.task_experience.clone()),
+        stores
+            .with_empty_discovery(config.features.empty_discovery)
+            .with_writer_policy(config.task_experience.clone()),
     ))
 }
 

@@ -29,7 +29,15 @@ impl AgentFileService {
         let diagnostic = DiagnosticContext::current();
         file_read_diagnostics::scope(
             move |stage, outcome, elapsed_us| {
-                tracing::info!(target: "agent_file_read_phase", parent: None,
+                // JSON formatters include the current scope even for a
+                // parentless event. Isolate it at the same level and target so
+                // restrictive filters cannot leave a private parent attached.
+                let span = tracing::info_span!(target: "agent_file_read_phase", parent: None, "agent_file_read");
+                if span.is_disabled() {
+                    return;
+                }
+                let _entered = span.enter();
+                tracing::info!(target: "agent_file_read_phase", parent: &span,
                 phase = stage.label(), outcome = outcome.label(), elapsed_us,
                 route = diagnostic.route.as_ref(), request_hash = %diagnostic.request_hash,
                 "agent file read phase");

@@ -14,6 +14,8 @@ pub use metric_observation::{MetricIdentity, MetricRuntime};
 mod claim_guard;
 mod native_assignment;
 pub use claim_guard::NativeClaimGuardReason;
+mod readiness_observation;
+pub use readiness_observation::NativeReadinessObservation;
 mod native_runtime_proof;
 mod network_policy;
 mod nonexecuting;
@@ -50,7 +52,7 @@ pub use pool::{
 pub use pool::{NativeFsGroupChangePolicy, NativePoolPodPolicy};
 pub use pool::{NativeHomeVolumes, NativePoolHomeOrigin};
 pub use pool::{NativePoolCleanup, NativePoolMember};
-pub use pool::{NativePoolConfiguration, NativePoolControl};
+pub use pool::{NativePoolConfiguration, NativePoolControl, NativePoolTarget};
 pub(crate) use pool::{NATIVE_HOME_ANNOTATION, NATIVE_HOME_REQUEST_LABEL};
 pub use runtime_stream::RuntimeStream;
 pub(crate) use runtime_stream::RuntimeStreamKind;

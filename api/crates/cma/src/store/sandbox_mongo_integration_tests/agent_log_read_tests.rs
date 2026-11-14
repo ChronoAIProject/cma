@@ -1,5 +1,6 @@
 use super::*;
 
+mod opening;
 mod transcript_projection_tests;
 mod usage_projection_tests;
 

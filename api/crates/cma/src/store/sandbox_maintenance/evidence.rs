@@ -164,10 +164,10 @@ pub(super) async fn fence_idle_workspaces(
         workspaces.push(workspace);
     }
     for workspace in workspaces {
-        let locked = store.workspaces.update_one(doc! {
+        let locked = store.workspaces.update_one(crate::store::work_schema::query(doc! {
             "_id": workspace.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "sandbox_id": sandbox.id.as_str(), "revision": signed(workspace.revision, "maintenance Workspace revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-        }, doc! { "$inc": { "sandbox_maintenance_fence": 1_i64 } }).session(&mut *session).await.map_err(ApplyError::Driver)?;
+        }), doc! { "$inc": { "sandbox_maintenance_fence": 1_i64 } }).session(&mut *session).await.map_err(ApplyError::Driver)?;
         if locked.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }

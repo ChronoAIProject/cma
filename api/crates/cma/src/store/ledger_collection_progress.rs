@@ -85,7 +85,7 @@ impl LedgerCollectionStore for MongoSandboxStore {
         let filter = parent_filter(sandbox, expected_sandbox_revision)?;
         let document = self
             .sandboxes
-            .find_one(filter.clone())
+            .find_one(crate::store::work_schema::query(filter.clone()))
             .await
             .map_err(unavailable)?
             .ok_or(SandboxStoreError::Conflict)?;
@@ -108,7 +108,10 @@ impl LedgerCollectionStore for MongoSandboxStore {
         // Do not write retention in a disjoint collection (snapshot write skew).
         let outcome = self
             .sandboxes
-            .update_one(filter, doc! {"$set":fields})
+            .update_one(
+                crate::store::work_schema::query(filter),
+                doc! {"$set":fields},
+            )
             .await
             .map_err(unavailable)?;
         if outcome.matched_count != 1 {
@@ -132,7 +135,7 @@ impl LedgerCollectionStore for MongoSandboxStore {
         );
         let document = self
             .sandboxes
-            .find_one(filter.clone())
+            .find_one(crate::store::work_schema::query(filter.clone()))
             .await
             .map_err(unavailable)?
             .ok_or(SandboxStoreError::Conflict)?;
@@ -151,7 +154,10 @@ impl LedgerCollectionStore for MongoSandboxStore {
         );
         let outcome = self
             .sandboxes
-            .update_one(filter, doc! {"$set":fields})
+            .update_one(
+                crate::store::work_schema::query(filter),
+                doc! {"$set":fields},
+            )
             .await
             .map_err(unavailable)?;
         if outcome.matched_count != 1 {

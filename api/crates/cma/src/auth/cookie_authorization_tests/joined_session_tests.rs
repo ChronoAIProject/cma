@@ -27,7 +27,7 @@ async fn joined_session_still_verifies_every_request_and_rejects_provider_revoca
     for _ in 0..2 {
         assert!(fixture
             .auth
-            .resolve_request_with_policy(&headers, true)
+            .resolve_request(&headers)
             .await
             .unwrap()
             .is_some());
@@ -36,7 +36,7 @@ async fn joined_session_still_verifies_every_request_and_rejects_provider_revoca
     *fixture.control.introspection.write().await = Reply::json(json!({"active":false}));
     assert!(fixture
         .auth
-        .resolve_request_with_policy(&headers, true)
+        .resolve_request(&headers)
         .await
         .unwrap()
         .is_none());
@@ -50,10 +50,7 @@ async fn joined_session_rechecks_logout_after_provider_verification() {
     fixture.control.introspection.write().await.gate = Some(gate.clone());
     let auth = fixture.auth.clone();
     let pending_headers = headers.clone();
-    let pending = tokio::spawn(async move {
-        auth.resolve_request_with_policy(&pending_headers, true)
-            .await
-    });
+    let pending = tokio::spawn(async move { auth.resolve_request(&pending_headers).await });
     tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
         .await
         .unwrap();
@@ -71,8 +68,7 @@ async fn joined_session_rechecks_token_generation_after_provider_verification() 
     let gate = Arc::new(Gate::default());
     fixture.control.introspection.write().await.gate = Some(gate.clone());
     let auth = fixture.auth.clone();
-    let pending =
-        tokio::spawn(async move { auth.resolve_request_with_policy(&headers, true).await });
+    let pending = tokio::spawn(async move { auth.resolve_request(&headers).await });
     tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
         .await
         .unwrap();
@@ -123,8 +119,8 @@ async fn verification_counts_led_and_shared_without_sensitive_fields() {
         let gate = Arc::new(Gate::default());
         fixture.control.introspection.write().await.gate = Some(gate.clone());
         let (a, b, ()) = tokio::join!(
-            request_for_session(&fixture.auth, &state.subject, state.clone()),
-            request_for_session(&fixture.auth, &state.subject, state.clone()),
+            request_for_browser_cookie(&fixture.auth, &state.subject, state.clone()),
+            request_for_browser_cookie(&fixture.auth, &state.subject, state.clone()),
             async {
                 gate.reached.notified().await;
                 gate.release.notify_one();
