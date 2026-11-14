@@ -59,6 +59,8 @@ pub(crate) struct DesktopReceiver {
     changed: watch::Sender<()>,
     #[cfg(test)]
     persisted: std::sync::atomic::AtomicUsize,
+    #[cfg(test)]
+    custody_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl DesktopReceiver {
@@ -83,6 +85,8 @@ impl DesktopReceiver {
             changed: watch::channel(()).0,
             #[cfg(test)]
             persisted: std::sync::atomic::AtomicUsize::new(0),
+            #[cfg(test)]
+            custody_reads: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -96,6 +100,9 @@ impl DesktopReceiver {
         if state.poisoned {
             return Err(unavailable());
         }
+        #[cfg(test)]
+        self.custody_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         // Detect missing/corrupt/changed custody on subsequent control calls.
         if persistence::load(&self.root).ok().as_ref() != Some(&state.record) {
             self.poison(state);

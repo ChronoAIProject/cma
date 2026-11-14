@@ -54,9 +54,9 @@ async fn remains_closed(fixture: &Fixture, expected: Option<Vec<u8>>) {
     assert!(fixture.receiver.tasks.lock().await.is_empty());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn confirmation_preserves_damaged_custody_after_join_with_or_without_prior_poison() {
-    for poison in [false, true] {
+    for (poison, expire) in [(false, false), (true, false), (false, true), (true, true)] {
         for fault in ["missing", "corrupt", "changed", "directory"] {
             let fixture = Fixture::new();
             let (release, wait) = tokio::sync::oneshot::channel();
@@ -83,8 +83,18 @@ async fn confirmation_preserves_damaged_custody_after_join_with_or_without_prior
             if poison {
                 assert!(fixture.receiver.challenge(fixture.request(None)).is_err());
             }
+            if expire {
+                tokio::time::advance(Duration::from_secs(11)).await;
+            }
             release.send(()).unwrap();
-            assert!(confirm.await.unwrap().is_err());
+            assert_eq!(
+                confirm.await.unwrap().err().unwrap().code,
+                "desktop_ownership_unavailable"
+            );
+            {
+                let state = fixture.receiver.state.lock().unwrap();
+                assert!(state.poisoned && state.legacy_closed && state.deadline.is_none());
+            }
             remains_closed(&fixture, expected).await;
         }
     }
