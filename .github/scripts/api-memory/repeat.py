@@ -174,6 +174,30 @@ class Observer:
         return subprocess.check_output(["docker", "--context", "desktop-linux", *arguments],
                                        text=True, stderr=subprocess.PIPE, timeout=15)
 
+    def swap_readback(self, status):
+        began = time.monotonic()
+        result = {"process_vm_swap_kib": "UNAVAILABLE", "cgroup_memory_swap_current_bytes": "UNAVAILABLE",
+                  "cgroup_memory_swap_max_bytes": "UNAVAILABLE"}
+        for line in status.splitlines():
+            if line.startswith("VmSwap:"):
+                try:
+                    result["process_vm_swap_kib"] = int(line.split()[1])
+                except (ValueError, IndexError):
+                    pass
+        # Only initial/quiescent phases call this fixed, bounded read; no recurring collector.
+        script = ('for qualification_field in memory.swap.current memory.swap.max; do '
+                  'if [ -r "/sys/fs/cgroup/$qualification_field" ]; then '
+                  'cat "/sys/fs/cgroup/$qualification_field"; else echo UNAVAILABLE; fi; done')
+        try:
+            values = self.docker("exec", self.config["container"], "sh", "-c", script).strip().splitlines()
+            if len(values) == 2:
+                for key, value in zip(("cgroup_memory_swap_current_bytes", "cgroup_memory_swap_max_bytes"), values):
+                    result[key] = int(value) if value.isdecimal() else value if value == "max" else "UNAVAILABLE"
+        except Exception as error:
+            result["cgroup_readback_failure_type"] = type(error).__name__
+        result["diagnostic_duration_seconds"] = time.monotonic() - began
+        return result
+
     def sample(self, phase, round_number):
         template = ('{{.Id}} {{.Image}} {{.RestartCount}} {{.State.StartedAt}} {{.State.Running}} '
                     '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}} {{.HostConfig.CpusetCpus}}')
@@ -193,6 +217,7 @@ class Observer:
         metrics = parse_metrics(get(self.config["metrics_origin"], "/metrics").decode("utf8"))
         if metrics["cma_runtime_workers"] != 8:
             raise RuntimeError("actual API Tokio worker count differs from paired contract")
+        swap = {"swap_readback": self.swap_readback(status)} if phase in ("initial", "quiescent") else {}
         now = datetime.datetime.now(datetime.timezone.utc)
         # Python 3.9 accepts microseconds, while Docker emits nanoseconds.
         started_text = re.sub(r"(\.\d{6})\d+", r"\1", identity[3]).replace("Z", "+00:00")
@@ -201,7 +226,7 @@ class Observer:
                 "process_age_seconds": (now - started).total_seconds(),
                 "elapsed_seconds": time.monotonic() - self.started, "phase": phase, "round": round_number,
                 "rss_kib": process["VmRSS"], "anonymous_kib": process["RssAnon"],
-                "threads": process["Threads"], "cpu_affinity": process["Cpus_allowed_list"], **metrics}
+                "threads": process["Threads"], "cpu_affinity": process["Cpus_allowed_list"], **metrics, **swap}
 
 
 def fit(rows):
