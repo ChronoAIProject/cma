@@ -71,6 +71,11 @@ pub async fn prepare(config: Config) -> Result<Arc<Shared>, &'static str> {
     let provider_bearer = random_secret()?;
     let service_bearer = random_secret()?;
     let definition = channel(&config.advertised_origin, &provider_bearer)?;
+    let channel_key = definition
+        .secrets
+        .channel_key
+        .clone()
+        .ok_or("fixture channel key")?;
     let record_id = definition.record_id.to_string();
     let owner = definition.owner.subject.clone();
     let pointer = ChannelPointer {
@@ -160,6 +165,7 @@ pub async fn prepare(config: Config) -> Result<Arc<Shared>, &'static str> {
     Ok(Arc::new(Shared {
         config,
         provider_bearer,
+        channel_key,
         events: Mutex::new(events),
         ledger: Mutex::new(ledger),
         oracle,

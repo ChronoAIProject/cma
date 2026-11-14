@@ -76,50 +76,7 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
         return problem(StatusCode::NOT_FOUND, "control_route");
     }
     if method == axum::http::Method::POST && path == "/api/v1/channel-relay/reply" {
-        let supplied = request
-            .headers()
-            .get("authorization")
-            .and_then(|x| x.to_str().ok())
-            .map(str::to_owned);
-        let Ok(body) = to_bytes(request.into_body(), 2 * 1024 * 1024).await else {
-            return problem(StatusCode::BAD_REQUEST, "sink_body");
-        };
-        let Ok(value) = serde_json::from_slice::<Value>(&body) else {
-            return problem(StatusCode::BAD_REQUEST, "sink_json");
-        };
-        let Some(event_id) = value["message_id"].as_str() else {
-            return problem(StatusCode::BAD_REQUEST, "sink_event");
-        };
-        let authenticated = {
-            let events = shared.events.lock().expect("fixture events");
-            events
-                .values()
-                .find(|event| event.identity.event_id.as_str() == event_id)
-                .and_then(|event| event.signed.as_ref())
-                .is_some_and(|signed| {
-                    supplied.as_deref().is_some_and(|value| {
-                        hash(value.as_bytes())
-                            .as_bytes()
-                            .ct_eq(hash(format!("Bearer {}", signed.reply).as_bytes()).as_bytes())
-                            .into()
-                    })
-                })
-        };
-        if !authenticated {
-            return problem(StatusCode::UNAUTHORIZED, "sink_auth");
-        }
-        let Some(text) = value["reply"]["text"].as_str() else {
-            return problem(StatusCode::BAD_REQUEST, "sink_text");
-        };
-        let receipt = shared
-            .ledger
-            .lock()
-            .expect("fixture ledger")
-            .effect(event_id, &body, text);
-        return match receipt {
-            Ok(value) => Json(value).into_response(),
-            Err(code) => problem(StatusCode::SERVICE_UNAVAILABLE, code),
-        };
+        return sink_reply(request, &shared.channel_key, &shared.events, &shared.ledger).await;
     }
     if !authorized(&request, &shared.provider_bearer) {
         return problem(StatusCode::UNAUTHORIZED, "provider_auth");
@@ -200,6 +157,61 @@ async fn handle(State(shared): State<Arc<Shared>>, request: Request) -> Response
     }
     problem(StatusCode::NOT_FOUND, "fixture_route")
 }
+async fn sink_reply(
+    request: Request,
+    channel_key: &cmaeg_core::channel::Secret,
+    events: &std::sync::Mutex<std::collections::BTreeMap<String, protocol::Event>>,
+    ledger: &std::sync::Mutex<super::ledger::Ledger>,
+) -> Response {
+    let supplied = request
+        .headers()
+        .get("authorization")
+        .and_then(|x| x.to_str().ok())
+        .map(str::to_owned);
+    let Ok(body) = to_bytes(request.into_body(), 2 * 1024 * 1024).await else {
+        return problem(StatusCode::BAD_REQUEST, "sink_body");
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&body) else {
+        return problem(StatusCode::BAD_REQUEST, "sink_json");
+    };
+    let Some(event_id) = value["message_id"].as_str() else {
+        return problem(StatusCode::BAD_REQUEST, "sink_event");
+    };
+    let authenticated = {
+        let events = events.lock().expect("fixture events");
+        events
+            .values()
+            .find(|event| event.identity.event_id.as_str() == event_id)
+            .and_then(|event| event.signed.as_ref())
+            .is_some_and(|signed| {
+                supplied.as_deref().is_some_and(|value| {
+                    // Durable replay uses the channel key rather than consuming
+                    // the event's single-use ingress reply token.
+                    let supplied = hash(value.as_bytes());
+                    let reply = hash(format!("Bearer {}", signed.reply).as_bytes());
+                    let channel = hash(format!("Bearer {}", channel_key.as_str()).as_bytes());
+                    (supplied.as_bytes().ct_eq(reply.as_bytes())
+                        | supplied.as_bytes().ct_eq(channel.as_bytes()))
+                    .into()
+                })
+            })
+    };
+    if !authenticated {
+        return problem(StatusCode::UNAUTHORIZED, "sink_auth");
+    }
+    let Some(text) = value["reply"]["text"].as_str() else {
+        return problem(StatusCode::BAD_REQUEST, "sink_text");
+    };
+    let receipt = ledger
+        .lock()
+        .expect("fixture ledger")
+        .effect(event_id, &body, text);
+    match receipt {
+        Ok(value) => Json(value).into_response(),
+        Err(code) => problem(StatusCode::SERVICE_UNAVAILABLE, code),
+    }
+}
+
 fn stream_response(
     row: &super::ledger::ResponseRecord,
     after: Option<u64>,
@@ -233,3 +245,7 @@ mod tests {
         assert!(!authorized(&Request::new(Body::empty()), &credential));
     }
 }
+
+#[cfg(test)]
+#[path = "sink_tests.rs"]
+mod sink_tests;
