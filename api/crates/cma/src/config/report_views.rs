@@ -1,21 +1,23 @@
 //! Retained snapshots and operator-scoped warming require separate activation.
-use layer2_core::sandbox_metrics::{query::opaque_id, Scope};
+use layer2_core::sandbox_metrics::{query::opaque_id, Scope, ViewWindow};
 use serde::Deserialize;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ViewPolicy {
     pub enabled: bool,
+    pub allocation_rollups_enabled: bool,
     pub freshness_seconds: u64,
     pub retain_seconds: u64,
     pub warm_enabled: bool,
     pub warm_seconds: u64,
-    pub warm_scopes: Vec<WarmScope>,
+    pub warm_scopes: Vec<WarmSelection>,
     pub view_scopes: Vec<WarmScope>,
 }
 impl Default for ViewPolicy {
     fn default() -> Self {
         Self {
             enabled: false,
+            allocation_rollups_enabled: false,
             freshness_seconds: 300,
             retain_seconds: 86_400,
             warm_enabled: false,
@@ -34,6 +36,35 @@ pub(crate) struct WarmScope {
     /// explicitly approved default Everyone/own-resources scope.
     pub sandbox_id: Option<String>,
 }
+/// Existing configurations keep warming 24 hours; other windows are explicit.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WarmSelection {
+    pub principal: String,
+    pub admin: bool,
+    pub sandbox_id: Option<String>,
+    #[serde(default)]
+    pub window: ViewWindow,
+}
+impl WarmSelection {
+    pub fn scope(&self) -> Scope {
+        Scope {
+            principal: self.principal.clone(),
+            admin: self.admin,
+        }
+    }
+}
+#[cfg(test)]
+impl From<WarmScope> for WarmSelection {
+    fn from(scope: WarmScope) -> Self {
+        Self {
+            principal: scope.principal,
+            admin: scope.admin,
+            sandbox_id: scope.sandbox_id,
+            window: ViewWindow::Day,
+        }
+    }
+}
 impl WarmScope {
     pub fn allows(&self, scope: &Scope, sandbox: Option<&str>) -> bool {
         self.principal == scope.principal
@@ -42,12 +73,6 @@ impl WarmScope {
                 .sandbox_id
                 .as_deref()
                 .is_none_or(|id| Some(id) == sandbox)
-    }
-    pub fn scope(&self) -> Scope {
-        Scope {
-            principal: self.principal.clone(),
-            admin: self.admin,
-        }
     }
 }
 impl ViewPolicy {
@@ -81,6 +106,8 @@ impl ViewPolicy {
             Ok(value)
         }
         let enabled = boolean(lookup, "CHRONO_USAGE_REPORT_VIEWS_ENABLED")?;
+        let allocation_rollups_enabled =
+            boolean(lookup, "CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED")?;
         let warm_enabled = boolean(lookup, "CHRONO_USAGE_REPORT_WARMER_ENABLED")?;
         let freshness_seconds = number(lookup, "CHRONO_USAGE_REPORT_FRESH_SECONDS", 300, 60, 3600)?;
         let retain_seconds = number(
@@ -95,11 +122,13 @@ impl ViewPolicy {
         if scopes.len() > 8192 {
             return Err("usage warm scope configuration exceeds 8192 bytes".into());
         }
-        let warm_scopes: Vec<WarmScope> =
+        let warm_scopes: Vec<WarmSelection> =
             serde_json::from_str(&scopes).map_err(|_| "invalid usage warm scopes".to_string())?;
         if warm_scopes.len() > 8
-            || warm_scopes.iter().any(|scope| {
-                scope.principal.is_empty()
+            || warm_scopes.iter().enumerate().any(|(index, scope)| {
+                scope.window == ViewWindow::Custom
+                    || warm_scopes[..index].contains(scope)
+                    || scope.principal.is_empty()
                     || scope.principal.len() > 256
                     || scope.principal.chars().any(char::is_control)
                     || scope
@@ -153,6 +182,7 @@ impl ViewPolicy {
         }
         Ok(Self {
             enabled,
+            allocation_rollups_enabled,
             freshness_seconds,
             retain_seconds,
             warm_enabled,

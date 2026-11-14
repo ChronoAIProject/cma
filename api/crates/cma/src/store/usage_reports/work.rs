@@ -148,22 +148,40 @@ impl ReportingStore {
         Ok(updated.matched_count == 1)
     }
 
+    #[cfg(test)]
     pub(crate) async fn write_report_chunk(
         &self,
         lease: &ReportLease,
         rows: &[Row],
         charts: Vec<Document>,
     ) -> Result<()> {
+        let charts = charts
+            .iter()
+            .map(|d| mongodb::bson::RawDocumentBuf::try_from(d).map_err(unavailable))
+            .collect::<Result<Vec<_>>>()?;
+        self.write_prepared_report_chunk(lease, rows, charts).await
+    }
+
+    pub(crate) async fn write_prepared_report_chunk(
+        &self,
+        lease: &ReportLease,
+        rows: &[Row],
+        charts: Vec<mongodb::bson::RawDocumentBuf>,
+    ) -> Result<()> {
         let row_count = rows.len() as i64;
         let chart_count = charts.len() as i64;
         let rows = rows
             .iter()
-            .map(|row| row_document(&lease.report, row))
+            .map(|row| {
+                mongodb::bson::RawDocumentBuf::try_from(&row_document(&lease.report, row)?)
+                    .map_err(unavailable)
+            })
             .collect::<Result<Vec<_>>>()?;
+        // These exact bytes are also inserted below. Counting preencoded
+        // documents avoids rebuilding large chart trees merely to budget them.
         let bytes = rows.iter().chain(&charts).try_fold(0_i64, |n, d| {
-            mongodb::bson::serialize_to_vec(d)
-                .map(|v| n + v.len() as i64)
-                .map_err(unavailable)
+            n.checked_add(d.as_bytes().len() as i64)
+                .ok_or(MetricsError::Busy)
         })?;
         if bytes > self.budgets.report_bytes {
             return Err(MetricsError::Busy);
@@ -189,6 +207,7 @@ impl ReportingStore {
         }
         if !rows.is_empty() {
             self.collection(ROWS)
+                .clone_with_type::<mongodb::bson::RawDocumentBuf>()
                 .insert_many(rows)
                 .session(&mut session)
                 .await
@@ -196,6 +215,7 @@ impl ReportingStore {
         }
         if !charts.is_empty() {
             self.collection(CHARTS)
+                .clone_with_type::<mongodb::bson::RawDocumentBuf>()
                 .insert_many(charts)
                 .session(&mut session)
                 .await

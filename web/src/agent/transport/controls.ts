@@ -2,6 +2,7 @@ import { ApiError, type V2ResponseControlCommand, type V2ResponseControl } from 
 import type { ConversationState } from '../model';
 import type { AgentV2Session } from './client';
 import type { ControlRecord } from './controlRecord';
+import type { RequestRecovery } from './requestRecovery';
 
 export async function submitV2Control(
   session: AgentV2Session,
@@ -10,7 +11,11 @@ export async function submitV2Control(
   key: string,
   signal: AbortSignal,
 ): Promise<V2ResponseControl> {
-  return submitV2ControlAttempt(session, target, command, key, signal, true);
+  return session.withRecovery(
+    signal,
+    (recovery) => submitV2ControlAttempt(session, target, command, key, recovery, true),
+    command.type === 'cancel',
+  );
 }
 
 /**
@@ -24,10 +29,11 @@ async function submitV2ControlAttempt(
   target: ConversationState['responseBinding'],
   command: V2ResponseControlCommand,
   key: string,
-  signal: AbortSignal,
+  recovery: RequestRecovery,
   allowRevisionRetry: boolean,
 ): Promise<V2ResponseControl> {
-  await authorize(session, command, signal);
+  const signal = recovery.signal;
+  await recovery.retry(() => authorize(session, command, signal));
   if (target === undefined) throw new Error('This turn does not support response controls.');
   const retained = session.journal.readControl();
   let intent: ControlRecord;
@@ -40,11 +46,13 @@ async function submitV2ControlAttempt(
       throw new Error('Recover your pending action before requesting a different action.');
     intent = retained;
   } else {
-    const observed = await session.responses.observeControls(
-      session.journal.agentId,
-      target.responseId,
-      { signal },
-    );
+    const observed = await recovery.retry(async (retry) => {
+      if (retry > 0) await authorize(session, command, signal);
+      return session.responses.observeControls(session.journal.agentId, target.responseId, {
+        signal,
+        timeoutMs: recovery.timeoutMs,
+      });
+    });
     if (observed.target?.turn_sequence !== target.turnSequence || !observed.target_active)
       throw new Error(
         'This response is no longer active. Its recorded outcome is available in the conversation.',
@@ -61,16 +69,17 @@ async function submitV2ControlAttempt(
     });
   }
   try {
-    return await send(session, intent, signal, false);
+    return await send(session, intent, recovery, false);
   } catch (error) {
     if (
       allowRevisionRetry &&
+      !recovery.retried &&
       error instanceof ApiError &&
       error.status === 409 &&
       error.code === 'response_control_not_admitted'
     ) {
       session.journal.refusedControl(intent.key);
-      return submitV2ControlAttempt(session, target, command, retryKey(), signal, false);
+      return submitV2ControlAttempt(session, target, command, retryKey(), recovery, false);
     }
     if (isDefinitiveRefusal(error)) session.journal.refusedControl(intent.key);
     throw error;
@@ -81,10 +90,20 @@ export async function recoverV2Control(
   session: AgentV2Session,
   signal: AbortSignal,
 ): Promise<void> {
-  signal.throwIfAborted();
-  await authorize(session, session.journal.readControl()?.body.command, signal);
-  const intent = session.journal.readControl();
-  if (intent !== null && intent.commandId === null) await send(session, intent, signal);
+  const cancel = session.journal.readControl()?.body.command.type === 'cancel';
+  return session.withRecovery(
+    signal,
+    async (recovery) => {
+      const recoverySignal = recovery.signal;
+      recoverySignal.throwIfAborted();
+      await recovery.retry(() =>
+        authorize(session, session.journal.readControl()?.body.command, recoverySignal),
+      );
+      const intent = session.journal.readControl();
+      if (intent !== null && intent.commandId === null) await send(session, intent, recovery);
+    },
+    cancel,
+  );
 }
 
 function retryKey(): string {
@@ -112,28 +131,44 @@ function isDefinitiveRefusal(error: unknown): error is ApiError {
 async function send(
   session: AgentV2Session,
   intent: ControlRecord,
-  signal: AbortSignal,
+  recovery: RequestRecovery,
   clearDefinitiveRefusal = true,
 ) {
-  await authorize(session, intent.body.command, signal);
-  let accepted;
-  try {
-    accepted = await session.responses.submitControl(
-      session.journal.agentId,
-      intent.responseId,
-      intent.body,
-      { idempotencyKey: intent.key, signal },
-    );
-  } catch (error) {
-    // Generic conflicts can hide an already-admitted receipt behind a fresh
-    // authority/revision fence, including browser transport retries. Only a
-    // definitive no-admission code or invalid body permits replacement.
-    if (clearDefinitiveRefusal && isDefinitiveRefusal(error))
-      session.journal.refusedControl(intent.key);
-    throw error;
-  }
-  await authorize(session, intent.body.command, signal);
-  session.journal.acceptedControl(intent.key, accepted.control.receipt.command_id);
-  // Admission or delivery does not end the displayed turn. Only durable replay does.
-  return accepted;
+  const signal = recovery.signal;
+  let accepted: V2ResponseControl | undefined;
+  const requireRetained = () => {
+    const retained = session.journal.readControl();
+    if (
+      retained?.key !== intent.key ||
+      retained.responseId !== intent.responseId ||
+      JSON.stringify(retained.body) !== JSON.stringify(intent.body)
+    )
+      throw new Error('The retained control changed while its receipt was being recovered.');
+  };
+  return recovery.retry(async () => {
+    if (accepted === undefined) {
+      await authorize(session, intent.body.command, signal);
+      requireRetained();
+      try {
+        accepted = await session.responses.submitControl(
+          session.journal.agentId,
+          intent.responseId,
+          intent.body,
+          { idempotencyKey: intent.key, signal, timeoutMs: recovery.timeoutMs },
+        );
+      } catch (error) {
+        // Generic conflicts can hide an already-admitted receipt behind a fresh
+        // authority/revision fence, including browser transport retries. Only a
+        // definitive no-admission code or invalid body permits replacement.
+        if (clearDefinitiveRefusal && isDefinitiveRefusal(error))
+          session.journal.refusedControl(intent.key);
+        throw error;
+      }
+    }
+    await authorize(session, intent.body.command, signal);
+    requireRetained();
+    session.journal.acceptedControl(intent.key, accepted.control.receipt.command_id);
+    // Admission or delivery does not end the displayed turn. Only durable replay does.
+    return accepted;
+  });
 }

@@ -1,4 +1,5 @@
 //! Background reporting, isolated from Agent/lifecycle transactions.
+mod allocation_maintenance;
 mod diagnostics;
 mod observer;
 mod projection;
@@ -38,6 +39,10 @@ impl MetricsWorkers {
         .await
         .map_err(|e| e.to_string())?;
         let store = store.with_view_policy(config.usage_metrics.views.clone());
+        store
+            .initialize_allocation_buckets(store.view_policy.allocation_rollups_enabled)
+            .await
+            .map_err(|e| e.to_string())?;
         let enabled = config.usage_metrics.enabled;
         let (source, native) = if enabled {
             let source = if let Some(url) = &config.usage_metrics.source_url {
@@ -78,6 +83,14 @@ impl MetricsWorkers {
         layer1_public::rest::sandbox_metrics_router(MetricsService::new(self.store.clone()))
     }
     pub(crate) fn spawn(self, shutdown: &mut crate::shutdown::ShutdownCoordinator) {
+        if self.store.view_policy.allocation_rollups_enabled {
+            let worker = self.clone();
+            let signal = shutdown.subscribe();
+            shutdown.push(tokio::spawn(async move {
+                tokio::select! { _ = crate::shutdown::signalled(signal) => {},
+                _ = worker.maintain_allocation_history() => {} }
+            }));
+        }
         for slot in 0..self.store.budgets.workers {
             let worker = self.clone();
             let signal = shutdown.subscribe();

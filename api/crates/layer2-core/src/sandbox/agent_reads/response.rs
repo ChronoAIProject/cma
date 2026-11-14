@@ -27,6 +27,34 @@ impl AgentReadService {
         authorization: &AgentEventStreamAuthorization,
         turn_sequence: Option<u64>,
     ) -> Result<AgentEventStreamSnapshot, AgentReadError> {
+        // An unbound response has no output turn. Its public projection only
+        // needs the current Agent identity/model and the command receipt;
+        // scanning the response source here adds Mongo work without adding
+        // evidence. Keep the same current snapshot and release fence used by
+        // every other response observation.
+        if turn_sequence.is_none() {
+            let result = authorization
+                .bounded(async {
+                    let snapshot = self.current_event_stream_snapshot(authorization).await?;
+                    let agent = snapshot
+                        .lineage
+                        .agent
+                        .ok_or_else(|| corrupt("authorized response has no Agent"))?;
+                    Ok(AgentEventStreamSnapshot {
+                        model: agent.selected_model(),
+                        id: agent.id,
+                        created_at: agent.created_at,
+                        initial_model: agent.profile.content.model,
+                        runtime_generation: agent.conversation.runtime_generation,
+                        active_turn: agent.conversation.active_turn,
+                        head: agent.conversation.last_seq,
+                        history: vec![],
+                    })
+                })
+                .await;
+            self.validate_event_stream(authorization).await?;
+            return result;
+        }
         let Some(reader) = &self.response_logs else {
             return self.event_stream_snapshot(authorization).await;
         };
