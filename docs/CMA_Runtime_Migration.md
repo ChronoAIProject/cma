@@ -76,7 +76,7 @@ the operation in that transaction, including original source/interval evidence.
 An exact accepted replay can read the durable result after bundle removal or
 expiry and with the writer disabled, under fresh operator authorization. It does
 not run effects again. Reusing a key with another payload or authority refuses.
-Explicit failed-work restart requires a new authority entry and current complete
+Custom failed-work restart requires a new authority entry and current complete
 quiet evidence, while retaining the original target and operation phase. The
 bounded retained history refuses further requests rather than forgetting old keys
 or restart admissions when its limit is reached.
@@ -86,6 +86,15 @@ proof/session guard at actual scheduling. Paused admissions retain full current
 child, command and session checks. Ordinary policies outside that explicit scope
 are unchanged. All Running fleet IDs must be in the configured scope before an
 operator campaign can use this protection.
+
+For an ordinary managed rotation carrying scoped admission, explicit failed-work
+retry and explicit unpublished-runtime recovery are unavailable in this release:
+the retained basis cannot authorize another attempt, and no ordinary fresh-proof
+restart endpoint is implemented. Eligibility and the service refuse before
+recovery inspection; the model also refuses direct explicit recovery. Exact
+no-failure replay, existing automatic recovery with its original target and
+once-only checks, and new ordinary requests after completion remain available.
+Requests outside scoped admission retain their existing retry behavior.
 
 ## Forward observation
 
