@@ -30,7 +30,7 @@ Log01 binds S1/S2 to actual B9 component images and serving processes, with the 
 
 Operation start, stable-soak S/E and synthetic-read S/E remain distinct. B10→observed success→Activity/U1/U2 follows S2 and the blackout and is not an evening S1 prerequisite. Planned ordering or an unset U2 start does not prove inactivity. Engineer02 supplies actual rollout and U-state identities/timestamps; compare known equal source/config/backfill states. Image transition cohorts stay separate, with earlier errors retained and affected stable observations rebound; no automatic synthetic read restart or borrowed prior-source qualification.
 
-If an actual state transition occurs within an observation, split latency/error results without resetting original S, accepted-command N or cumulative errors. Do not pool unlike states or sum overlapping scopes. The fixed1800-second owned READ session, low-N rule and immediate incident/ACK/compatible-recovery path remain. Revised wall-clock times require actual session bindings from the read owner, never automatic execution/restart. #2038 merge/qualification remains separate from this scheduling document.
+If an actual backfill-state transition occurs within an observation, split latency/error results without resetting original S, accepted-command N or cumulative errors. Image/config/count changes still restart stability and retain earlier failures. Do not pool unlike states or sum overlapping scopes. The fixed1800-second owned READ session, low-N rule and immediate incident/ACK/compatible-recovery path remain. Revised wall-clock times require actual session bindings from the read owner, never automatic execution/restart. #2038 merge/qualification remains separate from this scheduling document.
 
 ## Revised M3 merge gate
 
