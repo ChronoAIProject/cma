@@ -6,6 +6,10 @@ Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016). Owner: soluti
 
 - Lead plan: `/Users/shining/code/work/tech-lead/notes/2026-11-14-hard-deadline-plan.md`. S1 06:00, S2 08:30, S3 10:30, final 18:00 SGT; no writes 02:00–02:59. Local gates and admin integration; no CI wait.
 - Architect-04: `/Users/shining/code/work/tech-lead.staff/solution-architect-04/`, files `production-stages.md`, `essentials.md`, `contract-addendum-a2.md`, `contract-addendum-a3.md` and `contract-addendum-work-recovery-20261114.md`. Current K01–K25 and A3 supersede old full-matrix repetitions, schedules and blanket noise rules.
+- Latest M3 ruling, now at the top of architect04's essentials/stages: (a) local source/resources/placement/PDB/readiness PASS; (b) f6 host cross-ingress N1/N2 OFF/ON PASS; (c) verifier02's integration-head, two-or-more-instance real-Mongo suites, with explicit per-suite PASS/FAIL; (d) env01 EG fixture PASS. Architect04 owns final GO plus quick source pass. Missing local real-runtime/auth/provider adapter is no longer a merge blocker. Real accepted-work qualification moves to production S1, without relabeling pending/unrun suites or production boundaries PASS.
+- **Later lead answer to #116 controls S1 traffic:** no synthetic WRITE executor or broker creates/sends; NyxID slot unchanged. Log-engineer-01 reads real production logs/metrics during the30-minute soak: per-replica create/send/stop/stream success/latency, ownership/epochs/fencing, zero duplicate ledger effects and5xx/429 by cause versus baseline. Synthetic READS only supplement detail/transcript and usage24h/7d/30d to sufficient N. This supersedes earlier synthetic owner-account write instructions in the architect04 documents. Immediate approved compatible rollback and all safety/absolute targets remain.
+- Lead19:10 low-traffic ruling, also recorded in `/Users/shining/code/work/tech-lead.staff/local-env-manager-02/handoffs/S1-real-runtime-soak.md`: if accepted production commands N<20 at30minutes, extend by up to30more; if still low, accept on the required passing multi-instance suites plus zero errors and disclose N. Low traffic alone does not hold S1. Actual failures remain failures and unobserved client boundaries remain unclaimed; actual E+15 reporting applies. This supersedes the earlier fixed30-minute-only S1 wording.
+- Log-engineer-01's existing query interface: `/Users/shining/code/work/tech-lead.staff/log-engineer-01/logs/batch9-scale-queries/README.md`. Actual S1 source/window bindings, safe normalized ownership/effect data and coverage remain its owner's delivery. Local SQL preparation and HTTP observations alone cannot prove a complete zero-duplicate ledger or client completion. No query/tool test was duplicated for this checklist.
 - Manifest baseline #1968: `d38966aab5c77fa2262da2d14ffba0da84cd958c`; corrected EG native sleep #1996: `37f2bedbfce3be4fe5b8bd1370ba2c81cd872be5`. Inspected integration: `15306eed8aacb67964f95442c1f29ba47d161502`. This identifies source, not final production images or runtime qualification.
 - Current execution preparation: engineer commit `08ce4653d5777ca766ab449d9e7ec6b1e6acf983`, [deployment-runbooks.md](https://github.com/ChronoAIProject/cma/blob/08ce4653d5777ca766ab449d9e7ec6b1e6acf983/docs/notes/reviews/2026-11-15/deployment-runbooks.md) and the adjacent S1/S2/S3 pages. It supplies controller commands and recovery branches; lead selection, actual qualification and operation approvals remain required. Historical A2-r5 commands are superseded. Its corrected metadata-only predecessor is not an executable root; EG exec derivatives remain withdrawn.
 - Developer-16 input: `/Users/shining/code/work/tech-lead.staff/developer-16/deadline-20261115/stage-checklist-handoff-r1/HANDOFF.md`. Correction source and operation identities were checked against this handoff.
@@ -28,17 +32,19 @@ The lead's speed directive applies: evidence is source, tests, commit and concis
 
 Follow-up verification: current lead ruling and essentials K21/K23 read; current action names checked against the engineer's stage pages. Three pages, K01–K25 mapping, local links, the single current Bash example's syntax, line limits and whitespace pass. Engineer-reported33 controller tests and eight driver tests remain author evidence; this update does not rerun or qualify those tools.
 
+Revised M3/S1 update: apply the controlling M3 ruling and later lead answer to #116; keep suite(c) results pending and production qualification distinct. Checks PASS: three pages/two page breaks,12 local links/anchors, one Bash block syntax, line limits and whitespace. Only the three checklist documents changed; engineer-owned S1 execution/common runbooks remain untouched. Log-engineer-01 was asked for the existing read-only queries/coverage; no query, suite, probe, arming or production operation was run for this update.
+
 ## Essential ownership and stage coverage
 
 | Rows | Required evidence handoff |
 | --- | --- |
 | K01 | Integrator/local verifiers: final source, local gates, build and configuration before M4/S1. |
-| K02 | Engineer/production verifiers: accepted-work conservation at every stage; no empty denominator. |
-| K03–K08 | AM owners/local verifier: local races/kill; S1 observations, preserved through S2/S3. |
-| K09–K11 | EG owners/local verifier: local admission/provider/loss; authorized S2/S3 observations. |
-| K12 | Local verifier/developer-17: actual M3 2→4→2; S3 automatic behavior is separate. |
+| K02 | Engineer/production verifiers: accepted-work conservation at every stage; log-engineer-01 reports S1 real-traffic ledger duplicates and coverage, with no empty denominator. |
+| K03–K08 | AM owners/verifier02: selected M3 multi-instance Mongo boundaries; log-engineer-01 observes S1 real production work, ownership/fencing and per-replica results, preserved through S2/S3. |
+| K09–K11 | EG owners/verifier02: selected Mongo suites/env01 fixture scope; actual authorized production delivery/loss evidence remains distinct. |
+| K12 | Verifier02/developer17: report the revised M3(a)–(d) scope; S3 useful automatic scaling remains a separate production requirement. |
 | K13–K15 | Developer-16, drain/capacity owners and engineer: drain, placement, capacity, compatible receivers/floors before activation and throughout transitions. |
-| K16–K21 | Analyst/client/production verifiers: complete journeys, distinct routes, A3 classes/confidence; M8 evidence by17:00. |
+| K16–K21 | Log-engineer-01 and analyst/client/production verifiers: real-traffic outcomes plus synthetic READ-only detail/transcript/usage24h/7d/30d, distinct boundaries/routes/ranges and A3 confidence; M8 evidence by17:00. |
 | K22 | Engineer: approved S1/S2 operations, no overlap and actual <120s service-restoration clock. |
 | K23 | Engineer/provider monitor: fresh S1/S2 stable soaks, closed canaries and named24-hour monitor. |
 | K24 | Engineer/lead: state-specific compatible recovery before each stage; M8 fixes forward only. |
