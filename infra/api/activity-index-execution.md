@@ -1,10 +1,11 @@
 # Named-query index toolkit execution packet
 
-Owner: deployment-engineer-01. Issue #2005 / PR #2008. Activity is the first catalog entry. `agents-owner-page` adds the analyst-ranked
+Execution: deployment-engineer-02 under lead approval; deployment-engineer-01 coordinates release gates. Issue #2005 / PR #2008. Activity is the first catalog entry. `agents-owner-page` adds the analyst-ranked
 nonunique `{owner:1,_id:1}` access path through `am-agent-owner-page-index-v1`.
-Other candidates require a reviewed catalog entry and complete manifest before execution. This packet supplies no operation
-approval. Small collections may run soon after fresh approval; large collections
-remain in 15 November 03:00–05:00 SGT. Never run production writes 02:00–02:59.
+The catalog also includes inspection-only usage and claim candidates from the
+analyst ranking. This packet supplies no operation approval. All production
+builds are scheduled for 15 November 03:00–05:00 SGT under lead approval.
+Never run production writes 02:00–02:59.
 
 ## Reusable command contract
 
@@ -45,6 +46,31 @@ every supported plan branch reaches it, without COLLSCAN/SORT, missing children,
 unknown topology or incomplete markers. Preserve its JSON on failure. This is a
 planner gate; it does not establish HTTP or page-usable latency.
 
+The compiled catalog is ordered Activity, usage, list, then claim discovery:
+
+| Named query | Candidate index | Execution scope |
+| --- | --- | --- |
+| `activity-first-page` | `{recorded_at:-1,_id:-1}` | Size/build/status/abort/verify; existing manifest |
+| `usage-event-interval` | `{sandbox_id:1,ended_at:1,started_at:1,revision:1}` | Inspection only; may introduce a blocking sort |
+| `usage-reserved-expiry` | `{logical_expires_at:1}`, partial `reserved:true` | Inspection only; full prune OR query |
+| `usage-reserved-retire` | `{kind:1,retire_after:1}`, partial `reserved:true` | Inspection only; same full prune OR query |
+| `agents-owner-page` | `{owner:1,_id:1}` | Size/build/status/abort/verify; new manifest |
+| `sandboxes-pending-claim` | `{work_ready_at:1,_id:1,work_lease_expires_at:1}`, partial `work_pending:true` | Inspection only; preserves retirement/lease predicates |
+| `workspaces-pending-claim` | Same key and partial filter on workspaces | Inspection only; preserves lease predicates |
+| `native-ready-agent-claim` | `{kind:1,state:1,_id:1}` | Inspection only; agent channel, limit 2 |
+
+Conditional specs have no migration and refuse build/status/abort before database
+access. Their verification output cannot pass the automatic acceptance gate even
+if an index already exists. Promote a candidate only through a separately reviewed
+manifest after read/write evidence supports it. No query is hinted and no claim or
+update is executed. The usage interval binds one sampled sandbox and its event's
+UTC day, with integer-second ranges and the source's sandbox/revision sort. Its
+51-event prefix is shape evidence, not a complete usage report or a 7d/30d test.
+Prune and pending-work filters bind inspection time; changing filter digests means
+the before/after cohorts differ. Partial indexes are compared exactly and cannot
+silently match a different partial predicate. Extra indexes add insert/delete and
+key-update work; claim candidates also add lease-update cost.
+
 ## Render and approve each Job
 
 `infra/api/index-toolkit-job.yaml` defaults to read-only sizing and uses the
@@ -64,6 +90,12 @@ the client is alive, not a server build percentage. The outer build allowance is
 the chosen timeout plus 60 seconds; the Job deadline is 3900 seconds. There is no
 automatic Job retry. Timeouts, lost acknowledgements and lease loss do not prove
 that MongoDB stopped its submitted command.
+
+The database owner must provide the approved operation/abort Secret reference
+names and key layout (never values), effective-grant confirmation, and current
+CPU, lag, disk and duration budgets. These are unresolved release inputs, not
+values supplied or inferred by this source packet. The deployment engineer
+supplies the qualified release image and rendered artifacts after integration.
 
 Bind the reviewed controller version/verdict and exact create, stop,
 Job-status and sanitized-log readback handles in the release record. The kubectl
@@ -119,8 +151,7 @@ production HPA remains a separate release obligation.
 
 Size first. A collection being <=5M documents and having a <=30-minute approved
 estimate does not automatically classify it as small. Deployment must explicitly
-classify it using live size, topology and resource/duration evidence. If a large
-build stays after03:00, the serial soak/build/repeat schedule still requires an
+classify it using live size, topology and resource/duration evidence. All builds stay in 03:00–05:00; the serial soak/build/repeat schedule requires an
 approved arrangement preserving K21; do not compress or borrow noise windows.
 Use the Activity-specific gates and retained command shapes below for its first
 catalog entry. All numbers are go/no-go inputs, never inferred production facts.
@@ -232,27 +263,31 @@ running, and the durable attempt may be unfinished or failed.
 
 ## 4. Abort and recovery
 
-The migration credential has no `dropIndex` privilege on Activity. Aborting is a
-separate database-operator action. First stop this Job and prevent any second
-operator from starting it. Reconcile the Job, the migration status and the
-actual Activity index/build state. If the index is present and the approved
-abort decision requires removal, the operator may use the narrowly targeted
-command below with the server-version-specific timeout and write concern:
+The ordinary operation credential has no `dropIndex` privilege on Activity.
+Use the exact-target abort contract above: stop the build client, prevent other
+invocations, reconcile server state and the latest attempt, then wait for its
+lease to expire. Render a separately approved operator Job with
+`INDEX_OPERATION=abort`, `INDEX_QUERIES=activity-first-page`, the approved
+manifest checksum/image and `INDEX_PREVIOUS_FENCE` from status. Its narrow role
+must be supplied by Secret reference without reading the value.
+
+The toolkit claims the next fence and refuses a completed manifest before
+issuing this exact underlying command (shown for review, not as an alternate
+unfenced execution route):
 
 ```javascript
-db.runCommand({
+{
   dropIndexes: "activity",
   index: "activity_recorded_at_id_desc",
-  maxTimeMS: 5000
-})
+  maxTimeMS: 5000,
+  writeConcern: { w: "majority", wtimeout: 5000 }
+}
 ```
 
-This is a command shape for the separately approved operator route, not a
-permission embedded in the Job or a command to run from the API container. Do
-not use a wildcard, drop the collection, remove `activity_expiry` or actor/action
-indexes, kill the database process, or edit migration receipts. Confirm the
-server's current operation and actual index state before and after the drop; a
-client timeout does not prove that a server-side build stopped.
+No wildcard, collection drop, TTL/actor/action index drop or receipt editing is
+allowed. A missing target or uncertain drop requires the separately approved DBA
+status/recovery route; the toolkit does not claim cancellation. Confirm server
+build state and exact inventory after the command before considering resume.
 
 If the manifest was already marked completed and the index is later dropped,
 ordinary reapply must refuse completed-manifest postcondition drift. Use a

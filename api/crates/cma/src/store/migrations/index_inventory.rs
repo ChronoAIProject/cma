@@ -72,9 +72,12 @@ pub(super) fn strict_missing(existing: &[Document], desired: &Document) -> Resul
             index.get_document("key").ok(),
             desired.get_document("key").ok(),
         )
+        || desired
+            .iter()
+            .any(|(key, value)| key != "key" && index.get(key) != Some(value))
         || index
             .keys()
-            .any(|key| !["v", "ns", "name", "key"].contains(&key.as_str()))
+            .any(|key| !["v", "ns"].contains(&key.as_str()) && !desired.contains_key(key))
     {
         return Err("Query index key or option drift");
     }
@@ -91,6 +94,22 @@ fn same_keys(left: Option<&Document>, right: Option<&Document>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn candidate_partial_filter_is_compared_exactly() {
+        let index =
+            doc! {"name":"pending","key":{"ready":1},"partialFilterExpression":{"pending":true}};
+        assert!(strict_missing(std::slice::from_ref(&index), &index)
+            .unwrap()
+            .is_empty());
+        for partial in [None, Some(doc! {"pending":false})] {
+            let mut drift = index.clone();
+            drift.remove("partialFilterExpression");
+            if let Some(partial) = partial {
+                drift.insert("partialFilterExpression", partial);
+            }
+            assert!(strict_missing(&[drift], &index).is_err());
+        }
+    }
     #[test]
     fn generic_inventory_refuses_drift_and_reconciles_exact_indexes() {
         for index in [
