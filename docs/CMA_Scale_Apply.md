@@ -40,10 +40,10 @@ allow and matching per-step approvals. A refusal stops the step; never edit poli
 Obtain explicit rollback permissions before starting. Server dry-run does not
 replace permission, application tests or live backend verification.
 
-Earliest stage start15 Nov03:00 SGT; no write02:00–02:59, including rollback.
-Proposed outage windows S1 03:15 and S2 04:15 still need owner approval.
-Reserve S1~03:15–04:15, S2~04:15–05:30, S3~05:30–09:30, review09:30–12:00,
-owner result before13:00. Recheck time immediately before every write; do not
+Lead stage starts are 15 Nov S1 06:00, S2 08:30 and S3 10:30 SGT, with final
+production verification 13:00–17:00 and owner report by 18:00. No writes
+02:00–02:59, including rollback. Existing operation approvals still apply.
+Recheck time immediately before every write; do not
 start an operation whose bounded duration can cross a prohibited window.
 
 ## Release packet and local preparation
@@ -165,6 +165,17 @@ with request/user payloads. Keep source/image/config changes as separate strata.
 Do not restore an old whole object from this capture.
 
 ## Common stage gates and verification
+
+**Latest lead M3 merge ruling:** local source/resource placement, PDB and
+readiness subchecks PASS; retained f6 host cross-ingress N1/N2 OFF/ON PASS;
+all integration-head (5cfd or newer) multi-instance suites against one real
+Mongo must report PASS/FAIL through local-verifier-02; environment01 EG fixture
+cases PASS. The suites cover killed-owner takeover, recovery leases, fencing,
+no duplicate effects, title custody, desktop exclusive sessions and EG delivery/SSE.
+Architect04 supplies the quick integrated source pass. This supersedes the
+earlier requirement for a deployed local AM runtime/auth/provider workload before
+merge. Unrun local end-to-end rows remain unrun; S1 must execute the real-runtime
+accepted-work soak below. The missing local adapter is not an M3 merge blocker.
 
 Require integrated local fmt/clippy/tests and real Mongo independent-instance
 proof. **Before zeroing legacy AM**, inventory every retained traffic-capable
@@ -395,6 +406,49 @@ Start the final30-minute soak only after actual terminating processes are gone.
 Do not reapply Deployment `replicas:2` while an HPA owns its scale subresource.
 
 ## Soak, abort, rollback and receipts
+
+### Mandatory S1 real-runtime accepted work
+
+The revised M3 gate does not claim deployed local AM end-to-end acceptance.
+After the selected S1 candidate is serving and its complete path is usable,
+run **30 continuous minutes of synthetic owner-account traffic through actual
+production authentication, AM, runtime and provider**. Bind the selected canary
+run/stop command and private configuration to actual API/runtime images and
+switches. Keep identifiers, tokens, request content and browser state private.
+Health probes, component tests and the read-only sampler do not count as this work.
+
+The [selected S1 runbook](notes/reviews/2026-11-15/s1-execution.md#mandatory-real-runtime-accepted-work-soak)
+records the current execution HOLD: the lead must assign/provide the accepted-work
+executor/private binding, and engineer01 binds its release, window and rollback.
+Follow the common runbook's scheduler/lock ownership for supplemental reads.
+This is a production S1 execution input, not a local M3 merge blocker.
+
+Exercise real create/open, workspace, send/stream and interrupt operations
+through both serving ingresses. Retain serving/owning-instance observations and,
+for each logical operation, offered/admitted/refused/failed status, durable
+operation and owner/fence linkage, client completion and independent terminal/effect
+results. Reconcile accepted = terminal + reconciled + unresolved as disjoint counts;
+require zero accepted loss, duplicate committed effects or stale-owner effects.
+Keep every failed attempt, timeout, reconnect gap and incomplete operation even
+if a retry succeeds. Reconciled failures remain failures; balanced accounting
+alone is not PASS. Apply A3 classes and the existing absolute client limits.
+
+**Immediately trigger the preapproved compatible rollback** on accepted-work loss,
+duplicate/stale effect, unreconciled or unbounded work, a broken auth/runtime/provider
+path, a failed in-contract journey, or a breached absolute latency/recovery/availability
+stop condition. Do not wait for the soak to finish or for two five-minute performance
+windows. Stop new synthetic admissions, preserve custody and effect evidence, and
+use the existing compatible recovery branch. Record detection, rollback dispatch,
+restored successful service and final reconciliation times separately. Preserve
+ownership, receiver and retained-record floors; never blindly resend an unknown
+effect or automatically restart a legacy image or turn ownership OFF.
+
+S1 passes only after the complete 30-minute window and final reconciliation pass.
+Record the actual canary command/private-config path, images, operation counts,
+client latency classes and any rollback result; report by soak end E +15 minutes.
+Missing or unresolved outcomes prevent S1 PASS. Production authority, controller
+route, per-stage approvals and the 02:00–02:59 blackout remain unchanged. S2 retains
+its existing provider-specific accepted-work and terminal reconciliation requirements.
 
 Every stage needs30 stable minutes after its intended replica count is Ready,
 healthy in endpoints/NEG, ownership stable, and old processes finished. Record
