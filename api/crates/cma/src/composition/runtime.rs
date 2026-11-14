@@ -21,6 +21,19 @@ pub(super) struct RuntimeServices {
 }
 
 impl RuntimeServices {
+    pub fn attach_admin(
+        &self,
+        admin: layer1_public::rest::admin::AdminState,
+        stores: &MongoStores,
+    ) -> layer1_public::rest::admin::AdminState {
+        admin
+            .with_runtime_updates(self.updates.clone())
+            .with_runtime_migrations(
+                self.migrations.clone(),
+                stores.sandbox_model.runtime_migration_verifier(),
+            )
+    }
+
     pub fn new(
         config: &Config,
         stores: &MongoStores,

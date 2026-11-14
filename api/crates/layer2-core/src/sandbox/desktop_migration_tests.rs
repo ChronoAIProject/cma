@@ -144,7 +144,7 @@ async fn desktop_revalidates_active_state_and_exact_runtime_after_earlier_author
         if paused {
             fixture
                 .store
-                .schedule_sandbox_lifecycle(crate::sandbox::SandboxLifecycleCommand::pause(
+                .schedule_sandbox_lifecycle(crate::sandbox::store::SandboxLifecycleCommand::pause(
                     id.clone(),
                     fixture.owner.subject.clone(),
                     crate::now_rfc3339(),

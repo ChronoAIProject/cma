@@ -56,13 +56,41 @@ impl SandboxCustomRuntimeMigrationAdmission {
     /// Exact read-only replay is resolved before requiring a live bundle. An
     /// explicit restart always takes a new activity admission without retargeting.
     pub fn is_replay(&self, sandbox: &Sandbox) -> Result<bool, SandboxStoreError> {
-        matching_custom_runtime_replay(
+        let matched = matching_custom_runtime_replay(
             sandbox,
             &self.migration,
             &self.basis.authority_id,
             self.expected_current_revision,
             self.restart_failed,
-        )
+        )?;
+        if !matched {
+            return Ok(false);
+        }
+        let basis = sandbox
+            .lifecycle
+            .custom_runtime
+            .as_ref()
+            .and_then(|state| state.admission_basis.as_ref())
+            .ok_or_else(invalid)?;
+        let original = std::iter::once(basis.as_ref())
+            .chain(basis.earlier_admissions.iter())
+            .find(|basis| {
+                basis.authority_id == self.basis.authority_id
+                    && basis.identity.revision == self.expected_current_revision
+            })
+            .ok_or_else(invalid)?;
+        if original.policy_id != self.basis.policy_id
+            || original.request_key != self.basis.request_key
+            || original.identity != self.basis.identity
+            || original.approved_target != self.basis.approved_target
+            || original.source_runtime != self.basis.source_runtime
+            || original.clearance != self.basis.clearance
+            || original.authority_issued_at_ms != self.basis.authority_issued_at_ms
+            || original.authority_expires_at_ms != self.basis.authority_expires_at_ms
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        Ok(true)
     }
 }
 
@@ -179,6 +207,9 @@ pub fn apply_custom_runtime_migration(
     {
         return Err(invalid());
     }
+    if serde_json::to_vec(&basis).map_err(|_| invalid())?.len() > 4 * 1024 * 1024 {
+        return Err(invalid());
+    }
     let mut next = current.clone();
     if !next
         .request_custom_runtime_migration(
@@ -220,6 +251,29 @@ pub fn apply_custom_runtime_migration(
 
 pub(crate) fn valid_label(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+}
+
+/// Pure scoped rotation transition, after the adapter's trusted policy and
+/// complete transactional activity checks. Preserve its verified basis atomically.
+pub fn apply_scoped_image_rotation(
+    current: &Sandbox,
+    agents: &[Agent],
+    request: &super::SandboxImageRotationRequest,
+    basis: &RuntimeMigrationAdmissionBasis,
+) -> Result<SandboxMaintenanceApplication, SandboxStoreError> {
+    basis.validate_at(runtime_migration_now_ms()?)?;
+    if basis.identity != crate::sandbox::RuntimeMigrationIdentity::capture(current)?
+        || basis.approved_target != request.expected_runtime_version
+        || (matches!(basis.clearance, RuntimeMigrationClearance::Paused)
+            && current.status != SandboxStatus::Paused)
+    {
+        return Err(invalid());
+    }
+    let mut application = super::apply_image_rotation(current, agents, request)?;
+    if let SandboxMaintenanceApplication::Persist { sandbox, .. } = &mut application {
+        sandbox.lifecycle.runtime_migration_admission = Some(Box::new(basis.clone()));
+    }
+    Ok(application)
 }
 
 const fn invalid() -> SandboxStoreError {
