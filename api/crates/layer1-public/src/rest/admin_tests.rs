@@ -360,3 +360,5 @@ mod route_contract_1;
 
 #[path = "admin/route_contract_2_tests.rs"]
 mod route_contract_2;
+#[path = "admin/runtime_migration_tests.rs"]
+mod runtime_migration_tests;

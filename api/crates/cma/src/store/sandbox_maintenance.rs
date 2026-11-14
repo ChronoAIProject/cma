@@ -19,14 +19,23 @@ use super::sandboxes::read_sandbox;
 use transaction::{attempt as apply_attempt, reconcile, ApplyError, MaintenanceRequest};
 
 mod consented;
+mod custom_runtime;
 mod evidence;
 #[cfg(test)]
 pub(crate) mod mongo_integration_tests;
 mod retained_availability;
+pub(super) mod runtime_activity;
 mod transaction;
 
 #[async_trait::async_trait]
 impl SandboxMaintenanceStore for MongoSandboxStore {
+    async fn admit_custom_runtime_migration(
+        &self,
+        admission: layer2_core::sandbox::store::SandboxCustomRuntimeMigrationAdmission,
+    ) -> Result<Sandbox, SandboxStoreError> {
+        custom_runtime::admit(self, admission).await
+    }
+
     async fn sandbox_maintenance_candidates(
         &self,
         page: &PageRequest,
@@ -117,7 +126,7 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
         request: SandboxImageRotationRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
         validate_image_rotation_request(&request)?;
-        schedule(self, MaintenanceRequest::Rotation(request)).await
+        custom_runtime::schedule_rotation(self, request).await
     }
 }
 
@@ -125,6 +134,21 @@ async fn schedule(
     store: &MongoSandboxStore,
     request: MaintenanceRequest,
 ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+    Ok(schedule_receipt(store, request).await?.outcome)
+}
+
+async fn schedule_receipt(
+    store: &MongoSandboxStore,
+    request: MaintenanceRequest,
+) -> Result<transaction::MaintenanceReceipt, SandboxStoreError> {
+    let _desktop = if request.requires_desktop_guard() {
+        Some(
+            layer2_core::sandbox::try_acquire_runtime_migration_guard(request.sandbox_id())
+                .map_err(|_| SandboxStoreError::Conflict)?,
+        )
+    } else {
+        None
+    };
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
         if attempt > 0 {
@@ -156,10 +180,18 @@ async fn schedule(
         };
         if receipt.event.is_none() {
             let _ = session.abort_transaction().await;
-            return Ok(receipt.outcome);
+            return Ok(receipt);
+        }
+        if let Some(basis) = request.basis() {
+            if let Err(error) =
+                basis.validate_at(layer2_core::sandbox::store::runtime_migration_now_ms()?)
+            {
+                let _ = session.abort_transaction().await;
+                return Err(error);
+            }
         }
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(receipt.outcome),
+            CommitOutcome::Committed => return Ok(receipt),
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
@@ -172,7 +204,7 @@ async fn schedule(
                 let store = store.clone();
                 return wait_for_reconciliation("sandbox maintenance commit", async move {
                     if reconcile(&store, &receipt, snapshot_time).await? {
-                        Ok(receipt.outcome)
+                        Ok(receipt)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
                             "sandbox maintenance commit remained unknown: {unresolved}"

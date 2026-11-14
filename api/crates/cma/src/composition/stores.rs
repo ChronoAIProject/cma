@@ -62,6 +62,37 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
                 .map_err(|_| "Agent Manager ownership store is unavailable")?,
         );
     }
+    if let (Some(policy), Some(path)) = (
+        &config.runtime.migration.policy,
+        &config.runtime.migration.bundle_path,
+    ) {
+        if policy.deployment_id != config.deployment_id || config.agent_manager_replicas.is_some() {
+            return Err(
+                "runtime migration policy requires the exact single-AM/OFF deployment".into(),
+            );
+        }
+        let verifier = Arc::new(layer2_core::sandbox::RuntimeActivityVerifier::new(
+            stores.sandbox_model.clone(),
+            policy.qualified_sources.first().cloned(),
+            policy.scoped_sandboxes.clone(),
+        ));
+        let authority = Arc::new(
+            super::runtime_migration::FileRuntimeMigrationAuthority::new(
+                policy.clone(),
+                path.clone(),
+                verifier.clone(),
+            ),
+        );
+        stores.sandbox_model = Arc::new(
+            (*stores.sandbox_model)
+                .clone()
+                .with_runtime_migration_authority(
+                    authority,
+                    verifier,
+                    config.runtime.migration.enabled,
+                ),
+        );
+    }
     Ok(Arc::new(
         stores
             .with_empty_discovery(config.features.empty_discovery)

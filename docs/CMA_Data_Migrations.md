@@ -260,3 +260,16 @@ Follow-ups under [CMA data migration safety](https://github.com/ChronoAIProject/
 - [Service migration runner/ledger #1328](https://github.com/ChronoAIProject/cma/issues/1328).
 - [Planned startup DDL #1329](https://github.com/ChronoAIProject/cma/issues/1329).
 - [Backfill progress and completion surfaces #1331](https://github.com/ChronoAIProject/cma/issues/1331).
+
+### Custom runtime authority and scoped fleet admission (#2064)
+
+Retained custom image authority and ordinary scoped runtime-migration admission
+use Sandbox envelope version 5. The same admission transaction retains the
+`runtime-migration-writer-floor-v1` sentinel in `sandbox_credentials`; it survives
+aggregate deletion. Deploy compatible readers/workers before enabling
+`CHRONO_RUNTIME_MIGRATION_ENABLED`, which defaults off. Old binaries refuse the
+new envelope and the permanent startup sentinel. Disabling new writes preserves
+settlement and exact durable replay; it does not lower the rollback floor. Never
+clear the immutable profile pin, strip the override, or remove the sentinel to
+permit rollback. See [CMA_Runtime_Migration.md](CMA_Runtime_Migration.md) for the
+operator/source contract and required qualification.

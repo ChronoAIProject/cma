@@ -91,6 +91,12 @@ data:
   CHRONO_AGENT_LOG_ADMISSION_AGENTS: ""
   # Owner-consented same-image reopening only; admission remains off until qualified.
   CHRONO_RETAINED_REOPEN_ENABLED: "false"
+  # #2064: compatible readers remain active while operator migration writes are
+  # disabled. Activate only after qualified policy/evidence publication and the
+  # coordinated single-AM/OFF reader rollout. Mount files through the release.
+  CHRONO_RUNTIME_MIGRATION_ENABLED: "false"
+  CHRONO_RUNTIME_MIGRATION_POLICY_FILE: ""
+  CHRONO_RUNTIME_MIGRATION_BUNDLE_FILE: ""
   # Independent pending-approval reader; also requires trusted cohort membership.
   CHRONO_RUNTIME_PERMISSION_BOUNDS_ENABLED: "false"
   CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED: "false"

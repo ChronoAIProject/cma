@@ -13,6 +13,7 @@ pub(super) fn worker_observations(
 }
 
 pub(super) struct RuntimeServices {
+    pub migrations: Arc<layer2_core::sandbox::SandboxCustomRuntimeMigrationService>,
     pub warm_pools: Arc<NativeWarmPools>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
     pub recovery: Arc<layer2_core::sandbox::RetainedRecoveryService>,
@@ -31,7 +32,15 @@ impl RuntimeServices {
                 config.deployment_id.clone(),
             ),
         );
+        let mut migrations = layer2_core::sandbox::SandboxCustomRuntimeMigrationService::new(
+            stores.sandbox_model.clone(),
+            stores.sandbox_model.clone(),
+        );
+        if let Some(authority) = stores.sandbox_model.runtime_migration_authority() {
+            migrations = migrations.with_authority(authority, config.runtime.migration.enabled);
+        }
         Self {
+            migrations: Arc::new(migrations),
             reopen: Arc::new(layer2_core::sandbox::RetainedReopenService::new(
                 stores.sandbox_model.clone(),
                 inspector.clone(),
