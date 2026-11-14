@@ -1,0 +1,16 @@
+{
+  "reference_commit": "6b1ace3e12aaabef592875cc851dbd7af763b670",
+  "source_sha256": {
+    "api/crates/cmaeg/src/records/mongo.rs": "b5821d76b3f389dcbc484c8ed16b628d2b4386b806f099de6f1d8d1d481f172b",
+    "api/crates/cmaeg/src/records/mongo_replicas.rs": "4140c1c78e410583abe9bee0029e278f08adeb78e86562a6579c4fb42de8a34d",
+    "api/crates/cmaeg/src/records/mongo_replica_retry.rs": "b76c749cbfa04ddea362efad9f59a80b7c691929128c98d9e318007a37d700b8",
+    "api/crates/cmaeg/src/records/mongo_replica_observation.rs": "9c985be4269529a92f83aedb36032e8d28e6f0a6f03763d89ca8ce1903c9b46f",
+    "api/crates/cmaeg/src/records/client_guarded.rs": "06d2d5164459c308a1d1ea5cd35755bde48deb6b6efdd2aecd1098ffe9367aac",
+    "api/crates/cmaeg/src/ingress/routing_store/root.rs": "0960a361378dff72148d0e6b76e6f0443c38a4c7425970eb5e47b8141b7ca9e8",
+    "api/crates/cmaeg/src/ingress/routing_store/store.rs": "ff3bc6b30c18bab4edde6972b5cb4a1a77924feca88edc6e9c9675a32501bbf4",
+    "api/crates/cmaeg/src/ingress/routing_store/queue.rs": "bc937989ab98a845bdff6c7cbea7997a0b300c52e6768c82291dd5f5f7a732ea",
+    "api/Cargo.toml": "5bed84f1beab232e8814c24933380e3a53afb007699fb6943e187699633c1529",
+    "api/Cargo.lock": "8f797fba38e2f04276e92067f5f55ab7a79f48f26550d68de9ebd1eb8f096c3e",
+    "api/crates/cmaeg/Cargo.toml": "0f1b0dd026069fc0f0bcabc7bbeb010a27d7b46e2eaa08b0fd0a2499f69cb885"
+  }
+}

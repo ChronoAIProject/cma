@@ -1,0 +1,40 @@
+{
+  "recorded_at_utc": "2026-11-13T17:52:45.042949+00:00",
+  "application_dependency": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+  "diagnostic_test_commit": "643461b62298a8deb9bc382e9eb67c32154be859",
+  "qualification": "NO_GO: enabled N2 rejection unresolved; cluster scenarios unrun; revised runner has unit validation only",
+  "runner_sha256": "3b95a9ef9e00c35024a3e57ef980dd3d541226cf6e2d69aa720b286f1f8c3b08",
+  "runner_test_sha256": "82db76eb5a95b4e7480923d532f61b953e7e9e3d138179da8536ac9b6c6e6f12",
+  "gates": {
+    "javascript_tests": 26,
+    "javascript_source_changed_since_pass": false,
+    "python_tests": 14,
+    "python_trace_hit_lines": 175,
+    "python_trace_missed_lines": 10,
+    "python_trace_percent": 94.59,
+    "lint": "PASS",
+    "rust_fmt": "PASS",
+    "strict_cmaeg_clippy": "PASS",
+    "rust_diagnostic_test": 1,
+    "delivery_oracle_tests": 3,
+    "current_executable_control": "PASS on binary97c6bfc; see mongo-control-aadd212.json",
+    "enabled_replica_case": "FAIL on first run; later diagnostic BLOCKED; no replacement PASS",
+    "revised_runner_real_execution": "NOT_RUN; exact-source review requested"
+  },
+  "logs": {
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/clippy-aadd212-final.log": "d2ceea6ca4b18d2845d7f7faf0cfe3a16dad1421f2ee993262a53bb75f09eb4e",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/diagnostics-aadd212-final.log": "1a314ba2211c4a3404898d1f9339a93894267fecb45579879d0b3182267e7556",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/oracle-aadd212-final.log": "a64a090cc367d56ddf52fd4054b5bc4f42c1ec2543eb1407d0b15bc8db0a10f1",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/fmt-aadd212-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/python-timeout-retention-final.log": "21f1324fbf6cc310b81d982d748872e346698d77cf7eabe67c8760fa5f73b27e",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/lint-timeout-retention-final.log": "19e27cf7273482ed375e4a47c54b6d0f1e8d67054a048215a0af74a8abb434b1"
+  },
+  "cleanup": {
+    "all_owned_disposable_mongo_receipts": true,
+    "no_shared_cluster_mutation": true,
+    "stale_zero_test_trace_removed": true,
+    "mixed_compiler_artifacts_removed_mib": 64.4,
+    "active_build_cache_retained": true,
+    "worktree_owner": "lead"
+  }
+}

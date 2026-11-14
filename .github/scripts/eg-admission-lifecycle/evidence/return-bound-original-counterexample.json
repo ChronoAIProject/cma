@@ -1,0 +1,114 @@
+{
+  "source": "1233d9b0fffca49b0ea8882c7d29b800032e7016",
+  "kind": "pure injected clock; no child or cluster",
+  "result": {
+    "schema": "eg_lifecycle_result_v1",
+    "run_id": "36b8b30a-a113-4019-9e78-cf20f776e704",
+    "cohort_id": "6210a351-1498-4ac8-aca8-a5022ebb1ad8",
+    "plan_sha256": "8c441d99de176c8f21b65f1d8877bf469af8d5007b56bb95f989b193a88aed56",
+    "events_sha256": "7b5d9574726eef49902150385222038a766764eef23d36760493c4b80588aedc",
+    "phases": [
+      {
+        "phase": "prepare",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "workload",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "terminal_wait",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "capture",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "workload_shutdown",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "resource_shutdown",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "child_wait",
+        "status": "timed_out",
+        "duration_ms": 3600000.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "local_destroy",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "cleanup",
+        "status": "ok",
+        "duration_ms": 1.0000000004656613,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "phase": "transition",
+        "status": "ok",
+        "duration_ms": 1.0,
+        "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "complete": true,
+    "normal_boundaries_observed": false,
+    "registered_stall_observed": true,
+    "accounting_closed": true,
+    "custody_confirmed": true,
+    "fixture_disposal_permitted": true,
+    "resources_disposed": true,
+    "disposal_without_confirmation": false,
+    "accounting": {
+      "http_attempts": 2,
+      "submitted_events": 1,
+      "proven_unadmitted": 0,
+      "custody_established": 1,
+      "admission_uncertain": 0,
+      "direct_terminal": 1,
+      "reconciled_terminal": 0,
+      "unresolved": 0,
+      "terminal_failures": 0,
+      "expected_effects": 1,
+      "confirmed_effects": 1,
+      "duplicate_effects": 0,
+      "missing_effects": 0,
+      "stale_effects": 0,
+      "wrong_owner_effects": 0,
+      "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "custody": {
+      "receipt_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "registered_departures": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "confirmed_process_exits": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ],
+      "collectors_closed": true,
+      "fixture_closed": true,
+      "no_late_effect_barrier": true,
+      "resources_disposed": true
+    },
+    "evidence_status": "COMPLETE",
+    "application_acceptance": "REQUIRES_INDEPENDENT_REVIEW"
+  }
+}
