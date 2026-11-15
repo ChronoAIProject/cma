@@ -1,12 +1,14 @@
 //! Public runtime routing reuses the serving operation's domain authorization.
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use layer2_core::{
-    resource_access::{AccessPurpose, CallerContext, ResourceAccessService, ResourceCapability},
+    resource_access::{
+        AccessPurpose, CallerContext, ResourceAccessService, ResourceCapability, ResourceTarget,
+    },
     sandbox::{
         agent_attachments::AgentAttachmentService, agent_filesystem::AgentFileService,
         AgentReadService,
     },
-    AgentId,
+    AgentId, Capability,
 };
 use std::{sync::Arc, time::SystemTime};
 
@@ -27,6 +29,7 @@ pub(super) trait PublicAuthorization: Send + Sync {
 pub(crate) struct PublicAccess {
     auth: Arc<crate::auth::AuthState>,
     reads: Arc<AgentReadService>,
+    access: Arc<ResourceAccessService>,
     files: Arc<AgentFileService>,
     attachments: Arc<AgentAttachmentService>,
 }
@@ -40,6 +43,7 @@ impl PublicAccess {
         Arc::new(Self {
             auth,
             reads,
+            access: access.clone(),
             files: AgentFileService::new(access.clone(), adapter.clone()),
             attachments: AgentAttachmentService::new(access, adapter),
         })
@@ -66,6 +70,40 @@ impl PublicAuthorization for PublicAccess {
         )
         .await?;
         match operation {
+            Operation::Configuration => {
+                // Routing is a mutation, including a cached idempotent replay.
+                // A view/read credential must not gain owner execution scope.
+                // The receiving handler validates the exact settings payload
+                // and creates its existing transactional settings authority.
+                if !context.validate_principal()
+                    || !context
+                        .caller
+                        .authorization
+                        .allows(Capability::UseOwnSandboxes)
+                {
+                    return Err(StatusCode::FORBIDDEN);
+                }
+                let target = ResourceTarget::Agent {
+                    agent_id: id.clone(),
+                };
+                let authorized = self
+                    .access
+                    .authorize(
+                        context,
+                        credential,
+                        &target,
+                        ResourceCapability::OperateAgent,
+                        AccessPurpose::Mutation {
+                            started_at: SystemTime::now(),
+                        },
+                    )
+                    .await
+                    .map_err(access_error)?;
+                self.access
+                    .validate_read_result(&authorized, &target, ResourceCapability::OperateAgent)
+                    .await
+                    .map_err(access_error)?;
+            }
             Operation::Models => {
                 let read = self
                     .reads
@@ -125,6 +163,7 @@ impl PublicAuthorization for PublicAccess {
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
+    Configuration,
     Models,
     Skills,
     Recovery,
@@ -141,6 +180,7 @@ fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
         .ok_or(StatusCode::FORBIDDEN)?;
     let read = method == Method::GET || method == Method::HEAD;
     Ok(match suffix {
+        "preferences" | "settings" if method == Method::PATCH => Operation::Configuration,
         "models" if read => Operation::Models,
         "skills" if read || method == Method::POST => Operation::Skills,
         "recover-worktree" if method == Method::POST => Operation::Recovery,

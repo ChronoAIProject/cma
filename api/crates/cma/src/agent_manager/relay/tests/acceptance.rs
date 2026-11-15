@@ -92,6 +92,14 @@ async fn replicas() -> (Arc<MemoryOwnershipStore>, Vec<Instance>, Vec<Arc<Probe>
             .routes(
                 Router::new()
                     .route("/api/v1/agents/{agent}/files", axum::routing::post(accept))
+                    .route(
+                        "/api/v1/agents/{agent}/preferences",
+                        axum::routing::patch(accept),
+                    )
+                    .route(
+                        "/api/v1/agents/{agent}/settings",
+                        axum::routing::patch(accept),
+                    )
                     .with_state(probe.clone()),
             )
             .layer(axum::middleware::from_fn(test_auth));
@@ -119,6 +127,69 @@ fn headers() -> HeaderMap {
         headers.insert(name, value.parse().unwrap());
     }
     headers
+}
+
+#[tokio::test]
+async fn configuration_writes_on_either_ingress_run_under_the_exact_owner() {
+    let (store, instances, probes) = replicas().await;
+    let id = AgentId("agt-configuration-owner".into());
+    let (owner, authority) = acquire(&store, &instances, &id).await;
+    let peer = 1 - owner;
+    let client = client();
+    for (suffix, body) in [
+        (
+            "preferences",
+            br#"{"expected_revision":0,"title":"New title"}"#.as_slice(),
+        ),
+        (
+            "preferences",
+            br#"{"expected_revision":1,"system_prompt":"Be concise"}"#.as_slice(),
+        ),
+        (
+            "settings",
+            br#"{"model":"fixture-model","reasoning_effort":"high","permission_mode":"guarded"}"#
+                .as_slice(),
+        ),
+    ] {
+        for ingress in [owner, peer] {
+            let response = client
+                .patch(format!(
+                    "{}/api/v1/agents/{id}/{suffix}",
+                    instances[ingress].address
+                ))
+                .headers(headers())
+                .body(body.to_vec())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let accepted: Value = response.json().await.unwrap();
+            assert_eq!(accepted["owner"], instances[owner].coordinator.instance_id);
+            assert_eq!(accepted["epoch"], authority.token.epoch);
+            assert_eq!(accepted["relayed"], ingress == peer);
+            assert_eq!(accepted["body"], json!(body.to_vec()));
+            assert_eq!(accepted["request"], "acceptance-request");
+            assert_eq!(accepted["idempotency"], "acceptance-operation");
+        }
+    }
+    assert_eq!(probes[peer].effects.load(Ordering::SeqCst), 0);
+    assert_eq!(probes[owner].effects.load(Ordering::SeqCst), 6);
+
+    // Receiving policy is checked independently after forwarding, so a stale
+    // source-side permission cannot make the owner execute a configuration.
+    probes[owner].allowed.store(false, Ordering::SeqCst);
+    let response = client
+        .patch(format!(
+            "{}/api/v1/agents/{id}/preferences",
+            instances[peer].address
+        ))
+        .headers(headers())
+        .body(br#"{"expected_revision":2,"title":"Revoked"}"#.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(probes[owner].effects.load(Ordering::SeqCst), 6);
 }
 
 #[tokio::test]

@@ -22,8 +22,9 @@ pub(super) async fn route(
             next.run(request).await
         };
     };
-    // Durable admissions and reads need no local transport. Only paths that can
-    // invoke a synchronous Agent runtime effect take this one-hop route.
+    // Agent configuration publication needs the same owning-AM scope as live
+    // runtime effects. Reads and the remaining admission interfaces retain
+    // their own routing contracts.
     if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
         return next.run(request).await;
     }
@@ -205,16 +206,18 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
     else {
         return false;
     };
-    matches!(
-        suffix,
-        "recover-worktree"
-            | "skills"
-            | "models"
-            | "environment"
-            | "attachments"
-            | "files"
-            | "browser"
-    ) || suffix.starts_with("files/")
+    (method == axum::http::Method::PATCH && matches!(suffix, "preferences" | "settings"))
+        || matches!(
+            suffix,
+            "recover-worktree"
+                | "skills"
+                | "models"
+                | "environment"
+                | "attachments"
+                | "files"
+                | "browser"
+        )
+        || suffix.starts_with("files/")
         || suffix == "browser/control"
 }
 
