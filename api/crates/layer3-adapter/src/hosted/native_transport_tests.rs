@@ -48,6 +48,8 @@ struct State {
     restarted: AtomicBool,
     missing_incarnation: AtomicBool,
     hold_response: AtomicBool,
+    hold_ownership_response: AtomicBool,
+    ownership_confirmations: AtomicUsize,
     hold_next_upgrade: AtomicBool,
     preparation_entered: tokio::sync::Notify,
     preparation_release: tokio::sync::Notify,
@@ -482,6 +484,9 @@ use runtime_fixture::serve_runtime;
 mod open_overlap_tests;
 #[path = "native_http_reuse_tests.rs"]
 mod reuse_tests;
+
+#[path = "native_ownership_contention_tests.rs"]
+mod ownership_contention_tests;
 
 #[path = "native_desktop_tests.rs"]
 mod desktop_tests;
