@@ -38,6 +38,7 @@ interface Options {
   readonly setRequestRevision: Dispatch<SetStateAction<number>>;
   readonly applyLive: (event: AgentLiveEvent) => void;
   readonly reload: () => void;
+  readonly refreshDetail: () => void;
   readonly errorMessage: (error: unknown) => string;
   readonly onIdentityChange: (error: unknown) => boolean;
   readonly options: {
@@ -69,6 +70,7 @@ export function useAgentActions({
   setRequestRevision,
   applyLive,
   reload,
+  refreshDetail,
   errorMessage,
   onIdentityChange,
   options,
@@ -393,6 +395,7 @@ export function useAgentActions({
         keys.settle(scope);
         options.onHierarchyChange?.();
         if (name === 'delete') options.onDeleted?.();
+        else if (name === 'stop' && v2 !== undefined) refreshDetail();
         else if (name !== 'interrupt' || (v2 === undefined && !requireStop)) reload();
       } catch (error: unknown) {
         if (!controller.signal.aborted && !onIdentityChange(error))
@@ -416,6 +419,7 @@ export function useAgentActions({
       keys,
       options,
       reload,
+      refreshDetail,
       stateRef,
       v2,
       actionAbortRef,

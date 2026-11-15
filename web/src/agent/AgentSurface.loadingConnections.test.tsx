@@ -31,6 +31,7 @@ function controller(): AgentController {
     resourceAvailability: { state: 'live', runtimeVersion: 'one' },
     send: vi.fn(async () => undefined),
     reload: vi.fn(),
+    refreshDetail: vi.fn(),
     clearActionError: vi.fn(),
     interrupt: vi.fn(),
     approve: vi.fn(),
