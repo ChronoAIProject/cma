@@ -8,6 +8,7 @@ import urllib.request
 import zipfile
 
 ARCHIVE_SHA256 = '775a3517f5c7c1b62165d72dff98e092b432502d454a0dcd687b2463c2832ad8'
+ARCHIVE_URL = 'https://get.localhost.direct/localhost.direct.OP.zip'
 def pinned_files():
     # Conventional checksum records keep public digests distinct from key material.
     rows = [line.split('  ', 1) for line in Path(__file__).with_name('localhost-direct.sha256').read_text().splitlines()]
@@ -18,7 +19,9 @@ def pinned_files():
 
 
 def download(url):
-    with urllib.request.urlopen(url, timeout=30) as response:
+    request = urllib.request.Request(url, headers={
+        'User-Agent': 'cma-two-am-ci/1.0 (+https://github.com/ChronoAIProject/cma)'})
+    with urllib.request.urlopen(request, timeout=30) as response:
         data = response.read(4 * 1024 * 1024 + 1)
     if len(data) > 4 * 1024 * 1024:
         raise ValueError('public_tls_bundle_size')
@@ -28,7 +31,9 @@ def download(url):
 def prepare(directory):
     directory = Path(directory)
     directory.mkdir(mode=0o700)
-    archive = download('https://aka.re/localhost')
+    # Official destination of the public download link. The shortener rejects
+    # urllib's default agent with 403; the archive itself remains hash-pinned.
+    archive = download(ARCHIVE_URL)
     if hashlib.sha256(archive).hexdigest() != ARCHIVE_SHA256:
         raise ValueError('public_tls_bundle_rotated_requires_review')
     readme = download('https://raw.githubusercontent.com/Upinel/localhost.direct/master/README.md').decode()

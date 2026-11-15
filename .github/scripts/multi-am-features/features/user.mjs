@@ -66,7 +66,7 @@ export async function userCases({record: resource, api, runCase, recordFailure})
           body: {expected_revision: current.revision, title: before.title ?? resource.name}, key: randomUUID()});
       }
       const restored = (await api.request('a', 'GET', base)).body;
-      check([restored.title, restored.owner_title].includes(resource.name), 'rename_restore_missing');
+      check([restored.title, restored.owner_title].includes(before.title ?? resource.name), 'rename_restore_missing');
     }, recordFailure);
   });
 }

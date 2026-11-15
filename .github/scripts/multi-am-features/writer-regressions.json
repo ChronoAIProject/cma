@@ -1,0 +1,132 @@
+{
+  "schema": "multi-am-writer-regressions-v1",
+  "source": "4eaf069d234fbd20edbb63e22a3d36a30190ef3a",
+  "requirements_sha256": "1ea95c00a7786cff73f953d03783a53e3bef1184d1e20a160544051683cf2913",
+  "verdict": "INCOMPLETE",
+  "cases": [
+    {
+      "id": "SW01",
+      "issues": "#2157",
+      "feature": "Rename",
+      "requirement": "Request is authorized and executed under current owning AM authority; server-internal CAS conflict re-reads and retries boundedly; acknowledged title remains after reload and owner move. A stale explicit expected revision receives the established typed stale-client response.",
+      "implemented_assertions": [
+        "user.rename_cas",
+        "writer.held_rename",
+        "writer.held_title_survives_restart"
+      ],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Deterministic lifecycle/log publication race and original title effect custody assertions."
+    },
+    {
+      "id": "SW02",
+      "issues": "#2157",
+      "feature": "Settings and system prompt",
+      "requirement": "Current owner executes both durable admission and runtime effect; policy/idle/runtime/setting revisions revalidated. No false success from unchanged settings. Non-idle and unauthorized cases remain refused.",
+      "implemented_assertions": [
+        "user.system_prompt_roundtrip",
+        "user.session_settings_roundtrip",
+        "admin.system_prompt_roundtrip",
+        "admin.session_settings_roundtrip",
+        "writer.busy_configuration_refused"
+      ],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Unauthorized actor fixture and exact native configure-effect count; busy refusal runs before restart only."
+    },
+    {
+      "id": "SW03",
+      "issues": "#2157",
+      "feature": "Skill installation",
+      "requirement": "Existing owner route and authority scope survive; bounded intent CAS retry succeeds or returns bounded availability outcome, never duplicates installation. Do not presume missing route: /skills is already allowlisted in exact4eaf.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Deterministic skill catalog/installation fixture and publication barrier."
+    },
+    {
+      "id": "SW04",
+      "issues": "#2147",
+      "feature": "Send, interrupt, queued cancellation, Stop, delete, revive/Open",
+      "requirement": "Admission is executed under current owner or explicitly reviewed non-routable CAS contract. Immutable command/idempotency receipt is unique; effect runs once; old owner cannot publish after epoch change. Cleanup uses public owner path.",
+      "implemented_assertions": [
+        "plain_send_and_interrupt_non_owner",
+        "actual_owner_kill_and_recovery",
+        "plain_public_stop_retire"
+      ],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Queued edit/cancellation, command-settlement barriers and ownerless revive/Open coverage."
+    },
+    {
+      "id": "SW05",
+      "issues": "#2152/#2156",
+      "feature": "Startup publication",
+      "requirement": "Bounded reread checks current holder, work lease, parent, runtime and owner; retries publication only. Agent reaches Ready without waiting for the 18-minute old work lease and without rerunning native preparation.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Author-owned known-aborted startup fence injection tied to exact image."
+    },
+    {
+      "id": "SW06",
+      "issues": "#2152/#2156",
+      "feature": "Startup refusal boundaries",
+      "requirement": "Reject changed authority/intent, preserve unknown outcome, do not claim retryable known-abort or repeat native effects.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Author-owned owner/parent/work-lease and unknown-outcome injection."
+    },
+    {
+      "id": "SW07",
+      "issues": "#2147",
+      "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
+      "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Deterministic background/multi-Agent transaction barriers and atomicity assertions."
+    },
+    {
+      "id": "SW08",
+      "issues": "LEAD05:40",
+      "feature": "Metadata writers",
+      "requirement": "Each runs on owner where routable; non-routable known conflict has bounded fresh snapshot retry. Immutable title-effect custody prevents LLM/native replay; optional pacing hints may be safely superseded. Fences remain present.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Title/suggestions/access metadata dependencies and publication barriers."
+    },
+    {
+      "id": "SW09",
+      "issues": "#2161",
+      "feature": "Always-on and admission replay",
+      "requirement": "Successful toggle never makes readers503; original immutable admission still replays to same identity; altered original payload is rejected. Preserve permissions, stale revision checks, owner relinquishment and provenance. Routing alone is insufficient to fix immutable fingerprint mismatch.",
+      "implemented_assertions": [
+        "admin.sandbox_always_on_cross_am"
+      ],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Trigger-origin creation, owner relinquishment and browser fixture."
+    },
+    {
+      "id": "SW10",
+      "issues": "LEAD05:40",
+      "feature": "Sharing/access/artifact metadata",
+      "requirement": "No raw conflict for internal contention; fresh authorization and policy snapshot checked on retry, immutable receipt recovered on unknown outcome, denied/revoked caller never admitted. Some share redemption retry already exists; preserve it.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Organization/shared access and artifact publication fixture plus contention barriers."
+    },
+    {
+      "id": "SW11",
+      "issues": "LEAD05:40",
+      "feature": "Local destructive/admin matrix",
+      "requirement": "Exact capture/retention/title-finality guards remain enforced. Known contention re-evaluates safely and boundedly; terminal cleanup never deletes a live Agent or bypasses retained evidence. Local topology only.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Checkpoint, retirement/purge and retention/finality fixture."
+    },
+    {
+      "id": "SW12",
+      "issues": "#2159/#2146",
+      "feature": "Readiness and HPA",
+      "requirement": "Never-Ready manager acquires no Agent; shared readiness predicate drops immediately on termination; serving peer owns any touched Agent within approved drain bound. Existing native65 PASS is not an integrated image PASS.",
+      "implemented_assertions": [],
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "Third-AM never-Ready and approved HPA 2-to-3-to-2 integrated scenario."
+    }
+  ]
+}

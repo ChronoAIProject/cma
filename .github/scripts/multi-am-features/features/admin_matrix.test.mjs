@@ -46,6 +46,18 @@ test('admin denial is a failure when the ordinary caller receives protected data
   const rows=[];const m=new AdminMatrix({fixture:fixture(),record:r=>rows.push(r),request:async()=>({status:200,body:{items:[],next:null}})});
   await assert.rejects(m.denials(1),/unexpected_http_200/);assert.equal(rows[0].verdict,'FAIL');
 });
+test('failed admin request retains the actual ingress, response status and request ID',async()=>{
+  const rows=[];
+  const primary=Object.assign(Error('api_status_503'),{response:{status:503,
+    timing:{am:'b',request_id:'private-request-id'},body:{code:'operator_service_unavailable'}}});
+  const m=new AdminMatrix({fixture:fixture(),record:row=>rows.push(row),request:async()=>{throw primary;}});
+  await assert.rejects(m.runCase('failed_read',1,()=>m.call('a','GET','/api/v1/admin/sandboxes')),
+    error=>error===primary);
+  assert.equal(rows[0].requests[0].am,'b');
+  assert.equal(rows[0].requests[0].status,503);
+  assert.equal(rows[0].requests[0].request_id,'private-request-id');
+  assert.equal(rows[0].verdict,'FAIL');
+});
 test('admission lost stop acknowledgement reconciles once and restores through peer',async()=>{
   let state={revision:1,operator_stop:null,writes_available:true,history:[]};const calls=[];
   const m=new AdminMatrix({fixture:fixture(),record:()=>{},request:async(role,am,method,path,{body})=>{

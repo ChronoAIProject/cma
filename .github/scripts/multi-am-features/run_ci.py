@@ -9,6 +9,7 @@ import re
 import signal
 import sys
 import time
+import urllib.error
 
 from desktop_policy import install as install_desktop_policy
 from infrastructure import Infrastructure
@@ -40,13 +41,16 @@ def run(args):
     for sig in [signal.SIGTERM, signal.SIGINT]:
         signal.signal(sig, interrupted)
     try:
+        result['stage'] = 'public_tls_fixture'
         tls_directory = prepare_tls(private / 'tls')
+        result['stage'] = 'shared_cluster_and_images'
         ready = infrastructure.setup(args.artifacts, args.revision, args.run_id, args.attempt)
         ready['tls_directory'] = str(tls_directory)
         ready['desktop_admission_policy'] = install_desktop_policy(
             infrastructure, ready['runtime_images']['omarchy'], ready['runtime_images']['base'])
         write(private / 'ready.private.json', ready)
         fixture = LocalFixture(ready, private)
+        result['stage'] = 'two_am_initialization'
         fixture.initialize()
         config = {'am_origins': fixture.origins, 'bearer': fixture.secret['bearer'],
             'admin_bearer': fixture.secret['admin_bearer'], 'owner_id': 'native-am-fixture-owner',
@@ -58,6 +62,7 @@ def run(args):
             'output_dir': str(private / 'journey'), 'matrix_output': str(private / 'matrix'),
             'summary_dir': str(summary), 'run_id': ready['run_id']}
         result['processes_ready_at'] = utc()
+        result['stage'] = 'feature_journey'
         code, output = fixture.client.command(['node', str(ROOT / 'suite.mjs')],
                                                data=json.dumps(config), timeout=2400, check=False)
         (private / 'suite.private.log').write_text(output)
@@ -69,6 +74,10 @@ def run(args):
         # credentials, resource identities or raw API/fixture payloads.
         (private / 'error.private.txt').write_text(type(error).__name__ + ': ' + str(error))
         result['failure_class'] = type(error).__name__
+        if isinstance(error, urllib.error.HTTPError):
+            result['http_status'] = error.code
+        elif isinstance(error, (ValueError, RuntimeError)) and re.fullmatch('[a-z][a-z0-9_]{0,100}', str(error)):
+            result['failure_code'] = str(error)
     finally:
         if fixture:
             fixture.client.deadline = max(fixture.client.deadline, time.monotonic() + 120)

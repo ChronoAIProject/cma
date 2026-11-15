@@ -63,6 +63,9 @@ export class AdminMatrix {
       check(allowed.includes(response?.status),'unexpected_http_'+response?.status);
       return response.body;
     } catch(error) {
+      observation.status ??= error?.response?.status;
+      observation.am=error?.response?.timing?.am ?? observation.am;
+      observation.request_id ??= error?.response?.timing?.request_id;
       observation.error_code=/^[a-zA-Z0-9_:-]{1,160}$/.test(error?.message??'')?error.message:'transport_or_contract_error';
       throw error;
     } finally {observation.elapsed_ms=performance.now()-started;this.current?.requests.push(observation);}

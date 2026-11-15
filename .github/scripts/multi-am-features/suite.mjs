@@ -7,6 +7,8 @@ import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
 import {documentCases} from './features/documents.mjs';
+import {configurationCases, heldConfigurationCases, assertWriterTitle,
+  verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
 import {retainFailure} from './failure.mjs';
@@ -62,14 +64,57 @@ const matrix = new ExtendedAdminMatrix({fixture,
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
 try {
-  result.journey = await runJourney(config, {featureHook: async context => {
+  result.journey = await runJourney(config, {heldTurnHook: async context => {
+    const previousRecorder = context.api.router.record;
+    context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
+    try {
+      for (let iteration = 1; iteration <= 3; iteration++) {
+        let activeRow;
+        await heldConfigurationCases({...context,
+          recordState: async (stage, state) => { (activeRow.states ??= []).push({stage, state}); },
+          runCase: async (name, operation) => {
+          const start = performance.now(), first = observations.length;
+          const row = {case: name, phase: context.phase, iteration, verdict: 'RUNNING'};
+          activeRow = row;
+          try { await operation(); row.verdict = 'PASS'; }
+          catch (error) {
+            row.verdict = 'FAIL';
+            try { row.failures = [await retainFailure(config.matrix_output, 'primary', error,
+              {case: name, phase: context.phase, iteration})]; }
+            catch { row.evidence_failure = true; }
+            throw error;
+          } finally {
+            row.owner_proofs = observations.slice(first);
+            row.non_owner = row.owner_proofs.length > 0
+              && row.owner_proofs.every(p => p.verdict === 'PASS' && p.owner !== p.ingress);
+            row.elapsed_ms = performance.now() - start; await record(row);
+          }
+        }});
+      }
+    } finally { context.api.router.record = previousRecorder; }
+  }, featureHook: async context => {
     phase = context.phase;
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);
     admin.router = new NonOwnerRouter({adapter: context.adapter,
-      record: proof => { adminOwnerProofs.push(proof); }});
+      record: proof => { adminOwnerProofs.push(proof); observations.push(proof); }});
     admin.bindSandbox(context.record.sandboxId, context.record.agentId);
+    if (phase === 'after_restart') {
+      const first = observations.length;
+      const previousRecorder = context.api.router.record;
+      context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
+      const row = {case: 'writer.held_title_survives_restart', phase, iteration: 1, verdict: 'RUNNING'};
+      try { row.final_state = await assertWriterTitle(context.api, context.record); row.verdict = 'PASS'; }
+      catch (error) { row.verdict = 'FAIL'; throw error; }
+      finally {
+        context.api.router.record = previousRecorder;
+        row.owner_proofs = observations.slice(first);
+        row.non_owner = row.owner_proofs.length > 0
+          && row.owner_proofs.every(p => p.verdict === 'PASS' && p.owner !== p.ingress);
+        await record(row);
+      }
+    }
     if (phase === 'after_restart') for (const [index, document] of savedDocuments.entries()) {
       await documentCase(index + 1, 'user.documents_survive_restart', async () => {
         for (const am of ['a', 'b']) {
@@ -95,7 +140,8 @@ try {
     try {
       for (let iteration = 1; iteration <= 3; iteration++) {
         let activeRow;
-        await userCases({...context,
+        const caseContext = {...context,
+        recordState: async (stage, state) => { (activeRow.states ??= []).push({stage, state}); },
         recordFailure: async (stage, error) => {
           const receipt = await retainFailure(config.matrix_output, stage, error,
             {case: activeRow?.case, phase: context.phase, iteration});
@@ -110,9 +156,14 @@ try {
           finally {
             const proofs = observations.slice(first);
             row.non_owner = proofs.length > 0 && proofs.every(p => p.verdict === 'PASS' && p.owner !== p.ingress);
+            row.owner_proofs = proofs;
             row.elapsed_ms = performance.now() - start; await record(row);
           }
-        }});
+        }};
+        await userCases(caseContext);
+        await configurationCases(caseContext);
+        await configurationCases({...caseContext, api: admin,
+          runCase: (name, operation) => caseContext.runCase(name.replace('user.', 'admin.'), operation)});
         await matrix.sandboxAlwaysOn(iteration, {
           created_by_run: config.run_id, sandbox_id: context.record.sandboxId,
           verifyAdmission: async stage => {
@@ -121,13 +172,10 @@ try {
                 '/api/v1/agents/' + context.record.agentId)).body;
               check(detail.id === context.record.agentId && detail.sandbox?.id === context.record.sandboxId
                 && detail.status === 'ready', 'always_on_public_agent_unavailable_' + stage);
-              // Replay only an already acknowledged intent. A mutable policy
-              // must not change its immutable admission identity or create again.
-              const replay = await context.api.request(am, 'POST', '/api/v1/agents', {
-                body: context.record.createBody, key: context.record.key, allowed: [202]});
-              check(replay.body.id === context.record.operationId,
-                'always_on_admission_replay_identity_changed_' + stage);
             }
+            // Replay only acknowledged creation custody; altered payload must
+            // refuse without replacing the original receipt or creating again.
+            await verifyLifecycleReplay(context.api, context.record);
           },
         });
       }

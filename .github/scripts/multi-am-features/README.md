@@ -37,6 +37,15 @@ An executable subset passing is never a full-inventory PASS.
   enable/revoke, and replaying the already acknowledged create intent must retain
   its original lifecycle identity. Rename and Always-on failures retain typed
   private responses, request IDs, and separate primary/restoration evidence.
+- Changed system prompts and permission modes run through both personal and
+  authorized operator entrypoints, with exact revision, acknowledged runtime
+  configuration, stale-write refusal, preserved prompt and guarded restoration
+  assertions. While a real provider response is held, busy configuration writes
+  must refuse without changing state; changed titles must survive the actual
+  owner restart. Private cases retain the checked state and owner/request joins.
+  These do not inject a deterministic store conflict or count native Configure
+  effects. The full single-writer regression requirements and remaining gaps are
+  tracked in `writer-regressions.json`.
 - Feature hooks run before and after the owner restart. Each selected feature case
   repeats three times in each phase. The actual owner StatefulSet scales to zero;
   the old native container task must be absent. The survivor must recover a higher
@@ -95,7 +104,8 @@ of the fixture.
 ## TLS and desktop prerequisites
 
 Native provider requests retain default WebPKI verification. The fixture downloads
-the public `localhost.direct` test bundle from `https://aka.re/localhost`, obtains
+the public `localhost.direct` test bundle from its official download destination,
+`https://get.localhost.direct/localhost.direct.OP.zip`, obtains
 its publicly documented archive password from the upstream README, and checks
 pinned archive/member hashes, expiry, hostname and key agreement. It serves the
 full chain with the original SNI and rewrites only this cluster's DNS. The pinned
@@ -129,6 +139,9 @@ file hashes. Raw response bodies, logs, cookies, fixture keys and resource IDs s
 under `private/`. Normal exit, failure and signals join fixture children and remove
 the cluster. An `always()` CI step repeats identity-checked cleanup after command
 cancellation, then removes private data. Cleanup failure fails the run.
+Setup failures expose only the fixed stage, exception class, safe error code or
+HTTP status in the summary. An upstream public download failure is a fixture
+failure; it does not constitute a product feature execution.
 
 Offline validation:
 
