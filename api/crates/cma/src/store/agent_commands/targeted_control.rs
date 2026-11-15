@@ -76,10 +76,7 @@ async fn execute(
                 .await
             {
                 Some(writer) => Some(writer),
-                None => {
-                    record_outcome("conflict_exhausted", attempt);
-                    break;
-                }
+                None => break,
             }
         } else {
             None
