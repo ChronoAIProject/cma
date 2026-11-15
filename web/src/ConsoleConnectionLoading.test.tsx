@@ -10,7 +10,7 @@ import { connectionClient } from './connections/client';
 afterEach(() => vi.restoreAllMocks());
 
 it.each(['personal', 'refused'] as const)(
-  'starts loading connections only after exact personal access resolves: %s',
+  'overlaps connection authorization while protected loading waits for personal access: %s',
   async (access) => {
     const sdk = createClient({
       baseUrl: 'https://fixture.invalid',
@@ -52,7 +52,12 @@ it.each(['personal', 'refused'] as const)(
     );
     await waitFor(() => expect(sdk.agents.readAccessible).toHaveBeenCalledOnce());
     expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
-    expect(check).not.toHaveBeenCalled();
+    expect(check).toHaveBeenCalledExactlyOnceWith(
+      { type: 'agent', id: 'agt_1' },
+      undefined,
+      expect.any(AbortSignal),
+    );
+    expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
     expect(detail).not.toHaveBeenCalled();
     expect(parent).not.toHaveBeenCalledWith(WIRE_AGENT.sandbox.id, expect.anything());
     await act(async () => {
@@ -70,7 +75,8 @@ it.each(['personal', 'refused'] as const)(
     } else {
       expect(screen.getByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
       expect(document.title).toBe('ChronoAI Managed Agent (CMA)');
-      expect(check).not.toHaveBeenCalled();
+      expect(check).toHaveBeenCalledOnce();
+      expect(check.mock.calls[0]![2]?.aborted).toBe(true);
       expect(detail).not.toHaveBeenCalled();
       expect(parent).not.toHaveBeenCalledWith(WIRE_AGENT.sandbox.id, expect.anything());
     }

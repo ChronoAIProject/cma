@@ -61,6 +61,17 @@ does not establish a statistically significant latency improvement.
 
 ## Boundaries that must stay intact
 
+- A cold selected Agent route starts its connection check alongside access
+  classification. The connection endpoint independently authenticates the caller
+  and authorizes the exact target. Only the subsequently authorized personal
+  view can consume that result, once, for the same client, account and Agent.
+  An unconsumed result expires one second after completion or on blur and
+  visibility changes. Navigation, access failure and account/client changes
+  cancel the route's read. After consumption, ordinary read behavior applies. This is route
+  overlap, not a readiness cache across visits. Ordinary results never become
+  prepared Send handoffs, and shared views never consume them. Existing creation
+  handoffs keep their separate contract. Retry-After and connection-read cooldowns
+  still apply. Send, command custody and server effect checks are unchanged.
 - Independent hierarchy, transcript, usage and first history-page reads already
   overlap. Recent transcript and shell publication must remain independent of
   delayed older history and usage. Cached return must not reread old history.
