@@ -134,13 +134,11 @@ async fn legacy_projection_dispatch_keeps_existing_fallback() {
         .final_answer()
         .unwrap()
         .sequence;
-    assert!(
-        store
-            .agent_log_final_answer(&agent, sequence)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(store
+        .agent_log_final_answer(&agent, sequence)
+        .await
+        .unwrap()
+        .is_none());
     let mut session = store.client.start_session().snapshot(true).await.unwrap();
     let expected_usage = crate::store::agent_opening_reads::usage(&store, &agent, &mut session)
         .await
