@@ -369,3 +369,50 @@ async fn late_old_incarnation_invalidation_preserves_new_pod_slots() {
     fixture.transport.retire(&handle()).await.unwrap();
     fixture.drained().await;
 }
+
+#[tokio::test]
+async fn incarnation_cancellation_cannot_interrupt_sibling_fencing_at_a_contended_lock() {
+    let fixture = fixture().await;
+    let endpoint = fixture.endpoint().await;
+    let observed = fixture
+        .transport
+        .native_slot_for(&endpoint, native_pool::NativeHttpLane::Ownership)
+        .await
+        .unwrap();
+    fixture.state.hold_response.store(true, Ordering::SeqCst);
+    let control = tokio::spawn({
+        let transport = fixture.transport.clone();
+        async move { transport.exchange(&handle(), RequestFrame::Resources).await }
+    });
+    wait_for_request(&fixture, "POST /runtime/control ").await;
+    let sibling = fixture.transport.native_slot(&endpoint).await.unwrap();
+    let before = fixture.state.requests.lock().unwrap().len();
+    let state = fixture.transport.state.lock().await;
+    let mut cancelled = observed.cancellation();
+    // Reproduce the enclosing native_http_for biased select. Poll twice while
+    // the state mutex is held: publishing cancellation before that lock lets
+    // the second poll drop invalidation before it can reach the sibling lane.
+    let invalidation = async {
+        tokio::select! { biased;
+            _ = cancelled.wait_for(|cancelled| *cancelled) => {},
+            _ = fixture.transport.discard_native_incarnation(&endpoint, &observed) => {},
+        }
+    };
+    tokio::pin!(invalidation);
+    assert!(futures_util::poll!(&mut invalidation).is_pending());
+    assert!(futures_util::poll!(&mut invalidation).is_pending());
+    assert!(!*observed.cancellation().borrow());
+    assert!(!*sibling.cancellation().borrow());
+    drop(state);
+    tokio::time::timeout(Duration::from_secs(2), &mut invalidation)
+        .await
+        .unwrap();
+    assert!(*observed.cancellation().borrow());
+    assert!(*sibling.cancellation().borrow());
+    let refused = tokio::time::timeout(Duration::from_secs(2), control).await;
+    fixture.state.hold_response.store(false, Ordering::SeqCst);
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+    assert!(refused.unwrap().unwrap().is_err());
+    assert_eq!(fixture.state.requests.lock().unwrap().len(), before);
+}

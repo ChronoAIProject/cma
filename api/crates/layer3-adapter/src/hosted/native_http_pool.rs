@@ -283,8 +283,11 @@ impl ProviderHostedControlTransport {
         let Some((handle, _)) = endpoint.native_binding() else {
             return;
         };
-        observed.cancel();
         let mut state = self.state.lock().await;
+        // Publishing cancellation wakes the caller's biased select. Acquire the
+        // guard first so it cannot drop this future before sibling lanes are
+        // fenced; all cancellation below must remain synchronous.
+        observed.cancel();
         state.native_http.retain(|(runtime, _), slot| {
             if runtime == handle
                 && slot.identity == observed.identity
