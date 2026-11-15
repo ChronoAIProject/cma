@@ -3,7 +3,7 @@ use super::*;
 use crate::store::sandbox_usage::{event_document, read_event};
 use crate::store::sandbox_usage_rollups::AllocationDelta;
 use layer2_core::sandbox_usage::UsageEvent;
-use mongodb::event::{EventHandler, command::CommandEvent};
+use mongodb::event::{command::CommandEvent, EventHandler};
 use std::sync::Mutex;
 
 async fn observed() -> (Arc<ReportingStore>, Arc<Mutex<Vec<Document>>>) {
@@ -14,12 +14,13 @@ async fn observed() -> (Arc<ReportingStore>, Arc<Mutex<Vec<Document>>>) {
         .await
         .unwrap();
     configure_pool(&mut options, 4);
-    options.command_event_handler = Some(EventHandler::callback(move |event| {
-        if let CommandEvent::Started(event) = event
-            && event.command.get_str("find").ok() == Some("sandbox_usage_events")
+    options.command_event_handler = Some(EventHandler::callback(move |event| match event {
+        CommandEvent::Started(event)
+            if event.command.get_str("find").ok() == Some("sandbox_usage_events") =>
         {
             recorded.lock().unwrap().push(event.command);
         }
+        _ => {}
     }));
     let client = Client::with_options(options).unwrap();
     let mut store = (*original).clone();
@@ -247,20 +248,16 @@ async fn allocation_interval_native_boundaries_delta_and_snapshot_remain_exact()
         &doc! {"sandbox_id":1,"revision":1}
     );
     assert!(!command.contains_key("hint"));
-    assert!(
-        store
-            .allocation_events(&mut snapshot, &[], range)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
-        store
-            .allocation_events(&mut snapshot, &["absent"], range)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(store
+        .allocation_events(&mut snapshot, &[], range)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(store
+        .allocation_events(&mut snapshot, &["absent"], range)
+        .await
+        .unwrap()
+        .is_empty());
     assert!(matches!(
         store
             .allocation_events(&mut snapshot, &[id; 201], range)
