@@ -121,7 +121,7 @@ async fn expiry_and_drain_reject_stale_effects_and_allow_takeover() {
     start_transaction(&mut session).await.unwrap();
     assert_eq!(
         store.fence_transaction(&first.token, &mut session).await,
-        Err(OwnershipError::Stale)
+        Err(SandboxStoreError::Conflict)
     );
     session.abort_transaction().await.unwrap();
     expire(&store, &first.token).await;
@@ -130,7 +130,7 @@ async fn expiry_and_drain_reject_stale_effects_and_allow_takeover() {
     start_transaction(&mut session).await.unwrap();
     assert_eq!(
         store.fence_transaction(&first.token, &mut session).await,
-        Err(OwnershipError::Stale)
+        Err(SandboxStoreError::Conflict)
     );
     session.abort_transaction().await.unwrap();
     start_transaction(&mut session).await.unwrap();
