@@ -170,6 +170,9 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   const names = [
     'store::usage_reports::tests::allocation_interval::allocation_interval_native_cursor_matches_projection_with_and_without_index',
     'store::usage_reports::tests::allocation_interval::allocation_interval_native_boundaries_delta_and_snapshot_remain_exact',
+    'store::usage_reports::tests::allocation_cold_range::allocation_cold_range_native_matches_daily_and_declines_any_cache',
+    'store::usage_reports::tests::allocation_cold_range::allocation_cold_range_native_snapshot_and_late_corruption_are_not_declines',
+    'store::usage_reports::tests::allocation_cold_range::allocation_cold_range_native_combined_cap_declines_without_cache_prefix',
     'store::sandbox_usage::interval_index::tests::interval_index_real_startup_creates_and_reopens_without_replacing_existing_indexes',
     'store::sandbox_usage::interval_index::tests::interval_index_resumes_partial_startup_and_coalesces_concurrent_ensure',
     'store::sandbox_usage::interval_index::tests::interval_index_real_startup_accepts_equivalent_existing_name',

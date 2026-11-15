@@ -9,6 +9,7 @@ use layer2_core::{
 };
 use mongodb::bson::doc;
 use serde::{Deserialize, Serialize};
+mod cold_range;
 mod source;
 pub(crate) use source::AllocationDelta;
 use std::collections::BTreeMap;
@@ -102,17 +103,7 @@ impl ReportingStore {
                     .unwrap_or_default(),
                 range,
             );
-            let r = Rollup {
-                schema_version: 1,
-                sandbox_id: s.sandbox_id.to_string(),
-                owner: s.owner.to_string(),
-                day,
-                source_watermark: s.revision,
-                range,
-                projection: p.clone(),
-            };
-            let key = format!("{}:{day}", s.sandbox_id);
-            updates.push(doc!{"q":{"_id":&key},"u":{"_id":key,"document_schema_version":1_i64,"sandbox_id":s.sandbox_id.as_str(),"day":day as i64,"expires_at":expires(day+31*86_400),"record":encode(&r)?},"upsert":true,"multi":false});
+            updates.push(cache_update(s, range, &p)?);
             cached.insert(s.sandbox_id.to_string(), p);
         }
         if !updates.is_empty() {
@@ -120,4 +111,28 @@ impl ReportingStore {
         }
         Ok(cached)
     }
+}
+
+fn cache_update(
+    state: &SandboxUsage,
+    range: Range,
+    projection: &allocation::Projection,
+) -> Result<mongodb::bson::Document> {
+    let day = range.from / 86_400 * 86_400;
+    let record = Rollup {
+        schema_version: 1,
+        sandbox_id: state.sandbox_id.to_string(),
+        owner: state.owner.to_string(),
+        day,
+        source_watermark: state.revision,
+        range,
+        projection: projection.clone(),
+    };
+    let key = format!("{}:{day}", state.sandbox_id);
+    Ok(
+        doc! {"q":{"_id":&key},"u":{"_id":key,"document_schema_version":1_i64,
+        "sandbox_id":state.sandbox_id.as_str(),"day":day as i64,
+        "expires_at":expires(day+31*86_400),"record":encode(&record)?},
+        "upsert":true,"multi":false},
+    )
 }

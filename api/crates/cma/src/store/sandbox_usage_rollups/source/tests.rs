@@ -161,27 +161,18 @@ fn allocation_interval_keeps_exact_event_and_byte_caps() {
         ..Default::default()
     };
     count.push(&raw(document.clone())).unwrap();
-    assert!(matches!(
-        count.push(&raw(document.clone())),
-        Err(MetricsError::Busy)
-    ));
+    assert!(matches!(count.push(&raw(document.clone())), Ok(false)));
     let mut bytes = EventBatch {
         bytes: 64 * 1024 * 1024 - length,
         ..Default::default()
     };
     bytes.push(&raw(document.clone())).unwrap();
-    assert!(matches!(
-        bytes.push(&raw(document.clone())),
-        Err(MetricsError::Busy)
-    ));
+    assert!(matches!(bytes.push(&raw(document.clone())), Ok(false)));
     let mut overflow = EventBatch {
         bytes: usize::MAX,
         ..Default::default()
     };
-    assert!(matches!(
-        overflow.push(&raw(document)),
-        Err(MetricsError::Busy)
-    ));
+    assert!(matches!(overflow.push(&raw(document)), Ok(false)));
 }
 
 fn raw(document: mongodb::bson::Document) -> mongodb::bson::RawDocumentBuf {

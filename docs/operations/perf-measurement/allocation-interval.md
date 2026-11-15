@@ -22,6 +22,39 @@ the byte cap. It decodes each event once while preserving strict nested-record
 validation, exact typed envelope comparisons, and refusal of duplicate authority
 fields. This removes repeated document reconstruction and serialization.
 
+## Completely cold multi-day ranges
+
+With allocation buckets disabled, a multi-day report can prepare its daily
+legacy projections from a single full-range read per small group. A same-snapshot
+existence read first checks the selected page's at-most-31 UTC dates. Any cache
+record, including a partial or invalid one, selects the existing daily path.
+
+For an entirely empty cache, the new internal reader accepts at most eight
+Sandboxes and thirty days. It keeps the exact overlap predicate, snapshot,
+decoder and integer revision order. Its 100,000-event and 64 MiB limits apply to
+the entire group's interval, across every cursor batch. Each original daily
+slice filters exact overlaps before calling the unchanged projector. Crossing
+events participate in every day they overlap; an out-of-day foreign owner cannot
+change a different day's completeness. Daily merge order is unchanged.
+
+Preparation retains at most 31 dates by 200 identities, 100,000 expectations and
+64 MiB of serialized cache updates. Raw histories are released after each
+sequential eight-member group. A raw/output cap discards the whole prepared map
+and selects the original daily path once for that inventory page. Database,
+decoder, circuit and deadline errors remain errors. Cache writes start only
+after every group has validated and passed the output caps, use the original
+owner/range/watermark/TTL format, and contain at most 200 updates per operation.
+Each group read, cache precheck and cache-write operation retains the ten-second
+wall guard; all preparation remains inside the sixty-second report deadline.
+There is no parallel work on the snapshot or new persistent cache schema.
+
+Aggregate application phase clocks report cache precheck, raw cursor/validation,
+projection and cache writes without customer identifiers or a BSON reply
+callback. This successor is unmeasured; the previous optimized candidate
+completed six cases but met two seconds only for personal/admin 24h. Cold-range
+reuse still transfers every required event and does not establish a two-second
+full-report result.
+
 ## Index dependency
 
 The existing awaited Sandbox store startup path now ensures this additive index:
@@ -89,6 +122,11 @@ Machine-readable analyst report SHA256:
 `3d1ff701d29bf4e48d3fc17c49a9c263c5225ba2fee9c03f7d47509f1ab03334`.
 
 ## Native regressions
+
+The `allocation_cold_range` filter covers exact daily parity, crossing intervals,
+owner isolation, prepared-output caps, cold/cache selection, late corruption and
+snapshot/circuit authority. Its native contracts use the same two explicit
+database overrides as the interval contracts and remain in ordinary Mongo CI.
 
 The `allocation_interval` test filter covers revision ordering, exact projected
 allocations, large integer revisions, incomplete histories, corrupted fields,
