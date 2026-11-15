@@ -57,9 +57,11 @@ records the actual ping result. Never count an unknown completion as success.
 Pre-checkout time is not asserted to be server-selection time. Command elapsed
 time includes driver/transport work and does not identify server execution time.
 
-An independent one-second timer records scheduled-versus-actual wake delay and
-stops with the health monitor. It identifies runtime delay, not the task causing
-it. The readiness loop separately records its own wake delay and deadline
+One shared one-second timing task supplies the always-on Tokio runtime sampler
+and, when diagnostics are enabled, the readiness timer records. Both use the
+same observed wake lag. The telemetry server owns and stops that task; losing
+its scrape listener does not stop sampling. No second diagnostic timer is
+started by the health monitor. It identifies runtime delay, not the task causing it. The readiness loop separately records its own wake delay and deadline
 overshoot. Diagnostics do not change the public response or extend its deadline.
 
 ## Bounds, loss and accounting

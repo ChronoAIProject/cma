@@ -93,7 +93,7 @@ export function AllocationChart({
         </div>
       </div>
       <p className="usage-chart-unit">
-        {resource.label} · {resource.unit} in the selected period
+        {resource.label} · {resource.unit} in the report period
       </p>
       {byOwner ? (
         <OwnerAllocationChart

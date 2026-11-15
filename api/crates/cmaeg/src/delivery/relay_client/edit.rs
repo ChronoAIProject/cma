@@ -11,22 +11,78 @@ impl RelayClient {
         outbound_id: &str,
         text: &str,
     ) -> DeliveryOutcome {
+        self.edit_text_with_commonmark(secret, platform_id, outbound_id, text, false)
+            .await
+    }
+
+    pub async fn edit_text_with_commonmark(
+        &self,
+        secret: &Secret,
+        platform_id: &str,
+        outbound_id: &str,
+        text: &str,
+        commonmark: bool,
+    ) -> DeliveryOutcome {
         if !valid_id(platform_id) || !valid_id(outbound_id) || text.is_empty() {
             return DeliveryOutcome::Rejected {
                 reason: "relay_edit_invalid".into(),
             };
         }
-        let Ok(endpoint) = self.endpoint.join("reply/update") else {
-            return DeliveryOutcome::Unsupported;
-        };
-        let Some(headers) = headers(secret) else {
-            return unknown("edit_unconfirmed");
-        };
         let Ok(body) = serde_json::to_vec(&serde_json::json!({
             "message_id": platform_id,
             "outbound_message_id": outbound_id,
             "reply": {"text": text}
         })) else {
+            return unknown("edit_unconfirmed");
+        };
+        self.post_text_edit(secret, platform_id, body, commonmark)
+            .await
+    }
+
+    pub(crate) async fn edit_with_commonmark(
+        &self,
+        secret: &Secret,
+        destination: &crate::interactions::Destination,
+        text: &str,
+        markup: &serde_json::Value,
+        commonmark: bool,
+    ) -> DeliveryOutcome {
+        if !commonmark {
+            return self.edit(secret, destination, text, markup).await;
+        }
+        if !valid_id(&destination.platform_id)
+            || !valid_id(&destination.outbound_id)
+            || text.is_empty()
+        {
+            return DeliveryOutcome::Rejected {
+                reason: "relay_edit_invalid".into(),
+            };
+        }
+        let Ok(body) = serde_json::to_vec(&serde_json::json!({
+            "message_id": destination.platform_id,
+            "outbound_message_id": destination.outbound_id,
+            "reply": {"text": text, "metadata": {"reply_markup": markup}}
+        })) else {
+            return unknown("edit_unconfirmed");
+        };
+        self.post_text_edit(secret, &destination.platform_id, body, true)
+            .await
+    }
+
+    async fn post_text_edit(
+        &self,
+        secret: &Secret,
+        platform_id: &str,
+        body: Vec<u8>,
+        commonmark: bool,
+    ) -> DeliveryOutcome {
+        let mut endpoint = self.endpoint.clone();
+        endpoint.set_path(if commonmark {
+            "/api/v1/channel-relay/reply/update/commonmark"
+        } else {
+            "/api/v1/channel-relay/reply/update"
+        });
+        let Some(headers) = headers(secret) else {
             return unknown("edit_unconfirmed");
         };
         if body.len() > REQUEST_MAX_BYTES {

@@ -1,0 +1,97 @@
+{
+  "id": "s2-prepare-paused-template",
+  "stage": "S2",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "Deployment",
+  "name": "cma-event-gateway",
+  "action": "patch",
+  "changes": {
+    "deployment": {
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": 1,
+          "maxUnavailable": 0
+        },
+        "type": "RollingUpdate"
+      },
+      "minReadySeconds": 30
+    },
+    "pod": {
+      "terminationGracePeriodSeconds": 760,
+      "topologySpreadConstraints": [
+        {
+          "maxSkew": 1,
+          "topologyKey": "kubernetes.io/hostname",
+          "whenUnsatisfiable": "DoNotSchedule",
+          "nodeTaintsPolicy": "Honor",
+          "matchLabelKeys": [
+            "pod-template-hash"
+          ],
+          "labelSelector": {
+            "matchLabels": {
+              "app.kubernetes.io/name": "cma-event-gateway"
+            }
+          }
+        },
+        {
+          "maxSkew": 1,
+          "topologyKey": "topology.kubernetes.io/zone",
+          "whenUnsatisfiable": "ScheduleAnyway",
+          "nodeTaintsPolicy": "Honor",
+          "matchLabelKeys": [
+            "pod-template-hash"
+          ],
+          "labelSelector": {
+            "matchLabels": {
+              "app.kubernetes.io/name": "cma-event-gateway"
+            }
+          }
+        }
+      ]
+    },
+    "container": {
+      "image": null,
+      "lifecycle": {
+        "preStop": {
+          "sleep": {
+            "seconds": 30
+          }
+        }
+      },
+      "readinessProbe": {
+        "failureThreshold": 1,
+        "httpGet": {
+          "path": "/readyz",
+          "port": "http",
+          "scheme": "HTTP"
+        },
+        "initialDelaySeconds": 3,
+        "periodSeconds": 5,
+        "timeoutSeconds": 2,
+        "successThreshold": 1
+      }
+    },
+    "env": [
+      {
+        "name": "POD_IP",
+        "valueFrom": {
+          "fieldRef": {
+            "apiVersion": "v1",
+            "fieldPath": "status.podIP"
+          }
+        }
+      },
+      {
+        "name": "CMAEG_REPLICA_ADDRESS",
+        "value": "http://$(POD_IP):8090"
+      },
+      {
+        "name": "CMAEG_REPLICAS_ENABLED",
+        "value": "true"
+      }
+    ]
+  },
+  "a2_phase": "prepare-template",
+  "a2_prepare_paused_template": true
+}

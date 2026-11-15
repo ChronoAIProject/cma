@@ -5,9 +5,11 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-// Each row is one former invocation, including both include-ignored cases and
-// nextest's existing exact owner-key contract. Match substrings explicitly.
+// Independent inventory of every invocation, including replica delivery and
+// the exact owner-key contract. Check complete arguments in source and archive mode.
 const selections = [
+  ['package(=cmaeg) and kind(lib) and test(~console::session_backend::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=console) and test(~shared_)', 'only', true],
   ['package(=cma-image-manager) and kind(test) and (binary(=mongo_isolation) or binary(=browser_session))', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_forms_storage)', 'only', true],
   ['package(=cmaeg) and kind(lib) and test(~optional_media_continuation_storage)', 'only', true],
@@ -21,6 +23,13 @@ const selections = [
   ['package(=cma) and (test(~store::isolation::tests::real_) or test(~store::migrations::tests::segments_runtime::))', 'only', false],
   ['package(=cmaeg) and kind(test) and binary(=management) and test(~binary::compiled_binary_)', 'all', true],
   ['package(=cmaeg) and kind(test) and binary(=relay_ingress) and test(~runner_binary::)', 'only', true],
+  ['package(=cmaeg) and kind(test) and binary(=replica_admission_mongo)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_tool_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::replica_legacy_tool_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::compatibility_mongo_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::tool_relay::mongo_tests::)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::tool_effects::mongo_)', 'only', true],
+  ['package(=cmaeg) and kind(lib) and test(~turns::routed::media_effects::tests::)', 'only', true],
   ['package(=cma) and test(~gateway::tests::)', 'only', false],
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
 ];
@@ -77,7 +86,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 15);
+      assert.equal(selections.length, 24);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -107,7 +116,7 @@ for (const reuse of [false, true]) {
   for (const scenario of ['test-error', 'cleanup-error', 'foreign-container']) test(`${reuse ? 'archive' : 'source'}: ${scenario} fails without deleting foreign containers`, () => {
     const f = fixture(reuse, scenario);
     try {
-      assert.throws(f.run);
+      assert.throws(f.run, error => error.status === (scenario === 'test-error' ? 8 : 1));
       const removals = f.calls().filter(row => row.args[0] === 'rm');
       assert.equal(removals.length, scenario === 'foreign-container' ? 0 : 1);
       assert.equal(f.calls().filter(row => row.command === 'cargo').length, scenario === 'foreign-container' ? 0 : scenario === 'test-error' ? 1 : selections.length);

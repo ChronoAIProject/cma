@@ -57,3 +57,77 @@ pub(super) async fn drain_github(
         }
     }
 }
+
+/// Own shutdown resources together so every entry point uses the same order.
+pub(super) struct Drain {
+    pub tracker: std::sync::Arc<crate::turns::TurnTracker>,
+    pub drain_timeout: std::time::Duration,
+    pub native_lark_controls: crate::native_lark::control_recovery::Worker,
+    pub whatsapp_form_worker: Option<crate::whatsapp::forms::worker::Worker>,
+    pub native_discord: Option<crate::discord::lifecycle::Worker>,
+    pub routed_workers: Vec<crate::serve_routed::Worker>,
+    pub github_initialization: Option<crate::github::Initialization>,
+    pub delivery_engine: crate::delivery::engine::DeliveryEngine,
+}
+impl Drain {
+    pub async fn run(mut self) -> std::time::Instant {
+        self.tracker.start_draining();
+        let deadline = std::time::Instant::now() + self.drain_timeout;
+        self.native_lark_controls.stop();
+        if let Some(worker) = &self.whatsapp_form_worker {
+            worker.stop();
+        }
+        if let Some(worker) = &self.native_discord {
+            worker.stop();
+        }
+        for worker in &self.routed_workers {
+            worker.stop_scheduling();
+        }
+        if let Some(worker) = &self.github_initialization {
+            worker.stop();
+        }
+        let (
+            turns_drained,
+            routed_drained,
+            native_drained,
+            lark_controls_drained,
+            whatsapp_forms_drained,
+        ) = tokio::join!(
+            self.tracker.drain(deadline),
+            async {
+                let mut drained = true;
+                for worker in &mut self.routed_workers {
+                    drained &= worker.drain(deadline).await;
+                }
+                drained
+            },
+            async {
+                match &mut self.native_discord {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            },
+            self.native_lark_controls.drain(deadline),
+            async {
+                match &mut self.whatsapp_form_worker {
+                    Some(worker) => worker.drain(deadline).await,
+                    None => true,
+                }
+            }
+        );
+        log_drain_results(
+            turns_drained,
+            routed_drained,
+            native_drained,
+            lark_controls_drained,
+            whatsapp_forms_drained,
+        );
+        drain_github(&mut self.github_initialization, deadline).await;
+        if !self.delivery_engine.drain(deadline).await {
+            tracing::warn!(
+                "delivery drain deadline reached; remaining sends cancelled with unknown outcome"
+            );
+        }
+        deadline
+    }
+}

@@ -43,6 +43,35 @@ verification, credential rejection and recovered transient attempts do not count
 as final dependency failures. Unclassified auth-store/custody errors remain
 `authentication_authority/unknown` instead of being guessed from a message.
 
+The separate WARN event `identity_verification_failure` records the cause before
+that broad projection. Its fixed fields are `endpoint` (`discovery`, `userinfo`,
+`introspection`, `agent_key`, or `verification`), `stage`, `reason`, and
+`disposition` (`rejected`, `transient`, or `unavailable`). A numeric `status` is
+present when the HTTP status is known. `request_hash` is the existing opaque
+request correlation value, or `none` outside a request context. A dedicated root
+span prevents JSON logging from inheriting caller spans; the event never includes
+URLs, tokens, headers, bodies or error text.
+
+Stages distinguish `response_headers`, `status`, `body`, `claims`,
+`configuration`, `admission`, and `deadline`. For example, HTTP 429 is
+`status/http_status` with `status=429` and `disposition=unavailable`;
+an incomplete body's timeout is `body/timeout`, also unavailable. A timeout
+before headers is `response_headers/timeout` and transient. Body size refusal
+is `body/body_too_large`; malformed JSON is `body/invalid_body`. Missing local
+configuration, exhausted verification capacity and caller/sequence deadlines
+have separate fixed reasons. These distinctions do not alter retry, fallback,
+validation or public error behavior.
+
+Provider events describe failed attempts, including explicit refusals and
+attempts that later recover; they are not additional final-503 counters.
+Overlapping callers share one provider event from the verification leader;
+each failed caller retains its existing final dependency observation. A leader's
+request hash must not be assumed to identify every follower. An outer deadline
+records `endpoint=verification` because cancellation cannot prove which pending
+provider phase caused it. Bind any investigation to the exact deployed image
+and time window; an `invalid_evidence` event alone cannot establish HTTP 429,
+upstream 503, malformed credentials, or a retryable outage.
+
 File reads distinguish persistence (`unavailable`, `corrupt`), membership
 (`unavailable`, `invalid_evidence`), authority (`authority_changed`) and runtime
 (`unavailable`, `capacity`, `runtime_ledger_hold`, `input_authority`,

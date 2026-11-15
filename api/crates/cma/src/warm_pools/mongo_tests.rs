@@ -3,6 +3,63 @@ use crate::store::native_warm_pools::MongoNativeWarmPools;
 use mongodb::bson::{doc, DateTime, Document};
 
 #[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
+async fn independent_warm_workers_keep_shared_target_and_original_claim_on_takeover() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let a = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let b = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("warm_workers_{}", uuid::Uuid::new_v4().simple());
+    let db = a.database(&name);
+    let first = MongoNativeWarmPools::open(&db, "test").await.unwrap();
+    let second = MongoNativeWarmPools::open(&b.database(&name), "test")
+        .await
+        .unwrap();
+    let mut original = target();
+    original.lease = None;
+    original.lease_until = DateTime::from_millis(0);
+    first.insert(original.clone()).await.unwrap();
+    second.insert(original.clone()).await.unwrap();
+    let (left, right) = tokio::join!(first.claim(), second.claim());
+    let (left, right) = (left.unwrap(), right.unwrap());
+    assert_ne!(left.is_some(), right.is_some());
+    let stale = left.or(right).unwrap();
+    db.collection::<Document>("native_warm_pool_targets")
+        .update_one(
+            doc! {"_id":&original.id},
+            doc! {"$set":{"lease_until":DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    second
+        .resize(
+            &original.id,
+            &ResizeWarmPoolBody {
+                expected_revision: 1,
+                target_replicas: 2,
+            },
+        )
+        .await
+        .unwrap();
+    let current = second.claim().await.unwrap().unwrap();
+    assert_ne!(current.lease, stale.lease);
+    assert_eq!(current.revision, 2);
+    assert_eq!(current.target_replicas, 2);
+    assert!(first.finish(&stale, true).await.is_err());
+    second.finish(&current, true).await.unwrap();
+    assert_eq!(first.list().await.unwrap().len(), 1);
+    assert_eq!(
+        first
+            .find(&original.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .applied_revision,
+        2
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo URI is required");
