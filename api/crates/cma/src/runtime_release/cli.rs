@@ -103,7 +103,7 @@ pub(super) async fn command(args: &[String]) -> std::result::Result<String, Stri
                 &cookie_file,
                 &grant_file,
                 &request.operator,
-                &OperationRequest::Bootstrap(request.clone()),
+                &OperationRequest::Bootstrap(Box::new(request.clone())),
             )
             .await?;
             serde_json::to_value(

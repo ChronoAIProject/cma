@@ -378,8 +378,10 @@ async fn archived_legacy_collections_preserve_custody_and_allow_full_new_store_b
         &auth_key(),
         Duration::from_secs(86_400),
         super::checkpoint_storage::test_storage(&name),
-        ("runtime-schema-test", None),
-        None,
+        super::mongo::RuntimeStorePolicy {
+            image: "runtime-schema-test",
+            release_session: None,
+        },
     )
     .await
     .unwrap();

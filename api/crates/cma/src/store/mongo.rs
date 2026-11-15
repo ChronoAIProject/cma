@@ -18,6 +18,11 @@ pub(crate) struct MongoConnectionPolicy {
     pub release_session: Option<Arc<crate::runtime_release::Session>>,
 }
 
+pub(super) struct RuntimeStorePolicy<'a> {
+    pub image: &'a str,
+    pub release_session: Option<Arc<crate::runtime_release::Session>>,
+}
+
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
@@ -144,8 +149,10 @@ impl MongoStores {
             auth_encryption_key,
             activity_retention,
             Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
-            runtime,
-            policy.release_session,
+            RuntimeStorePolicy {
+                image: runtime.0,
+                release_session: policy.release_session,
+            },
         )
         .await
     }
@@ -157,15 +164,14 @@ impl MongoStores {
         auth_encryption_key: &AuthEncryptionKey,
         activity_retention: Duration,
         checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
-        runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
-        release_session: Option<Arc<crate::runtime_release::Session>>,
+        runtime: RuntimeStorePolicy<'_>,
     ) -> Result<Self, StoreError> {
         // Legacy Profile warm records are retained only for cleanup and already
         // claimed runtime recovery. New admissions use the regular Sandbox lifecycle.
         let sandbox_model =
             MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage)
                 .await?
-                .with_managed_runtime_version(runtime.0.into());
+                .with_managed_runtime_version(runtime.image.into());
         let sandbox_model = Arc::new(sandbox_model);
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
@@ -220,7 +226,7 @@ impl MongoStores {
                 .await
                 .map_err(|_| StoreError::Unavailable("open event worker profiles".into()))?,
         );
-        let native_warm_pools = Arc::new(match release_session {
+        let native_warm_pools = Arc::new(match runtime.release_session {
             Some(session) => {
                 super::native_warm_pools::MongoNativeWarmPools::open_managed(
                     &client.database(database),
