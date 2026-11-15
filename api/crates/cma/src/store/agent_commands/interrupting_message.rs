@@ -21,6 +21,24 @@ pub(super) async fn run(
     );
     while retries.next().await {
         request.require_current_authority()?;
+        // `reserve_in_session` composes the control and message reservations
+        // in this transaction, so the outer admission owns the Agent lock.
+        let _writer = if store.agent_control_write_coordination {
+            match store
+                .agent_writes
+                .lock_until(
+                    &request.control.command.envelope.agent_id,
+                    retries.deadline(),
+                )
+                .await
+            {
+                Some(writer) => Some(writer),
+                None => break,
+            }
+        } else {
+            None
+        };
+        request.require_current_authority()?;
         let mut session = store
             .client
             .start_session()
