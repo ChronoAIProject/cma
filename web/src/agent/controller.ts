@@ -1,3 +1,4 @@
+import { controlBaselineReady } from './controlReadiness';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule, rateLimitDelay } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
@@ -24,12 +25,8 @@ import { useQueuedInputs } from './transport/queuedInputsStatus';
 import { presentAgent, presentRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
-export type {
-  AgentCommand,
-  AgentController,
-  AgentResourceState,
-  ApprovalDecision,
-} from './controllerTypes';
+export type { AgentCommand, AgentController } from './controllerTypes';
+export type { AgentResourceState, ApprovalDecision } from './controllerTypes';
 
 export function useAgentController(
   client: CmaWebClient,
@@ -253,6 +250,7 @@ export function useAgentController(
   const historyLoading =
     state.status === 'ready' && state.detail.id === agentId && state.historyLoading === true;
   const historyIncomplete = historyLoading || historyUnavailable;
+  const controlReady = controlBaselineReady(state, agentId, suspended);
   const v2 =
     !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
   useEffect(() => {
@@ -406,6 +404,7 @@ export function useAgentController(
     agentId: suspended ? undefined : agentId,
     client,
     historyIncomplete: historyIncomplete || suspended,
+    commandsBlocked: !controlReady,
     activeTurn,
     inputAvailability,
     actionAbortRef,
@@ -432,7 +431,7 @@ export function useAgentController(
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,
-    !historyIncomplete && !suspended,
+    controlReady,
     activeTurn,
     state.status === 'ready' ? queueObservationRevision(state.conversation) : '',
     onIdentityChange,
@@ -448,6 +447,7 @@ export function useAgentController(
     ...presentRetainedInputs(v2, legacy),
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
+    controlBaselineReady: controlReady,
     controlsUnavailable:
       suspended ||
       (v2 !== undefined &&
