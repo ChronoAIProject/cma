@@ -190,9 +190,11 @@ pub(crate) async fn command(args: &[String]) -> Result<String> {
             let current = store.inspect(&request.sandbox_id).await?;
             let parent = crate::store::retirement_archive::accepted(&current, &request, &bytes)?;
             if parent.retirement_archive_pending()
-                && export::build(&store, &request, &bytes, custody.as_ref(), blobs.as_deref())
-                    .await?
-                    != manifest
+                && !crate::store::retirement_archive::matches_current(
+                    &manifest,
+                    export::build(&store, &request, &bytes, custody.as_ref(), blobs.as_deref())
+                        .await?,
+                )?
             {
                 return Err(REFUSED);
             }

@@ -96,6 +96,9 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     cargo build --release --locked --bin cma \
     && mkdir /out \
     && cp /build/target/release/cma /out/cma
+# Exercise the actual API's mimalloc before the runtime can copy its ELF.
+# Static musl/linker metadata does not establish bounded allocator retention.
+RUN --network=none /out/cma --allocator-self-test
 
 FROM alpine:3.22 AS runtime
 ARG CHRONO_BUILD=development

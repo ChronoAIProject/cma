@@ -197,13 +197,13 @@ pub(super) async fn fence_control_lineage(
     let result = store
         .workspaces
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": snapshot.workspace.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": workspace_revision,
                 "sandbox_id": snapshot.agent.sandbox_id.as_str(),
                 "owner": snapshot.agent.owner.as_str(),
-            },
+            }),
             doc! { "$set": { CONTROL_MARKER_FIELD: operation_id } },
         )
         .session(&mut *session)
@@ -216,12 +216,12 @@ pub(super) async fn fence_control_lineage(
     let result = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": snapshot.sandbox.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": sandbox_revision,
                 "owner": snapshot.agent.owner.as_str(),
-            },
+            }),
             doc! { "$set": { CONTROL_MARKER_FIELD: operation_id } },
         )
         .session(session)

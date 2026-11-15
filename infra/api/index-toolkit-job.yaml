@@ -1,0 +1,95 @@
+# Render a fresh immutable metadata.name for EACH approved operation/attempt.
+# Default mode is read-only sizing. No Deployment/startup/readiness references.
+# Bind the actual reviewed release digest in image AND INDEX_RELEASE_IMAGE.
+# Size/build/abort use EXACTLY the live Deployment credential references/env.
+# No separate DBA credential. Never read, copy or print Secret values.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cma-index-inspection
+  namespace: chrono-bot
+  labels:
+    app.kubernetes.io/name: cma-index-inspection
+    app.kubernetes.io/part-of: cma
+    app.kubernetes.io/component: migration
+  annotations:
+    cma.chronoai.dev/operation: index-toolkit
+    cma.chronoai.dev/approval: deployment-engineer-01
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1900
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cma-index-inspection
+        app.kubernetes.io/part-of: cma
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: chrono-bot-ksa
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: index-toolkit
+          # The release controller must replace this with the exact immutable
+          # API image that contains these CLI modes before creating the Job.
+          image: us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              /usr/local/bin/cma --index-preflight "$INDEX_QUERIES"
+              case "$INDEX_OPERATION" in
+                preflight) exit 0 ;;
+                size) exec /usr/local/bin/cma --index-size "$INDEX_QUERIES" ;;
+                verify) exec /usr/local/bin/cma --index-verify "$INDEX_QUERIES" ;;
+                status) exec /usr/local/bin/cma --index-status "$INDEX_QUERIES" ;;
+                build) exec /usr/local/bin/cma --index-build "$INDEX_QUERIES" \
+                  "$INDEX_MANIFEST_CHECKSUM" "$INDEX_RELEASE_IMAGE" "$INDEX_BUILD_TIMEOUT_SECONDS" ;;
+                abort) exec /usr/local/bin/cma --index-abort "$INDEX_QUERIES" \
+                  "$INDEX_MANIFEST_CHECKSUM" "$INDEX_RELEASE_IMAGE" "$INDEX_PREVIOUS_FENCE" ;;
+                *) echo 'unsupported index operation' >&2; exit 2 ;;
+              esac
+          envFrom:
+            # Rendering MUST copy the live cma-agent-manager api container's
+            # envFrom and env in memory, preserving Secret references exactly.
+            # These checked-in references are placeholders, never read Secrets.
+            # Append only the non-secret operation controls below, if present.
+            - configMapRef:
+                name: cma-agent-manager
+            - secretRef:
+                name: cma-agent-manager
+          env:
+            - name: INDEX_OPERATION
+              value: "size"
+            - name: INDEX_QUERIES
+              value: "activity-first-page"
+            - name: INDEX_PREVIOUS_FENCE
+              value: ""
+            - name: INDEX_MANIFEST_CHECKSUM
+              value: "64811936c3025cefcb9ff7210c1994986fcfe491152e05f0eee2cef0ecb91c8b"
+            - name: INDEX_RELEASE_IMAGE
+              value: "us-central1-docker.pkg.dev/aelf-shared-k8s-prod/aelf-prod-registry/cma-api@sha256:9dd19848a67403165777e63db377f9ff129a66052762f0e5efd3fc020d522f36"
+            - name: INDEX_BUILD_TIMEOUT_SECONDS
+              value: "1800"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]

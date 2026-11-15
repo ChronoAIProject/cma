@@ -1,0 +1,21 @@
+{
+  "source": null,
+  "images": {"am": null, "eg": null},
+  "am_max_owned_agents": null,
+  "recovery": {
+    "am": {"image": null, "compatible_mode_on": false},
+    "eg": {"image": null, "compatible_mode_on": false}
+  },
+  "controller_order_approved": false,
+  "no_overlap_under_120s_proven": false,
+  "hpa": {
+    "am": {"handoff_p95_seconds": null, "hard_lifetime_seconds": null,
+           "capacity_processes_per_service": null, "cpu_signal_qualified": false},
+    "eg": {"handoff_p95_seconds": null, "hard_lifetime_seconds": null,
+           "capacity_processes_per_service": null, "cpu_signal_qualified": false}
+  },
+  "survivor_capacity": {
+    "am": {"observed_at": null, "minimum_safe_replicas": null, "qualified": false},
+    "eg": {"observed_at": null, "minimum_safe_replicas": null, "qualified": false}
+  }
+}

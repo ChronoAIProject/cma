@@ -10,12 +10,13 @@ pub(in crate::store) async fn save(
     store: &MongoSandboxStore,
     expected: u64,
     sandbox: &Sandbox,
+    acquisition: Option<&Document>,
 ) -> Result<(), SandboxStoreError> {
     let at = sandbox.updated_at.clone();
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = store.client.start_session().await.map_err(unavailable)?;
         start_transaction(&mut session).await.map_err(unavailable)?;
-        match apply(store, &mut session, expected, sandbox, &at).await {
+        match apply(store, &mut session, expected, sandbox, &at, acquisition).await {
             Ok(()) => {}
             Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;
@@ -49,8 +50,17 @@ async fn apply(
     expected: u64,
     sandbox: &Sandbox,
     at: &str,
+    acquisition: Option<&Document>,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
+    crate::store::work_publication::fence(store, session)
+        .await
+        .map_err(Domain)?;
+    if acquisition.is_some() && sandbox.work.authority_protocol.is_some() {
+        crate::store::work_schema::floor::retain(store, session)
+            .await
+            .map_err(Driver)?;
+    }
     let current = store
         .sandboxes
         .find_one(doc! { "_id": sandbox.id.as_str() })
@@ -62,6 +72,16 @@ async fn apply(
         .map_err(Domain)?
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| Domain(SandboxStoreError::Conflict))?;
+    if acquisition.is_some() {
+        crate::store::sandbox_credentials::issuance::legacy::preserve(
+            store,
+            &crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?,
+            sandbox,
+            session,
+        )
+        .await
+        .map_err(Driver)?;
+    }
     let previous_revision = expected;
     let expected = signed(expected, "sandbox revision")
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;
@@ -75,14 +95,37 @@ async fn apply(
         .map_err(|error| Domain(SandboxStoreError::Corrupt(error)))?;
     let (origin_type, launch_id, operation_id) =
         crate::store::sandboxes::sandbox_origin_fields(sandbox).map_err(Domain)?;
-    let updated = store.sandboxes.update_one(doc! {
+    let mut filter = doc! {
         "_id": sandbox.id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "revision": expected, "origin_type": origin_type, "origin_launch_id": launch_id,
         "origin_operation_id": operation_id,
         "channel_reuse_cleanup_execution": { "$exists": false },
         "channel_retirement_finalization": { "$exists": false },
-    }, doc! { "$set": crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)? })
-        .session(&mut *session).await.map_err(Driver)?;
+    };
+    if let Some(acquisition) = acquisition {
+        // The authority predicate and metering remain in this exact write's
+        // transaction. A pre-read cannot authorize delayed claim delivery.
+        filter = doc! {"$and":[filter, acquisition.clone()]};
+    }
+    let filter =
+        crate::store::work_publication::sandbox(filter, sandbox.id.as_str()).map_err(Domain)?;
+    let updated = store
+        .sandboxes
+        .update_one(
+            crate::store::work_schema::query(filter),
+            if acquisition.is_some() {
+                crate::store::work_lease_update::acquisition(
+                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
+                )
+            } else {
+                crate::store::work_lease_update::replacement(
+                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
+                )
+            },
+        )
+        .session(&mut *session)
+        .await
+        .map_err(Driver)?;
     if updated.matched_count != 1 {
         return Err(Domain(SandboxStoreError::Conflict));
     }

@@ -1,0 +1,5 @@
+
+> lint
+> eslint . --max-warnings=0 && node check.mjs
+
+Syntax and source-size checks passed.

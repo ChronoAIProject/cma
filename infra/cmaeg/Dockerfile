@@ -97,6 +97,9 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     cargo build --release --locked --bin cmaeg \
     && mkdir /out \
     && cp /build/target/release/cmaeg /out/cmaeg
+# Qualify the actual linked allocator. Static musl ELF metadata alone does not
+# exclude a cross-linker's replacement malloc retaining freed small blocks.
+RUN --network=none /out/cmaeg --allocator-self-test
 # Exercise the musl binary's sandbox (CI tests use glibc): gaps such as the
 # sched_setscheduler stub or a missing close_range fail the image build here.
 RUN --network=none <<'SANDBOX_CHECK'

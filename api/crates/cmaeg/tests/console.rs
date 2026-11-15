@@ -56,6 +56,17 @@ mod summary_bounds;
 #[path = "console/support.rs"]
 pub mod support;
 
+#[path = "console/shared_faults.rs"]
+mod shared_faults;
+#[path = "console/shared_outcomes.rs"]
+mod shared_outcomes;
+#[path = "console/shared_refresh.rs"]
+mod shared_refresh;
+#[path = "console/shared_sessions.rs"]
+mod shared_sessions;
+#[path = "console/shared_support.rs"]
+mod shared_support;
+
 #[path = "../../cmaeg-core/tests/routing_policy/fixture.rs"]
 pub mod policy;
 #[path = "relay/support.rs"]

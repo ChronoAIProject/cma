@@ -39,6 +39,7 @@ pub enum FrameDelivery {
     Unknown,
 }
 pub struct RoutedDelivery {
+    pub(super) stream_relay: Option<reqwest::Client>,
     pub(super) plans: PlanStore,
     pub(super) journal: Journal,
     pub(super) authority: Arc<dyn Authority>,
@@ -52,6 +53,7 @@ impl RoutedDelivery {
         coordinator: DeliveryCoordinator,
     ) -> Self {
         Self {
+            stream_relay: None,
             plans,
             journal,
             authority,
@@ -227,7 +229,7 @@ impl RoutedDelivery {
                             ),
                             None => None,
                         };
-                        if checkpoint.terminal && !self.close(&plan, target).await? {
+                        if checkpoint.terminal && !self.close(&plan, target, lease).await? {
                             return Ok(FrameDelivery::Unknown);
                         }
                         self.journal
@@ -314,7 +316,7 @@ impl RoutedDelivery {
         }
         // This shared CAS reservation closes the race between projection's
         // suppression lookup and a concurrently admitted tool reply.
-        let store = ReplyStore(self.journal.clone());
+        let store = ReplyStore(self.journal.clone(), lease.partition.clone());
         let mut automatic = None;
         let mut suppressed = false;
         let mut replayed = None;
@@ -415,7 +417,7 @@ impl RoutedDelivery {
             .delivery
             .as_ref()
             .is_some_and(|value| value.terminal)
-            && !self.close(&plan, target).await?
+            && !self.close(&plan, target, lease).await?
         {
             return Ok(FrameDelivery::Unknown);
         }
@@ -432,8 +434,12 @@ impl RoutedDelivery {
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
+        lease: &Lease,
     ) -> Result<bool, ExecutionError> {
-        match ReplyStore(self.journal.clone()).close(plan, target).await? {
+        match ReplyStore(self.journal.clone(), lease.partition.clone())
+            .close(plan, target)
+            .await?
+        {
             ToolReplyStatus::Pending => Err(ExecutionError::Busy),
             ToolReplyStatus::Unknown => Ok(false),
             ToolReplyStatus::None | ToolReplyStatus::Confirmed => Ok(true),

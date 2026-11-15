@@ -174,16 +174,19 @@ impl SandboxWorker {
                     }
                 )
             )
-            || sandbox
-                .work
-                .lease
-                .as_ref()
-                .is_none_or(|lease| lease.holder != self.config.holder || lease.expires_at <= stamp)
+            || sandbox.work.lease.as_ref().is_none_or(|lease| {
+                lease.holder != self.config.holder
+                    || (!layer2_core::sandbox::store::WorkAuthority::active()
+                        && lease.expires_at <= stamp)
+            })
+            || layer2_core::sandbox::store::WorkAuthority::current().is_err()
             || SandboxStore::get_sandbox(self.dependencies.store.as_ref(), &sandbox.id)
                 .await
                 .map_err(|_| held())?
                 .as_ref()
-                != Some(sandbox)
+                .is_none_or(|current| {
+                    !layer2_core::sandbox::store::sandbox_content_matches(Some(current), sandbox)
+                })
             || self
                 .dependencies
                 .store

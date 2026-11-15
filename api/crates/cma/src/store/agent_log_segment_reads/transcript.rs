@@ -19,10 +19,7 @@ pub(super) async fn complete(
     agent: &Agent,
     session: &mut ClientSession,
 ) -> Result<Option<AgentTranscript>, SandboxStoreError> {
-    if segmented_source(store, agent, session, true)
-        .await?
-        .is_none()
-    {
+    if !is_segmented(store, agent, session).await? {
         return Ok(None);
     }
     let source = capture::capture(store, agent, session, capture::CaptureMode::Snapshot)
@@ -94,10 +91,7 @@ pub(in crate::store) async fn page(
     {
         return Err(SandboxStoreError::SequenceConflict);
     }
-    if segmented_source(store, agent, session, true)
-        .await?
-        .is_none()
-    {
+    if !is_segmented(store, agent, session).await? {
         return crate::store::agent_opening_reads::transcript::page(store, agent, session, request)
             .await;
     }
