@@ -28,6 +28,8 @@ jobs:
         run: ruby .github/scripts/ci-contract-tests.rb release
       - name: API Cargo cache bridge regressions
         run: python3 .github/scripts/api-cargo-cache-tests.py
+      - name: Local Gateway release gate regressions
+        run: python3 -B .github/scripts/prepare-cmaeg-release-dockerfile-tests.py
       - name: Runtime image evidence and provenance regressions
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
       - name: Ledger image qualification regressions

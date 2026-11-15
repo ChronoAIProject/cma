@@ -47,6 +47,19 @@ async fn a_missing_client_id_or_secret_answers_503_and_starts_no_discovery() {
 }
 
 #[tokio::test]
+async fn shared_configuration_never_falls_back_when_its_backend_is_missing() {
+    let harness = Harness::start(cmaeg::ConsoleConfig {
+        shared_sessions: true,
+        ..config()
+    })
+    .await;
+    harness.console.discover_once().await.unwrap();
+    assert!(!harness.console.is_enabled());
+    assert_soft_disabled(&harness).await;
+    harness.close().await;
+}
+
+#[tokio::test]
 async fn discovery_enables_the_console_and_sets_its_gauge() {
     let metrics = cmaeg::telemetry::install().unwrap();
     let harness = Harness::start(config()).await;
