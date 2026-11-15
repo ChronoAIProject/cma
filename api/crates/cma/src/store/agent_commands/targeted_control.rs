@@ -66,6 +66,25 @@ async fn execute(
     while retries.next().await {
         attempt = attempt.saturating_add(1);
         request.command.require_current_authority()?;
+        // Local Agent writers already use this scheduler. Waiting here keeps
+        // the control transaction from repeatedly losing the same document
+        // lock while preserving the existing authority/retry deadline.
+        let _writer = if store.agent_control_write_coordination {
+            match store
+                .agent_writes
+                .lock_until(&request.command.envelope.agent_id, retries.deadline())
+                .await
+            {
+                Some(writer) => Some(writer),
+                None => {
+                    record_outcome("conflict_exhausted", attempt);
+                    break;
+                }
+            }
+        } else {
+            None
+        };
+        request.command.require_current_authority()?;
         let mut session = store
             .client
             .start_session()
@@ -78,6 +97,7 @@ async fn execute(
             Ok(result) => result,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
+                record_outcome("other_refused", attempt);
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) => {
@@ -94,15 +114,26 @@ async fn execute(
                     );
                     continue;
                 }
+                record_outcome("other_refused", attempt);
                 return Err(CommandLedgerError::Unavailable);
             }
         };
         if let Err(error) = request.command.require_current_authority() {
             let _ = session.abort_transaction().await;
+            record_outcome("other_refused", attempt);
             return Err(error);
         }
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(result),
+            CommitOutcome::Committed => {
+                let outcome = match &result {
+                    TargetedControlInspection::NotAdmitted => "not_admitted",
+                    TargetedControlInspection::Existing(_) | TargetedControlInspection::Missing => {
+                        "committed"
+                    }
+                };
+                record_outcome(outcome, attempt);
+                return Ok(result);
+            }
             CommitOutcome::Retry(error) => {
                 trace_rejection(&request, "commit", ApplyError::Driver(error));
                 continue;
@@ -110,7 +141,8 @@ async fn execute(
             // Same-key recovery reads the command and sidecar atomically even
             // after the original response completes. No runtime IO occurred.
             CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                return Err(CommandLedgerError::Unavailable)
+                record_outcome("other_refused", attempt);
+                return Err(CommandLedgerError::Unavailable);
             }
         }
     }
@@ -120,7 +152,13 @@ async fn execute(
         ?mode,
         "response control transaction retries exhausted"
     );
+    record_outcome("conflict_exhausted", attempt);
     Err(CommandLedgerError::Conflict)
+}
+
+fn record_outcome(outcome: &'static str, attempts: u32) {
+    metrics::counter!("cma_agent_control_admission_total", "outcome" => outcome).increment(1);
+    metrics::histogram!("cma_agent_control_admission_attempts").record(attempts as f64);
 }
 
 fn trace_rejection(
