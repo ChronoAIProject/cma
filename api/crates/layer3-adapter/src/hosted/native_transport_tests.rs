@@ -48,6 +48,9 @@ struct State {
     restarted: AtomicBool,
     missing_incarnation: AtomicBool,
     hold_response: AtomicBool,
+    hold_next_pod_reply: AtomicBool,
+    pod_reply_entered: tokio::sync::Notify,
+    pod_reply_release: tokio::sync::Notify,
     hold_ownership_response: AtomicBool,
     ownership_confirmations: AtomicUsize,
     hold_next_upgrade: AtomicBool,
@@ -308,6 +311,10 @@ async fn api_request(
         } else {
             assert!(path.starts_with("/api/v1/namespaces/fixture/pods?"));
             state.pod_reads.fetch_add(1, Ordering::SeqCst);
+            if state.hold_next_pod_reply.swap(false, Ordering::SeqCst) {
+                state.pod_reply_entered.notify_one();
+                state.pod_reply_release.notified().await;
+            }
             let url = url::Url::parse(&format!("http://fixture{path}")).unwrap();
             let selector = url
                 .query_pairs()

@@ -416,3 +416,159 @@ async fn incarnation_cancellation_cannot_interrupt_sibling_fencing_at_a_contende
     assert!(refused.unwrap().unwrap().is_err());
     assert_eq!(fixture.state.requests.lock().unwrap().len(), before);
 }
+
+// The Pod reply barrier drives the real endpoint and cached-native code. It
+// never substitutes a mocked transport, authority failure, or fixed sleep for
+// observing the replacement Pod. Control has no shared receiver authority, so
+// only its own old-incarnation fence can make it fail before body release.
+#[tokio::test]
+async fn ownership_replacement_proof_fences_held_control_before_body_release() {
+    let fixture = fixture().await;
+    let endpoint = fixture.endpoint().await;
+    let authority = TestAuthority::new(7);
+    let initial = scope(
+        authority.clone(),
+        fixture.transport.receiver_lease(&endpoint),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    drop(initial); // Keep the cached connection, stop periodic background reads.
+    fixture.state.hold_response.store(true, Ordering::SeqCst);
+    let mut control = tokio::spawn({
+        let transport = fixture.transport.clone();
+        async move { transport.exchange(&handle(), RequestFrame::Resources).await }
+    });
+    wait_for_request(&fixture, "POST /runtime/control ").await;
+    let before = fixture.state.requests.lock().unwrap().len();
+    fixture
+        .state
+        .hold_next_pod_reply
+        .store(true, Ordering::SeqCst);
+    let renewal = scope(
+        authority.clone(),
+        fixture.transport.receiver_lease(&endpoint),
+    );
+    tokio::pin!(renewal);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::select! {
+            _ = fixture.state.pod_reply_entered.notified() => {},
+            _ = &mut renewal => panic!("ownership finished before its fresh Pod read"),
+        }
+    })
+    .await
+    .expect("cached Ownership must reach its own fresh Pod proof");
+    assert!(!control.is_finished());
+    fixture.state.replaced.store(true, Ordering::SeqCst);
+    fixture.state.pod_reply_release.notify_one();
+    let rejected = tokio::time::timeout(Duration::from_secs(2), &mut renewal)
+        .await
+        .expect("replacement proof must terminate ownership")
+        .is_err();
+    let early_control = tokio::time::timeout(Duration::from_secs(2), &mut control).await;
+    let fenced_before_release = matches!(&early_control, Ok(Ok(Err(_))));
+    // Cleanup precedes the regression assertion, including on the RED source.
+    fixture.state.hold_response.store(false, Ordering::SeqCst);
+    if early_control.is_err() {
+        let _ = tokio::time::timeout(Duration::from_secs(2), &mut control)
+            .await
+            .expect("released old response must finish")
+            .expect("control task must join");
+    }
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+    assert!(rejected, "replacement cannot receive stale ownership bytes");
+    assert!(
+        fenced_before_release,
+        "Ownership observed replacement but held Control from the old Pod remained live"
+    );
+    assert_eq!(
+        fixture.state.requests.lock().unwrap().len(),
+        before,
+        "replacement rejection must not send ownership bytes or replay Control"
+    );
+}
+
+#[tokio::test]
+async fn fresh_ownership_endpoint_fences_control_installed_during_discovery() {
+    let fixture = fixture().await;
+    let old_endpoint = fixture.endpoint().await;
+    let authority = TestAuthority::new(7);
+    let initial = scope(
+        authority.clone(),
+        fixture.transport.receiver_lease(&old_endpoint),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    drop(initial);
+    // Only OwnershipP1 exists. endpoint() observes no Control hint and must
+    // read Kubernetes. Hold that actual read while ControlP1 is installed.
+    fixture
+        .state
+        .hold_next_pod_reply
+        .store(true, Ordering::SeqCst);
+    let runtime = handle();
+    let discovery = fixture.transport.endpoint(&runtime);
+    tokio::pin!(discovery);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::select! {
+            _ = fixture.state.pod_reply_entered.notified() => {},
+            _ = &mut discovery => panic!("fresh discovery did not reach its Pod read"),
+        }
+    })
+    .await
+    .expect("fresh discovery Pod read must enter the fixture");
+    fixture.state.hold_response.store(true, Ordering::SeqCst);
+    let mut control = tokio::spawn({
+        let transport = fixture.transport.clone();
+        async move { transport.exchange(&handle(), RequestFrame::Resources).await }
+    });
+    wait_for_request(&fixture, "POST /runtime/control ").await;
+    assert!(!control.is_finished());
+    fixture.state.replaced.store(true, Ordering::SeqCst);
+    fixture.state.pod_reply_release.notify_one();
+    let new_endpoint = tokio::time::timeout(Duration::from_secs(2), &mut discovery)
+        .await
+        .expect("replacement discovery must finish")
+        .unwrap();
+    assert_ne!(old_endpoint.native_binding(), new_endpoint.native_binding());
+    // P2 is a freshly discovered endpoint, so new-stream admission succeeds
+    // without the cached-P1 mismatch branch. That must still fence ControlP1.
+    let replacement = tokio::time::timeout(
+        Duration::from_secs(2),
+        scope(authority, fixture.transport.receiver_lease(&new_endpoint)),
+    )
+    .await
+    .expect("new incarnation negotiation must finish");
+    let admitted = replacement.as_ref().is_ok_and(|lease| lease.is_some());
+    drop(replacement);
+    let early_control = tokio::time::timeout(Duration::from_secs(2), &mut control).await;
+    let fenced_before_release = matches!(&early_control, Ok(Ok(Err(_))));
+    fixture.state.hold_response.store(false, Ordering::SeqCst);
+    if early_control.is_err() {
+        let _ = tokio::time::timeout(Duration::from_secs(2), &mut control)
+            .await
+            .expect("released old response must finish")
+            .expect("control task must join");
+    }
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+    assert!(admitted, "fresh replacement must remain usable");
+    assert!(
+        fenced_before_release,
+        "fresh OwnershipP2 admission left held ControlP1 live"
+    );
+    assert_eq!(
+        fixture
+            .state
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|request| request.starts_with("POST /runtime/control "))
+            .count(),
+        1,
+        "old Control must never be replayed onto the replacement"
+    );
+}
