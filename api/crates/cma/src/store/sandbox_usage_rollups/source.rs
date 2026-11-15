@@ -67,6 +67,35 @@ impl ReportingStore {
             range,
             revision_seek,
         ))
+        .await?
+        .ok_or(MetricsError::Busy)
+    }
+
+    // A separate contract for cold-range preparation. None means only that the
+    // combined raw count/byte cap was reached; operational errors stay errors.
+    pub(super) async fn allocation_range_events(
+        &self,
+        session: &mut mongodb::ClientSession,
+        ids: &[&str],
+        range: Range,
+    ) -> Result<Option<BTreeMap<String, Vec<UsageEvent>>>> {
+        if ids.len() > 8
+            || range.from >= range.to
+            || range.to > i64::MAX as u64
+            || range.seconds() > 30 * 86_400
+        {
+            return Err(MetricsError::Busy);
+        }
+        if ids.is_empty() {
+            return Ok(Some(BTreeMap::new()));
+        }
+        let _timer = self.time_read("allocation_cold_range_raw")?;
+        allocation_operation(self.read_allocation_events_inner(
+            session,
+            doc! {"sandbox_id":{"$in":ids}},
+            range,
+            false,
+        ))
         .await
     }
 
@@ -76,7 +105,7 @@ impl ReportingStore {
         mut filter: mongodb::bson::Document,
         range: Range,
         revision_seek: bool,
-    ) -> Result<BTreeMap<String, Vec<UsageEvent>>> {
+    ) -> Result<Option<BTreeMap<String, Vec<UsageEvent>>>> {
         filter.extend(
             doc! {"ended_at":{"$gt":range.from as i64},"started_at":{"$lt":range.to as i64}},
         );
@@ -100,10 +129,14 @@ impl ReportingStore {
         // Mongo still caps each reply at 16 MiB and the 100k event cap is unchanged.
         let mut events = EventBatch::default();
         while cursor.advance(&mut *session).await.map_err(unavailable)? {
-            events.push(cursor.current())?;
+            if !events.push(cursor.current())? {
+                // A size-cap decline is separate from every MetricsError,
+                // including a Busy result from the reporting circuit.
+                return Ok(None);
+            }
         }
         // No partially fetched or invalid day reaches projection.
-        Ok(events.finish(revision_seek))
+        Ok(Some(events.finish(revision_seek)))
     }
 }
 
@@ -115,21 +148,18 @@ struct EventBatch {
 }
 
 impl EventBatch {
-    fn push(&mut self, document: &mongodb::bson::RawDocument) -> Result<()> {
-        self.count += 1;
-        self.bytes = self
-            .bytes
-            .checked_add(document.as_bytes().len())
-            .ok_or(MetricsError::Busy)?;
+    fn push(&mut self, document: &mongodb::bson::RawDocument) -> Result<bool> {
+        self.count = self.count.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(document.as_bytes().len());
         if self.count > 100_000 || self.bytes > 64 * 1024 * 1024 {
-            return Err(MetricsError::Busy);
+            return Ok(false);
         }
         let event = super::super::sandbox_usage::raw_event::read(document).map_err(unavailable)?;
         self.events
             .entry(event.sandbox_id.to_string())
             .or_default()
             .push(event);
-        Ok(())
+        Ok(true)
     }
 
     fn finish(mut self, revision_seek: bool) -> BTreeMap<String, Vec<UsageEvent>> {
