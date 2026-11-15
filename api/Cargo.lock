@@ -465,6 +465,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cma-allocator-qualification"
+version = "0.1.0"
+
+[[package]]
 name = "cma-image-manager"
 version = "0.1.0"
 dependencies = [
@@ -517,6 +521,7 @@ dependencies = [
  "bytes",
  "cbc",
  "cfb",
+ "cma-allocator-qualification",
  "cma-service-auth",
  "cmaeg-core",
  "dashmap",

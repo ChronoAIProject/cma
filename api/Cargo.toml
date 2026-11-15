@@ -10,6 +10,7 @@ members = [
     "crates/cmaeg",
     "crates/cma-image-manager",
     "crates/cma-service-auth",
+    "crates/cma-allocator-qualification",
 ]
 
 [workspace.package]
