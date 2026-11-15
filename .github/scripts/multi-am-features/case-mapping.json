@@ -363,7 +363,7 @@
     "cases": [
       "user.rename_cas"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "blocked": "Idle and held-turn changed-title API assertions implemented, with acknowledged title readback after owner restart; browser and deterministic publication-conflict barrier remain incomplete",
     "minimum_runs": 3,
     "routing": "non_owner",
     "phases": [
@@ -372,22 +372,28 @@
     ]
   },
   "cma-user.agent.system-prompt": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": [
+      "user.system_prompt_roundtrip"
+    ],
+    "blocked": "Changed-value API mutation, private state readback and restoration implemented; browser, unauthorized and full runtime-effect assertions remain incomplete",
     "minimum_runs": 3,
     "phases": [
       "before_restart",
       "after_restart"
-    ]
+    ],
+    "routing": "non_owner"
   },
   "cma-user.agent.session-settings": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": [
+      "user.session_settings_roundtrip"
+    ],
+    "blocked": "Changed-value API mutation, private state readback and restoration implemented; browser, unauthorized and full runtime-effect assertions remain incomplete",
     "minimum_runs": 3,
     "phases": [
       "before_restart",
       "after_restart"
-    ]
+    ],
+    "routing": "non_owner"
   },
   "cma-user.agent.skills": {
     "cases": [],
@@ -1390,7 +1396,7 @@
     "cases": [
       "admin.sandbox_always_on_cross_am"
     ],
-    "blocked": "API non-owner mutation, stale rejection, public reads and lifecycle replay implemented; browser control and trigger-origin fixture assertions remain incomplete",
+    "blocked": "API non-owner toggle, stale rejection, public reads, immutable lifecycle replay and altered-payload refusal implemented; browser and trigger-origin fixture remain incomplete",
     "minimum_runs": 3,
     "phases": [
       "before_restart",

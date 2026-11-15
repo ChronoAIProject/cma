@@ -9,9 +9,10 @@ import {desktopFrame, closeDesktop} from './desktop.mjs';
 
 const terminal = value => ['completed', 'failed', 'incomplete', 'cancelled'].includes(value.status);
 const lineage = (record, detail) => detail?.id === record.agentId && detail.sandbox?.id === record.sandboxId
-  && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name].includes(record.name);
+  && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
+    .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title));
 
-export async function runJourney(raw, {adoptionHook, featureHook} = {}) {
+export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -196,6 +197,8 @@ export async function runJourney(raw, {adoptionHook, featureHook} = {}) {
   }
   async function recovery(record, am) {
     const turn = await sendHeld(record, am, 'owner-recovery');
+    if (heldTurnHook) await heldTurnHook({record, api, adapter, config,
+      phase: 'before_restart', turn});
     api.routingEnabled = false; // Survivor reads exercise the ordinary takeover path.
     const before = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
     const kill = await adapter.killAm({agentId: record.agentId, owner: before}); killedAm = before.am;
