@@ -267,7 +267,11 @@ pub(super) async fn begin(
         .return_document(ReturnDocument::After)
         .await
         .map_err(|_| WarmPoolError::Unavailable)?;
-    updated.ok_or(WarmPoolError::Conflict).and_then(validate)
+    let updated = updated.ok_or(WarmPoolError::Conflict).and_then(validate)?;
+    if let Some(polls) = &store.managed_polls {
+        polls.began_retirement(target, &updated).await;
+    }
+    Ok(updated)
 }
 
 pub(super) async fn remove(
@@ -291,7 +295,13 @@ pub(super) async fn remove(
     store.check_fenced_write(store.targets.update_one(filter, doc! {"$set":{
         "retired":true,"lease":mongodb::bson::Bson::Null,"lease_until":DateTime::from_millis(0),
         "error":mongodb::bson::Bson::Null,"applied_revision":target.revision
-    }}).await).await
+    }}).await).await?;
+    if let Some(polls) = &store.managed_polls {
+        // An exact tombstone ACK terminates only this delivered store lease.
+        // Provider permits and workflow finality remain unresolved.
+        polls.finished(target).await;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

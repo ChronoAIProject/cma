@@ -22,6 +22,7 @@ pub(super) struct ManagedPolls {
 struct PendingPoll {
     previous: Option<NativePollReceipt>,
     command: Option<NativePollCommand>,
+    retry_noncommitted: bool,
     delivered: Option<DeliveredLease>,
 }
 
@@ -40,6 +41,25 @@ impl DeliveredLease {
 }
 
 impl PendingPoll {
+    fn acknowledged_retirement(&mut self, prior: &PoolTarget, next: &PoolTarget) {
+        if let Some(delivered) = self.delivered.as_mut().filter(|delivered| {
+            delivered.matches(prior)
+                && prior.revision.checked_add(1) == Some(next.revision)
+                && next.id == prior.id
+                && next.lease == prior.lease
+                && next.plan == prior.plan
+                && next.binding == prior.binding
+                && !prior.retiring
+                && next.retiring
+                && !next.retired
+                && next.target_replicas == 0
+        }) {
+            // The immutable poll receipt remains in previous. Only the
+            // exact acknowledged store transition advances this lease.
+            delivered.revision = next.revision;
+        }
+    }
+
     fn acknowledged_finish(&mut self, target: &PoolTarget) {
         if self
             .delivered
@@ -107,6 +127,12 @@ impl ManagedPolls {
             state.lock().await.acknowledged_finish(target);
         }
     }
+
+    pub(super) async fn began_retirement(&self, prior: &PoolTarget, next: &PoolTarget) {
+        for state in [&self.background, &self.startup_agent, &self.startup_machine] {
+            state.lock().await.acknowledged_retirement(prior, next);
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -160,7 +186,11 @@ async fn poll(
     if pending.delivered.is_some() {
         return Err(WarmPoolError::Unavailable);
     }
-    if let Some(command) = &pending.command {
+    if let Some(command) = pending
+        .command
+        .as_ref()
+        .filter(|_| !pending.retry_noncommitted)
+    {
         let receipt = authority
             .reconcile(command)
             .await
@@ -168,14 +198,20 @@ async fn poll(
             .ok_or(WarmPoolError::Unavailable)?;
         return observe(&mut pending, receipt, false);
     }
-    let command = authority
-        .prepare(lane, pending.previous.as_ref())
-        .await
-        .map_err(|_| WarmPoolError::Unavailable)?;
-    tracing::debug!(sequence = command.sequence(), "native target poll prepared");
+    if pending.command.is_none() {
+        let command = authority
+            .prepare(lane, pending.previous.as_ref())
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        tracing::debug!(sequence = command.sequence(), "native target poll prepared");
+        pending.command = Some(command);
+    }
     // Save before the first mutating await. A cancelled task leaves this
     // command in place and its successor can only inspect the same result.
-    pending.command = Some(command);
+    // Consume the store's noncommit certificate before await. Cancellation
+    // or any unclassified error restores reconcile-only handling. Execute at
+    // most once per poll call, always retaining the same frozen command.
+    pending.retry_noncommitted = false;
     let outcome = authority
         .execute(pending.command.as_ref().expect("saved before dispatch"))
         .await
@@ -183,6 +219,11 @@ async fn poll(
     match outcome {
         NativePollExecution::Fresh(receipt) => observe(&mut pending, receipt, true),
         NativePollExecution::Replay(receipt) => observe(&mut pending, receipt, false),
+        NativePollExecution::NotCommitted(error) => {
+            pending.retry_noncommitted = true;
+            tracing::warn!(error = %error, "native target poll did not commit; same command may retry");
+            Err(WarmPoolError::Unavailable)
+        }
         NativePollExecution::Uncertain => {
             tracing::warn!("native target poll commit is unresolved; reconciliation required");
             Err(WarmPoolError::Unavailable)

@@ -411,3 +411,6 @@ mod retirement_tests;
 
 #[path = "startup_tests.rs"]
 mod startup_tests;
+
+#[path = "managed_poll_tests.rs"]
+mod managed_poll_tests;
