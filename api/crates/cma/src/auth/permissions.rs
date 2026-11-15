@@ -100,10 +100,13 @@ pub(super) async fn fetch_introspection(
         ("client_secret", client_secret.as_str()),
     ];
     // The form carries the secret, so nothing here logs it.
-    let body = super::identity_http::json(
+    let body = super::identity_cooldown::json(
+        auth,
+        access_token,
+        endpoint,
+        super::verification_diagnostics::Endpoint::Introspection,
         auth.http.post(endpoint).form(&form),
         deadline,
-        super::verification_diagnostics::Endpoint::Introspection,
     )
     .await?;
     claims(
