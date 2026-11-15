@@ -39,7 +39,7 @@ impl AuthorityStore {
         let evidence = verifier.verify(&evidence).await?.check(&evidence)?;
         let head = ReleaseHead {
             deployment: request.deployment.clone(),
-            schema_version: 1,
+            schema_version: HEAD_SCHEMA_VERSION,
             epoch: 1,
             control_revision: 1,
             admission_sequence: 0,

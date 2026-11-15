@@ -13,11 +13,16 @@ pub(crate) struct AuthorityStore {
     pub(super) heads: Collection<Document>,
     pub(super) operations: Collection<Document>,
     pub(super) effects: Collection<Document>,
+    pub(super) store_commands: Collection<Document>,
+    pub(super) native_targets: Collection<crate::warm_pools::PoolTarget>,
 }
 
 impl AuthorityStore {
     /// Only verifies preinstalled collections; never performs startup DDL.
     pub(crate) async fn open(client: Client, database: Database) -> Result<Self> {
+        // Derive every handle from this client, even if a caller supplied a
+        // Database obtained from another client. Sessions never cross clients.
+        let database = client.database(database.name());
         let names = database
             .list_collection_names()
             .await
@@ -37,7 +42,11 @@ impl AuthorityStore {
             client,
             heads: database.collection_with_options(HEADS, options.clone()),
             operations: database.collection_with_options(OPERATIONS, options.clone()),
-            effects: database.collection_with_options(EFFECTS, options),
+            effects: database.collection_with_options(EFFECTS, options.clone()),
+            store_commands: database.collection_with_options(STORE_COMMANDS, options.clone()),
+            // This handle and every transaction originate from the same Client.
+            // Callers cannot supply their separate native-store handle/session.
+            native_targets: database.collection_with_options("native_warm_pool_targets", options),
         })
     }
 
@@ -148,7 +157,7 @@ impl AuthorityStore {
             update.insert("$currentDate", doc! {"committed_at": true});
         }
         let result = self.heads.update_one(
-            doc! {"_id": &previous.deployment, "schema_version": 1_i64,
+            doc! {"_id": &previous.deployment, "schema_version": HEAD_SCHEMA_VERSION,
                 "epoch": previous.epoch, "control_revision": previous.control_revision,
                 "admission_sequence": previous.admission_sequence, "active_effects": previous.active_effects},
             update,
