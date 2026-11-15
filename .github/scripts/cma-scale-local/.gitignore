@@ -1,0 +1,14 @@
+/source/
+/private/
+/cache/
+/bin/
+/evidence/*.log
+/.DS_Store
+**/__pycache__/
+/manifests/apps.json
+/manifests/infra.json
+/manifests/routing.json
+/manifests/metrics-server-upstream.yaml
+/manifests/metrics-server-local.yaml
+/manifests/agent-sandbox-local.yaml
+/manifests/hpa-pdb-reviewed.json

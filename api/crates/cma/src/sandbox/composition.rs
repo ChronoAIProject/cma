@@ -44,6 +44,8 @@ pub(crate) struct SandboxLifecycleDependencies {
 }
 
 pub(crate) struct SandboxLifecycleConfig {
+    pub renewable_work: bool,
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
     pub retry_single_marker_enabled: bool,
@@ -66,6 +68,8 @@ pub(crate) struct SandboxLifecycleConfig {
 }
 
 pub(crate) struct SandboxLifecycleComposition {
+    inline_lifecycle: Option<crate::agent_lifecycle::LifecycleDrain>,
+    pub(crate) reopen_worker: Arc<SandboxWorker>,
     warmup: super::warmup::LegacyWarmSandboxCleanup,
     reconciliation: SandboxReconciler,
     sandbox: SandboxScheduler,
@@ -75,11 +79,22 @@ pub(crate) struct SandboxLifecycleComposition {
     capacity_recovery: Option<SandboxScheduler>,
     titles: AgentTitleScheduler,
     suggestions: Arc<super::suggestion_worker::SuggestionWorker>,
-    updates: Arc<dyn AgentUpdateRecorder>,
+    updates: Arc<DurableAgentUpdateRecorder>,
     funding_renewal: FundingRenewalWorker,
 }
 
 impl SandboxLifecycleComposition {
+    pub(crate) fn register_inline_lifecycle(
+        &mut self,
+        drain: crate::agent_lifecycle::LifecycleDrain,
+    ) {
+        assert!(
+            self.inline_lifecycle.is_none(),
+            "lifecycle drain registered once"
+        );
+        self.inline_lifecycle = Some(drain);
+    }
+
     pub(crate) fn new(
         dependencies: SandboxLifecycleDependencies,
         config: SandboxLifecycleConfig,
@@ -170,7 +185,8 @@ impl SandboxLifecycleComposition {
                 format!("{}:workspace", config.holder),
                 config.deployment_id.clone(),
             )
-            .with_execution(config.execution),
+            .with_execution(config.execution)
+            .with_replicas(config.renewable_work),
         );
         let agent_worker = AgentWorker::new(
             AgentWorkerDependencies {
@@ -186,6 +202,7 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_parent_readiness(Arc::clone(&dependencies.store.agent_parent_ready))
+            .with_ownership(config.ownership)
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
             .with_cleanup_continuation(config.cleanup_continuation_enabled)
             .with_retry_single_marker(config.retry_single_marker_enabled)
@@ -218,6 +235,7 @@ impl SandboxLifecycleComposition {
                 dependencies.policy,
             )
             .with_execution(config.execution)
+            .with_replicas(config.renewable_work)
             .with_work_retry_policy(config.work_retry_policy_enabled)
             .with_native_create_retry(config.native_create_retry_enabled)
             .with_home_policy(config.home_policy),
@@ -225,6 +243,8 @@ impl SandboxLifecycleComposition {
         );
 
         Ok(Self {
+            inline_lifecycle: None,
+            reopen_worker: sandbox_worker.clone(),
             warmup,
             updates,
             reconciliation,
@@ -243,8 +263,12 @@ impl SandboxLifecycleComposition {
         })
     }
 
+    pub(crate) fn live_updates(&self) -> Arc<DurableAgentUpdateRecorder> {
+        self.updates.clone()
+    }
+
     pub(crate) fn updates(&self) -> Arc<dyn AgentUpdateRecorder> {
-        Arc::clone(&self.updates)
+        self.updates.clone()
     }
 
     pub(crate) fn capacity_recovery_commands(
@@ -271,7 +295,7 @@ impl SandboxLifecycleComposition {
 
     pub(crate) async fn initialize(&self) -> Result<(), String> {
         self.reconciliation
-            .initialize(std::time::SystemTime::now())
+            .initialize_before_workers(std::time::SystemTime::now())
             .await
             .map_err(|error| format!("sandbox runtime initialization failed: {error}"))
     }
@@ -281,6 +305,9 @@ impl SandboxLifecycleComposition {
         shutdown: &mut ShutdownCoordinator,
         workers: &crate::worker_supervision::Workers,
     ) {
+        if let Some(lifecycle) = self.inline_lifecycle {
+            shutdown.register_lifecycle(lifecycle);
+        }
         if let Some(scheduler) = self.capacity_recovery {
             shutdown.push(
                 scheduler

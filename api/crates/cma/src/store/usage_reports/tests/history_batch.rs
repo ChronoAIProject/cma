@@ -10,7 +10,7 @@ use std::sync::{
 #[derive(Default)]
 pub(super) struct Commands {
     pub(super) event_reads: AtomicUsize,
-    returned: AtomicUsize,
+    pub(super) returned: AtomicUsize,
     max_batch: AtomicUsize,
     pending: Mutex<std::collections::HashSet<i32>>,
 }

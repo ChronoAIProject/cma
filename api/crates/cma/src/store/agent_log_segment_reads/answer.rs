@@ -11,10 +11,7 @@ pub(in crate::store) async fn read(
     sequence: u64,
     session: &mut ClientSession,
 ) -> Result<Option<AgentLogFinalAnswer>, SandboxStoreError> {
-    if segmented_source(store, agent, session, true)
-        .await?
-        .is_none()
-    {
+    if !is_segmented(store, agent, session).await? {
         return Ok(None);
     }
     let source = capture::capture(store, agent, session, capture::CaptureMode::Snapshot)

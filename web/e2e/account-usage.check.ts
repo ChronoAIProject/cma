@@ -126,13 +126,26 @@ for (const status of [403, 410, 429, 503]) {
     const boundary = new LocalStartup();
     const metrics = new LocalUsageMetrics();
     metrics.failure = status;
+    const transient = status === 429 || status === 503;
+    // Use a bounded server floor while preserving the normal four attempts.
+    // The separate backoff checks cover a full 30-second Retry-After deadline.
+    if (transient) metrics.retryAfterSeconds = 1;
     await boundary.route(page, baseURL!);
     await metrics.route(page);
     metrics.measuredVisible = measured;
     await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
     await page.goto('/usage');
     const dialog = page.getByRole('dialog', { name: 'Your usage' });
-    await expect(dialog.getByRole('alert')).toBeVisible();
+    if (transient) {
+      await expect(
+        dialog.getByText('Retrying usage automatically…', { exact: true }),
+      ).toBeVisible();
+      await expect(dialog.getByRole('alert')).toHaveCount(0);
+    }
+    await expect(dialog.getByRole('alert')).toBeVisible({ timeout: transient ? 15_000 : 5_000 });
+    expect(metrics.reads.filter((url) => url.pathname.endsWith('/reports'))).toHaveLength(
+      transient ? 4 : 1,
+    );
     await expect(dialog.getByText('No Sandboxes match this selection.')).toHaveCount(0);
     if (status === 429)
       await expect(dialog.getByRole('button', { name: 'Waiting to retry' })).toBeDisabled();

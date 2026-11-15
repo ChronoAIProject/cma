@@ -40,8 +40,20 @@ pub(crate) async fn session_guard(
     if post && !csrf::origin_matches(request.headers(), console.public_url()) {
         return csrf::reject("origin");
     }
-    let session = cookies::get(request.headers(), cookies::SESSION)
-        .and_then(|sid| console.sessions().find(sid));
+    let _permit = match console.sessions().try_request() {
+        Ok(permit) => permit,
+        Err(_) => return super::pages::unavailable(),
+    };
+    let session = match cookies::get(request.headers(), cookies::SESSION) {
+        Some(sid) => match console.sessions().find_session(sid).await {
+            Ok(session) => session,
+            Err(_) => {
+                tracing::warn!(stage = "lookup", "console session authority unavailable");
+                return super::pages::unavailable();
+            }
+        },
+        None => None,
+    };
     let mut request = if post {
         let Some(cell) = &session else {
             return redirect::signed_out(true);

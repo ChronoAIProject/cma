@@ -1,0 +1,105 @@
+{
+  "id": "s1-prepare-paused-template",
+  "stage": "S1",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "Deployment",
+  "name": "cma-agent-manager",
+  "action": "patch",
+  "changes": {
+    "deployment": {
+      "strategy": {
+        "rollingUpdate": {
+          "maxSurge": 1,
+          "maxUnavailable": 0
+        },
+        "type": "RollingUpdate"
+      },
+      "minReadySeconds": 30
+    },
+    "pod": {
+      "terminationGracePeriodSeconds": 760,
+      "topologySpreadConstraints": [
+        {
+          "maxSkew": 1,
+          "topologyKey": "kubernetes.io/hostname",
+          "whenUnsatisfiable": "DoNotSchedule",
+          "nodeTaintsPolicy": "Honor",
+          "matchLabelKeys": [
+            "pod-template-hash"
+          ],
+          "labelSelector": {
+            "matchLabels": {
+              "app.kubernetes.io/name": "cma-agent-manager"
+            }
+          }
+        },
+        {
+          "maxSkew": 1,
+          "topologyKey": "topology.kubernetes.io/zone",
+          "whenUnsatisfiable": "ScheduleAnyway",
+          "nodeTaintsPolicy": "Honor",
+          "matchLabelKeys": [
+            "pod-template-hash"
+          ],
+          "labelSelector": {
+            "matchLabels": {
+              "app.kubernetes.io/name": "cma-agent-manager"
+            }
+          }
+        }
+      ]
+    },
+    "container": {
+      "image": null,
+      "lifecycle": {
+        "preStop": {
+          "exec": {
+            "command": [
+              "/bin/sh",
+              "-c",
+              "/usr/local/bin/cma --agent-manager-drain; status=$?; /bin/sleep 30; exit $status"
+            ]
+          }
+        }
+      },
+      "readinessProbe": {
+        "failureThreshold": 1,
+        "httpGet": {
+          "path": "/ready",
+          "port": "http",
+          "scheme": "HTTP"
+        },
+        "initialDelaySeconds": 3,
+        "periodSeconds": 5,
+        "timeoutSeconds": 3,
+        "successThreshold": 1
+      }
+    },
+    "env": [
+      {
+        "name": "POD_IP",
+        "valueFrom": {
+          "fieldRef": {
+            "fieldPath": "status.podIP",
+            "apiVersion": "v1"
+          }
+        }
+      },
+      {
+        "name": "CHRONO_AGENT_MANAGER_RELAY_ADDRESS",
+        "value": "http://$(POD_IP):8080"
+      },
+      {
+        "name": "CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS",
+        "value": null
+      },
+      {
+        "name": "CHRONO_AGENT_MANAGER_REPLICAS_ENABLED",
+        "value": "true"
+      }
+    ]
+  },
+  "a2_phase": "prepare-template",
+  "a2_prepare_paused_template": true
+}

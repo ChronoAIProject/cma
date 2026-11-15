@@ -221,8 +221,16 @@ impl NativePreparedWorker {
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let result = loop {
             tokio::select! {
+                biased;
+                // The immediate first tick validates the claim before any
+                // provider effect. Failed or uncertain renewal cancels work.
+                _ = heartbeat.tick() => tokio::time::timeout(
+                    Duration::from_secs(5),
+                    self.store.renew_native_prepared_work(&claim, &after(60)),
+                ).await.map_err(|_| SandboxStoreError::Unavailable(
+                    "native preparation lease renewal timed out".into(),
+                ))??,
                 result = &mut operation => break result,
-                _ = heartbeat.tick() => self.store.renew_native_prepared_work(&claim, &after(60)).await?,
             }
         };
         let (next, proof, delay) =

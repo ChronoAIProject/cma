@@ -63,7 +63,8 @@ impl MediaObligationStore {
                 text: (*part).into(),
             };
             self.0
-                .write(
+                .write_fenced(
+                    &lease.partition,
                     &id,
                     &lease.record.owner,
                     lease.record.retained_until,

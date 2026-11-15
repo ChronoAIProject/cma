@@ -14,6 +14,9 @@ use super::{Page, PageRequest, SandboxStoreError};
 
 const MAX_RUNTIME_VERSION_BYTES: usize = 512;
 
+mod desktop_sessions;
+pub use desktop_sessions::DesktopSessionRequest;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxInactivityPauseRequest {
     pub sandbox_id: SandboxId,
@@ -85,6 +88,37 @@ pub enum SandboxMaintenanceOutcome {
 /// concurrent open stream cannot race a pause admission.
 #[async_trait]
 pub trait SandboxSessionStore: Send + Sync {
+    /// Replica-mode claims serialize with maintenance and all other desktop opens.
+    /// Unsupported adapters refuse; they must never fall back to a local lock.
+    async fn acquire_exclusive_sandbox_session(
+        &self,
+        _: &DesktopSessionRequest,
+    ) -> Result<layer3_adapter::DesktopOwnership, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "shared desktop sessions unavailable".into(),
+        ))
+    }
+
+    async fn renew_exclusive_sandbox_session(
+        &self,
+        _: &DesktopSessionRequest,
+        _: &layer3_adapter::DesktopOwnership,
+    ) -> Result<layer3_adapter::DesktopOwnership, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "shared desktop sessions unavailable".into(),
+        ))
+    }
+
+    /// Invoke only after receiver revocation; uncertainty is recovered by expiry.
+    async fn release_exclusive_sandbox_session(
+        &self,
+        _: &layer3_adapter::DesktopOwnership,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "shared desktop sessions unavailable".into(),
+        ))
+    }
+
     async fn open_sandbox_session(
         &self,
         sandbox_id: &SandboxId,
