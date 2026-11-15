@@ -3,6 +3,15 @@ use std::sync::Arc;
 
 use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
 
+pub(super) fn worker_observations(
+    config: &Config,
+    stores: &MongoStores,
+) -> crate::store::worker_observations::Observations {
+    stores
+        .worker_observations()
+        .with_work_retry_policy(config.features.work_retry_policy_enabled)
+}
+
 pub(super) struct RuntimeServices {
     pub warm_pools: Arc<NativeWarmPools>,
     pub updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
@@ -44,7 +53,8 @@ impl RuntimeServices {
                     .machine_sandbox_image
                     .clone()
                     .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
-            ),
+            )
+            .with_target_fencing(config.agent_manager_replicas.is_some()),
             updates: Arc::new(
                 layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                     stores.sandbox_model.clone(),
@@ -78,14 +88,24 @@ pub(super) fn funding(
 pub(super) fn lifecycle_config(
     config: &Config,
     holder: String,
+    ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
+        renewable_work: config.agent_manager_replicas.is_some(),
+        ownership,
+        runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        retry_single_marker_enabled: config.features.retry_single_marker_enabled,
+        work_retry_policy_enabled: config.features.work_retry_policy_enabled,
+        native_create_retry_enabled: config.features.native_create_retry_enabled,
+        cleanup_continuation_enabled: config.features.cleanup_continuation_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
+        quiet_output: config.features.quiet_output,
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,
+        sandbox_reconciliation_reserved_lane: config.features.sandbox_reconciliation_reserved_lane,
         home_policy: config
             .runtime
             .home_policy

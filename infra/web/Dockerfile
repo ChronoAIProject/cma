@@ -14,17 +14,21 @@ COPY api/crates/cmaeg/assets/docs/ /build/api/crates/cmaeg/assets/docs/
 # The bundle and final OCI metadata receive identical immutable inputs.
 ARG CHRONO_BUILD=dev
 ARG CHRONO_BUILD_SHA=development
+ARG CHRONO_WEB_REPLICA_RECOVERY_ENABLED=false
 ENV CHRONO_BUILD=$CHRONO_BUILD \
     CHRONO_BUILD_SHA=$CHRONO_BUILD_SHA \
-    CHRONO_BUILD_ARTIFACT=promotable
+    CHRONO_BUILD_ARTIFACT=promotable \
+    CHRONO_WEB_REPLICA_RECOVERY_ENABLED=$CHRONO_WEB_REPLICA_RECOVERY_ENABLED
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
 ARG CHRONO_BUILD=dev
 ARG CHRONO_BUILD_SHA=development
+ARG CHRONO_WEB_REPLICA_RECOVERY_ENABLED=false
 LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
-      org.opencontainers.image.version="${CHRONO_BUILD}"
+      org.opencontainers.image.version="${CHRONO_BUILD}" \
+      io.chronoai.web.replica-recovery-enabled="${CHRONO_WEB_REPLICA_RECOVERY_ENABLED}"
 
 # Pull security fixes published after the base image was cut. Without this the
 # image ships known-fixed CVEs and the vulnerability gate fails, correctly.

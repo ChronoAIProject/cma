@@ -1,5 +1,56 @@
 # Agent reconciliation background scheduler
 
+## Reserved Sandbox recovery capacity
+
+`CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED` is a strict boolean,
+default `false`, independent of the Agent reconciliation and command pacing
+switches. The disabled path retains the shared background budget and its
+foreground admission rule. When enabled at process composition, the Sandbox
+reconciler reserves one permit from the two-permit shared budget and owns an
+independent one-permit lane. Shared workers retain one permit even while
+foreground requests are active. The total remains two background chains,
+including when there are no foreground requests. A busy or invalid reservation
+fails startup instead of silently falling back to shared admission.
+
+The same switch replaces the outer 15-second batch tick with the background
+work's next-run deadline. A denied or yielded attempt resumes after the existing
+187–250 ms jittered delay; failures retain the existing exponential 2–60 second
+backoff with 75–100% jitter, and completed sweeps retain the jittered 15-second
+interval. The disabled path keeps its original 15-second tick. Supervision
+heartbeats continue during work, only one owned attempt runs at a time, waiting
+shutdown exits immediately, and shutdown drains an in-flight attempt without
+cancelling it. The 30-second work deadline and all sweep, operation, binding
+opportunity and hold bounds are unchanged.
+
+The reservation lasts through all owned reconciliation attempts and returns
+only when the reconciler's background work is dropped. It does not authorize
+runtime adoption, recovery, reclamation, or a write: all existing durable
+identity/revision checks, binding holds and cleanup proofs remain mandatory.
+No persistent state, reader format, or migration is introduced. Rollback sets
+the switch to `false` and restarts the API through the release owner.
+
+Ship disabled. The release owner captures and compares background admission,
+slot occupancy, full-sweep and binding-pass wall times, completed recovery,
+Mongo and native HTTP checkout wait, route latency, CPU, readiness and restarts
+before activation. Existing production baseline evidence is recorded in #1791;
+local scheduling tests do not establish a production latency improvement.
+Track `cma_background_attempts_total`, `cma_background_deferred_total`,
+`cma_background_pending_since_timestamp_seconds` and
+`cma_background_completion_timestamp_seconds` for `sandbox_reconciliation`,
+plus `sandbox maintenance sweep completed` and phase-progress logs. The initial
+production targets in #1791 are a full-sweep p95 within 15 minutes and a binding
+pass within three minutes under comparable load. Reserved-lane shared-budget
+denials should be zero. Activation and its one-hour observation window belong
+to the release owner; default-off merge is not production verification.
+
+Binding-refresh rules before retained tail work are unchanged. Changing tail
+fairness requires the conditional measurements in #1791. Policy gating of
+runtime updates, optional provenance backfill cadence, and hold causes remain
+outside this scheduling change. Roll back on the existing Mongo/native HTTP
+checkout, route latency, readiness or restart gates, or lost recovery progress.
+
+## Agent reconciliation
+
 The Agent Manager scheduler performs two independent jobs: due Agent work and
 connection reconciliation. Due work keeps its existing one-second discovery
 cadence. Reconciliation checks durable live-Agent candidates and repairs a lost
@@ -94,3 +145,68 @@ errors, or existing checkout/readiness/circuit-breaker gate failures. There are
 no persistent fields, indexes or migrations. API rollout does not stop Sandbox
 runtimes or interrupt a turn that its owner has not stopped. Production rollout
 and the full-hour evidence in #1785 remain release-owner gates.
+
+## Fresh discovery observations
+
+`CHRONO_AGENT_RECONCILIATION_VALIDATION_REUSE_ENABLED` is a strict boolean,
+default `false`. When enabled, the live-Agent query still reads every complete
+candidate document and the hidden lookahead row. It can reuse the parsed
+connection candidate only when the **entire fresh BSON byte sequence** equals a
+previously fully validated row. Revision equality alone is insufficient because
+trigger admission can update a hydration sidecar without advancing the revision.
+The reader, hydration and candidate parser are pure functions of that document;
+adding an external dependency to these functions requires revisiting this reuse.
+
+The process retains at most 1,024 entries, 256 KiB per row, and 16 MiB of charged
+row/candidate/key storage including a conservative fixed reservation for the
+preallocated map and string-allocation overhead. Entries expire 30 seconds after
+validation; hits never extend expiry. Oversize, saturation,
+changed bytes, expiry and restart take the complete parser path. Query/validation
+failure or cancellation clears reusable observations. No borrowed cursor batch
+is retained. Local attachment is checked on every sweep; parent/runtime checks,
+maintenance admission and recovery claims/CAS retain their existing authority.
+This saves decoding/validation work; Mongo scan frequency and consumed bytes stay
+unchanged. `cma_agent_discovery_validation_total` and
+`cma_agent_discovery_validation_seconds` use fixed outcomes; cache bytes and
+entries are exposed as gauges. No Agent IDs or document contents are metric labels.
+
+`CHRONO_EMPTY_DISCOVERY_COALESCING_ENABLED` is independent and defaults to `false`.
+It coalesces overlapping discovery requests into one fresh snapshot aggregate
+with bounded pending-population probes. Commands, Sandbox controls, Agent work,
+Sandbox work, Workspace work, bindings, binding conversations, Agent access and
+launches keep separate results. Supersets include future-ready and leased work;
+any possible pending work takes the ordinary query and validation/claim path.
+The failed-binding recovery predicate is included, and disabling new admission
+does not suppress already accepted work.
+
+There is **no absence TTL or change to scheduler cadence**. Requests that arrive
+after a batch starts IO form a new batch. A single request bypasses probing.
+Each batch verifies collection presence and preserves the command reader's
+mandatory index hint. At most 16 requests queue per batch and two probe batches
+run concurrently; excess, errors and timeouts fall through to normal discovery.
+The aggregate has a 25 ms server time limit and each caller waits at most
+50 ms for coordination, subject to executor scheduling. A late probe retains its
+slot until the driver completes; callers immediately resume ordinary discovery
+without waiting for that cleanup. Two stalled probes disable extra probing.
+Positive/failed probes suppress further extra probes for
+30 seconds while ordinary discovery continues at its existing cadence. No mutex
+spans IO. Cancellation drops the caller's interest; at most two probes retain IO
+slots until completion, and runtime shutdown cancels their tasks. No recurring task or
+unbounded waiter map is introduced.
+
+Existing admission notifications and timers remain responsible for wakes. A
+remote/missed wake is rediscovered on the existing scheduler interval (250 ms for
+commands; the existing intervals for the other workers), plus normal scheduling
+and query time and at most the probe wait above. Cursor continuation, newly due
+records and lease expiry take ordinary discovery when a pending population
+exists. Batched emptiness replaces only the participating request, never a later
+tick. `cma_empty_discovery_total`, `cma_empty_discovery_batches_total`,
+`cma_empty_discovery_probe_seconds` and `cma_empty_discovery_batch_requests` expose
+fixed worker/outcome labels, failures, savings and overhead.
+
+Both switches require a separate owner activation decision. Compare scan and
+validation counters, cache memory, process CPU, checkout wait/hold, foreground
+request tails and durable work completion under empty, mixed and busy loads.
+Disable the affected switch if work latency, recovery, errors or request tails
+regress; no data migration or persisted format rollback is needed. Local
+measurements do not complete #1421 production or multi-replica acceptance.

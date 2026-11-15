@@ -10,6 +10,7 @@ members = [
     "crates/cmaeg",
     "crates/cma-image-manager",
     "crates/cma-service-auth",
+    "crates/cma-allocator-qualification",
 ]
 
 [workspace.package]
@@ -77,6 +78,8 @@ rusqlite = { version = "=0.41.1", default-features = false, features = ["libsqli
 # private Axum listener, so the exporter's extra servers and push client stay off.
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+# Keep service Rust allocations independent of the build toolchain's libc allocator.
+mimalloc = "0.1.52"
 # Byte-weighted, time-bounded cache for derived media; only the synchronous
 # cache is needed, so the async runtime integration stays off.
 moka = { version = "0.12", default-features = false, features = ["sync"] }

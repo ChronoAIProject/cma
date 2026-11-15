@@ -1,4 +1,4 @@
-//! Durable ordinary-routing admission, deliberately disconnected from ingress.
+//! Durable ordinary-routing admission and restart-safe scheduling custody.
 //!
 //! Immutable encrypted chunks precede one create-only root manifest. Only the
 //! root commits admission. An interrupted chunk upload is never acknowledged as
@@ -6,15 +6,20 @@
 //! Recovery restores the winning snapshot, not current routing configuration.
 //! All records share a fixed retention boundary of at most seven days. Stored
 //! event-reference expiry remains unchanged and is checked separately by any
-//! future dispatcher. Delivery isolation and fenced scheduling are still absent.
+//! dispatcher. Replica scheduling custody is injected by the ownership layer;
+//! merely loading a retained plan never schedules it or authorizes effects.
 mod candidate;
 mod codec;
+mod compatibility;
 mod preparation_source;
+mod queue;
 mod recovery;
+mod root;
 mod store;
 mod types;
 
 pub use candidate::Candidate;
+pub use queue::AdmissionQueue;
 pub use recovery::{RecoveryIssue, RecoveryPage};
 pub use store::PlanStore;
 pub use types::{
@@ -30,3 +35,6 @@ mod tests;
 
 #[cfg(test)]
 mod message_event_tests;
+
+#[cfg(test)]
+mod queue_tests;

@@ -112,6 +112,7 @@ async fn every_authenticated_role_reads_live_usage_presentation_and_failures_are
     let (status, body) = session(&app, Some(vec![Capability::UseOwnSandboxes])).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["code"], "settings_unavailable");
+    assert!(body.get("retryable").is_none());
     assert!(body.get("usage_reporting").is_none());
     assert_eq!(
         session(&app, None).await,

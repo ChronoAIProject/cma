@@ -121,7 +121,9 @@ async fn bounded_response_source_preserves_shared_redaction_and_unbound_state() 
         .unwrap();
     assert!(queued.history.is_empty());
     assert_eq!(queued.initial_model, agent.profile.content.model);
-    assert_eq!(source.calls.load(Ordering::SeqCst), 3);
+    // Unbound queued responses use the metadata-only projection and do not
+    // need a response-source read; only the two bounded snapshots hit Mongo.
+    assert_eq!(source.calls.load(Ordering::SeqCst), 2);
     assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
 }
 

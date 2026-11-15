@@ -1,5 +1,6 @@
 import { ApiError } from '@chronoai/cma-sdk';
 import { UsageBackoff } from './request';
+import { UsageObservationLimit } from './retry';
 
 export interface MetricsFailure {
   readonly title: string;
@@ -10,6 +11,13 @@ export interface MetricsFailure {
 }
 export function metricsFailure(error: unknown): MetricsFailure {
   const base = { denied: false, expired: false };
+  if (error instanceof UsageObservationLimit)
+    return {
+      ...base,
+      title: 'This report is taking longer than expected',
+      message:
+        'Automatic checks have paused after two minutes. Check again, or choose a shorter range. Your selection is preserved.',
+    };
   if (error instanceof UsageBackoff)
     return {
       ...base,
@@ -43,6 +51,7 @@ export function metricsFailure(error: unknown): MetricsFailure {
     if (error.status === 503)
       return {
         ...base,
+        retryAt: error.retryAfterMs === undefined ? undefined : Date.now() + error.retryAfterMs,
         title: 'Usage reporting is unavailable',
         message: 'Usage could not be loaded. Try again later; unavailable data is not zero usage.',
       };

@@ -48,6 +48,14 @@ export function CmaClientProvider({
   );
 }
 
+/** Share pending observations without replacing other capability contexts. */
+export function CmaReadScope({
+  client,
+  children,
+}: Pick<CmaClientProviderProps, 'client' | 'children'>) {
+  return <CmaClientContext value={client}>{children}</CmaClientContext>;
+}
+
 export function useProfileViewsClient(): ProfileViewsClient | undefined {
   return useContext(ProfileClientContext);
 }

@@ -56,6 +56,11 @@ impl Read {
         }
     }
     pub(super) fn document(&mut self, encoded_bytes: usize) {
+        let _ = DOCUMENT_OBSERVER.try_with(|observer| {
+            if observer.class == self.class {
+                observer.documents.fetch_add(1, Ordering::Relaxed);
+            }
+        });
         self.documents = self.documents.saturating_add(1);
         self.bytes = self.bytes.saturating_add(encoded_bytes as u64);
     }
@@ -153,3 +158,26 @@ mod tests;
 #[cfg(test)]
 #[path = "mongo_read_cursor_tests.rs"]
 mod cursor_tests;
+
+/// Invocation-local consumption, including malformed rows and cancellation.
+/// Nested scopes replace rather than share the observer; no cross-task deltas.
+#[derive(Clone)]
+pub(super) struct DocumentObserver {
+    class: usize,
+    documents: Arc<AtomicU64>,
+}
+tokio::task_local! { static DOCUMENT_OBSERVER: DocumentObserver; }
+impl DocumentObserver {
+    pub(super) fn new(collection: &str) -> Self {
+        Self {
+            class: class(collection),
+            documents: Arc::default(),
+        }
+    }
+    pub(super) fn documents(&self) -> u64 {
+        self.documents.load(Ordering::Relaxed)
+    }
+    pub(super) async fn scope<F: std::future::Future>(&self, work: F) -> F::Output {
+        DOCUMENT_OBSERVER.scope(self.clone(), work).await
+    }
+}

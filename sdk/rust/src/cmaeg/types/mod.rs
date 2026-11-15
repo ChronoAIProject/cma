@@ -1,4 +1,6 @@
 //! Typed management, event and tool protocol documents.
+mod provider_binding;
+pub use provider_binding::*;
 mod channels;
 pub use channels::*;
 mod partitions;

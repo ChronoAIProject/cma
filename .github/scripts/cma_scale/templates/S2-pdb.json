@@ -1,0 +1,30 @@
+{
+  "id": "s2-pdb",
+  "stage": "S2",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "PodDisruptionBudget",
+  "name": "cma-event-gateway",
+  "action": "create",
+  "manifest": {
+    "apiVersion": "policy/v1",
+    "kind": "PodDisruptionBudget",
+    "metadata": {
+      "labels": {
+        "app.kubernetes.io/name": "cma-event-gateway",
+        "app.kubernetes.io/part-of": "cma"
+      },
+      "name": "cma-event-gateway",
+      "namespace": "chrono-bot"
+    },
+    "spec": {
+      "minAvailable": 1,
+      "selector": {
+        "matchLabels": {
+          "app.kubernetes.io/name": "cma-event-gateway"
+        }
+      },
+      "unhealthyPodEvictionPolicy": "AlwaysAllow"
+    }
+  }
+}

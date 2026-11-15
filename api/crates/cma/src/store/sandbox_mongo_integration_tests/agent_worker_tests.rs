@@ -1,6 +1,8 @@
 use super::*;
 
+mod empty_discovery_tests;
 mod reconciliation_context_tests;
+mod work_retry_policy_tests;
 
 async fn idle_connection_fixture(
     store: &MongoSandboxStore,

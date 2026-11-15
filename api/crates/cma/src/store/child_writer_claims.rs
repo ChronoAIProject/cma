@@ -18,6 +18,8 @@ use super::sandbox_mongo::{
 use super::sandboxes::read_sandbox;
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 
+mod diagnostics;
+
 pub(super) enum ChildWriterClaim {
     Agent(Box<Agent>),
     Workspace(Box<Workspace>),
@@ -67,7 +69,13 @@ pub(super) async fn persist(
         return Err(SandboxStoreError::Conflict);
     }
     let mut last_transient = None;
-    for _ in 0..TRANSACTION_ATTEMPTS {
+    let mut diagnostics = diagnostics::ClaimDiagnostics::new(&claim);
+    for attempt in 0..TRANSACTION_ATTEMPTS {
+        // The previous session has been aborted/dropped before this delay.
+        // Keep exhaustion Unavailable: outer claim loops retry domain conflicts
+        // and must not multiply this known-abort transaction budget.
+        super::contention::backoff(attempt).await;
+        diagnostics.attempt(attempt + 1);
         let mut session = store
             .client
             .start_session()
@@ -75,12 +83,20 @@ pub(super) async fn persist(
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         if let Err(error) = start_transaction(&mut session).await {
             if is_transient(&error) {
-                last_transient = Some(error.to_string());
+                last_transient = Some(diagnostics.transient(&error));
                 continue;
             }
             return Err(SandboxStoreError::Unavailable(error.to_string()));
         }
-        match apply(store, expected_revision, &claim, &mut session).await {
+        match apply(
+            store,
+            expected_revision,
+            &claim,
+            &mut session,
+            &mut diagnostics,
+        )
+        .await
+        {
             Ok(true) => {}
             Ok(false) => {
                 let _ = session.abort_transaction().await;
@@ -92,7 +108,7 @@ pub(super) async fn persist(
             }
             Err(ClaimError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;
-                last_transient = Some(error.to_string());
+                last_transient = Some(diagnostics.transient(&error));
                 continue;
             }
             Err(ClaimError::Driver(error)) => {
@@ -100,9 +116,10 @@ pub(super) async fn persist(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         }
+        diagnostics.phase = "commit";
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(true),
-            CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
+            CommitOutcome::Retry(error) => last_transient = Some(diagnostics.transient(&error)),
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
                     SandboxStoreError::Unavailable(format!(
@@ -138,8 +155,19 @@ async fn apply(
     expected_revision: u64,
     claim: &ChildWriterClaim,
     session: &mut ClientSession,
+    diagnostics: &mut diagnostics::ClaimDiagnostics,
 ) -> Result<bool, ClaimError> {
+    if let ChildWriterClaim::Agent(agent) = claim {
+        store
+            .fence_agent_effect(&agent.id, session)
+            .await
+            .map_err(ClaimError::Domain)?;
+    }
     let (id, sandbox_id, owner, _) = claim.identity();
+    crate::store::work_publication::fence(store, session)
+        .await
+        .map_err(ClaimError::Domain)?;
+    diagnostics.phase = "parent_read";
     let parent = store
         .sandboxes
         .find_one(doc! { "_id": sandbox_id.as_str() })
@@ -170,14 +198,21 @@ async fn apply(
     }
     let parent_revision = signed(parent.revision, "writer claim parent revision")
         .map_err(|_| ClaimError::Domain(SandboxStoreError::Conflict))?;
+    diagnostics.phase = "parent_fence";
     let locked = store
         .sandboxes
         .update_one(
-            doc! {
-                "_id": sandbox_id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "revision": parent_revision,
-            },
+            crate::store::work_schema::query(
+                crate::store::work_publication::sandbox(
+                    doc! {
+                        "_id": sandbox_id.as_str(),
+                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                        "revision": parent_revision,
+                    },
+                    sandbox_id.as_str(),
+                )
+                .map_err(ClaimError::Domain)?,
+            ),
             doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
         )
         .session(&mut *session)
@@ -188,6 +223,7 @@ async fn apply(
     }
     let revision = signed(expected_revision, "writer claim revision")
         .map_err(|_| ClaimError::Domain(SandboxStoreError::Conflict))?;
+    diagnostics.phase = "child_read";
     let current_agent_row = if matches!(claim, ChildWriterClaim::Agent(_)) {
         Some(
             store
@@ -210,6 +246,7 @@ async fn apply(
         {
             return Err(ClaimError::Domain(SandboxStoreError::Conflict));
         }
+        diagnostics.phase = "child_validation";
         super::agent_log_segments::ordinary::source(store, &current, current_row, session)
             .await
             .map_err(|error| match error {
@@ -243,7 +280,22 @@ async fn apply(
         );
         filter.insert("record.title", record_title_value(agent));
     }
+    if let ChildWriterClaim::Workspace(workspace) = claim {
+        let lease = workspace
+            .work
+            .lease
+            .as_ref()
+            .ok_or(ClaimError::Domain(SandboxStoreError::Conflict))?;
+        let acquisition =
+            super::work_claim_authority::eligible(&lease.expires_at).map_err(ClaimError::Domain)?;
+        filter = super::work_schema::query(doc! {"$and":[filter, acquisition]});
+    }
     let mut fields = claim.fields().map_err(ClaimError::Domain)?;
+    if let ChildWriterClaim::Agent(agent) = claim {
+        store
+            .agent_work_owner_fields(&agent.id, &mut fields)
+            .map_err(ClaimError::Domain)?;
+    }
     if let (ChildWriterClaim::Agent(agent), Some(current_row)) = (claim, current_agent_row.as_ref())
     {
         carry_integrity_for_revision(
@@ -254,9 +306,19 @@ async fn apply(
         )
         .map_err(ClaimError::Domain)?;
     }
+    if matches!(claim, ChildWriterClaim::Workspace(row) if row.work.authority_protocol.is_some()) {
+        super::work_schema::floor::retain(store, session)
+            .await
+            .map_err(ClaimError::Driver)?;
+    }
+    diagnostics.phase = "child_write";
+    let update: mongodb::options::UpdateModifications = match claim {
+        ChildWriterClaim::Workspace(_) => super::work_lease_update::acquisition(fields).into(),
+        ChildWriterClaim::Agent(_) => doc! {"$set":fields}.into(),
+    };
     let advanced = claim
         .collection(store)
-        .update_one(filter, doc! { "$set": fields })
+        .update_one(filter, update)
         .session(session)
         .await
         .map_err(ClaimError::Driver)?;

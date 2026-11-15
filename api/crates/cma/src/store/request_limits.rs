@@ -37,14 +37,31 @@ impl MongoRequestLimits {
         key: &str,
         per_minute: u32,
     ) -> Result<Option<u64>, StoreError> {
+        self.charge(key, per_minute, 1).await
+    }
+
+    /// Reserve credits atomically before a process can spend them locally.
+    pub(crate) async fn charge(
+        &self,
+        key: &str,
+        per_minute: u32,
+        tokens: u32,
+    ) -> Result<Option<u64>, StoreError> {
+        if tokens == 0 || tokens > per_minute.max(1) {
+            return Err(StoreError::Malformed(
+                "invalid request budget charge".into(),
+            ));
+        }
         let interval = i64::from(60_000_u32.div_ceil(per_minute.max(1)));
-        let tolerance = interval * i64::from(per_minute.saturating_sub(1));
+        let tolerance =
+            interval * i64::from(per_minute.saturating_sub(1)) - interval * i64::from(tokens - 1);
+        let increment = interval * i64::from(tokens);
         for _ in 0..8 {
             let result = self.limits.find_one_and_update(doc! {
                 "_id": key,
                 "$expr": { "$lte": ["$tat", { "$add": [{ "$toLong": "$$NOW" }, tolerance] }] },
             }, vec![doc! { "$set": {
-                "tat": { "$add": [{ "$max": ["$tat", { "$toLong": "$$NOW" }] }, interval] },
+                "tat": { "$add": [{ "$max": ["$tat", { "$toLong": "$$NOW" }] }, increment] },
                 "expires_at": { "$add": ["$$NOW", 120_000] },
             } }]).return_document(ReturnDocument::After).await.map_err(unavailable)?;
             if result.is_some() {

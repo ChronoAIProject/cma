@@ -58,12 +58,12 @@ before any explicit control or audit action. See the
 Existing non-segmentation store initialization is unchanged; no segmentation
 sidecar DDL or adoption is performed by service startup.
 
-The pre-review findings remain activation gates until their executable evidence
-and exact-head review pass. In particular, current retained reopening needs its
-bounded original-history proof on segmented data. Generation maxima alone do
-not establish its history digest. Missing native state/output confirmation is
-an explicit unsupported capability, never permission to create a replacement
-conversation or replay input.
+The #1938 source review qualifies bounded retained reopening and its original
+history proof. Activation still requires the #1913 malformed source-key
+correction, complete writer integration, active-tail qualification and the exact
+release/recovery artifacts. Missing native state/output confirmation remains an
+explicit unsupported capability; it never permits a replacement conversation or
+input replay.
 
 ## Kill switch and recovery floor
 
@@ -74,6 +74,15 @@ with the switch still on. Once those preparations have drained, roll out
 `CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED=false` to restore the original
 request-path operation count. Durable closure alone, while dispatch stays on,
 still performs discovery; it must not be reported as zero-overhead rollback.
+
+Capacity recovery retries an uncertain Mongo commit on the same session and
+transaction, up to five commit attempts. It never repeats the mutation or native
+input as part of that retry. A later transient or unclassified failure cannot
+erase an earlier uncertain result. If the bound expires, retain the original
+operation and reconcile its exact durable receipt; an absent receipt remains
+unknown, including after restart. A gate-admission receipt alone does not prove
+that storage recovery published. No status or kill-switch operation promotes
+that absence to a known abort.
 
 Close new durable writer/recovery admission first when a stage fails. Preserve
 original receipts, carrier result witnesses, metadata, log rows and native homes.
@@ -91,3 +100,60 @@ cohorts. Record each stage's nonzero route samples, source work/bytes, checkout
 wait, error/timeout rates and exact source/image/configuration. Source merge,
 flag activation and metadata discovery do not establish completed recovery or
 issue acceptance.
+
+## Reuse and Trigger publication recovery
+
+The writer integration inventory and migration identity are recorded in
+[CMA Agent log segments](CMA_Agent_Log_Segments.md#writer-integration-contract-1350).
+Include `agent_reuse_bindings`, `trigger_first_message_bindings`, Trigger launches,
+input-protocol receipts, command/lane records and the original parent/creation
+artifacts in the same protected recovery point as the segmentation sidecars.
+A reuse binding's publication reference is part of its accepted-operation proof.
+Copying an Agent and its log alone is insufficient.
+
+A disposable restore rehearsal for these roots must perform the following:
+
+1. Capture an admitted first-message reuse, a metadata-only reuse and a terminal
+   undispatched Trigger command together with their publication/domain receipts.
+2. Preserve original BSON, event IDs, global sequences, native/home/worktree
+   references, publication keys/fingerprints/timestamps and Trigger command binding.
+3. Exercise coherent replay after later appends with writer admission closed.
+   The accepted operation must reconcile without selecting another Agent,
+   allocating another successor or sending native input.
+4. Remove each required publication or command artifact in a separate disposable
+   copy. Reconciliation must remain unknown or refuse; no read-side repair,
+   first-message redispatch or fabricated cleanup receipt is an acceptable result.
+5. Reconcile every post-backup accepted write before the restored database can
+   become authoritative. Record the exact recovery executable/image, schema
+   checksum, protected backup identity and observed results in the release record.
+
+Local Mongo contracts exercise atomic publication/refusal and receipt recovery.
+They do not certify a production backup or authorize activation. Keep the process
+switch and durable writer/recovery gates closed until the release owner records
+the full compatible floor, #1913 correction and active-tail qualification.
+
+## Publication observations
+
+`cma_agent_log_segment_work_total` and `cma_agent_log_segment_work_seconds`
+measure preparation, transaction-local persistence and exact reconciliation.
+Labels contain only phase, whether the persisted plan seals a segment, and a
+fixed outcome class. Persistence success means the writes were staged in the
+caller's transaction; it is not a committed-publication counter. Conflicts,
+refusals, integrity failures, driver failures, unknown reads and cancellation
+remain distinct. No Agent, owner, command key, prompt or error payload is a label.
+
+`cma_agent_log_segment_source` samples active bytes/entries, lifetime bytes/entries
+and closed segment counts from the already captured head. These are distributions
+of observed Agents, not additive fleet totals. They add no lifetime scan.
+`cma_agent_log_segment_evidence_lag_entries` measures projection sequence distance
+before accepting the projection and remaining work after a successful audit unit.
+Projection lag still refuses publication; metrics cannot authorize stale evidence.
+
+`cma_agent_log_segment_reconciliations_in_flight` tracks live proof checks in this
+process and returns to zero when they finish or are dropped. Unknown outcomes in
+the work counter remain unknown after the check ends. This gauge is not the
+persistent unresolved-operation inventory and cannot clear uncertainty on restart.
+Include original domain receipts, `keyed_publication_attempt_v1`, accepted writer
+admissions, recovery work and publication receipts in the release owner's coherent
+backlog inventory. Record unresolved identities securely with the recovery evidence;
+never derive a global durable backlog by subtracting process-local counters.

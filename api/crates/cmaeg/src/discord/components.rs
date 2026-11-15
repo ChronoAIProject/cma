@@ -258,8 +258,7 @@ impl DurableJournal {
             &[&authority.record, &authority.bot_id, id],
         );
         if self
-            .store
-            .put(
+            .write_owned(
                 &claim,
                 &authority.owner,
                 &json!({"kind":"discord_component_ack_v1","interaction":id}),

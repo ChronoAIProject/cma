@@ -1,0 +1,194 @@
+# Stage command review and execution bindings
+
+Issue [#2016](https://github.com/ChronoAIProject/cma/issues/2016), reviewer solution-architect-03. Companion to the three [stage go/no-go pages](stage-go-checklists.md). **Documentary freeze may PASS while S1/S2/S3 execution remains HOLD.** The lead alone advances stages; deployment-engineer-01 executes. Developer-16 supplies manifest/capacity input. Initial review was offline; later authorized observation reads are recorded in the [S1 companion](s1-observation.md). No production writes, builds or workloads were run by this reviewer.
+
+## Authority, dates and evidence precedence
+
+The binding lead20:30 revision pulls Batch9/S1 into14November evening: B9 21:00, S1~22:30; on15November S2~00:30 fully soaked before02:00, no writes02:00–02:59, Activity/U1/U2 from03:00, S3~05:30–06:00, M8 09:00–16:00 using prod-verifier-01's kit, final report18:00 SGT. Each stage needs a fresh lead approval and observed preceding-stage success. On failure use approved rollback, report immediately and let the lead re-slot; never advance because a scheduled time arrived. Admin merge/local builds follow the integration plan; **never wait for CI**.
+
+This20:30 schedule supersedes all earlier stage times, including the19:56 U/S timeline. The18:00 final deadline and current K01–K25/A3 behavior criteria remain. Essentials removes inherited repetition gates; the revised M3 scope below remains the local qualification contract, without a new campaign. A2 supplies compatible cutover/capacity definitions where consistent with later lead selections.
+
+## Usage and replica stage order
+
+The lead20:30 instruction controls the following planned times. Developer13 owns the corresponding [stage timeline](stage-timeline.md) and operator runbook updates; engineer02 owns B9/Activity/U1–U3 and engineer01 owns S1–S3. Actual starts, success and approvals remain unset until observed. A fresh grant is required for each stage and the existing per-operation controls still apply.
+
+| Step | Controlling order |
+| --- | --- |
+| B9 ·14Nov21:00 | Engineer02 reports preflight ready; lead then issues the deployment approval. Primary rollout at N1 uses shipped defaults: multi-replica false, rollups OFF, web recovery OFF. Standard15-minute checkpoint and auto-rollback; observed checkpoint success is required for S1. |
+| S1 ·14Nov~22:30 | AM2+PDB after B9 checkpoint PASS and successful S1 dry-run projections with the #2043 controller, develop9be345523 or later containing the fix. Log01's60-minute Batch9-image baseline starts21:30, targeting21:30–22:30. Fresh S1 grant required. |
+| S2 ·15Nov~00:30 | EG2 after observed S1 success and fresh S2 grant. Finish operation and full30-minute soak before02:00, preserving time for termination and approved recovery; respect the controller's earlier01:58 write guard. If it cannot fit, report for lead re-slotting. |
+| Blackout ·15Nov02:00–02:59 | No production writes, including recovery; do not enter it with a planned write-dependent completion. |
+| Activity/U1/U2 ·15Nov03:00 | Engineer02 executes Activity index → successful U1 collection/index Job → U2, with observed predecessor success and fresh stage grants. U1 remains `GRANT_NOOP` for credentials: existing AM `readWrite`+`dbAdmin` requires no new role/credential operation. |
+| U2 cutoff/fallback | After U1 success, U2 must start strictly before04:30; exactly04:30 or later defers until after successful S3 and a fresh U2 grant. The former06:45/after-S1 fallback is withdrawn. |
+| S3 ·15Nov~05:30–06:00 | After preceding-stage success, engineer01 uses a fresh S3 grant: CPU quota64/128 → HPAs → S3b exercise after #2038 merges and its execution inputs qualify. Deferred U2 is explicitly after S3; U2 completion is not a new S3 prerequisite. |
+| U3 | Only after actual U2 `pass_complete`, with launch at least15minutes from every selected S-stage start. Engineer02 confirms the current schedule with engineer01 and recomputes after any lead re-slot; do not reuse old fixed exclusion times. |
+| M8/final ·15Nov | Production verification09:00–16:00 using prod-verifier-01's kit; final owner report by18:00. Stage reports remain due at actual E+15. |
+
+Log01 binds the14Nov21:30 baseline to the actual Batch9 image, serving AM1 processes and shipped defaults, retaining standing24h context separately. Every before interval is `[actual_operation_start−60min, actual_operation_start)`: planned S1 is14Nov21:30–22:30; S2 is14Nov23:30–15Nov00:30; S3 is15Nov04:30–05:30 or05:00–06:00 according to its selected start. Rebind if the operation moves. Operation start, stable-soak S/E and synthetic-read S/E are separate. Activity/U1/U2 follow S2 and the blackout; their completion is not a prerequisite for evening S1. Planned ordering or an unset U2 start does not prove inactivity. Engineer02 supplies observed U-state identities/timestamps; compare known equal source/config/backfill states and retain missing state or baseline explicitly.
+
+If an actual state transition occurs within an observation, split latency/error results without resetting original S, accepted-command N or cumulative errors. Do not pool unlike states or sum overlapping scopes. The fixed1800-second owned READ session, low-N rule and immediate incident/ACK/compatible-recovery path remain. Revised wall-clock times require actual session bindings from the read owner, never automatic execution/restart. #2038 merge/qualification remains separate from this scheduling document.
+
+## Revised M3 merge gate
+
+The controlling lead ruling is published at the top of architect04's `essentials.md` and `production-stages.md`. It defines these four inputs; the status attribution below does not claim new reviewer execution:
+
+| Input | Required result / owner |
+| --- | --- |
+| (a) Local source/resources, placement, PDB, readiness | PASS accepted under the lead ruling. |
+| (b) f6 cross-ingress host diagnostic at N1/N2, OFF/ON | PASS accepted under the lead ruling; host diagnostic scope remains explicit. |
+| (c) All required integration-head multi-instance suites | Local-verifier02 runs against one real Mongo with two or more application instances; developer17 supplies exact filters. Every suite needs its actual source/command and PASS/FAIL. Pending or unrun is not PASS. |
+| (d) Environment01 EG fixture cases | PASS accepted under the lead ruling; fixture scope remains explicit. |
+
+Suite(c) covers killed-owner takeover, leases/fencing/no duplicate effects, recovery leases, title custody, desktop exclusive sessions/receiver boundaries and EG delivery/SSE. Retain the owners' actual tested source/results and architect04 disposition from merged #1370; this is the qualification contract, not a request to repeat the completed campaign. The lead20:30 ruling reports Batch9 ready. Actual deployment inputs and the separate #2043 controller projections still belong to the execution owners.
+
+The missing local real-runtime/auth/provider adapter is no longer an M3 merge blocker. This changes **where qualification occurs**: it does not turn host/component evidence into deployed end-to-end PASS. Real accepted-work verification moves to production S1 with immediate approved compatible rollback on failure. **The later lead answer to #116 and19:10 ruling supersede the synthetic-write plan:** use real production traffic observed by log-engineer-01 during30minutes, with the explicit low-N extension/acceptance below. Synthetic reads cover detail/transcript and usage24h/7d/30d only; no broker creates/sends or NyxID slot change. A3, absolute targets, safety and production operation grants remain unchanged.
+
+## Open execution bindings at preparation freeze
+
+The following qualification and observation requirements remain open at this update. Close the applicable entries with source, passing/failing results and the required production approvals before advancing. Recheck material production changes; reuse unchanged evidence.
+
+| ID / rows | Required closure | Responsible handoff |
+| --- | --- | --- |
+| B1 · K01/K15 | Retain accepted M3(a)–(d)/source results and bind actual Batch9 source/images, retained receiver durations/floors, schema/role and capacity. Engineer02 supplies preflight ready and observed B9 checkpoint outcome; no repeat local campaign or missing-adapter gate is introduced. | developer-13, verifier02, architect04, release engineer |
+| B2 · K22/K24 | Use the selected #2043 controller from develop9be345523 or later containing the fix; require S1 projection dry-run PASS, actual release binding and fresh grants. Read-only observer approval is granted. [Kubernetes mapping and owner probe CLI are supplied](s1-observation.md); the earlier Compute403 still requires a working authorized identity/resource binding. Bind actual N1 pre-arm window/clock and independently associate the response with replacement service. | lead + deployment-engineer-01 + prod-verifier-02 |
+| B3 · K22/K24 | Actual CMA/GKE/NEG no-overlap/restoration proof <120s, concurrent-writer/restart/interrupted-cutover cases; separately authorized recovery from failed start or unhealthy owners. Kind1.34 pause containers prove only their controller observations. | deployment-engineer-01 + local verifier |
+| B4 · K13 | Secure early EG drain: authenticated mechanism, helper credential isolation, bounded success/failure, socket close before exact-token release, independent TERM handling. Native sleep30 alone does not close this gate. | developer-15/08 + developer-16 + architect-04 |
+| B5 · K13/K14/K25 | Qualified handoff p95≤90s at fixed P120; distinct hard lifetime G; actual/template grace760s; combined process/client/node/provider capacity and ≥30% Mongo headroom. Lead-selected quota64/128 requires the S3 grant and spec/status readback before HPAs. G760/P120→12 is illustrative and still exceeds observed node CPU. | debugger-03 + developer-16/17 + lead |
+| B6 · K02–K08/K16–K21/K23/K25 | Before S1: bind log01's21:30 Batch9-image AM1 baseline/queries, actual source/config/state coverage, ledger duplicate check and failure/rollback path. Before advancement: actual traffic/latency/error and READ-only detail/transcript/usage24h/7d/30d results; disclose low-N acceptance. Preserve cumulative N/errors, actual E+15 and S2 reconciliation/24h monitor. Activity/U1/U2 occur after the blackout. Neither exception passes an observed failure. | engineer02 + log-engineer-01 + production verifiers + analyst02 + engineer01 |
+
+Before each stage the reviewer records closures or reports `BLOCKED: URGENT — Bn, missing result or binding, owner`; continue independent preparation. The00:00 freeze fixes checklist criteria; it is not a write blackout and does not prohibit the lead-selected00:30 S2 under its fresh grant. The actual no-write window is02:00–02:59, with the controller's01:58 margin. Final source, passing/failing tests and a brief stage result supply closure; do not turn historical FAILs into PASS.
+
+## Reviewed source facts
+
+Six manifests at #1968 merge `d38966aab5c77fa2262da2d14ffba0da84cd958c` supply identities, HPA policy and PDBs. **#1996 merge `37f2bedbfce3be4fe5b8bd1370ba2c81cd872be5` supersedes its EG exec hook** with native `preStop.sleep.seconds:30`, keeping grace760 and memory request=limit2Gi. EG Pod QoS is **Burstable**, because CPU request250m differs from limit2; equal memory values do not establish Guaranteed QoS. At inspected integration `15306eed8aacb67964f95442c1f29ba47d161502`, the other five manifests are identical to d389; EG differs by the documented hook/comment correction. Final release must preserve this or a separately reviewed replacement.
+
+Engineer [server admission results at c07984cd0](https://github.com/ChronoAIProject/cma/blob/c07984cd0c1d166f4b5fdd85b708161ade3ab333/docs/notes/reviews/2026-11-15/server-dry-run-20261114.md) report six strict server dry-runs and two Pod-template checks PASS at18:04–18:07 SGT on14November, using Batch8 images. All six diffs returned1 (changes), with no errors; no resources persisted. This does not qualify Batch9 runtime, scheduling or cutover. Full historical EG apply adds explicit `CMAEG_OWNER_KEY_CUTOVER_ID` / `CMAEG_OWNER_KEY_SERVICE_ID` absent from live env. Use guarded approved-field patches, preserving live env/envFrom and unrelated configuration; admission success does not authorize full-manifest apply.
+
+Both PDBs select exactly `app.kubernetes.io/name` equal to their Deployment name, with `minAvailable:1` and `unhealthyPodEvictionPolicy:AlwaysAllow`. They protect eligible voluntary evictions, **not** Deployment scale-to-zero/deletion, involuntary loss or HPA-driven pod removal. Never combine `minAvailable` with a second `maxUnavailable` field. Rollback to one retains minAvailable1. Both topology rules use revision-aware `matchLabelKeys:[pod-template-hash]`; verify distinct hosts after old pods disappear, not only during overlap.
+
+HPAs target canonical Deployments, min2/max5; CPU AM60% of4CPU and EG200% of250m. Up stabilization0, Max(+2 pods,+100%)/60s. The later lead selection fixes downscale at stabilization300s, Min(−1 Pod)/120s. Qualified handoff p95 must be≤90s; missing/censored/failed timing or p95>90s means HOLD. This supersedes the earlier adaptive-period formula; do not lengthen or shorten cadence silently. Require grace760s in both staged templates and actual Pods, including preStop delay; the reported live Batch8 value735s must be replaced by S1/S2. Grace is not hard lifetime G. No rollout/HPA overlap; use5+ceil(G/120) only after proving G includes deletion delay, hooks and client/socket tails, including failure/zombie behavior.
+
+For each Mongo server: other consumers + Σ(max service processes × Σ(actual client pool cap + monitoring/topology sockets)) ≤0.70×verified server limit. Include jobs/startup/terminating processes; historical AM30+30+4+6 and illustrative EG10 are not final receipts.
+
+The18:04 production snapshot confirms namespace CPU request/limit quotas40/80. With its captured other use, require `4*AM + 0.25*EG + 0.025 <=40` and `8*AM + 2*EG + 0.25 <=80`, plus memory/Pod quotas and node placement. Steady2/2 and5/5 fit; eight of each need80.25 CPU limits and fail. Illustrative12/12 needs51.025 CPU requests/120.25 limits and exceeds the three eligible nodes' entire47.67 CPU; sandbox nodes are tainted and excluded. Passing separate admission calls reserves no combined capacity. Seven each fitting arithmetic is not a qualified lifetime/socket budget. Keep S3 HOLD until qualified G/cadence yields a safe combined envelope or an explicitly approved capacity remedy. Do not silently alter quota, requests, CPU targets or taints.
+
+The lead subsequently selected `s3-quota-raise` for `chrono-bot/ResourceQuota/sandbox-quota`: CPU ceilings40/80→64/128, before either HPA and only with the exact S3 grant. The plan saves complete before-spec; UID/RV/full-spec tests guard two CPU leaf replacements. Preserve memory/Pod quotas and all unrelated fields. Require confirmed64/128 in spec.hard and reconciled status.hard. Engineer's18:19 guarded server dry-run passed; readback remained40/80, so no raise has occurred. After the real raise the CPU inequalities use64/128; illustrative12/12 fits those ceilings but still fails observed node capacity. Recompute actual nodes/memory/socket/provider bounds independently.
+
+`s3-quota-restore` uses the confirmed raise result and its own grant. First remove the exact S3 HPAs and recover both services to fixed2 with no terminating Pods; require reconciled quota status and used CPU≤40/80. Restore saved CPU ceilings only, refusing object replacement or unrelated drift. If preconditions fail, retain raised ceilings while recovering workload. Lowering quota does not evict Pods; it can block replacement admission. Successful S3 retains64/128 unless separately directed.
+
+AM memory was3273.7MiB against256MiB requested (8GiB limit). Refresh actual memory pressure/headroom with final images/load and survivor placement; scheduler request arithmetic alone understates occupancy. EG memory request=limit2Gi and both services' Burstable QoS remain explicit. Fresh metrics were available in this snapshot; that proves neither useful-load calibration nor automatic scaling.
+
+## Current execution commands — selection and qualification still required
+
+The selected S1 controller is #2043, merged at `9be345523fd2768d8e8daf1c0f4ccd487191f9b0`, or a later develop descendant retaining its fix. Require successful current projections before S1; historical `08ce4653d`/`d2a28a360` commands and tests alone do not meet this requirement. Use the current owner S1/S2/S3 runbooks and operation grants; #2038 adds the separately merged/qualified S3b exercise. This documentation update runs no controller or tool tests and grants no execution authority.
+
+The new `.github/scripts/cma_scale/controller.py` implements one-operation plan/server dry-run, context-bound approval, CAS apply and readback for `reviewed-release-controller`. The historical A2-r5 direct-helper commands are superseded here. The old corrected metadata directory still contains no helpers; never use it as an executable root or reuse old EG exec derivatives.
+
+```bash
+set -euo pipefail
+: "${scale_tools:?selected controller source directory}"
+: "${scale_release:?qualified release JSON}"
+: "${scale_action:?one action from the stage runbook}"
+: "${scale_plan:?new plan path for the current checkpoint}"
+# plan reads production and performs server dry-run; observation authority is required.
+python3 -B "$scale_tools/controller.py" plan --action "$scale_action" \
+  --release "$scale_release" --out "$scale_plan"
+# Lead grants the exact printed context before apply; one grant per operation.
+: "${scale_approval:?fresh exact operation approval}"
+python3 -B "$scale_tools/controller.py" apply \
+  --plan "$scale_plan" --approval "$scale_approval"
+```
+
+Stage-specific extra arguments, especially recovery `--created` and pre-stop restoration inputs, come from the canonical stage page. Do not run a sequence/write loop. Every checkpoint rechecks actual object identity/generation/spec, observed state, images, ownership and prior terminations. An uncertain write stops progression; reconcile it before a new plan. A new approval cannot justify replay of an ambiguous mutation. The controller refuses writes01:58–02:59 SGT, including recovery; reserve full recovery time separately.
+
+| Purpose | Current action names | Required evidence |
+| --- | --- | --- |
+| S1/S2 progression | `s1-pause`, `s1-prepare`, `s1-stop`, `s1-unpause`, `s1-start`, `s1-pdb`; corresponding `s2-` actions | Qualified old1; inactive ON template; old0 and authority cessation; controller candidate RS0; new2 on distinct hosts with real service; then PDB. |
+| Abort before old stop | `s1-abort-before-stop`, `s2-abort-before-stop` | Original serving state still qualified; exact original template inputs; uncertain abort reconciled before any stop. |
+| Healthy recovery | `s1-one`, `s2-one` | Current Ready/Available generation, no prior terminations, survivor capacity≤120s old; retain compatible mode/image/floors/PDB. |
+| Failed-start/unhealthy recovery | `s1-quiesce`, `s1-recovery-image`, `s1-unpause`, `s1-recover-one`; corresponding `s2-` actions | Separately authorized outage; all-stop and proven authority cessation; qualified compatible ON image; controller-owned restart; real survivor service and fresh soak. |
+| S3 quota pre-step | `s3-quota-raise` | Both fixed2, no HPA/terminations, actual/template grace760s; saved before-spec, exact S3 grant and confirmed spec/status64/128. |
+| S3 creation | `s3-am-create`, then `s3-eg-create` | Both fixed2, timing/capacity qualified, no rollout, valid metrics and exact final HPA policy. |
+| S3 recovery | `s3-am-freeze`, `s3-eg-freeze`; then their `delete`; then one `descend` at a time | Both directions Disabled; exact-created UID/RV deletion using actual creation results; HPA absence and in-flight-write reconciliation; survivor proof and actual exit between decrements. |
+| S3 quota recovery | `s3-quota-restore` | Confirmed raise result; fixed2, HPA absent, no terminations, reconciled status and CPU use≤40/80; own grant and no unrelated drift. |
+
+Pause is not a replica lock. Reserve one release/scale writer, preserve canonical Service/Gateway/HTTPRoute/NEG identities, and never hand-create/adopt a ReplicaSet. No shared ConfigMap activation under live legacy processes. Both direct origins use Pod IP (AM8080/EG8090). No Secret reads, pod exec, whole-object exports, generic rollout undo, unverified modeOFF or bulk downscale.
+
+The [agreed observer companion](s1-observation.md) contains approved read commands, actual preparation results and the owner's concrete cutover CLI. Working Compute identity/resource mapping and actual execution/source-association inputs remain missing; no repeat read-only observation approval is needed. EndpointSlice or Pod Ready cannot establish successful user service. Bracket old backend withdrawal → qualified full user-service completion; require a defensible upper bound strictly<120s and record both-ready separately. At120s from the conservative lower bound without restoration, use approved compatible recovery even if a long wait remains. Do not shorten grace/authority or force-delete. Pod disappearance alone does not prove remote authority cessation.
+
+S3 freeze/delete/descent preserves modeON, compatible images, custody and PDBs. Do not patch Deployment replicas while HPA exists. If demand needs>2, retain the safe fixed count and report autoscaling incomplete. A fresh30-minute recovery soak follows. Eight author driver tests are preparation evidence; the proposed8RPS workload remains uncalibrated and needs its distinct load approval. Engineer02 alone owns M4/index operations.
+
+## Soak evidence and verdict rules
+
+Start30 minutes only after intended Ready/Available, backend/NEG, membership and handoff are stable, with prior terminations complete. Reset on image/config/count changes; final S3 soak is after automatic return to2. Per-minute samples plus finer approved failure capture must cover two five-minute background cycles, all process/client/capacity bounds and K02 custody accounting. Metadata-only watchers cannot prove user-service recovery, complete client journeys or absence of committed stale effects.
+
+**S1 low-traffic rule, predeclared by the lead at19:10:** count distinct accepted production write commands during the initial30minutes; retries, refused commands and synthetic reads do not increase N. If N<20 at30minutes, extend the same observation by up to30 additional minutes. Retain the first-window count/errors and the cumulative extended count/errors; never sum overlapping windows or reset the original denominator. If still below20 after extension, accept using the required passing in-code multi-instance suites plus **zero errors**, disclose actual N and do not hold S1 for low traffic alone. Record initial/extended S–E and report by actual E+15. This is a stage-acceptance exception, not a per-route sample count, measured client-boundary PASS or statistical-confidence claim. It never waives observed failures, duplicates/stale effects, missing telemetry or unresolved work; preserve all errors and absolute targets. The exception changes S1 only.
+
+Log-engineer-01 runs its supplied `accepted_command_count` query at the initial closed end and declared extended end, keeping the same start. From its own workspace:
+
+```bash
+: "${s1_log_db:?actual safe local analysis database}"
+: "${s1_run_id:?actual S1 run identity}"
+: "${s1_start_ns:?original S1 start in UTC nanoseconds}"
+: "${s1_closed_end_ns:?actual closed observation end in UTC nanoseconds}"
+python3 logs/batch9-scale-queries/query.py --db "$s1_log_db" \
+  --query accepted_command_count --run-id "$s1_run_id" --stage S1 \
+  --start-ns "$s1_start_ns" --end-ns "$s1_closed_end_ns"
+```
+
+Use `initial_30m.accepted_command_n` for analyst `accepted_first_30m` and `full_observation.accepted_command_n` for `accepted_total`; `extension_only` is diagnostic, not another scope to add to the full count. The count is distinct canonical durable real-production command identity at original admission, excluding replay/fanout, synthetic traffic and pre-S admissions. Missing/conflicting identity, original time, origin, accepting replica or accepted-command ledger coverage makes qualified N null, never0. Keep `count_qualified` and source/ledger/identity coverage. These are local analysis fields, not permission to change the standing collector database. The query supplies a decision input, never stage PASS; independent failure/duplicate/absolute/coverage checks still apply. Owner reports37 SQL tests PASS, including19 initial+1 extension+replays yielding19/1/20.
+
+**Mandatory S1 real-traffic verification — lead answer to #116:** log-engineer-01 owns the read-only log/metric queries over the actual30-minute S–E interval and matched baseline. Bind the deployed source/images/config, Pod identities/restarts and query coverage; retain per-replica create/send/stop/stream counts, success/failure/completion denominators and latency. Report ownership/epoch transitions, fencing refusals and5xx/429 by cause against baseline. A correctly refused stale request is distinct from a committed stale effect; distinguish expected admission limits from service failures. Join logical command identity across attempts/replicas to the effect ledger: **the same logical command executed twice must be0**. Distinguish duplicate delivery/log rows from duplicate execution. A missing ledger join, sampling gap or zero relevant traffic cannot establish zero duplicate effects or successful work. Keep custody accounting disjoint: accepted = terminal + reconciled + unresolved.
+
+There is **no synthetic WRITE executor at S1**, no broker create/send and no NyxID slot change. Observe real auth/runtime/provider delivery and natural ownership transitions without generating write traffic or injecting owner loss. The read harness supplements only **open detail/transcript and usage24h,7d,30d**, each route/range with sufficient N under the existing authorized owner's pacing and abort rules. Keep ranges separate; verify complete bodies, identity and requested range. Log-engineer-01's exact command/output mapping is `/Users/shining/code/work/tech-lead.staff/log-engineer-01/logs/batch9-scale-queries/S1-CHECKLIST.md`: `tools/run_scale_query_set.py` reads a local safe analysis database using actual S1 bindings, while `tools/measure_create_completions.py` reads the retained completion store. Query preparation alone supplies no live coverage or ledger data. In particular, `duplicate_effects` reports distinct authoritative committed effects; if these receipts cannot establish execution identity/coverage, same-command-executed-twice remains UNKNOWN. Log-engineer-01 supplies the actual inputs/results; the read owner binds its routes/ranges without a new scheduler or credentials.
+
+Report observable create≤5s, Send/stop≤1s, stream/terminal bounds and same-work recovery≤30s with their actual boundary definitions. Complete-body read timing is separate from usable open≤1s or coherent usage render≤2s. Logs, metrics and synthetic reads do not manufacture unobserved client completion or fault coverage: missing is NOT_RUN, invalid is INVALID, insufficient/unassessed is INCONCLUSIVE. Those labels remain explicit even if S1 receives the permitted low-N stage acceptance. Retain failures, incomplete work, offered/accepted/refused/failed/completed/reconciled/unresolved counts and per-boundary N. Production results remain separate from local M3 evidence.
+
+Observed accepted-work loss, duplicate/stale effect, authorization or dual-desktop breach, unresolved terminal/effect failure, failed in-contract journey or absolute completion target requires **immediate stop of promotion, halt of owned synthetic reads and approved compatible rollback**. Do not wait for two performance windows. Restrict real admissions only through the approved recovery controls. Use healthy ownership-enabled2→1 when safe; otherwise quiesce via the approved failure branch. Preserve uncertain custody, with no blind resend, generic image undo or switch-off bypass. Log-engineer-01 and the read owner supply results for the E+15 decision; the narrow CRITICAL exception never passes missing work or an absolute failure.
+
+Log-engineer-01's supplied failure path is an immediate `BLOCKED: URGENT` report in its lead-visible pane plus guarded delivery of the same sanitized incident to deployment-engineer-01, copying health-monitor-01. Include detection UTC, actual S/E, source/image/replica, safe work/record identity, observed failure/boundary and coverage; request acknowledgement. Bind this existing path in the actual stage execution. The E+15 report is not the failure-notification mechanism. Log-engineer-01 uses:
+
+```bash
+: "${s1_incident:?absolute path to sanitized incident text}"
+TL_HOME='/Users/shining/code/work/tech-lead' \
+  '/Users/shining/.claude/skills/shining-tech-lead/scripts/team.sh' \
+  peer-send deployment-engineer-01 "$s1_incident" --force
+TL_HOME='/Users/shining/code/work/tech-lead' \
+  '/Users/shining/.claude/skills/shining-tech-lead/scripts/team.sh' \
+  peer-send health-monitor-01 "$s1_incident" --force
+```
+
+Delivery exit0 is transport success, not executor acknowledgement. Deployment-engineer-01 acknowledges the incident and its promotion/compatible-recovery action or status; the failure remains open until that reply. A rejected/failed delivery or missing acknowledgement immediately escalates through the already-issued urgent lead-pane report and health-monitor copy, with delivery/no-ACK status explicit. Never bypass a directed-grant rejection. Deployment-engineer-01 alone invokes approved compatible rollback; observation ownership grants no mutation authority. Missing coverage remains UNKNOWN, not a fabricated failure or clean result.
+
+## S1 read sampler
+
+Prod-verifier-02 is the sole execution owner, working in `/Users/shining/code/work/tech-lead.staff/prod-verifier-02`. Its `deadline-20261115/S1-REAL-TRAFFIC-CHECKLIST.md` supplies the full read contract. Use `deadline-20261115/soak-session.example.json`, schema `cma-m8-read-session-v3`, with actual source/images/config and a distinct `[S_read,E_read)` of exactly1800s. Its proposed matched N1 baseline slot is14Nov21:30–22:00, subject to actual deployment-owner binding, not a launch instruction. The lock must release before cutover arming and retained≥90s spacing remains. Bind observed N1 for that before session and actual S1 AM2/EG1 for the post session; never copy expected target fields over observed state. Validate offline; run only in the owner's authorized window:
+
+```bash
+: "${s1_read_session:?absolute path to actual v3 read-session JSON}"
+node deadline-20261115/read-capture.mjs --validate "$s1_read_session"
+# Execution owner only, at the bound read window; not a second collector.
+node deadline-20261115/read-capture.mjs --run "$s1_read_session"
+```
+
+The sampler schedules120slots at15s intervals. Each round reads the concurrent existing-Agent detail/transcript pair, then serialized view+coherent firstpage for each of24h/7d/30d, rotating range order. At most8GETs/round and960scheduled GETs plus bounded fixture discovery; target100completed observations/boundary, cap120, with actual N reported. Slow/discovery rounds skip slots without catch-up. The existing buffered lane,1s ordinary pacing and shared lock remain. Use `refresh=false`, no explicit step, polling, retry or prewarming. Nonready/202,429/5xx, identity/coherence/broker failure or hard cutoff stops subsequent requests and retains prior valid range results. Only the owner's emitted PID may receive SIGINT/SIGTERM for cleanup. The real-traffic extension never extends this hard cutoff, doubles its cap or automatically starts another sampler.
+
+Output is `deadline-20261115/results/<UTC>/capture.json`, schema `cma-m8-read-capture-v3`. Use `samples[].usage[range]` and `usage_summary[range][metric]` for separate range outcomes, N/p50/p95, freshness and report identity. Legacy top-level usage fields and v2sessions are24h-only; never pool them with7d/30d. Report missed/failed/incomplete/unissued slots and natural-versus-synthetic attribution; unknown attribution remains explicit. API wall includes broker waits; no transport-time subtraction or client-render claim. Owner reports21/21 local tests PASS, including actual CLI with a local fake broker and no credentials/network; this checklist does not rerun those tools.
+
+## Latency acceptance and reporting
+
+K16–K19: usable plain/desktop create ≤5s, full open ≤1s, shown durable send ≤1s, delivered/UI-acknowledged interrupt ≤1s, rendered usage summary/page ≤2s. Activity API p95 <1s; Activity page completion is measured separately with no invented absolute page ceiling. K20: request p95≤500ms/p99≤2s, stream-header p99≤2s, terminal p99≤5s/every terminal≤30s; EG checkout p99≤50ms, ordinary event≤50 Mongo operations and ≤10% same-fixture cost regression. Count failed, refused, timed-out and incomplete journeys separately; missing terminal fails.
+
+K21 keeps statistical and acceptance verdicts separate. CRITICAL uses measured noise; UX p95≤+10% (aim≤5%); detached NON-SENSITIVE p95≤+30ms, with the existing confidence methods. No added noise allowance, result-driven reclassification or borrowed local noise. User-waited background/relay work inherits the critical boundary. Keep every catalog membership and route/mode separate; p99 needs≥1000/stratum.
+
+**Later lead ruling, S1/S2/S3 only:** a valid observed matched CRITICAL statistical INCONCLUSIVE may receive policy PASS when the signal is explicitly assessed as no adverse signal and all applicable absolute checks pass. Statistical INCONCLUSIVE remains visible. Beyond-noise signal, failed/incomplete observations or absolute failure means FAIL. Missing observations are NOT_RUN; invalid data INVALID; unassessed context/signal INCONCLUSIVE. No exception applies to UX/background, missing client boundaries, empty denominators or M3 local gates.
+
+**S2/S3 keep30-minute soaks; S1 alone uses the explicit low-N extension above. Report by actual E+15minutes.** Earlier requests for longer statistical soaks remain closed. Three baseline/post windows remain requirements of the existing statistical method, not an independent reason to block the expressly permitted CRITICAL policy PASS. Do not change the estimator, expand measured noise or relabel statistical results. Record stable start S, initial E=S+30min and any authorized S1 extension; changes restart stability, with all earlier failures retained.
+
+The earlier fixed morning HTTP windows are superseded. Log01 captures the60-minute S1 baseline from14Nov21:30 on the Batch9 image; prod-verifier-02 supplies bounded read-session times against actual revised stage windows and matching source/config/state, preserving the existing NyxID slot/lock and fixed1800s cap. S2/S3 before/after observations bind to their selected starts and actual S–E, not old calendar slots. Keep cumulative N/errors across state strata; no automatic extra sampler or mutation. HTTP body timing remains separate from rendering. Engineer02 performs Activity→U1→U2 from15Nov03:00 after the blackout, with the U2 cutoff/fallback above.
+
+Immediate ABORT for stale/wrong-owner committed effect, duplicate external action, lost accepted custody/terminal/receipt, dual desktop/bot authority, auth bypass, epoch/cursor regression or incompatible receiver. Stop promotion/admission using approved controls; preserve custody; if rollback risks duplicates, remain safely quiesced with compatible fences and escalate.
+
+Availability/capacity ABORT: zero healthy canonical backends outside the approved cutover; no restored service at120s within it; same-work sustained recovery>30s; OOM/repeated crash/permanent renewal failure; process/client/provider cap breach or Mongo headroom<30%. Widespread timeouts/5xx and the S1 accepted-work/absolute failures above do not wait for performance windows. Other performance-only supported failures across two consecutive five-minute windows trigger recovery; any failing whole30-minute comparison fails the stage. Missing data, unbound configuration, invalid/unmatched baseline or Unknown means HOLD. Statistical sample inadequacy follows the narrow K21 rule; missing real work and absolute failures never receive that exception.
+
+Each stage result records source/controller commit, images/configuration, exact operation/approval outcome, UTC/SGT interval and both outage/ready clocks, separate statistical/policy verdicts and K-row results with denominators, route confidence, peak process/socket/headroom, PDB/HPA/backend history and actual recovery. Engineer attests observations; lead grants each next stage only after prior success. Failure invokes approved rollback and immediate report for lead re-slotting. S2 records provider reconciliation and assigned24-hour monitoring. M8 uses prod-verifier-01's kit plus log/read/client evidence09:00–16:00 on15Nov for the18:00 final report.

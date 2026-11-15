@@ -289,6 +289,9 @@ impl AgentWorker {
             )
             .await;
         timing.completed("open_runtime");
+        let startup_timing = timing.finish();
+        let agent_id = agent.id.clone();
+        self.retain_startup_timing(&agent_id, startup_timing);
         let now = now + started.elapsed();
         let (channel, updates) = match opened {
             Ok(opened) => opened,
@@ -313,7 +316,6 @@ impl AgentWorker {
             let published = self
                 .publish_prepared_open_ready(&agent, &context, &evidence, &attachment, now)
                 .await;
-            timing.completed("prepared_open_ready_publication");
             match published {
                 Ok(true) => {
                     tracing::info!(agent_id = %agent.id, "Prepared Agent Open and Ready published atomically");

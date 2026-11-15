@@ -1,6 +1,6 @@
 use super::*;
 
-fn machine_plan() -> NativePreparedPlan {
+pub(super) fn machine_plan() -> NativePreparedPlan {
     let original = plan();
     let image = format!("registry.example/omarchy@sha256:{}", "c".repeat(64));
     let mut sandbox = original.warm.profile.content.clone();
@@ -24,7 +24,7 @@ fn machine_plan() -> NativePreparedPlan {
     .unwrap()
 }
 
-async fn ready_machine(store: &MongoSandboxStore) -> Record {
+pub(super) async fn ready_machine(store: &MongoSandboxStore) -> Record {
     let original = records(store)
         .await
         .into_iter()
@@ -73,20 +73,20 @@ async fn health_probe_scheduling_keeps_each_classes_other_reservation_admissible
         .await
         .unwrap();
     let first = store
-        .claim_native_prepared_work_for(NOW, LATER, [true, true])
+        .claim_native_prepared_work_for(NOW, &lease_deadline(), [true, true])
         .await
         .unwrap()
         .unwrap();
     let mut classes = [true, true];
     classes[usize::from(first.plan.machine())] = false;
     let second = store
-        .claim_native_prepared_work_for(NOW, LATER, classes)
+        .claim_native_prepared_work_for(NOW, &lease_deadline(), classes)
         .await
         .unwrap()
         .unwrap();
     assert_ne!(first.plan.machine(), second.plan.machine());
     assert!(store
-        .claim_native_prepared_work_for(NOW, LATER, [false, false])
+        .claim_native_prepared_work_for(NOW, &lease_deadline(), [false, false])
         .await
         .unwrap()
         .is_none());
@@ -105,7 +105,7 @@ async fn health_probe_scheduling_keeps_each_classes_other_reservation_admissible
         .await
         .unwrap();
     let preparing = store
-        .claim_native_prepared_work_for(NOW, LATER, [false, false])
+        .claim_native_prepared_work_for(NOW, &lease_deadline(), [false, false])
         .await
         .unwrap()
         .unwrap();

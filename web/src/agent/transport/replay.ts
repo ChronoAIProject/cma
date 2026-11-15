@@ -1,3 +1,4 @@
+import { rateLimitDelay } from './readRetry';
 import type { V2AgentStreamFrame } from '@chronoai/cma-sdk';
 import { transientReadFailure } from '../loadAgent';
 import type { AgentV2Session } from './client';
@@ -26,8 +27,14 @@ export async function followV2Agent(
 ): Promise<void> {
   let cursor = afterCursor;
   let retry = 250;
+  let failures = 0;
   let notice: ReturnType<typeof setTimeout> | undefined;
   const visibility = new ReadinessWake();
+  let attempt: AbortController | undefined;
+  const onVisibility = () => {
+    if (document.hidden || document.visibilityState === 'hidden') attempt?.abort();
+  };
+  document.addEventListener('visibilitychange', onVisibility);
   const reconnecting = () => {
     notice ??= setTimeout(() => {
       if (!signal.aborted)
@@ -37,18 +44,21 @@ export async function followV2Agent(
   try {
     while (!signal.aborted) {
       let progressed = false;
+      let failure: unknown;
       try {
         if (document.hidden) await visibility.wait(0, signal);
         signal.throwIfAborted();
-        await v2.authorize(signal);
+        attempt = new AbortController();
+        const observing = AbortSignal.any([signal, attempt.signal]);
+        await v2.authorize(observing);
         await v2.events.events(v2.journal.agentId, {
           afterCursor: cursor,
           messageBindings: true,
           toolOutput: true,
           liveTimestamps: true,
-          signal,
+          signal: observing,
           onEvent(frame) {
-            signal.throwIfAborted();
+            observing.throwIfAborted();
             v2.journal.read();
             onEvent(frame);
             clearTimeout(notice);
@@ -63,15 +73,17 @@ export async function followV2Agent(
         reconnecting();
       } catch (error) {
         if (signal.aborted) return;
-        if (!transientReadFailure(error)) throw error;
+        if (!attempt?.signal.aborted && !transientReadFailure(error)) throw error;
+        failure = error;
         reconnecting();
       }
+      failures = progressed ? 1 : failures + 1;
       retry = progressed ? 250 : Math.min(retry * 2, 10000);
-      // Equal jitter spreads clients after a shared disconnect without ever
-      // exceeding the ten-second cap or allowing a zero-delay retry loop.
-      await delay(retry * (0.5 + Math.random() * 0.5), signal);
+      await delay(rateLimitDelay(failure, retry * (0.5 + Math.random() * 0.5), failures), signal);
     }
   } finally {
     clearTimeout(notice);
+    attempt?.abort();
+    document.removeEventListener('visibilitychange', onVisibility);
   }
 }

@@ -42,7 +42,7 @@ impl RoutedDelivery {
         self.journal.guard(lease).await?;
         body.validate_settlement(&plan, target, &self.journal.keys, (self.journal.clock)())?;
         current_target(self.authority.as_ref(), &plan, target).await?;
-        let status = ReplyStore(self.journal.clone())
+        let status = ReplyStore(self.journal.clone(), lease.partition.clone())
             .status(&plan, target)
             .await?;
         self.journal.guard(lease).await?;
@@ -58,7 +58,7 @@ impl RoutedDelivery {
     ) -> Result<bool, ExecutionError> {
         let stored = match (automatic, receipt) {
             (Some(claim), Some(receipt)) => Some(
-                ReplyStore(self.journal.clone())
+                ReplyStore(self.journal.clone(), lease.partition.clone())
                     .finish(claim, receipt)
                     .await?,
             ),
