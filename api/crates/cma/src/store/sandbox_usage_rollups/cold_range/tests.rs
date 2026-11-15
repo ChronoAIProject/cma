@@ -27,11 +27,11 @@ fn state() -> SandboxUsage {
 }
 
 fn events(state: &SandboxUsage) -> Vec<UsageEvent> {
-    (0..31)
+    (0_u64..31)
         .map(|n| {
             let mut allocation = state.allocation.clone();
             allocation.cpu_millis += n as u32;
-            allocation.running = n % 3 != 0;
+            allocation.running = !n.is_multiple_of(3);
             UsageEvent {
                 sandbox_id: state.sandbox_id.clone(),
                 owner: state.owner.clone(),
@@ -186,5 +186,5 @@ fn allocation_cold_range_splits_at_utc_days_without_rounding_edges() {
     );
     assert!(slices
         .windows(2)
-        .all(|w| w[0].to == w[1].from && w[0].to % DAY == 0));
+        .all(|w| w[0].to == w[1].from && w[0].to.is_multiple_of(DAY)));
 }
