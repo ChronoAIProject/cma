@@ -253,10 +253,13 @@ async fn userinfo(
             .as_ref()
             .ok_or_else(|| Unavailable("identity provider advertises no userinfo endpoint".into())),
     )?;
-    let body = super::identity_http::json(
+    let body = super::identity_cooldown::json(
+        auth,
+        access_token,
+        endpoint,
+        super::verification_diagnostics::Endpoint::Userinfo,
         auth.http.get(endpoint).bearer_auth(access_token),
         deadline,
-        super::verification_diagnostics::Endpoint::Userinfo,
     )
     .await?;
     claims(Endpoint::Userinfo, permissions::token_expiry(&body))?;
