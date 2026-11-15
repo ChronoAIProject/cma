@@ -38,7 +38,7 @@ The release qualification must perform these steps for each shipped family:
    `--wait-for-assignment` command on the same PVC and supported retained
    Claim/home identity. Do not delete metadata or invent replacement assignment
    authority to make the test pass.
-4. Observe successful recovery, authenticated runtime readiness, the public
+4. Observe successful recovery, public `/ready`, authenticated `RuntimeStatus`, the public
    and durable AM result, retained-home continuity, and the existing receiver
    challenge, confirmation and refusal checks. An assignment transport ACK
    precedes ledger publication and does not prove runtime readiness or a
