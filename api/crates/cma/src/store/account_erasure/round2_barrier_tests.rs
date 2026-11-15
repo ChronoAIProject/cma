@@ -86,6 +86,7 @@ impl Commands {
 
 fn options() -> Options {
     Options {
+        allocation_rollups_enabled: Some(false),
         billing_enabled: false,
         transaction_drain_fallback_secs: 120,
     }

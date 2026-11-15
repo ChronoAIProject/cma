@@ -283,6 +283,7 @@ impl Context {
     }
 }
 
+#[cfg(test)]
 pub(super) async fn load(db: &Database, target: &Target<'_>) -> Result<Context, Error> {
     load_cohort(db, std::slice::from_ref(target))
         .await?
@@ -290,11 +291,21 @@ pub(super) async fn load(db: &Database, target: &Target<'_>) -> Result<Context, 
         .ok_or(Error::InvalidRecord("erasure target"))
 }
 
+#[cfg(test)]
 pub(super) async fn load_cohort(
     db: &Database,
     targets: &[Target<'_>],
 ) -> Result<Vec<Context>, Error> {
-    super::indexes::ensure(db).await?;
+    let receipt = super::optional::inspect(db, Some(false)).await?;
+    load_cohort_with_receipt(db, targets, &receipt).await
+}
+
+pub(super) async fn load_cohort_with_receipt(
+    db: &Database,
+    targets: &[Target<'_>],
+    receipt: &super::optional::Receipt,
+) -> Result<Vec<Context>, Error> {
+    super::indexes::ensure_with_receipt(db, receipt).await?;
     let mut contexts = Vec::new();
     for target in targets {
         let mut context = Context {

@@ -165,6 +165,7 @@ async fn erasure_installs_majority_fences_before_any_reference_discovery() {
         &mut Cursor::default(),
         NOW,
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
             transaction_drain_fallback_secs: 120,
         },
