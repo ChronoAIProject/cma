@@ -25,6 +25,7 @@ use super::{
 };
 
 pub(super) const BROWSER_LOGINS: &str = "auth_browser_logins";
+pub(crate) mod read_only;
 pub(super) const LOGIN_ATTEMPTS: &str = "auth_login_attempts";
 pub(super) const SUBJECTS: &str = "auth_subjects";
 pub(super) const API_BEARERS: &str = "auth_api_bearers";

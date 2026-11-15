@@ -47,6 +47,7 @@ pub(crate) mod provider_http;
 mod provider_metadata;
 #[cfg(test)]
 mod public_contract_tests;
+pub(crate) mod read_only;
 mod records;
 mod refresh;
 pub(crate) mod relay;
