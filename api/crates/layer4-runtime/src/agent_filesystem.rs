@@ -206,7 +206,7 @@ pub(crate) fn write(
         if previous.is_some() {
             // Creation applies umask; edits must retain the existing ordinary bits.
             stage
-                .set_permissions(std::fs::Permissions::from_mode(u32::from(mode)))
+                .set_permissions(std::fs::Permissions::from_mode(libc::c_uint::from(mode)))
                 .map_err(io_error)?;
         }
         stage.sync_all().map_err(io_error)?;
