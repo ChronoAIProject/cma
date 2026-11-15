@@ -80,8 +80,26 @@ pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
 const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
+fn main() {
+    let mut arguments = std::env::args_os().skip(1);
+    if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--allocator-self-test")) {
+        // Qualify this executable's allocator before Tokio starts threads or
+        // any serving, configuration, metrics or database composition runs.
+        if arguments.next().is_some() {
+            eprintln!("usage: cma --allocator-self-test");
+            std::process::exit(2);
+        }
+        if let Err(error) = cma_allocator_qualification::run() {
+            eprintln!("allocator-self-test outcome=failed error={error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    run();
+}
+
 #[tokio::main]
-async fn main() {
+async fn run() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if retirement_archive::is_command(&arguments) {
         match retirement_archive::command(&arguments).await {
@@ -188,7 +206,7 @@ async fn main() {
         return;
     }
     if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
-        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --allocator-self-test]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
