@@ -125,33 +125,22 @@ async fn legacy_binding_nonempty_ledgers_and_no_home_never_select_fresh_from_an_
 }
 
 #[tokio::test]
-async fn legacy_interrupted_publication_without_intent_holds_until_manifest_commit_without_fallback(
-) {
+async fn legacy_unpublished_prefix_recovers_but_final_database_without_manifest_holds() {
     for step in [
         "locked",
-        "database",
         "closed",
         "barriers",
         "renamed",
         "temporary",
         "committed",
     ] {
-        let fixture = Fixture::new();
-        set_failure(&fixture.config, step);
-        assert!(fixture.open().await.is_err(), "{step}");
-        set_failure(&fixture.config, "");
-        // Reconstruct the original writer's no-intent format. Its ambiguous
-        // partial states must retain every existing refusal assertion.
-        let intent = fixture.config.state_root.join(publication::INTENT);
-        if intent.exists() {
-            std::fs::remove_file(intent).unwrap();
-        }
-        // The worker releases its lock on sender destruction; the outer lock
-        // never authorizes a second writer before the connection is gone.
-        if step == "committed" {
-            close(fixture.open().await.unwrap().unwrap()).await;
+        let fixture = aborted_tests::interrupted(step).await;
+        if matches!(step, "renamed" | "temporary") {
+            let before = aborted_tests::bytes(&fixture);
+            assert!(fixture.open().await.is_err(), "ambiguous {step}");
+            assert_eq!(aborted_tests::bytes(&fixture), before);
         } else {
-            assert!(fixture.open().await.is_err(), "partial {step} must hold");
+            close(fixture.open().await.unwrap().unwrap()).await;
         }
     }
 }
@@ -364,4 +353,11 @@ mod publication_tests;
 
 pub(super) fn replace_publication_path(config: &RuntimeConfig, phase: &str) {
     publication_tests::replace_path(config, phase);
+}
+
+#[path = "aborted_tests.rs"]
+mod aborted_tests;
+
+pub(super) fn replace_aborted_path(config: &RuntimeConfig) {
+    aborted_tests::replace_path(config);
 }

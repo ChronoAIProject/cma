@@ -1,4 +1,5 @@
 //! Manifest is the only format commit point. Missing/partial V2 never means V1.
+mod aborted;
 mod descriptor;
 #[cfg(test)]
 mod diagnostics_tests;
@@ -129,7 +130,18 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
             writer: Some(writer),
         });
     }
-    for name in [LOCK, STAGE, DATABASE, TEMP] {
+    if io::exists(&config.state_root.join(LOCK))? {
+        retained_transfer(config)?;
+        let writer = Arc::new(io::lock(&config.state_root.join(LOCK), false)?);
+        aborted::discard(config)?;
+        return Ok(Selection {
+            fresh: true,
+            pending_publication: false,
+            descriptor: None,
+            writer: Some(writer),
+        });
+    }
+    for name in [STAGE, DATABASE, TEMP] {
         if io::exists(&config.state_root.join(name))? {
             return Err(hold_at("selection.partial_v2"));
         }
@@ -186,7 +198,10 @@ impl Selection {
                     .ok_or_else(|| hold_at("selection.writer_absent"))?,
             )
         } else if self.fresh {
-            let writer = Arc::new(io::lock(&config.state_root.join(LOCK), true)?);
+            let writer = match self.writer {
+                Some(writer) => writer,
+                None => Arc::new(io::lock(&config.state_root.join(LOCK), true)?),
+            };
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "locked")?;
             let stage = config.state_root.join(STAGE);
@@ -199,6 +214,7 @@ impl Selection {
             tests::checkpoint(&config.state_root, "closed")?;
             crate::fs_durability::sync_tree(&stage)
                 .map_err(|_| hold_at("publication.stage_sync"))?;
+            crate::publication_qualification::stop_before_intent()?;
             let descriptor = Descriptor::new(config, store)?;
             io::create(
                 &config.state_root.join(publication::INTENT),
