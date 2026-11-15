@@ -3,6 +3,9 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { AuthContextProvider } from './auth/context';
 import { createNyxidAuthProvider } from './auth/nyxid';
+import { currentTransportUser } from './auth/retryMetadata';
+import { replicaRecoveryEnabled } from './agent/transport/recoveryConfig';
+import { readRetryDelay } from './agent/transport/readRetry';
 import { startAppearance } from './theme/appearance';
 import { startTextSize } from './theme/textSize';
 import { createClient } from '@chronoai/cma-sdk';
@@ -47,11 +50,8 @@ globalThis.fetch = observedFetch;
 const sdk = createClient({ fetch: observedFetch });
 const client = createRestWebClient(sdk, {
   storage: sessionStorage,
-  async currentUser(signal) {
-    const identity = await identityProvider.current(signal);
-    if (identity.status === 'error') throw new Error(identity.message);
-    return identity.status === 'authenticated' ? identity.user.id : undefined;
-  },
+  recovery: { enabled: replicaRecoveryEnabled, delay: readRetryDelay },
+  currentUser: currentTransportUser(identityProvider),
 });
 const profiles = createProfileViewsClient(sdk);
 const creation = createCreationClient(sdk);

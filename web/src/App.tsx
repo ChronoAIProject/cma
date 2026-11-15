@@ -12,7 +12,7 @@ import './styles/shiki.css';
 import './styles/base.css';
 import './styles/components.css';
 import './AppError.css';
-import { lazy, Suspense, useEffect, useLayoutEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Presence } from './ui/Presence';
 import { IdentityNotice, IdentityError } from './auth/IdentityNotice';
 import { useCmaClient, useCreationClient, usePublicClient } from './api/context';
@@ -34,6 +34,7 @@ import type { AppRouter, AppRoute } from './routing/routes';
 import { EventGatewayPortal } from './services/EventGatewayPortal';
 import { isBotRoute } from './BotManagement';
 import { ServiceBody } from './services/ServiceBody';
+import { useReportOwner } from './usage/metrics/reportOwner';
 import { PortalFrame } from './shell/PortalFrame';
 import { AccountDeletionDialog } from './account/AccountDeletionDialog';
 import { AccountDeletionPending } from './account/AccountDeletionPending';
@@ -49,6 +50,22 @@ const AUTHENTICATED_HOME_ROUTE: AppRoute = { kind: 'agent_manager' };
 export function App() {
   const browserRouter = useAppRouter();
   const { state: identity, signOut } = useAuth();
+  const identityScope =
+    identity.status === 'authenticated'
+      ? JSON.stringify([identity.user.id, [...identity.user.capabilities].sort()])
+      : identity.status;
+  const lastIdentityScope = useRef(identityScope);
+  const [authEpoch, setAuthEpoch] = useState(0);
+  useEffect(() => {
+    if (lastIdentityScope.current === identityScope) return;
+    lastIdentityScope.current = identityScope;
+    setAuthEpoch((value) => value + 1);
+  }, [identityScope]);
+  const usageOwner = useReportOwner(
+    identity.status === 'authenticated' ? identity.user.id : undefined,
+    identity.status === 'authenticated' ? identity.user.capabilities : [],
+    authEpoch,
+  );
   const { navigate } = browserRouter;
   const client = useCmaClient();
   const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
@@ -107,6 +124,7 @@ export function App() {
         <UsageDialog
           key={identity.user.id}
           client={client.usageViews}
+          principal={usageOwner}
           open={usageOpen}
           appearanceNotice={browserRouter.usageAppearanceNotice}
           onClose={() => browserRouter.closeUsage?.()}
@@ -222,7 +240,7 @@ export function App() {
     return (
       <div className="service-shell">
         <IdentityNotice />
-        <AgentApp router={router} onDeleteAccount={openAccountDeletion} />
+        <AgentApp router={router} authEpoch={authEpoch} onDeleteAccount={openAccountDeletion} />
         {usageDialog}
         {accountDeletionDialog}
       </div>
@@ -244,6 +262,7 @@ export function App() {
         <ServiceBody visible={agentVisible}>
           <AgentApp
             router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
+            authEpoch={authEpoch}
             onServiceNavigate={navigateService}
             {...sidebar}
             onDeleteAccount={openAccountDeletion}
@@ -280,12 +299,14 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
 }
 function AgentApp({
   router,
+  authEpoch,
   sidebarCollapsed,
   onSidebarCollapsedChange,
   onServiceNavigate,
   onDeleteAccount,
 }: {
   readonly router: AppRouter;
+  readonly authEpoch: number;
   readonly sidebarCollapsed?: boolean;
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   readonly onServiceNavigate?: (route: AppRoute) => void;
@@ -356,6 +377,7 @@ function AgentApp({
       <Console
         key={state.user.id}
         user={state.user}
+        authEpoch={authEpoch}
         route={router.route}
         onNavigate={router.navigate}
         hierarchyRevision={hierarchyRevision}

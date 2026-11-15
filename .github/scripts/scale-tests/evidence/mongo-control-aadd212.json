@@ -1,0 +1,27 @@
+{
+  "environment": "local_disposable_mongo",
+  "status": "PASS",
+  "cleanup": true,
+  "binary_sha256": "97c6bfc136a092b1b2c1f926357ffea77790530c39d0fbfb0de9798ac6079f85",
+  "test_name": "runner_binary::executable_accepts_signed_custom_events_and_curl_streams_through_completion",
+  "mongo_image": "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c",
+  "started_at": "2026-11-13T17:31:48.961601+00:00",
+  "mongo_limits": {
+    "cpus": 1,
+    "memory_mib": 1024,
+    "db_tmpfs_mib": 1024,
+    "oplog_mib": 64
+  },
+  "exit_code": 0,
+  "output_sha256": "3de410dd72dbb9dec1c7e5c334232fb2e51f9c090f62b681aa2d1117428fce46",
+  "tests_expected": 1,
+  "tests_passed": 1,
+  "numeric_assertions": [],
+  "completed_replica_counts": [],
+  "completed_ownership_cohorts": [],
+  "ingress_rejections": [],
+  "migration_diagnostics": [],
+  "failure_codes": [],
+  "elapsed_seconds": 5.827505749999999,
+  "finished_at": "2026-11-13T17:31:54.761667+00:00"
+}

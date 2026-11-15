@@ -25,74 +25,87 @@ pub(crate) fn spawn_update_task(
     mut updates: mpsc::Receiver<ConversationUpdate>,
     recorder: Arc<dyn AgentUpdateRecorder>,
 ) -> AbortHandle {
+    let authority = layer2_core::agent_ownership::execution_authority();
+    let cleanup = registry.clone();
     let task = tokio::spawn(async move {
-        let Ok(attachment) = activated.await else {
-            return;
-        };
-        let mut assembly = AgentMessageAssembly::default();
-        if restore_assembly(
-            recorder.as_ref(),
-            &attachment.agent_id,
-            attachment.runtime_generation,
-            &mut assembly,
-        )
-        .await
-        .is_err()
-        {
-            if let Some(registry) = registry.upgrade() {
-                registry.connection_ended(attachment).await;
-            }
-            return;
-        }
-        let _budget_monitor =
-            super::budget::monitor(registry.clone(), attachment.clone(), recorder.clone());
-        let mut pending = None;
-        loop {
-            let update = match assembly.output_flush_deadline() {
-                Some(deadline) => tokio::select! {
-                    biased;
-                    _ = tokio::time::sleep_until(deadline) => {
-                        if flush_output(recorder.as_ref(), &attachment.agent_id, attachment.runtime_generation, &mut assembly, &mut pending).await.is_err() { break; }
-                        continue;
-                    }
-                    update = updates.recv() => update,
-                },
-                None => updates.recv().await,
+        let recording = async move {
+            let Ok(attachment) = activated.await else {
+                return;
             };
-            let Some(update) = update else {
-                // Closing a connection leaves uncommitted receipts for replay; never ACK on drop.
-                break;
-            };
-            if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
-                && pending.is_some()
-                && flush_output(
-                    recorder.as_ref(),
-                    &attachment.agent_id,
-                    attachment.runtime_generation,
-                    &mut assembly,
-                    &mut pending,
-                )
-                .await
-                .is_err()
-            {
-                break;
-            }
-            if process_update(
+            let mut assembly = AgentMessageAssembly::default();
+            if restore_assembly(
                 recorder.as_ref(),
                 &attachment.agent_id,
                 attachment.runtime_generation,
                 &mut assembly,
-                update,
-                &mut pending,
             )
             .await
             .is_err()
             {
-                break;
+                if let Some(registry) = registry.upgrade() {
+                    registry.connection_ended(attachment).await;
+                }
+                return;
             }
-        }
-        if let Some(registry) = registry.upgrade() {
-            registry.connection_ended(attachment).await;
+            let _budget_monitor =
+                super::budget::monitor(registry.clone(), attachment.clone(), recorder.clone());
+            let mut pending = None;
+            loop {
+                let update = match assembly.output_flush_deadline() {
+                    Some(deadline) => tokio::select! {
+                        biased;
+                        _ = tokio::time::sleep_until(deadline) => {
+                            if flush_output(recorder.as_ref(), &attachment.agent_id, attachment.runtime_generation, &mut assembly, &mut pending).await.is_err() { break; }
+                            continue;
+                        }
+                        update = updates.recv() => update,
+                    },
+                    None => updates.recv().await,
+                };
+                let Some(update) = update else {
+                    // Closing a connection leaves uncommitted receipts for replay; never ACK on drop.
+                    break;
+                };
+                if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
+                    && pending.is_some()
+                    && flush_output(
+                        recorder.as_ref(),
+                        &attachment.agent_id,
+                        attachment.runtime_generation,
+                        &mut assembly,
+                        &mut pending,
+                    )
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if process_update(
+                    recorder.as_ref(),
+                    &attachment.agent_id,
+                    attachment.runtime_generation,
+                    &mut assembly,
+                    update,
+                    &mut pending,
+                )
+                .await
+                .is_err()
+                {
+                    break;
+                }
+            }
+            if let Some(registry) = registry.upgrade() {
+                registry.connection_ended(attachment).await;
+            }
+        };
+        match authority {
+            Some(authority) => {
+                let _ = authority.run(recording).await;
+                if let Some(registry) = cleanup.upgrade() {
+                    registry.detach_owner(&authority.token);
+                }
+            }
+            None => recording.await,
         }
     });
     task.abort_handle()

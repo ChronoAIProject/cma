@@ -92,7 +92,7 @@ async fn pending_then_unknown_tool_delivery_prevents_terminal_completion_without
     let (mut runner, mut rx, work) = executor(&setup, &http);
     runner.frame_limit = 1;
     assert!(matches!(runner.execute(&work).await, Disposition::Retry(_)));
-    let store = ReplyStore(setup.journal().clone());
+    let store = ReplyStore(setup.journal().clone(), None);
     let Admission::Claimed(claim) = store
         .admit(&setup.plan, setup.target(), Kind::Tool, "a".repeat(64))
         .await

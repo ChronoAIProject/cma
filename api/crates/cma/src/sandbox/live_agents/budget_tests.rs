@@ -56,6 +56,7 @@ async fn budget_cancel_requires_current_attachment_and_rechecked_turn_before_wri
             conversation_id: attachment.conversation_id.clone(),
             runtime_generation: 1,
             authority_fence: 1,
+            manager_authority: None,
             capabilities: layer2_core::RuntimeCapabilities::default(),
             input: input.clone(),
             activation: None,

@@ -1,10 +1,13 @@
 //! Background reporting, isolated from Agent/lifecycle transactions.
+mod allocation_maintenance;
 mod diagnostics;
 mod observer;
 mod projection;
 mod report;
+mod report_trace;
 mod source;
 mod summary;
+mod warmer;
 use crate::{config::Config, store::usage_reports::ReportingStore};
 use layer2_core::sandbox_metrics::{MetricsError, MetricsService};
 use layer3_adapter::{
@@ -35,6 +38,11 @@ impl MetricsWorkers {
         )
         .await
         .map_err(|e| e.to_string())?;
+        let store = store.with_view_policy(config.usage_metrics.views.clone());
+        store
+            .initialize_allocation_buckets(store.view_policy.allocation_rollups_enabled)
+            .await
+            .map_err(|e| e.to_string())?;
         let enabled = config.usage_metrics.enabled;
         let (source, native) = if enabled {
             let source = if let Some(url) = &config.usage_metrics.source_url {
@@ -75,11 +83,26 @@ impl MetricsWorkers {
         layer1_public::rest::sandbox_metrics_router(MetricsService::new(self.store.clone()))
     }
     pub(crate) fn spawn(self, shutdown: &mut crate::shutdown::ShutdownCoordinator) {
+        if self.store.view_policy.allocation_rollups_enabled {
+            let worker = self.clone();
+            let signal = shutdown.subscribe();
+            shutdown.push(tokio::spawn(async move {
+                tokio::select! { _ = crate::shutdown::signalled(signal) => {},
+                _ = worker.maintain_allocation_history() => {} }
+            }));
+        }
         for slot in 0..self.store.budgets.workers {
             let worker = self.clone();
             let signal = shutdown.subscribe();
             shutdown.push(tokio::spawn(async move {
                 tokio::select!{_ = crate::shutdown::signalled(signal)=>{},_ = layer2_core::diagnostic_context::DiagnosticContext::background("metrics").scope(worker.reports(slot))=>{}}
+            }));
+        }
+        if self.store.view_policy.enabled && self.store.view_policy.warm_enabled {
+            let worker = self.clone();
+            let signal = shutdown.subscribe();
+            shutdown.push(tokio::spawn(async move {
+                tokio::select! { _ = crate::shutdown::signalled(signal) => {}, _ = worker.warm_views() => {} }
             }));
         }
         if self.enabled {
@@ -93,13 +116,19 @@ impl MetricsWorkers {
         }
     }
     async fn background(&self, task: &str) {
-        let holder = format!("metrics-{task}-{}", uuid::Uuid::new_v4().simple());
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if !self.store.lease(task, &holder, 70).await.unwrap_or(false) {
-                continue;
+            // A delayed cycle must never inherit a later cycle's authority.
+            let holder = format!("metrics-{task}-{}", uuid::Uuid::new_v4().simple());
+            match self.store.lease(task, &holder, 70).await {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    tracing::warn!(task, %error, "sandbox metrics lease unavailable");
+                    continue;
+                }
             }
             let start = std::time::Instant::now();
             let result = tokio::time::timeout(Duration::from_secs(60), async {
@@ -107,7 +136,7 @@ impl MetricsWorkers {
                     "observer" => self.observe(&holder).await,
                     "rollups" => self.collect(&holder, false).await,
                     "replay" => self.collect(&holder, true).await,
-                    _ => self.diagnostics().await,
+                    _ => self.diagnostics(&holder).await,
                 }
             })
             .await
@@ -121,9 +150,24 @@ impl MetricsWorkers {
             if let Err(error) = result {
                 tracing::warn!(task,error=%error,"sandbox metrics cycle incomplete");
             }
-            let _ = self.store.release(task, &holder).await;
+            if let Err(error) = self.store.release(task, &holder).await {
+                tracing::warn!(task, %error, "sandbox metrics lease release unconfirmed");
+            }
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) async fn reports_fixture(store: Arc<ReportingStore>) {
+    MetricsWorkers {
+        store,
+        source: None,
+        native: None,
+        cluster: "fixture".into(),
+        enabled: false,
+    }
+    .reports(0)
+    .await;
 }
 
 #[cfg(test)]
@@ -151,3 +195,6 @@ pub(crate) async fn generate_fixture_with_collection(
         .await
         .map_err(|_| MetricsError::Unavailable)?
 }
+
+#[cfg(test)]
+pub(crate) use warmer::warm_fixture;

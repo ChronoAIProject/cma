@@ -400,3 +400,6 @@ async fn exact_admission_replay_precedes_deletion_but_new_admission_is_refused()
     );
     client.database(&database).drop().await.unwrap();
 }
+
+#[path = "sandbox_owner_admission_mongo_tests.rs"]
+mod owner_replicas;

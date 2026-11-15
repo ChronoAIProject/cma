@@ -135,7 +135,7 @@ it('rejects changed startup lineage before reading history and retains error bac
   expect(result.current.actionError).toBe(
     'Preparation progress could not be refreshed. Reconnecting.',
   );
-  await act(() => vi.advanceTimersByTimeAsync(4999));
+  await act(() => vi.advanceTimersByTimeAsync(5499));
   expect(readAgent).toHaveBeenCalledTimes(2);
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(readAgent).toHaveBeenCalledTimes(3);

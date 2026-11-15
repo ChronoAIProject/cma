@@ -1,3 +1,5 @@
+import { observeRead } from './transport/readObserver';
+import { retrySchedule } from './transport/readRetry';
 import { Presence } from '../ui/Presence';
 import { useEffect, useMemo, useState } from 'react';
 import { ApiError, type AgentResources } from '@chronoai/cma-sdk';
@@ -141,57 +143,46 @@ export function Resources({
   }>({ sampleIdentity });
   useEffect(() => {
     if (runtimeVersion === undefined) return;
-    const request = new AbortController();
     let previous: AgentResources | undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let pending = false;
-    const poll = async () => {
-      if (pending || request.signal.aborted || document.visibilityState === 'hidden') return;
-      clearTimeout(timer);
-      pending = true;
-      try {
-        const reading = await client.readAgentResources(agentId, { signal: request.signal });
-        if (reading.agent_id !== agentId || reading.sandbox_id !== sandboxId)
-          throw new Error('Resource identity mismatch');
-        if (!request.signal.aborted)
-          setState({ sampleIdentity, reading, cpu: cpuMillis(previous, reading) });
-        previous = reading;
-      } catch (cause) {
-        previous = undefined;
-        if (!request.signal.aborted)
-          setState((current) =>
-            current.sampleIdentity === sampleIdentity
-              ? {
-                  ...current,
-                  error:
-                    current.reading === undefined
-                      ? cause instanceof ApiError && cause.code === 'agent_resources_unsupported'
-                        ? 'This Sandbox does not report usage readings.'
-                        : cause instanceof ApiError && cause.status === 403
-                          ? 'Resources are not permitted for this Agent'
-                          : 'Usage readings are unavailable right now. Your Agent keeps working.'
-                      : 'Last reading; reconnecting',
-                }
-              : {
-                  sampleIdentity,
-                  error: 'Usage readings are unavailable right now. Your Agent keeps working.',
-                },
-          );
-      } finally {
-        pending = false;
-        if (!request.signal.aborted) timer = setTimeout(() => void poll(), 5000);
-      }
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === 'visible') void poll();
-    };
-    void poll();
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      request.abort();
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
+    let failures = 0;
+    const observer = observeRead(
+      async (signal) => {
+        try {
+          const reading = await client.readAgentResources(agentId, { signal: signal });
+          if (reading.agent_id !== agentId || reading.sandbox_id !== sandboxId)
+            throw new Error('Resource identity mismatch');
+          if (!signal.aborted)
+            setState({ sampleIdentity, reading, cpu: cpuMillis(previous, reading) });
+          previous = reading;
+          failures = 0;
+          return { next: 5000, cooldown: 1000 };
+        } catch (cause) {
+          previous = undefined;
+          if (!signal.aborted)
+            setState((current) =>
+              current.sampleIdentity === sampleIdentity
+                ? {
+                    ...current,
+                    error:
+                      current.reading === undefined
+                        ? cause instanceof ApiError && cause.code === 'agent_resources_unsupported'
+                          ? 'This Sandbox does not report usage readings.'
+                          : cause instanceof ApiError && cause.status === 403
+                            ? 'Resources are not permitted for this Agent'
+                            : 'Usage readings are unavailable right now. Your Agent keeps working.'
+                        : 'Last reading; reconnecting',
+                  }
+                : {
+                    sampleIdentity,
+                    error: 'Usage readings are unavailable right now. Your Agent keeps working.',
+                  },
+            );
+          if (!signal.aborted) return retrySchedule(cause, ++failures, 5000);
+        }
+      },
+      { immediateForeground: true },
+    );
+    return () => observer.dispose();
   }, [agentId, client, sandboxId, runtimeVersion, sampleIdentity]);
   const current =
     runtimeVersion !== undefined && state.sampleIdentity === sampleIdentity ? state : undefined;

@@ -1,0 +1,18 @@
+{
+  "environment": "local_disposable_mongo",
+  "status": "BLOCKED",
+  "cleanup": true,
+  "binary_sha256": "67e7e9fc04bf52340c62ec200340f216d22dee1877fb0870ed65c4ac38fc0e82",
+  "test_name": "runner_binary::replicas::",
+  "mongo_image": "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c",
+  "started_at": "2026-11-13T17:41:54.077784+00:00",
+  "mongo_limits": {
+    "cpus": 1,
+    "memory_mib": 1024,
+    "db_tmpfs_mib": 1024,
+    "oplog_mib": 64
+  },
+  "code": "local_fixture_execution_incomplete",
+  "elapsed_seconds": 124.61639875,
+  "finished_at": "2026-11-13T17:43:58.665253+00:00"
+}

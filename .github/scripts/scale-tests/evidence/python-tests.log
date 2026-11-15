@@ -1,0 +1,9 @@
+
+> test:python
+> PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s test -p '*_test.py'
+
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.014s
+
+OK
