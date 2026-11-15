@@ -105,42 +105,39 @@ async fn full_output_pages_avoid_empty_get_more_and_preserve_traversal() {
     );
     assert_eq!(expected.len() as u64, total);
 
-    // Reproduce the previous full-page query: the validation lookahead is in
-    // the limit, but only the requested page fits in the first batch.
-    let mut session = client.start_session().snapshot(true).await.unwrap();
-    *commands.lock().unwrap() = Commands::default();
-    let mut cursor = store
-        .segment_logs
-        .evidence
-        .find(query(&head, u64::from(OUTPUT_PAGE_CHANGES)))
-        .hint(Hint::Name("agent_log_output_change_seek".into()))
-        .sort(doc! {"change_ordinal":1})
-        .limit(i64::from(OUTPUT_PAGE_CHANGES) + 1)
-        .batch_size(u32::from(OUTPUT_PAGE_CHANGES))
-        .max_time(std::time::Duration::from_secs(2))
-        .read_concern(ReadConcern::snapshot())
-        .session(&mut session)
-        .await
-        .unwrap();
-    let mut rows = Vec::new();
-    while let Some(row) = cursor.next(&mut session).await {
-        rows.push(row.unwrap());
-    }
-    let previous = std::mem::take(&mut *commands.lock().unwrap());
-    assert_eq!(
-        previous,
-        Commands {
-            finds: 1,
-            get_mores: 1,
-            writes: 0
-        }
-    );
-    assert_eq!(
-        changes(&head, rows),
-        expected[..usize::from(OUTPUT_PAGE_CHANGES)]
-    );
-
     for limit in [1, 3, OUTPUT_PAGE_CHANGES] {
+        // Reproduce the previous full-page query: the validation lookahead is in
+        // the limit, but only the requested page fits in the first batch.
+        let mut session = client.start_session().snapshot(true).await.unwrap();
+        *commands.lock().unwrap() = Commands::default();
+        let mut cursor = store
+            .segment_logs
+            .evidence
+            .find(query(&head, u64::from(limit)))
+            .hint(Hint::Name("agent_log_output_change_seek".into()))
+            .sort(doc! {"change_ordinal":1})
+            .limit(i64::from(limit) + 1)
+            .batch_size(u32::from(limit))
+            .max_time(std::time::Duration::from_secs(2))
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut session)
+            .await
+            .unwrap();
+        let mut rows = Vec::new();
+        while let Some(row) = cursor.next(&mut session).await {
+            rows.push(row.unwrap());
+        }
+        let previous = std::mem::take(&mut *commands.lock().unwrap());
+        assert_eq!(
+            previous,
+            Commands {
+                finds: 1,
+                get_mores: 1,
+                writes: 0
+            }
+        );
+        assert_eq!(changes(&head, rows), expected[..usize::from(limit)]);
+
         let mut all = Vec::new();
         let mut pages = 0;
         while (all.len() as u64) < total {
