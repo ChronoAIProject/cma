@@ -272,6 +272,31 @@ impl ProviderHostedControlTransport {
             slot.cancel();
         }
     }
+
+    /// A fresh Pod proof rejected this captured incarnation. Invalidate every
+    /// request lane for it, but never slots installed for a newer Pod/epoch.
+    pub(super) async fn discard_native_incarnation(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        observed: &Arc<NativeHttpSlot>,
+    ) {
+        let Some((handle, _)) = endpoint.native_binding() else {
+            return;
+        };
+        observed.cancel();
+        let mut state = self.state.lock().await;
+        state.native_http.retain(|(runtime, _), slot| {
+            if runtime == handle
+                && slot.identity == observed.identity
+                && slot.binding == observed.binding
+            {
+                slot.cancel();
+                false
+            } else {
+                true
+            }
+        });
+    }
 }
 
 fn identity(state: &TransportState, handle: &RuntimeHandle) -> NativeRuntimeIdentity {
