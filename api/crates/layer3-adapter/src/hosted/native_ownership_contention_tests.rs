@@ -189,3 +189,68 @@ async fn retirement_cancels_ownership_negotiation_and_preserves_no_replay() {
         "retirement must not replay negotiation"
     );
 }
+
+#[tokio::test]
+async fn ownership_negotiation_respects_shared_request_and_idle_session_limits() {
+    let fixture = fixture().await;
+    let endpoint = fixture.endpoint().await;
+    let permits = fixture
+        .transport
+        .native_http_budget
+        .clone()
+        .acquire_many_owned(32)
+        .await
+        .unwrap();
+    let authority = TestAuthority::new(7);
+    assert!(matches!(
+        scope(authority, fixture.transport.receiver_lease(&endpoint)).await,
+        Err(AdapterError::AtCapacity(_))
+    ));
+    assert!(fixture.state.requests.lock().unwrap().is_empty());
+    drop(permits);
+
+    let RuntimeDiscovery::AgentSandbox(client) = &fixture.transport.client else {
+        unreachable!()
+    };
+    let mut handles = Vec::new();
+    for index in 0..20 {
+        let name = format!("ownership-budget-{index}");
+        let handle = RuntimeHandle::new(format!("agent-sandbox:{name}:{}", sandbox_uid(&name)));
+        fixture
+            .state
+            .runtimes
+            .lock()
+            .unwrap()
+            .insert(name.clone(), client.control_token(&name));
+        fixture
+            .transport
+            .bind_native_runtime(&handle, &format!("sandbox-budget-{index}"), &"a".repeat(64))
+            .await
+            .unwrap();
+        let endpoint = fixture.transport.endpoint(&handle).await.unwrap();
+        let authority = TestAuthority::new(index + 10);
+        let lease = scope(authority, fixture.transport.receiver_lease(&endpoint))
+            .await
+            .unwrap()
+            .unwrap();
+        drop(lease);
+        fixture
+            .transport
+            .exchange(&handle, RequestFrame::Resources)
+            .await
+            .unwrap();
+        assert!(
+            fixture.transport.state.lock().await.native_http.len()
+                <= native_pool::MAX_HTTP_SESSIONS
+        );
+        handles.push(handle);
+    }
+    assert_eq!(
+        fixture.transport.state.lock().await.native_http.len(),
+        native_pool::MAX_HTTP_SESSIONS
+    );
+    for handle in handles {
+        fixture.transport.retire(&handle).await.unwrap();
+    }
+    fixture.drained().await;
+}
