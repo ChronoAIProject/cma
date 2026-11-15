@@ -1,5 +1,19 @@
 use super::*;
 
+async fn owned_fixture() -> ReusedInspection {
+    let mut fixture = fixture(false, true).await;
+    let (socket, _) = fixture
+        .transport
+        .seed_native_ownership_connection(&fixture.bound.runtime)
+        .await;
+    fixture.ownership_task = Some(tokio::spawn(serve(
+        socket,
+        fixture.stream.clone(),
+        fixture.bound.fixture.state.clone(),
+    )));
+    fixture
+}
+
 pub(super) async fn write_owner_response(socket: &mut tokio::io::DuplexStream, body: &[u8]) {
     socket
         .write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).as_bytes())
@@ -11,7 +25,7 @@ pub(super) async fn write_owner_response(socket: &mut tokio::io::DuplexStream, b
 #[tokio::test]
 async fn native_owned_status_negotiates_receiver_before_reused_status() {
     use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
-    let fixture = fixture(false, true).await;
+    let fixture = owned_fixture().await;
     let authority = TestAuthority::new(2);
     *fixture.stream.owner.lock().unwrap() = Some(authority.owner());
     let result = tokio::time::timeout(
@@ -38,7 +52,7 @@ async fn native_owned_status_negotiates_receiver_before_reused_status() {
 #[tokio::test]
 async fn native_owned_status_refused_receiver_never_sends_status() {
     use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
-    let fixture = fixture(false, true).await;
+    let fixture = owned_fixture().await;
     let authority = TestAuthority::new(2);
     *fixture.stream.owner.lock().unwrap() = Some(authority.owner());
     fixture
@@ -61,4 +75,54 @@ async fn native_owned_status_refused_receiver_never_sends_status() {
     );
     assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 0);
     assert!(!authority.is_current());
+}
+
+#[tokio::test]
+async fn reused_unowned_status_pod_mismatch_cancels_old_ownership_lane() {
+    for pointer in ["/metadata/uid", "/status/containerStatuses/0/containerID"] {
+        let fixture = fixture(false, true).await;
+        let (_socket, cancelled) = fixture
+            .transport
+            .seed_native_ownership_connection(&fixture.bound.runtime)
+            .await;
+        *fixture
+            .bound
+            .fixture
+            .state
+            .lock()
+            .unwrap()
+            .rows
+            .get_mut(POD)
+            .unwrap()
+            .pointer_mut(pointer)
+            .unwrap() = json!("replacement");
+        // Bootstrap the replacement using the real backend so its fresh graph
+        // proof is acknowledged, while the prior incarnation remains cached.
+        fixture
+            .backend
+            .adopt(&fixture.bound.runtime, &fixture.bound.request)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!*cancelled.borrow(), "exercise status's mismatch branch");
+        assert!(fixture
+            .backend
+            .inspect_native_runtime(
+                &fixture.bound.runtime,
+                &fixture.bound.request,
+                &fixture.home,
+            )
+            .await
+            .is_err());
+        assert!(
+            *cancelled.borrow(),
+            "authoritative Control proof must fence old Ownership too"
+        );
+        assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 0);
+        fixture
+            .transport
+            .retire(&fixture.bound.runtime)
+            .await
+            .unwrap();
+    }
 }
