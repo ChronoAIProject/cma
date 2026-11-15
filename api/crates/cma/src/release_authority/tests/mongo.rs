@@ -1,5 +1,5 @@
 use super::*;
-use mongodb::{Client, Database, bson::doc};
+use mongodb::{bson::doc, Client, Database};
 
 async fn fixture() -> (Database, AuthorityStore) {
     let uri =

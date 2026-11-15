@@ -146,14 +146,12 @@ fn freeze_preserves_inflight_effects_and_refuses_drain_until_they_settle() {
         ),
         Err(AuthorityError::EvidenceRequired)
     );
-    assert!(
-        transitions::advance(
-            &frozen,
-            &operation(&request),
-            &step(&frozen, AdvanceAction::Hold)
-        )
-        .is_ok()
-    );
+    assert!(transitions::advance(
+        &frozen,
+        &operation(&request),
+        &step(&frozen, AdvanceAction::Hold)
+    )
+    .is_ok());
 }
 
 #[test]
@@ -253,16 +251,14 @@ fn aborting_reversal_restores_failed_hold_without_reviving_a_writer() {
     assert_eq!(h.operation_id, held.operation_id);
     assert_eq!(h.pair, held.pair);
     assert_eq!(h.epoch, held.epoch);
-    assert!(
-        transitions::begin(
-            &h,
-            &TransitionRequest {
-                expected_control_revision: h.control_revision,
-                ..reversal
-            }
-        )
-        .is_ok()
-    );
+    assert!(transitions::begin(
+        &h,
+        &TransitionRequest {
+            expected_control_revision: h.control_revision,
+            ..reversal
+        }
+    )
+    .is_ok());
     // The original committed operation still needs fresh activation evidence.
     let resumed = transitions::advance(&h, &first_op, &step(&h, AdvanceAction::Activate)).unwrap();
     assert_eq!(resumed.writer, Some(first.next_writer));
