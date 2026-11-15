@@ -103,6 +103,7 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
         Err(WarmPoolError::Conflict)
     ));
     let provider = Provider {
+        supports_target_fencing: false,
         calls: Arc::default(),
         original: original.plan.clone(),
         refuse_replaced_uid: AtomicBool::new(false),

@@ -380,6 +380,16 @@ data:
   # Profiles above and existing Sandbox reservations keep their recorded values.
   # Default-off until all retained runtimes and managers support ownership v1.
   CHRONO_AGENT_MANAGER_REPLICAS_ENABLED: "false"
+  # Backup release-transition implementation is incomplete and must remain OFF.
+  # See docs/operator-runtime-release-transition.md before any future activation.
+  CHRONO_RUNTIME_RELEASE_MODE: "disabled"
+  # Managed mode requires a separately approved Ed25519 public trust key,
+  # private grant/challenge paths, and the exact immutable API image identity.
+  # No signing key or operator credential belongs in this ConfigMap.
+  CHRONO_RUNTIME_RELEASE_PUBLIC_KEY: ""
+  CHRONO_RUNTIME_RELEASE_GRANT_PATH: ""
+  CHRONO_RUNTIME_RELEASE_CHALLENGE_PATH: ""
+  CHRONO_RUNTIME_RELEASE_BINARY_IMAGE: ""
   # Overridden by the Deployment with this pod's downward-API address.
   CHRONO_AGENT_MANAGER_RELAY_ADDRESS: ""
   CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS: "256"

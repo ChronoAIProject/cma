@@ -5,6 +5,7 @@ use mongodb::{
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
+pub(crate) mod release;
 pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     super::budget::COLLECTION,
@@ -276,6 +277,7 @@ fn validate_index_role(
             || (!collection.is_empty()
                 && !COLLECTIONS.contains(&collection)
                 && !replicas::COLLECTIONS.contains(&collection)
+                && !crate::release_authority::COLLECTIONS.contains(&collection)
                 && (!migration_ledger || collection != MIGRATION_COLLECTION)
                 && collection != super::provenance_progress::COLLECTION)
         {
@@ -285,6 +287,8 @@ fn validate_index_role(
             let action = action.as_str().ok_or_else(&denied)?;
             if !(if collection.is_empty() {
                 action == "listCollections"
+            } else if crate::release_authority::COLLECTIONS.contains(&collection) {
+                release::ACTIONS.contains(&action)
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
             } else if migration_ledger && collection == MIGRATION_COLLECTION {
@@ -304,6 +308,9 @@ fn validate_index_role(
                 .or_default()
                 .insert(action.into());
         }
+    }
+    if !release::complete(&grants) {
+        return Err(denied());
     }
     if grants
         .get(super::provenance_progress::COLLECTION)

@@ -43,6 +43,9 @@ pub(crate) async fn before_composition(config: &Config) -> Result<Option<Arc<Ses
             let authenticated = files::authenticate(config).await?;
             let client = connect(config).await?;
             let database = client.database(&config.mongodb_database);
+            crate::store::isolation::release::verify(&database, config.mongodb_authority)
+                .await
+                .map_err(|error| error.to_string())?;
             let store = Arc::new(
                 AuthorityStore::open(client, database)
                     .await

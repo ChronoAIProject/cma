@@ -43,6 +43,14 @@ fn service(
     original: PoolTarget,
     current: NativePoolConfiguration,
 ) -> (Arc<NativeWarmPools>, Arc<Memory>) {
+    service_with_fencing(original, current, false)
+}
+
+fn service_with_fencing(
+    original: PoolTarget,
+    current: NativePoolConfiguration,
+    supported: bool,
+) -> (Arc<NativeWarmPools>, Arc<Memory>) {
     let calls = Arc::new(Mutex::new(vec![]));
     let store = Arc::new(Memory {
         target: Mutex::new(original),
@@ -53,6 +61,7 @@ fn service(
     });
     let adapter = CodexAdapter::with_backend(
         PoolBackend(Provider {
+            supports_target_fencing: supported,
             calls,
             original: current.clone(),
             refuse_replaced_uid: AtomicBool::new(false),
@@ -219,10 +228,29 @@ async fn target_fencing_defaults_off_and_preserves_legacy_provider_calls() {
 async fn enabled_target_fencing_never_falls_back_to_an_unversioned_provider() {
     let original = original_target();
     let (worker, store) = service(original.clone(), original.plan.clone());
-    let worker = worker.with_target_fencing(true);
+    let worker = worker.with_target_fencing(true, false);
     worker.reconcile_one().await.unwrap();
     let calls = store.calls.lock().unwrap();
     assert!(!calls.iter().any(|call| call.starts_with("resize:")));
     assert!(calls.iter().any(|call| call == "finish:false"));
     assert!(store.target.lock().unwrap().error.is_some());
+}
+
+#[tokio::test]
+async fn managed_off_requires_target_revision_dispatch_and_never_falls_back() {
+    for supported in [false, true] {
+        let original = original_target();
+        let (worker, store) =
+            service_with_fencing(original.clone(), original.plan.clone(), supported);
+        let worker = worker.with_target_fencing(false, true);
+        worker.reconcile_one().await.unwrap();
+        let calls = store.calls.lock().unwrap();
+        assert!(calls.contains(&format!(
+            "fenced:{}:{}:{}",
+            original.id, original.revision, original.target_replicas
+        )));
+        assert!(!calls.iter().any(|call| call.starts_with("resize:")));
+        assert!(calls.contains(&format!("finish:{supported}")));
+        assert_eq!(store.target.lock().unwrap().error.is_none(), supported);
+    }
 }

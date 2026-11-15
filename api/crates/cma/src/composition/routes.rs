@@ -25,6 +25,10 @@ pub(super) fn compose(
     (health, tools): (Router, Router),
     relay: Option<&Arc<crate::agent_manager::relay::Relay>>,
 ) -> Router {
+    // Installed inside human auth and both rate budgets. Auth/session endpoints
+    // retain their existing custody protocol and do not allocate release permits.
+    let resources =
+        crate::runtime_release::guard_http(resources, config.runtime_release_session.clone());
     let public = crate::rest_router(resources)
         .merge(crate::connections::router(connections))
         .merge(crate::auth::router(auth.clone()))

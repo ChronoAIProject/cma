@@ -190,7 +190,7 @@ impl NativeWarmPools {
             target_fencing: false,
             release_session: None,
         })
-        .with_target_fencing(false)
+        .with_target_fencing(false, false)
     }
 
     pub(crate) fn with_release_session(
@@ -201,9 +201,13 @@ impl NativeWarmPools {
         self
     }
 
-    /// The integrator binds this to the default-off AM replica writer gate.
-    pub(crate) fn with_target_fencing(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
-        Arc::make_mut(&mut self).target_fencing = enabled;
+    /// Managed release authority retains target revision fencing with replicas OFF.
+    pub(crate) fn with_target_fencing(
+        mut self: Arc<Self>,
+        replicas: bool,
+        managed_release: bool,
+    ) -> Arc<Self> {
+        Arc::make_mut(&mut self).target_fencing = replicas || managed_release;
         self
     }
 
