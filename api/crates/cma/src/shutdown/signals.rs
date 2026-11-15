@@ -21,7 +21,7 @@ impl Termination {
                 }
             }
         };
-        #[not(unix)]
+        #[cfg(not(unix))]
         let source = async {
             let _ = tokio::signal::ctrl_c().await;
         };
