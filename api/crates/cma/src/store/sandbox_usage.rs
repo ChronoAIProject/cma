@@ -20,6 +20,7 @@ pub(super) const EVENTS: &str = "sandbox_usage_events";
 
 pub(crate) mod billing;
 mod checkpoint;
+mod interval_index;
 mod reads;
 pub(super) mod save;
 
@@ -54,6 +55,10 @@ pub(super) async fn ensure_indexes(
         .map_err(|error| {
             layer2_core::StoreError::Unavailable(format!("usage event indexes: {error}"))
         })?;
+    let database = store
+        .client
+        .database(&store.sandbox_usage_events.namespace().db);
+    interval_index::ensure(&database).await?;
     Ok(())
 }
 
