@@ -33,9 +33,12 @@ def dependencies(secret, ready):
     provider_path=Path(ready['provider_source'])
     code['data']['provider.py']=provider_path.read_text()
     code['data']['api_proxy.py']=(ROOT/'api_proxy.py').read_text()
+    code['data']['storage.py']=(ROOT/'storage.py').read_text()
     private=next(o for o in objects if o['kind']=='Secret')
     private['stringData'].update({'provider-control':secret['provider_control'],
         'provider.crt':secret['provider_cert'],'provider.key':secret['provider_key']})
+    private['stringData']['storage.json']=json.dumps({'client_id':secret['client_id'],
+        'client_secret':secret['client_secret'],'access':secret['storage_access']})
     provider=old.pod('provider',old.BASELINE,old.resource('250m','256Mi','25m','32Mi'),
         command=['/usr/bin/python3','-B','/code/provider.py'],
         env=[{'name':'WS4_PROVIDER_CONTROL_TOKEN','valueFrom':{'secretKeyRef':
@@ -58,6 +61,14 @@ def dependencies(secret, ready):
     service=old.service('api-proxy',443)
     service['spec']['ports'][0]['targetPort']=8443
     objects.extend([service,proxy])
+    storage=old.pod('storage',old.BASELINE,old.resource('250m','256Mi','25m','64Mi'),
+        command=['/usr/bin/python3','-B','/code/storage.py'],
+        volumeMounts=deepcopy(proxy['spec']['containers'][0]['volumeMounts']),
+        readinessProbe={'tcpSocket':{'port':8443},'periodSeconds':2})
+    storage['spec']['volumes']=deepcopy(proxy['spec']['volumes'])
+    service=old.service('storage',443)
+    service['spec']['ports'][0]['targetPort']=8443
+    objects.extend([service,storage])
     return objects
 
 def managers(secret, ready):
@@ -70,7 +81,10 @@ def managers(secret, ready):
         CHRONO_SERVER_PUBLIC_URL='https://api.localhost.direct',
         CHRONO_SERVER_CORS_ORIGIN='https://api.localhost.direct',
         CHRONO_UPSTREAM_BASE_URL='https://provider.localhost.direct:8080/v1',
-        CHRONO_PLATFORM_BASE_URL='https://identity.native-am.invalid')
+        CHRONO_PLATFORM_BASE_URL='https://storage.localhost.direct',
+        CHRONO_DOCUMENT_BUCKET='cma-ci-documents',
+        CHRONO_STORAGE_CLIENT_ID=secret['client_id'],
+        CHRONO_STORAGE_CLIENT_SECRET=secret['client_secret'])
     # The native controller defaults a missing managed policy to public DNS.
     # Explicit fixture-only traffic preserves ClusterFirst for the two local
     # TLS routes, using the supported immutable native template configuration.

@@ -177,9 +177,9 @@ export class API {
     }
     return response;
   }
-  async rawRequest(am, method, path, {body, key, allowed = [200], timeout = 30000} = {}) {
+  async rawRequest(am, method, path, {body, key, allowed = [200], timeout = 30000, documentShareToken} = {}) {
     const start = performance.now();
-    const result = await fetch(this.url(am, path), {method, headers: this.headers({...(body === undefined ? {} : {'Content-Type': 'application/json'}), ...(key ? {'Idempotency-Key': key} : {})}),
+    const result = await fetch(this.url(am, path), {method, headers: this.headers({...(body === undefined ? {} : {'Content-Type': 'application/json'}), ...(key ? {'Idempotency-Key': key} : {}), ...(documentShareToken ? {'X-CMA-Document-Share-Token': documentShareToken} : {})}),
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeout), redirect: 'error'});
     const headerMs = performance.now() - start;
     const text = await result.text(); check(text.length < 4 * 1024 * 1024, 'api_body_limit');
