@@ -166,6 +166,7 @@ pub(crate) struct NativeWarmPools {
     default_target: u32,
     machine: Option<(RuntimeImage, u32)>,
     target_fencing: bool,
+    release_session: Option<Arc<crate::runtime_release::Session>>,
 }
 
 impl NativeWarmPools {
@@ -187,8 +188,17 @@ impl NativeWarmPools {
             default_target,
             machine: machine.map(|(image, target)| (deployment_image(image), target)),
             target_fencing: false,
+            release_session: None,
         })
         .with_target_fencing(false)
+    }
+
+    pub(crate) fn with_release_session(
+        mut self: Arc<Self>,
+        session: Option<Arc<crate::runtime_release::Session>>,
+    ) -> Arc<Self> {
+        Arc::make_mut(&mut self).release_session = session;
+        self
     }
 
     /// The integrator binds this to the default-off AM replica writer gate.

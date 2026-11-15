@@ -1,5 +1,6 @@
 //! Provider lifecycle and transport share the same durable mutation barrier.
-use super::{EffectAuthority, EffectIntent, dispatch, pools::GuardedPools};
+use super::identity::allocation_identity;
+use super::{dispatch, pools::GuardedPools, EffectAuthority, EffectIntent};
 use crate::{
     hosted::{HostedAgentOpenSettings, HostedBackend, RuntimeRecoveryCommand},
     provider::ProviderSandboxRequest,
@@ -53,7 +54,11 @@ impl HostedBackend for GuardedBackend {
         _runtime: &ProviderSandboxRequest,
         home: &crate::HomeVolumeRequest,
     ) -> Result<crate::HomeVolumeRequest> {
-        let intent = EffectIntent::new("reserve_home_request", "allocation", &(&_runtime, &home))?;
+        let intent = EffectIntent::new(
+            "reserve_home_request",
+            &home.sandbox_id,
+            &(&_runtime, &home),
+        )?;
         dispatch(
             &self.authority,
             intent,
@@ -66,7 +71,13 @@ impl HostedBackend for GuardedBackend {
         _runtime: &ProviderSandboxRequest,
         _home: &crate::HomeVolumeRequest,
     ) -> Result<()> {
-        self.inner.verify_home_route(_runtime, _home).await
+        let intent = EffectIntent::new("verify_home_route", &_home.sandbox_id, &(_runtime, _home))?;
+        dispatch(
+            &self.authority,
+            intent,
+            self.inner.verify_home_route(_runtime, _home),
+        )
+        .await
     }
     fn verify_retained_home_route(
         &self,
@@ -107,7 +118,7 @@ impl HostedBackend for GuardedBackend {
     ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         let intent = EffectIntent::new(
             "select_native_pool",
-            "allocation",
+            &_home.sandbox_id,
             &(&_request, &_image, &_home),
         )?;
         dispatch(
@@ -122,7 +133,17 @@ impl HostedBackend for GuardedBackend {
         request: &ProviderSandboxRequest,
         _existing: Option<&RuntimeHandle>,
     ) -> Result<()> {
-        self.inner.validate_funding(request, _existing).await
+        let intent = EffectIntent::new(
+            "validate_funding",
+            &allocation_identity(request)?,
+            &(request, _existing, request.funded_until),
+        )?;
+        dispatch(
+            &self.authority,
+            intent,
+            self.inner.validate_funding(request, _existing),
+        )
+        .await
     }
     async fn set_runtime_deadline(
         &self,
@@ -143,7 +164,7 @@ impl HostedBackend for GuardedBackend {
         .await
     }
     async fn provision(&self, request: ProviderSandboxRequest) -> Result<RuntimeHandle> {
-        let intent = EffectIntent::new("provision", "allocation", &(&request,))?;
+        let intent = EffectIntent::new("provision", &allocation_identity(&request)?, &(&request,))?;
         dispatch(&self.authority, intent, self.inner.provision(request)).await
     }
     async fn provision_with_home(
@@ -151,7 +172,11 @@ impl HostedBackend for GuardedBackend {
         request: ProviderSandboxRequest,
         _home: &crate::HomeVolumeAttachment,
     ) -> Result<RuntimeHandle> {
-        let intent = EffectIntent::new("provision_with_home", "allocation", &(&request, &_home))?;
+        let intent = EffectIntent::new(
+            "provision_with_home",
+            &_home.request.sandbox_id,
+            &(&request, &_home),
+        )?;
         dispatch(
             &self.authority,
             intent,
@@ -253,7 +278,7 @@ impl HostedBackend for GuardedBackend {
     ) -> Result<crate::RuntimeProvisionReceipt> {
         let intent = EffectIntent::new(
             "provision_receipted",
-            "allocation",
+            &allocation_identity(&_request)?,
             &(&_request, &_operation_id, &_request_sha256),
         )?;
         dispatch(
@@ -271,7 +296,7 @@ impl HostedBackend for GuardedBackend {
     ) -> Result<crate::RuntimeFinalityReceipt> {
         let intent = EffectIntent::new(
             "finalize_runtime",
-            "allocation",
+            &_original.handle().0,
             &(&_original, &_operation_id),
         )?;
         dispatch(
@@ -395,7 +420,7 @@ impl HostedBackend for GuardedBackend {
         .await
     }
     async fn reclaim(&self, _observation: &RuntimeObservation) -> Result<()> {
-        let intent = EffectIntent::new("reclaim", "allocation", &(&_observation,))?;
+        let intent = EffectIntent::new("reclaim", &_observation.handle.0, &(&_observation,))?;
         dispatch(&self.authority, intent, self.inner.reclaim(_observation)).await
     }
     async fn exchange(
@@ -439,7 +464,12 @@ impl HostedBackend for GuardedBackend {
         let intent = EffectIntent::new(
             "open_agent",
             handle.0.as_str(),
-            &(&handle, &launch, &resume_conversation),
+            &(
+                &handle,
+                &launch,
+                &resume_conversation,
+                format!("{settings:?}"),
+            ),
         )?;
         dispatch(
             &self.authority,

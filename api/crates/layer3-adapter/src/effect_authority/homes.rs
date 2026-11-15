@@ -1,5 +1,5 @@
 //! Every escaped capability retains the same durable effect authority.
-use super::{EffectAuthority, EffectIntent, dispatch};
+use super::{dispatch, EffectAuthority, EffectIntent};
 use crate::*;
 use std::sync::Arc;
 pub struct GuardedHomeVolumes {
@@ -20,7 +20,7 @@ impl HomeVolumeStore for GuardedHomeVolumes {
     ) -> Result<crate::HomeDeleteReceipt> {
         let intent = EffectIntent::new(
             "delete_original_home",
-            "home",
+            &_original.home().request.volume_id,
             &(&_original, &_operation_id),
         )?;
         dispatch(
@@ -41,7 +41,11 @@ impl HomeVolumeStore for GuardedHomeVolumes {
         _request: &HomeVolumeRequest,
         _operation_id: &str,
     ) -> Result<crate::HomeProvisionReceipt> {
-        let intent = EffectIntent::new("prepare_receipted", "home", &(&_request, &_operation_id))?;
+        let intent = EffectIntent::new(
+            "prepare_receipted",
+            &_request.volume_id,
+            &(&_request, &_operation_id),
+        )?;
         dispatch(
             &self.authority,
             intent,
@@ -62,14 +66,18 @@ impl HomeVolumeStore for GuardedHomeVolumes {
         self.inner.inventory_cursor()
     }
     async fn prepare(&self, request: &HomeVolumeRequest) -> Result<HomeVolumeReceipt> {
-        let intent = EffectIntent::new("prepare", "home", &(&request,))?;
+        let intent = EffectIntent::new("prepare", &request.volume_id, &(&request,))?;
         dispatch(&self.authority, intent, self.inner.prepare(request)).await
     }
     async fn verify(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
         self.inner.verify(attachment).await
     }
     async fn remove_captures(&self, attachment: &HomeVolumeAttachment) -> Result<()> {
-        let intent = EffectIntent::new("remove_captures", "home", &(&attachment,))?;
+        let intent = EffectIntent::new(
+            "remove_captures",
+            &attachment.request.volume_id,
+            &(&attachment,),
+        )?;
         dispatch(
             &self.authority,
             intent,
@@ -82,7 +90,7 @@ impl HomeVolumeStore for GuardedHomeVolumes {
         request: &HomeVolumeRequest,
         receipt: Option<&HomeVolumeReceipt>,
     ) -> Result<()> {
-        let intent = EffectIntent::new("remove", "home", &(&request, &receipt))?;
+        let intent = EffectIntent::new("remove", &request.volume_id, &(&request, &receipt))?;
         dispatch(&self.authority, intent, self.inner.remove(request, receipt)).await
     }
 }

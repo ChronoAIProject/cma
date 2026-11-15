@@ -7,6 +7,45 @@ impl NativeWarmPools {
     /// Pod-policy change creates a new pool identity and never mutates a claimed
     /// pool. Provider resources are still created only by the normal reconciler.
     pub async fn ensure_default(&self) -> Result<(), WarmPoolError> {
+        if let Some(session) = &self.release_session {
+            let head = session
+                .current()
+                .await
+                .map_err(|_| WarmPoolError::Unavailable)?;
+            let provider = self
+                .adapter
+                .native_pools()
+                .ok_or(WarmPoolError::Unavailable)?;
+            for selected in std::iter::once(&head.pair.agent).chain(head.pair.machine.iter()) {
+                let target = self
+                    .store
+                    .find(&selected.target_id)
+                    .await?
+                    .ok_or(WarmPoolError::Conflict)?;
+                let expected = provider
+                    .plan(&NativePoolSpec {
+                        image: if target.machine {
+                            self.machine
+                                .as_ref()
+                                .ok_or(WarmPoolError::Conflict)?
+                                .0
+                                .clone()
+                        } else {
+                            self.image.clone()
+                        },
+                        cpu_millis: self.default_capacity.cpu_millis,
+                        memory_mib: self.default_capacity.memory_mib,
+                        home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
+                    })
+                    .map_err(|_| WarmPoolError::Invalid)?;
+                if expected != target.plan
+                    || !crate::runtime_release::target_matches(selected, &target)
+                {
+                    return Err(WarmPoolError::Conflict);
+                }
+            }
+            return Ok(());
+        }
         self.ensure_image(&self.image, self.default_target, false)
             .await?;
         if let Some((image, target)) = &self.machine {

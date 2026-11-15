@@ -193,6 +193,14 @@ pub(super) async fn production_adapter(
         backends.home_routes = Some(routes.clone());
         home_store = Some(routes);
     }
+    if let Some(authority) = &config.runtime_release_session {
+        home_store = home_store.map(|homes| {
+            Arc::new(layer3_adapter::effect_authority::GuardedHomeVolumes::new(
+                homes,
+                authority.clone(),
+            )) as Arc<dyn layer3_adapter::HomeVolumeStore>
+        });
+    }
     let deployment = HostedDeployment {
         image: crate::warm_pools::deployment_image(config.runtime.sandbox_image.clone()),
         upstream_base_url: config.runtime.upstream_base_url.clone(),
@@ -204,6 +212,15 @@ pub(super) async fn production_adapter(
         .contract()
         .map_err(|error| format!("hosted runtime image is not usable: {error}"))?;
     let backend: Arc<dyn layer3_adapter::hosted::HostedBackend> = Arc::new(backends);
+    // Routing itself can persist a provider selection; guard the outer boundary.
+    let backend: Arc<dyn layer3_adapter::hosted::HostedBackend> =
+        match &config.runtime_release_session {
+            Some(authority) => Arc::new(layer3_adapter::effect_authority::GuardedBackend::new(
+                backend,
+                authority.clone(),
+            )),
+            None => backend,
+        };
     let spec = CodexSandboxSpec {
         deployment,
         ..CodexSandboxSpec::default()

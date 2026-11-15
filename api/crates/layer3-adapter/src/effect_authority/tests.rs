@@ -1,7 +1,8 @@
 use super::*;
+mod routing;
 use std::sync::{
-    Mutex,
     atomic::{AtomicBool, AtomicUsize, Ordering},
+    Mutex,
 };
 
 #[derive(Default)]
@@ -116,11 +117,9 @@ async fn cancellation_retains_admission_without_a_success_outcome() {
 async fn failed_outcome_persistence_cannot_return_provider_success() {
     let journal = Arc::new(Journal::default());
     journal.fail_outcome.store(true, Ordering::SeqCst);
-    assert!(
-        dispatch(&authority(&journal), intent(), async { Ok(()) })
-            .await
-            .is_err()
-    );
+    assert!(dispatch(&authority(&journal), intent(), async { Ok(()) })
+        .await
+        .is_err());
     assert_eq!(journal.admitted.load(Ordering::SeqCst), 1);
     assert!(journal.outcomes.lock().unwrap().is_empty());
 }

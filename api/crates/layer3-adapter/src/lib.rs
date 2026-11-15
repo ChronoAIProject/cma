@@ -13,9 +13,9 @@ mod agent_filesystem;
 mod allocation_probe;
 pub mod archive_source;
 pub mod binding_diagnostics;
-pub mod effect_authority;
 mod browser;
 mod browser_control;
+pub mod effect_authority;
 pub mod file_read_diagnostics;
 pub mod permanent_custody;
 pub use browser::{

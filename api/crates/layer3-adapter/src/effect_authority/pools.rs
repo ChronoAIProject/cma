@@ -1,5 +1,5 @@
 //! Every escaped capability retains the same durable effect authority.
-use super::{EffectAuthority, EffectIntent, dispatch};
+use super::{dispatch, EffectAuthority, EffectIntent};
 use crate::*;
 use crate::{
     agent_sandbox::{
@@ -87,7 +87,11 @@ impl NativePoolControl for GuardedPools {
         .await
     }
     async fn cleanup_retained_home(&self, _home: &HomeVolumeAttachment) -> Result<()> {
-        let intent = EffectIntent::new("cleanup_retained_home", "pool", &(&_home,))?;
+        let intent = EffectIntent::new(
+            "cleanup_retained_home",
+            &_home.request.volume_id,
+            &(&_home,),
+        )?;
         dispatch(
             &self.authority,
             intent,
@@ -103,7 +107,11 @@ impl NativePoolControl for GuardedPools {
         plan: &crate::agent_sandbox::NativePoolConfiguration,
         replicas: u32,
     ) -> Result<NativePoolStatus> {
-        let intent = EffectIntent::new("configure_planned", "pool", &(&plan, &replicas))?;
+        let intent = EffectIntent::new(
+            "configure_planned",
+            &plan.config_sha256,
+            &(&plan, &replicas),
+        )?;
         dispatch(
             &self.authority,
             intent,
