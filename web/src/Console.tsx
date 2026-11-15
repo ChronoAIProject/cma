@@ -356,6 +356,7 @@ function ConsoleContent({
               onAccessChanged={agentAccess.reload}
               publicationScope={artifactPublicationScope}
               historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
+              controlReady={agent.controlBaselineReady}
               pending={agent.pending}
               onOpenSandbox={
                 ready === undefined
