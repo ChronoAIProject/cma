@@ -1,0 +1,16 @@
+{
+  "developer08": {
+    "commit": "3a80b118a023d97faf899ccdece8e6b0dd159834",
+    "qualification": "Test-owned fixture/oracle source reuse; no production changes imported. Integration remains owned by developer-13.",
+    "files": {
+      "api/crates/cmaeg/tests/support/replica_delivery.rs": "54ea1deb473c9f7d630351d861db5e4006f59b4c56dc478d1f412e155d296587",
+      "api/crates/cmaeg/tests/replica_delivery_contract.rs": "60ad53a08f0638420bb43c9af242b214e426b062e8431d41bf8ef67817c6b755"
+    }
+  },
+  "architect": {
+    "contract_a2_sha256": "79b2de77e6b4b68a1c919ba68b355487274787ad702ef111766313c22840b11f",
+    "addendum_a2_sha256": "b238fbbc032f2f6d8bdfd96d8bbc669a985833a2a1cd1ca153f46d5c9ec7c717",
+    "production_stages_a2_sha256": "229cc0388034fed1d102da641802a0789e469650ae0d1bd20cf1297ce4cf4909",
+    "catalog_sha256": "a47475609633f3f736147dbded6dace5864d174b0cf58283425e639aba3ad951"
+  }
+}

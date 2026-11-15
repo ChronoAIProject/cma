@@ -13,10 +13,12 @@ pub(super) struct Store {
     pub channels: RecordClient,
     pub keys: Arc<MasterKeyRing>,
     pub clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    pub replica: Option<crate::replicas::store::Store>,
 }
 impl Store {
     pub fn new(channels: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
+            replica: None,
             channels,
             keys,
             clock: Arc::new(|| {
@@ -36,6 +38,12 @@ impl Store {
         id: &str,
         inbox: bool,
     ) -> Result<Option<(T, u64)>, GatewayError> {
+        if let Some(replica) = &self.replica {
+            return replica
+                .read(id, inbox)
+                .await
+                .map_err(super::source_fence::failure);
+        }
         let records = self.records(inbox);
         let url = records.record_url(id).map_err(|_| GatewayError::Protocol)?;
         let record = match records.get(url.as_str()).await {

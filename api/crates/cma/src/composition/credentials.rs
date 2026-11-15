@@ -5,6 +5,23 @@ use crate::{
 };
 use std::sync::Arc;
 
+pub(super) fn connection_broker(
+    config: &Config,
+    auth: Arc<crate::auth::AuthState>,
+    subscriptions: Arc<crate::connections::CodexSubscriptions>,
+) -> Result<Arc<crate::trigger::CmaServiceConnectionBroker>, String> {
+    Ok(Arc::new(
+        crate::trigger::CmaServiceConnectionBroker::from_auth_config_with_callback(
+            &config.auth_mode,
+            config.nyxid_public_url.as_deref(),
+            Some(config.public_url.as_str()),
+            auth,
+        )
+        .map_err(|error| format!("service connection broker is not usable: {error}"))?
+        .with_subscriptions(subscriptions),
+    ))
+}
+
 pub(super) fn provider_tools(
     config: &Config,
     stores: &crate::store::MongoStores,

@@ -32,7 +32,7 @@ pub(crate) mod suggestions;
 mod title_budget;
 mod title_scheduler;
 mod title_worker;
-mod titles;
+pub(crate) mod titles;
 mod unavailable_credentials;
 pub(crate) mod unpublished_recovery;
 mod warmup;
@@ -45,7 +45,8 @@ pub(crate) use composition::{
     SandboxLifecycleComposition, SandboxLifecycleConfig, SandboxLifecycleDependencies,
 };
 pub(crate) use credential::{
-    CredentialCustodyError, CredentialError, CredentialMaterial, CredentialRevocation,
+    CredentialCustodyError, CredentialError, CredentialIssuance, CredentialMaterial,
+    CredentialRevocation, IssuanceIdentity, IssuanceObservation, IssuanceState,
     ManagedSandboxCredentials, OwnerTokenSource, SandboxCredentialController,
     SandboxCredentialCustody,
 };
@@ -78,7 +79,7 @@ pub(crate) mod binding_lifecycle_test_support {
     };
     pub(crate) use super::live_agent_stopper::DurableLiveAgentStopper;
     pub(crate) use super::live_agents::{
-        DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
+        spawn_update_task, DurableAgentConnectionLossHandler, LiveAgentAttachmentIdentity,
         LiveAgentConnectionLossHandler,
     };
     pub(crate) use super::workspace_worker::{

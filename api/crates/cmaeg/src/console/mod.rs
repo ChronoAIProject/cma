@@ -40,6 +40,7 @@ mod revoke;
 mod routes;
 pub mod routing_view;
 pub mod session;
+pub mod session_backend;
 pub mod source_changes;
 mod source_routes;
 pub mod summary;
@@ -140,16 +141,34 @@ struct Inner {
 
 impl Console {
     pub fn new(deps: ConsoleDeps) -> Result<Self, reqwest::Error> {
+        Self::build(deps, None)
+    }
+
+    /// Build an independent Console over shared session authority.
+    pub fn with_session_backend(
+        deps: ConsoleDeps,
+        backend: Arc<dyn session_backend::SessionBackend>,
+    ) -> Result<Self, reqwest::Error> {
+        Self::build(deps, Some(backend))
+    }
+
+    fn build(
+        deps: ConsoleDeps,
+        backend: Option<Arc<dyn session_backend::SessionBackend>>,
+    ) -> Result<Self, reqwest::Error> {
         let http = Client::builder()
             .connect_timeout(Duration::from_secs(2))
             .redirect(reqwest::redirect::Policy::none())
             .user_agent(format!("cmaeg/{}", env!("CARGO_PKG_VERSION")))
             .build()?;
-        let missing_key = deps.config.missing_client_key();
+        let missing_key = deps.config.missing_client_key().or_else(|| {
+            (deps.config.shared_sessions && backend.is_none())
+                .then_some(crate::config::CMAEG_CONSOLE_SHARED_SESSIONS)
+        });
         if let Some(key) = missing_key {
             tracing::error!(
                 key,
-                "console client is not configured; /console answers 503 until it is"
+                "console configuration is incomplete; /console answers 503 until it is"
             );
         }
         crate::telemetry::describe_console();
@@ -163,12 +182,16 @@ impl Console {
             .clone()
             .unwrap_or_else(|| cmaeg_core::channel::Secret::new(""));
         let tokens = TokenClient::new(http.clone(), &deps.config.client_id, &secret);
-        let sessions = Arc::new(SessionStore::new(
+        let sessions = SessionStore::new(
             SessionLimits::from(&deps.config),
             deps.clock,
             tokens.clone(),
             endpoints.clone(),
-        ));
+        );
+        let sessions = Arc::new(match backend {
+            Some(backend) => sessions.with_backend(backend, deps.keys.clone()),
+            None => sessions,
+        });
         let authority = ConsoleAuthority::new(deps.creator_auth.clone(), sessions.clone());
         Ok(Self {
             inner: Arc::new(Inner {
@@ -377,11 +400,12 @@ async fn gate(State(console): State<Console>, request: Request, next: Next) -> R
 /// background work: sign-in discovery, the session sweeper, and the channel
 /// memory draining `observations` from the hot paths. `None` while it is off,
 /// so nothing is allocated.
-pub(crate) fn compose(
+pub(crate) async fn compose(
     config: &crate::Config,
     state: &crate::channels::management::ManagementState,
     observations: Option<observer::ObservationQueue>,
-) -> Result<Option<Router>, reqwest::Error> {
+    backend: Option<Arc<dyn session_backend::SessionBackend>>,
+) -> Result<Option<Router>, Box<dyn std::error::Error + Send + Sync>> {
     if !config.console.enabled {
         return Ok(None);
     }
@@ -396,19 +420,22 @@ pub(crate) fn compose(
         )
         .with_non_human_providers(config.routing.non_human_providers.clone()),
     );
-    let console = Console::new(ConsoleDeps {
-        config: config.console.clone(),
-        public_url: config.management.console_origin().to_owned(),
-        public_api_url: state.advertised_api_url().to_owned(),
-        nyxid_base_url: config.management.nyxid_base_url.clone(),
-        clock: Arc::new(clock::SystemClock),
-        keys: state.master_keys.clone(),
-        creator_auth: state.creator_auth.clone(),
-        directory: memory.clone(),
-        // Record-keyed source mutations arrive with #999.
-        source_changes: Arc::new(source_changes::PendingSourceChanges),
-        multi_consumer: false,
-    })?;
+    let console = Console::build(
+        ConsoleDeps {
+            config: config.console.clone(),
+            public_url: config.management.console_origin().to_owned(),
+            public_api_url: state.advertised_api_url().to_owned(),
+            nyxid_base_url: config.management.nyxid_base_url.clone(),
+            clock: Arc::new(clock::SystemClock),
+            keys: state.master_keys.clone(),
+            creator_auth: state.creator_auth.clone(),
+            directory: memory.clone(),
+            // Record-keyed source mutations arrive with #999.
+            source_changes: Arc::new(source_changes::PendingSourceChanges),
+            multi_consumer: false,
+        },
+        backend,
+    )?;
     if let Some(queue) = observations {
         memory.spawn(queue, state.readiness.clone());
     }
@@ -416,4 +443,29 @@ pub(crate) fn compose(
     drop(console.spawn_discovery());
     drop(console.spawn_sweeper());
     Ok(Some(console.router()))
+}
+
+/// Validate opt-in storage before any replica runtime may advance its floor.
+pub(crate) async fn prepare_sessions(
+    config: &ConsoleConfig,
+    records: &crate::records::RecordClient,
+) -> Result<
+    Option<Arc<dyn session_backend::SessionBackend>>,
+    Box<dyn std::error::Error + Send + Sync>,
+> {
+    if !config.enabled || !config.shared_sessions {
+        return Ok(None);
+    }
+    let db = records
+        .database()
+        .ok_or("shared Console sessions require Gateway-owned Mongo storage")?;
+    session_backend::schema::verify_grants(&db)
+        .await
+        .map_err(|_| "shared Console session grants unavailable")?;
+    session_backend::schema::verify(&db)
+        .await
+        .map_err(|_| "shared Console session migration or grants unavailable")?;
+    Ok(Some(Arc::new(session_backend::MongoSessionBackend::new(
+        db,
+    ))))
 }

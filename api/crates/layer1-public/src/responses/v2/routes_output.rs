@@ -24,17 +24,18 @@ pub(in crate::responses::v2) async fn output_page(
             "Use the returned output-page cursor.",
         );
     };
-    let (authorization, receipt) =
-        match authorize(&state, &auth, &AgentResponseId(id.clone())).await {
-            Ok(value) => value,
-            Err(value) => return *value,
-        };
+    let (authorization, status) = match authorize(&state, &auth, &AgentResponseId(id.clone())).await
+    {
+        Ok(value) => value,
+        Err(value) => return *value,
+    };
+    let receipt = &status.receipt;
     let reading = match state
         .commands
         .response_for_stream(&authorization, &AgentResponseId(id.clone()))
         .await
     {
-        Ok(value) if value.command.receipt == receipt => value,
+        Ok(value) if value.command.receipt == *receipt => value,
         _ => return error::unavailable(),
     };
     let cursor = query.after.clone();
@@ -70,7 +71,7 @@ pub(in crate::responses::v2) async fn output_page(
                 },
             };
             let (response, _) =
-                match super::super::stream::snapshot(&state, &authorization, &receipt).await {
+                match super::super::stream::snapshot(&state, &authorization, receipt).await {
                     Ok(value) => value,
                     Err(error) => return error,
                 };

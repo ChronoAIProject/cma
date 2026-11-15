@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use super::agent_lineage::DetailAgent;
 use super::*;
 
 impl From<&Worktree> for WorktreeHierarchySummary {
@@ -40,7 +41,16 @@ impl From<&Agent> for AgentHierarchySummary {
 }
 
 pub(super) fn sandbox_view(
-    record: SandboxHierarchyRecord,
+    record: SandboxDetailRecord,
+) -> Result<SandboxHierarchyView, HierarchyReadError> {
+    match record {
+        SandboxDetailRecord::Complete(record) => sandbox_record_view(record),
+        SandboxDetailRecord::Projected(record) => sandbox_record_view(record),
+    }
+}
+
+fn sandbox_record_view<A: DetailAgent>(
+    record: SandboxHierarchyRecord<A>,
 ) -> Result<SandboxHierarchyView, HierarchyReadError> {
     if record.sandbox.id.as_str().trim().is_empty()
         || record.sandbox.owner.as_str().trim().is_empty()
@@ -59,10 +69,10 @@ pub(super) fn sandbox_view(
         .worktrees
         .iter()
         .any(|worktree| &worktree.sandbox_id != sandbox_id || &worktree.owner != owner)
-        || record
-            .agents
-            .iter()
-            .any(|agent| &agent.sandbox_id != sandbox_id || &agent.owner != owner)
+        || record.agents.iter().any(|agent| {
+            let agent = agent.lineage();
+            agent.sandbox_id != sandbox_id || agent.owner != owner
+        })
     {
         return Err(corrupt("sandbox child lineage does not match"));
     }
@@ -77,7 +87,7 @@ pub(super) fn sandbox_view(
         || record
             .agents
             .iter()
-            .any(|value| !workspace_ids.contains(&value.workspace_id))
+            .any(|value| !workspace_ids.contains(value.lineage().workspace_id))
     {
         return Err(corrupt("sandbox child references an unknown workspace"));
     }
@@ -150,10 +160,10 @@ pub(super) fn workspace_view(
     })
 }
 
-fn workspace_summary(
+fn workspace_summary<A: DetailAgent>(
     workspace: &Workspace,
     worktrees: &[Worktree],
-    agents: &[Agent],
+    agents: &[A],
 ) -> WorkspaceHierarchySummary {
     WorkspaceHierarchySummary {
         id: workspace.id.clone(),
@@ -170,18 +180,21 @@ fn workspace_summary(
                 .count(),
             agents
                 .iter()
-                .filter(|value| value.workspace_id == workspace.id)
+                .filter(|value| value.lineage().workspace_id == &workspace.id)
                 .count(),
         ),
     }
 }
 
-fn validate_agent_worktrees(
+fn validate_agent_worktrees<A: DetailAgent>(
     worktrees: &[Worktree],
-    agents: &[Agent],
+    agents: &[A],
 ) -> Result<(), HierarchyReadError> {
     let by_id: HashMap<_, _> = worktrees.iter().map(|value| (&value.id, value)).collect();
-    let agents_by_id: HashMap<_, _> = agents.iter().map(|agent| (&agent.id, agent)).collect();
+    let agents_by_id: HashMap<_, _> = agents
+        .iter()
+        .map(|agent| (agent.lineage().id, agent))
+        .collect();
     if by_id.len() != worktrees.len()
         || agents_by_id.len() != agents.len()
         || worktrees
@@ -194,27 +207,26 @@ fn validate_agent_worktrees(
         if tree.agent_id.as_ref().is_some_and(|id| {
             agents_by_id
                 .get(id)
-                .is_none_or(|agent| agent.worktree_id != tree.id)
+                .is_none_or(|agent| agent.lineage().worktree_id != &tree.id)
         }) {
             return Err(corrupt("Worktree assignment references an unknown Agent"));
         }
     }
-    for agent in agents {
+    for value in agents {
+        let agent = value.lineage();
         let worktree = by_id
-            .get(&agent.worktree_id)
+            .get(agent.worktree_id)
             .ok_or_else(|| corrupt("agent references an unknown worktree"))?;
-        if worktree.agent_id.as_ref() != Some(&agent.id)
-            || worktree.workspace_id != agent.workspace_id
-            || worktree.sandbox_id != agent.sandbox_id
-            || worktree.owner != agent.owner
+        if worktree.agent_id.as_ref() != Some(agent.id)
+            || &worktree.workspace_id != agent.workspace_id
+            || &worktree.sandbox_id != agent.sandbox_id
+            || &worktree.owner != agent.owner
             || agent.revision == 0
             || agent.id.as_str().trim().is_empty()
         {
             return Err(corrupt("agent and worktree assignment disagree"));
         }
-        agent
-            .validate_conversation()
-            .map_err(|_| corrupt("invalid Agent conversation"))?;
+        value.validate_payload()?;
     }
     Ok(())
 }

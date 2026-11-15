@@ -367,7 +367,7 @@ export function errorFromBody(
 
 const MAX_RETRY_AFTER_MS = 2_147_483_647;
 
-function retryAfterMilliseconds(response: Response): number | undefined {
+export function retryAfterMilliseconds(response: Response): number | undefined {
   const value = response.headers.get('retry-after')?.trim();
   if (value === undefined || value === '') return undefined;
   if (/^[0-9]+$/.test(value)) {
