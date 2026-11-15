@@ -401,7 +401,17 @@ impl Config {
         config.startup_configuration_sha256 = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&observed).map_err(|_| "cannot bind startup configuration")?
+                serde_json::to_vec(&(
+                    "runtime-release-effective-configuration-v1",
+                    &observed,
+                    &config.runtime.sandbox_api_key,
+                    config
+                        .runtime
+                        .agent_sandbox
+                        .as_ref()
+                        .map(|native| &native.control_key),
+                ))
+                .map_err(|_| "cannot bind startup configuration")?
             )
         );
         Ok(config)

@@ -5,6 +5,7 @@ fn fixture() -> (Memory, Provider) {
     let calls = Arc::new(Mutex::new(vec![]));
     let original = target();
     let provider = Provider {
+        supports_target_fencing: false,
         calls: calls.clone(),
         original: original.plan.clone(),
         refuse_replaced_uid: AtomicBool::new(false),

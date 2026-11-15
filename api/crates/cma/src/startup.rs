@@ -37,10 +37,7 @@ pub(crate) async fn serve() -> Result<(), String> {
     )
     .await?;
     let auth_mode = config.auth_mode_name();
-    let app = crate::runtime_release::guard_http(
-        with_request_context(with_cors(composition.router, config.cors_origins)),
-        config.runtime_release_session.clone(),
-    );
+    let app = with_request_context(with_cors(composition.router, config.cors_origins));
 
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).
