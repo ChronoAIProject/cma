@@ -22,7 +22,6 @@ impl OwnershipCoordinator {
             registration: std::sync::Mutex::new(Some(member)),
             registered: AtomicBool::new(false),
             admission_readiness: OnceLock::new(),
-            admission_changes: watch::channel(()).0,
             uncertain_acquisitions: AtomicUsize::new(0),
             cancelled_cursor: AtomicUsize::new(0),
             member_deadline: std::sync::Mutex::new(Instant::now()),
@@ -53,7 +52,9 @@ impl OwnershipCoordinator {
         self.admission_readiness.get().is_none_or(|ready| ready())
     }
 
-    pub(super) fn can_acquire(&self) -> bool {
+    /// The live readiness used for admitting ownership. Public serving health
+    /// must use this same predicate, not membership liveness alone.
+    pub fn can_acquire(&self) -> bool {
         self.is_ready() && self.admission_ready()
     }
 
@@ -93,23 +94,7 @@ impl OwnershipCoordinator {
         if result.is_err() {
             self.failed.send_replace(true);
         }
-        self.admission_changes.send_replace(());
         result
-    }
-
-    /// Wait only for initial registration. No request is dispatched while the
-    /// process has entered serving readiness but placement is still dormant.
-    pub async fn await_activation(&self) -> Result<(), OwnershipError> {
-        let mut changes = self.admission_changes.subscribe();
-        loop {
-            if self.is_ready() {
-                return Ok(());
-            }
-            if !self.is_starting() {
-                return Err(OwnershipError::Stale);
-            }
-            changes.changed().await.map_err(|_| OwnershipError::Stale)?;
-        }
     }
 }
 
