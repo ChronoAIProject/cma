@@ -3,6 +3,36 @@ import assert from 'node:assert/strict';
 import {NonOwnerRouter} from './routing.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
+import {RequestPacer} from './pacing.mjs';
+import {API} from './cma/core.mjs';
+
+test('command polling follows its Agent receipt to the current non-owner', async () => {
+  const api = new API({bearer: 'command-routing-fixture'});
+  const calls = [];
+  api.routedAgents.add('agent');
+  api.router = {dispatch: async (agent, run) => { assert.equal(agent, 'agent'); return run('b'); }};
+  api.rawRequest = async (am, method, path) => {
+    calls.push({am, method, path});
+    return {body: method === 'POST' ? {control: {receipt: {command_id: 'command'}}} : {status: 'completed'}};
+  };
+  await api.request('a', 'POST', '/api/v2/agents/agent/responses/response/controls');
+  await api.request('a', 'GET', '/api/v2/commands/command');
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(row => row.am), ['b', 'b']);
+});
+
+test('requests sharing a credential reserve distinct slots across AM clients and preserve independent actors', async () => {
+  const waits = [];
+  const pacer = new RequestPacer({now: () => 100, sleep: async ms => { waits.push(ms); }});
+  await Promise.all([pacer.wait('owner', 'POST'), pacer.wait('owner', 'POST'), pacer.wait('owner', 'POST')]);
+  assert.deepEqual(waits, [6200, 12400]);
+  await pacer.wait('other-owner', 'POST');
+  await pacer.wait('owner', 'GET');
+  assert.deepEqual(waits, [6200, 12400]);
+  await pacer.wait('owner', 'GET');
+  assert.equal(waits.at(-1), 120);
+  assert.ok([...pacer.next.keys()].every(key => !key.includes('owner')));
+});
 
 test('client config accepts split UTF-8 over a pipe and rejects overlong or truncated input', async () => {
   const bytes = Buffer.from(JSON.stringify({owner: 'fixture-测试'}));

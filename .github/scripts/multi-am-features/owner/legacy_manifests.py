@@ -56,7 +56,7 @@ def dependencies(secret):
                     ['bearer', 'admin_bearer', 'refresh_token', 'client_id', 'client_secret', 'expires_at']}),
                     'control-key': secret['control_key'], 'replica-key': secret['replica_key'],
                     'mongo-root': secret['mongo_root'], 'mongo-app': secret['mongo_app']}}
-    mongo = pod('mongo', MONGO, resource('1', '1Gi', '250m', '512Mi'),
+    mongo = pod('mongo', MONGO, resource('1', '3Gi', '250m', '2Gi'),
                 command=['/bin/sh', '-ec'], args=[
                     'umask 077; cp /private/replica-key /tmp/replica-key; '
                     'chmod 600 /tmp/replica-key; chown mongodb:mongodb /tmp/replica-key; '
