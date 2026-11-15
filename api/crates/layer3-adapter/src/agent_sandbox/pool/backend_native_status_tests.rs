@@ -23,10 +23,14 @@ struct ReusedInspection {
     home: HomeVolumeAttachment,
     stream: Arc<StreamState>,
     task: tokio::task::JoinHandle<()>,
+    ownership_task: Option<tokio::task::JoinHandle<()>>,
 }
 impl Drop for ReusedInspection {
     fn drop(&mut self) {
         self.task.abort();
+        if let Some(task) = &self.ownership_task {
+            task.abort();
+        }
     }
 }
 
@@ -108,6 +112,7 @@ async fn fixture(explicit_policy: bool, shared_client: bool) -> ReusedInspection
         home,
         stream,
         task,
+        ownership_task: None,
     }
 }
 
