@@ -94,7 +94,7 @@ impl RoutedIngress {
         observer: &dyn ActivityObserver,
         authority: GithubAuthorityFence,
     ) -> Result<Option<LaunchOutcome>, Problem> {
-        self.admit_once(
+        let future = self.admit_once(
             request,
             source,
             observer,
@@ -102,8 +102,8 @@ impl RoutedIngress {
             None,
             None,
             Some(&authority),
-        )
-        .await
+        );
+        crate::ingress::admission_trace::attempt(request, future).await
     }
 
     fn has_routed_source(&self, request: &LaunchRequest) -> bool {

@@ -32,8 +32,10 @@ impl Identity {
         };
         if !hash(source, 40)
             || !image
-                .strip_prefix("ghcr.io/chronoaiproject/cma-api@sha256:")
-                .is_some_and(|value| hash(value, 64))
+                .split_once("@sha256:")
+                .is_some_and(|(repository, digest)| {
+                    repository.ends_with("/cma-api") && hash(digest, 64)
+                })
         {
             return Err("apply requires a release build SHA and immutable API image reference");
         }

@@ -1,0 +1,313 @@
+{
+  "status": "FAIL",
+  "result_sha256": "99f2033c552ea9a8613288b7d74d6f19ad4a13d0168f1a48f3bc7676ea72bf8d",
+  "source_binding_sha256": "5ae8cc8af6291fd2f216221e324085e22aee29159b5948a067fc0caeedfb24b2",
+  "invocation_log_sha256": "5ccfe85585c00e6491198b7ef6f757a4cc9bb25bf4c670c4b17df93e91e1c97c",
+  "tooling_source": "0dd2db92962eecea55ea70b21953ffbc92d49796",
+  "compiled_fixture_source": "6f580ea84e48e1fde58990bb16dbc4834ae48aef",
+  "application_source": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+  "test_binary_sha256": "e81f4e575c90a00364a03f5fa048d0edfe0e615c99fd3b91b4d1449997deddb7",
+  "application_binary_sha256": "54cbd773129c6f0bc3b98fd3900b9d5508ea0d0d76a6f1eca31c7ff0d933ece0",
+  "started_at": "2026-11-13T18:49:42.409622+00:00",
+  "finished_at": "2026-11-13T18:49:52.374197+00:00",
+  "elapsed_seconds_including_setup_cleanup": 9.991006166999998,
+  "failure_phase": "test_result",
+  "error_class": "test_failure",
+  "exit_code": 101,
+  "timed_out": false,
+  "censored": false,
+  "completed_workload_cohorts": [
+    {
+      "replicas": 1,
+      "enabled": false
+    },
+    {
+      "replicas": 1,
+      "enabled": true
+    },
+    {
+      "replicas": 2,
+      "enabled": false
+    }
+  ],
+  "completed_cohort_boundaries": [
+    {
+      "replicas": 1,
+      "enabled": false,
+      "phase": "cohort",
+      "boundary": "end",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 2010
+    },
+    {
+      "replicas": 1,
+      "enabled": true,
+      "phase": "cohort",
+      "boundary": "end",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 1044
+    },
+    {
+      "replicas": 2,
+      "enabled": false,
+      "phase": "cohort",
+      "boundary": "end",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 1174
+    }
+  ],
+  "failure_codes": [
+    "cross_ingress_not_accepted"
+  ],
+  "ingress_rejections": [
+    "routed_admission_unavailable"
+  ],
+  "failed_cohort_observations": [
+    {
+      "replicas": 2,
+      "enabled": true,
+      "accepted_responses": 1,
+      "durable_plan_after_responses": true,
+      "targets_present_after_responses": 0
+    }
+  ],
+  "failed_cohort_headers": [
+    {
+      "replicas": 2,
+      "enabled": true,
+      "process_ordinal": 1,
+      "status": 503,
+      "cohort_elapsed_ms": 932
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "process_ordinal": 2,
+      "status": 202,
+      "cohort_elapsed_ms": 935
+    }
+  ],
+  "failed_cohort_stages": [
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "cohort",
+      "boundary": "start",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 0
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "setup",
+      "boundary": "start",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 0
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "setup",
+      "boundary": "end",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 2
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "migration",
+      "boundary": "start",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 2
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "migration",
+      "boundary": "end",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 133
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ready",
+      "boundary": "start",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 133
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ready",
+      "boundary": "end",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 490
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ready",
+      "boundary": "start",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 490
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ready",
+      "boundary": "end",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 842
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "oracle_open",
+      "boundary": "start",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 844
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "oracle_open",
+      "boundary": "end",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 903
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ingress",
+      "boundary": "start",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 903
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "headers",
+      "boundary": "start",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 903
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ingress",
+      "boundary": "start",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 904
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "headers",
+      "boundary": "start",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 904
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "headers",
+      "boundary": "end",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 932
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "headers",
+      "boundary": "end",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "body",
+      "boundary": "start",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "body",
+      "boundary": "end",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ingress",
+      "boundary": "end",
+      "process_ordinal": 1,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "body",
+      "boundary": "start",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "body",
+      "boundary": "end",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "ingress",
+      "boundary": "end",
+      "process_ordinal": 2,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "rejected_oracle",
+      "boundary": "start",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 935
+    },
+    {
+      "replicas": 2,
+      "enabled": true,
+      "phase": "rejected_oracle",
+      "boundary": "end",
+      "process_ordinal": 0,
+      "cohort_elapsed_ms": 939
+    }
+  ],
+  "cleanup": {
+    "test_parent_cleanup": true,
+    "process_group_cleanup": true,
+    "process_cleanup": true,
+    "container_cleanup": true,
+    "cleanup": true,
+    "fixture_directory_retained": false,
+    "group_term_sent": false,
+    "group_kill_sent": false,
+    "group_observation_failed": false
+  },
+  "cleanup_inventory_sha256": "f5b7b9ccb4d1d741aa6773e3927f5e1e8b93475fd521e0ee8b8d7d6a26b176a1",
+  "interpretation": [
+    "Two ingress calls replay one identical synthetic event; one HTTP response passes the accepted-body check.",
+    "The independent after-response read finds a plan and zero existing target-state records. This does not identify which caller created the plan or establish the failed request queue commit.",
+    "The assertion terminates before the terminal-delivery wait and provider/sink reconciliation; no terminal accepted-event accounting result, loss, duplicate or late-delivery finding follows.",
+    "The public routed_admission_unavailable detail does not identify an internal AdmissionError variant or transaction phase. No matching typed per-request application warning is retained.",
+    "Clock origins are cohort-local; separate stage/header arrays have no total-order sequence for equal timestamps. Whole-invocation elapsed time is not application latency, drain or recovery time.",
+    "This original aadd212 run does not test newer corrective candidates or retrospectively recover the original unclassified 503 or c08 timeout phase.",
+    "No fault, cluster, HPA, load or external-provider acceptance was executed. The 120-second test deadline remains unchanged."
+  ]
+}

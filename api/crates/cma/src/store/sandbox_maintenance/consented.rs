@@ -350,14 +350,14 @@ async fn apply(
         })?;
     fence_live_agents(store, &agents, session).await?;
     let advanced = store.sandboxes.update_one(
-        doc! {
+        crate::store::work_schema::query(doc! {
             "_id": current.id.as_str(),
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "channel_reuse_cleanup_execution": { "$exists": false },
             "revision": signed(expected_revision, "consented pause revision").map_err(|_| AgentAccessError::Conflict)?,
             "last_seq": signed(last_seq, "consented pause event sequence").map_err(|_| AgentAccessError::Conflict)?,
-        },
-        doc! { "$set": sandbox_replacement_fields(&sandbox).map_err(domain)? },
+        }),
+        crate::store::work_lease_update::replacement(sandbox_replacement_fields(&sandbox).map_err(domain)?),
     ).session(&mut *session).await.map_err(driver)?;
     if advanced.matched_count != 1 {
         return Err(AgentAccessError::Conflict.into());

@@ -1,3 +1,4 @@
+import { previewDeadline } from './previewDeadline';
 import { ProtocolError } from '@chronoai/cma-sdk';
 import { AgentFileError, MAX_FILE_BYTES, PREVIEW_BYTES } from '../agentFiles';
 import type {
@@ -66,23 +67,25 @@ export function agentFilesClient(): AgentFilesClient {
       return value.entries;
     },
     async read(agent, path, options) {
-      const response = await request(
-        `${route(agent, '/content', path)}&max_bytes=${PREVIEW_BYTES}`,
-        { signal: options?.signal },
-      );
-      const value = (await response.json()) as AgentFileContent;
-      if (
-        value.path !== path ||
-        !validDigest(value.sha256) ||
-        !Number.isSafeInteger(value.size_bytes) ||
-        value.size_bytes < 0 ||
-        value.size_bytes > PREVIEW_BYTES ||
-        typeof value.content_base64 !== 'string' ||
-        value.content_base64.length > Math.ceil(PREVIEW_BYTES / 3) * 4 ||
-        decodedSize(value.content_base64) !== value.size_bytes
-      )
-        throw new ProtocolError('Agent Manager returned an invalid file preview.');
-      return value;
+      return previewDeadline(async (signal) => {
+        const response = await request(
+          `${route(agent, '/content', path)}&max_bytes=${PREVIEW_BYTES}`,
+          { signal },
+        );
+        const value = (await response.json()) as AgentFileContent;
+        if (
+          value.path !== path ||
+          !validDigest(value.sha256) ||
+          !Number.isSafeInteger(value.size_bytes) ||
+          value.size_bytes < 0 ||
+          value.size_bytes > PREVIEW_BYTES ||
+          typeof value.content_base64 !== 'string' ||
+          value.content_base64.length > Math.ceil(PREVIEW_BYTES / 3) * 4 ||
+          decodedSize(value.content_base64) !== value.size_bytes
+        )
+          throw new ProtocolError('Agent Manager returned an invalid file preview.');
+        return value;
+      }, options?.signal);
     },
     async download(agent, path, options) {
       const response = await request(route(agent, '/download', path), { signal: options?.signal });

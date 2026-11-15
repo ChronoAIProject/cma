@@ -141,6 +141,10 @@ async fn apply_publication_observed(
         None
     };
     let session = scope.release();
+    store
+        .fence_agent_effect(&mutation.agent.id, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.
@@ -163,7 +167,7 @@ async fn apply_publication_observed(
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let history = if segmented.is_none() {
         Some(
-            publication_history::read(
+            Box::pin(publication_history::read(
                 store,
                 &current,
                 &current_row,
@@ -174,7 +178,7 @@ async fn apply_publication_observed(
                 },
                 history_cache,
                 session,
-            )
+            ))
             .await?,
         )
     } else {
@@ -222,11 +226,11 @@ async fn apply_publication_observed(
             (&store.sandboxes, sandbox.id.as_str(), sandbox.revision),
             (&store.workspaces, workspace.id.as_str(), workspace.revision),
         ] {
-            let written = collection.update_one(doc! {"_id": id,
+            let written = collection.update_one(crate::store::work_schema::for_collection(collection, doc! {"_id": id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": signed(revision, "bootstrap parent revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
                 "owned_workspace_cleanup_admission_v1": {"$exists": false},
-                "channel_reuse_cleanup_execution": {"$exists": false}},
+                "channel_reuse_cleanup_execution": {"$exists": false}}),
                 doc! {"$inc": {"agent_bootstrap_binding_fence": 1_i64}})
                 .session(&mut *session).await.map_err(ApplyError::Driver)?;
             if written.matched_count != 1 {
@@ -286,12 +290,12 @@ async fn apply_publication_observed(
         let written = store
             .sandboxes
             .update_one(
-                doc! {
+                crate::store::work_schema::query(doc! {
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": signed(sandbox.revision, "retiring sandbox revision")
                         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                },
+                }),
                 doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
             )
             .session(&mut *session)

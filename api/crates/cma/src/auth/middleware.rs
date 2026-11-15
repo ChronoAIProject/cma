@@ -53,17 +53,16 @@ async fn attach_subject_inner(
         drop(observation);
         return next.run(request).await;
     }
-    let allow_fallback = auth
-        .fallback_policy
-        .permits(request.method(), request.uri().path());
     let mut observation = crate::telemetry::request::Resolution::start(&request, "ambient");
-    let (resolved, failure) = layer2_core::diagnostic_context::DiagnosticContext::current()
-        .with_phase("identity")
-        .scope(diagnostics::capture(auth.resolve_request_with_policy(
-            request.headers(),
-            allow_fallback,
-        )))
-        .await;
+    let ((resolved, failure), retry_after) = super::identity_throttle::capture(
+        layer2_core::diagnostic_context::DiagnosticContext::current()
+            .with_phase("identity")
+            .scope(diagnostics::capture(super::identity_lifetime::scope(
+                &auth,
+                auth.resolve_request(request.headers()),
+            ))),
+    )
+    .await;
     let outcome = match &resolved {
         Ok(Some(_)) => "resolved",
         Ok(None) => "anonymous",
@@ -104,6 +103,9 @@ async fn attach_subject_inner(
                     Reason::Unknown,
                 ))),
             );
+            if let Some(seconds) = retry_after {
+                return identity_failure_after(seconds);
+            }
             if request.uri().path() == "/auth/session"
                 && matches!(&error, layer2_core::StoreError::Unavailable(detail) if detail == "identity_provider_unavailable")
             {
@@ -160,6 +162,18 @@ async fn attach_subject_inner(
                     binding_id: binding.binding_id().into(),
                 });
         }
+        if request.uri().path().starts_with("/api/v1/agents/")
+            && request.uri().path().ends_with("/desktop/ws")
+        {
+            // The domain service uses this independent port only in replica
+            // mode. Retain legacy authentication behavior if capture is refused.
+            match super::desktop::capture(auth.clone(), request.headers(), &resolved) {
+                Ok(authority) => {
+                    request.extensions_mut().insert(authority);
+                }
+                Err(_) => tracing::debug!("desktop renewable authority unavailable"),
+            }
+        }
         request
             .extensions_mut()
             .insert(auth.resource_request_context(&resolved));
@@ -181,7 +195,11 @@ async fn attach_subject_inner(
 }
 
 pub(super) fn identity_failure() -> Response {
-    (
+    identity_failure_after(3)
+}
+
+fn identity_failure_after(seconds: u64) -> Response {
+    let mut response = (
         StatusCode::SERVICE_UNAVAILABLE,
         [
             (axum::http::header::CONTENT_TYPE, "application/problem+json"),
@@ -194,9 +212,15 @@ pub(super) fn identity_failure() -> Response {
             "status": 503,
             "detail": "The identity service is temporarily unavailable. Please retry shortly.",
             "code": "identity_unavailable",
+            "retryable": true,
         })),
     )
-        .into_response()
+        .into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        seconds.max(1).to_string().parse().expect("integer header"),
+    );
+    response
 }
 
 pub(super) fn store_failure() -> Response {
@@ -208,6 +232,9 @@ pub(super) fn store_failure() -> Response {
             "status": 503,
             "detail": "Authentication authority is temporarily unavailable.",
             "code": "store_failed",
+            // Invalid provider evidence also reaches this response. A 503 alone
+            // must not authorize automatic browser identity retries.
+            "retryable": false,
         })),
     )
         .into_response()
@@ -271,3 +298,7 @@ fn bypasses_ambient_auth(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "error_metadata_tests.rs"]
+mod error_metadata_tests;

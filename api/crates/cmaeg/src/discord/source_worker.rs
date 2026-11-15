@@ -8,6 +8,9 @@ use std::{sync::Arc, time::Duration};
 use tokio::sync::watch;
 
 pub(super) trait SourcePort: Send + Sync {
+    fn replica_mode(&self) -> bool {
+        false
+    }
     /// Return the current eligible source revision; no credential is returned.
     fn revision<'a>(&'a self, record: &'a str) -> BoxFuture<'a, Result<String, GatewayError>>;
     fn connect<'a>(
@@ -138,7 +141,12 @@ pub(super) async fn run(
             _ => false,
         };
         failures = failures.saturating_add(1);
-        let delay = retry_delay(&outcome, failures, timing.retry);
+        let delay = if port.replica_mode() && matches!(outcome.result, Err(GatewayError::Authority))
+        {
+            Duration::from_secs(1).max(outcome.cooldown)
+        } else {
+            retry_delay(&outcome, failures, timing.retry)
+        };
         let code = match &outcome.result {
             Ok(end) => end.reason.into(),
             Err(error) => (*error).into(),

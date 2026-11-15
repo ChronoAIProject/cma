@@ -1,3 +1,6 @@
+import { ApiError } from '@chronoai/cma-sdk';
+import { useCmaClient } from '../api/context';
+import { readRetryDelay } from './transport/readRetry';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type RFB from '@novnc/novnc';
 import {
@@ -39,13 +42,14 @@ export function useDesktopConnection(
   runtimeReady: boolean,
   preparation?: DesktopPreparationScope,
 ) {
+  const discovery = useCmaClient().resourceViews?.agents;
+  const backoff = useRef({ agentId, failures: 0, at: 0 });
   const { context, owner } = preparation ?? {};
   const screen = useRef<HTMLDivElement>(null);
   const connection = useRef<RFB>(undefined);
   const input = useRef<ReturnType<typeof desktopInput>>(undefined);
   const [phase, setPhase] = useState<DesktopPhase>(runtimeReady ? 'connecting' : 'waiting');
   const [error, setError] = useState('');
-  const [recovery, setRecovery] = useState(0);
   const [generation, setGeneration] = useState({ agentId, attempt, runtimeReady });
   if (
     generation.agentId !== agentId ||
@@ -55,7 +59,6 @@ export function useDesktopConnection(
     setGeneration({ agentId, attempt, runtimeReady });
     setPhase(runtimeReady ? 'connecting' : 'waiting');
     setError('');
-    setRecovery(0);
   }
   useLayoutEffect(() => {
     const current = connection.current;
@@ -68,102 +71,158 @@ export function useDesktopConnection(
   }, [inputAllowed, phase]);
 
   useEffect(() => {
-    // The stream is owner-authorized only after the Sandbox becomes Active.
-    // A later revival opens a fresh viewer without restoring manual input.
     if (!runtimeReady) return;
+    if (backoff.current.agentId !== agentId) backoff.current = { agentId, failures: 0, at: 0 };
     let disposed = false;
-    let failed = false;
+    let terminal = false;
+    let version = 0;
+    let request: AbortController | undefined;
     let rfb: RFB | undefined;
+    let preparedSocket: WebSocket | undefined;
     let stopWaiting: (() => void) | undefined;
     let stopWatching: (() => void) | undefined;
-    let retry: number | undefined;
-    const fail = (message: string) => {
-      if (disposed || failed) return;
-      failed = true;
-      window.clearTimeout(deadline);
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let stable: ReturnType<typeof setTimeout> | undefined;
+    const hidden = () => document.hidden || document.visibilityState === 'hidden';
+    const release = () => {
+      // Invalidate callbacks before disconnect (noVNC may emit synchronously).
+      version += 1;
+      request?.abort();
+      request = undefined;
+      preparedSocket?.close();
+      preparedSocket = undefined;
+      clearTimeout(retry);
+      clearTimeout(deadline);
+      clearTimeout(stable);
       stopWaiting?.();
       stopWatching?.();
-      input.current?.release();
+      stopWaiting = stopWatching = undefined;
+      input.current?.dispose();
+      input.current = undefined;
+      connection.current = undefined;
       if (rfb) rfb.viewOnly = true;
+      const previous = rfb;
+      rfb = undefined;
+      previous?.disconnect();
+    };
+    const failed = (message: string, cause?: unknown, permanent = false) => {
+      if (disposed) return;
+      release();
+      terminal = permanent;
       setError(message);
-      setPhase('error');
+      setPhase(permanent ? 'error' : 'recovering');
+      if (permanent) return;
+      const delay = readRetryDelay(cause, ++backoff.current.failures);
+      backoff.current.at = Date.now() + delay;
+      if (
+        backoff.current.failures === 1 ||
+        (backoff.current.failures & (backoff.current.failures - 1)) === 0
+      )
+        console.warn('Desktop observation retry scheduled', {
+          attempt: backoff.current.failures,
+          delayMs: delay,
+        });
+      schedule();
     };
-    const recoverDisplay = () => {
-      if (disposed || failed) return;
-      if (recovery >= 2) {
-        fail('The desktop display could not be restored. Reconnect to try again.');
-        rfb?.disconnect();
-        return;
-      }
-      failed = true;
-      window.clearTimeout(deadline);
-      stopWaiting?.();
-      stopWatching?.();
-      input.current?.release();
-      if (rfb) rfb.viewOnly = true;
-      setPhase('recovering');
-      rfb?.disconnect();
-      // Release this viewer's old stream before opening another. Never restart
-      // the Machine or restore input ownership as part of display recovery.
-      retry = window.setTimeout(() => setRecovery(recovery + 1), 750);
-    };
-    const deadline = window.setTimeout(() => {
-      fail('The screen is taking longer than expected. Reconnect to try again.');
-      rfb?.disconnect();
-    }, 30_000);
-    void import('@novnc/novnc')
-      .then(({ default: Client }) => {
-        if (disposed || failed || !screen.current) return;
-        const target = screen.current;
+    const begin = async () => {
+      if (disposed || terminal || hidden() || request) return;
+      const current = ++version;
+      const valid = () => !disposed && current === version && !hidden();
+      request = new AbortController();
+      setPhase(backoff.current.failures ? 'recovering' : 'connecting');
+      deadline = setTimeout(() => {
+        if (valid()) failed('The screen is taking longer than expected. Reconnecting…');
+      }, 30_000);
+      try {
+        // A browser WebSocket hides failed-handshake headers. Discovery exposes
+        // the shared route budget's Retry-After before opening another stream.
         const prepared = takePreparedDesktop({ context, owner }, agentId);
+        preparedSocket = prepared?.socket;
+        if (!prepared) await discovery?.desktop(agentId, { signal: request.signal });
+        if (!valid()) {
+          prepared?.socket.close();
+          return;
+        }
+        const { default: Client } = await import('@novnc/novnc');
+        if (!valid() || !screen.current) {
+          prepared?.socket.close();
+          return;
+        }
+        const target = screen.current;
         try {
           rfb = new Client(target, prepared?.socket ?? desktopSocketUrl(agentId));
-        } catch (error) {
+        } catch (cause) {
           prepared?.socket.close();
-          throw error;
+          throw cause;
         }
+        preparedSocket = undefined;
         rfb.scaleViewport = true;
-        // Keep Agent screenshot coordinates stable while the viewer scales.
         rfb.resizeSession = false;
         rfb.background = 'var(--dsw-alias-bg-layer-3)';
         rfb.viewOnly = true;
         input.current = desktopInput(rfb, target);
         connection.current = rfb;
         rfb.addEventListener('connect', () => {
-          if (disposed || failed) return;
+          if (!valid()) return;
           setPhase('loading');
           stopWaiting = waitForDesktopFrame(target, () => {
-            if (disposed || failed) return;
-            window.clearTimeout(deadline);
+            if (!valid()) return;
+            clearTimeout(deadline);
+            setError('');
             setPhase('ready');
+            // Short-lived connections must not reset an ongoing failure storm.
+            stable = setTimeout(() => {
+              backoff.current = { agentId, failures: 0, at: 0 };
+            }, 30_000);
             stopWatching = watchDesktopDisplay(
               target,
               () => {
                 if (rfb) rfb.scaleViewport = true;
               },
-              recoverDisplay,
+              () => {
+                if (valid()) failed('Restoring the desktop display…');
+              },
             );
           });
         });
-        rfb.addEventListener('disconnect', () =>
-          fail('Connection lost. Reconnect, and close any other desktop viewer if needed.'),
-        );
-        rfb.addEventListener('securityfailure', () => fail('Desktop connection refused.'));
+        rfb.addEventListener('disconnect', () => {
+          if (valid()) failed('Connection lost. Reconnecting automatically…');
+        });
+        rfb.addEventListener('securityfailure', () => {
+          if (valid()) failed('Desktop connection refused.', undefined, true);
+        });
         prepared?.replay();
-      })
-      .catch(() => fail('Could not load the desktop viewer. Reconnect to try again.'));
+      } catch (cause) {
+        if (valid())
+          failed(
+            'Desktop is temporarily unavailable. Reconnecting…',
+            cause,
+            cause instanceof ApiError && [401, 403].includes(cause.status),
+          );
+      }
+    };
+    function schedule() {
+      clearTimeout(retry);
+      if (disposed || terminal || hidden()) return;
+      const delay = Math.max(0, backoff.current.at - Date.now());
+      if (delay) retry = setTimeout(() => void begin(), delay);
+      else void begin();
+    }
+    const visibility = () => {
+      if (hidden()) {
+        release();
+        setPhase('recovering');
+      } else schedule();
+    };
+    document.addEventListener('visibilitychange', visibility);
+    schedule();
     return () => {
       disposed = true;
-      window.clearTimeout(deadline);
-      window.clearTimeout(retry);
-      stopWaiting?.();
-      stopWatching?.();
-      input.current?.dispose();
-      input.current = undefined;
-      connection.current = undefined;
-      rfb?.disconnect();
+      release();
+      document.removeEventListener('visibilitychange', visibility);
     };
-  }, [agentId, attempt, context, owner, recovery, runtimeReady]);
+  }, [agentId, attempt, context, discovery, owner, runtimeReady]);
 
   return { screen, phase, error };
 }
