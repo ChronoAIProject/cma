@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const PAGE_SIZE: i64 = 16;
+pub(super) const PAGE_SIZE: i64 = 4;
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Lane {
     Live,
