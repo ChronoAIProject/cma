@@ -113,6 +113,19 @@ impl AgentWorkerStore for InMemorySandboxStore {
 }
 
 impl InMemorySandboxStore {
+    /// Inject known publication outcomes at the validated, pre-commit boundary.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inject_agent_work_publications(
+        &self,
+        id: AgentId,
+        outcomes: impl IntoIterator<Item = (crate::sandbox::AgentWorkStep, SandboxStoreError)>,
+    ) {
+        self.agent_work_publication_faults
+            .lock()
+            .expect("publication faults poisoned")
+            .insert(id, outcomes.into_iter().collect());
+    }
+
     fn commit_work(
         &self,
         mutation: AgentWorkMutation,
@@ -124,6 +137,21 @@ impl InMemorySandboxStore {
         let mut state = self.lock();
         let mut candidate = state.clone();
         validate_mutation(&candidate, &mutation, marker)?;
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let mut faults = self
+                .agent_work_publication_faults
+                .lock()
+                .expect("publication faults poisoned");
+            if let Some(pending) = faults.get_mut(&mutation.agent.id) {
+                if pending
+                    .front()
+                    .is_some_and(|(step, _)| *step == mutation.agent.work.step)
+                {
+                    return Err(pending.pop_front().expect("front checked").1);
+                }
+            }
+        }
 
         let current = candidate
             .agents

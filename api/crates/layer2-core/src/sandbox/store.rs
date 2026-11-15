@@ -372,12 +372,18 @@ pub trait SandboxTransactionStore: Send + Sync {
     async fn commit(&self, transaction: SandboxTransaction) -> Result<(), SandboxStoreError>;
 }
 
+#[cfg(any(test, feature = "test-support"))]
+type AgentWorkPublicationFaults =
+    HashMap<AgentId, std::collections::VecDeque<(super::AgentWorkStep, SandboxStoreError)>>;
+
 #[derive(Clone, Default)]
 pub struct InMemorySandboxStore {
     #[cfg(test)]
     log_rows_read: Arc<std::sync::atomic::AtomicUsize>,
     #[cfg(test)]
     artifact_body_reads: Arc<std::sync::atomic::AtomicUsize>,
+    #[cfg(any(test, feature = "test-support"))]
+    agent_work_publication_faults: Arc<Mutex<AgentWorkPublicationFaults>>,
     managed_runtime_version: Option<String>,
     state: Arc<Mutex<State>>,
     profiles: crate::profiles::InMemoryProfileStore,
