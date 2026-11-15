@@ -344,7 +344,7 @@ async fn retained_warmer_is_off_by_default_and_enforces_explicit_owned_canary_sc
         enabled: true,
         warm_enabled: true,
         view_scopes: vec![canary.clone()],
-        warm_scopes: vec![canary],
+        warm_scopes: vec![canary.into()],
         ..Default::default()
     });
     let default = ViewInput::default().validate(now()).unwrap();

@@ -21,11 +21,14 @@ fn owned(index: usize) -> SandboxAdmission {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn different_owners_and_store_handles_cannot_overshoot_global_capacity() {
     let (client, database) = database("global_concurrent").await;
+    let peer = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
     let left = MongoSandboxStore::open(&client, &database)
         .await
         .unwrap()
         .with_global_sandbox_limit(3);
-    let right = MongoSandboxStore::open(&client, &database)
+    let right = MongoSandboxStore::open(&peer, &database)
         .await
         .unwrap()
         .with_global_sandbox_limit(3);
@@ -60,7 +63,7 @@ async fn different_owners_and_store_handles_cannot_overshoot_global_capacity() {
         3
     );
     // Startup must accept the durable fence and recover capacity without a counter.
-    let restarted = MongoSandboxStore::open(&client, &database)
+    let restarted = MongoSandboxStore::open(&peer, &database)
         .await
         .unwrap()
         .with_global_sandbox_limit(3);

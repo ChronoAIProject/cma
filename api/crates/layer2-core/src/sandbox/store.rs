@@ -28,6 +28,16 @@ mod agent_response_log;
 pub use agent_response_log::{indexed, AgentResponseLogStore, AgentResponseLogWindow};
 mod agent_log_publication;
 pub use agent_log_publication::AgentLogPublicationIdentity;
+mod sandbox_worker;
+pub use sandbox_worker::SandboxWorkerStore;
+mod work_authority;
+mod work_lease;
+mod work_snapshot;
+pub use work_authority::{ClaimedWork, WorkAuthority};
+pub use work_lease::{
+    WorkAuthorityProtocol, WorkLeaseGrant, WORK_LEASE_SECONDS, WORK_RENEW_SECONDS,
+};
+pub use work_snapshot::{sandbox_content_matches, workspace_content_matches};
 mod workspace_worker;
 pub use workspace_worker::{WorkspacePreparationCompletion, WorkspaceWorkerStore};
 
@@ -90,8 +100,8 @@ mod agent_sign_in;
 pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
-    AgentConnectionRecoveryRequest, AgentRetryObservation, AgentWorkMutation, AgentWorkerStore,
-    VersionedWorktree,
+    AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation, AgentWorkMutation,
+    AgentWorkerStore, VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
@@ -332,39 +342,6 @@ pub trait SandboxEventStore: Send + Sync {
         after: u64,
         limit: u16,
     ) -> Result<Vec<SandboxEvent>, SandboxStoreError>;
-}
-
-/// Durable lifecycle work discovery, lease fencing and terminal purge.
-#[async_trait]
-pub trait SandboxWorkerStore: Send + Sync {
-    /// Completed installation attached to this exact ownership and runtime.
-    /// The worker must match the current request digest and inspect the live
-    /// process before advancing; this proof never authorizes runtime dispatch.
-    async fn completed_installation_digest(
-        &self,
-        _sandbox: &Sandbox,
-    ) -> Result<Option<String>, SandboxStoreError> {
-        Ok(None)
-    }
-
-    async fn due_sandbox_work(
-        &self,
-        now: &str,
-        limit: u16,
-    ) -> Result<Vec<SandboxId>, SandboxStoreError>;
-    async fn claim_sandbox_work(
-        &self,
-        id: &SandboxId,
-        holder: &str,
-        now: String,
-        lease_expires_at: String,
-    ) -> Result<Option<Sandbox>, SandboxStoreError>;
-    async fn purge_sandbox(
-        &self,
-        id: &SandboxId,
-        expected_revision: u64,
-        now: &str,
-    ) -> Result<(), SandboxStoreError>;
 }
 
 #[derive(Debug, Clone)]

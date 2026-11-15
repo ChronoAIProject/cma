@@ -352,3 +352,6 @@ mod ceilings;
 
 #[path = "sandbox_admission/pending_home_mongo_tests.rs"]
 mod pending_home_ceilings;
+
+#[path = "sandbox_owner_admission_mongo_tests.rs"]
+mod owner_replicas;

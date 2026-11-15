@@ -405,6 +405,15 @@ impl AgentTitleGenerationError {
 /// Deployment model call made only while the caller owns generation authority.
 #[async_trait]
 pub trait AgentTitleGenerator: Send + Sync {
+    /// Refuse custody unless the adapter implements a preparation boundary that
+    /// cannot send. Legacy generators remain usable only before the reader floor.
+    async fn prepare(
+        &self,
+        _request: AgentTitleGenerationRequest,
+    ) -> Result<Box<dyn super::PreparedAgentTitle>, AgentTitleGenerationError> {
+        Err(AgentTitleGenerationError::unavailable())
+    }
+
     async fn generate(
         &self,
         request: AgentTitleGenerationRequest,

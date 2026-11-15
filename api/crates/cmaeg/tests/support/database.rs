@@ -14,6 +14,13 @@ impl Drop for DatabaseFixture {
 }
 impl DatabaseFixture {
     pub async fn new(binary: &std::path::Path) -> Self {
+        Self::with_migration(binary, "--migrate").await
+    }
+    #[allow(dead_code)] // Only the enabled multi-process fixture needs the additive migration.
+    pub async fn replicas(binary: &std::path::Path) -> Self {
+        Self::with_migration(binary, "--migrate-replicas").await
+    }
+    async fn with_migration(binary: &std::path::Path, migration: &str) -> Self {
         let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
             .expect("run the authenticated service Mongo contract");
         let admin = Client::with_uri_str(&uri).await.unwrap();
@@ -45,7 +52,7 @@ impl DatabaseFixture {
         url.set_path(&format!("/{name}"));
         url.set_query(Some("directConnection=true"));
         let output = tokio::process::Command::new(binary)
-            .arg("--migrate")
+            .arg(migration)
             .env("CMAEG_MONGODB_DATABASE", &name)
             .env("CMAEG_MONGODB_URI", url.as_str())
             .output()

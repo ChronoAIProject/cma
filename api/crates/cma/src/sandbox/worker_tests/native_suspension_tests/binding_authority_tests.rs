@@ -10,6 +10,9 @@ mod fixture;
 #[path = "binding_authority_transport.rs"]
 mod transport;
 
+#[path = "../reconciliation_tests/startup_native_order.rs"]
+mod startup_native_order;
+
 #[tokio::test]
 async fn due_reserved_native_status_rechecks_every_authority_and_protects_cleanup() {
     for fresh in [false, true] {

@@ -1,5 +1,6 @@
 use super::super::{workspace_proof, NativePreparedWorkspaceProof};
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 
 fn prepared_record() -> Record {
     let plan = plan();
@@ -231,7 +232,7 @@ async fn workspace_completion_survives_health_and_claim_with_old_record_fallback
         .await
         .unwrap();
     let claim = store
-        .claim_native_prepared_work(NOW, LATER)
+        .claim_native_prepared_work(NOW, &lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -286,7 +287,12 @@ async fn workspace_completion_survives_health_and_claim_with_old_record_fallback
         panic!("fresh workspace");
     };
     let claimed = store
-        .claim_workspace_work(&workspace.id, "proof-worker", NOW.into(), LATER.into())
+        .claim_workspace_work(
+            &workspace.id,
+            "proof-worker",
+            NOW.into(),
+            work_lease_deadline(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -295,6 +301,32 @@ async fn workspace_completion_survives_health_and_claim_with_old_record_fallback
         .await
         .unwrap()
         .unwrap();
+    let independent_client =
+        mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    let independent = MongoSandboxStore::open(&independent_client, &name)
+        .await
+        .unwrap();
+    let now = std::time::SystemTime::now();
+    independent
+        .renew_workspace_work(
+            &claimed,
+            &layer2_core::rfc3339_at(now),
+            &layer2_core::rfc3339_at(now + std::time::Duration::from_secs(120)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    // The claimant's in-flight snapshot predates renewal. It must still use
+    // the original prepared receipt, without replaying preparation or setup.
+    assert_eq!(
+        store
+            .prepared_workspace_completion(&parent, &claimed)
+            .await
+            .unwrap(),
+        Some(completed.clone())
+    );
     let mut stale = claimed.clone();
     stale.revision += 1;
     assert!(store

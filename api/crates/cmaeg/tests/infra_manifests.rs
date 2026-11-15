@@ -18,6 +18,8 @@ mod lifecycle;
 mod native_whatsapp;
 #[path = "infra_manifests/owner_keys.rs"]
 mod owner_keys;
+#[path = "infra_manifests/release_allocator.rs"]
+mod release_allocator;
 
 use fixtures::{set_config, with_memory};
 

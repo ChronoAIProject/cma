@@ -70,6 +70,7 @@ pub async fn verify_with_authority(
                         MEDIA_CONTINUATIONS,
                         USES,
                         CUTOVERS,
+                        crate::console::session_backend::schema::COLLECTION,
                     ]
                     .contains(&collection))
             {
@@ -161,6 +162,7 @@ pub(crate) fn migration_validator() -> Document {
             "required":["_id","version"],"properties":{
                 "_id":{"bsonType":"string"},"version":{"enum":[1,2,3,4,5,6]}}},
         "$or":[{"_id":"schema","version":2},
+            {"_id":"replicas","version":1},
             {"_id":"thread_fences","version":1},{"_id":"whatsapp_forms","version":1},
             {"_id":"media_continuations","version":1},{"_id":"worker_credentials","version":1},
             {"_id":"worker_tracking_cutover","version":1},
@@ -172,8 +174,14 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     cma_service_auth::browser::migrate(db, SESSIONS)
         .await
         .map_err(failure)?;
-    let record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
+    let mut record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
     "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
+    record_validator
+        .get_document_mut("$jsonSchema")
+        .unwrap()
+        .get_document_mut("properties")
+        .unwrap()
+        .insert("replica", super::replica_schema::projection_schema());
     let mut interaction_validator = record_validator.clone();
     let interaction_schema = interaction_validator
         .get_document_mut("$jsonSchema")
