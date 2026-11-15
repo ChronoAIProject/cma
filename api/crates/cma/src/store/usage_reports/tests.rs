@@ -422,3 +422,5 @@ mod bucket_ranges;
 mod rebaseline;
 
 mod range_measurement;
+
+mod hotfix_matrix;
