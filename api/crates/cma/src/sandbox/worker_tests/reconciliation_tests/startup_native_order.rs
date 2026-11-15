@@ -116,7 +116,8 @@ impl NativeStartup {
             let handle = provisioning
                 .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
                     1,
-                    crate::sandbox::runtime_mapping::sandbox_spec(&sibling, "test"),
+                    crate::sandbox::runtime_mapping::sandbox_spec(&sibling, "test")
+                        .expect("valid startup sibling runtime authority"),
                 ))
                 .await
                 .unwrap();
