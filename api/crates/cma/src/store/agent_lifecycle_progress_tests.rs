@@ -5,6 +5,8 @@ mod support;
 use support::Fixture;
 #[path = "agent_lifecycle_progress_race_tests.rs"]
 mod races;
+#[path = "agent_lifecycle_progress_replicas.rs"]
+mod replicas;
 
 const OBSERVATIONS: [(&str, &str, &str); 8] = [
     ("sandbox_ready", "running", "Preparing the Agent Sandbox"),

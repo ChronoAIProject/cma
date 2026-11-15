@@ -32,3 +32,25 @@ fn sandbox_snapshot_is_opt_in_and_detail_timings_are_default_on() {
         }
     }
 }
+
+#[test]
+fn agent_file_read_timings_are_default_off_and_strict() {
+    let key = "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |name| {
+            Ok(if name == key {
+                value.map(str::to_owned)
+            } else {
+                None
+            })
+        })
+        .unwrap();
+        assert_eq!(flags.agent_file_read_timings, expected);
+    }
+    for invalid in ["", "1", "TRUE", " true "] {
+        assert!(FeatureFlags::from_lookup(&mut |name| Ok(
+            (name == key).then(|| invalid.to_owned())
+        ))
+        .is_err());
+    }
+}

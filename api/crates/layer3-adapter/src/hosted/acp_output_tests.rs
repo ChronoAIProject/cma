@@ -384,3 +384,6 @@ async fn cancelling_open_closes_its_reader_and_relay_before_retained_output_can_
 
 #[path = "acp_output_json_tests.rs"]
 mod json_budget_tests;
+
+#[path = "acp_owned_output_tests.rs"]
+mod owned;

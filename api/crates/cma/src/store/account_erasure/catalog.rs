@@ -74,6 +74,7 @@ pub(crate) fn validate_catalog() -> Result<(), &'static str> {
     use std::collections::BTreeSet;
     let expected: BTreeSet<_> = super::super::isolation::COLLECTIONS
         .iter()
+        .chain(super::super::isolation::replicas::COLLECTIONS)
         .copied()
         .collect();
     let actual: BTreeSet<_> = ERASURE.iter().map(|entry| entry.collection).collect();

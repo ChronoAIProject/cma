@@ -2,6 +2,60 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxCredentialCustody for MongoSandboxCredentialStore {
+    async fn requires_no_resend(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<bool, CredentialCustodyError> {
+        if self
+            .intents
+            .find_one(doc! {"_id":sandbox.id.as_str()})
+            .await
+            .map_err(|_| {
+                CredentialCustodyError::Unavailable("issuance custody unavailable".into())
+            })?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .sandboxes
+            .find_one(doc! {"_id":sandbox.id.as_str(),"document_schema_version":3_i64})
+            .await
+            .map_err(|_| CredentialCustodyError::Unavailable("work floor unavailable".into()))?
+            .is_some())
+    }
+
+    async fn issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+    ) -> Result<Option<crate::sandbox::CredentialIssuance>, CredentialCustodyError> {
+        issuance::read(self, sandbox).await
+    }
+    async fn begin_issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        issuance::begin(self, sandbox, intent).await
+    }
+    async fn accept_issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+        material: &CredentialMaterial,
+    ) -> Result<(), CredentialCustodyError> {
+        issuance::accept(self, sandbox, intent, material).await
+    }
+    async fn observe_issuance(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+        observation: crate::sandbox::IssuanceObservation,
+        _now: std::time::SystemTime,
+    ) -> Result<(), CredentialCustodyError> {
+        issuance::observe(self, sandbox, intent, observation).await
+    }
+
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError> {
         let document = self.document(&material).map_err(custody_store_error)?;
         self.collection

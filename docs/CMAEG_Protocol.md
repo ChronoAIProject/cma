@@ -1645,10 +1645,27 @@ does not own the original primary waiter. This includes concurrent duplicate
 requests and retrying an event first submitted asynchronously. It does not
 start another provider turn, replace the original waiter, or promise replay.
 Only the request whose waiter was retained by the winning admission receives
-the live 200 SSE response. If the acceptance budget expires before this waiter
-is confirmed, the request returns 202 JSON and releases its waiter; pending
+the live 200 SSE response. In replica mode, that waiter retains its original
+process identity. A different execution owner can forward a live frame to it
+through an authenticated internal hop, after checking the persisted pending
+frame, current channel authority and exact execution/partition leases. This
+hop has a five-second bound and never retries an ambiguous acknowledgement.
+`buffered` still means only that the original process queue accepted the frame;
+process loss, disconnect or missing membership remains unavailable or lost
+stream delivery, without repeating the provider operation. If the acceptance
+budget expires before this waiter is confirmed, the request returns 202 JSON and releases its waiter; pending
 admission and provider work continue. It does not open an unowned stream that
 could remain empty when a concurrent duplicate is resolved.
+
+For an admitted ordinary stream in replica mode, the original ingress observes
+the primary target once per second while its waiter remains live. A confirmed
+terminal state or lost terminal delivery closes that waiter with a content-free
+`cmaeg.failed` / `sync_delivery_lost` control. Status reads, including access to a
+shared pool of 32 observers, have a two-second bound; failed observation closes
+only the connection with `sync_delivery_observation_unavailable` uncertainty.
+Neither control changes durable delivery evidence or retries the provider or
+answer. Queued and executing work has no new total stream deadline. Explicit
+media-continuation streams retain their existing separate lifetime contract.
 
 Legacy Custom retries using `cma_codex` read the provider's original admitted event under the
 channel's current credential before starting work. Missing CloudEvent `time`

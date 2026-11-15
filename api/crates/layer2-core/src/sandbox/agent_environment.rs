@@ -18,7 +18,7 @@ pub struct BrowserObservationView {
     pub observation: BrowserObservation,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentAvailability {
     Available,
@@ -28,7 +28,7 @@ pub enum EnvironmentAvailability {
     TemporarilyUnavailable,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EnvironmentFeature {
     pub state: EnvironmentAvailability,
     pub reason: &'static str,

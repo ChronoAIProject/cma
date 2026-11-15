@@ -17,11 +17,14 @@ mod account_deletion;
 mod activity;
 mod admission_log;
 mod auth_mode;
+mod debug;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
+mod agent_manager;
 mod agent_sandbox;
+pub(crate) use agent_manager::AgentManagerReplicas;
 mod execution;
 mod gateway;
 mod home;
@@ -29,15 +32,19 @@ mod oauth_resource;
 mod profiles;
 mod public_streams;
 mod rate_default_lease;
+mod rate_limits;
+pub use rate_limits::RateLimitConfig;
 mod runtime;
 
 mod features;
+mod quiet_output;
 mod task_experience;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
+pub(crate) mod report_views;
 mod sandbox_billing;
 pub(crate) mod sandbox_metrics;
 mod usage_billing;
@@ -68,72 +75,6 @@ const PINNED_CLOUDFLARE_PROXY_CIDRS: &str = concat!(
     "2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,",
     "2a06:98c0::/29,2c0f:f248::/32",
 );
-
-/// Per-key request budgets enforced by this process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RateLimitConfig {
-    pub admission_per_minute: NonZeroU32,
-    pub health_per_minute: NonZeroU32,
-    pub default_per_minute: NonZeroU32,
-    pub create_per_minute: NonZeroU32,
-    pub input_per_minute: NonZeroU32,
-    pub control_per_minute: NonZeroU32,
-    pub control_tier_enabled: bool,
-    pub response_input_tier_enabled: bool,
-    pub default_lease_enabled: bool,
-}
-
-impl RateLimitConfig {
-    fn from_lookup(
-        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
-    ) -> Result<Self, String> {
-        Ok(Self {
-            default_lease_enabled: rate_default_lease::enabled(lookup)?,
-            control_tier_enabled: match lookup("CHRONO_SERVER_RATE_CONTROL_ENABLED")?.as_deref() {
-                None | Some("false") => false,
-                Some("true") => true,
-                _ => return Err("CHRONO_SERVER_RATE_CONTROL_ENABLED must be true or false".into()),
-            },
-            response_input_tier_enabled: match lookup("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED")?
-                .as_deref()
-            {
-                None | Some("false") => false,
-                Some("true") => true,
-                _ => {
-                    return Err(
-                        "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED must be true or false".into(),
-                    )
-                }
-            },
-            admission_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE",
-                6_000,
-                1,
-            )?,
-            health_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_HEALTH_PER_MINUTE",
-                120,
-                MINIMUM_HEALTH_REQUESTS_PER_MINUTE,
-            )?,
-            default_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_DEFAULT_PER_MINUTE",
-                600,
-                1,
-            )?,
-            create_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_CREATE_PER_MINUTE", 10, 1)?,
-            input_per_minute: positive_u32(lookup, "CHRONO_SERVER_RATE_INPUT_PER_MINUTE", 120, 1)?,
-            control_per_minute: positive_u32(
-                lookup,
-                "CHRONO_SERVER_RATE_CONTROL_PER_MINUTE",
-                120,
-                1,
-            )?,
-        })
-    }
-}
 
 /// TCP peers allowed to provide the load balancer's client-address chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -220,12 +161,14 @@ pub struct Config {
     pub auth_encryption_key: AuthEncryptionKey,
     pub activity_retention: Duration,
     pub activity_async_enabled: bool,
+    pub activity_operational_read_sampling_enabled: bool,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
+    pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
@@ -234,43 +177,6 @@ pub struct Config {
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
-}
-
-impl std::fmt::Debug for Config {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Config")
-            .field("bind", &self.bind)
-            .field("public_url", &self.public_url)
-            .field(
-                "agent_access_retained_origins",
-                &self.agent_access_retained_origins,
-            )
-            .field("image_manager_base_url", &self.image_manager_base_url)
-            .field("nyxid_public_url", &self.nyxid_public_url)
-            .field("cors_origins", &self.cors_origins)
-            .field("rate_limits", &self.rate_limits)
-            .field("public_stream_limit", &self.public_stream_limit)
-            .field("trusted_proxies", &self.trusted_proxies)
-            .field("mongodb_uri", &"<redacted>")
-            .field("mongodb_database", &self.mongodb_database)
-            .field("mongodb_authority", &self.mongodb_authority)
-            .field("deployment_id", &self.deployment_id)
-            .field("runtime", &self.runtime)
-            .field("execution", &self.execution)
-            .field("baseline_services", &self.baseline_services)
-            .field("auth_encryption_key", &self.auth_encryption_key)
-            .field("activity_retention", &self.activity_retention)
-            .field("activity_async_enabled", &self.activity_async_enabled)
-            .field("default_profiles", &self.default_profiles)
-            .field(
-                "agent_manager_sandbox_capacity",
-                &self.agent_manager_sandbox_capacity,
-            )
-            .field("auth_mode", &self.auth_mode)
-            .field("features", &self.features)
-            .finish()
-    }
 }
 
 impl Config {
@@ -464,6 +370,7 @@ impl Config {
             auth_encryption_key,
             activity_retention,
             activity_async_enabled: activity::enabled(&mut lookup)?,
+            activity_operational_read_sampling_enabled: activity::sampling_enabled(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
@@ -471,6 +378,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
+            agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
             agent_log_fleet_percent,

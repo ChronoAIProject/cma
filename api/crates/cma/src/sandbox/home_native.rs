@@ -74,17 +74,32 @@ async fn observe_assignment(
     // The controller can assign warm capacity just after Claim creation. Observe
     // only this persisted receipt briefly before yielding to durable retry;
     // dependency and identity errors still leave immediately through `?`.
-    tokio::time::timeout(Duration::from_secs(5), async {
+    let readiness = layer3_adapter::agent_sandbox::NativeReadinessObservation::default();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    tokio::time::timeout_at(deadline, async {
         loop {
-            let assigned = pools.observe_claim(original).await?;
-            if assigned.sandbox_name.is_some() {
+            let started = tokio::time::Instant::now();
+            // A wake at the deadline must not dispatch another read and clear
+            // Pending evidence without any remaining observation budget.
+            if started >= deadline {
+                return Err(readiness.timeout());
+            }
+            if let Some(assigned) = readiness
+                .observe(async {
+                    let assigned = pools.observe_claim(original).await?;
+                    Ok(assigned.sandbox_name.is_some().then_some(assigned))
+                })
+                .await?
+            {
                 return Ok(assigned);
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            // Read latency consumes the polling interval. Anchor each wait to
+            // this read, not a ticker, so slow reads never cause catch-up bursts.
+            tokio::time::sleep_until(started + Duration::from_millis(250)).await;
         }
     })
     .await
-    .map_err(|_| AdapterError::Unavailable("native claim assignment remains pending".into()))?
+    .map_err(|_| readiness.timeout())?
 }
 
 pub(super) async fn next_cleanup(

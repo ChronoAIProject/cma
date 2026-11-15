@@ -49,6 +49,11 @@ impl MediaSendGate {
     fn live(&self) -> bool {
         let now = (self.store.0.clock)();
         !self.cancelled.load(Ordering::SeqCst)
+            && self
+                .lease
+                .partition
+                .as_ref()
+                .is_none_or(|token| token.live())
             && Instant::now() < self.deadline
             && self
                 .lease

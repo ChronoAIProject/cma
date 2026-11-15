@@ -6,22 +6,25 @@ pub(super) enum ProviderVerificationError {
     Rejected(String),
     #[error("{0}")]
     Unavailable(String),
-    /// Only these classified transport / gateway failures permit retry and fallback.
+    /// Only these classified transport / gateway failures permit transient retry.
     #[error("identity provider unavailable: {0}")]
     Transient(&'static str),
+    #[error("identity provider rate limited")]
+    RateLimited(super::identity_throttle::RetryAfter),
 }
 
 impl ProviderVerificationError {
     pub(super) fn reason(&self) -> &'static str {
         match self {
             Self::Transient(reason) => reason,
+            Self::RateLimited(_) => "http_429",
             Self::Rejected(_) => "rejected",
             Self::Unavailable(_) => "invalid_evidence",
         }
     }
 
     /// Preserve the final typed verification reason before the public projection.
-    /// This runs per caller, after single-flight fan-out and fallback decisions.
+    /// This runs per caller, after single-flight fan-out.
     pub(super) fn record_unavailable(&self) {
         use layer2_core::dependency_diagnostics::{Dependency, Failure, Reason};
         let reason = match self.reason() {
@@ -29,11 +32,15 @@ impl ProviderVerificationError {
             "connection" => Reason::Connection,
             "http_502" => Reason::BadGateway,
             "http_503" => Reason::UpstreamUnavailable,
+            "http_429" => Reason::RateLimited,
             "deadline" => Reason::VerificationDeadline,
             "invalid_evidence" => Reason::InvalidEvidence,
             _ => Reason::Unknown,
         };
         Failure::new(Dependency::IdentityProvider, reason).record();
+        if let Self::RateLimited(hint) = self {
+            hint.record();
+        }
     }
 
     pub(super) fn transport(error: reqwest::Error) -> Self {
@@ -51,7 +58,8 @@ impl ProviderVerificationError {
             401 | 403 => Self::Rejected("identity provider refused verification".into()),
             502 => Self::Transient("http_502"),
             503 => Self::Transient("http_503"),
-            // In particular, never bypass 429 limits or retry configuration errors.
+            // The HTTP reader handles 429 with its Retry-After headers. Other
+            // status codes cannot become transient configuration failures.
             _ => Self::Unavailable(format!(
                 "identity provider returned HTTP {}",
                 status.as_u16()
@@ -63,7 +71,9 @@ impl ProviderVerificationError {
         use layer2_core::sandbox::agent_io::CommandAuthorizationError;
         match self {
             Self::Rejected(_) => CommandAuthorizationError::Revoked,
-            Self::Unavailable(_) | Self::Transient(_) => CommandAuthorizationError::Unavailable,
+            Self::Unavailable(_) | Self::Transient(_) | Self::RateLimited(_) => {
+                CommandAuthorizationError::Unavailable
+            }
         }
     }
 }

@@ -1,7 +1,9 @@
 //! The Sandbox -> Workspace -> Worktree -> Agent domain hierarchy.
 
 mod desktop;
-pub use desktop::{DesktopConnection, DesktopError, DesktopFrame, DesktopService};
+pub use desktop::{
+    DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
+};
 mod admin;
 mod agent;
 pub mod agent_artifacts;
@@ -40,6 +42,7 @@ mod agent_log_projection;
 mod agent_reads_fold;
 mod agent_reads_transcript;
 mod agent_reads_usage;
+mod agent_transcript_window;
 pub use agent_log_projection::{
     AgentLogAnswerEvidence, AgentLogAnswerLookup, AgentLogEvidenceChange, AgentLogProjectionState,
     AgentLogQueuedReference, AgentLogTurnFacts, AgentLogTurnLookup, BoundedAgentLogFold,
@@ -47,6 +50,7 @@ pub use agent_log_projection::{
 pub use agent_reads_transcript::{
     AgentTranscriptFold, AgentTranscriptPage, AgentTranscriptPageRequest,
 };
+pub use agent_transcript_window::AgentTranscriptWindow;
 mod agent_runtime;
 mod agent_service;
 mod agent_work;
@@ -78,7 +82,9 @@ pub use conversation_observation::{
 };
 pub mod agent_ledger_recovery;
 mod conversation_fold_support;
+mod conversation_record_observation;
 mod conversation_recorder;
+pub use conversation_record_observation::{observe_agent_output, AgentOutputCategory};
 mod creation_admission;
 pub mod ledger_census;
 pub mod ledger_collection_artifact;
@@ -186,8 +192,12 @@ mod service_trust;
 mod status;
 pub mod store;
 mod title;
+mod title_effect;
 mod title_sanitize;
 mod title_service;
+pub use title_effect::{
+    AgentTitleEffect, AgentTitleEffectIntent, AgentTitleEffectState, PreparedAgentTitle,
+};
 mod title_store;
 mod warmup;
 mod workspace;
@@ -255,12 +265,13 @@ pub use checkpoint::{
 };
 pub use checkpoint_capture::{SandboxCheckpointCapture, SandboxCheckpointCapturePhase};
 pub use conversation::{
-    AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
-    MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    AgentConversationError, AgentMessageAssembly, AgentOutputCommit, AgentUpdateOutcome,
+    AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
     AgentHeadSubscription, AgentLiveDelivery, AgentLiveFragment, AgentLiveFragmentKind,
-    AgentLiveSubscription, DurableAgentUpdateRecorder,
+    AgentLivePublisher, AgentLiveSource, AgentLiveSubscription, AgentOutputCoalescePolicy,
+    DurableAgentUpdateRecorder,
 };
 pub use credential::{
     SandboxCredentialAuthority, SandboxCredentialSource, SandboxCredentialState, SandboxRevokeDebt,
@@ -283,13 +294,13 @@ pub use first_message::{
 pub use first_message_service::{AgentWorkAuthority, FirstMessageDispatchOutcome};
 pub use hierarchy::{
     AgentHierarchySummary, HierarchyCounts, HierarchyReadError, HierarchyReadService,
-    HierarchyReadStore, OwnerSandboxQuery, SandboxDetailPhase, SandboxDetailTimer,
-    SandboxHierarchyReading, SandboxHierarchyRecord, SandboxHierarchySummary, SandboxHierarchyView,
-    SandboxInventoryReading, SandboxInventoryRecord, SandboxSnapshotDownload, SharedHierarchyAgent,
-    SharedSandboxHierarchy, SharedSandboxSummary, SharedWorkspaceHierarchy, SharedWorkspaceSummary,
-    SharedWorktreeSummary, WorkspaceHierarchyReading, WorkspaceHierarchyRecord,
-    WorkspaceHierarchySummary, WorkspaceHierarchyView, WorktreeHierarchyReading,
-    WorktreeHierarchySummary,
+    HierarchyReadStore, OwnerSandboxQuery, SandboxAgentLineage, SandboxDetailPhase,
+    SandboxDetailRecord, SandboxDetailTimer, SandboxHierarchyReading, SandboxHierarchyRecord,
+    SandboxHierarchySummary, SandboxHierarchyView, SandboxInventoryReading, SandboxInventoryRecord,
+    SandboxSnapshotDownload, SharedHierarchyAgent, SharedSandboxHierarchy, SharedSandboxSummary,
+    SharedWorkspaceHierarchy, SharedWorkspaceSummary, SharedWorktreeSummary,
+    WorkspaceHierarchyReading, WorkspaceHierarchyRecord, WorkspaceHierarchySummary,
+    WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
 pub use inactivity::{
@@ -392,6 +403,8 @@ mod sandbox_usage_tests;
 mod service_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod title_effect_tests;
 #[cfg(test)]
 mod title_service_tests;
 #[cfg(test)]

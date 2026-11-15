@@ -10,16 +10,6 @@ const MAX_DOCUMENTS: u64 = 2_000_000;
 const MAX_BYTES: u64 = 32 * 1024 * 1024 * 1024;
 const CHUNK: usize = 4 * 1024 * 1024;
 
-pub(crate) fn schema_sha256() -> String {
-    digest(
-        format!(
-            "archive-census-v2\n{:?}\n{}",
-            super::census_catalog::AUDIT,
-            super::super::isolation::COLLECTIONS.join("\n")
-        )
-        .as_bytes(),
-    )
-}
 pub(crate) async fn capture(
     store: &ArchiveStore,
     request: &Request,
@@ -62,7 +52,30 @@ pub(crate) async fn capture(
     let mut external = Vec::new();
     let mut total = 0;
     let mut document_count = 0;
+    let present_optional = store
+        .database
+        .list_collection_names()
+        .filter(doc! {"name":{"$in":super::super::isolation::OPTIONAL_COLLECTIONS}})
+        .await
+        .map_err(|_| REFUSED)?;
     for name in super::super::isolation::COLLECTIONS {
+        // Disabled features have no collection or grants. An absent optional
+        // namespace contributes an explicit empty inventory without reading it.
+        // Existing namespaces still take the normal ownership/authority path.
+        if super::super::isolation::OPTIONAL_COLLECTIONS.contains(name)
+            && !present_optional
+                .iter()
+                .any(|present| present.as_str() == *name)
+        {
+            records.push(DatabaseRecord {
+                collection: (*name).into(),
+                documents: 0,
+                bytes: 0,
+                sha256: digest(&[]),
+                objects: Vec::new(),
+            });
+            continue;
+        }
         let selected =
             super::census::selection(&store.database, name, &closure, &mut session).await?;
         let mut cursor = store

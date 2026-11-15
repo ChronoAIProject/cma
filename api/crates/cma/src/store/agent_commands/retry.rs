@@ -13,6 +13,10 @@ impl CommandAdmissionRetries {
         Self::with_deadline(authority_deadline, None)
     }
 
+    pub(super) fn deadline(&self) -> Instant {
+        self.deadline
+    }
+
     pub(super) fn with_deadline(
         authority_deadline: Option<Instant>,
         retry_deadline: Option<Instant>,

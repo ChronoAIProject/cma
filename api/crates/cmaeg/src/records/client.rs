@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 #[path = "client_guarded.rs"]
 mod guarded;
+pub(crate) use guarded::AdmissionRootWrite;
 
 const RECORD_PATH: &str = "/api/v1/gateway/channel-records";
 
