@@ -50,8 +50,22 @@ fn refusal(detail: &'static str) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Command, Stdio};
+    use std::io::Read;
+    use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
+
+    struct OwnedChild(Child);
+
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            // Non-reaping observation leaves our child's PID reserved. Signal
+            // only while Child still reports it as our live child.
+            if matches!(self.0.try_wait(), Ok(None)) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
 
     #[test]
     fn ordinary_and_mixed_commands_cannot_arm_qualification() {
@@ -85,51 +99,62 @@ mod tests {
 
     #[test]
     fn qualification_stop_is_real_and_continue_refuses() {
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "publication_qualification::tests::qualification_child",
-                "--ignored",
-                "--nocapture",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let pid = child.id() as libc::pid_t;
+        let mut child = OwnedChild(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "publication_qualification::tests::qualification_child",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let pid = child.0.id() as libc::pid_t;
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut stopped = false;
         while Instant::now() < deadline {
-            let mut status = 0;
-            let observed =
-                unsafe { libc::waitpid(pid, &mut status, libc::WUNTRACED | libc::WNOHANG) };
-            if observed == pid {
-                stopped = libc::WIFSTOPPED(status) && libc::WSTOPSIG(status) == libc::SIGSTOP;
-                break;
-            }
-            if observed < 0 {
+            let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let observed = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid as libc::id_t,
+                    &mut status,
+                    libc::WSTOPPED | libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            assert_eq!(observed, 0, "cannot observe owned qualification child");
+            if status.si_signo != 0 {
+                stopped = status.si_code == libc::CLD_STOPPED
+                    && unsafe { status.si_status() } == libc::SIGSTOP;
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
         if !stopped {
-            let _ = child.kill();
-            let _ = child.wait();
             panic!("qualification child did not reach the actual SIGSTOP boundary");
         }
         assert_eq!(unsafe { libc::kill(pid, libc::SIGCONT) }, 0);
         let deadline = Instant::now() + Duration::from_secs(10);
-        while child.try_wait().unwrap().is_none() {
+        while child.0.try_wait().unwrap().is_none() {
             if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
                 panic!("continued qualification child failed to refuse serving");
             }
             std::thread::sleep(Duration::from_millis(10));
         }
-        let output = child.wait_with_output().unwrap();
-        assert!(output.status.success(), "{output:?}");
-        assert_eq!(output.stderr, BOUNDARY);
+        let status = child.0.wait().unwrap();
+        let mut stderr = Vec::new();
+        child
+            .0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_end(&mut stderr)
+            .unwrap();
+        assert!(status.success(), "{status:?}");
+        assert_eq!(stderr, BOUNDARY);
     }
 }
