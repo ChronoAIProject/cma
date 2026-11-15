@@ -11,7 +11,7 @@ use axum::{
 };
 use layer2_core::{Authorization, Capability, SubjectId};
 use serde_json::json;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 struct Fixture {
@@ -20,6 +20,7 @@ struct Fixture {
     headers: HeaderMap,
     login: SecretDigest,
     calls: Arc<AtomicUsize>,
+    operator_enabled: Arc<AtomicBool>,
     server: tokio::task::JoinHandle<()>,
 }
 impl Drop for Fixture {
@@ -35,12 +36,25 @@ impl Fixture {
         let issuer = base.clone();
         let calls = Arc::new(AtomicUsize::new(0));
         let user_calls = calls.clone();
+        let operator_enabled = Arc::new(AtomicBool::new(true));
+        let provider_operator = operator_enabled.clone();
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(move || { let base = discovery.clone(); async move {
                 Json(json!({"authorization_endpoint": format!("{base}/authorize"), "token_endpoint": format!("{base}/token"), "userinfo_endpoint": format!("{base}/userinfo"), "introspection_endpoint": format!("{base}/introspect")}))
             }}))
             .route("/userinfo", get(move || { let calls = user_calls.clone(); async move { calls.fetch_add(1, Ordering::SeqCst); Json(json!({"sub": "owner"})) } }))
-            .route("/introspect", post(move || { let issuer = issuer.clone(); async move { Json(json!({"active":true,"sub":"owner","iss":issuer,"token_type":"access","exp":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()+3600,"permissions":["cma:*"]})) } }));
+            .route("/introspect", post(move || {
+                let issuer = issuer.clone();
+                let operator_enabled = provider_operator.clone();
+                async move {
+                    let permissions = if operator_enabled.load(Ordering::SeqCst) {
+                        vec!["cma:*"]
+                    } else {
+                        Vec::new()
+                    };
+                    Json(json!({"active":true,"sub":"owner","iss":issuer,"token_type":"access","exp":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()+3600,"permissions":permissions}))
+                }
+            }));
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let store = Arc::new(MemoryAuthStore::default());
         let auth = AuthState::with_store(
@@ -89,6 +103,7 @@ impl Fixture {
             headers,
             login,
             calls,
+            operator_enabled,
             server,
         }
     }
@@ -114,17 +129,58 @@ async fn fresh_existing_cookie_reads_without_changing_custody() {
         .unwrap();
     let proof = authenticate(f.auth.clone(), &f.headers).await.unwrap();
     assert_eq!(proof.caller().subject, before.subject);
-    assert!(proof
-        .recheck()
-        .await
-        .unwrap()
-        .authorization
-        .allows(Capability::ConfigurePlatform));
+    // CLI construction and dispatch both recheck. Each verification replaces
+    // the former live receipt without changing durable credential custody.
+    for _ in 0..3 {
+        assert!(proof
+            .recheck()
+            .await
+            .unwrap()
+            .authorization
+            .allows(Capability::ConfigurePlatform));
+    }
     let after = f.store.subject(&before.subject).await.unwrap().unwrap();
     assert_eq!(after.revision, before.revision);
     assert_eq!(after.token_generation, before.token_generation);
     assert_eq!(after.tokens, before.tokens);
-    assert!(f.calls.load(Ordering::SeqCst) >= 2);
+    assert_eq!(f.calls.load(Ordering::SeqCst), 4);
+}
+
+#[tokio::test]
+async fn operator_recheck_rejects_remote_permission_revocation_without_token_change() {
+    let f = Fixture::new().await;
+    let before = f
+        .store
+        .subject(&SubjectId::new("owner"))
+        .await
+        .unwrap()
+        .unwrap();
+    let proof = authenticate(f.auth.clone(), &f.headers).await.unwrap();
+    assert!(proof
+        .caller()
+        .authorization
+        .allows(Capability::ConfigurePlatform));
+    f.operator_enabled.store(false, Ordering::SeqCst);
+    assert!(matches!(
+        proof.recheck().await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+    assert_eq!(f.calls.load(Ordering::SeqCst), 2);
+    let after = f.store.subject(&before.subject).await.unwrap().unwrap();
+    assert_eq!(after.revision, before.revision);
+    assert_eq!(after.token_generation, before.token_generation);
+    assert_eq!(after.tokens, before.tokens);
+    // Freshly admitted ordinary reads may observe the reduced permissions,
+    // while the older operator proof cannot be reused to regain its authority.
+    let reduced = authenticate(f.auth.clone(), &f.headers).await.unwrap();
+    assert!(!reduced
+        .caller()
+        .authorization
+        .allows(Capability::ConfigurePlatform));
+    assert!(matches!(
+        proof.recheck().await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
 }
 
 #[tokio::test]
