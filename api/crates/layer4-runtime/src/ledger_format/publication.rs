@@ -2,7 +2,9 @@
 //! No-intent initial staging recovery is separately bounded in aborted.
 use std::path::{Path, PathBuf};
 
-use super::{BARRIER, DATABASE, LOCK, MANIFEST, STAGE, TEMP, descriptor::Descriptor, hold_at, io};
+use super::{
+    descriptor::Descriptor, hold_at, hold_io, io, BARRIER, DATABASE, LOCK, MANIFEST, STAGE, TEMP,
+};
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
 use crate::mutation_ledger::Ledger;
@@ -91,11 +93,19 @@ fn verify(
 
 fn only_entries(path: &Path, allowed: &[&str]) -> Result<()> {
     io::directories(path)?;
-    for entry in std::fs::read_dir(path)
-        .map_err(|error| io::io_error("publication.intent_inventory", "intent_inventory", &error))?
-    {
+    for entry in std::fs::read_dir(path).map_err(|error| {
+        hold_io(
+            "publication.intent_inventory",
+            "read_publication_directory",
+            error,
+        )
+    })? {
         let entry = entry.map_err(|error| {
-            io::io_error("publication.intent_inventory", "intent_inventory", &error)
+            hold_io(
+                "publication.intent_inventory",
+                "read_publication_directory",
+                error,
+            )
         })?;
         if !entry
             .file_name()
@@ -122,7 +132,7 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
         intent_identity,
     )?;
     crate::fs_durability::sync_tree(&database)
-        .map_err(|error| io::io_error("publication.stage_sync", "stage_sync", &error))?;
+        .map_err(|error| hold_io("publication.stage_sync", "sync_stage_tree", error))?;
     for path in descriptor.base_markers() {
         if !io::exists(&path)? {
             check_paths(
@@ -146,10 +156,10 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
             intent_identity,
         )?;
         crate::fs_durability::rename(&database, &final_database).map_err(|error| {
-            io::io_error(
+            hold_io(
                 "publication.database_rename",
-                "database_rename_and_sync",
-                &error,
+                "rename_database_and_sync_parents",
+                error,
             )
         })?;
     }
@@ -178,10 +188,10 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
         )?;
         crate::fs_durability::rename(&temporary, &config.state_root.join(MANIFEST)).map_err(
             |error| {
-                io::io_error(
+                hold_io(
                     "publication.manifest_rename",
-                    "manifest_rename_and_sync",
-                    &error,
+                    "rename_manifest_and_sync_parents",
+                    error,
                 )
             },
         )?;
@@ -202,8 +212,13 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
 
 fn intent_identity(config: &RuntimeConfig) -> Result<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::symlink_metadata(config.state_root.join(INTENT))
-        .map_err(|error| io::io_error("publication.intent_identity", "intent_metadata", &error))?;
+    let metadata = std::fs::symlink_metadata(config.state_root.join(INTENT)).map_err(|error| {
+        hold_io(
+            "publication.intent_identity",
+            "inspect_intent_metadata",
+            error,
+        )
+    })?;
     Ok((metadata.dev(), metadata.ino()))
 }
 
@@ -246,10 +261,10 @@ pub(super) fn consume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result
     #[cfg(test)]
     super::tests::checkpoint(&config.state_root, "intent-removal")?;
     crate::fs_durability::remove_file(&config.state_root.join(INTENT)).map_err(|error| {
-        io::io_error(
+        hold_io(
             "publication.intent_consume",
-            "intent_remove_and_sync",
-            &error,
+            "remove_intent_and_sync_parent",
+            error,
         )
     })?;
     #[cfg(test)]
