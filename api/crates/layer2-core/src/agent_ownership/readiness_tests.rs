@@ -312,3 +312,97 @@ async fn unknown_acquisition_outcome_retains_lease_until_expiry_without_unsafe_r
     assert!(!manager.is_ready());
     assert_eq!(store.releases.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test(start_paused = true)]
+async fn terminated_never_ready_scale_up_cannot_touch_ownership_or_delay_serving_peers() {
+    // Both observed deletion and a process termination close admission; a
+    // deletion observation additionally fails membership in the application.
+    for deletion_observed in [false, true] {
+        let store = Arc::new(HeldStore::default());
+        let first = OwnershipCoordinator::register(store.inner.client(), member("serving-a"))
+            .await
+            .unwrap();
+        let second = OwnershipCoordinator::register(store.inner.client(), member("serving-b"))
+            .await
+            .unwrap();
+        let peers = [&first, &second];
+        let existing = AgentId("existing-before-scale-up".into());
+        let mut original = None;
+        for peer in peers {
+            if let Some(authority) = peer.acquire(&existing).await.unwrap() {
+                assert!(original.replace(authority).is_none());
+            }
+        }
+        let original = original.unwrap();
+        let starting = OwnershipCoordinator::prepare(store.clone(), member("scale-up"));
+        let ready = Arc::new(AtomicBool::new(false));
+        starting
+            .set_admission_readiness({
+                let ready = ready.clone();
+                Arc::new(move || ready.load(Ordering::SeqCst))
+            })
+            .unwrap();
+        let attempted: Vec<_> = (0..31)
+            .map(|n| AgentId(format!("scale-up-candidate-{n}")))
+            .collect();
+        // Startup exceeds one lease lifetime while both serving AMs renew.
+        for _ in 0..6 {
+            tokio::time::advance(Duration::from_millis(HEARTBEAT_INTERVAL_MS)).await;
+            for peer in peers {
+                peer.maintain().await.unwrap();
+            }
+            assert!(starting.maintain().await.unwrap().is_empty());
+            assert!(starting.activate().await.is_err());
+            for id in attempted.iter().chain(std::iter::once(&existing)) {
+                assert!(starting.acquire(id).await.is_err());
+            }
+            assert!(starting.owned().await.is_empty());
+            assert_current(&original, store.inner.as_ref()).await;
+        }
+        let terminated = tokio::time::Instant::now();
+        starting.stop_admission();
+        if deletion_observed {
+            starting.fail().await;
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_secs(23), starting.begin_drain())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Completion of dependencies after termination must never reopen it.
+        ready.store(true, Ordering::SeqCst);
+        assert!(starting.activate().await.is_err());
+        assert!(!starting.is_ready());
+        let mut served_by = std::collections::BTreeSet::new();
+        for id in &attempted {
+            assert!(!store.inner.has_owner_history(id).await.unwrap());
+            let mut acquired = None;
+            for peer in peers {
+                if let Some(authority) = peer.acquire(id).await.unwrap() {
+                    assert!(acquired.replace(authority).is_none());
+                    assert!(peer.is_ready());
+                }
+            }
+            let authority = acquired
+                .expect("a serving AM must own each attempted Agent within the drain bound");
+            assert_current(&authority, store.inner.as_ref()).await;
+            assert_eq!(
+                store.inner.owner(id).await.unwrap().unwrap().token,
+                authority.token
+            );
+            served_by.insert(authority.token.instance_id.clone());
+        }
+        assert_eq!(
+            served_by.len(),
+            2,
+            "both serving AMs must continue owning work"
+        );
+        assert!(terminated.elapsed() < Duration::from_secs(23));
+        assert_current(&original, store.inner.as_ref()).await;
+        assert_eq!(store.inner.membership().await.unwrap().members.len(), 2);
+        assert_eq!(store.registrations.load(Ordering::SeqCst), 0);
+        assert_eq!(store.acquisitions.load(Ordering::SeqCst), 0);
+        assert_eq!(store.releases.load(Ordering::SeqCst), 0);
+    }
+}
