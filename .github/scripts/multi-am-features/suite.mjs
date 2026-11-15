@@ -6,6 +6,7 @@ import {runJourney} from './cma/journey.mjs';
 import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
+import {documentCases} from './features/documents.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
 
@@ -15,15 +16,26 @@ const config = await readConfig(process.stdin);
 const inventory = await loadInventory(join(root, 'inventory'));
 const mappings = JSON.parse(await readFile(join(root, 'case-mapping.json'), 'utf8'));
 await mkdir(config.matrix_output, {recursive: true, mode: 0o700});
-const rows = [], observations = [];
+const rows = [], observations = [], apiObservations = [], savedDocuments = [];
 let phase;
 const journal = await open(join(config.matrix_output, 'cases.private.jsonl'), 'ax', 0o600);
 async function record(row) {
   rows.push(row); await journal.write(JSON.stringify(row) + '\n'); await journal.sync();
 }
 const normal = normalizeConfig(config);
-const user = new API(normal);
-const admin = new API({...normal, bearer: config.admin_bearer});
+const user = new API(normal, observation => apiObservations.push(observation));
+const admin = new API({...normal, bearer: config.admin_bearer}, observation => apiObservations.push(observation));
+async function documentCase(iteration, name, operation) {
+  const start = performance.now(), first = apiObservations.length;
+  const row = {case: name, phase, iteration, verdict: 'RUNNING', routing: 'shared_document_has_no_agent_owner'};
+  try { const value = await operation(); row.verdict = 'PASS'; return value; }
+  catch (error) { row.verdict = 'FAIL'; throw error; }
+  finally {
+    row.ams = [...new Set(apiObservations.slice(first).map(x => x.am))];
+    row.elapsed_ms = performance.now() - start;
+    await record(row);
+  }
+}
 const fixture = {scope: 'LOCAL_DISPOSABLE_TWO_AM', source: config.expected_api_source,
   manifest: config.expected_api_image.split('@')[1], database_disposable: true, single_matrix_writer: true,
   am_origins: normal.ams, run_id: config.run_id, admin_permissions: ADMIN_PERMISSIONS, ordinary_user_has_admin: false};
@@ -41,6 +53,24 @@ try {
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);
+    if (phase === 'after_restart') for (const [index, document] of savedDocuments.entries()) {
+      await documentCase(index + 1, 'user.documents_survive_restart', async () => {
+        for (const am of ['a', 'b']) {
+          const current = (await user.request(am, 'GET', '/api/v1/documents/' + encodeURIComponent(document.id))).body;
+          check(current.id === document.id && current.revision === document.revision
+            && current.sha256 === document.sha256, 'document_changed_across_owner_restart');
+          const source = (await user.request(am, 'GET', '/api/v1/documents/' + encodeURIComponent(document.id) + '/source')).body;
+          check(source.id === document.id && source.revision === document.source_revision,
+            'document_source_missing_after_restart');
+        }
+      });
+    }
+    for (let iteration = 1; iteration <= 3; iteration++) {
+      const document = await documentCases({owner: user, recipient: admin,
+        ownerId: config.owner_id, recipientId: 'native-am-fixture-admin',
+        runCase: (name, operation) => documentCase(iteration, name, operation)});
+      if (phase === 'before_restart') savedDocuments.push(document);
+    }
     await matrix.run({iterations: 3, groups: ['reads', 'denials', 'settings', 'triggers', 'admission', 'usage']});
     await matrix.runExtended({iterations: 3, groups: ['replace', 'inactivity']});
     const previousRecorder = context.api.router.record;

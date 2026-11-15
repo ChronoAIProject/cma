@@ -23,6 +23,11 @@ An executable subset passing is never a full-inventory PASS.
 - Files: directory/file creation, byte and digest readback, listing, CAS edit,
   stale-write refusal, download and deletion. Preferences: rename, peer-visible
   readback, stale-revision refusal and guarded restoration.
+- Documents: create, search, known-receipt idempotent replay, cross-process edit,
+  source digests and history, stale-write refusal, comment grants and revocation,
+  and read links with revocation. A separate admin subject proves that global
+  operator permissions do not grant implicit access to personal documents. Both
+  processes must read unchanged source identity after the owner restart.
 - Shared admin assertions for inventory, exact permission denials, settings CAS,
   full replacement, inactivity grace, orchestration pause/resume, admission
   stop/resume and complete usage reports. Global admin operations have no Agent
@@ -42,6 +47,13 @@ Requests are paced across clients sharing a fixture identity to stay within the
 default Create and read budgets. Pacing happens before owner observation and does
 not retry failed mutations. Mongo observation shells are serialized within a
 2 GiB request / 3 GiB limit, and each failure capture has a unique directory.
+
+Document object bytes use a bounded synthetic HTTPS storage service with exact
+machine-client authentication and content-addressed write receipts. The real AM
+storage adapter, document policy, revision checks and Mongo records execute. This
+dependency persists across AM restart; its in-memory bytes do not prove recovery
+from an object-store crash. The same fixture platform origin refuses unsupported
+service routes, so these cases do not imply skill-catalog or title-service coverage.
 
 ## CI inputs and execution
 
@@ -102,7 +114,8 @@ ID sets. Inventory files retain feature steps, expectations, API routes and
 repository source hashes, while omitting private evidence paths. `case-mapping.json`
 names the executable assertions and remaining gaps per feature. Add focused cases
 for the missing browser controls, organization roles, connection repair,
-admission uncertainty, document/trigger fixtures, retained-runtime upgrades and
+admission uncertainty, document browser interactions, trigger execution,
+retained-runtime upgrades and
 admin resource mutations before making this a merge-ready feature gate.
 
 Only `summary/coverage.json` and `summary/result.json` may be uploaded. They contain

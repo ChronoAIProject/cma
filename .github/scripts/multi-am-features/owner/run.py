@@ -46,6 +46,7 @@ class Fixture:
         self.output=Path(output)
         self.secret=old.credentials()
         self.secret['provider_control']=secrets.token_hex(32)
+        self.secret['storage_access']=secrets.token_hex(32)
         self.control_token=secrets.token_hex(32)
         self.origins={}
         self.templates={}
@@ -341,7 +342,7 @@ class Fixture:
                 write(destination/(kind+'.final.json'),value)
                 if kind=='pods':pods=value.get('items',[])
             except Exception as exc:self.record('capture_failed',kind=kind,error=str(exc))
-        for name in ['am-a-0','am-b-0','mongo','identity','provider','api-proxy']:
+        for name in ['am-a-0','am-b-0','mongo','identity','provider','api-proxy','storage']:
             try:
                 if name in ['am-a-0','am-b-0']:
                     rc,raw=self.client.k(['logs',name,'--timestamps=true','--limit-bytes=2097152'],check=False)

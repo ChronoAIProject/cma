@@ -144,6 +144,7 @@ class Infrastructure:
         # plugins and send TLS SNI to the same names used by the native client.
         dns = json.loads(self.k(['-n', 'kube-system', 'get', 'configmap', 'coredns', '-o', 'json']))
         rewrites = ('\n    rewrite name exact provider.localhost.direct provider.cma-native-am.svc.cluster.local\n'
+                    '    rewrite name exact storage.localhost.direct storage.cma-native-am.svc.cluster.local\n'
                     '    rewrite name exact api.localhost.direct api-proxy.cma-native-am.svc.cluster.local\n')
         dns['data']['Corefile'] = dns['data']['Corefile'].replace('.:53 {', '.:53 {' + rewrites, 1)
         self.k(['replace', '-f', '-'], data=json.dumps(dns))
