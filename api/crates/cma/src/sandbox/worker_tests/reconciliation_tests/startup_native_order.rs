@@ -301,53 +301,11 @@ async fn startup_native_proof_status_and_durable_fence_keep_order_with_held_sibl
     }
 }
 
-#[tokio::test]
-async fn startup_native_parent_race_drains_siblings_before_returning_read_or_cas_conflict() {
-    for record_boot in [false, true] {
-        let fixture = NativeStartup::new(record_boot, false).await;
-        let startup = fixture.reconciler.initialize_before_workers(fixture.now);
-        tokio::pin!(startup);
-        until(&mut startup, fixture.control.status_entered.notified()).await;
-        until(&mut startup, fixture.control.siblings_started(7)).await;
-        let mut newer = fixture.original.clone();
-        newer.revision += 1;
-        newer.name = "concurrent parent revision".into();
-        fixture
-            .store
-            .inner
-            .save_sandbox(fixture.original.revision, newer.clone())
-            .await
-            .unwrap();
-        fixture.control.status_gate.add_permits(1);
-        until(&mut startup, fixture.control.fenced.notified()).await;
-        assert!(futures_util::poll!(&mut startup).is_pending());
-        assert_eq!(fixture.control.other_started.load(Ordering::SeqCst), 7);
-        fixture.control.assert_no_cleanup();
-        fixture.assert_native_order(if record_boot {
-            "DURABLE_CAS"
-        } else {
-            "DURABLE_READ"
-        });
-        fixture.control.other_gate.add_permits(7);
-        assert!(matches!(
-            tokio::time::timeout(Duration::from_secs(10), startup)
-                .await
-                .unwrap(),
-            Err(SandboxStoreError::Conflict)
-        ));
-        assert_eq!(fixture.control.other_started.load(Ordering::SeqCst), 7);
-        assert_eq!(fixture.control.other_settled.load(Ordering::SeqCst), 7);
-        assert_eq!(fixture.control.cancelled.load(Ordering::SeqCst), 0);
-        fixture.control.assert_no_cleanup();
-        assert_eq!(
-            fixture.store.inner.get_sandbox(&newer.id).await.unwrap(),
-            Some(newer)
-        );
-    }
-}
+#[path = "startup_native_conflict.rs"]
+mod conflicts;
 
 #[tokio::test]
-async fn startup_native_false_is_nonfatal_and_cleanup_waits_for_held_siblings() {
+async fn startup_native_false_is_nonfatal_and_defers_cleanup_with_a_binding_hold() {
     let fixture = NativeStartup::new(false, true).await;
     // A deliberately future caller floor makes the fresh provider observation
     // stale for recovery. The production binding result is Ok(false), with no
@@ -390,7 +348,8 @@ async fn startup_native_false_is_nonfatal_and_cleanup_waits_for_held_siblings() 
         .unwrap();
     assert_eq!(fixture.control.other_settled.load(Ordering::SeqCst), 8);
     assert_eq!(fixture.control.cancelled.load(Ordering::SeqCst), 0);
-    assert!(fixture.control.cleanup.load(Ordering::SeqCst) > 0);
+    fixture.control.assert_no_cleanup();
+    assert!(fixture.reconciler.binding_is_held(&fixture.original.id));
     assert_eq!(
         fixture
             .store
