@@ -3,6 +3,7 @@ use std::sync::Arc;
 mod access;
 pub(crate) mod activity;
 mod adapter;
+mod admin;
 mod agent_manager;
 mod bindings;
 mod bots;
@@ -174,10 +175,11 @@ impl ControlPlaneComposition {
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
         let native_warm_pools = runtime.warm_pools;
-        let admin = layer1_public::rest::admin::AdminState::new(
+        let admin = admin::state(
             Arc::clone(&settings),
             sandbox_operators,
             Arc::clone(&activity),
+            adapter.clone(),
         )
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
