@@ -96,9 +96,9 @@ export async function recoverV2Control(
     async (recovery) => {
       const recoverySignal = recovery.signal;
       recoverySignal.throwIfAborted();
-      await recovery.retry(() =>
-        authorize(session, session.journal.readControl()?.body.command, recoverySignal),
-      );
+      // send() checks fresh authority before dispatch and again after receipt.
+      // Only guarded local reads precede it: a second adjacent network check
+      // delays recovery without protecting an additional IO boundary.
       const intent = session.journal.readControl();
       if (intent !== null && intent.commandId === null) await send(session, intent, recovery);
     },
