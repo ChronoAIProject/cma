@@ -100,6 +100,8 @@ async fn replicas() -> (Arc<MemoryOwnershipStore>, Vec<Instance>, Vec<Arc<Probe>
                         "/api/v1/agents/{agent}/settings",
                         axum::routing::patch(accept),
                     )
+                    .route("/api/v1/agents/{agent}", axum::routing::delete(accept))
+                    .route("/api/v1/agents/{agent}/stop", axum::routing::post(accept))
                     .with_state(probe.clone()),
             )
             .layer(axum::middleware::from_fn(test_auth));
@@ -190,6 +192,90 @@ async fn configuration_writes_on_either_ingress_run_under_the_exact_owner() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert_eq!(probes[owner].effects.load(Ordering::SeqCst), 6);
+}
+
+#[tokio::test]
+async fn ownerless_stop_and_delete_claim_a_real_owner_before_mutation() {
+    let (store, instances, probes) = replicas().await;
+    let client = client();
+    for (method, suffix, name) in [
+        (Method::POST, "/stop", "stop"),
+        (Method::DELETE, "", "delete"),
+    ] {
+        let id = AgentId(format!("agt-ownerless-{name}"));
+        assert!(store.owner(&id).await.unwrap().is_none());
+        let selected = candidates(&id, &store.membership().await.unwrap(), None).unwrap()[0]
+            .instance_id
+            .clone();
+        let owner = instances
+            .iter()
+            .position(|instance| instance.coordinator.instance_id == selected)
+            .unwrap();
+        for ingress in [1 - owner, owner] {
+            let response = client
+                .request(
+                    method.clone(),
+                    format!("{}/api/v1/agents/{id}{suffix}", instances[ingress].address),
+                )
+                .headers(headers())
+                .body(b"{}".to_vec())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let accepted: Value = response.json().await.unwrap();
+            let lease = store.owner(&id).await.unwrap().unwrap();
+            assert!(lease.token.epoch > 0);
+            assert_eq!(lease.token.instance_id, selected);
+            assert_eq!(accepted["owner"], selected);
+            assert_eq!(accepted["epoch"], lease.token.epoch);
+            assert_eq!(accepted["relayed"], ingress != owner);
+            assert_eq!(accepted["body"], json!(b"{}".to_vec()));
+            assert_eq!(accepted["idempotency"], "acceptance-operation");
+        }
+    }
+    assert_eq!(
+        probes
+            .iter()
+            .map(|probe| probe.effects.load(Ordering::SeqCst))
+            .sum::<usize>(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn a_claim_invitation_does_not_authorize_configuration_publication() {
+    let (store, instances, probes) = replicas().await;
+    let id = AgentId("agt-no-configuration-claim".into());
+    let (owner, authority) = acquire(&store, &instances, &id).await;
+    let mut invitation = authority.token.clone();
+    invitation.epoch = 0;
+    let uri: Uri = format!("/api/v1/agents/{id}/preferences").parse().unwrap();
+    let body = br#"{"expected_revision":0,"title":"Unowned"}"#;
+    let proof = instances[1 - owner]
+        .relay
+        .authentication
+        .sign(
+            &instances[1 - owner].coordinator.instance_id,
+            &invitation,
+            &Method::PATCH,
+            &uri,
+            &headers(),
+            body,
+        )
+        .unwrap();
+    let response = client()
+        .patch(format!("{}{uri}", instances[owner].address))
+        .headers(headers())
+        .header(PROOF, proof)
+        .body(body.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(probes
+        .iter()
+        .all(|probe| probe.effects.load(Ordering::SeqCst) == 0));
 }
 
 #[tokio::test]

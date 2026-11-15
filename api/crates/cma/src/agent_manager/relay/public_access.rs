@@ -70,7 +70,7 @@ impl PublicAuthorization for PublicAccess {
         )
         .await?;
         match operation {
-            Operation::Configuration => {
+            Operation::Configuration | Operation::PersonalControl => {
                 // Routing is a mutation, including a cached idempotent replay.
                 // A view/read credential must not gain owner execution scope.
                 // The receiving handler validates the exact settings payload
@@ -103,6 +103,14 @@ impl PublicAuthorization for PublicAccess {
                     .validate_read_result(&authorized, &target, ResourceCapability::OperateAgent)
                     .await
                     .map_err(access_error)?;
+                if operation == Operation::PersonalControl {
+                    // Stop/Delete retain AgentService's personal owner rule;
+                    // an interactive share cannot become teardown authority.
+                    self.reads
+                        .lineage(&context.caller, id)
+                        .await
+                        .map_err(read_error)?;
+                }
             }
             Operation::Models => {
                 let read = self
@@ -164,6 +172,7 @@ impl PublicAuthorization for PublicAccess {
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
     Configuration,
+    PersonalControl,
     Models,
     Skills,
     Recovery,
@@ -175,11 +184,12 @@ fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
     let suffix = uri
         .path()
         .strip_prefix("/api/v1/agents/")
-        .and_then(|path| path.split_once('/'))
-        .map(|(_, suffix)| suffix)
+        .map(|path| path.split_once('/').map_or("", |(_, suffix)| suffix))
         .ok_or(StatusCode::FORBIDDEN)?;
     let read = method == Method::GET || method == Method::HEAD;
     Ok(match suffix {
+        "" if method == Method::DELETE => Operation::PersonalControl,
+        "stop" if method == Method::POST => Operation::PersonalControl,
         "preferences" | "settings" if method == Method::PATCH => Operation::Configuration,
         "models" if read => Operation::Models,
         "skills" if read || method == Method::POST => Operation::Skills,

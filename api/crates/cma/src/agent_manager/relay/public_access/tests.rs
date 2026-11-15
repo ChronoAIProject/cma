@@ -13,7 +13,11 @@ async fn call(
 ) -> StatusCode {
     let mut request = Request::builder()
         .method(method)
-        .uri(format!("/api/v1/agents/agt-public/{suffix}"))
+        .uri(if suffix.is_empty() {
+            "/api/v1/agents/agt-public".to_owned()
+        } else {
+            format!("/api/v1/agents/agt-public/{suffix}")
+        })
         .body(Body::empty())
         .unwrap();
     request
@@ -42,6 +46,8 @@ async fn foreign_and_wrong_operation_callers_never_touch_ownership_or_effects() 
         ("POST", "recover-worktree"),
         ("PATCH", "preferences"),
         ("PATCH", "settings"),
+        ("POST", "stop"),
+        ("DELETE", ""),
     ] {
         let response = call(&router, context("foreign"), method, suffix).await;
         assert!(
@@ -141,6 +147,8 @@ async fn view_link_cannot_route_writes_and_revocation_precedes_owner_lookup() {
         ("GET", "models"),
         ("PATCH", "preferences"),
         ("PATCH", "settings"),
+        ("POST", "stop"),
+        ("DELETE", ""),
     ] {
         assert!(
             call(&router, viewer.clone(), method, suffix)
@@ -187,6 +195,7 @@ async fn accepted_write_link_routes_files_and_upload_but_not_browser_management(
     }
     assert!(authorize(&f, &viewer, "PUT", "browser").await.is_err());
     assert!(authorize(&f, &viewer, "POST", "skills").await.is_err());
+    assert!(authorize(&f, &viewer, "POST", "stop").await.is_err());
 }
 
 #[tokio::test]
@@ -200,6 +209,7 @@ async fn exact_read_proof_keeps_read_scope_without_ambient_owner_authority() {
     assert!(authorize(&f, &proof, "POST", "files").await.is_err());
     assert!(authorize(&f, &proof, "PATCH", "preferences").await.is_err());
     assert!(authorize(&f, &proof, "PATCH", "settings").await.is_err());
+    assert!(authorize(&f, &proof, "POST", "stop").await.is_err());
     proof.credential_source = CredentialSource::RequestBoundRead {
         expires_at: SystemTime::now() - std::time::Duration::from_secs(1),
     };
@@ -222,6 +232,7 @@ async fn owner_preflight_preserves_head_skills_post_and_observer_release() {
         ("POST", "recover-worktree"),
         ("PATCH", "preferences"),
         ("PATCH", "settings"),
+        ("POST", "stop"),
         ("DELETE", "browser"),
         ("GET", "browser/control?operation_id=one"),
     ] {
