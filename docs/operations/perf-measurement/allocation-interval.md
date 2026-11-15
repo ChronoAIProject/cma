@@ -12,32 +12,45 @@ receives the same order as before. Incremental `allocation_events_after` queries
 keep the existing revision-bound seek and database sort.
 
 The snapshot session, strict overlap predicates, schema/query-field validation,
-200-Sandbox/day bound, two-second database deadline, 2,000-event batch size,
+200-Sandbox/day bound, 2,000-event batch size,
 100,000-event cap, and 64 MiB byte cap remain in effect. A failed cursor or corrupt
 record returns an error rather than a partially usable day. Cache ownership,
 watermark, and exact-range checks are unchanged.
 
 ## Index dependency
 
-The measured improvement requires this existing inspection candidate shape:
+The existing awaited Sandbox store startup path now ensures this additive index:
 
 ```javascript
 { sandbox_id: 1, ended_at: 1, started_at: 1, revision: 1 }
 ```
 
-The catalog entry is `usage-event-interval`, index name
-`sandbox_usage_events_interval_candidate`. It is currently inspection-only;
-`step: None` does not establish that it exists in any deployment or authorize its
-creation. An equivalent usable index can have a different name because the query
-has no mandatory hint. Keep the existing revision index for incremental reads.
+The catalog entry is `usage-event-interval`; new startup creation names it
+`sandbox_usage_events_interval`. A complete compatible index under another name
+is accepted because the reader uses no mandatory hint. Startup performs bounded
+inventory and postcondition readback and refuses incompatible or incomplete
+indexes. Existing revision indexes remain available for incremental reads.
+See [the migration record](../../CMA_Usage_Interval_Index.md) for startup limits,
+compatibility, and rollback behavior. Production index presence remains unknown
+until an authorized metadata readback is available.
 
-This change neither builds an index at startup nor creates a migration authority.
-Before expecting a production speedup, an authorized operator must inspect the
-serving database's `sandbox_usage_events` index definitions and options. The
-minimal read is a bounded `listIndexes`; no customer document or credential needs
-to be returned. If no suitable index exists, its build requires a separately
-reviewed activation plan and explicit approval. Without it, the reader remains
-correct but may retain the expensive scan.
+## Allocation deadlines and circuit protection
+
+Allocation cache reads, raw interval reads, and cache updates use a five-second
+Mongo operation limit. A ten-second wall timeout covers the complete allocation
+call, including cursor consumption, validation, projection, and cache writes.
+Standalone raw and delta readers have the same finite wall guard. A timeout
+returns an unavailable result and never returns a partially fetched day.
+
+The reporting pool's connection-hold threshold is six seconds, allowing a
+bounded allocation command to finish without opening the circuit at the old
+two-second boundary. This hold policy applies to the whole reporting pool.
+Connection establishment, server selection, checkout-stall protection, and
+unrelated operations retain two seconds. The complete report generation budget
+remains sixty seconds; the report lease remains seventy seconds. These are
+safety ceilings, not performance targets or evidence that a report meets two
+seconds. The native matrix must calibrate completion and timing on retained
+history before release.
 
 ## Saved local comparison
 
@@ -85,5 +98,17 @@ cargo test --locked -p cma --bin cma allocation_interval -- --include-ignored --
 ```
 
 `CHRONO_TEST_MONGODB_URI` must point to that disposable replica set. The integration
-tests create and drop their own randomly named databases. This command is not a
-production diagnostic and must never use a production connection.
+tests require the explicit `CHRONO_TEST_ALLOCATION_DB_01` and
+`CHRONO_TEST_ALLOCATION_DB_02` disposable database names. They run serially and
+create/drop only those assigned databases. The `interval_index` filter covers
+startup inventory, creation, idempotence, and refusal of drift; the
+`usage_reports::budget::tests` filter covers existing pressure behavior.
+
+The ignored `native_usage_hotfix_full_report_six_case_matrix` fixture is built
+unchanged into two exact source revisions. It records six N=1 cold allocation
+cache cases, personal/admin over 24h/7d/30d, on 421 Sandboxes and 3,758,688
+retained events. It runs actual store startup and authenticated in-process
+routes through generation/finalization and page reads, samples native RSS, and
+retains failed cases. It excludes external authentication, network, polling and
+browser time. No percentiles or production recovery follow from this fixture.
+These commands must never use a production connection.
