@@ -7,6 +7,7 @@ mod control;
 mod controlled_updates;
 mod diagnostics;
 pub(crate) mod inventory;
+mod on_demand_views;
 mod options;
 mod owner_allocation;
 mod owner_names;
