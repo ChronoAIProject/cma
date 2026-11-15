@@ -1,16 +1,6 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  type Dispatch,
-  type SetStateAction,
-  type RefObject,
-} from 'react';
-import type { CmaWebClient, CommandKeys } from '../api/client';
-import type { AgentLiveEvent } from '../api/types';
-import type { AgentCommand, AgentResourceState, ApprovalDecision } from './controller';
-import type { AgentV2Session } from './transport/client';
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import type { AgentActionOptions } from './actionOptions';
+import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@chronoai/cma-sdk';
 import { submitV2Control, recoverV2Control } from './transport/controls';
@@ -20,33 +10,6 @@ import {
   InterruptionNotSubmittedError,
 } from './transport/interruption';
 
-interface Options {
-  readonly agentId?: string;
-  readonly client: CmaWebClient;
-  readonly historyIncomplete: boolean;
-  readonly activeTurn: boolean;
-  readonly inputAvailability: { readonly allowed: boolean };
-  readonly actionAbortRef: RefObject<AbortController | undefined>;
-  readonly actionKindRef: RefObject<AgentCommand | undefined>;
-  readonly replayAbortRef: RefObject<AbortController | undefined>;
-  readonly stateRef: RefObject<AgentResourceState>;
-  readonly keys: CommandKeys;
-  readonly v2?: AgentV2Session;
-  readonly setPending: Dispatch<SetStateAction<AgentCommand | undefined>>;
-  readonly setActionError: Dispatch<SetStateAction<string | undefined>>;
-  readonly setReplayRevision: Dispatch<SetStateAction<number>>;
-  readonly setRequestRevision: Dispatch<SetStateAction<number>>;
-  readonly applyLive: (event: AgentLiveEvent) => void;
-  readonly reload: () => void;
-  readonly refreshDetail: () => void;
-  readonly errorMessage: (error: unknown) => string;
-  readonly onIdentityChange: (error: unknown) => boolean;
-  readonly options: {
-    readonly viewerId?: string;
-    readonly onHierarchyChange?: () => void;
-    readonly onDeleted?: () => void;
-  };
-}
 function runId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -56,6 +19,7 @@ export function useAgentActions({
   agentId,
   client,
   historyIncomplete,
+  commandsBlocked,
   activeTurn,
   inputAvailability,
   actionAbortRef,
@@ -74,7 +38,7 @@ export function useAgentActions({
   errorMessage,
   onIdentityChange,
   options,
-}: Options) {
+}: AgentActionOptions) {
   const context = useMemo(
     () => ({
       agentId,
@@ -84,6 +48,11 @@ export function useAgentActions({
     }),
     [agentId, client, options.viewerId, inputAvailability.allowed],
   );
+  // Revoking controls must not invalidate an ordinary send's in-flight receipt.
+  const currentCommandsBlocked = useRef(commandsBlocked);
+  useLayoutEffect(() => {
+    currentCommandsBlocked.current = commandsBlocked;
+  }, [commandsBlocked]);
   const currentContext = useRef<typeof context | undefined>(undefined);
   useLayoutEffect(() => {
     currentContext.current = context;
@@ -106,12 +75,18 @@ export function useAgentActions({
         currentContext.current !== context ||
         agentId === undefined ||
         actionAbortRef.current !== undefined ||
-        (historyIncomplete && typeof approval !== 'string') ||
+        ((commandsBlocked || currentCommandsBlocked.current) && typeof approval !== 'string') ||
         !inputAvailability.allowed
       )
         return;
       const current = stateRef.current;
       if (current.status !== 'ready' || current.detail.id !== agentId) return;
+      if (
+        historyIncomplete &&
+        typeof approval !== 'string' &&
+        !current.conversation.approvals.some((request) => request.id === approval.id)
+      )
+        return;
       if (answerContext && !recovering) {
         const answer = current.conversation.messages.at(-1);
         if (
@@ -336,6 +311,7 @@ export function useAgentActions({
       client,
       context,
       historyIncomplete,
+      commandsBlocked,
       inputAvailability.allowed,
       keys,
       stateRef,
@@ -359,7 +335,7 @@ export function useAgentActions({
       requireStop = false,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
-      if (currentContext.current !== context || historyIncomplete) {
+      if (currentContext.current !== context || commandsBlocked || currentCommandsBlocked.current) {
         if (requireStop)
           throw new Error('Agent activity is still loading. Try again when it is available.');
         return;
@@ -415,7 +391,7 @@ export function useAgentActions({
       activeTurn,
       context,
       agentId,
-      historyIncomplete,
+      commandsBlocked,
       keys,
       options,
       reload,
