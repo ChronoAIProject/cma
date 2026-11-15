@@ -32,6 +32,7 @@ mod identity_lifetime;
 mod identity_observations;
 mod identity_retry;
 mod identity_throttle;
+pub(crate) use identity_throttle::RetryAfter as ProviderRetryAfter;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
 mod middleware;
