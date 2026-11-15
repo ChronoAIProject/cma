@@ -174,7 +174,6 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
-        let native_warm_pools = runtime.warm_pools;
         let admin = admin::state(
             Arc::clone(&settings),
             sandbox_operators,
@@ -184,7 +183,7 @@ impl ControlPlaneComposition {
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(native_warm_pools.clone())
+        .with_warm_pools(runtime.warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_control(Arc::new(
             layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
@@ -493,7 +492,7 @@ impl ControlPlaneComposition {
             command_scheduler,
             sandbox_control_scheduler,
             sandbox_lifecycle,
-            native_warm_pools,
+            native_warm_pools: runtime.warm_pools,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })
