@@ -1739,6 +1739,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/sandboxes/{id}/events` | - | after, limit | 200 array<object> |
 | `POST /api/v1/admin/sandboxes/{id}/retire` | - | - | 200 object |
 | `POST /api/v1/admin/sandboxes/{id}/runtime-update` | UpdateSandboxRuntimeRequest | - | 202 SandboxView |
+| `POST /api/v1/admin/sandboxes/{id}/runtime-migration` | CustomRuntimeMigrationRequest | - | 202 SandboxView |
+| `GET /api/v1/admin/sandboxes/{id}/runtime-update/activity` | - | - | 200 RuntimeActivityStatus |
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `POST /api/v1/admin/admission/resume` | AdmissionChangeRequest | - | 200 AdmissionView |
@@ -2345,6 +2347,31 @@ GET never schedules recovery. The explicit owner POST repeats stronger native an
 history proof and requires consent, the reviewed revision and an original request
 key. See [Same-image retained recovery](CMA_Retained_Recovery.md) for supported
 states, refusal categories, atomic admission and rollback qualification.
+
+Custom-image migration uses `POST /api/v1/admin/sandboxes/{id}/runtime-migration`
+with `ControlAnySandbox`. Its strict JSON body contains `migration` (the request
+key, expected revision/image, immutable profile/home origin and exact target
+image), `authority_id`, `expected_current_revision`, and optional `restart_failed`
+(default `false`). The server resolves the separately configured operator policy
+and admission basis; caller-provided clearance, proof or approval fields are
+rejected. Fresh migration is disabled by default. A configured service with its
+writer disabled still accepts an exact previously admitted replay, returning
+202 `SandboxView`; new or mismatched admission returns 409
+`runtime_migration_not_admitted`. A missing Sandbox returns 404, malformed input
+returns 422 `invalid_runtime_migration`, and an unavailable service returns 503.
+Authorized operators may act across owners; ordinary tenant capabilities and
+`ReadAllSandboxes` alone cannot migrate.
+
+`GET /api/v1/admin/sandboxes/{id}/runtime-update/activity` independently requires
+`ReadAllSandboxes`; `ControlAnySandbox` alone cannot observe. It is read-only and
+does not append a mutation audit or admit maintenance. Its content-free result is
+`unknown` with a reason, `active`, `observing`, or `quiet` with an opaque
+`proof_reference`. An unqualified or unconfigured source returns 200
+`{"status":"unknown","reason":"unqualified_source"}`. Unknown is not inactivity
+approval, and a proof reference is not bearer authorization. Observation failure
+returns 503. Both endpoints require authentication (401) and their independent
+capability (403). See [runtime migration](CMA_Runtime_Migration.md) for source
+qualification, finality, retained authority and production activation limits.
 
 `runtime-update` accepts `{ "target_version": "<exact image reference>" }`
 with `Idempotency-Key` from the Sandbox owner. Use the owner detail's

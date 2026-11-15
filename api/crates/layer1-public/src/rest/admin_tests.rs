@@ -144,6 +144,14 @@ pub(crate) fn fixture_with_pools(
     inventory: bool,
     pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
 ) -> Fixture {
+    fixture_with_configure(inventory, pools, |state, _| state)
+}
+
+pub(crate) fn fixture_with_configure(
+    inventory: bool,
+    pools: Option<Arc<dyn warm_pools::WarmPoolAdministration>>,
+    configure: impl FnOnce(AdminState, &Arc<InMemorySandboxStore>) -> AdminState,
+) -> Fixture {
     let activity = Arc::new(MemoryActivity::default());
     let activity_service = ActivityService::new(activity.clone());
     let settings = Arc::new(PlatformSettingsService::new(
@@ -179,7 +187,7 @@ pub(crate) fn fixture_with_pools(
         state = state.with_warm_pools(pools);
     }
     Fixture {
-        app: router(state),
+        app: router(configure(state, &sandboxes)),
         sandboxes,
         profiles,
         activity,

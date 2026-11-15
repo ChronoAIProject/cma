@@ -51,6 +51,7 @@ mod response_headers;
 mod responses_v2_cases;
 mod retained_clients;
 mod retained_recovery_cases;
+mod runtime_migration_cases;
 mod runtime_update_cases;
 mod sandbox_command_cases;
 mod sandbox_inventory_cases;
@@ -170,6 +171,9 @@ fn paths() -> Vec<PathBuf> {
 }
 
 async fn scenario(name: &str) -> Scenario {
+    if let Some(scenario) = Box::pin(runtime_migration_cases::scenario(name)).await {
+        return scenario;
+    }
     if let Some(scenario) = admission_control_cases::scenario(name).await {
         return scenario;
     }

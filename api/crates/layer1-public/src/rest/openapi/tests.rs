@@ -166,7 +166,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 32);
+    assert_eq!(admin.len(), 34);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -181,7 +181,17 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 35);
+    assert_eq!(operation_ids.len(), 37);
+    assert!(
+        document.paths.paths["/api/v1/admin/sandboxes/{id}/runtime-migration"]
+            .post
+            .is_some()
+    );
+    assert!(
+        document.paths.paths["/api/v1/admin/sandboxes/{id}/runtime-update/activity"]
+            .get
+            .is_some()
+    );
     let view = document.paths.paths["/api/v1/admin/usage/metrics/view"]
         .get
         .as_ref()
