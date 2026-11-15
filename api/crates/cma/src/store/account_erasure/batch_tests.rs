@@ -26,6 +26,7 @@ async fn mode(db: &Database, enabled: bool) -> Result<BTreeMap<String, u64>, Err
             &mut cursor,
             NOW,
             Options {
+                allocation_rollups_enabled: Some(false),
                 billing_enabled: enabled,
                 transaction_drain_fallback_secs: 120,
             },
@@ -188,6 +189,7 @@ async fn cursor_bindings_independently_guard_a_compatible_shared_scan_resume() {
             &mut cursor,
             BTreeSet::from(["a".to_owned()]),
             Options {
+                allocation_rollups_enabled: Some(false),
                 billing_enabled: false,
                 transaction_drain_fallback_secs: 120,
             },
