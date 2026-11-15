@@ -23,9 +23,13 @@ pub trait SandboxAdapter: Send + Sync {
     fn runtime_recovery(&self) -> Option<&dyn crate::RuntimeRecovery> {
         None
     }
+    /// Remaining cache entries for an exclusively owned startup batch; not a reservation.
+    /// Unknown adapters retain serial initialization. No concurrent cache writers may run.
+    fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
+        None
+    }
     /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
-
     async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         Err(unsupported("runtime desktop is unavailable"))
     }
@@ -91,13 +95,11 @@ pub trait SandboxAdapter: Send + Sync {
     async fn set_runtime_deadline(&self, _: &RuntimeAdoptionRequest, _: u64) -> Result<()> {
         Err(unsupported("funded runtime deadlines are unavailable"))
     }
-
     async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle>;
     /// Stop the exact runtime Pod while retaining its provider object and volume.
     async fn suspend_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
         Err(unsupported("runtime suspension is unavailable"))
     }
-
     async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
         Err(unsupported("runtime suspension observation is unavailable"))
     }
@@ -187,7 +189,6 @@ pub trait SandboxAdapter: Send + Sync {
     async fn reclaim_runtime(&self, _observation: &RuntimeObservation) -> Result<()> {
         Err(unsupported("observed runtime reclamation is not supported"))
     }
-
     /// Publish an exact owner upload within the retained home, never an arbitrary path.
     async fn upload_agent_attachment(
         &self,
@@ -199,7 +200,6 @@ pub trait SandboxAdapter: Send + Sync {
             "agent attachments are unavailable on this runtime",
         ))
     }
-
     /// List one directory in the retained runtime home. Paths are relative to
     /// that home and are validated by the runtime supervisor.
     async fn list_agent_files(
@@ -209,7 +209,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<crate::AgentFileListReceipt> {
         Err(unsupported("runtime filesystem access is unavailable"))
     }
-
     async fn read_agent_file(
         &self,
         _handle: &RuntimeHandle,
@@ -217,7 +216,6 @@ pub trait SandboxAdapter: Send + Sync {
     ) -> Result<crate::AgentFileReadReceipt> {
         Err(unsupported("runtime filesystem access is unavailable"))
     }
-
     async fn write_agent_file(
         &self,
         _handle: &RuntimeHandle,

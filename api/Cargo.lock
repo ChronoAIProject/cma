@@ -425,6 +425,7 @@ dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
+ "cma-allocator-qualification",
  "cma-service-auth",
  "cmaeg",
  "cmaeg-core",
@@ -465,6 +466,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "cma-allocator-qualification"
+version = "0.1.0"
+
+[[package]]
 name = "cma-service-auth"
 version = "0.1.0"
 dependencies = [
@@ -491,6 +496,7 @@ dependencies = [
  "bytes",
  "cbc",
  "cfb",
+ "cma-allocator-qualification",
  "cma-service-auth",
  "cmaeg-core",
  "dashmap",

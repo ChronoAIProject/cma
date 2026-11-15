@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use super::{hold, io, BARRIER, MANIFEST};
+use super::{hold_at, io, BARRIER, MANIFEST};
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
 
@@ -26,7 +26,10 @@ impl Descriptor {
             version: 2,
             store,
             sandbox: config.sandbox_id.clone(),
-            home: config.home_identity.clone().ok_or_else(hold)?,
+            home: config
+                .home_identity
+                .clone()
+                .ok_or_else(|| hold_at("descriptor.home_identity"))?,
             state_root: config.state_root.clone(),
             home_root: config.home.clone(),
             transfer_root: config.checkpoint_root.clone(),
@@ -36,9 +39,11 @@ impl Descriptor {
         })
     }
     pub(super) fn load(config: &RuntimeConfig) -> Result<Self> {
+        Self::decode(config, &io::read(&config.state_root.join(MANIFEST))?)
+    }
+    pub(super) fn decode(config: &RuntimeConfig, bytes: &[u8]) -> Result<Self> {
         let descriptor: Self =
-            serde_json::from_slice(&io::read(&config.state_root.join(MANIFEST))?)
-                .map_err(|_| hold())?;
+            serde_json::from_slice(bytes).map_err(|_| hold_at("descriptor.decode"))?;
         let mut expected = Self::new(config, descriptor.store.clone())?;
         expected.born = descriptor.born;
         if descriptor != expected
@@ -51,12 +56,12 @@ impl Descriptor {
                 .as_deref()
                 != Some(&descriptor.store)
         {
-            return Err(hold());
+            return Err(hold_at("descriptor.identity"));
         }
         Ok(descriptor)
     }
     pub(super) fn bytes(&self) -> Result<Vec<u8>> {
-        serde_json::to_vec(self).map_err(|_| hold())
+        serde_json::to_vec(self).map_err(|_| hold_at("descriptor.encode"))
     }
     pub(super) fn install(&self) -> PathBuf {
         self.transfer_root.join("runtime-state").join(BARRIER)
@@ -85,14 +90,20 @@ impl Descriptor {
         let bytes = self.bytes()?;
         for path in paths {
             if io::read(&path)? != bytes {
-                return Err(hold());
+                return Err(hold_at("descriptor.barrier_content"));
             }
             if path != self.install() {
-                let mut entries =
-                    std::fs::read_dir(path.parent().ok_or_else(hold)?).map_err(|_| hold())?;
-                let entry = entries.next().ok_or_else(hold)?.map_err(|_| hold())?;
+                let mut entries = std::fs::read_dir(
+                    path.parent()
+                        .ok_or_else(|| hold_at("descriptor.barrier_parent"))?,
+                )
+                .map_err(|_| hold_at("descriptor.barrier_inventory"))?;
+                let entry = entries
+                    .next()
+                    .ok_or_else(|| hold_at("descriptor.barrier_missing"))?
+                    .map_err(|_| hold_at("descriptor.barrier_entry"))?;
                 if entry.file_name() != BARRIER || entries.next().is_some() {
-                    return Err(hold());
+                    return Err(hold_at("descriptor.barrier_directory"));
                 }
             }
         }
@@ -102,9 +113,11 @@ impl Descriptor {
         let bytes = self.bytes()?;
         for (index, path) in paths.into_iter().enumerate() {
             let _ = index;
-            let parent = path.parent().ok_or_else(hold)?;
+            let parent = path
+                .parent()
+                .ok_or_else(|| hold_at("descriptor.barrier_parent"))?;
             if !io::empty(parent)? {
-                return Err(hold());
+                return Err(hold_at("descriptor.publication_empty"));
             }
             io::make_directory(parent)?;
             io::create(&path, &bytes)?;
