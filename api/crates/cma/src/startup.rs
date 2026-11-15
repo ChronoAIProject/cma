@@ -20,11 +20,14 @@ const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 
 pub(crate) async fn serve() -> Result<(), String> {
     let startup_started = Instant::now();
-    let config =
+    let mut config =
         Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
         return agent_manager::relay::prestop(&config).await;
     }
+    // Managed processes authenticate and wait without ordinary composition.
+    // The default path also refuses a migrated deployment before any effects.
+    config.runtime_release_session = crate::runtime_release::before_composition(&config).await?;
     let recorder = telemetry::install()?;
     let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
     let composition = observe(
@@ -34,7 +37,10 @@ pub(crate) async fn serve() -> Result<(), String> {
     )
     .await?;
     let auth_mode = config.auth_mode_name();
-    let app = with_request_context(with_cors(composition.router, config.cors_origins));
+    let app = crate::runtime_release::guard_http(
+        with_request_context(with_cors(composition.router, config.cors_origins)),
+        config.runtime_release_session.clone(),
+    );
 
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).

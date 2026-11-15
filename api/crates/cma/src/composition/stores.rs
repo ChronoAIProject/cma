@@ -17,6 +17,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         crate::store::mongo::MongoConnectionPolicy {
             authority: config.mongodb_authority,
             agent_manager_replicas: config.agent_manager_replicas.is_some(),
+            release_session: config.runtime_release_session.clone(),
         },
     )
     .await

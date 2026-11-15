@@ -99,6 +99,19 @@ async fn authorized(
     {
         return Err(WarmPoolError::Conflict);
     }
+    if let Some(head) = store.release_head().await? {
+        let selected = if target.machine {
+            head.pair.machine.as_ref()
+        } else {
+            Some(&head.pair.agent)
+        };
+        return Ok(!super::release::protected(&head, target)
+            && selected.is_some_and(|selected| selected.image == image)
+            && DateTime::now()
+                .timestamp_millis()
+                .saturating_sub(head.committed_at.timestamp_millis())
+                >= 120_000);
+    }
     // Tombstones retain release order even after old capacity is removed.
     let mut scope = release_scope(store, target.machine);
     scope.insert("activated_at", doc! {"$type":"date"});
@@ -232,9 +245,17 @@ pub(super) async fn begin(
     store: &MongoNativeWarmPools,
     target: &PoolTarget,
 ) -> Result<PoolTarget, WarmPoolError> {
+    if store
+        .release_head()
+        .await?
+        .is_some_and(|head| super::release::protected(&head, target))
+    {
+        return Err(WarmPoolError::Conflict);
+    }
     if target.retiring {
         return Ok(target.clone());
     }
+    let _permit = store.admit_mutation("pool_target_retire", target).await?;
     let updated = store
         .targets
         .find_one_and_update(
@@ -253,6 +274,16 @@ pub(super) async fn remove(
     store: &MongoNativeWarmPools,
     target: &PoolTarget,
 ) -> Result<(), WarmPoolError> {
+    if store
+        .release_head()
+        .await?
+        .is_some_and(|head| super::release::protected(&head, target))
+    {
+        return Err(WarmPoolError::Conflict);
+    }
+    let _permit = store
+        .admit_mutation("pool_target_tombstone", target)
+        .await?;
     let mut filter = fence(target);
     filter.extend(doc! {"retiring":true,"target_replicas":0_i64});
     // Keep the immutable activation/identity tombstone. Physically removing it

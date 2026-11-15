@@ -15,6 +15,7 @@ use super::{
 pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
+    pub release_session: Option<Arc<crate::runtime_release::Session>>,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -112,6 +113,7 @@ impl MongoStores {
             MongoConnectionPolicy {
                 authority,
                 agent_manager_replicas: false,
+                release_session: None,
             },
         )
         .await
@@ -143,6 +145,7 @@ impl MongoStores {
             activity_retention,
             Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
             runtime,
+            policy.release_session,
         )
         .await
     }
@@ -155,6 +158,7 @@ impl MongoStores {
         activity_retention: Duration,
         checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
+        release_session: Option<Arc<crate::runtime_release::Session>>,
     ) -> Result<Self, StoreError> {
         // Legacy Profile warm records are retained only for cleanup and already
         // claimed runtime recovery. New admissions use the regular Sandbox lifecycle.
@@ -216,13 +220,23 @@ impl MongoStores {
                 .await
                 .map_err(|_| StoreError::Unavailable("open event worker profiles".into()))?,
         );
-        let native_warm_pools = Arc::new(
-            super::native_warm_pools::MongoNativeWarmPools::open(
-                &client.database(database),
-                deployment,
-            )
-            .await?,
-        );
+        let native_warm_pools = Arc::new(match release_session {
+            Some(session) => {
+                super::native_warm_pools::MongoNativeWarmPools::open_managed(
+                    &client.database(database),
+                    deployment,
+                    session,
+                )
+                .await?
+            }
+            None => {
+                super::native_warm_pools::MongoNativeWarmPools::open(
+                    &client.database(database),
+                    deployment,
+                )
+                .await?
+            }
+        });
         let message_feedback = Arc::new(
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,

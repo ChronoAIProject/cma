@@ -39,7 +39,9 @@ mod public_streams;
 mod rate_limit;
 mod read_telemetry;
 mod readiness_diagnostics;
+mod release_authority;
 mod retirement_archive;
+mod runtime_release;
 mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
@@ -101,6 +103,16 @@ fn main() {
 #[tokio::main]
 async fn run() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if runtime_release::is_command(&arguments) {
+        match runtime_release::command(&arguments).await {
+            Ok(summary) => println!("{summary}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if retirement_archive::is_command(&arguments) {
         match retirement_archive::command(&arguments).await {
             Ok(summary) => println!("{summary}"),

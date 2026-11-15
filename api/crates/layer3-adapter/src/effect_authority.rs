@@ -7,6 +7,7 @@ use crate::{AdapterError, Result};
 
 mod backend;
 mod homes;
+mod identity;
 mod pools;
 pub use backend::GuardedBackend;
 pub use homes::GuardedHomeVolumes;

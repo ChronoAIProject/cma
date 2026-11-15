@@ -17,6 +17,38 @@ impl NativeWarmPools {
             .adapter
             .native_pools()
             .ok_or(WarmPoolError::Unavailable)?;
+        if let Some(session) = &self.release_session {
+            let head = session
+                .current()
+                .await
+                .map_err(|_| WarmPoolError::Unavailable)?;
+            let inventory = provider
+                .inventory()
+                .await
+                .map_err(|_| WarmPoolError::Unavailable)?;
+            for selected in std::iter::once(&head.pair.agent).chain(head.pair.machine.iter()) {
+                let target = self
+                    .store
+                    .find(&selected.target_id)
+                    .await?
+                    .ok_or(WarmPoolError::Conflict)?;
+                if !crate::runtime_release::target_matches(selected, &target)
+                    || !inventory.iter().any(|status| {
+                        target.binding.as_ref() == Some(&status.binding)
+                            && status.observed
+                            && status.desired_replicas == target.target_replicas
+                            && status.ready_replicas >= target.target_replicas
+                    })
+                {
+                    return Err(WarmPoolError::Unavailable);
+                }
+            }
+            session
+                .current()
+                .await
+                .map_err(|_| WarmPoolError::Unavailable)?;
+            return Ok(());
+        }
         let mut images = vec![&self.image];
         if let Some((image, _)) = &self.machine {
             images.push(image);

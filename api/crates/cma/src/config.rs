@@ -125,6 +125,9 @@ impl TrustedProxyConfig {
 /// Complete process configuration for the temporary discovery boundary.
 #[derive(Clone)]
 pub struct Config {
+    pub(crate) runtime_release: crate::runtime_release::settings::Settings,
+    pub(crate) runtime_release_session: Option<std::sync::Arc<crate::runtime_release::Session>>,
+    pub(crate) startup_configuration_sha256: String,
     pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
@@ -185,6 +188,13 @@ impl Config {
     fn from_lookup(
         mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
+        let mut observed = std::collections::BTreeMap::new();
+        let mut lookup = |name: &str| {
+            let value = lookup(name)?;
+            observed.insert(name.to_owned(), value.clone());
+            Ok(value)
+        };
+        let runtime_release = crate::runtime_release::settings::Settings::from_lookup(&mut lookup)?;
         let bind = value_or(&mut lookup, "CHRONO_SERVER_BIND", DEFAULT_BIND)?
             .parse::<SocketAddr>()
             .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
@@ -331,7 +341,10 @@ impl Config {
                 "CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION requires managed document context".into(),
             );
         }
-        Ok(Self {
+        let mut config = Self {
+            runtime_release,
+            runtime_release_session: None,
+            startup_configuration_sha256: String::new(),
             global_sandbox_limit,
             bind,
             metrics_bind,
@@ -383,7 +396,15 @@ impl Config {
             sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,
-        })
+        };
+        use sha2::{Digest, Sha256};
+        config.startup_configuration_sha256 = format!(
+            "{:x}",
+            Sha256::digest(
+                serde_json::to_vec(&observed).map_err(|_| "cannot bind startup configuration")?
+            )
+        );
+        Ok(config)
     }
 
     pub fn auth_mode_name(&self) -> &'static str {

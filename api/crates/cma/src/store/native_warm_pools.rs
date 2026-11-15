@@ -14,12 +14,14 @@ use super::durability::majority_collection;
 use crate::warm_pools::{PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
+mod release;
 mod retirement;
 mod schema;
 
 const MAX_TARGETS: i64 = 1000;
 
 pub(crate) struct MongoNativeWarmPools {
+    release_session: Option<std::sync::Arc<crate::runtime_release::Session>>,
     targets: Collection<PoolTarget>,
     deployment: String,
     database: Database,
@@ -38,6 +40,7 @@ impl MongoNativeWarmPools {
             .await
             .map_err(|_| StoreError::Unavailable("create native pool identity index".into()))?;
         Ok(Self {
+            release_session: None,
             targets,
             deployment: deployment.into(),
             database: database.clone(),
@@ -45,7 +48,12 @@ impl MongoNativeWarmPools {
     }
 
     fn scope(&self) -> Document {
-        doc! {"plan.deployment":&self.deployment, "document_schema_version":{"$in":[1_i64,2_i64]}}
+        let versions = if self.release_session.is_some() {
+            vec![3_i64, 4]
+        } else {
+            vec![1_i64, 2]
+        };
+        doc! {"plan.deployment":&self.deployment, "document_schema_version":{"$in":versions}}
     }
 
     async fn check_fenced_write(
@@ -68,7 +76,7 @@ fn fence(target: &PoolTarget) -> Document {
 }
 
 fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
-    if target.document_schema_version != if target.machine { 2 } else { 1 }
+    if !if target.machine { [2, 4] } else { [1, 3] }.contains(&target.document_schema_version)
         || target.revision < 1
         || target.applied_revision < 0
         || target.applied_revision > target.revision
@@ -90,7 +98,11 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
 #[async_trait]
 impl PoolTargetStore for MongoNativeWarmPools {
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
-        retirement::activate(self, id).await
+        if self.release_session.is_some() {
+            self.activate_selected(id).await
+        } else {
+            retirement::activate(self, id).await
+        }
     }
     async fn retirement_homes(
         &self,
@@ -145,6 +157,7 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
 
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
+        let _permit = self.admit_mutation("pool_target_insert", &target).await?;
         match self.targets.insert_one(&target).await {
             Ok(_) => Ok(target),
             Err(_) => {
@@ -174,6 +187,9 @@ impl PoolTargetStore for MongoNativeWarmPools {
         id: &str,
         body: &ResizeWarmPoolBody,
     ) -> Result<PoolTarget, WarmPoolError> {
+        let _permit = self
+            .admit_mutation("pool_target_resize", &(id, body))
+            .await?;
         let mut filter = self.scope();
         filter.extend(doc! {"_id":id,"revision":body.expected_revision as i64,"retiring":{"$ne":true},"retired":{"$ne":true},"lease_until":{"$lte":DateTime::now()}});
         let update = doc! {"$set":{"target_replicas":i64::from(body.target_replicas),
@@ -215,6 +231,9 @@ impl PoolTargetStore for MongoNativeWarmPools {
         {
             return Err(WarmPoolError::Conflict);
         }
+        let _permit = self
+            .admit_mutation("pool_target_bind", &(target, binding))
+            .await?;
         let mut filter = fence(target);
         filter.insert("binding", mongodb::bson::Bson::Null);
         let value =
@@ -228,6 +247,9 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
 
     async fn finish(&self, target: &PoolTarget, success: bool) -> Result<(), WarmPoolError> {
+        let _permit = self
+            .admit_mutation("pool_target_finish", &(target, success))
+            .await?;
         let mut fields = doc! {"lease":mongodb::bson::Bson::Null,"lease_until":DateTime::from_millis(0),
         "reconcile_after":DateTime::from_millis(DateTime::now().timestamp_millis()+15_000),
         "error": if success { mongodb::bson::Bson::Null } else { "Native warm pool reconciliation is unavailable; the recorded target will retry.".into() }};
@@ -245,6 +267,7 @@ impl PoolTargetStore for MongoNativeWarmPools {
 
 impl MongoNativeWarmPools {
     async fn claim_matching(&self, id: Option<&str>) -> Result<Option<PoolTarget>, WarmPoolError> {
+        let _permit = self.admit_mutation("pool_target_claim", &id).await?;
         let now = DateTime::now();
         let mut filter = self.scope();
         filter.extend(
