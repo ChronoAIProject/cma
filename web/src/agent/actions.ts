@@ -1,16 +1,6 @@
-import {
-  useCallback,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  type Dispatch,
-  type SetStateAction,
-  type RefObject,
-} from 'react';
-import type { CmaWebClient, CommandKeys } from '../api/client';
-import type { AgentLiveEvent } from '../api/types';
-import type { AgentCommand, AgentResourceState, ApprovalDecision } from './controller';
-import type { AgentV2Session } from './transport/client';
+import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import type { AgentActionOptions } from './actionOptions';
+import type { AgentCommand, ApprovalDecision } from './controller';
 import type { MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@chronoai/cma-sdk';
 import { submitV2Control, recoverV2Control } from './transport/controls';
@@ -20,33 +10,6 @@ import {
   InterruptionNotSubmittedError,
 } from './transport/interruption';
 
-interface Options {
-  readonly agentId?: string;
-  readonly client: CmaWebClient;
-  readonly historyIncomplete: boolean;
-  readonly commandsBlocked: boolean;
-  readonly activeTurn: boolean;
-  readonly inputAvailability: { readonly allowed: boolean };
-  readonly actionAbortRef: RefObject<AbortController | undefined>;
-  readonly actionKindRef: RefObject<AgentCommand | undefined>;
-  readonly replayAbortRef: RefObject<AbortController | undefined>;
-  readonly stateRef: RefObject<AgentResourceState>;
-  readonly keys: CommandKeys;
-  readonly v2?: AgentV2Session;
-  readonly setPending: Dispatch<SetStateAction<AgentCommand | undefined>>;
-  readonly setActionError: Dispatch<SetStateAction<string | undefined>>;
-  readonly setReplayRevision: Dispatch<SetStateAction<number>>;
-  readonly setRequestRevision: Dispatch<SetStateAction<number>>;
-  readonly applyLive: (event: AgentLiveEvent) => void;
-  readonly reload: () => void;
-  readonly errorMessage: (error: unknown) => string;
-  readonly onIdentityChange: (error: unknown) => boolean;
-  readonly options: {
-    readonly viewerId?: string;
-    readonly onHierarchyChange?: () => void;
-    readonly onDeleted?: () => void;
-  };
-}
 function runId(): string {
   return typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -71,10 +34,11 @@ export function useAgentActions({
   setRequestRevision,
   applyLive,
   reload,
+  refreshDetail,
   errorMessage,
   onIdentityChange,
   options,
-}: Options) {
+}: AgentActionOptions) {
   const context = useMemo(
     () => ({
       agentId,
@@ -407,6 +371,7 @@ export function useAgentActions({
         keys.settle(scope);
         options.onHierarchyChange?.();
         if (name === 'delete') options.onDeleted?.();
+        else if (name === 'stop' && v2 !== undefined) refreshDetail();
         else if (name !== 'interrupt' || (v2 === undefined && !requireStop)) reload();
       } catch (error: unknown) {
         if (!controller.signal.aborted && !onIdentityChange(error))
@@ -430,6 +395,7 @@ export function useAgentActions({
       keys,
       options,
       reload,
+      refreshDetail,
       stateRef,
       v2,
       actionAbortRef,

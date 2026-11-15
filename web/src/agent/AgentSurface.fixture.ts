@@ -13,6 +13,7 @@ export function controller(
     state:
       state.status === 'ready' && conversation !== undefined ? { ...state, conversation } : state,
     reload: vi.fn(),
+    refreshDetail: vi.fn(),
     clearActionError: vi.fn(),
     send: vi.fn().mockResolvedValue(undefined),
     interrupt: vi.fn().mockResolvedValue(undefined),
