@@ -44,6 +44,16 @@ pub(super) async fn hierarchy_with_claims(
             .unwrap()
             .unwrap();
     }
+    if workspace_claim {
+        // Lifecycle Workspace claims wait for the ordinary parent installation
+        // and credential boundary, including when the runtime was prepared.
+        let previous = parent.revision;
+        parent.status = SandboxStatus::Installing;
+        parent.credential = crate::store::agent_access_fixtures::sandbox("prepared").credential;
+        parent.work.step = SandboxWorkStep::CreateProfileWorkspace(0);
+        parent.revision += 1;
+        store.save_sandbox(previous, parent.clone()).await.unwrap();
+    }
     let (_, profile) = actual_profiles(&plan);
     let mut candidate = crate::store::agent_access_fixtures::workspace(&parent, "prepared");
     candidate.profile = profile;
