@@ -15,10 +15,10 @@ async fn observed() -> (Arc<ReportingStore>, Arc<Mutex<Vec<Document>>>) {
         .unwrap();
     configure_pool(&mut options, 4);
     options.command_event_handler = Some(EventHandler::callback(move |event| {
-        if let CommandEvent::Started(event) = event {
-            if event.command.get_str("find").ok() == Some("sandbox_usage_events") {
-                recorded.lock().unwrap().push(event.command);
-            }
+        if let CommandEvent::Started(event) = event
+            && event.command.get_str("find").ok() == Some("sandbox_usage_events")
+        {
+            recorded.lock().unwrap().push(event.command);
         }
     }));
     let client = Client::with_options(options).unwrap();
@@ -263,7 +263,7 @@ async fn allocation_interval_native_boundaries_delta_and_snapshot_remain_exact()
     );
     assert!(matches!(
         store
-            .allocation_events(&mut snapshot, &vec![id; 201], range)
+            .allocation_events(&mut snapshot, &[id; 201], range)
             .await,
         Err(MetricsError::Busy)
     ));
