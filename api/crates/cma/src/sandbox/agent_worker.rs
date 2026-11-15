@@ -370,13 +370,8 @@ impl AgentWorker {
                 return Err(SandboxStoreError::Conflict);
             }
         }
-        let started = tokio::time::Instant::now();
         let claimed = agent.clone();
-        let result = self.execute_step(agent, now).await;
-        let result = self
-            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
-            .await;
-        self.finish_startup_attempt(&claimed, result, now + started.elapsed())
+        self.startup_attempt(&claimed, now, self.execute_step(agent, now))
             .await
     }
 

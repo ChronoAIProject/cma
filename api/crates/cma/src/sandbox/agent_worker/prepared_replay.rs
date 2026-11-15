@@ -52,14 +52,12 @@ impl AgentWorker {
         if !super::startup_publication::holds_startup_authority(&claimed, &self.config.holder, at) {
             return Err(SandboxStoreError::Conflict);
         }
-        let result = self
-            .open_conversation_with_context(claimed.clone(), Some(context), at)
-            .await;
-        let result = self
-            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
-            .await;
-        self.finish_startup_attempt(&claimed, result, now + started.elapsed())
-            .await
+        self.startup_attempt(
+            &claimed,
+            at,
+            self.open_conversation_with_context(claimed.clone(), Some(context), at),
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -135,9 +133,10 @@ impl AgentWorker {
                 &home.request_sha256,
             ),
         ];
-        let agent = self
+        let prepared = self
             .prepare_replay_pair(agent, context, &evidence, now)
-            .await?;
+            .await;
+        let agent = super::startup_retry::intent_result(prepared)?;
         timing.completed("prepared_replay_intent");
         let fence = claimed_fence(&agent, &self.config.holder)?;
         if !super::startup_publication::holds_startup_authority(

@@ -16,10 +16,12 @@ impl AgentWorker {
         sandbox: &Sandbox,
         now: SystemTime,
     ) -> Result<Agent, SandboxStoreError> {
-        self.retry_startup_publication(agent, sandbox, now, |current, at| {
-            self.prepare_side_effect_once(current, evidence, resolved_skills.clone(), at)
-        })
-        .await
+        let result = self
+            .retry_startup_publication(agent, sandbox, now, |current, at| {
+                self.prepare_side_effect_once(current, evidence, resolved_skills.clone(), at)
+            })
+            .await;
+        crate::sandbox::agent_worker::startup_retry::intent_result(result)
     }
 
     async fn prepare_side_effect_once(
