@@ -29,9 +29,7 @@ pub(crate) async fn attach(
             return Err(StatusCode::SERVICE_UNAVAILABLE);
         }
         let proof = authenticate(auth.clone(), request.headers()).await?;
-        let super::permissions::PermissionEvidence::Active(permissions) =
-            &proof.verified.permissions
-        else {
+        let super::permissions::PermissionEvidence::Active(permissions) = &proof.permissions else {
             return Err(StatusCode::UNAUTHORIZED);
         };
         request
@@ -63,12 +61,13 @@ pub(crate) struct ReadProof {
     auth: Arc<AuthState>,
     login: SecretDigest,
     state: SubjectAuthState,
-    verified: Arc<VerifiedSubject>,
+    permissions: super::permissions::PermissionEvidence,
+    verified: tokio::sync::Mutex<Arc<VerifiedSubject>>,
 }
 
 impl ReadProof {
     pub(crate) fn caller(&self) -> layer2_core::Caller {
-        let authorization = match &self.verified.permissions {
+        let authorization = match &self.permissions {
             super::permissions::PermissionEvidence::Active(permissions) => {
                 crate::permissions::capabilities_from_permissions(permissions.iter().cloned())
             }
@@ -80,7 +79,8 @@ impl ReadProof {
     /// CLI dispatch reacquires live provider permission and the exact durable
     /// credential custody. A changed credential or permission refuses dispatch.
     pub(crate) async fn recheck(&self) -> Result<layer2_core::Caller, StatusCode> {
-        self.current(&self.auth).await?;
+        let mut verified = self.verified.lock().await;
+        self.current_with(&self.auth, &verified).await?;
         let tokens = self.state.tokens.as_ref().ok_or(StatusCode::UNAUTHORIZED)?;
         let fresh = super::identity_retry::verify(
             &self.auth,
@@ -93,20 +93,29 @@ impl ReadProof {
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         if fresh.subject != self.state.subject
-            || fresh.permissions != self.verified.permissions
+            || fresh.permissions != self.permissions
             || !super::identity_lifetime::current(&self.auth, &fresh)
         {
             return Err(StatusCode::UNAUTHORIZED);
         }
-        self.current(&self.auth).await?;
-        if !super::identity_lifetime::current(&self.auth, &fresh) {
-            return Err(StatusCode::UNAUTHORIZED);
-        }
+        // Finishing verification supersedes the former live receipt. Validate
+        // custody against the new receipt, then retain it for the next check.
+        self.current_with(&self.auth, &fresh).await?;
+        *verified = fresh;
         Ok(self.caller())
     }
 
     async fn current(&self, auth: &AuthState) -> Result<(), StatusCode> {
-        if !super::identity_lifetime::current(auth, &self.verified) {
+        let verified = self.verified.lock().await;
+        self.current_with(auth, &verified).await
+    }
+
+    async fn current_with(
+        &self,
+        auth: &AuthState,
+        verified: &VerifiedSubject,
+    ) -> Result<(), StatusCode> {
+        if !super::identity_lifetime::current(auth, verified) {
             return Err(StatusCode::UNAUTHORIZED);
         }
         let current = auth
@@ -129,7 +138,7 @@ impl ReadProof {
                 .tokens
                 .as_ref()
                 .is_some_and(|t| t.expires_at > SystemTime::now())
-            || !super::identity_lifetime::current(auth, &self.verified)
+            || !super::identity_lifetime::current(auth, verified)
         {
             return Err(StatusCode::UNAUTHORIZED);
         }
@@ -187,19 +196,18 @@ pub(crate) async fn authenticate(
         }
         _ => StatusCode::SERVICE_UNAVAILABLE,
     })?;
-    if verified.subject != state.subject
-        || !matches!(
-            verified.permissions,
-            super::permissions::PermissionEvidence::Active(_)
-        )
-    {
+    if verified.subject != state.subject {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    let super::permissions::PermissionEvidence::Active(permissions) = &verified.permissions else {
+        return Err(StatusCode::UNAUTHORIZED);
+    };
     let proof = ReadProof {
         auth: auth.clone(),
         login: id,
         state,
-        verified,
+        permissions: super::permissions::PermissionEvidence::Active(permissions.clone()),
+        verified: tokio::sync::Mutex::new(verified),
     };
     proof.current(&auth).await?;
     Ok(proof)
