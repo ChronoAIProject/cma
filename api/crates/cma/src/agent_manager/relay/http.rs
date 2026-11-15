@@ -122,12 +122,8 @@ pub(super) async fn route(
         {
             return StatusCode::FORBIDDEN.into_response();
         }
-        let destination = match if private
-            && request
-                .uri()
-                .path()
-                .starts_with("/internal/agent-manager/v1/control/")
-        {
+        let claim = permits_claim(request.uri().path(), request.method(), private);
+        let destination = match if claim {
             relay.control_destination(&id).await
         } else {
             relay.destination(&id).await
@@ -137,11 +133,7 @@ pub(super) async fn route(
         };
         if destination.token != verified.owner
             && !(verified.owner.epoch == 0
-                && private
-                && request
-                    .uri()
-                    .path()
-                    .starts_with("/internal/agent-manager/v1/control/")
+                && claim
                 && destination.token.instance_id == verified.owner.instance_id)
         {
             return unavailable();
@@ -153,7 +145,12 @@ pub(super) async fn route(
         if private {
             return StatusCode::FORBIDDEN.into_response();
         }
-        match relay.destination(&id).await {
+        let destination = if permits_claim(request.uri().path(), request.method(), false) {
+            relay.control_destination(&id).await
+        } else {
+            relay.destination(&id).await
+        };
+        match destination {
             Ok(value) => value,
             Err(_) => return unavailable(),
         }
@@ -200,6 +197,9 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
     if method == axum::http::Method::OPTIONS {
         return false;
     }
+    if public_control(path, method) {
+        return true;
+    }
     let Some((_, suffix)) = path
         .strip_prefix("/api/v1/agents/")
         .and_then(|path| path.split_once('/'))
@@ -219,6 +219,28 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
         )
         || suffix.starts_with("files/")
         || suffix == "browser/control"
+}
+
+fn public_control(path: &str, method: &axum::http::Method) -> bool {
+    let Some(agent_path) = path.strip_prefix("/api/v1/agents/") else {
+        return false;
+    };
+    match agent_path.split_once('/') {
+        None => !agent_path.is_empty() && method == axum::http::Method::DELETE,
+        Some((_, "stop")) => method == axum::http::Method::POST,
+        _ => false,
+    }
+}
+
+fn permits_claim(path: &str, method: &axum::http::Method, private: bool) -> bool {
+    // A signed epoch-zero proof only invites an eligible peer to acquire a
+    // real lease. Public Stop/Delete first pass current personal mutation
+    // authorization on BOTH peers. It never becomes execution authority.
+    if private {
+        path.starts_with("/internal/agent-manager/v1/control/")
+    } else {
+        public_control(path, method)
+    }
 }
 
 fn body_limit(path: &str) -> usize {
