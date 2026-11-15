@@ -29,11 +29,11 @@ pub(super) fn usage() -> Vec<Query> {
     let mut interval = candidate(
         "usage-event-interval",
         "sandbox_usage_events",
-        doc! {"name":"sandbox_usage_events_interval_candidate",
+        doc! {"name":"sandbox_usage_events_interval",
             "key":{"sandbox_id":1,"ended_at":1,"started_at":1,"revision":1}},
         doc! {},
-        doc! {"sandbox_id":1,"revision":1},
-        "one sampled sandbox/UTC day, first 51 events only; not full 7d/30d report evidence; candidate may introduce a blocking sort",
+        doc! {},
+        "startup interval index; one sampled sandbox/UTC day, first 51 events only; not complete allocation or full report evidence",
     );
     interval.binding = Binding::UsageInterval;
     let at = mongodb::bson::DateTime::now().timestamp_millis() / 1000;
