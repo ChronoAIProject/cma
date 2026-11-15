@@ -8,6 +8,21 @@ struct Prepared {
     selection: Option<crate::ledger_format::Selection>,
 }
 
+async fn wait_for_desktop_ready(
+    machine_included: bool,
+    ready: impl std::future::Future<Output = ()>,
+) -> Result<()> {
+    if !machine_included {
+        return Ok(());
+    }
+    // The desktop launcher allows 10 seconds for Xvfb and 60 for its session.
+    tokio::time::timeout(std::time::Duration::from_secs(90), ready)
+        .await
+        .map_err(|_| {
+            RuntimeError::unavailable("desktop_start_failed", "desktop did not become ready")
+        })
+}
+
 fn prepare(config: &RuntimeConfig, indexed: bool) -> Result<Prepared> {
     if config.home_identity.is_none() {
         crate::fs_durability::create_dir_all(&config.home).map_err(|error| {
@@ -60,27 +75,18 @@ impl Supervisor {
     }
 
     pub(super) async fn finish_startup(supervisor: Arc<Self>) -> Result<Arc<Self>> {
-        if supervisor.config.machine_included {
-            let ready = async {
-                loop {
-                    if tokio::net::TcpStream::connect("127.0.0.1:6080")
-                        .await
-                        .is_ok()
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        wait_for_desktop_ready(supervisor.config.machine_included, async {
+            loop {
+                if tokio::net::TcpStream::connect("127.0.0.1:6080")
+                    .await
+                    .is_ok()
+                {
+                    break;
                 }
-            };
-            tokio::time::timeout(std::time::Duration::from_secs(30), ready)
-                .await
-                .map_err(|_| {
-                    RuntimeError::unavailable(
-                        "desktop_start_failed",
-                        "desktop did not become ready",
-                    )
-                })?;
-        }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await?;
         supervisor.recover_journals().await?;
         Ok(supervisor)
     }
@@ -177,3 +183,7 @@ impl Supervisor {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "supervisor_startup_tests.rs"]
+mod tests;
