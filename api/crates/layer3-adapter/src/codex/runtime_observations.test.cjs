@@ -31,8 +31,8 @@ function connect(program, directory, home, binary, frames) {
       child.stdin.write(JSON.stringify({jsonrpc:"2.0",id,method,params})+"\n");
       try {const frame=await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error("Fixture deadline: "+method)),30000);})]);assert.equal(frame.error,undefined,JSON.stringify(frame.error));return frame.result;}
       finally{clearTimeout(timer);pending.delete(id);}},
-    async waitFor(predicate){
-      if(frames.some(predicate))return;
+    async waitFor(predicate, start=0){
+      if(frames.slice(start).some(predicate))return;
       await new Promise((resolve,reject)=>{
         const receive=frame=>{if(predicate(frame)){clearTimeout(timer);listeners.delete(receive);resolve();}};
         const timer=setTimeout(()=>{listeners.delete(receive);reject(new Error("Observation deadline"));},10000);
@@ -83,16 +83,28 @@ test("pinned provider emits canonical cwd and cumulative real usage across turns
       return m?.descriptionSource==="prompt_preview" && m.descriptionInput===input && m.descriptionInputPosition==="first";
     }));
     // These are genuine native requests on the same process and thread.
+    const controlStart=frames.length;
     await control(directory,"thread/settings/update",{threadId:session.sessionId,cwd:other});
     await control(directory,"thread/name/set",{threadId:session.sessionId,name:"Describe the workspace briefly."});
-    await bridge.waitFor(f=>f.params?.update?._meta?.cma?.runtimeMetadata?.workingDirectory===other);
-    await bridge.waitFor(f=>f.params?.update?._meta?.cma?.runtimeMetadata?.descriptionSource==="provider_title");
+    await bridge.waitFor(f=>f.params?.sessionId===session.sessionId &&
+      f.params?.update?._meta?.cma?.runtimeMetadata?.workingDirectory===other,controlStart);
+    // Native control replies can arrive before ACP forwards their notifications.
+    // An earlier provider title must not satisfy this exact-title barrier.
+    await bridge.waitFor(f=>{
+      const m=f.params?.update?._meta?.cma?.runtimeMetadata;
+      return f.params?.sessionId===session.sessionId &&
+        m?.description==="Describe the workspace briefly." && m.descriptionSource==="provider_title";
+    },controlStart);
     assert(metadata().some(m=>m.workingDirectory===other));
     assert(metadata().some(m=>m.description==="Describe the workspace briefly." && m.descriptionSource==="provider_title"));
     await bridge.close();await open();
     const resumeStart=frames.length;
     await bridge.call("session/load",{sessionId:session.sessionId,cwd:other,mcpServers:[]});
-    assert(frames.slice(resumeStart).some(f=>f.params?.update?._meta?.cma?.runtimeMetadata?.descriptionSource==="provider_title"));
+    assert(frames.slice(resumeStart).some(f=>{
+      const m=f.params?.update?._meta?.cma?.runtimeMetadata;
+      return f.params?.sessionId===session.sessionId &&
+        m?.description==="Describe the workspace briefly." && m.descriptionSource==="provider_title";
+    }));
     assert(frames.some(f=>f.params?.update?._meta?.cma?.runtimeMetadata?.workingDirectory===other));
     await prompt();if(error)throw error;
     assert.equal(snapshots().at(-1).inputTokens,30);assert.equal(snapshots().at(-1).outputTokens,9);
