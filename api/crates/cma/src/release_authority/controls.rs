@@ -12,7 +12,7 @@ impl AuthorityStore {
         request: &BootstrapRequest,
         verifier: &dyn EvidenceVerifier,
     ) -> Result<ReleaseOperation> {
-        let original = OperationRequest::Bootstrap(request.clone());
+        let original = OperationRequest::Bootstrap(Box::new(request.clone()));
         original.validate()?;
         let digest = hash(&original)?;
         if let Some(existing) = self
@@ -33,7 +33,7 @@ impl AuthorityStore {
             request_sha256: digest.clone(),
             state_sha256: hash(&Option::<ReleaseHead>::None)?,
             subject: EvidenceSubject::Bootstrap {
-                request: request.clone(),
+                request: Box::new(request.clone()),
             },
         };
         let evidence = verifier.verify(&evidence).await?.check(&evidence)?;

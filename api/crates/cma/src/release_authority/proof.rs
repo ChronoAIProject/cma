@@ -34,7 +34,7 @@ pub(crate) struct EvidenceRequest {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum EvidenceSubject {
     Bootstrap {
-        request: BootstrapRequest,
+        request: Box<BootstrapRequest>,
     },
     Begin {
         request: Box<TransitionRequest>,

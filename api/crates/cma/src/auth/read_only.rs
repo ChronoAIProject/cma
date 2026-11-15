@@ -134,10 +134,10 @@ impl ReadProof {
             || state.token_generation != self.state.token_generation
             || state.tokens != self.state.tokens
             || state.refresh_lease.is_some()
-            || !state
+            || state
                 .tokens
                 .as_ref()
-                .is_some_and(|t| t.expires_at > SystemTime::now())
+                .is_none_or(|t| t.expires_at <= SystemTime::now())
             || !super::identity_lifetime::current(auth, verified)
         {
             return Err(StatusCode::UNAUTHORIZED);
