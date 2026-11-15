@@ -78,6 +78,15 @@ does not establish a statistically significant latency improvement.
   may consume a one-use proof within 250ms when `IDENTITY_HANDOFF_ENABLED` is
   activated. That switch ships disabled. Preparation handoffs and mutations
   always require a fresh check, and local journal epoch guards remain enforced.
+- Responses v2 control readiness follows the authorized live head, independently
+  of history length or transient history-page failures. Stop uses its recorded
+  response binding; queue discovery keeps its own fresh authorization checks.
+  Only live approvals are visible before history completes. Desktop takeover
+  still confirms and waits for interruption of an active turn. Missing heads,
+  account changes and access review fail closed; legacy AG-UI retains its full
+  history gate. `LIVE_HEAD_CONTROLS_ENABLED` in `controlReadiness.ts` can be set
+  to `false` to restore the previous history gate; production rollback uses the
+  normal Web generation rollback. This changes no server admission checks.
 - The model catalog refreshes across turn transitions because available runtime
   capabilities can change. Its repeated reads have a correctness purpose.
 - Sandbox availability, effective access and service-consent observations have
