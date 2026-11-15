@@ -6,6 +6,8 @@ SIGTERM only to ACP Node, allowing native app-server's stdin EOF shutdown. It
 never signals a native process or process group, nor invokes lifecycle APIs.
 """
 BRIDGES = {
+    "8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4",
+    "fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7",
     "113762e08aaa46cbea8ec3710e334024d13f1cc026a1c264130d5e642e0748c4",
     "4e3fbc3fb4850f57019f4ba955193363c25c1c044445f165e96d7a65dcf64888",
     "ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66",

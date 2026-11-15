@@ -220,18 +220,30 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
     super::super::mongo_read_telemetry::isolated_test(isolated_test(async {
         let mut session = client.start_session().await.unwrap();
         for caller in CALLERS {
-            assert!(
-                scan_collection(caller, &collection, &id, 1, &mut session, false, |_| Ok(()))
-                    .await
-                    .is_ok()
-            );
+            assert!(scan_collection(
+                caller,
+                &collection,
+                &id,
+                1,
+                &mut session,
+                crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+                |_| Ok(())
+            )
+            .await
+            .is_ok());
             assert_eq!(&snapshot(caller, true)[..3], &[1, 1, bytes]);
             // Missing tail retains consumption without successful validation.
-            assert!(
-                scan_collection(caller, &collection, &id, 2, &mut session, false, |_| Ok(()))
-                    .await
-                    .is_err()
-            );
+            assert!(scan_collection(
+                caller,
+                &collection,
+                &id,
+                2,
+                &mut session,
+                crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+                |_| Ok(())
+            )
+            .await
+            .is_err());
             assert_eq!(&snapshot(caller, false)[..3], &[1, 1, bytes]);
         }
         assert_eq!(
@@ -248,18 +260,30 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
             .update_one(doc! {}, doc! {"$set": {"seq": 7_i64}})
             .await
             .unwrap();
-        assert!(
-            scan_collection(caller, &collection, &id, 1, &mut session, false, |_| Ok(()))
-                .await
-                .is_err()
-        );
+        assert!(scan_collection(
+            caller,
+            &collection,
+            &id,
+            1,
+            &mut session,
+            crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+            |_| Ok(())
+        )
+        .await
+        .is_err());
         assert_eq!(&snapshot(caller, false)[..3], &[2, 2, 2 * bytes]);
         let invalid = database.collection::<Document>("invalid\0collection");
-        assert!(
-            scan_collection(caller, &invalid, &id, 1, &mut session, false, |_| Ok(()))
-                .await
-                .is_err()
-        );
+        assert!(scan_collection(
+            caller,
+            &invalid,
+            &id,
+            1,
+            &mut session,
+            crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
+            |_| Ok(())
+        )
+        .await
+        .is_err());
         assert_eq!(&snapshot(caller, false)[..3], &[3, 2, 2 * bytes]);
         assert_eq!(
             super::super::mongo_read_telemetry::snapshot("other"),
@@ -272,7 +296,7 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
             &id,
             10_129,
             &mut session,
-            false,
+            crate::store::agent_log_integrity::ScanOptions::new(false, Default::default()),
             |_| Ok(())
         )
         .await
@@ -282,3 +306,38 @@ async fn real_complete_scan_counts_success_corruption_and_failed_reads() {
     .await;
     database.drop().await.unwrap();
 }
+
+#[test]
+fn scan_execution_export_is_once_per_attempt_including_failure() {
+    for complete in [false, true] {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            let mut scan = Scan::new(ScanCaller::Other);
+            for _ in 0..100 {
+                scan.document(128);
+            }
+            if complete {
+                scan.complete();
+            }
+            drop(scan);
+        });
+        let text = handle.render();
+        for metric in [
+            "cma_agent_log_scan_longest_section_seconds",
+            "cma_agent_log_scan_driver_poll_seconds",
+        ] {
+            assert!(
+                text.contains(&format!(r#"{metric}_count{{caller="other"}} 1"#)),
+                "{text}"
+            );
+        }
+        assert!(text.contains(r#"cma_agent_log_scan_yields_total{caller="other"} 0"#));
+        for private in ["agent_id", "sandbox_id", "request_id", "user_id"] {
+            assert!(!text.contains(private));
+        }
+    }
+}
+
+#[path = "agent_log_telemetry_tests/cooperation.rs"]
+mod cooperation;

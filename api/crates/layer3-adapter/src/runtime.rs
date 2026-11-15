@@ -15,6 +15,15 @@ pub const DEFAULT_COMMAND_OUTPUT_LIMIT_BYTES: u32 = 32 * 1024;
 pub struct RuntimeHandle(pub String);
 
 impl RuntimeHandle {
+    /// Physical native member aliases for conservative startup scheduling only.
+    /// This parsing grants no ownership; adoption must still prove the current object.
+    pub fn native_member_identity(&self) -> crate::Result<Option<(&str, &str)>> {
+        if self.0.starts_with("agent-sandbox:") {
+            crate::agent_sandbox::parse_handle(self).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }

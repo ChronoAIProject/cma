@@ -2,7 +2,7 @@
 
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
-use layer2_core::sandbox::AgentLogEntry;
+use layer2_core::sandbox::{Agent, AgentLogEntry};
 use mongodb::bson::doc;
 use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
@@ -91,6 +91,21 @@ pub(super) async fn read_window(
     read_with_integrity(store, agent_id, window, &PreparedIntegrity).await
 }
 
+pub(super) async fn read_prefix_with_tail(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+    read_with_integrity(
+        store,
+        &agent.id,
+        Window::Prefix {
+            through: agent.conversation.last_seq,
+        },
+        &integrity::CapturedIntegrity(agent),
+    )
+    .await
+}
+
 pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
     store: &MongoSandboxStore,
     agent_id: &AgentId,
@@ -144,7 +159,7 @@ pub(super) async fn read_with_integrity<P: LogReadIntegrity>(
             agent_id,
             head.last_seq,
             &mut session,
-            true,
+            crate::store::agent_log_integrity::ScanOptions::new(true, store.scan_cooperation),
             |entry| {
                 head.validate_lineage(&entry)?;
                 if window.contains(entry.seq) && (entries.len() as u64) < window.limit() {

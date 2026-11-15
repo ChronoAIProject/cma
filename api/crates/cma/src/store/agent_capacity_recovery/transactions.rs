@@ -9,15 +9,13 @@ use layer2_core::sandbox::{
     },
     store::SandboxStoreError,
 };
-use mongodb::{
-    error::{TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT},
-    ClientSession,
-};
+use mongodb::ClientSession;
 
 use super::{admission, authority, receipts, settlement};
 use crate::store::{
     agent_log_integrity::TransactionLogError,
-    agent_log_segments::transaction_scope::TransactionScope, sandbox_mongo::MongoSandboxStore,
+    agent_log_segments::transaction_scope::TransactionScope,
+    sandbox_mongo::{commit_transaction, CommitOutcome as MongoCommitOutcome, MongoSandboxStore},
 };
 
 /// The caller stages the original S4 admission/bootstrap before this atomic
@@ -164,19 +162,15 @@ pub(super) async fn finish<T>(
             return Err(error(failure));
         }
     };
-    // Issue commit once. A helper that first retries an Unknown result and later
-    // returns only a transient error would erase the earlier uncertainty.
-    Ok(match session.commit_transaction().await {
-        Ok(()) => CommitOutcome::Recorded(value),
-        Err(failure) if failure.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
+    // Retry only the original commit, never its mutation. The shared helper
+    // preserves an earlier Unknown even if a later response looks transient.
+    Ok(match commit_transaction(session).await {
+        MongoCommitOutcome::Committed => CommitOutcome::Recorded(value),
+        MongoCommitOutcome::Retry(_) => CommitOutcome::KnownAbort,
+        MongoCommitOutcome::Unknown(_) | MongoCommitOutcome::Failed(_) => {
+            tracing::warn!("Capacity recovery commit unresolved; retain the original operation");
             CommitOutcome::Unknown
         }
-        Err(failure) if failure.contains_label(TRANSIENT_TRANSACTION_ERROR) => {
-            CommitOutcome::KnownAbort
-        }
-        // A bare failure is not promoted to KnownAbort. The original attempt
-        // must be reconciled from immutable publication evidence.
-        Err(_) => CommitOutcome::Unknown,
     })
 }
 

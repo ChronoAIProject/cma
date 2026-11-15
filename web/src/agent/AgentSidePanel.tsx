@@ -4,6 +4,7 @@ import { changedFiles, homeFilePath } from './fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
+import { detailReadSource } from '../api/detailReads';
 import { SharedAgentDetails } from '../resources/SharedAgentDetails';
 import { useAgentAccess } from '../resources/agentAccess';
 import type { ArtifactPublicationScope } from '../resources/artifactRecovery';
@@ -399,10 +400,13 @@ export function AgentSidePanel({
           hidden={panel !== 'browser'}
         >
           <>
-            {machineAvailable && !agentBrowserActive ? (
+            {!shared && detail === undefined && features?.browser.state === 'unsupported' ? (
+              <p role="status">Checking Agent desktop availability…</p>
+            ) : machineAvailable && !agentBrowserActive ? (
               panel === 'browser' ? (
                 <DesktopPanel
-                  key={`${agentId}:${connectionRevision}`}
+                  key={agentId}
+                  reconnectRevision={connectionRevision}
                   agentId={agentId}
                   application="Desktop"
                   runtimeReady={desktopRuntimeReady(detail)}
@@ -410,7 +414,7 @@ export function AgentSidePanel({
                   runId={operations?.activeRunId}
                   onStop={onStopForControl}
                   controlUnavailable={!historyLoaded}
-                  preparation={{ context: client, owner: subject }}
+                  preparation={{ context: detailReadSource(client), owner: subject }}
                   onClose={onClose}
                   embedded
                 />

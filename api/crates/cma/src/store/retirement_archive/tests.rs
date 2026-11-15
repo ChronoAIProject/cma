@@ -14,6 +14,8 @@ mod census_tests;
 mod commit_support;
 #[path = "completion_tests.rs"]
 mod completion_tests;
+#[path = "schema_compatibility_tests.rs"]
+mod schema_compatibility_tests;
 
 pub(super) async fn fixture() -> (Temp, ArchiveStore, Request, Vec<u8>) {
     let temp = Temp::new();

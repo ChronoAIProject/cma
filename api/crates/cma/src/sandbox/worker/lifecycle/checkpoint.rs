@@ -327,53 +327,6 @@ impl SandboxWorker {
         Ok(())
     }
 
-    pub(super) async fn fail_after_writer_resume(
-        &self,
-        sandbox: Sandbox,
-        failure: WorkerFailure,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        // Retry delay starts after writer recovery, not before its potentially slow acknowledgement.
-        let started = tokio::time::Instant::now();
-        let resumed = self.resume_lifecycle_writers(&sandbox).await;
-        let now = now + started.elapsed();
-        if resumed.is_err() {
-            return self
-                .handle_lifecycle_failure(
-                    sandbox,
-                    WorkerFailure::retryable("checkpoint writer resumption is unconfirmed"),
-                    now,
-                )
-                .await;
-        }
-        if failure.is_retryable() {
-            let stamp = rfc3339_at(now);
-            let lease = super::support::lifecycle_lease(&sandbox, &self.config.holder)?;
-            let mut next = sandbox.clone();
-            next.retry_lifecycle_after_writer_resume(
-                rfc3339_at(now + self.config.retry_delay),
-                &lease.holder,
-                lease.fence,
-                stamp.clone(),
-            )
-            .map_err(model_error)?;
-            return self
-                .commit_lifecycle_phase(
-                    &sandbox,
-                    next,
-                    Vec::new(),
-                    layer2_core::sandbox::store::SandboxLifecycleAgentScope::Touched,
-                    stamp,
-                    vec![layer2_core::sandbox::SandboxEventKind::WorkStepFailed {
-                        step: layer2_core::sandbox::SandboxWorkStep::RunLifecycleOperation,
-                        failure: failure.typed(),
-                    }],
-                )
-                .await;
-        }
-        self.handle_lifecycle_failure(sandbox, failure, now).await
-    }
-
     async fn reconcile_checkpoint_publication(
         &self,
         current: &Sandbox,
@@ -397,7 +350,7 @@ fn checkpoint_hold_failure(error: AdapterError) -> WorkerFailure {
         if detail.starts_with("checkpoint_hold_retired: ")
             || detail == "CheckpointForTeardown: checkpoint_hold_retired")
     {
-        return WorkerFailure::retryable("checkpoint writer authority was already resumed");
+        return WorkerFailure::waiting("checkpoint writer authority was already resumed");
     }
     adapter_failure(error)
 }
@@ -413,7 +366,7 @@ pub(super) fn require_quiet_agent(agent: &Agent) -> Result<(), WorkerFailure> {
         || agent.work.lease.is_some()
         || agent.requested_stop_reason.is_some()
     {
-        return Err(WorkerFailure::retryable(
+        return Err(WorkerFailure::waiting(
             "a live agent is not quiet enough for sandbox lifecycle work",
         ));
     }

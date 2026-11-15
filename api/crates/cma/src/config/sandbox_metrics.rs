@@ -2,6 +2,7 @@
 #[derive(Clone, Debug)]
 pub(crate) struct MetricsConfig {
     pub enabled: bool,
+    pub views: super::report_views::ViewPolicy,
     pub cluster: String,
     pub source_url: Option<String>,
     pub budgets: MetricsBudgets,
@@ -29,6 +30,7 @@ impl MetricsConfig {
         let budgets = MetricsBudgets::from_lookup(lookup)?;
         let reporting_pool_size = reporting_pool_size(lookup)?;
         Ok(Self {
+            views: super::report_views::ViewPolicy::from_lookup(lookup)?,
             enabled,
             cluster,
             source_url,

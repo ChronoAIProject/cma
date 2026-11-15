@@ -6,17 +6,20 @@ import { useUsageSelection } from './metrics/selection';
 import { UsageAgentPicker } from './UsageAgentPicker';
 import type { DocumentsClient } from '../api/documents';
 import { DocumentUsage } from '../documents/DocumentUsage';
+import { anonymousReportOwner, type UsageReportOwner } from './metrics/reportOwner';
 
 export function UsageDialog({
   client,
   open,
   onClose,
+  principal = anonymousReportOwner,
   appearanceNotice = false,
   documents,
 }: {
   readonly client?: UsageClient;
   readonly open: boolean;
   readonly onClose: () => void;
+  readonly principal?: UsageReportOwner;
   readonly appearanceNotice?: boolean;
   readonly documents?: Pick<DocumentsClient, 'documentUsage'>;
 }) {
@@ -37,6 +40,7 @@ export function UsageDialog({
             api={client.usageMetrics}
             history={client.usage}
             admin={false}
+            principal={principal}
             measured={measured}
             active={open}
             selection={selection}
