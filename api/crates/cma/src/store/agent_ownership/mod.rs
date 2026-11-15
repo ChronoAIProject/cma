@@ -13,7 +13,6 @@ use mongodb::{Client, ClientSession, Collection, Database};
 use super::durability::majority_collection;
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-    TRANSACTION_ATTEMPTS,
 };
 
 mod acquisition;
@@ -228,13 +227,16 @@ mod mongo_tests;
 // This only classifies writes inside an uncommitted effect transaction. A
 // transient transaction error proves abort; commit uncertainty never does.
 fn fence_write_error(error: mongodb::error::Error) -> SandboxStoreError {
-    if is_transient(&error)
-        && !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
-    {
+    if known_aborted(&error) {
         SandboxStoreError::Conflict
     } else {
         SandboxStoreError::Unavailable(error.to_string())
     }
+}
+
+// An unknown commit label always wins over a transient-abort label.
+fn known_aborted(error: &mongodb::error::Error) -> bool {
+    is_transient(error) && !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
 }
 
 #[cfg(test)]
