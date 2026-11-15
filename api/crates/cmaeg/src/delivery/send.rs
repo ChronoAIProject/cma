@@ -126,7 +126,17 @@ impl Sender {
                 _ => "custom",
             },
         );
-        let (result, effects) = self.reply_inner(ctx, event, message).await;
+        let platform = !matches!(
+            event.reply,
+            ReplyAddress::Sync { .. } | ReplyAddress::ResultWebhook { .. } | ReplyAddress::None
+        );
+        let (result, effects) = super::trace::observe(
+            ctx.trace,
+            platform,
+            self.reply_inner(ctx, event, message),
+            |(receipt, _)| super::trace::receipt(receipt),
+        )
+        .await;
         observation.finish(result.delivery.kind());
         (result, effects)
     }
@@ -256,7 +266,10 @@ impl Sender {
         if interactive && crate::interactions::has_controls(message) {
             return Box::pin(self.interactive_reply(ctx, event, message, None)).await;
         }
-        if self.relay.complete_replies() || !message.native_attachments.is_empty() {
+        if self.relay.complete_replies()
+            || self.relay.commonmark_for(&event.reply)
+            || !message.native_attachments.is_empty()
+        {
             return Box::pin(self.complete_reply(ctx, event, message, interactive)).await;
         }
         // The send's own view of the event's first-send flag, returned as its effect.

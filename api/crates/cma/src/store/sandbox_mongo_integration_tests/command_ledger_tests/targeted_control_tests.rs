@@ -6,6 +6,8 @@ mod approvals;
 mod failures;
 #[path = "targeted_control_fixtures.rs"]
 mod fixtures;
+#[path = "operator_stop_controls_tests.rs"]
+mod operator_stop_controls;
 use fixtures::*;
 #[path = "targeted_control_contention_tests.rs"]
 mod contention;

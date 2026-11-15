@@ -64,3 +64,48 @@ impl UsageFold {
         }
     }
 }
+
+/// The last durable cumulative observation is authoritative even when older
+/// generation counters or later raw Usage events remain in the log. Callers
+/// must first prove the complete prefix and select its last UsageUpdated row.
+impl super::AgentUsageReading {
+    pub fn from_summary(
+        agent: &super::Agent,
+        entry: &super::AgentLogEntry,
+    ) -> Result<Self, String> {
+        if entry.agent_id != agent.id
+            || entry.seq == 0
+            || entry.seq > agent.conversation.last_seq
+            || crate::seconds_from_rfc3339(&entry.appended_at).is_none()
+        {
+            return Err("usage summary source identity is invalid".into());
+        }
+        let super::AgentLogKind::UsageUpdated {
+            input_tokens,
+            output_tokens,
+            context_used,
+            context_window,
+            turn_sequence,
+            turn_input_tokens,
+            turn_output_tokens,
+        } = entry.kind
+        else {
+            return Err("usage summary has no cumulative observation".into());
+        };
+        Ok(Self {
+            agent_id: agent.id.clone(),
+            through_seq: agent.conversation.last_seq,
+            usage: AgentUsage {
+                input_tokens,
+                output_tokens,
+                context_used,
+                context_window,
+                current_turn: turn_sequence.map(|turn_sequence| super::AgentTurnUsage {
+                    turn_sequence,
+                    input_tokens: turn_input_tokens,
+                    output_tokens: turn_output_tokens,
+                }),
+            },
+        })
+    }
+}

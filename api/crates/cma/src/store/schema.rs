@@ -16,6 +16,9 @@ pub(super) async fn initialize_collections(
 ) -> Result<(), StoreError> {
     ensure_collections(database, collections).await?;
     refuse_unknown_versions(database, collections).await?;
+    if collections.contains(&super::work_schema::floor::COLLECTION) {
+        super::work_schema::floor::verify(database).await?;
+    }
     if collections.contains(&"agents") {
         super::agent_log_segments::schema::verify(database).await?;
     }
@@ -109,8 +112,17 @@ pub(super) fn require_current(version: i64) -> Result<(), StoreError> {
 }
 
 fn unknown_version_filter(collection: &str) -> Document {
-    let versions = if collection == "agents" {
+    let versions = if matches!(collection, "agents" | "agent_reuse_bindings") {
         vec![1_i64, 2]
+    } else if matches!(
+        collection,
+        "sandboxes" | "workspaces" | "sandbox_credentials"
+    ) {
+        vec![
+            1_i64,
+            super::work_schema::RENEWED_VERSION,
+            super::work_schema::PREPARED_VERSION,
+        ]
     } else {
         vec![DOCUMENT_SCHEMA_VERSION]
     };
@@ -132,15 +144,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_agent_envelopes_accept_the_additive_reader_version() {
+    fn only_explicitly_versioned_aggregates_accept_their_retained_envelopes() {
         let versions = |name| {
             unknown_version_filter(name).get_array("$or").unwrap()[0]["document_schema_version"]
                 ["$nin"]
                 .clone()
         };
         assert_eq!(versions("agents"), mongodb::bson::bson!([1_i64, 2_i64]));
+        assert_eq!(
+            versions("agent_reuse_bindings"),
+            mongodb::bson::bson!([1_i64, 2_i64])
+        );
         assert_eq!(versions("agent_log"), mongodb::bson::bson!([1_i64]));
-        assert_eq!(versions("sandboxes"), mongodb::bson::bson!([1_i64]));
+        assert_eq!(
+            versions("sandboxes"),
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64])
+        );
+        assert_eq!(
+            versions("workspaces"),
+            mongodb::bson::bson!([1_i64, 3_i64, 4_i64])
+        );
         // Scalar integer and no-array predicates remain present for both paths.
         for guard in [1_usize, 2] {
             assert_eq!(

@@ -67,6 +67,7 @@ fn not_found() -> Box<Response> {
 }
 fn binding_error(error: BindingError) -> Box<Response> {
     match error {
+        BindingError::AdmissionPaused => Box::new(super::error::admission_paused()),
         BindingError::NotFound | BindingError::Forbidden => not_found(),
         // A reserved conversation is not admissible until its Agent is ready.
         // Use the provider contract's retryable capacity response so a gateway
@@ -86,5 +87,26 @@ fn binding_error(error: BindingError) -> Box<Response> {
             Box::new(response)
         }
         _ => Box::new(super::error::unavailable()),
+    }
+}
+
+#[cfg(test)]
+mod admission_pause_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn binding_conversation_preparation_paces_operator_pause_retries() {
+        let response = *binding_error(BindingError::AdmissionPaused);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()["retry-after"], "60");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "admission_paused");
+        assert_eq!(
+            body["error"]["message"],
+            layer2_core::admission::ADMISSION_PAUSED_GUIDANCE
+        );
     }
 }

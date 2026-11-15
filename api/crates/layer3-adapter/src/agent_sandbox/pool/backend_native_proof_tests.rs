@@ -6,8 +6,14 @@ use crate::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "backend_inspection_admission_tests.rs"]
+mod inspection_admission;
+
 #[path = "backend_policy_read_tests.rs"]
 mod policy_reads;
+
+#[path = "backend_post_status_order_tests.rs"]
+mod post_status_order;
 
 #[path = "backend_native_status_tests.rs"]
 mod native_status;
@@ -20,6 +26,7 @@ struct StatusTransport {
     client: AgentSandboxClient,
     calls: AtomicUsize,
     replace_volume: AtomicBool,
+    after_status: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 #[async_trait::async_trait]
 impl HostedControlTransport for StatusTransport {
@@ -41,6 +48,9 @@ impl HostedControlTransport for StatusTransport {
         if self.replace_volume.load(Ordering::SeqCst) {
             self.state.lock().unwrap().rows.get_mut(VOLUME).unwrap()["metadata"]["uid"] =
                 json!("replaced-after-status");
+        }
+        if let Some(after_status) = self.after_status.lock().unwrap().take() {
+            after_status();
         }
         Ok(ResponseFrame::RuntimeStatus(RuntimeStatus {
             agent_filesystem: false,
@@ -96,6 +106,7 @@ async fn inspection_fixture_with_home_authority(
         client: client(&bound.fixture, false),
         calls: AtomicUsize::new(0),
         replace_volume: AtomicBool::new(false),
+        after_status: Mutex::new(None),
     });
     let backend = Arc::new(AgentSandboxBackend::new(
         client(&bound.fixture, false),

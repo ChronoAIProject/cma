@@ -6,6 +6,41 @@ use tokio::sync::Notify;
 
 use super::*;
 
+pub(crate) struct DrivenScheduler {
+    work: ScheduledWork,
+    interval: Duration,
+}
+
+impl CommandScheduler {
+    pub(crate) fn driven(self) -> DrivenScheduler {
+        DrivenScheduler {
+            work: ScheduledWork::new(self.worker, self.concurrency, self.reconcile_pacing),
+            interval: self.interval,
+        }
+    }
+}
+
+impl DrivenScheduler {
+    pub(crate) async fn poll(&mut self) {
+        // Keep real cooldowns and discovery cadence, but finish each poll's
+        // work before the next one so slow Mongo scans cannot lose attempts.
+        tokio::time::sleep(self.interval).await;
+        self.work.poll();
+        while let Some(result) = self.work.tasks.join_next_with_id().await {
+            match &result {
+                Err(error) => panic!("driven scheduler task failed: {error}"),
+                Ok((_, Err(error))) => panic!("driven scheduler work failed: {error:?}"),
+                Ok((_, Ok(_))) => {}
+            }
+            self.work.completed(result);
+            self.work.fill_slots();
+        }
+        assert!(self.work.in_flight.is_empty());
+        assert!(self.work.queued.is_empty());
+        assert!(!self.work.polling);
+    }
+}
+
 #[derive(Clone)]
 enum Behavior {
     Complete,

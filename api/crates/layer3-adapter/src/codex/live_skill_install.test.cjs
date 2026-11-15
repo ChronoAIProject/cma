@@ -8,6 +8,7 @@ const { test } = require("node:test");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { controlledBinary } = require("./native_control_fixture.cjs");
 const { processRpc } = require("./native_tools_fixture.cjs");
+const { nativeProcessIdentity } = require("./native_process_identity.cjs");
 async function modelFixture() {
   const calls = [];
   let error;
@@ -73,7 +74,12 @@ function nativeProcesses(root) {
         readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim().split(/\s+/).filter(Boolean).map(Number);
       processes.push(...children);
       const executable = rows ? rows.find(row => row.pid === pid)?.executable : readlinkSync(`/proc/${pid}/exe`);
-      if (executable && basename(executable) === "codex") native.push(pid);
+      const matches = executable && (rows ? basename(executable) === "codex" :
+        nativeProcessIdentity(pid, executable, {
+          path: process.env.CMA_CODEX_TEST_NATIVE_BINARY,
+          sha256: process.env.CMA_CODEX_TEST_NATIVE_SHA256,
+        }));
+      if (matches) native.push(pid);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
     }

@@ -29,13 +29,25 @@ impl SignedIn {
     /// notice, so the notice is shown exactly once.
     pub(crate) async fn load(console: &Console, cell: &Arc<SessionCell>) -> Self {
         let orgs = console.org_choices(cell).await;
-        let mut meta = cell.meta();
+        let flash = cell.meta().flash.clone();
+        let flash = if flash.is_some() {
+            match console.sessions().set_flash(cell, None).await {
+                Ok(()) => flash,
+                Err(_) => {
+                    tracing::debug!(stage = "flash", "console notice consumption deferred");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let meta = cell.meta();
         Self {
             subject: mask(&meta.subject),
             selected: meta.selected.clone(),
             orgs,
             csrf_key: meta.csrf_key,
-            flash: meta.flash.take(),
+            flash,
         }
     }
 

@@ -1,11 +1,12 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
 pub(super) mod retry;
-use super::sandbox_events::{append_in_transaction, reconcile_event, TransactionEventError};
+use super::sandbox_events::{append_in_transaction, reconcile_event};
 use super::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, signed, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::work_lease_update::replacement;
 use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
 use layer2_core::ids::{SubjectId, WorkspaceId};
@@ -37,15 +38,6 @@ impl AdmissionReceipt {
         match self {
             Self::Created { workspace, .. } => WorkspaceAdmissionResult::Created(workspace.clone()),
             Self::Existing(workspace) => WorkspaceAdmissionResult::Existing(workspace.clone()),
-        }
-    }
-}
-
-impl From<TransactionEventError> for ApplyError {
-    fn from(error: TransactionEventError) -> Self {
-        match error {
-            TransactionEventError::Domain(error) => Self::Domain(error),
-            TransactionEventError::Driver(error) => Self::Driver(error),
         }
     }
 }
@@ -257,7 +249,7 @@ async fn apply_admission(
         };
         if let Some(document) = store
             .workspaces
-            .find_one(origin_filter)
+            .find_one(crate::store::work_schema::query(origin_filter))
             .session(&mut *session)
             .await
             .map_err(ApplyError::Driver)?
@@ -301,6 +293,13 @@ async fn apply_admission(
             },
         ));
     }
+    super::budget::require_open(
+        store,
+        super::budget::now_seconds(),
+        admission.admission_cause(),
+        session,
+    )
+    .await?;
     let prepared =
         match super::native_prepared::adopt_workspace(store, &sandbox, candidate, session)
             .await
@@ -330,14 +329,14 @@ async fn apply_admission(
         let updated = store
             .sandboxes
             .update_one(
-                doc! {
+                crate::store::work_schema::query(doc! {
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "channel_reuse_cleanup_execution": { "$exists": false },
                     "revision": signed(sandbox.revision, "sandbox revision")
                         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
-                },
-                doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? },
+                }),
+                replacement(sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?),
             )
             .session(&mut *session)
             .await
@@ -392,11 +391,11 @@ pub(super) async fn lock_sandbox(
     let locked = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
-            },
+            }),
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )
         .session(session)

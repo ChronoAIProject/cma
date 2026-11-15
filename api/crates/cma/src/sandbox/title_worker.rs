@@ -1,6 +1,8 @@
 //! Bind durable title claims to the current Sandbox runtime and scoped credential.
 
 use super::title_budget::TitleBudget;
+use layer2_core::sandbox::PreparedAgentTitle;
+mod prepared;
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -227,6 +229,7 @@ impl AgentTitleWorker {
     }
 }
 
+#[derive(Clone)]
 struct TitleAuthority {
     agent: Agent,
     sandbox: Sandbox,
@@ -260,6 +263,12 @@ impl AgentTitleGenerator for FencedTitleGenerator {
         &self,
         request: AgentTitleGenerationRequest,
     ) -> Result<AgentTitleGenerationResponse, AgentTitleGenerationError> {
+        self.prepare(request).await?.dispatch().await
+    }
+    async fn prepare(
+        &self,
+        request: AgentTitleGenerationRequest,
+    ) -> Result<Box<dyn PreparedAgentTitle>, AgentTitleGenerationError> {
         let refused = AgentTitleGenerationError::unavailable;
         if !self
             .worker
@@ -300,7 +309,7 @@ impl AgentTitleGenerator for FencedTitleGenerator {
                     },
                 });
         }
-        let response = generator.generate(request.clone()).await?;
+        let inner = generator.prepare(request.clone()).await?;
         if !self
             .worker
             .is_current(&self.authority, request.bearer())
@@ -308,7 +317,12 @@ impl AgentTitleGenerator for FencedTitleGenerator {
         {
             return Err(refused());
         }
-        Ok(response)
+        Ok(Box::new(prepared::FencedPrepared {
+            inner,
+            worker: self.worker.clone(),
+            authority: self.authority.clone(),
+            request,
+        }))
     }
 }
 

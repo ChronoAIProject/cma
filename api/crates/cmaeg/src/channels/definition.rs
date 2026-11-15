@@ -45,6 +45,7 @@ pub fn build_definition(
         profile: request.profile.clone(),
         profile_digest: request.profile.digest(),
         provider: ProviderBinding {
+            capabilities: Vec::new(),
             slug: request.provider.slug.clone(),
             target: request.provider.target.clone(),
             binding_id,

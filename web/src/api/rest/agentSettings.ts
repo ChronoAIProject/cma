@@ -1,13 +1,10 @@
 import { agentPreferencesClient } from './agentPreferences';
-import { ProtocolError } from '@chronoai/cma-sdk';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
 import type { AgentSettingsView, CmaWebClient } from '../client';
 
-export class AgentSettingsError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
+export class AgentSettingsError extends ApiError {
+  constructor(message: string, status: number, retryAfterMs?: number) {
+    super(status, message, undefined, undefined, retryAfterMs);
   }
 }
 
@@ -26,6 +23,7 @@ async function settingsRequest(id: string, init: RequestInit): Promise<AgentSett
           ? 'Wait for this Agent to finish its current turn before changing settings.'
           : `Agent settings are unavailable (${String(response.status)}).`,
       response.status,
+      retryAfterMilliseconds(response),
     );
   }
   const value = (await response.json()) as AgentSettingsView;

@@ -90,6 +90,14 @@ impl MongoBindingCredentials {
         credential: &ProvidedCredential,
         session: &mut ClientSession,
     ) -> Result<BindingPreparationReceipt, CoreError> {
+        crate::store::admission_checks::require_fresh(&self.store.budget_settings, session)
+            .await
+            .map_err(|error| match error {
+                layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused => {
+                    CoreError::AdmissionPaused
+                }
+                other => unavailable(other),
+            })?;
         let binding = self
             .store
             .bindings

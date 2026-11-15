@@ -94,6 +94,7 @@ pub async fn create(
         .await
         .map_err(ManagementError::Provider)?;
     definition.provider.level = binding.level;
+    definition.provider.capabilities = binding.capabilities.clone();
     let saved = async {
         let blob = seal_definition(&state.master_keys, &definition)?;
         state
@@ -307,6 +308,7 @@ pub async fn update(
         .await
         .map_err(ManagementError::Provider)?;
     definition.provider.level = binding.level;
+    definition.provider.capabilities = binding.capabilities;
     let blob = seal_definition(&state.master_keys, &definition)?;
     // A failed CAS must never unbind a retained channel. The provider and CMA record store
     // do not share a transaction; retry with a freshly read version to reconcile a rebind.

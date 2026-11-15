@@ -12,6 +12,11 @@ pub(super) async fn browser(fixture: &Fixture) -> (Router, String) {
     let app = crate::auth::router(fixture.auth.clone())
         .route("/api/v1/admin/settings", get(|| async { StatusCode::OK }))
         .route("/api/v1/agents", get(|| async { StatusCode::OK }))
+        .route("/api/v1/agents/{id}", get(|| async { StatusCode::OK }))
+        .route(
+            "/api/v1/agents/provenance",
+            get(|| async { StatusCode::OK }),
+        )
         .layer(axum::middleware::from_fn_with_state(
             fixture.auth.clone(),
             crate::auth::attach_subject,
@@ -41,7 +46,7 @@ pub(super) async fn call(app: &Router, login: &str, path: &str) -> (StatusCode, 
 }
 
 #[tokio::test]
-async fn warm_session_falls_back_but_api_and_background_requests_fail_closed_then_recover() {
+async fn prior_success_cannot_authorize_session_api_or_background_during_outage() {
     let fixture = Fixture::new().await;
     let state = fixture.seed().await;
     let (app, login) = browser(&fixture).await;
@@ -49,8 +54,8 @@ async fn warm_session_falls_back_but_api_and_background_requests_fail_closed_the
     fixture.control.userinfo.write().await.status = StatusCode::SERVICE_UNAVAILABLE;
     let before = fixture.control.requests.load(Ordering::SeqCst);
     let (status, body) = call(&app, &login, "/auth/session").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["display_name"], "Live Owner");
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["code"], "identity_unavailable");
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst) - before, 6);
     for path in ["/api/v1/admin/settings", "/api/v1/agents"] {
         let (status, body) = call(&app, &login, path).await;
@@ -103,8 +108,8 @@ async fn rejection_in_either_endpoint_invalidates_warm_record_even_if_the_other_
 }
 
 #[tokio::test]
-async fn limits_malformed_evidence_and_other_http_errors_never_retry_or_fallback() {
-    for status in [429, 400, 404, 500, 504, 200] {
+async fn malformed_evidence_and_nonretryable_http_errors_never_retry_or_fallback() {
+    for status in [400, 404, 500, 504, 200] {
         let fixture = Fixture::new().await;
         fixture.seed().await;
         let (app, login) = browser(&fixture).await;
@@ -136,7 +141,7 @@ async fn logout_clears_records_and_does_not_restore_them_from_pending_success() 
     let (gate, pending) = fixture.blocked_request(state.clone()).await;
     fixture.auth.revoke_browser_login(&login).await.unwrap();
     gate.release.notify_one();
-    pending.await.unwrap().unwrap();
+    assert_unavailable(pending.await.unwrap());
     fixture.control.introspection.write().await.gate = None;
     // A new browser cookie with the same retained access token must verify anew.
     let new_login = fixture
@@ -152,7 +157,7 @@ async fn logout_clears_records_and_does_not_restore_them_from_pending_success() 
 }
 
 #[tokio::test]
-async fn overlapping_session_fallback_and_sensitive_calls_share_retries_not_policy() {
+async fn overlapping_session_and_sensitive_calls_share_retries_and_fail_closed() {
     let fixture = Fixture::new().await;
     let state = fixture.seed().await;
     let (app, login) = browser(&fixture).await;
@@ -186,21 +191,14 @@ async fn overlapping_session_fallback_and_sensitive_calls_share_retries_not_poli
     fixture.control.userinfo.write().await.gate = None;
     gate.release.notify_one();
     for pending in requests {
-        let (index, status) = pending.await.unwrap();
-        assert_eq!(
-            status,
-            if index % 2 == 0 {
-                StatusCode::OK
-            } else {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
-        );
+        let (_, status) = pending.await.unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     }
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst) - before, 6);
 }
 
 #[tokio::test]
-async fn outage_past_sixty_seconds_exhausts_fallback_until_real_recovery() {
+async fn prior_success_never_authorizes_an_outage_before_or_after_sixty_seconds() {
     let fixture = Fixture::new().await;
     fixture.seed().await;
     let (app, login) = browser(&fixture).await;
@@ -211,19 +209,15 @@ async fn outage_past_sixty_seconds_exhausts_fallback_until_real_recovery() {
         tokio::time::advance(Duration::from_secs(age)).await;
         tokio::time::resume();
         let status = call(&app, &login, "/auth/session").await.0;
-        assert_eq!(
-            status,
-            if age == 2 {
-                StatusCode::SERVICE_UNAVAILABLE
-            } else {
-                StatusCode::OK
-            }
-        );
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     }
     fixture.control.userinfo.write().await.status = StatusCode::OK;
     assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
     fixture.control.userinfo.write().await.status = StatusCode::SERVICE_UNAVAILABLE;
-    assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
+    assert_eq!(
+        call(&app, &login, "/auth/session").await.0,
+        StatusCode::SERVICE_UNAVAILABLE
+    );
 }
 
 #[tokio::test]
@@ -246,7 +240,7 @@ async fn retry_recovers_without_fallback_and_stops_immediately_after_success() {
 }
 
 #[tokio::test]
-async fn timeout_and_connection_failure_are_bounded_and_only_warm_sessions_survive() {
+async fn timeout_and_connection_failure_are_bounded_without_retained_success() {
     for connection in [false, true] {
         let fixture = Fixture::new().await;
         fixture.seed().await;
@@ -269,7 +263,7 @@ async fn timeout_and_connection_failure_are_bounded_and_only_warm_sessions_survi
                 .await
                 .unwrap()
                 .0,
-            StatusCode::OK
+            StatusCode::SERVICE_UNAVAILABLE
         );
         fixture.auth.identity_store.clear();
         assert_eq!(
@@ -303,7 +297,7 @@ async fn local_capacity_is_fail_closed_without_provider_io_or_fallback() {
 }
 
 #[tokio::test]
-async fn provider_expiry_caps_fallback_even_when_retained_cookie_token_lives_longer() {
+async fn expired_provider_evidence_cannot_be_replaced_by_prior_success() {
     let fixture = Fixture::new().await;
     fixture.seed().await;
     let (app, login) = browser(&fixture).await;
@@ -357,20 +351,12 @@ async fn partial_success_cannot_hide_invalid_evidence_or_changed_subject() {
 }
 
 #[tokio::test]
-async fn rejected_refresh_grant_erases_fallback_and_signs_out_immediately() {
+async fn rejected_refresh_grant_erases_custody_and_signs_out_immediately() {
     let fixture = Fixture::new().await;
     let mut state = fixture.seed().await;
     let (app, login) = browser(&fixture).await;
     assert_eq!(call(&app, &login, "/auth/session").await.0, StatusCode::OK);
-    let key = fixture.auth.identity_store.key(
-        CredentialPurpose::BrowserCookie,
-        state.tokens.as_ref().unwrap().access_token.expose(),
-    );
-    assert!(fixture
-        .auth
-        .identity_store
-        .get(&key, &fixture.auth.identity_store.epoch())
-        .is_some());
+    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
     state.tokens.as_mut().unwrap().expires_at = SystemTime::now() + Duration::from_secs(30);
     fixture.store.put_subject(state).await.unwrap();
     fixture.control.exchange.write().await.status = StatusCode::BAD_REQUEST;
@@ -379,9 +365,13 @@ async fn rejected_refresh_grant_erases_fallback_and_signs_out_immediately() {
         call(&app, &login, "/auth/session").await.0,
         StatusCode::UNAUTHORIZED
     );
+    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
     assert!(fixture
-        .auth
-        .identity_store
-        .get(&key, &fixture.auth.identity_store.epoch())
+        .store
+        .subject(&SubjectId::new("owner"))
+        .await
+        .unwrap()
+        .unwrap()
+        .tokens
         .is_none());
 }

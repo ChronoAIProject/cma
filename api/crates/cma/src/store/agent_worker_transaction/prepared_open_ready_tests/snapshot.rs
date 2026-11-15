@@ -4,6 +4,44 @@ use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_open_ready_preserves_an_independent_parent_renewal() {
+    use layer2_core::sandbox::store::SandboxWorkerStore;
+    let (client, name, store, agent, mut observed) = fixture().await;
+    let now = layer2_core::now_rfc3339();
+    let until = crate::store::sandbox_mongo_integration_tests::work_lease_deadline();
+    observed.sandbox = store
+        .claim_sandbox_work(&observed.sandbox.id, "parent-worker", now.clone(), until)
+        .await
+        .unwrap()
+        .unwrap();
+    let independent = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let successor = MongoSandboxStore::open(&independent, &name).await.unwrap();
+    let requested =
+        layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(120));
+    let extended = successor
+        .renew_sandbox_work(&observed.sandbox, &now, &requested)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(extended > observed.sandbox.work.lease.as_ref().unwrap().expires_at);
+    assert!(store
+        .commit_prepared_agent_open_ready(completion(&agent, &observed.worktree), observed.clone())
+        .await
+        .unwrap());
+    let parent = successor
+        .get_sandbox(&observed.sandbox.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(parent.work.lease.as_ref().unwrap().expires_at, extended);
+    assert_eq!(parent.revision, observed.sandbox.revision);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn prepared_open_ready_reads_eligibility_once_inside_its_publication_transaction() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let trace = Arc::new(Mutex::new(Vec::new()));

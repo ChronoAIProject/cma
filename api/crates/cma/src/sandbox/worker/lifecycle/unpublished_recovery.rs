@@ -8,7 +8,7 @@ use layer2_core::{
     },
 };
 use layer3_adapter::{
-    RecoveryConversation, RuntimeHandle, RuntimeRecoveryInspectionRequest,
+    AdapterError, RecoveryConversation, RuntimeHandle, RuntimeRecoveryInspectionRequest,
     RuntimeRecoveryQuiescenceRequest, RuntimeStatusRequest,
 };
 
@@ -31,12 +31,17 @@ impl SandboxWorker {
                 receipt.completed_at = rfc3339_at(completed);
                 receipt
             }
-            Err(_) => {
+            Err(error) => {
                 // Keep the admitted plan and its original runtime. A failed
                 // drain must never become permission to force termination.
-                return self.handle_lifecycle_failure(sandbox, WorkerFailure::retryable(
+                let failure = WorkerFailure::retryable(
                     "original conversation persistence is not yet verified; recovery will retry with all data retained",
-                ), completed).await;
+                ).with_retry_kind(if matches!(error, SandboxStoreError::Corrupt(_)) {
+                    layer2_core::sandbox::work_retry::WorkRetryFailure::ExternalAction
+                } else { layer2_core::sandbox::work_retry::WorkRetryFailure::Transient });
+                return self
+                    .handle_lifecycle_failure(sandbox, failure, completed)
+                    .await;
             }
         };
         if !self.lifecycle_state_matches(&sandbox).await? {
@@ -94,7 +99,7 @@ impl SandboxWorker {
                 .ok_or_else(unavailable)?
                 .verify_nonexecuting_recovery(&request)
                 .await
-                .map_err(|_| unavailable())?;
+                .map_err(recovery_failure)?;
             return Ok(SandboxUnpublishedRecoveryQuiescence {
                 operation_id: state.operation_id.clone(),
                 runtime_id: proof.runtime_id.clone(),
@@ -131,7 +136,7 @@ impl SandboxWorker {
             &self.config.deployment_id,
         )
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(recovery_failure)?;
         if !self.lifecycle_state_matches(sandbox).await? {
             return Err(SandboxStoreError::Conflict);
         }
@@ -147,7 +152,7 @@ impl SandboxWorker {
                 provider_plan_sha256: proof.provider_plan_sha256.clone(),
             })
             .await
-            .map_err(|_| unavailable())?;
+            .map_err(recovery_failure)?;
         crate::sandbox::unpublished_recovery::verify_source(
             self.dependencies.adapter.as_ref(),
             sandbox,
@@ -155,7 +160,7 @@ impl SandboxWorker {
             &self.config.deployment_id,
         )
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(recovery_failure)?;
         Ok(SandboxUnpublishedRecoveryQuiescence {
             operation_id: state.operation_id.clone(),
             runtime_id: proof.runtime_id.clone(),
@@ -209,4 +214,43 @@ impl SandboxWorker {
 
 fn unavailable() -> SandboxStoreError {
     SandboxStoreError::Unavailable("original runtime quiescence is incomplete".into())
+}
+
+// Keep uncertain transport failures retryable; a refused original-history or
+// identity proof requires outside recovery and uses the smaller retry budget.
+// This internal classification never changes the persisted failure diagnostic.
+fn recovery_failure(error: AdapterError) -> SandboxStoreError {
+    match error {
+        AdapterError::NativeClaimNotReady(_)
+        | AdapterError::Unavailable(_)
+        | AdapterError::AtCapacity(_)
+        | AdapterError::InputAuthorityUnavailable(_)
+        | AdapterError::PromptNotWritten(_)
+        | AdapterError::RuntimeLedgerHold(_) => unavailable(),
+        _ => SandboxStoreError::Corrupt(
+            "original runtime recovery evidence requires external action".into(),
+        ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn work_retry_original_history_refusal_keeps_external_and_transient_failures_distinct() {
+        assert!(matches!(
+            recovery_failure(AdapterError::Rejected("original history refused".into())),
+            SandboxStoreError::Corrupt(_)
+        ));
+        for error in [
+            AdapterError::Unavailable("network".into()),
+            AdapterError::RuntimeLedgerHold("hold".into()),
+        ] {
+            assert!(matches!(
+                recovery_failure(error),
+                SandboxStoreError::Unavailable(_)
+            ));
+        }
+    }
 }

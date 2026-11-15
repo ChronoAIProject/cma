@@ -4,6 +4,15 @@ use std::time::{Duration, Instant};
 
 #[tokio::test]
 async fn unknown_provider_refusal_keeps_callback_502_and_configured_failure_delivery() {
+    check_provider_refusal("guest_denied", "unrecognized").await;
+}
+
+#[tokio::test]
+async fn known_provider_refusal_exposes_only_safe_metadata_with_the_same_failure_delivery() {
+    check_provider_refusal("media_source_refused", "media_source_refused").await;
+}
+
+async fn check_provider_refusal(provider_code: &str, expected_code: &str) {
     for missing in [false, true] {
         let config = cmaeg::DeliveryConfig {
             failure_text: "Configured failure reply".into(),
@@ -15,7 +24,7 @@ async fn unknown_provider_refusal_keeps_callback_502_and_configured_failure_deli
             config.clone(),
             FakeProviderConfig {
                 missing_turn_once: missing,
-                response_refusal: Some((403, "guest_denied".into())),
+                response_refusal: Some((403, provider_code.into())),
                 ..Default::default()
             },
         )
@@ -26,6 +35,12 @@ async fn unknown_provider_refusal_keeps_callback_502_and_configured_failure_deli
         assert_eq!(problem["status"], 502);
         assert_eq!(problem["code"], "provider_rejected");
         assert_eq!(problem["detail"], "provider_rejected");
+        assert_eq!(
+            problem["upstream"],
+            json!({
+                "operation": "responses", "status": 403, "code": expected_code
+            })
+        );
         assert!(!problem.to_string().contains("guest_denied"));
         assert!(!problem.to_string().contains("private provider diagnostic"));
         assert!(

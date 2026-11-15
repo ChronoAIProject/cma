@@ -60,13 +60,20 @@ impl MetricsWorkers {
                 self.store.save_progress(key, holder, &progress).await?;
                 break;
             }
-            self.collect_page(&ids, range, !replay).await?;
+            self.collect_page(key, holder, &ids, range, !replay).await?;
             progress.after = ids.last().cloned();
             self.store.save_progress(key, holder, &progress).await?;
         }
         Ok(())
     }
-    async fn collect_page(&self, ids: &[String], range: Range, include_live: bool) -> Result<()> {
+    async fn collect_page(
+        &self,
+        key: &str,
+        holder: &str,
+        ids: &[String],
+        range: Range,
+        include_live: bool,
+    ) -> Result<()> {
         let now = crate::store::usage_reports::now();
         let from = range.from;
         let cutoff = range.to;
@@ -157,8 +164,10 @@ impl MetricsWorkers {
                 ));
             }
         }
-        self.store.save_metric_rollups(&rollups).await?;
-        self.store.save_live(&readings).await?;
+        self.store
+            .save_metric_rollups(key, holder, &rollups)
+            .await?;
+        self.store.save_live(holder, &readings).await?;
         Ok(())
     }
     pub(super) async fn raw(

@@ -56,6 +56,17 @@ impl BindingStore for InMemorySandboxStore {
     ) -> Result<(), SandboxStoreError> {
         let mut state = self.lock();
         validate_binding_write(state.bindings.get(&next.binding_id), expected, &next)?;
+        if next.existing_agent.is_none()
+            && state
+                .bindings
+                .get(&next.binding_id)
+                .is_none_or(|old| old.generation != next.generation)
+        {
+            super::admission::require_operator_open(
+                &state,
+                crate::admission::AdmissionCause::Fresh,
+            )?;
+        }
         if state
             .bindings
             .values()
@@ -120,6 +131,19 @@ impl BindingStore for InMemorySandboxStore {
             expected,
             &next,
         )?;
+        if expected.is_none()
+            && !state.binding_conversations.contains_key(&key)
+            && matches!(
+                next.state,
+                crate::sandbox::binding::BindingConversationState::Provisioning
+                    | crate::sandbox::binding::BindingConversationState::Ready
+            )
+        {
+            super::admission::require_operator_open(
+                &state,
+                crate::admission::AdmissionCause::Fresh,
+            )?;
+        }
         if state.binding_conversations.iter().any(|(id, value)| {
             id != &key
                 && value.agent_id == next.agent_id

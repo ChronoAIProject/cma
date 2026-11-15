@@ -31,6 +31,10 @@ fn domain(error: TransactionLogError) -> SandboxStoreError {
 
 /// The owning writer module delegates its visitor ports here. No visitor is
 /// called for rows outside the requested interval except its explicit predecessor.
+/// Tail absence belongs to this same snapshot: prepared legacy proof rejects
+/// rows beyond its head, fallback scans validate the complete prefix, and the
+/// segmented range reader probes past its captured head before visiting rows.
+/// The buffered-page port relies on those proofs instead of reopening `point`.
 pub(in crate::store) async fn visit_page(
     store: &MongoSandboxStore,
     id: &AgentId,
@@ -125,7 +129,7 @@ pub(in crate::store) async fn visit_page(
             id,
             head.last_seq,
             &mut session,
-            true,
+            crate::store::agent_log_integrity::ScanOptions::new(true, store.scan_cooperation),
             |entry| {
                 head.validate_lineage(&entry)?;
                 if entry.seq > start && entry.seq <= end {

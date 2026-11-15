@@ -7,7 +7,7 @@ use crate::{
     *,
 };
 use kube::{api::DynamicObject, ResourceExt};
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 pub struct AgentSandboxBackend {
@@ -41,10 +41,7 @@ impl AgentSandboxBackend {
                 .await?;
         }
         let mut timing = crate::agent_sandbox::provision_timing::ProvisionTiming::new();
-        let pod = self
-            .client
-            .wait_ready(handle, Duration::from_secs(180))
-            .await?;
+        let pod = self.client.wait_ready_for_create(handle).await?;
         timing.completed("wait_ready");
         if let Some(until) = request.funded_until {
             // Readiness can consume the remaining window; never bind expired work.
@@ -58,6 +55,15 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
+        Some(binding::MAX_ASSIGNMENTS.saturating_sub(self.assignments.lock().unwrap().len()))
+    }
+    fn desktop_ownership(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        self.transport.desktop_ownership()
+    }
     fn capacity_recovery_transport(
         &self,
         _handle: &RuntimeHandle,
@@ -266,6 +272,16 @@ impl HostedBackend for AgentSandboxBackend {
         home: &HomeVolumeAttachment,
     ) -> Result<Option<RuntimeInspection>> {
         self.inspect_native_context(handle, request, home).await
+    }
+    async fn inspect_native_runtime_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<RuntimeInspection>> {
+        self.inspect_native_context_after(handle, request, home, admission)
+            .await
     }
 
     async fn inspect_nonexecuting_runtime(

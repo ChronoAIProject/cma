@@ -10,6 +10,21 @@ const RFC3339_UTC_SECONDS: &str = concat!(
     r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z"
 );
 
+/// Canonical nonnegative BSON signed seconds and one of the sixteen fixed
+/// partitions. Conversion refuses numeric overflow; the anchored grammar
+/// rejects signs, leading zeroes, suffixes and future partition layouts.
+fn counter_shape() -> Document {
+    doc! {
+        "_id": {"$regex": r"\Aplatform-counter:(?:0|[1-9][0-9]{0,18}):(?:[0-9]|1[0-5])\z"},
+        "$expr": {"$ne": [{"$convert": {
+            "input": {"$arrayElemAt": [{"$split": [
+                {"$convert": {"input": "$_id", "to": "string", "onError": "", "onNull": ""}}, ":"
+            ]}, 1]},
+            "to": "long", "onError": Bson::Null, "onNull": Bson::Null
+        }}, Bson::Null]}
+    }
+}
+
 pub(super) async fn require_known_shapes(db: &Database, session: &mut ClientSession) -> Result<()> {
     let known = doc! {"$or":[
         {"_id":{"$regex":"^owner:.+$"}},
@@ -17,6 +32,7 @@ pub(super) async fn require_known_shapes(db: &Database, session: &mut ClientSess
         {"_id":{"$regex":"^turn:[^:]+:[0-9]+$"},"record.agent_id":{"$type":"string"}},
         {"_id":{"$regex":"^request:[^:]+:.+$"},"record.hold.scope.agent_id":{"$type":"string"}},
         {"_id":{"$regex":"^request-turn:[^:]+:[0-9]+$"}},
+        counter_shape(),
         // Query $type also matches array elements; stop evidence must be a scalar string.
         {"_id":{"$regex":r"\Astop:[^:]+:[0-9]+\z"},
          "$expr":{"$eq":[{"$type":"$record"},"string"]}},

@@ -9,6 +9,9 @@ import { WIRE_SANDBOX_DETAIL } from '../test/rest';
 import { OwnerViewsProvider } from '../resources/retainedOwnerViews';
 import { SandboxAccessPage } from '../resources/SandboxAccessPage';
 import { SandboxPage } from './SandboxPage';
+import { Console } from '../Console';
+import type { AppRoute } from '../routing/routes';
+import type { User } from '../auth/types';
 
 function deferred<Value>() {
   let resolve!: (value: Value) => void;
@@ -202,3 +205,62 @@ it('replaces cached personal content with the shared projection and forgets the 
   expect(screen.getByRole('heading', { name: 'Opening Sandbox' })).toBeInTheDocument();
   expect(screen.queryByText('Atlas')).not.toBeInTheDocument();
 });
+
+it.each(['owner', 'client'] as const)(
+  'restores retained children through Console wrappers and isolates a different %s',
+  async (changed) => {
+    const readSandbox = vi.fn(async () => sandbox);
+    const base = agentClient();
+    const readWorkspace = vi.fn(base.readWorkspace);
+    const readAgent = vi.fn(base.readAgent);
+    const readSandboxProfileSettings = vi.fn(base.readSandboxProfileSettings);
+    const client = agentClient({
+      listSandboxes: async () => ({ items: [] }),
+      readSandbox,
+      readWorkspace,
+      readAgent,
+      readSandboxProfileSettings,
+    });
+    const user: User = {
+      id: 'owner',
+      handle: 'Owner',
+      visitor: false,
+      capabilities: ['use_own_sandboxes'],
+    };
+    const route: AppRoute = { kind: 'sandbox', sandboxId: 'sbx_1' };
+    const away: AppRoute = { kind: 'not_found', pathname: '/missing' };
+    const draw = (activeRoute: AppRoute, activeClient = client, activeUser = user) => (
+      <CmaClientProvider client={activeClient}>
+        <Console user={activeUser} route={activeRoute} onNavigate={vi.fn()} onSignOut={vi.fn()} />
+      </CmaClientProvider>
+    );
+    const view = render(draw(route));
+    await screen.findByText('gpt-5');
+    expect(readWorkspace).toHaveBeenCalledTimes(1);
+    expect(readAgent).toHaveBeenCalledTimes(1);
+    expect(readSandboxProfileSettings).toHaveBeenCalledTimes(1);
+    const pending = deferred<typeof sandbox>();
+    readSandbox.mockImplementation(() => pending.promise);
+    view.rerender(draw(away));
+    view.rerender(draw(route));
+    expect(screen.getByRole('heading', { name: 'Atlas' })).toBeInTheDocument();
+    expect(screen.getByText('gpt-5')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Loading Sandbox')).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading workspaces')).not.toBeInTheDocument();
+    await act(async () => pending.resolve(structuredClone(sandbox)));
+    expect(readWorkspace).toHaveBeenCalledTimes(1);
+    expect(readAgent).toHaveBeenCalledTimes(1);
+    expect(readSandboxProfileSettings).toHaveBeenCalledTimes(1);
+    readSandbox.mockImplementation(() => new Promise(() => {}));
+    view.rerender(draw(away));
+    view.rerender(
+      draw(
+        route,
+        changed === 'client' ? { ...client } : client,
+        changed === 'owner' ? { ...user, id: 'other-owner' } : user,
+      ),
+    );
+    expect(screen.queryByRole('heading', { name: 'Atlas' })).not.toBeInTheDocument();
+    expect(screen.queryByText('gpt-5')).not.toBeInTheDocument();
+  },
+);

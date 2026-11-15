@@ -138,6 +138,18 @@ impl Supervisor {
             None
         };
         Ok(Arc::new(Self {
+            desktop_ownership: crate::desktop_ownership::DesktopReceiver::new(
+                config.state_root.join("desktop-owner"),
+                crate::desktop_ownership::Identity {
+                    sandbox: config.sandbox_id.clone(),
+                    generation: config.generation,
+                    home: config.home_identity.clone(),
+                    boot: boot_id.clone(),
+                },
+            ),
+            manager_ownership: crate::manager_ownership::ManagerOwnership::new(
+                config.state_root.join("agent-manager-owners"),
+            ),
             mutations: crate::mutation_store::Store::new(config.clone(), ledger)
                 .with_retirement(retirement),
             config,

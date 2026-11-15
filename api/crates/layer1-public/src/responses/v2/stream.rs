@@ -36,6 +36,16 @@ async fn snapshot_mode(
         return Err(error::unavailable());
     }
     let bound = reading.command.turn_sequence.is_some();
+    if !bound {
+        let history = state
+            .reads
+            .response_event_stream_snapshot(authorization, None)
+            .await
+            .map_err(error::read)?;
+        return projection::project(&state.agent_page_origin, reading, &history)
+            .map(|response| (response, false))
+            .ok_or_else(error::unavailable);
+    }
     let origin = state.agent_page_origin.clone();
     let indexed_reading = reading.clone();
     if let Some(result) = state
@@ -76,7 +86,18 @@ pub(super) async fn open(
     authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
     after: Option<u64>,
+    known_bound: Option<bool>,
 ) -> Response {
+    // Queued responses are not bound to a runtime turn and cannot contain
+    // output. Avoid probing the output format and scanning the Agent log just
+    // to construct their response.created frame; snapshot_mode still reads
+    // the current Agent and applies the final authority fence.
+    if known_bound == Some(false) {
+        // The response may bind after admission. Start with the metadata-only
+        // header path, then let stream_pages select indexed or legacy output
+        // from the first bound observation instead of freezing legacy routing.
+        return super::stream_pages::open(state, authorization, receipt, after).await;
+    }
     let indexed = match state.reads.output_is_indexed(&authorization).await {
         Ok(indexed) => indexed,
         Err(value) => return error::read(value),
@@ -88,6 +109,17 @@ pub(super) async fn open(
         Ok(value) => value,
         Err(error) => return error,
     };
+    open_legacy(state, authorization, receipt, after, initial, bound)
+}
+
+fn open_legacy(
+    state: ResponsesV2State,
+    authorization: AgentEventStreamAuthorization,
+    receipt: CommandReceiptView,
+    after: Option<u64>,
+    initial: V2ResponseObject,
+    bound: bool,
+) -> Response {
     let events = projection::events(&initial, bound);
     if after.is_some_and(|after| after >= events.len() as u64) {
         return error::field(

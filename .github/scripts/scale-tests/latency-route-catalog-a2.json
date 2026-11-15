@@ -1,0 +1,440 @@
+{
+  "version": "A2",
+  "source": "/Users/shining/code/work/tech-lead.staff/performance-analyst-01/criterion-scorecard.md",
+  "source_sha256": "f8b2381612d2de4ad427878d8c092c59a5f32f420b2d032ef89bf790add991e9",
+  "source_updated": "Updated 2026-11-13T14:35:45.131250+00:00. Owner deadline: **2026-11-14 14:00 SGT**. Last complete steady server window: **Generation 188 / deployment revision 184, API generation 188**. Source Git revision: unverified. Server window: **2026-11-13T14:10:00Z inclusive to 2026-11-13T14:20:00Z exclusive**. Image: `sha256:ce543b10b95092dcb7c155f6664e72df8e6cd113127a9a44e9154d16ca0fe461`.",
+  "frozen_excerpt_sha256": "ba3d7644be13972c28145b11c70b7cd2b8a3ffd0e4e09324be14222d1d534deb",
+  "source_selection": "lead-named scorecard rows 1\u201360; current file has 43 criterion rows on lines 15\u201357; preserve every row, including conditional/alternate routes",
+  "rows": [
+    {
+      "id": "scorecard-L15",
+      "source_line": 15,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "**Plain Linux Agent + Sandbox ready**",
+      "method": null,
+      "route": null,
+      "qualification": "7/7 completed; 0 failed; 0 blocked; release receipt unconfirmed; run spans rollout; per-attempt image unverified",
+      "required_comparison": "end-to-end absolute and no-regression"
+    },
+    {
+      "id": "scorecard-L16",
+      "source_line": 16,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "**Desktop Agent + Sandbox ready**",
+      "method": null,
+      "route": null,
+      "qualification": "0/0 completed; 0 failed; 1 blocked; release receipt unconfirmed; run spans rollout; per-attempt image unverified; desktop flag + active Sandbox, no rendered desktop-frame proof; deferred_by_lead_after_http_503",
+      "required_comparison": "end-to-end absolute and no-regression"
+    },
+    {
+      "id": "scorecard-L17",
+      "source_line": 17,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "POST `/api/v1/agents`",
+      "method": "POST",
+      "route": "/api/v1/agents",
+      "qualification": "Admission only; readiness continues asynchronously",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L18",
+      "source_line": 18,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "GET `/api/v1/agent-lifecycle/{id}`",
+      "method": "GET",
+      "route": "/api/v1/agent-lifecycle/{id}",
+      "qualification": "Repeated readiness polls; one poll is not total wait",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L19",
+      "source_line": 19,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "GET `/api/v1/agents/{id}`",
+      "method": "GET",
+      "route": "/api/v1/agents/{id}",
+      "qualification": "Harness checks Agent ready and active Sandbox; small N: descriptive tail only; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L20",
+      "source_line": 20,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "GET `/api/v1/sandboxes/{id}`",
+      "method": "GET",
+      "route": "/api/v1/sandboxes/{id}",
+      "qualification": "Browser provisioning candidate; not an additional harness prerequisite; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L21",
+      "source_line": 21,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "GET `/api/v1/workspaces/{id}`",
+      "method": "GET",
+      "route": "/api/v1/workspaces/{id}",
+      "qualification": "Browser provisioning candidate; runtime readiness remains separate",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L22",
+      "source_line": 22,
+      "criterion": "1 / 5,000 ms",
+      "boundary": "GET `/api/v1/desktop-capability`",
+      "method": "GET",
+      "route": "/api/v1/desktop-capability",
+      "qualification": "Desktop-only supporting read; no first-frame timing",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L23",
+      "source_line": 23,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "**Agent tab rendered, history loaded, composer usable**",
+      "method": null,
+      "route": null,
+      "qualification": "7/7 completed; 0 failed; 0 blocked; release receipt unconfirmed; run spans rollout; per-attempt image unverified",
+      "required_comparison": "end-to-end absolute and no-regression"
+    },
+    {
+      "id": "scorecard-L24",
+      "source_line": 24,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/auth/session`",
+      "method": "GET",
+      "route": "/auth/session",
+      "qualification": "Conditional session/authorization read; successful 2xx only",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L25",
+      "source_line": 25,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "POST `/auth/connections/check`",
+      "method": "POST",
+      "route": "/auth/connections/check",
+      "qualification": "Connection readiness; independent server requests, not paired to harness",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L26",
+      "source_line": 26,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v2/ui/task-experience`",
+      "method": "GET",
+      "route": "/api/v2/ui/task-experience",
+      "qualification": "Transport/experience selection candidate",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L27",
+      "source_line": 27,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v2/ui/transport`",
+      "method": "GET",
+      "route": "/api/v2/ui/transport",
+      "qualification": "Transport selection candidate",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L28",
+      "source_line": 28,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/agents`",
+      "method": "GET",
+      "route": "/api/v1/agents",
+      "qualification": "List/prefetch conditional; not necessarily on direct navigation; small N: descriptive tail only; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L29",
+      "source_line": 29,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/agents/{id}`",
+      "method": "GET",
+      "route": "/api/v1/agents/{id}",
+      "qualification": "Core Agent load; browser ordering to be traced; small N: descriptive tail only; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L30",
+      "source_line": 30,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/workspaces/{id}`",
+      "method": "GET",
+      "route": "/api/v1/workspaces/{id}",
+      "qualification": "Hierarchy load; parallelism depends on known lineage",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L31",
+      "source_line": 31,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/sandboxes/{id}`",
+      "method": "GET",
+      "route": "/api/v1/sandboxes/{id}",
+      "qualification": "Hierarchy/readiness candidate; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L32",
+      "source_line": 32,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/resource-access/{kind}/{id}`",
+      "method": "GET",
+      "route": "/api/v1/resource-access/{kind}/{id}",
+      "qualification": "Authorization candidate; exact transport determines usage",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L33",
+      "source_line": 33,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/agents/{id}/transcript`",
+      "method": "GET",
+      "route": "/api/v1/agents/{id}/transcript",
+      "qualification": "History load candidate; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L34",
+      "source_line": 34,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/agents/{id}/usage`",
+      "method": "GET",
+      "route": "/api/v1/agents/{id}/usage",
+      "qualification": "Agent usage; not the admin Sandbox usage report; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L35",
+      "source_line": 35,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v2/agents/{agent_id}/events/snapshot`",
+      "method": "GET",
+      "route": "/api/v2/agents/{agent_id}/events/snapshot",
+      "qualification": "History snapshot candidate",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L36",
+      "source_line": 36,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v2/agents/{agent_id}/events/head`",
+      "method": "GET",
+      "route": "/api/v2/agents/{agent_id}/events/head",
+      "qualification": "History catch-up candidate",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L37",
+      "source_line": 37,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v2/agents/{agent_id}/events`",
+      "method": "GET",
+      "route": "/api/v2/agents/{agent_id}/events",
+      "qualification": "History/event transport candidate; header does not establish stream completion; additional status counts HTTP 401: 1 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L38",
+      "source_line": 38,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v2/agents/{agent_id}/queued-inputs`",
+      "method": "GET",
+      "route": "/api/v2/agents/{agent_id}/queued-inputs",
+      "qualification": "Queued input reconstruction candidate",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L39",
+      "source_line": 39,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/agents/{id}/files/content`",
+      "method": "GET",
+      "route": "/api/v1/agents/{id}/files/content",
+      "qualification": "Conditional file read; verify whether tab completion awaits it",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L40",
+      "source_line": 40,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/agents/{id}/models`",
+      "method": "GET",
+      "route": "/api/v1/agents/{id}/models",
+      "qualification": "Supporting model read; critical-path membership needs client trace",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L41",
+      "source_line": 41,
+      "criterion": "2 / 1,000 ms",
+      "boundary": "GET `/api/v1/agents/{id}/environment`",
+      "method": "GET",
+      "route": "/api/v1/agents/{id}/environment",
+      "qualification": "Conditional computer-panel read; not universal first-paint dependency",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L42",
+      "source_line": 42,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "**Message accepted and shown**",
+      "method": null,
+      "route": null,
+      "qualification": "7/7 completed; 0 failed; 0 blocked; release receipt unconfirmed; run spans rollout; per-attempt image unverified; durable admission + displayed message, not full generated reply/stream EOF",
+      "required_comparison": "end-to-end absolute and no-regression"
+    },
+    {
+      "id": "scorecard-L43",
+      "source_line": 43,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "**Interrupt: cancel delivered and UI acknowledges**",
+      "method": null,
+      "route": null,
+      "qualification": "7/7 completed; 0 failed; 0 blocked; release receipt unconfirmed; run spans rollout; per-attempt image unverified; cancel command completed + Stop UI hidden",
+      "required_comparison": "end-to-end absolute and no-regression"
+    },
+    {
+      "id": "scorecard-L44",
+      "source_line": 44,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "POST `/api/v2/agents/{agent_id}/responses`",
+      "method": "POST",
+      "route": "/api/v2/agents/{agent_id}/responses",
+      "qualification": "Exact send route used by harness; header only",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L45",
+      "source_line": 45,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "POST `/api/v2/responses`",
+      "method": "POST",
+      "route": "/api/v2/responses",
+      "qualification": "Alternate send entry; keep population separate; very small N: p95 is the observed maximum",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L46",
+      "source_line": 46,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "GET `/api/v2/responses/{id}`",
+      "method": "GET",
+      "route": "/api/v2/responses/{id}",
+      "qualification": "Response observation; not generation completion; very small N: p95 is the observed maximum",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L47",
+      "source_line": 47,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "POST `/api/v1/agents/{id}/input`",
+      "method": "POST",
+      "route": "/api/v1/agents/{id}/input",
+      "qualification": "Legacy alternate send path",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L48",
+      "source_line": 48,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "POST `/api/v2/agents/{agent_id}/responses/{response_id}/controls`",
+      "method": "POST",
+      "route": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "qualification": "Control endpoint used by harness for cancel; logs do not identify control type; very small N: p95 is the observed maximum; additional status counts HTTP 409: 2 excluded from successful-response percentile",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L49",
+      "source_line": 49,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "GET `/api/v2/commands/{command_id}`",
+      "method": "GET",
+      "route": "/api/v2/commands/{command_id}",
+      "qualification": "Harness polls delivered command completion; total wait unknown",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L50",
+      "source_line": 50,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "POST `/api/v1/agents/{id}/interrupt`",
+      "method": "POST",
+      "route": "/api/v1/agents/{id}/interrupt",
+      "qualification": "Legacy alternate interrupt; do not substitute lifecycle /stop",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L51",
+      "source_line": 51,
+      "criterion": "3 / 1,000 ms",
+      "boundary": "POST `/api/v2/agents/{agent_id}/responses/{response_id}/interrupt`",
+      "method": "POST",
+      "route": "/api/v2/agents/{agent_id}/responses/{response_id}/interrupt",
+      "qualification": "Historical measurement catalog; harness uses /controls",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L52",
+      "source_line": 52,
+      "criterion": "4 / 2,000 ms",
+      "boundary": "**Admin usage first page + summary rendered**",
+      "method": null,
+      "route": null,
+      "qualification": "2/7 completed; 5 failed; 0 blocked; release receipt unconfirmed; run spans rollout; per-attempt image unverified; full displayed-chart completion also required when selected; failed observation ms 60,002.9, 60,001, 60,002.5, 60,001.4, 60,002.2 (not completion latency); usage_report_pending_timeout; usage_report_pending_timeout; usage_report_pending_timeout; usage_report_pending_timeout; usage_report_pending_timeout",
+      "required_comparison": "end-to-end absolute and no-regression"
+    },
+    {
+      "id": "scorecard-L53",
+      "source_line": 53,
+      "criterion": "4 / 2,000 ms",
+      "boundary": "POST `/api/v1/admin/usage/metrics/reports`",
+      "method": "POST",
+      "route": "/api/v1/admin/usage/metrics/reports",
+      "qualification": "Admission/ready reuse; background generation and queue wait also required",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L54",
+      "source_line": 54,
+      "criterion": "4 / 2,000 ms",
+      "boundary": "GET `/api/v1/admin/usage/metrics/reports/{report}`",
+      "method": "GET",
+      "route": "/api/v1/admin/usage/metrics/reports/{report}",
+      "qualification": "Poll to ready; single request does not measure generation wait",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L55",
+      "source_line": 55,
+      "criterion": "4 / 2,000 ms",
+      "boundary": "GET `/api/v1/admin/usage/metrics/reports/{report}/sandboxes`",
+      "method": "GET",
+      "route": "/api/v1/admin/usage/metrics/reports/{report}/sandboxes",
+      "qualification": "First report page; live whole-report authorization",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L56",
+      "source_line": 56,
+      "criterion": "4 / 2,000 ms",
+      "boundary": "GET `/api/v1/admin/usage/metrics/reports/{report}/series`",
+      "method": "GET",
+      "route": "/api/v1/admin/usage/metrics/reports/{report}/series",
+      "qualification": "Three metric reads when measured charts displayed",
+      "required_comparison": "p95 no-regression"
+    },
+    {
+      "id": "scorecard-L57",
+      "source_line": 57,
+      "criterion": "4 / 2,000 ms",
+      "boundary": "GET `/api/v1/admin/usage/metrics/reports/{report}/owner-allocations`",
+      "method": "GET",
+      "route": "/api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+      "qualification": "Conditional By owner view; not unconditional default opening",
+      "required_comparison": "p95 no-regression"
+    }
+  ]
+}

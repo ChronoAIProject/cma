@@ -5,6 +5,8 @@ use crate::RuntimeCapability;
 pub enum AgentOperationError {
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
+    #[error("new work is temporarily paused; existing work continues")]
+    AdmissionPaused,
     #[error(transparent)]
     Connection(#[from] SandboxCredentialPrerequisiteError),
     #[error("forbidden")]
@@ -72,6 +74,7 @@ impl AgentOperationError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Budget(reason) => reason.code(),
+            Self::AdmissionPaused => "admission_paused",
             Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
             Self::NotFound => "agent_not_found",
