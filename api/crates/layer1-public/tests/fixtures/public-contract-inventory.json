@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 291,
+  "openapi_operations": 293,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
