@@ -26,28 +26,38 @@ must kill and join the stopped process and perform its existing cleanup.
 The release qualification must perform these steps for each shipped family:
 
 1. Bind the actual merged source, image manifest, config and ELF. Start the
-   explicit qualification command in the existing isolated real-AM fixture
-   with native Claim/home authority and the production PVC/subpath policy.
-   Deliver the assignment through the real receiver.
+   explicit qualification command on a distinct scratch RWOP PVC with the
+   production home initializer, subpath policy and family resources. Deliver an
+   isolated test-owned bootstrap request through the real `--assign-runtime`
+   receiver, using valid fixture identity and fresh local test credentials.
+   This runtime regression does not claim an AM-issued assignment.
 2. Join the event to the exact Pod UID, container ID and process identity.
    Observe that this process is stopped. The event alone does not prove a
    stop or a particular retained state. While it is stopped, verify the same
    PVC contains the staged ledger and no durable intent, committed manifest,
    or final ledger directory. Record the retained home identity and generation.
 3. Kill and join that exact stopped process. Restart with the ordinary
-   `--wait-for-assignment` command on the same PVC and supported retained
-   Claim/home identity. Do not delete metadata or invent replacement assignment
-   authority to make the test pass.
-4. Observe successful recovery, public `/ready`, authenticated `RuntimeStatus`, the public
-   and durable AM result, retained-home continuity, and the existing receiver
-   challenge, confirmation and refusal checks. An assignment transport ACK
-   precedes ledger publication and does not prove runtime readiness or a
-   durable serving commit.
+   `--wait-for-assignment` command on the same PVC with the same test-owned
+   home, identity and generation. Do not delete metadata or replace the
+   assignment identity to make the test pass.
+4. Observe successful recovery, public `/ready`, authenticated `RuntimeStatus`,
+   installation, retained-home continuity and the existing receiver challenge,
+   confirmation and refusal checks. An assignment transport ACK precedes ledger
+   publication and does not prove runtime readiness or a durable serving commit.
 5. Independently exercise durable-intent and committed-state preservation
    controls. Recovery may complete an eligible intent-bearing publication but
    must not discard it. A final database with its committed manifest removed
    remains ambiguous and must hold with its bytes preserved. These controls
    are separate from the positive first-run interruption case.
+
+The pinned AM validates its immutable native Pod command as
+`--wait-for-assignment`; it must not be bypassed to admit the qualification
+command. A separate sequential integration case uses the unchanged actual AM,
+its native Claim/home/PVC authority and the normal command with the same candidate
+family image. That case records the public and durable AM result and receiver
+checks. Its normal startup does not replace the interruption case above, and the
+test-owned interruption assignment does not establish AM interruption recovery.
+Both cases share one admitted infrastructure owner and run one runtime at a time.
 
 The native tests exercise source checkpoints and the actual SIGSTOP/SIGCONT
 mechanism in an isolated child. They do not substitute for the real-container,
