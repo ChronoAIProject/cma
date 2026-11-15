@@ -1,6 +1,9 @@
 use super::*;
 use std::os::unix::fs::{symlink, PermissionsExt as _};
 
+#[path = "agent_filesystem_permission_tests.rs"]
+mod permissions;
+
 struct Fixture(RuntimeConfig);
 impl Fixture {
     fn new() -> Self {

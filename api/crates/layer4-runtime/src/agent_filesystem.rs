@@ -14,7 +14,10 @@ use sha2::{Digest as _, Sha256};
 use std::{
     fs::{File, OpenOptions},
     io::Write as _,
-    os::{fd::AsRawFd as _, unix::fs::OpenOptionsExt as _},
+    os::{
+        fd::AsRawFd as _,
+        unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
+    },
     path::Path,
 };
 
@@ -200,6 +203,12 @@ pub(crate) fn write(
     )?;
     let result = (|| {
         stage.write_all(&bytes).map_err(io_error)?;
+        if previous.is_some() {
+            // Creation applies umask; edits must retain the existing ordinary bits.
+            stage
+                .set_permissions(std::fs::Permissions::from_mode(u32::from(mode)))
+                .map_err(io_error)?;
+        }
         stage.sync_all().map_err(io_error)?;
         if let Some(original) = previous {
             let current = stat(&parent, &name)?;
