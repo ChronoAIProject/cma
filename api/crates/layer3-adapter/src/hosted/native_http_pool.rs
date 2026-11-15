@@ -7,6 +7,14 @@ use tokio::sync::{watch, OwnedMutexGuard};
 pub(super) const MAX_HTTP_SESSIONS: usize = 16;
 pub(super) const HTTP_IDLE_TTL: Duration = Duration::from_secs(60);
 
+/// Receiver negotiations cannot queue behind a long application response body.
+/// Both lanes share the same state, identity fences and total session budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum NativeHttpLane {
+    Control,
+    Ownership,
+}
+
 pub(super) struct AbortOnDrop(pub tokio::task::JoinHandle<()>);
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
@@ -20,6 +28,7 @@ pub(super) struct NativeConnection {
 }
 
 pub(super) struct NativeHttpSlot {
+    pub lane: NativeHttpLane,
     pub identity: NativeRuntimeIdentity,
     pub binding: PodBinding,
     connection: Arc<Mutex<Option<NativeConnection>>>,
@@ -96,7 +105,7 @@ impl NativeLease {
         if identity(&state, &self.handle) != self.slot.identity
             || !state
                 .native_http
-                .get(&self.handle)
+                .get(&(self.handle.clone(), self.slot.lane))
                 .is_some_and(|slot| Arc::ptr_eq(slot, &self.slot))
         {
             return Err(retired());
@@ -105,7 +114,7 @@ impl NativeLease {
         *self.slot.last_used.lock().unwrap() = std::time::Instant::now();
         let weak_state = Arc::downgrade(&self.state);
         let weak_slot = Arc::downgrade(&self.slot);
-        let handle = self.handle.clone();
+        let key = (self.handle.clone(), self.slot.lane);
         *self.slot.idle_timer.lock().unwrap() = Some(AbortOnDrop(tokio::spawn(async move {
             tokio::time::sleep(idle_ttl).await;
             let (Some(state), Some(slot)) = (weak_state.upgrade(), weak_slot.upgrade()) else {
@@ -116,10 +125,10 @@ impl NativeLease {
             if slot.connection.try_lock().is_ok()
                 && state
                     .native_http
-                    .get(&handle)
+                    .get(&key)
                     .is_some_and(|current| Arc::ptr_eq(current, &slot))
             {
-                state.native_http.remove(&handle);
+                state.native_http.remove(&key);
                 slot.cancel();
             }
         })));
@@ -138,7 +147,7 @@ impl ProviderHostedControlTransport {
         // and compares the complete Pod incarnation before every reused send.
         let hint = state
             .native_http
-            .get(handle)
+            .get(&(handle.clone(), NativeHttpLane::Control))
             .filter(|slot| slot.identity == identity && slot.reusable())
             .map(|slot| slot.binding.clone());
         (identity, hint)
@@ -148,17 +157,27 @@ impl ProviderHostedControlTransport {
         &self,
         endpoint: &RuntimeEndpoint,
     ) -> crate::Result<Arc<NativeHttpSlot>> {
+        self.native_slot_for(endpoint, NativeHttpLane::Control)
+            .await
+    }
+
+    pub(super) async fn native_slot_for(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        lane: NativeHttpLane,
+    ) -> crate::Result<Arc<NativeHttpSlot>> {
         let (handle, binding) = endpoint.native_binding().ok_or_else(retired)?;
         let expected = endpoint.native_identity().ok_or_else(retired)?;
+        let key = (handle.clone(), lane);
         let mut state = self.state.lock().await;
         if identity(&state, handle) != *expected {
             return Err(retired());
         }
-        if let Some(slot) = state.native_http.get(handle) {
+        if let Some(slot) = state.native_http.get(&key) {
             if slot.identity == *expected && slot.binding == *binding {
                 return Ok(slot.clone());
             }
-            if let Some(slot) = state.native_http.remove(handle) {
+            if let Some(slot) = state.native_http.remove(&key) {
                 slot.cancel();
             }
         }
@@ -183,6 +202,7 @@ impl ProviderHostedControlTransport {
             }
         }
         let slot = Arc::new(NativeHttpSlot {
+            lane,
             identity: expected.clone(),
             binding: binding.clone(),
             connection: Arc::new(Mutex::new(None)),
@@ -190,7 +210,7 @@ impl ProviderHostedControlTransport {
             idle_timer: StdMutex::new(None),
             last_used: StdMutex::new(std::time::Instant::now()),
         });
-        state.native_http.insert(handle.clone(), slot.clone());
+        state.native_http.insert(key, slot.clone());
         Ok(slot)
     }
 
@@ -225,6 +245,7 @@ impl ProviderHostedControlTransport {
         if wait_ms > 0 || !reused_connection {
             tracing::info!(
                 runtime_id = lease.handle.as_str(),
+                lane = ?lease.slot.lane,
                 wait_ms,
                 reused_connection,
                 "Native runtime HTTP connection checked out"
@@ -244,10 +265,10 @@ impl ProviderHostedControlTransport {
         let mut state = self.state.lock().await;
         if state
             .native_http
-            .get(handle)
+            .get(&(handle.clone(), slot.lane))
             .is_some_and(|current| Arc::ptr_eq(current, slot))
         {
-            state.native_http.remove(handle);
+            state.native_http.remove(&(handle.clone(), slot.lane));
             slot.cancel();
         }
     }
