@@ -124,7 +124,7 @@ pub(super) fn validate_current(
         || current.pointer.record_id != plan.identity.record_id
         || current.definition.record_id != plan.identity.record_id
         || current.definition.owner.subject != plan.identity.owner
-        || current.definition.routing.is_none()
+        || (current.definition.routing.is_none() && !plan.is_compatibility())
         || !current
             .definition
             .source_of(&plan.activity.source)

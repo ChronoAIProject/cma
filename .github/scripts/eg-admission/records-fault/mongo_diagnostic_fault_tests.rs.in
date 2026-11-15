@@ -1,0 +1,247 @@
+//! Pure controls only; these tests do not claim a server transaction or effect.
+use super::*;
+use crate::records::mongo::{replica_retry, ReplicaGuard, ReplicaProjection};
+use std::sync::{atomic::AtomicUsize, Arc};
+use std::time::Duration;
+
+const DATABASE: &str = "eg_diag_10000000000040008000000000000001";
+const ROOT: &str = "20000000-0000-4000-8000-000000000002";
+
+fn fixture(action: Action) -> Fixture {
+    // Keep callsite interest alive while parallel tests without subscribers
+    // exercise these same events. This registry has no output sink and never
+    // becomes a thread/global default; the capture test uses its own subscriber.
+    static REGISTRY: std::sync::OnceLock<tracing::Dispatch> = std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| tracing::Dispatch::new(tracing_subscriber::registry()));
+    Fixture {
+        database_sha256: Box::leak(digest(DATABASE.as_bytes()).into_boxed_str()),
+        admission_sha256: Box::leak(digest(ROOT.as_bytes()).into_boxed_str()),
+        case_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        fixture_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        action,
+        fired: AtomicBool::new(false),
+    }
+}
+
+fn write() -> ReplicaWrite {
+    ReplicaWrite {
+        id: ROOT.into(),
+        owner: "synthetic-owner".into(),
+        blob: vec![1],
+        expected: None,
+        expires_at: Some(1_800_000_000),
+        condition: None,
+        guard: None,
+        channel: None,
+        projection: Some(ReplicaProjection {
+            kind: ReplicaKind::Admission,
+            deployment: "c".repeat(64),
+            active: true,
+        }),
+    }
+}
+
+#[test]
+fn selector_requires_exact_database_root_and_single_ordinary_create() {
+    let fixture = fixture(Action::PreSubmitRefusal);
+    assert!(fixture.matches(DATABASE, &[write()]));
+    assert!(!fixture.matches("eg_diag_10000000000040008000000000000002", &[write()]));
+    assert!(!fixture.matches(DATABASE, &[]));
+    assert!(!fixture.matches(DATABASE, &[write(), write()]));
+    for mutation in 0..10 {
+        let mut value = write();
+        match mutation {
+            0 => value.id = "30000000-0000-4000-8000-000000000003".into(),
+            1 => value.expected = Some(1),
+            2 => value.expires_at = None,
+            3 => value.expires_at = Some(0),
+            4 => value.projection = None,
+            5 => value.projection.as_mut().unwrap().kind = ReplicaKind::Effect,
+            6 => value.projection.as_mut().unwrap().active = false,
+            7 => value.channel = Some(("channel".into(), 1)),
+            8 => value.condition = Some(super::super::LeaseCondition::Live(10)),
+            _ => {
+                value.guard = Some(ReplicaGuard {
+                    id: "guard".into(),
+                    owner: "owner".into(),
+                    version: 1,
+                    until_ms: 10,
+                })
+            }
+        }
+        assert!(!fixture.matches(DATABASE, &[value]), "mutation {mutation}");
+    }
+    assert!(!fixture.fired.load(Ordering::SeqCst));
+}
+
+#[test]
+fn only_one_concurrent_call_can_claim_the_process_local_fault() {
+    let fixture = Arc::new(fixture(Action::PreSubmitRefusal));
+    let threads: Vec<_> = (0..16)
+        .map(|_| {
+            let fixture = fixture.clone();
+            std::thread::spawn(move || fixture.claim())
+        })
+        .collect();
+    let wins = threads
+        .into_iter()
+        .map(|thread| usize::from(thread.join().unwrap()))
+        .sum::<usize>();
+    assert_eq!(wins, 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn refusal_exits_existing_retry_before_simulated_submission() {
+    let fixture = fixture(Action::PreSubmitRefusal);
+    let observation = Observation::transaction();
+    let submitted = AtomicUsize::new(0);
+    let result = replica_retry::run(&observation, || async {
+        Armed(&fixture).before_submission(&observation).await?;
+        submitted.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![1])
+    })
+    .await;
+    assert!(matches!(result, Err(RecordError::Unavailable(_))));
+    assert_eq!(submitted.load(Ordering::SeqCst), 0);
+    assert!(Armed(&fixture)
+        .before_submission(&observation)
+        .await
+        .is_ok());
+}
+
+#[tokio::test(start_paused = true)]
+async fn stalled_precommit_uses_unchanged_total_deadline_and_does_not_retry() {
+    let fixture = fixture(Action::PreSubmitStall);
+    let observation = Observation::transaction();
+    let attempts = AtomicUsize::new(0);
+    let submitted = AtomicUsize::new(0);
+    let started = tokio::time::Instant::now();
+    let result = replica_retry::run(&observation, || async {
+        attempts.fetch_add(1, Ordering::SeqCst);
+        Armed(&fixture).before_submission(&observation).await?;
+        submitted.fetch_add(1, Ordering::SeqCst);
+        Ok(vec![1])
+    })
+    .await;
+    assert_eq!(started.elapsed(), Duration::from_secs(2));
+    assert!(matches!(result, Err(RecordError::Unavailable(_))));
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(submitted.load(Ordering::SeqCst), 0);
+    assert!(fixture.fired.load(Ordering::SeqCst));
+}
+
+#[tokio::test(start_paused = true)]
+async fn postcommit_control_never_grants_retry_or_claims_before_commit_boundary() {
+    let fixture = fixture(Action::PostCommitUnknown);
+    let observation = Observation::transaction();
+    assert!(Armed(&fixture)
+        .before_submission(&observation)
+        .await
+        .is_ok());
+    assert!(!fixture.fired.load(Ordering::SeqCst));
+    let calls = AtomicUsize::new(0);
+    let simulated_commits = AtomicUsize::new(0);
+    let result = replica_retry::run(&observation, || async {
+        calls.fetch_add(1, Ordering::SeqCst);
+        observation.phase(Phase::Commit);
+        simulated_commits.fetch_add(1, Ordering::SeqCst);
+        Armed(&fixture).after_commit(&observation)?;
+        Ok(vec![1])
+    })
+    .await;
+    assert!(matches!(result, Err(RecordError::Unavailable(_))));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(simulated_commits.load(Ordering::SeqCst), 1);
+    assert!(Armed(&fixture).after_commit(&observation).is_ok());
+    let error = unknown_commit();
+    assert!(error.contains_label("UnknownTransactionCommitResult"));
+    assert!(!error.contains_label("TransientTransactionError"));
+}
+
+#[derive(Clone, Default)]
+struct Logs(Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for Logs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn fault_provenance_keeps_operation_ancestry_without_raw_selectors() {
+    use tracing::{instrument::WithSubscriber, Instrument};
+    let logs = Logs::default();
+    let writer = logs.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || writer.clone())
+        .finish();
+    async {
+        async {
+            async {
+                let fixture = fixture(Action::PostCommitUnknown);
+                let observation = Observation::transaction();
+                observation.attempt(1);
+                observation.phase(Phase::Commit);
+                assert!(Armed(&fixture).after_commit(&observation).is_err());
+            }
+            .instrument(tracing::info_span!("eg_admission_operation",
+                operation_sha256 = %"e".repeat(64), stage = "root_write"))
+            .await;
+        }
+        .instrument(tracing::info_span!("eg_admission_attempt",
+            attempt_sha256 = %"f".repeat(64), process_sha256 = %"d".repeat(64),
+            admission_sha256 = %digest(ROOT.as_bytes())))
+        .await;
+    }
+    .with_subscriber(subscriber)
+    .await;
+    let text = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    // With --nocapture this is an actual emitter/formatter fixture for the
+    // collector review. All values above are fixed synthetic test identities.
+    print!("{text}");
+    let rows: Vec<_> = text
+        .lines()
+        .filter(|line| line.contains("event=\"eg_fixture_record_fault\""))
+        .collect();
+    assert_eq!(rows.len(), 1, "synthetic capture: {text}");
+    let row = rows[0];
+    for required in [
+        "eg_admission_attempt",
+        "eg_admission_operation",
+        "stage=\"root_write\"",
+        "action=\"post_commit_unknown\"",
+        "boundary=\"after_commit_ack\"",
+        "commit_class=\"acknowledged\"",
+        "case_sha256=",
+        "fixture_sha256=",
+        "database_sha256=",
+    ] {
+        assert!(row.contains(required), "missing {required}");
+    }
+    assert!(
+        row.find("eg_admission_attempt").unwrap() < row.find("eg_admission_operation").unwrap()
+    );
+    assert!(row.contains(&digest(ROOT.as_bytes())));
+    for forbidden in [
+        DATABASE,
+        ROOT,
+        "synthetic-owner",
+        "DiagnosticAcknowledgementLost",
+    ] {
+        assert!(!text.contains(forbidden), "raw field leaked");
+    }
+    assert!(
+        text.contains("label_class=\"unknown_commit\""),
+        "synthetic capture: {text}"
+    );
+    assert!(
+        text.contains("commit_class=\"unknown\""),
+        "synthetic capture: {text}"
+    );
+}

@@ -17,6 +17,10 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_metric_bindings", Sandbox(&["sandbox_id"])),
     ("sandbox_metric_rollups", Sandbox(&["sandbox_id"])),
     ("sandbox_usage_rollups", Sandbox(&["sandbox_id"])),
+    (
+        "sandbox_usage_allocation_buckets_v1",
+        Sandbox(&["sandbox_id"]),
+    ),
     ("sandbox_usage_reports", Empty),
     ("sandbox_usage_report_rows", Sandbox(&["sandbox_id"])),
     ("sandbox_usage_report_charts", Sandbox(&["sandbox_id"])),
@@ -146,6 +150,8 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_billing_state", Sandbox(&["_id"])),
     ("sandbox_colors", Empty),
     ("sandbox_controls", Sandbox(&["sandbox_id"])),
+    // Legacy archive/restore cannot retire a retained no-resend obligation.
+    ("sandbox_credential_issuance", Empty),
     ("sandbox_credential_revocations", Sandbox(&["sandbox_id"])),
     ("sandbox_credentials", Sandbox(&["sandbox_id"])),
     ("sandbox_events", Sandbox(&["sandbox_id"])),

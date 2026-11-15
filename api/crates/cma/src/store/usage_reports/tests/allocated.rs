@@ -39,6 +39,8 @@ pub(super) async fn request(
     (status, serde_json::from_slice(&body).unwrap())
 }
 async fn measured_fixture(store: &ReportingStore, state: &SandboxUsage, from: u64) {
+    let holder = uuid::Uuid::new_v4().to_string();
+    assert!(store.lease("rollups", &holder, 70).await.unwrap());
     let a = Aggregate {
         integral: 60.,
         display_integral: 60.,
@@ -50,36 +52,44 @@ async fn measured_fixture(store: &ReportingStore, state: &SandboxUsage, from: u6
         ..Default::default()
     };
     store
-        .save_metric_rollups(&[MetricRollup {
-            schema_version: 1,
-            algorithm_version: ALGORITHM_VERSION,
-            source: SOURCE.into(),
-            sandbox_id: state.sandbox_id.to_string(),
-            owner_subject: state.owner.to_string(),
-            day: from / 86_400 * 86_400,
-            chunk: ((from % 86_400) / 3600) as u16,
-            mapping_revision: 0,
-            cutoff: from + 60,
-            source_complete: true,
-            minutes: vec![Minute {
-                from,
-                to: from + 60,
-                metrics: [a.clone(), a.clone(), a.clone()],
+        .save_metric_rollups(
+            "rollups",
+            &holder,
+            &[MetricRollup {
+                schema_version: 1,
+                algorithm_version: ALGORITHM_VERSION,
+                source: SOURCE.into(),
+                sandbox_id: state.sandbox_id.to_string(),
+                owner_subject: state.owner.to_string(),
+                day: from / 86_400 * 86_400,
+                chunk: ((from % 86_400) / 3600) as u16,
+                mapping_revision: 0,
+                cutoff: from + 60,
+                source_complete: true,
+                minutes: vec![Minute {
+                    from,
+                    to: from + 60,
+                    metrics: [a.clone(), a.clone(), a.clone()],
+                }],
             }],
-        }])
+        )
         .await
         .unwrap();
     store
-        .save_live(&[(
-            state.sandbox_id.to_string(),
-            super::super::super::sandbox_metric_rollups::LiveReading {
-                owner: state.owner.to_string(),
-                observed_at: now(),
-                metrics: [a.clone(), a.clone(), a],
-            },
-        )])
+        .save_live(
+            &holder,
+            &[(
+                state.sandbox_id.to_string(),
+                super::super::super::sandbox_metric_rollups::LiveReading {
+                    owner: state.owner.to_string(),
+                    observed_at: now(),
+                    metrics: [a.clone(), a.clone(), a],
+                },
+            )],
+        )
         .await
         .unwrap();
+    store.release("rollups", &holder).await.unwrap();
 }
 
 #[tokio::test]

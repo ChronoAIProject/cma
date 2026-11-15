@@ -52,7 +52,13 @@ async fn metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed
                 }
             })
             .collect();
-        store.save_metric_rollups(&metrics).await.unwrap();
+        let holder = uuid::Uuid::new_v4().to_string();
+        assert!(store.lease("rollups", &holder, 70).await.unwrap());
+        store
+            .save_metric_rollups("rollups", &holder, &metrics)
+            .await
+            .unwrap();
+        store.release("rollups", &holder).await.unwrap();
     }
     let query = ReportInput {
         from: Some(from),

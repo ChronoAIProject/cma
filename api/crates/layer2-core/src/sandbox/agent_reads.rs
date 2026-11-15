@@ -250,8 +250,8 @@ impl AgentReadService {
         }
         let mut previous = request.cursor.as_deref();
         for agent in &result.items {
-            if let Some(access) = &self.access {
-                access
+            let lineage_validated = if let Some(access) = &self.access {
+                let authorized = access
                     .authorize_personal(
                         caller,
                         &ResourceTarget::Agent {
@@ -261,14 +261,22 @@ impl AgentReadService {
                     )
                     .await
                     .map_err(authorized::access_error)?;
-            }
+                // Authorization already validates all parents and conversation
+                // invariants in one current snapshot. Reuse that proof only
+                // for the exact listed row; changed rows keep the legacy reads.
+                authorized.snapshot.lineage.agent.as_ref() == Some(agent)
+            } else {
+                false
+            };
             if agent.owner != *owner || !query.matches(agent) {
                 return Err(corrupt("agent page contains an out-of-scope row"));
             }
             if previous.is_some_and(|cursor| agent.id.as_str() <= cursor) {
                 return Err(corrupt("agent page order is invalid"));
             }
-            self.validate_lineage(owner, agent).await?;
+            if !lineage_validated {
+                self.validate_lineage(owner, agent).await?;
+            }
             previous = Some(agent.id.as_str());
         }
         if result.next.as_deref()

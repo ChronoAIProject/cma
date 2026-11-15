@@ -4,6 +4,8 @@ use mongodb::bson::{doc, Document};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 mod fixtures;
+mod public_relay;
+mod read_lanes;
 use fixtures::*;
 
 #[tokio::test]
@@ -86,7 +88,7 @@ async fn disabled_leases_preserve_exact_command_sequence_and_one_token_gcra() {
 
 struct Counted {
     store: Arc<MongoRequestLimits>,
-    prepaid: AtomicU32,
+    prepaid: Arc<AtomicU32>,
 }
 
 #[async_trait::async_trait]
@@ -104,9 +106,21 @@ impl Charge for Counted {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn two_replicas_never_admit_unpaid_requests_at_the_boundary_over_100_rounds() {
     let fixture = Fixture::new().await;
-    let counted = Counted {
+    let prepaid = Arc::new(AtomicU32::new(0));
+    let left_store = Counted {
         store: fixture.store.clone(),
-        prepaid: AtomicU32::new(0),
+        prepaid: prepaid.clone(),
+    };
+    let peer = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let right_store = Counted {
+        store: Arc::new(
+            MongoRequestLimits::open(&peer.database(fixture.database.name()))
+                .await
+                .unwrap(),
+        ),
+        prepaid: prepaid.clone(),
     };
     for round in 0..100 {
         let left = LeaseTable::default();
@@ -114,11 +128,15 @@ async fn two_replicas_never_admit_unpaid_requests_at_the_boundary_over_100_round
         let key = format!("default:boundary-{round}");
         history(&left, &key, 2).await;
         history(&right, &key, 2).await;
-        counted.prepaid.store(0, Ordering::SeqCst);
+        prepaid.store(0, Ordering::SeqCst);
         let started = Instant::now();
         let attempts = (0..44).map(|index| {
-            let table = if index % 2 == 0 { &left } else { &right };
-            table.check(&counted, &key, 40)
+            let (table, store) = if index % 2 == 0 {
+                (&left, &left_store)
+            } else {
+                (&right, &right_store)
+            };
+            table.check(store, &key, 40)
         });
         let results = futures_util::future::join_all(attempts).await;
         let admitted = results.iter().filter(|result| result.is_ok()).count() as u32;
@@ -127,7 +145,7 @@ async fn two_replicas_never_admit_unpaid_requests_at_the_boundary_over_100_round
             "fixture crossed a refill interval"
         );
         assert_eq!(admitted, 40, "round {round}");
-        assert_eq!(counted.prepaid.load(Ordering::SeqCst), 40);
+        assert_eq!(prepaid.load(Ordering::SeqCst), 40);
         assert!(results
             .iter()
             .all(|result| matches!(result, Ok(()) | Err(Refusal::Limited(1..=2)))));

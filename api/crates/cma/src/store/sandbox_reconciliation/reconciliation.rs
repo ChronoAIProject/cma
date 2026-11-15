@@ -31,7 +31,7 @@ pub(super) async fn reconcile(
         .as_ref()
         .map(read_sandbox)
         .transpose()?;
-    if sandbox.as_ref() != Some(&receipt.sandbox) {
+    if !crate::store::work_lease_update::sandbox_matches(sandbox.as_ref(), &receipt.sandbox) {
         return Ok(false);
     }
     for recorded in &receipt.segmented {
