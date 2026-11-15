@@ -202,6 +202,6 @@ fn allocation_raw_event_cpu_comparison() {
         "ALLOCATION_DECODE_CPU {}",
         serde_json::json!({"events_per_sample":documents.len()*repeats,
         "samples":samples,"baseline_us":before,"candidate_us":after,"same_checksum_and_byte_count":true,
-        "profile":"native test unoptimized","database":false,"full_report_measurement":false})
+        "debug_assertions":cfg!(debug_assertions),"profile_source":"bound compiler artifact receipt","database":false,"full_report_measurement":false})
     );
 }
