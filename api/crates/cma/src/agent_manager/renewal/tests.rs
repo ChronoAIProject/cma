@@ -5,6 +5,9 @@ use layer2_core::agent_ownership::{
 };
 use std::sync::atomic::AtomicUsize;
 
+#[path = "receiver_fairness_tests.rs"]
+mod receiver_fairness;
+
 struct DelayedStore {
     inner: Arc<MemoryOwnershipStore>,
     delay: Duration,
@@ -240,6 +243,126 @@ async fn normal_drain_does_not_publish_an_ownership_failure() {
     assert!(result.is_ok());
     assert!(finish_with_logs(&coordinator, result).await.is_empty());
     assert!(!*coordinator.failure_signal().borrow());
+}
+
+#[tokio::test(start_paused = true)]
+async fn receiver_cancellation_does_not_stop_healthy_supervised_owners() {
+    use layer2_core::agent_ownership::candidates;
+    use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
+
+    struct RefusedReceiver;
+    #[async_trait::async_trait]
+    impl ReceiverRevocation for RefusedReceiver {
+        fn identity(&self) -> String {
+            "receiver-without-revocation-ack".into()
+        }
+
+        async fn revoke(&self) -> layer3_adapter::Result<()> {
+            Err(layer3_adapter::AdapterError::Unavailable(
+                "receiver revocation acknowledgement unavailable".into(),
+            ))
+        }
+    }
+
+    let store = DelayedStore::new(Duration::from_millis(25));
+    let manager = coordinator(store.clone()).await;
+    let cancelled = manager
+        .acquire(&AgentId("cancelled-receiver".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let healthy = manager
+        .acquire(&AgentId("healthy-local".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let peer = OwnershipCoordinator::register(
+        store.clone(),
+        Member {
+            instance_id: "peer".into(),
+            protocol: PROTOCOL_VERSION,
+            relay_address: "http://peer:8080".into(),
+            expires_at_ms: 0,
+            draining: false,
+            owned_agents: 0,
+            max_owned_agents: DEFAULT_MAX_OWNED_AGENTS,
+        },
+    )
+    .await
+    .unwrap();
+    let membership = store.membership().await.unwrap();
+    let peer_id = (0..128)
+        .map(|index| AgentId(format!("healthy-peer-{index}")))
+        .find(|id| {
+            candidates(id, &membership, None)
+                .unwrap()
+                .first()
+                .is_some_and(|member| member.instance_id == peer.instance_id)
+        })
+        .expect("fixture contains a peer-preferred Agent");
+    let peer_owner = peer.acquire(&peer_id).await.unwrap().unwrap();
+    cancelled
+        .register_receiver(Arc::new(RefusedReceiver))
+        .unwrap();
+    let original = store
+        .owner(&cancelled.token.agent_id)
+        .await
+        .unwrap()
+        .unwrap();
+    // Model the receiver's irreversible cancellation before any renewal starts.
+    // Adapter tests cover the negotiation errors that call this same method.
+    TransportAuthority::revoke(cancelled.as_ref());
+    let running = tokio::spawn(run(manager.clone(), |_| std::future::pending()));
+    let peer_running = tokio::spawn(run(peer.clone(), |_| std::future::pending()));
+    // Receiver cleanup is blocked. It cannot release or revive local authority,
+    // and the supervisor must keep unrelated local/peer ownership available.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(
+        manager.is_ready(),
+        "receiver cancellation failed the whole manager"
+    );
+    assert!(peer.is_ready());
+    assert!(!running.is_finished());
+    assert!(!peer_running.is_finished());
+    assert_eq!(
+        store
+            .owner(&cancelled.token.agent_id)
+            .await
+            .unwrap()
+            .unwrap(),
+        original,
+        "no in-flight renewal and no receiver ACK: original durable lease remains"
+    );
+    assert!(!cancelled.is_current());
+    let executed = AtomicUsize::new(0);
+    assert!(cancelled
+        .run(async { executed.fetch_add(1, Ordering::Relaxed) })
+        .await
+        .is_err());
+    assert_eq!(executed.load(Ordering::Relaxed), 0);
+
+    // Advance past a full lease lifetime, with both real supervisors running.
+    tokio::time::sleep(Duration::from_secs(20)).await;
+    for (coordinator, owner) in [(&manager, &healthy), (&peer, &peer_owner)] {
+        assert!(coordinator.is_ready());
+        assert!(owner.is_current());
+        assert!(!*coordinator.failure_signal().borrow());
+        owner.run(store.check(&owner.token)).await.unwrap().unwrap();
+        assert_eq!(
+            store
+                .owner(&owner.token.agent_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .token,
+            owner.token
+        );
+    }
+    assert!(!cancelled.is_current());
+    manager.stop_admission();
+    peer.stop_admission();
+    running.await.unwrap().unwrap();
+    peer_running.await.unwrap().unwrap();
 }
 
 #[derive(Clone, Default)]
