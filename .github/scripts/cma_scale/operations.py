@@ -7,6 +7,7 @@ from pathlib import Path
 import rules as g
 import checkpoints
 import hpa_exercise
+import eg_hpa
 
 TEMPLATES = Path(__file__).with_name('templates')
 SUFFIXES = {'pause': 'pause', 'prepare': 'prepare-template.template',
@@ -105,6 +106,8 @@ def build(action, release, created=None, pause_plan=None, prepare_plan=None):
     g.require(len(parts) == 2 and parts[0] in ('s1', 's2', 's3'), 'unknown_action')
     stage, step = parts[0].upper(), parts[1]
     if stage == 'S3':
+        if step.startswith('eg-only-'):
+            return eg_hpa.build(step.removeprefix('eg-only-'), release, created, hpa, quota)
         return hpa(step, release, created)
     service = 'am' if stage == 'S1' else 'eg'
     if step in SUFFIXES:
