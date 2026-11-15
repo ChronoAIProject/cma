@@ -153,3 +153,100 @@ async fn startup_claim_retry_is_capped() {
         }
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn completion_conflict_waits_inside_publication_without_a_new_work_claim() {
+    let harness = production_lease_harness().await;
+    let agent = harness.admit("completed-effect-conflict", vec![]).await;
+    harness.store.inject_agent_work_publications(
+        agent.id.clone(),
+        (0..5).map(|_| (AgentWorkStep::MaterializeHome, SandboxStoreError::Conflict)),
+    );
+    let started = tokio::time::Instant::now();
+    harness
+        .worker
+        .run_scheduled(&agent.id, harness.now)
+        .await
+        .unwrap();
+    let ready = harness.stored(&agent.id).await;
+    assert_eq!(ready.status, AgentStatus::Ready);
+    assert_eq!(ready.work.step, AgentWorkStep::None);
+    assert_eq!(
+        ready.work.next_fence, 6,
+        "completion retries must retain the original work claim"
+    );
+    assert_eq!(ready.work.receipts.len(), 3);
+    assert!(started.elapsed() >= Duration::from_secs(3));
+    assert!(started.elapsed() < Duration::from_secs(30));
+}
+
+#[tokio::test]
+async fn retry_refuses_stop_changed_claim_expiry_and_parent_retirement() {
+    use layer2_core::sandbox::store::AgentStopRequest;
+    for change in ["stop", "holder", "fence", "expired", "parent"] {
+        let harness = production_lease_harness().await;
+        let agent = harness.admit("superseding-startup", vec![]).await;
+        let claimed = harness
+            .store
+            .claim_agent_work(
+                &agent.id,
+                "agent-worker",
+                rfc3339_at(harness.now),
+                rfc3339_at(harness.now + Duration::from_secs(1080)),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        let mut changed = claimed.clone();
+        match change {
+            "stop" => {
+                harness
+                    .store
+                    .schedule_agent_stop(AgentStopRequest {
+                        target: AgentControlTarget::from(&claimed),
+                        reason: AgentStopReason::Owner,
+                        requested_at: rfc3339_at(harness.now),
+                    })
+                    .await
+                    .unwrap();
+            }
+            "parent" => {
+                let mut parent = harness
+                    .store
+                    .get_sandbox(&agent.sandbox_id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let revision = parent.revision;
+                parent.begin_retirement(rfc3339_at(harness.now)).unwrap();
+                harness.store.save_sandbox(revision, parent).await.unwrap();
+            }
+            _ => {
+                match change {
+                    "holder" => changed.work.lease.as_mut().unwrap().holder = "successor".into(),
+                    "fence" => {
+                        changed.work.lease.as_mut().unwrap().fence += 1;
+                        changed.work.next_fence += 1;
+                    }
+                    _ => changed.work.lease.as_mut().unwrap().expires_at = rfc3339_at(harness.now),
+                }
+                changed.revision += 1;
+                harness
+                    .store
+                    .save_agent(claimed.revision, changed)
+                    .await
+                    .unwrap();
+            }
+        }
+        let retained = harness.stored(&agent.id).await;
+        assert_eq!(
+            harness
+                .worker
+                .finish_startup_attempt(&claimed, Err(SandboxStoreError::Conflict), harness.now)
+                .await,
+            Err(SandboxStoreError::Conflict),
+            "{change}"
+        );
+        assert_eq!(harness.stored(&agent.id).await, retained, "{change}");
+    }
+}
