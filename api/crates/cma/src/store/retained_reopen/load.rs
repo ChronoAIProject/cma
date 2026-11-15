@@ -11,7 +11,7 @@ use super::{domain, ApplyError, MongoSandboxStore};
 use crate::store::{
     agent_commands::{lane_records, records},
     sandbox_events::validate_in_transaction,
-    sandbox_unpublished_recovery::transaction::load_reopen,
+    sandbox_unpublished_recovery::transaction::{load_reopen_with_sources, NativeFacts},
     worktrees::read_worktree,
 };
 
@@ -20,7 +20,17 @@ pub(super) async fn snapshot(
     id: &SandboxId,
     session: &mut ClientSession,
 ) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
-    let (original, last_seq, history_state_sha256) = load_reopen(store, id, session).await?;
+    snapshot_with_sources(store, id, session, None).await
+}
+
+pub(super) async fn snapshot_with_sources(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    sources: Option<&NativeFacts>,
+) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
+    let (original, last_seq, history_state_sha256) =
+        load_reopen_with_sources(store, id, session, sources).await?;
     validate_in_transaction(store, id, last_seq, session).await?;
     let mut cursor = store
         .worktrees

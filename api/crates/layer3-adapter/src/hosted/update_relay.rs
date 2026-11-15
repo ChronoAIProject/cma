@@ -60,7 +60,7 @@ pub(super) fn spawn(
 ) -> (UpdateRelay, tokio::task::JoinHandle<()>) {
     if bounded {
         let (ingress, mut queued) = mpsc::channel(RELAY_CAPACITY);
-        let task = tokio::spawn(async move {
+        let task = spawn_owned(async move {
             loop {
                 let update = tokio::select! {
                     _ = output.closed() => break,
@@ -82,7 +82,7 @@ pub(super) fn spawn(
         );
     }
     let (ingress, mut queued) = mpsc::unbounded_channel();
-    let task = tokio::spawn(async move {
+    let task = spawn_owned(async move {
         while let Some(update) = queued.recv().await {
             if output.send(update).await.is_err() {
                 break;
@@ -95,4 +95,20 @@ pub(super) fn spawn(
         },
         task,
     )
+}
+
+fn spawn_owned(
+    relay: impl std::future::Future<Output = ()> + Send + 'static,
+) -> tokio::task::JoinHandle<()> {
+    // Capture before spawning: task-local authority is not inherited by Tokio.
+    let authority = crate::owner_protocol::current_authority();
+    tokio::spawn(async move {
+        match authority {
+            Some(authority) => tokio::select! { biased;
+                _ = authority.revoked() => (),
+                _ = relay => (),
+            },
+            None => relay.await,
+        }
+    })
 }

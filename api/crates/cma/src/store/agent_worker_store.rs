@@ -7,13 +7,66 @@ use layer2_core::sandbox::store::{
     AgentConnectionRecoveryRequest, AgentStore, AgentWorkMutation, AgentWorkerStore, Page,
     PageRequest, SandboxStoreError, MAX_PAGE_SIZE,
 };
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Bson};
+use std::time::Duration;
 
 use super::child_writer_claims::{persist, ChildWriterClaim};
 use super::sandbox_mongo::{MongoSandboxStore, TRANSACTION_ATTEMPTS};
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for MongoSandboxStore {
+    async fn agent_create_admission(
+        &self,
+        agent: &layer2_core::sandbox::Agent,
+    ) -> Result<Option<layer2_core::sandbox::store::AgentCreateAdmission>, SandboxStoreError> {
+        let layer2_core::sandbox::AgentOrigin::Lifecycle { operation_id } = &agent.origin else {
+            return Ok(None);
+        };
+        let Some(record) = self
+            .lifecycle_operations
+            .find_one(doc! { "_id": operation_id })
+            .projection(
+                doc! { "created_at": 1, "owner": 1, "input.request.desktop": 1,
+                "input.request.machine_included": 1 },
+            )
+            .max_time(Duration::from_millis(200))
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        if record.get_str("owner").ok() != Some(agent.owner.as_str()) {
+            return Ok(None);
+        }
+        let admitted_at_ms = record
+            .get_datetime("created_at")
+            .ok()
+            .map(|value| value.timestamp_millis());
+        let request = record
+            .get_document("input")
+            .ok()
+            .and_then(|input| input.get_document("request").ok());
+        let valid_bool = |key: &str| {
+            request
+                .and_then(|request| request.get(key))
+                .is_none_or(|value| matches!(value, Bson::Boolean(_)))
+        };
+        let (desktop, machine_included) = match request {
+            Some(request) if valid_bool("desktop") && valid_bool("machine_included") => (
+                Some(request.get_bool("desktop").unwrap_or(false)),
+                Some(request.get_bool("machine_included").unwrap_or(false)),
+            ),
+            _ => (None, None),
+        };
+        Ok(admitted_at_ms.map(
+            |admitted_at_ms| layer2_core::sandbox::store::AgentCreateAdmission {
+                admitted_at_ms,
+                desktop,
+                machine_included,
+            },
+        ))
+    }
+
     async fn agent_command_admission_generation(
         &self,
         id: &AgentId,
@@ -115,6 +168,10 @@ impl AgentWorkerStore for MongoSandboxStore {
             filter.insert("_id", doc! { "$gt": cursor });
         }
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
+        let mut pass = self
+            .agent_connection_observations
+            .as_ref()
+            .map(|cache| cache.pass());
         let mut cursor = self
             .agents
             .find(filter)
@@ -123,18 +180,27 @@ impl AgentWorkerStore for MongoSandboxStore {
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         let mut items = Vec::new();
-        while let Some(document) = read
-            .next(&mut cursor)
+        while cursor
+            .advance()
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
-            let agent = super::agents::read_agent(&document)?;
-            let candidate =
+            read.document(cursor.current().as_bytes().len());
+            let validate = || {
+                let document = cursor
+                    .deserialize_current()
+                    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+                let agent = super::agents::read_agent(&document)?;
                 AgentConnectionRecoveryCandidate::from_agent(&agent).ok_or_else(|| {
                     SandboxStoreError::Corrupt(
                         "agent connection query returned an invalid candidate".into(),
                     )
-                })?;
+                })
+            };
+            let candidate = match &self.agent_connection_observations {
+                Some(cache) => cache.resolve(cursor.current(), validate)?,
+                None => validate()?,
+            };
             items.push(candidate);
         }
         let has_more = items.len() > usize::from(page.limit);
@@ -149,6 +215,9 @@ impl AgentWorkerStore for MongoSandboxStore {
                 .to_string()
         });
         read.complete();
+        if let Some(pass) = pass.as_mut() {
+            pass.complete = true;
+        }
         Ok(Page { items, next })
     }
 
@@ -191,6 +260,23 @@ impl AgentWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Agents,
+                &self.agents,
+                doc! {"work_pending":true},
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
+        if self.agent_ownership.is_some() {
+            let ids = self.due_owned_agent_work(now, limit).await?;
+            self.empty_discovery
+                .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
+            return Ok(ids);
+        }
         let mut read = super::mongo_read_telemetry::Read::find(self.agents.name());
         let mut cursor = self
             .agents
@@ -213,6 +299,8 @@ impl AgentWorkerStore for MongoSandboxStore {
             ));
         }
         read.complete();
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
         Ok(ids)
     }
 
@@ -233,6 +321,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                 return Ok(None);
             };
             let mut agent = super::agents::read_agent(&row)?;
+            self.recover_agent_work_owner(&mut agent).await?;
             if agent
                 .work
                 .lease

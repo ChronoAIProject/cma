@@ -2,6 +2,8 @@ import { vi } from 'vitest';
 import { createClient } from '@chronoai/cma-sdk';
 import { agentClient } from '../../test/agent';
 import { createAgentTransport } from './client';
+import type { CurrentUser } from './identityGate';
+import type { RecoveryPolicy } from './requestRecovery';
 import {
   commandStatus,
   controlReceipt,
@@ -57,7 +59,7 @@ export function queuedPage(text = 'Cancel this waiting message', revision = 7) {
     ],
   };
 }
-export function harness(storage: Storage = sessionStorage) {
+export function harness(storage: Storage = sessionStorage, recovery?: RecoveryPolicy) {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const post = vi.fn<(init?: RequestInit) => Promise<Response>>().mockResolvedValue(accepted());
   const snapshot = vi
@@ -79,7 +81,7 @@ export function harness(storage: Storage = sessionStorage) {
     ),
   );
   const cancel = vi.fn();
-  const currentUser = vi.fn(async () => 'alice' as string | undefined);
+  const currentUser = vi.fn<CurrentUser>(async () => 'alice');
   const listQueued = vi.fn(async () =>
     json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null }),
   );
@@ -155,7 +157,7 @@ export function harness(storage: Storage = sessionStorage) {
   const sdk = createClient({ fetch });
   const client = agentClient({
     taskExperience: taskExperience('alice'),
-    agentTransport: createAgentTransport(sdk, { storage, currentUser }),
+    agentTransport: createAgentTransport(sdk, { storage, currentUser, recovery }),
     runAgent: vi.fn(),
     interruptAgent: vi.fn(),
     replayAgent: vi.fn(),

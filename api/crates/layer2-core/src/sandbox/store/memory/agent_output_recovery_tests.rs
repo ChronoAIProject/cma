@@ -7,6 +7,9 @@ mod identity_tests;
 #[path = "shared_output_tests.rs"]
 mod shared_output_tests;
 
+#[path = "agent_output_coalesce_tests.rs"]
+mod coalesce_tests;
+
 const STREAM: &str = "d99003d1-0c3c-46cd-aa47-9bbdbed50b12";
 
 fn retained(cursor: u64, update: Option<ConversationUpdate>) -> ConversationUpdate {

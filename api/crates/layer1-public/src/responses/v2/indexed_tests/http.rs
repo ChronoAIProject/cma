@@ -1,5 +1,67 @@
 use super::*;
 
+struct BindingStore {
+    inner: Arc<InMemorySandboxStore>,
+    bind_after_response_reads: usize,
+    bound: AtomicBool,
+    response_reads: AtomicUsize,
+}
+
+impl BindingStore {
+    fn record(&self, mut record: AdmittedAgentCommand) -> AdmittedAgentCommand {
+        if !self.bound.load(Ordering::SeqCst) {
+            return record;
+        }
+        record.status = AgentResponseStatus::InProgress;
+        record.work.dispatch = Some(CommandDispatch {
+            claim: CommandClaim {
+                agent_id: record.receipt.envelope.agent_id.clone(),
+                command_id: record.receipt.envelope.command_id.clone(),
+                holder: "indexed-test".into(),
+                fence: 1,
+            },
+            operation_sequence: 1,
+            turn_sequence: 3,
+            runtime_generation: 1,
+            fenced_at: AT.into(),
+            delivery: layer2_core::sandbox::AgentOperationDelivery::DispatchFenced,
+        });
+        record
+    }
+}
+
+#[async_trait]
+impl AgentCommandStore for BindingStore {
+    async fn reserve_command(
+        &self,
+        request: CommandReservation,
+    ) -> Result<CommandReservationResult, CommandLedgerError> {
+        self.inner.reserve_command(request).await
+    }
+
+    async fn get_command(
+        &self,
+        id: &layer2_core::ids::AgentCommandId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let record = self.inner.get_command(id).await?;
+        Ok(record.map(|record| self.record(record)))
+    }
+
+    async fn get_response_command(
+        &self,
+        id: &layer2_core::ids::AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        let record = self.inner.get_response_command(id).await?;
+        if record.is_some()
+            && self.response_reads.fetch_add(1, Ordering::SeqCst) + 1
+                >= self.bind_after_response_reads
+        {
+            self.bound.store(true, Ordering::SeqCst);
+        }
+        Ok(record.map(|record| self.record(record)))
+    }
+}
+
 #[tokio::test]
 async fn legacy_http_pages_oversized_output_without_truncating_the_response() {
     let mut kinds = beginning();
@@ -112,6 +174,132 @@ async fn legacy_indexed_stream_retains_intermediate_tools_and_fences_buffered_fr
         stream.next().await.is_none(),
         "buffered frames cannot escape deleted authority"
     );
+}
+
+#[tokio::test]
+async fn unbound_submit_switches_to_indexed_output_after_binding() {
+    let data = make({
+        let mut kinds = beginning();
+        kinds.extend([
+            message("answer"),
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ]);
+        kinds
+    })
+    .await;
+    let command_store = Arc::new(BindingStore {
+        inner: data.store.clone(),
+        bind_after_response_reads: 2,
+        bound: AtomicBool::new(false),
+        response_reads: AtomicUsize::new(0),
+    });
+    let commands = layer2_core::sandbox::agent_io::AgentCommandService::new(
+        command_store,
+        data.access.clone(),
+        Arc::new(Authority),
+    );
+    let state = crate::responses::v2::ResponsesV2State::new(
+        data.state.agent_page_origin.clone(),
+        commands,
+        data.reads.clone(),
+    );
+    let router = crate::responses::v2::router(state);
+    let response = router
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/api/v2/responses",
+            "owner-a",
+            Some("indexed-transition"),
+            Some(json!({
+                "conversation": "agt_indexed",
+                "input": "Hello",
+                "stream": true
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(data.source.counts.opens.load(Ordering::SeqCst), 0);
+    let mut body = response.into_body().into_data_stream();
+    let first = events(&body.next().await.unwrap().unwrap());
+    assert_eq!(first[0]["type"], "response.created");
+    assert!(first.iter().all(|event| event["type"] != "error"));
+    assert_eq!(data.source.counts.opens.load(Ordering::SeqCst), 0);
+    let mut completed = false;
+    for _ in 0..8 {
+        let frame = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let frame = events(&frame);
+        assert!(frame.iter().all(|event| event["type"] != "error"));
+        if frame
+            .iter()
+            .any(|event| event["type"] == "response.completed")
+        {
+            completed = true;
+            break;
+        }
+    }
+    assert!(completed, "indexed continuation never completed");
+    assert!(data.source.counts.opens.load(Ordering::SeqCst) > 0);
+}
+
+#[tokio::test]
+async fn unbound_submit_can_bind_before_first_snapshot_without_source_probe() {
+    let data = make({
+        let mut kinds = beginning();
+        kinds.push(AgentLogKind::TurnCompleted { turn_sequence: 3 });
+        kinds
+    })
+    .await;
+    let command_store = Arc::new(BindingStore {
+        inner: data.store.clone(),
+        bind_after_response_reads: 1,
+        bound: AtomicBool::new(false),
+        response_reads: AtomicUsize::new(0),
+    });
+    let commands = layer2_core::sandbox::agent_io::AgentCommandService::new(
+        command_store,
+        data.access.clone(),
+        Arc::new(Authority),
+    );
+    let state = crate::responses::v2::ResponsesV2State::new(
+        data.state.agent_page_origin.clone(),
+        commands,
+        data.reads.clone(),
+    );
+    let router = crate::responses::v2::router(state);
+    let response = router
+        .oneshot(request(
+            Method::POST,
+            "/api/v2/responses",
+            "owner-a",
+            Some("indexed-first-snapshot"),
+            Some(json!({
+                "conversation": "agt_indexed",
+                "input": "Hello",
+                "stream": true
+            })),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(data.source.counts.opens.load(Ordering::SeqCst), 0);
+    let bytes = axum::body::to_bytes(response.into_body(), 100_000)
+        .await
+        .unwrap();
+    let events = events(&bytes);
+    assert!(events.iter().all(|event| event["type"] != "error"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "response.created"));
+    assert!(events
+        .iter()
+        .any(|event| event["type"] == "response.completed"));
+    assert!(data.source.counts.opens.load(Ordering::SeqCst) > 0);
 }
 
 #[tokio::test]

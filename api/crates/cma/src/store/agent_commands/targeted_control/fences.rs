@@ -97,12 +97,12 @@ pub(super) async fn resources(
     let result = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": parent.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "revision": parent_revision,
                 "record.created_at": &parent.created_at,
-            },
+            }),
             doc! { "$inc": { "agent_command_admission_fence": 1_i64 } },
         )
         .session(&mut *session)

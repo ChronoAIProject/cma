@@ -7,6 +7,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::work_lease_update::replacement;
 use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
 use layer2_core::ids::{SubjectId, WorkspaceId};
@@ -201,7 +202,7 @@ async fn apply_admission(
         };
         if let Some(document) = store
             .workspaces
-            .find_one(origin_filter)
+            .find_one(crate::store::work_schema::query(origin_filter))
             .session(&mut *session)
             .await
             .map_err(ApplyError::Driver)?
@@ -304,14 +305,14 @@ async fn apply_admission(
         let updated = store
             .sandboxes
             .update_one(
-                doc! {
+                crate::store::work_schema::query(doc! {
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "channel_reuse_cleanup_execution": { "$exists": false },
                     "revision": signed(sandbox.revision, "sandbox revision")
                         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error)))?,
-                },
-                doc! { "$set": sandbox_replacement_fields(&next).map_err(ApplyError::Domain)? },
+                }),
+                replacement(sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?),
             )
             .session(&mut *session)
             .await
@@ -366,11 +367,11 @@ pub(super) async fn lock_sandbox(
     let locked = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
-            },
+            }),
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )
         .session(session)

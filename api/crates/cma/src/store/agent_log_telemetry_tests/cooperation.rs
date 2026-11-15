@@ -35,3 +35,6 @@ mod invariants;
 mod observation;
 #[path = "cooperation/quarantine.rs"]
 mod quarantine;
+
+#[path = "cooperation/snapshot.rs"]
+mod snapshot;

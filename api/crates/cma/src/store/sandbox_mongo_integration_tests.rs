@@ -117,7 +117,7 @@ mod log_integrity_tests;
 mod persistence_tests;
 mod profile_transaction_tests;
 mod response_projection_tests;
-mod sandbox_lifecycle_tests;
+pub(in crate::store) mod sandbox_lifecycle_tests;
 mod sandbox_usage_tests;
 mod schema_admission_tests;
 mod service_access_tests;
@@ -127,3 +127,8 @@ mod transaction_reconciliation_tests;
 mod warm_hierarchy_tests;
 mod workspace_admission_tests;
 mod workspace_lifecycle_tests;
+
+// Historical payload timestamps stay fixed; acquisition needs a live deadline.
+pub(in crate::store) fn work_lease_deadline() -> String {
+    layer2_core::rfc3339_at(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+}

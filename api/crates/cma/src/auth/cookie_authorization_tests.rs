@@ -39,6 +39,8 @@ mod tenant_isolation_tests;
 
 #[path = "cookie_authorization_tests/diagnostic_tests.rs"]
 mod diagnostic_tests;
+#[path = "cookie_authorization_tests/provider_diagnostic_tests.rs"]
+mod provider_diagnostic_tests;
 
 #[derive(Default)]
 struct Gate {
@@ -311,3 +313,11 @@ mod provider_boundary_tests;
 
 #[path = "cookie_authorization_tests/joined_session_tests.rs"]
 mod joined_session_tests;
+
+#[path = "cookie_authorization_tests/throttle_tests.rs"]
+mod throttle_tests;
+
+#[path = "cookie_authorization_tests/live_evidence_tests.rs"]
+mod live_evidence_tests;
+#[path = "cookie_authorization_tests/replica_verification_tests.rs"]
+mod replica_verification_tests;

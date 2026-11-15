@@ -90,6 +90,10 @@ fn fixtures(subject: &str, suffix: &str) -> Vec<(&'static str, Document)> {
     }
     rows.extend([
         (
+            "sandbox_usage_allocation_buckets_v1",
+            doc! {"_id":format!("{sandbox}:21000"),"sandbox_id":&sandbox,"owner":subject,"day":21000_i64},
+        ),
+        (
             "model_budget_reservations",
             doc! {"_id":&id,"record":{"owner":subject}},
         ),
@@ -247,6 +251,63 @@ async fn audited_owner_and_linked_fixtures_are_erased_without_touching_other_own
 
 fn expected_b_count(rows: &[(&str, Document)], collection: &str) -> u64 {
     rows.iter().filter(|(name, _)| *name == collection).count() as u64
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn allocation_buckets_follow_owner_without_losing_recovery_authority() {
+    let db = database().await;
+    sandbox(&db, "acct:a", "sbx_a").await;
+    for (sandbox, owner) in [
+        ("sbx_a", "acct:a"),
+        ("sbx_gone", "acct:a"),
+        ("sbx_b", "acct:b"),
+    ] {
+        put(
+            &db,
+            "sandbox_usage_allocation_buckets_v1",
+            doc! {
+                "_id":format!("{sandbox}:21000"),"sandbox_id":sandbox,"owner":owner,"day":21000_i64
+            },
+        )
+        .await;
+    }
+    let retained = [
+        (
+            "sandbox_credential_issuance",
+            doc! {"_id":"sbx_a","document_schema_version":1_i64,"record":{"owner":"acct:a","state":"unknown"}},
+        ),
+        (
+            "cma_agent_manager_members",
+            doc! {"_id":"manager-a","protocol":1_i64,"draining":false},
+        ),
+        (
+            "cma_agent_manager_owners",
+            doc! {"_id":"agt_a","instance_id":"manager-a","epoch":19_i64},
+        ),
+    ];
+    for (collection, row) in &retained {
+        put(&db, collection, row.clone()).await;
+    }
+    let deleted = drain(&db, "acct:a", &mut ErasureInventory::default()).await;
+    assert_eq!(deleted["sandbox_usage_allocation_buckets_v1"], 2);
+    assert_eq!(count(&db, "sandbox_usage_allocation_buckets_v1").await, 1);
+    assert!(db
+        .collection::<Document>("sandbox_usage_allocation_buckets_v1")
+        .find_one(doc! {"_id":"sbx_b:21000","owner":"acct:b"})
+        .await
+        .unwrap()
+        .is_some());
+    for (collection, row) in retained {
+        assert_eq!(
+            db.collection::<Document>(collection)
+                .find_one(doc! {"_id":row.get("_id").unwrap().clone()})
+                .await
+                .unwrap(),
+            Some(row)
+        );
+    }
+    db.drop().await.unwrap();
 }
 
 #[tokio::test]

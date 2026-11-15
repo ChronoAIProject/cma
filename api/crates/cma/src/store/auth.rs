@@ -104,7 +104,7 @@ pub struct MongoAuthStore {
 }
 
 impl MongoAuthStore {
-    pub(super) async fn open(
+    pub(crate) async fn open(
         client: &Client,
         database: &str,
         deployment: &str,

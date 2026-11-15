@@ -1,0 +1,84 @@
+{
+  "schema": "eg_fixture_fault_collector_source_v1",
+  "base": "0ac76c70f7a5c6f18d7c38f0b8266adece125b8f",
+  "reference_collector": "882a571487f6dcb9d2a2172ef9f90a55a859b409",
+  "status": "SOURCE_GATES_PASS_PENDING_REVIEW",
+  "sources": [
+    {
+      "path": ".github/scripts/eg-admission/observations.py",
+      "sha256": "ffeefdcf3048a7ca6718527657d97e469eaff4303b9652f9c08bf28c26f962da",
+      "bytes": 7677
+    },
+    {
+      "path": ".github/scripts/eg-admission/observation_schema.py",
+      "sha256": "c3ab5a616947ba71870d904ca82718bbbe6cb838c0edb469a1a7935e15efa2a3",
+      "bytes": 9587
+    },
+    {
+      "path": ".github/scripts/eg-admission/test_fixture_observations.py",
+      "sha256": "6a340b2d6de07f902e21583ea41693a36a4e1fd98cb45fee80ae7927c00cc807",
+      "bytes": 4306
+    },
+    {
+      "path": ".github/scripts/eg-admission/test_observations.py",
+      "sha256": "de754c6c78b43bfdd55427e492549154c5e4bd33431db2880596a27b0591f412",
+      "bytes": 15429
+    },
+    {
+      "path": ".github/scripts/eg-admission/fixtures/tracing-format.txt",
+      "sha256": "50c9f0a7eba5ce912c1866fed431ad82f22af9cb58e71a65d5167b9cdc65eaca",
+      "bytes": 2297
+    }
+  ],
+  "logs": [
+    {
+      "path": ".claude/eg-delivery/admission-closure/fault-parser-coverage.log",
+      "sha256": "1de4ac1ead85a9accd54adfa87b76ed1575ef1faaad6c332d01bd5511e6505f2",
+      "bytes": 6302
+    },
+    {
+      "path": ".claude/eg-delivery/admission-closure/fault-parser-lint.log",
+      "sha256": "b4cb017265b426fcab7c99cc7bf3dc225575858b82e7d5f21da05260f2213ca2",
+      "bytes": 45
+    },
+    {
+      "path": ".claude/eg-delivery/admission-closure/fault-parser-gitleaks.log",
+      "sha256": "e34ef04fe11ba2b1de70bc3ad8dc2d8362913d02904d5b678e9e8d8fbeacb517",
+      "bytes": 79
+    },
+    {
+      "path": ".claude/eg-delivery/admission-closure/fault-parser-coverage.py",
+      "sha256": "52d68dd396a4da743b8b4b37ad18fa8cf55b3c5df3d477b76dc63273c692a47c",
+      "bytes": 779
+    }
+  ],
+  "tests": {
+    "pass": 16,
+    "failed": 0,
+    "ignored": 0,
+    "scope": "12 retained parser cases plus 4 synthetic fault provenance cases; one coverage execution"
+  },
+  "coverage": {
+    "observations": {
+      "executable": 157,
+      "hit": 151,
+      "percent": 96.17834394904459
+    },
+    "observation_schema": {
+      "executable": 158,
+      "hit": 155,
+      "percent": 98.10126582278481
+    }
+  },
+  "gates": {
+    "ruff": "0.15.7 format/check PASS",
+    "gitleaks": "8.30.1 content directory PASS, no bypass"
+  },
+  "limitations": [
+    "No real fault marker captured from an application process; actual formatter/emitter integration remains pending.",
+    "No application, Mongo, cluster, provider or lifecycle invocation.",
+    "Fault marker is synthetic boundary provenance, never provider effect or historical attribution.",
+    "Reject counts remain evidence gaps; complete packet still requires actual image/config/Pod/process and terminal oracle."
+  ],
+  "integration": "Normal fast-forward of reviewed preparation6b to lead-authorized0ac76c70; existing ingress/records/collector contribution retained."
+}

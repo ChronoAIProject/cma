@@ -1,13 +1,15 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@chronoai/cma-sdk';
 import { MetricsDashboard } from './MetricsDashboard';
 import { defaultSelection } from './model';
 import { metricsClient } from './testFixtures';
 
+afterEach(() => vi.useRealTimers());
+
 it('retries an unavailable report without a zero chart, then renders its allocated comparison', async () => {
-  const actor = userEvent.setup();
+  vi.useFakeTimers();
   const api = metricsClient();
   api.create.mockRejectedValueOnce(new ApiError(503, 'Fixture unavailable'));
   render(
@@ -19,14 +21,12 @@ it('retries an unavailable report without a zero chart, then renders its allocat
       onSelection={vi.fn()}
     />,
   );
-  expect(await screen.findByRole('alert')).toHaveTextContent('unavailable data is not zero usage');
+  await act(async () => {});
+  expect(screen.getByText('Retrying usage automatically…')).toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
-  const retry = screen.getByRole('button', { name: 'Retry usage' });
-  expect(retry).toHaveClass('button--outline');
-  await actor.click(retry);
-  expect(
-    await screen.findByRole('region', { name: 'Allocation comparison chart' }),
-  ).toBeInTheDocument();
+  await act(async () => vi.advanceTimersByTimeAsync(1200));
+  expect(screen.getByRole('region', { name: 'Allocation comparison chart' })).toBeInTheDocument();
   expect(api.series).not.toHaveBeenCalled();
 });
 
@@ -54,7 +54,7 @@ it('preserves key server sorts in the compact table and hides all measured sort 
   expect(onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'status' }));
 });
 
-it('keeps pending allocation unknown and disables refresh while reserving the report layout', () => {
+it('keeps pending allocation unknown and disables refresh with bounded readable progress', () => {
   const api = metricsClient();
   api.create.mockReturnValue(new Promise(() => {}));
   const view = render(
@@ -72,5 +72,6 @@ it('keeps pending allocation unknown and disables refresh while reserving the re
     screen.queryByRole('region', { name: 'Allocated resource-hours' }),
   ).not.toBeInTheDocument();
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
-  expect(view.container.querySelector('.usage-loading')).toBeInTheDocument();
+  expect(view.container.querySelector('.usage-loading')).not.toBeInTheDocument();
+  expect(screen.getByText(/Automatic checks pause after two minutes/)).toBeInTheDocument();
 });

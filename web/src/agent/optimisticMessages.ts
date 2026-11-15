@@ -72,7 +72,7 @@ export function useOptimisticMessages(
               : { commandId: control.commandId, responseId: control.responseId },
         };
       }
-      return session?.journal.read() ?? readSuggestionRequest?.();
+      return session ? session.journal.read() : readSuggestionRequest?.();
     } catch {
       return undefined;
     }
@@ -150,7 +150,11 @@ export function useOptimisticMessages(
                     state: input.state === 'pending' ? 'unconfirmed' : 'accepted',
                     receipt: input.receipt ?? row.receipt,
                   }
-                : { ...row, state: 'unconfirmed' },
+                : // A readable empty journal proves no request was retained for
+                  // dispatch. Missing authority or an observed receipt does not.
+                  input === null && row.receipt === undefined
+                  ? { ...row, state: 'not_sent' }
+                  : { ...row, state: 'unconfirmed' },
           ),
         );
       },

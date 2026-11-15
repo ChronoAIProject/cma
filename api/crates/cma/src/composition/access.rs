@@ -8,9 +8,10 @@ use layer2_core::{
     sandbox::{
         agent_artifacts::AgentArtifactService, agent_filesystem::AgentFileService,
         agent_io::AgentCommandService, answer_deliverables::AnswerDeliverableService,
-        AgentReadService, SandboxPolicySource,
+        AgentReadService, SandboxOperatorService, SandboxPolicySource, StoredSandboxRetirement,
     },
     trigger_domain::ServiceConnectionBroker,
+    ActivityService,
 };
 use layer3_adapter::SandboxAdapter;
 
@@ -83,4 +84,20 @@ pub(super) fn compose(
             &tools.public_origin,
         ),
     }
+}
+
+pub(super) fn sandbox_operators(
+    stores: &MongoStores,
+    activity: &Arc<ActivityService>,
+) -> Arc<SandboxOperatorService> {
+    let retirement = Arc::new(StoredSandboxRetirement::new(stores.sandbox_model.clone()));
+    Arc::new(
+        SandboxOperatorService::new(
+            stores.sandbox_model.clone(),
+            stores.sandbox_profiles.clone(),
+            retirement,
+            Arc::clone(activity),
+        )
+        .with_maintenance(stores.sandbox_model.clone()),
+    )
 }

@@ -117,7 +117,10 @@ pub(in crate::store) async fn completed_workspace(
     else {
         return Ok(None);
     };
-    if super::super::sandboxes::read_sandbox(&parent)? != *sandbox {
+    if !crate::store::work_lease_update::sandbox_matches(
+        Some(&super::super::sandboxes::read_sandbox(&parent)?),
+        sandbox,
+    ) {
         return Ok(None);
     }
     let Some(child) = store
@@ -129,7 +132,10 @@ pub(in crate::store) async fn completed_workspace(
     else {
         return Ok(None);
     };
-    if super::super::workspaces::read_workspace(&child)? != *workspace {
+    if !crate::store::work_lease_update::workspace_matches(
+        Some(&super::super::workspaces::read_workspace(&child)?),
+        workspace,
+    ) {
         return Ok(None);
     }
     let Some(record) = claimed(store, sandbox, &mut session).await? else {

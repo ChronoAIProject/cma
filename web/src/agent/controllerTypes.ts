@@ -17,7 +17,7 @@ export type MessageAcceptance =
 export type AgentResourceState =
   | { readonly status: 'idle' }
   | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string }
+  | { readonly status: 'error'; readonly message: string; readonly retryAt?: number }
   | ({ readonly status: 'ready' } & ReadyAgent);
 
 export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete';
@@ -35,6 +35,7 @@ export interface AgentController {
   readonly pendingControl?: boolean;
   readonly controlNotice?: string;
   readonly controlsUnavailable?: boolean;
+  readonly controlBaselineReady?: boolean;
   readonly recoverPending?: () => Promise<void>;
   readonly state: AgentResourceState;
   readonly inputAvailability: SandboxInputAvailability;
@@ -43,6 +44,7 @@ export interface AgentController {
   readonly pending?: AgentCommand;
   readonly actionError?: string;
   readonly reload: () => void;
+  readonly refreshDetail: () => void;
   readonly clearActionError: () => void;
   readonly send: (
     content: string,

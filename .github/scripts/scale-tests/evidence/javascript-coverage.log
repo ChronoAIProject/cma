@@ -1,0 +1,62 @@
+
+> coverage
+> node --experimental-test-coverage --test-coverage-include='lib/**' --test-coverage-include='scenarios/**' --test-coverage-lines=80 --test-coverage-functions=80 --test test/*.test.mjs
+
+✔ real loopback HTTP records full-body latency and retains errors without response contents (27.54525ms)
+✔ Kubernetes wrapper pins local API server, namespace UID and test-owned pod; refuses Secret and exec (0.754417ms)
+✔ reports retain explicit blocked rows and performance deltas (43.175083ms)
+✔ baseline selection captures three N1 windows without fault, scale or cross-replica calls (10.787541ms)
+✔ baseline capture preserves missing routes, failed attempts and unrendered or slow journeys (22.363708ms)
+✔ baseline capture rejects changed phase, wrong replica count and broken evidence sinks (0.93725ms)
+✔ invalid selections and missing baseline drivers remain blocked (0.155791ms)
+✔ A2 preserves all 43 criteria, repeated route memberships and six exact client boundaries (1.132791ms)
+✔ missing and undersampled routes stay in comparisons; both create boundaries enforce 5s (1081.687792ms)
+✔ raw sample artifacts retain failures and missing routes, reject overwrite and omit private fields (19.490792ms)
+✔ guards reject remote origins, encoded authority tricks and unsafe local scope (1.845625ms)
+✔ only exact pinned module bytes reach import (35.873ms)
+✔ durable reconciliation rejects missing, duplicate, stale and incomplete evidence (0.423792ms)
+✔ poll deadlines include slow reads; unsafe exceptions are redacted (0.621584ms)
+✔ contract campaigns execute all production-path requirements and reject missing adapters (2.451833ms)
+✔ trial campaign requires101 AM and5 process+5 node EG trials, unique evidence and bounded service recovery (3.487459ms)
+✔ confidence intervals are repeatable and detect a fixed p95 shift (14.252208ms)
+✔ nearest-rank percentiles retain failures and suppress undersampled p99 (2.086875ms)
+✔ matched cohorts reject regressions, noise, failures, missing metrics and mismatched provenance (4320.590792ms)
+✔ open-loop workload includes failures and generator queueing without coordinated omission (0.984791ms)
+✔ all ordered create/use routes exercise every client path with cleanup (1.922708ms)
+✔ cross-replica gates fail on topology, serving identity, desktop and stream gaps (0.360916ms)
+✔ fault recovery counts injection time and requires just-renewed authority plus actual death (0.642834ms)
+✔ autoscale preserves canaries during stress removal and requires workload evidence (0.696667ms)
+✔ suite reports failures, aborts later gates and never turns missing fixtures into a GO (1023.416959ms)
+✔ cohort source identity is bound to environment preflight before any N2 measurement (2.577541ms)
+ℹ tests 26
+ℹ suites 0
+ℹ pass 26
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4472.84925
+ℹ start of coverage report
+ℹ -----------------------------------------------------------------
+ℹ file             | line % | branch % | funcs % | uncovered lines
+ℹ -----------------------------------------------------------------
+ℹ lib              |        |          |         |
+ℹ  catalog.mjs     | 100.00 |   100.00 |  100.00 |
+ℹ  checks.mjs      | 100.00 |   100.00 |  100.00 |
+ℹ  confidence.mjs  | 100.00 |   100.00 |  100.00 |
+ℹ  http.mjs        | 100.00 |    85.71 |  100.00 |
+ℹ  kubernetes.mjs  | 100.00 |   100.00 |  100.00 |
+ℹ  load.mjs        |  93.88 |    94.74 |   85.71 | 16-18
+ℹ  measurement.mjs | 100.00 |   100.00 |  100.00 |
+ℹ  metrics.mjs     | 100.00 |    97.89 |  100.00 |
+ℹ  report.mjs      | 100.00 |    82.61 |  100.00 |
+ℹ  safety.mjs      | 100.00 |   100.00 |   83.33 |
+ℹ  suite.mjs       | 100.00 |   100.00 |  100.00 |
+ℹ scenarios        |        |          |         |
+ℹ  contract.mjs    | 100.00 |   100.00 |  100.00 |
+ℹ  correctness.mjs | 100.00 |   100.00 |  100.00 |
+ℹ  scaling.mjs     | 100.00 |   100.00 |  100.00 |
+ℹ -----------------------------------------------------------------
+ℹ all files        |  99.65 |    97.84 |   98.54 |
+ℹ -----------------------------------------------------------------
+ℹ end of coverage report
