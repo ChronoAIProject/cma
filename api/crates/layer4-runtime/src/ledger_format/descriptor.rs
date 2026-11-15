@@ -39,9 +39,11 @@ impl Descriptor {
         })
     }
     pub(super) fn load(config: &RuntimeConfig) -> Result<Self> {
+        Self::decode(config, &io::read(&config.state_root.join(MANIFEST))?)
+    }
+    pub(super) fn decode(config: &RuntimeConfig, bytes: &[u8]) -> Result<Self> {
         let descriptor: Self =
-            serde_json::from_slice(&io::read(&config.state_root.join(MANIFEST))?)
-                .map_err(|_| hold_at("descriptor.decode"))?;
+            serde_json::from_slice(bytes).map_err(|_| hold_at("descriptor.decode"))?;
         let mut expected = Self::new(config, descriptor.store.clone())?;
         expected.born = descriptor.born;
         if descriptor != expected

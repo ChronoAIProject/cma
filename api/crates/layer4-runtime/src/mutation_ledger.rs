@@ -43,6 +43,14 @@ pub(crate) struct Ledger {
 }
 
 impl Ledger {
+    pub(crate) fn verify_fresh_publication(
+        db: &rusqlite::Connection,
+        config: &RuntimeConfig,
+        store: &str,
+    ) -> Result<()> {
+        schema::verify_fresh(db, config, store)
+    }
+
     pub(crate) async fn open(
         path: PathBuf,
         config: RuntimeConfig,
