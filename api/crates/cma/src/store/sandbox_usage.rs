@@ -21,6 +21,7 @@ pub(super) const EVENTS: &str = "sandbox_usage_events";
 pub(crate) mod billing;
 mod checkpoint;
 mod interval_index;
+pub(in crate::store) mod raw_event;
 mod reads;
 pub(super) mod save;
 

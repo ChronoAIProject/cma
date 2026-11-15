@@ -52,7 +52,7 @@ fn allocation_interval_restores_each_sandbox_revision_order_and_exact_projection
     let mut batch = EventBatch::default();
     for revision in [4, 2, 3, 1] {
         for state in &states {
-            batch.push(document(&event(state, revision))).unwrap();
+            batch.push(&raw(document(&event(state, revision)))).unwrap();
         }
     }
     let result = batch.finish(false);
@@ -85,7 +85,7 @@ fn allocation_interval_orders_large_revisions_without_precision_loss() {
     for revision in [start + 2, start, start + 1] {
         let mut e = event(&state, 1);
         e.revision = revision;
-        batch.push(document(&e)).unwrap();
+        batch.push(&raw(document(&e))).unwrap();
     }
     assert_eq!(
         batch.finish(false)["a"]
@@ -102,7 +102,9 @@ fn allocation_interval_keeps_gaps_duplicates_and_foreign_owners_incomplete() {
     for revisions in [vec![3, 1, 4], vec![4, 2, 2, 1, 3]] {
         let mut batch = EventBatch::default();
         for revision in revisions {
-            batch.push(document(&event(&state, revision))).unwrap();
+            batch
+                .push(&raw(document(&event(&state, revision))))
+                .unwrap();
         }
         let events = batch.finish(false);
         assert!(
@@ -114,7 +116,7 @@ fn allocation_interval_keeps_gaps_duplicates_and_foreign_owners_incomplete() {
     let mut foreign = event(&state, 1);
     foreign.owner = SubjectId("foreign".into());
     let mut batch = EventBatch::default();
-    batch.push(document(&foreign)).unwrap();
+    batch.push(&raw(document(&foreign))).unwrap();
     assert!(
         !allocation::project(
             &state,
@@ -142,9 +144,9 @@ fn allocation_interval_rejects_malformed_records_and_mismatched_query_fields() {
         let mut bad = original.clone();
         bad.insert(key, "corrupt");
         let mut batch = EventBatch::default();
-        batch.push(original.clone()).unwrap();
+        batch.push(&raw(original.clone())).unwrap();
         assert!(
-            matches!(batch.push(bad), Err(MetricsError::Unavailable)),
+            matches!(batch.push(&raw(bad)), Err(MetricsError::Unavailable)),
             "{key}"
         );
     }
@@ -158,23 +160,30 @@ fn allocation_interval_keeps_exact_event_and_byte_caps() {
         count: 99_999,
         ..Default::default()
     };
-    count.push(document.clone()).unwrap();
+    count.push(&raw(document.clone())).unwrap();
     assert!(matches!(
-        count.push(document.clone()),
+        count.push(&raw(document.clone())),
         Err(MetricsError::Busy)
     ));
     let mut bytes = EventBatch {
         bytes: 64 * 1024 * 1024 - length,
         ..Default::default()
     };
-    bytes.push(document.clone()).unwrap();
+    bytes.push(&raw(document.clone())).unwrap();
     assert!(matches!(
-        bytes.push(document.clone()),
+        bytes.push(&raw(document.clone())),
         Err(MetricsError::Busy)
     ));
     let mut overflow = EventBatch {
         bytes: usize::MAX,
         ..Default::default()
     };
-    assert!(matches!(overflow.push(document), Err(MetricsError::Busy)));
+    assert!(matches!(
+        overflow.push(&raw(document)),
+        Err(MetricsError::Busy)
+    ));
+}
+
+fn raw(document: mongodb::bson::Document) -> mongodb::bson::RawDocumentBuf {
+    mongodb::bson::RawDocumentBuf::try_from(document).unwrap()
 }

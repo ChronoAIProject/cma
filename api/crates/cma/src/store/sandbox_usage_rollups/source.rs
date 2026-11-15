@@ -99,13 +99,8 @@ impl ReportingStore {
         // projection. Avoid a network round trip for every 200 small events;
         // Mongo still caps each reply at 16 MiB and the 100k event cap is unchanged.
         let mut events = EventBatch::default();
-        while let Some(d) = cursor
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            events.push(d)?;
+        while cursor.advance(&mut *session).await.map_err(unavailable)? {
+            events.push(cursor.current())?;
         }
         // No partially fetched or invalid day reaches projection.
         Ok(events.finish(revision_seek))
@@ -120,20 +115,16 @@ struct EventBatch {
 }
 
 impl EventBatch {
-    fn push(&mut self, document: mongodb::bson::Document) -> Result<()> {
+    fn push(&mut self, document: &mongodb::bson::RawDocument) -> Result<()> {
         self.count += 1;
         self.bytes = self
             .bytes
-            .checked_add(
-                mongodb::bson::serialize_to_vec(&document)
-                    .map_err(unavailable)?
-                    .len(),
-            )
+            .checked_add(document.as_bytes().len())
             .ok_or(MetricsError::Busy)?;
         if self.count > 100_000 || self.bytes > 64 * 1024 * 1024 {
             return Err(MetricsError::Busy);
         }
-        let event = super::super::sandbox_usage::read_event(&document).map_err(unavailable)?;
+        let event = super::super::sandbox_usage::raw_event::read(document).map_err(unavailable)?;
         self.events
             .entry(event.sandbox_id.to_string())
             .or_default()
