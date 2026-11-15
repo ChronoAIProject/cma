@@ -74,6 +74,12 @@ pub(super) async fn fence(
             .await
             .map_err(ApplyError::Driver)?;
         if written.matched_count != 1 {
+            #[cfg(test)]
+            eprintln!(
+                "prepared_replay_fence_rejected collection={} matched={}",
+                collection.name(),
+                written.matched_count
+            );
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
     }
