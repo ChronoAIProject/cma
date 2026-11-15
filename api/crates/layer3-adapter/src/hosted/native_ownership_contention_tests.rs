@@ -3,6 +3,9 @@ use super::*;
 use crate::hosted::HostedControlTransport;
 use crate::owner_protocol::{scope, test_support::TestAuthority, TransportAuthority};
 
+#[path = "native_lane_replacement_tests.rs"]
+mod replacement;
+
 async fn fixture() -> Fixture {
     let fixture = Fixture::start(Mode::Persistent, NativeRuntimeTransport::KubernetesExec).await;
     fixture
