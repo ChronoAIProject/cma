@@ -639,10 +639,14 @@ jobs:
           --run-ignored only --test-threads 1
 
   backend-mongo:
-    name: Backend Mongo contracts
+    name: Backend Mongo contracts (${{ matrix.shard }}/2)
     needs: backend-test-build
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
       BASH_ENV: ${{ github.workspace }}/.github/scripts/backend-resource-env.sh
       RUST_MIN_STACK: 33554432
@@ -673,9 +677,11 @@ jobs:
           test -x target/debug/cmaeg-media-probe
           test -x target/debug/layer4-runtime
       - name: Disposable real Mongo persistence contracts
-        # A 622-contract run hit the 35-minute limit while tests still passed.
-        # Retain the complete corpus and two bounded fixtures on slower runners.
+        # The 1606-contract corpus exceeded one runner's 75-minute budget.
+        # Divide complete partitions, retaining two bounded fixtures per runner.
         timeout-minutes: 75
+        env:
+          CMA_MONGO_SHARD: ${{ matrix.shard }}/2
         run: bash ../.github/scripts/mongo-contract-tests.sh
 
   backend-image-manager:

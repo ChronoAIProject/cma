@@ -89,9 +89,11 @@ module CIContract
           backend_step("Isolated Linux Workspace removal writer boundary", "#{NEXTEST} run -E 'package(=layer4-runtime) and test(=supervisor::mutation_tests::workspace_reconciliation_tests::real_linux_writer_boundary_reconciles_target_and_resumes_live_sibling)' --run-ignored only --test-threads 1")],
       },
       "backend-mongo" => {
-        "name" => "Backend Mongo contracts", "timeout-minutes" => 90,
+        "name" => "Backend Mongo contracts (${{ matrix.shard }}/2)", "timeout-minutes" => 90,
+        "strategy" => { "fail-fast" => false, "matrix" => { "shard" => [1, 2] } },
         "steps" => consumers + [backend_step("Disposable real Mongo persistence contracts",
-          "bash ../.github/scripts/mongo-contract-tests.sh", "timeout-minutes" => 75)],
+          "bash ../.github/scripts/mongo-contract-tests.sh", "timeout-minutes" => 75,
+          env: { "CMA_MONGO_SHARD" => "${{ matrix.shard }}/2" })],
       },
       "backend-image-manager" => {
         "name" => "Backend Image Manager Mongo isolation", "timeout-minutes" => 30,

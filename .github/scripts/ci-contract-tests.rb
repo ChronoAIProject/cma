@@ -396,6 +396,13 @@ else
   [[], [1, 2], [1, 2, 2], [0, 1, 2], [1, 2, 3, 4]].each do |shards|
     reject.call("invalid shards #{shards}") { |v| v["ci"]["jobs"]["backend-tests"]["strategy"]["matrix"]["shard"] = shards }
   end
+  [[], [1], [2], [1, 1], [0, 1], [1, 2, 3]].each do |shards|
+    reject.call("invalid Mongo shards #{shards}") { |v| v["ci"]["jobs"]["backend-mongo"]["strategy"]["matrix"]["shard"] = shards }
+  end
+  reject.call("Mongo shard failure cancels its peer") { |v| v["ci"]["jobs"]["backend-mongo"]["strategy"]["fail-fast"] = true }
+  [nil, "1/2", "${{ matrix.shard }}/3"].each do |shard|
+    reject.call("Mongo shard binding #{shard.inspect}") { |v| v["ci"]["jobs"]["backend-mongo"]["steps"].last["env"]["CMA_MONGO_SHARD"] = shard }
+  end
   reject.call("partition denominator") do |v|
     v["ci"]["jobs"]["backend-tests"]["steps"].last["run"].sub!("$SHARD/3", "$SHARD/2")
   end
