@@ -52,7 +52,7 @@ impl Guard {
         use std::os::unix::fs::MetadataExt;
         let metadata = writer
             .metadata()
-            .map_err(|_| hold_at("guard.writer_metadata"))?;
+            .map_err(|error| io::io_error("guard.writer_metadata", "writer_metadata", &error))?;
         if inodes[2] != (metadata.dev(), metadata.ino()) {
             return Err(hold_at("guard.writer_inode"));
         }
@@ -163,9 +163,11 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
     if fresh {
         io::directories(&config.state_root)?;
         for entry in std::fs::read_dir(&config.state_root)
-            .map_err(|_| hold_at("selection.state_inventory"))?
+            .map_err(|error| io::io_error("selection.state_inventory", "state_inventory", &error))?
         {
-            let entry = entry.map_err(|_| hold_at("selection.state_entry"))?;
+            let entry = entry.map_err(|error| {
+                io::io_error("selection.state_entry", "state_inventory", &error)
+            })?;
             if entry.file_name() != "workspace-removal-writer-v1.lock"
                 || !io::read(&entry.path())?.is_empty()
             {
@@ -213,7 +215,7 @@ impl Selection {
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "closed")?;
             crate::fs_durability::sync_tree(&stage)
-                .map_err(|_| hold_at("publication.stage_sync"))?;
+                .map_err(|error| io::io_error("publication.stage_sync", "stage_sync", &error))?;
             crate::publication_qualification::stop_before_intent()?;
             let descriptor = Descriptor::new(config, store)?;
             io::create(
@@ -229,8 +231,13 @@ impl Selection {
             if io::exists(&database)? {
                 return Err(hold_at("publication.database_exists"));
             }
-            crate::fs_durability::rename(&stage, &database)
-                .map_err(|_| hold_at("publication.database_rename"))?;
+            crate::fs_durability::rename(&stage, &database).map_err(|error| {
+                io::io_error(
+                    "publication.database_rename",
+                    "database_rename_and_sync",
+                    &error,
+                )
+            })?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "renamed")?;
             io::create(&config.state_root.join(TEMP), &descriptor.bytes()?)?;
@@ -240,7 +247,13 @@ impl Selection {
                 &config.state_root.join(TEMP),
                 &config.state_root.join(MANIFEST),
             )
-            .map_err(|_| hold_at("publication.manifest_rename"))?;
+            .map_err(|error| {
+                io::io_error(
+                    "publication.manifest_rename",
+                    "manifest_rename_and_sync",
+                    &error,
+                )
+            })?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "committed")?;
             publication::consume(config, &descriptor)?;
@@ -289,7 +302,7 @@ fn retained_transfer(config: &RuntimeConfig) -> Result<()> {
     ] {
         io::directories(path)?;
         let dev = std::fs::symlink_metadata(path)
-            .map_err(|_| hold_at("transfer.root_metadata"))?
+            .map_err(|error| io::io_error("transfer.root_metadata", "root_metadata", &error))?
             .dev();
         if device.is_some_and(|expected| expected != dev) {
             return Err(hold_at("transfer.same_device"));
@@ -327,8 +340,8 @@ fn inodes(config: &RuntimeConfig) -> Result<[(u64, u64); 3]> {
     let mut result = [(0, 0); 3];
     for (index, path) in paths.iter().enumerate() {
         io::directories(path.parent().ok_or_else(hold)?)?;
-        let metadata =
-            std::fs::symlink_metadata(path).map_err(|_| hold_at("guard.path_metadata"))?;
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| io::io_error("guard.path_metadata", "path_metadata", &error))?;
         if (index == 0 && !metadata.is_dir())
             || (index != 0 && (!metadata.is_file() || metadata.nlink() != 1))
         {
