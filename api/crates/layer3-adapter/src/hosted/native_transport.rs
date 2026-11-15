@@ -95,12 +95,16 @@ impl ProviderHostedControlTransport {
                 let current = match client.pod_binding(handle).await {
                     Ok(current) => current,
                     Err(error) => {
-                        self.discard_native_slot(endpoint, &slot).await;
+                        if matches!(&error, AdapterError::Rejected(_)) {
+                            self.discard_native_incarnation(endpoint, &slot).await;
+                        } else {
+                            self.discard_native_slot(endpoint, &slot).await;
+                        }
                         return Err(error);
                     }
                 };
                 if current != *binding {
-                    self.discard_native_slot(endpoint, &slot).await;
+                    self.discard_native_incarnation(endpoint, &slot).await;
                     return Err(AdapterError::Rejected(
                         "Sandbox Pod changed before HTTP reuse".into(),
                     ));
@@ -113,7 +117,15 @@ impl ProviderHostedControlTransport {
                 {
                     Ok(stream) => stream,
                     Err(error) => {
-                        self.discard_native_slot(endpoint, &slot).await;
+                        // New-stream Pod admission can reject the captured
+                        // incarnation before this lane ever has a connection.
+                        // An authoritative rejection fences its other lanes too;
+                        // capacity/transport failures stay local to this lane.
+                        if matches!(&error, AdapterError::Rejected(_)) {
+                            self.discard_native_incarnation(endpoint, &slot).await;
+                        } else {
+                            self.discard_native_slot(endpoint, &slot).await;
+                        }
                         return Err(error);
                     }
                 };

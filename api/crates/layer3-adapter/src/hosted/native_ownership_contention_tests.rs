@@ -254,3 +254,118 @@ async fn ownership_negotiation_respects_shared_request_and_idle_session_limits()
     }
     fixture.drained().await;
 }
+
+#[tokio::test]
+async fn ownership_pod_change_cancels_held_control_for_the_old_incarnation() {
+    for cached_ownership in [false, true] {
+        for restart in [false, true] {
+            let fixture = fixture().await;
+            let endpoint = fixture.endpoint().await;
+            let authority = TestAuthority::new(7);
+            let lease = if cached_ownership {
+                scope(
+                    authority.clone(),
+                    fixture.transport.receiver_lease(&endpoint),
+                )
+                .await
+                .unwrap()
+            } else {
+                None
+            };
+            fixture.state.hold_response.store(true, Ordering::SeqCst);
+            let control = tokio::spawn({
+                let transport = fixture.transport.clone();
+                async move { transport.exchange(&handle(), RequestFrame::Resources).await }
+            });
+            wait_for_request(&fixture, "POST /runtime/control ").await;
+            let before = fixture.state.requests.lock().unwrap().len();
+            if restart {
+                fixture.state.restarted.store(true, Ordering::SeqCst);
+            } else {
+                fixture.state.replaced.store(true, Ordering::SeqCst);
+            }
+            assert!(
+                scope(authority, fixture.transport.receiver_lease(&endpoint))
+                    .await
+                    .is_err()
+            );
+            let refused = tokio::time::timeout(Duration::from_secs(2), control).await;
+            fixture.state.hold_response.store(false, Ordering::SeqCst);
+            drop(lease);
+            fixture.transport.retire(&handle()).await.unwrap();
+            fixture.drained().await;
+            assert!(refused
+                .expect("replacement proof must cancel old control before its body arrives")
+                .unwrap()
+                .is_err());
+            assert_eq!(
+                fixture.state.requests.lock().unwrap().len(),
+                before,
+                "replacement must receive no replay or ownership bytes"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn late_old_incarnation_invalidation_preserves_new_pod_slots() {
+    let fixture = fixture().await;
+    let old_endpoint = fixture.endpoint().await;
+    let old_authority = TestAuthority::new(7);
+    let old_lease = scope(
+        old_authority.clone(),
+        fixture.transport.receiver_lease(&old_endpoint),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let old_slot = fixture
+        .transport
+        .native_slot_for(&old_endpoint, native_pool::NativeHttpLane::Ownership)
+        .await
+        .unwrap();
+    fixture.state.replaced.store(true, Ordering::SeqCst);
+    assert!(scope(
+        old_authority,
+        fixture.transport.receiver_lease(&old_endpoint)
+    )
+    .await
+    .is_err());
+    drop(old_lease);
+    let endpoint = fixture.endpoint().await;
+    let authority = TestAuthority::new(8);
+    let lease = scope(
+        authority.clone(),
+        fixture.transport.receiver_lease(&endpoint),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    fixture
+        .transport
+        .exchange(&handle(), RequestFrame::Resources)
+        .await
+        .unwrap();
+    let new_slot = fixture
+        .transport
+        .native_slot_for(&endpoint, native_pool::NativeHttpLane::Ownership)
+        .await
+        .unwrap();
+    fixture
+        .transport
+        .discard_native_incarnation(&old_endpoint, &old_slot)
+        .await;
+    assert!(!*new_slot.cancellation().borrow());
+    assert_eq!(fixture.transport.state.lock().await.native_http.len(), 2);
+    assert!(authority.is_current());
+    fixture
+        .transport
+        .exchange(&handle(), RequestFrame::Resources)
+        .await
+        .unwrap();
+    drop(lease);
+    drop(old_slot);
+    drop(new_slot);
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+}
