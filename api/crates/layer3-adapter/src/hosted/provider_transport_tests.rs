@@ -23,6 +23,8 @@ mod checkpoint;
 mod history;
 #[path = "provider_ownership_tests.rs"]
 mod ownership;
+#[path = "provider_ownership_renewal_tests.rs"]
+mod ownership_renewal;
 #[path = "provider_transport_restore_tests.rs"]
 mod restore;
 #[path = "provider_transport_retirement_tests.rs"]
