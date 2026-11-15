@@ -136,17 +136,31 @@ pub(super) fn lock(path: &Path, create: bool) -> Result<File> {
     {
         return Err(hold_at("io.lock_empty"));
     }
-    file.try_lock().map_err(|_| {
-        crate::failure::RuntimeError::rejected(
-            "mutation_ledger_writer_held",
-            "runtime mutation ledger has another writer",
-        )
-    })?;
+    file.try_lock()
+        .map_err(|error| lock_error(error, operation))?;
     file.sync_all()
         .map_err(|error| io_error("io.lock_sync", operation, &error))?;
     crate::fs_durability::sync_parent(path)
         .map_err(|error| io_error("io.parent_sync", operation, &error))?;
     Ok(file)
+}
+
+fn lock_error(error: std::fs::TryLockError, operation: &'static str) -> RuntimeError {
+    match error {
+        std::fs::TryLockError::WouldBlock => tracing::error!(
+            predicate = "io.writer_lock_busy",
+            operation,
+            "runtime mutation ledger writer lock refused"
+        ),
+        std::fs::TryLockError::Error(error) => tracing::error!(
+            predicate = "io.writer_lock_syscall", operation,
+            error_kind = ?error.kind(), raw_os_error = ?error.raw_os_error(),
+            "runtime mutation ledger writer lock refused"),
+    }
+    RuntimeError::rejected(
+        "mutation_ledger_writer_held",
+        "runtime mutation ledger has another writer",
+    )
 }
 
 pub(super) fn empty(path: &Path) -> Result<bool> {
