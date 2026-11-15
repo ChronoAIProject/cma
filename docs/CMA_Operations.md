@@ -3182,3 +3182,16 @@ The activation and rollback packet is [CMA Usage Report Views](CMA_Usage_Report_
 | `CHRONO_USAGE_REPORT_WARM_SECONDS` | `300`, bounded 60–3600 seconds. Scheduling cadence, with missed ticks skipped and one refresh coalesced per semantic key. |
 | `CHRONO_USAGE_REPORT_WARM_SCOPES` | `[]`. Strict JSON array of at most eight operator-approved `{principal, admin, sandbox_id, window}` selections, at most 8192 bytes. `window` defaults to `24h`; explicitly supported values are `24h`, `7d`, and `30d`. Duplicate selections and custom ranges are rejected. The principal is an exact authenticated subject, never a role alias. No credentials. A canary Sandbox must currently belong to the named principal. Unfiltered Everyone and additional warm ranges require explicit expansion approval. Older images reject the new window field. |
 | `CHRONO_USAGE_REPORT_VIEW_SCOPES` | `[]`. Required explicit writer canary cohort when retained views are enabled; at most eight strict `{principal, admin, sandbox_id}` scopes and 8192 bytes. A named Sandbox restricts new retained admission to that exact selected Sandbox. Unlisted callers/selections receive `report_view_disabled` and retain the old workflow. Removing a cohort stops new latest-view work but preserves compatible explicit report reads and accepted-job draining. Warm scopes must be contained in this cohort. |
+
+
+### Runtime release-transition draft
+
+The backup operator transition implementation remains incomplete and is not a
+rollback procedure. `CHRONO_RUNTIME_RELEASE_MODE` stays `disabled`. A future
+qualified managed process would require `CHRONO_RUNTIME_RELEASE_PUBLIC_KEY`,
+`CHRONO_RUNTIME_RELEASE_GRANT_PATH`, `CHRONO_RUNTIME_RELEASE_CHALLENGE_PATH` and
+`CHRONO_RUNTIME_RELEASE_BINARY_IMAGE`; the checked-in values provide no usable
+trust grant, signing secret or operator credential. Actual signer observation,
+legacy/provider/receiver finality, atomic workflow admission, guarded migration
+and real replicas-OFF assignment qualification remain prerequisites. See
+[the implementation status and acceptance cells](operator-runtime-release-transition.md).

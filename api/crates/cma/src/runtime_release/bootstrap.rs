@@ -136,7 +136,7 @@ fn digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-pub(super) fn image(value: &str) -> bool {
+pub(crate) fn image(value: &str) -> bool {
     value.rsplit_once("@sha256:").is_some_and(|(name, hash)| {
         value.len() <= 2048
             && !name.is_empty()
