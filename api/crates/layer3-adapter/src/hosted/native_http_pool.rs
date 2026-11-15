@@ -7,6 +7,14 @@ use tokio::sync::{watch, OwnedMutexGuard};
 pub(super) const MAX_HTTP_SESSIONS: usize = 16;
 pub(super) const HTTP_IDLE_TTL: Duration = Duration::from_secs(60);
 
+/// Receiver negotiations cannot queue behind a long application response body.
+/// Both lanes share the same state, identity fences and total session budget.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum NativeHttpLane {
+    Control,
+    Ownership,
+}
+
 pub(super) struct AbortOnDrop(pub tokio::task::JoinHandle<()>);
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
@@ -20,6 +28,7 @@ pub(super) struct NativeConnection {
 }
 
 pub(super) struct NativeHttpSlot {
+    pub lane: NativeHttpLane,
     pub identity: NativeRuntimeIdentity,
     pub binding: PodBinding,
     connection: Arc<Mutex<Option<NativeConnection>>>,
@@ -96,7 +105,7 @@ impl NativeLease {
         if identity(&state, &self.handle) != self.slot.identity
             || !state
                 .native_http
-                .get(&self.handle)
+                .get(&(self.handle.clone(), self.slot.lane))
                 .is_some_and(|slot| Arc::ptr_eq(slot, &self.slot))
         {
             return Err(retired());
@@ -105,7 +114,7 @@ impl NativeLease {
         *self.slot.last_used.lock().unwrap() = std::time::Instant::now();
         let weak_state = Arc::downgrade(&self.state);
         let weak_slot = Arc::downgrade(&self.slot);
-        let handle = self.handle.clone();
+        let key = (self.handle.clone(), self.slot.lane);
         *self.slot.idle_timer.lock().unwrap() = Some(AbortOnDrop(tokio::spawn(async move {
             tokio::time::sleep(idle_ttl).await;
             let (Some(state), Some(slot)) = (weak_state.upgrade(), weak_slot.upgrade()) else {
@@ -116,10 +125,10 @@ impl NativeLease {
             if slot.connection.try_lock().is_ok()
                 && state
                     .native_http
-                    .get(&handle)
+                    .get(&key)
                     .is_some_and(|current| Arc::ptr_eq(current, &slot))
             {
-                state.native_http.remove(&handle);
+                state.native_http.remove(&key);
                 slot.cancel();
             }
         })));
@@ -138,7 +147,7 @@ impl ProviderHostedControlTransport {
         // and compares the complete Pod incarnation before every reused send.
         let hint = state
             .native_http
-            .get(handle)
+            .get(&(handle.clone(), NativeHttpLane::Control))
             .filter(|slot| slot.identity == identity && slot.reusable())
             .map(|slot| slot.binding.clone());
         (identity, hint)
@@ -148,17 +157,73 @@ impl ProviderHostedControlTransport {
         &self,
         endpoint: &RuntimeEndpoint,
     ) -> crate::Result<Arc<NativeHttpSlot>> {
+        self.native_slot_for(endpoint, NativeHttpLane::Control)
+            .await
+    }
+
+    pub(super) async fn native_slot_for(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        lane: NativeHttpLane,
+    ) -> crate::Result<Arc<NativeHttpSlot>> {
         let (handle, binding) = endpoint.native_binding().ok_or_else(retired)?;
         let expected = endpoint.native_identity().ok_or_else(retired)?;
+        let key = (handle.clone(), lane);
         let mut state = self.state.lock().await;
         if identity(&state, handle) != *expected {
             return Err(retired());
         }
-        if let Some(slot) = state.native_http.get(handle) {
+        let replaces_incarnation = state.native_http.iter().any(|((runtime, _), slot)| {
+            runtime == handle && (slot.identity != *expected || slot.binding != *binding)
+        });
+        if replaces_incarnation {
+            let captured: Vec<_> = state
+                .native_http
+                .iter()
+                .filter(|((runtime, _), _)| runtime == handle)
+                .map(|(_, slot)| slot.clone())
+                .collect();
+            // A concurrently discovered endpoint can bypass reused-send
+            // mismatch handling. Prove its incarnation before replacing either
+            // lane, including when only its sibling is currently cached.
+            drop(state);
+            let RuntimeDiscovery::AgentSandbox(client) = &self.client else {
+                return Err(retired());
+            };
+            let current = client.pod_binding(handle).await?;
+            state = self.state.lock().await;
+            let compatible = state
+                .native_http
+                .iter()
+                .filter(|((runtime, _), _)| runtime == handle)
+                .all(|(_, slot)| {
+                    (slot.identity == *expected && slot.binding == current)
+                        || captured
+                            .iter()
+                            .any(|old| slot.identity == old.identity && slot.binding == old.binding)
+                });
+            if identity(&state, handle) != *expected || !compatible {
+                // A late proof cannot remove a different incarnation installed
+                // during discovery. A new sibling of a captured old incarnation
+                // is still fenced below, even if its Arc was not yet captured.
+                return Err(retired());
+            }
+            for slot in &captured {
+                if slot.identity != *expected || slot.binding != current {
+                    cancel_incarnation(&mut state, handle, slot);
+                }
+            }
+            if current != *binding {
+                return Err(AdapterError::Rejected(
+                    "Sandbox Pod changed before HTTP lane replacement".into(),
+                ));
+            }
+        }
+        if let Some(slot) = state.native_http.get(&key) {
             if slot.identity == *expected && slot.binding == *binding {
                 return Ok(slot.clone());
             }
-            if let Some(slot) = state.native_http.remove(handle) {
+            if let Some(slot) = state.native_http.remove(&key) {
                 slot.cancel();
             }
         }
@@ -183,6 +248,7 @@ impl ProviderHostedControlTransport {
             }
         }
         let slot = Arc::new(NativeHttpSlot {
+            lane,
             identity: expected.clone(),
             binding: binding.clone(),
             connection: Arc::new(Mutex::new(None)),
@@ -190,7 +256,7 @@ impl ProviderHostedControlTransport {
             idle_timer: StdMutex::new(None),
             last_used: StdMutex::new(std::time::Instant::now()),
         });
-        state.native_http.insert(handle.clone(), slot.clone());
+        state.native_http.insert(key, slot.clone());
         Ok(slot)
     }
 
@@ -225,6 +291,7 @@ impl ProviderHostedControlTransport {
         if wait_ms > 0 || !reused_connection {
             tracing::info!(
                 runtime_id = lease.handle.as_str(),
+                lane = ?lease.slot.lane,
                 wait_ms,
                 reused_connection,
                 "Native runtime HTTP connection checked out"
@@ -244,13 +311,49 @@ impl ProviderHostedControlTransport {
         let mut state = self.state.lock().await;
         if state
             .native_http
-            .get(handle)
+            .get(&(handle.clone(), slot.lane))
             .is_some_and(|current| Arc::ptr_eq(current, slot))
         {
-            state.native_http.remove(handle);
+            state.native_http.remove(&(handle.clone(), slot.lane));
             slot.cancel();
         }
     }
+
+    /// A fresh Pod proof rejected this captured incarnation. Invalidate every
+    /// request lane for it, but never slots installed for a newer Pod/epoch.
+    pub(super) async fn discard_native_incarnation(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        observed: &Arc<NativeHttpSlot>,
+    ) {
+        let Some((handle, _)) = endpoint.native_binding() else {
+            return;
+        };
+        let mut state = self.state.lock().await;
+        // Publishing cancellation wakes the caller's biased select. Acquire the
+        // guard first so it cannot drop this future before sibling lanes are
+        // fenced; all cancellation below must remain synchronous.
+        cancel_incarnation(&mut state, handle, observed);
+    }
+}
+
+fn cancel_incarnation(
+    state: &mut TransportState,
+    handle: &RuntimeHandle,
+    observed: &Arc<NativeHttpSlot>,
+) {
+    observed.cancel();
+    state.native_http.retain(|(runtime, _), slot| {
+        if runtime == handle
+            && slot.identity == observed.identity
+            && slot.binding == observed.binding
+        {
+            slot.cancel();
+            false
+        } else {
+            true
+        }
+    });
 }
 
 fn identity(state: &TransportState, handle: &RuntimeHandle) -> NativeRuntimeIdentity {
