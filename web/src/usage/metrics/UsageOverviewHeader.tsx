@@ -4,7 +4,9 @@ import { IconRefreshOutline16 } from '../../ui/icons/IconRefreshOutline16';
 import { displayQuantity } from './model';
 
 function dateTime(value: number | string) {
-  return new Date(Number(value) * 1000).toLocaleString('en-SG', {
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric) ? new Date(numeric * 1000) : new Date(value);
+  return date.toLocaleString('en-SG', {
     timeZone: 'Asia/Singapore',
     day: 'numeric',
     month: 'short',
@@ -15,11 +17,17 @@ function dateTime(value: number | string) {
 
 export function UsageOverviewHeader({
   report,
+  generatedAt,
   busy,
+  refreshing,
+  stale,
   onRefresh,
 }: {
   readonly report?: UsageMetricReport;
+  readonly generatedAt?: number;
   readonly busy: boolean;
+  readonly refreshing?: boolean;
+  readonly stale?: boolean;
   readonly onRefresh: () => void;
 }) {
   return (
@@ -27,7 +35,13 @@ export function UsageOverviewHeader({
       <div className="usage-report-heading">
         <h2>Allocation overview</h2>
         <div className="usage-overview-actions">
-          {report && <p className="usage-report-time">Updated {dateTime(report.as_of)} SGT</p>}
+          {report && (
+            <p className="usage-report-time">
+              As of {dateTime(generatedAt ?? report.as_of)} SGT
+              {(busy || refreshing) && ', refreshing…'}
+              {!busy && !refreshing && stale && ', refresh deferred'}
+            </p>
+          )}
           <Button
             variant="outline"
             size="sm"

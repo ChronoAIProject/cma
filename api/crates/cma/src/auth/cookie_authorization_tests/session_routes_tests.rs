@@ -213,6 +213,11 @@ async fn session_provider_failure_remains_unavailable_and_next_request_reverifie
                 &fixture.control.introspection
             };
             reply.write().await.status = StatusCode::TOO_MANY_REQUESTS;
+            reply
+                .write()
+                .await
+                .headers
+                .insert(header::RETRY_AFTER, "60".parse().unwrap());
             let userinfo = Arc::new(Gate::default());
             let introspection = Arc::new(Gate::default());
             fixture.control.userinfo.write().await.gate = Some(userinfo.clone());
@@ -238,7 +243,7 @@ async fn session_provider_failure_remains_unavailable_and_next_request_reverifie
             introspection.release.notify_one();
             let (status, body) = pending.await.unwrap();
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-            assert_eq!(body["code"], "store_failed");
+            assert_eq!(body["code"], "identity_unavailable");
             assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 2);
 
             reply.write().await.status = StatusCode::OK;

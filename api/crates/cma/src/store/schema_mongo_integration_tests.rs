@@ -15,6 +15,7 @@ use super::settings::{MongoPlatformSettingsStore, SETTINGS};
 use super::MongoStores;
 
 mod activity_batch;
+mod activity_pages;
 mod activity_retention;
 mod auto_pause_compatibility;
 mod session_versions;

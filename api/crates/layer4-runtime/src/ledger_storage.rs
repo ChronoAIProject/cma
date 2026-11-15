@@ -2,6 +2,9 @@
 //! No database error or path is exposed through operational diagnostics.
 pub(crate) mod anchored;
 mod connection;
+mod diagnostics;
+mod inspection;
+pub(crate) use inspection::{inspect_closed, ClosedInspection};
 #[cfg(test)]
 pub(crate) mod fault_vfs;
 mod paths;

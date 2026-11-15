@@ -21,6 +21,14 @@ keeps its original choices. The configuration is read again when the catalogue
 is requested, allowing a conversation to switch to an advertised model and back
 to its configured CMA alias after a process restart.
 
+The final `session_open_overlap.cjs` patch runs this fresh catalogue discovery
+alongside native session opening, persistence and history reads. Authorization
+and required skill refresh still precede both branches. Every new/load/resume
+request waits for both branches; a discovery failure never abandons an in-flight
+native mutation, and native failures retain precedence. Required tool startup,
+history delivery, prepared close/load and Ready publication barriers remain in
+place. No catalogue or authorization result is cached between requests.
+
 `managed_model_catalog.test.cjs` runs against the exact pinned Codex and ACP
 programs with isolated homes and a local inference fixture. It demonstrates the
 original rejection, successful settings acknowledgements after the patch,

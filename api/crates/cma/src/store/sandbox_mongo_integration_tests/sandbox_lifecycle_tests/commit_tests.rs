@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -177,7 +178,7 @@ async fn lifecycle_checkpoint_and_all_agent_phase_commit_atomically() {
         .await
         .unwrap();
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -230,7 +231,7 @@ async fn one_stale_agent_aborts_the_entire_lifecycle_phase() {
         .await
         .unwrap();
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();
@@ -365,7 +366,7 @@ async fn lifecycle_phase_reconciles_an_ambiguous_commit_without_duplicate_logs()
         .await
         .unwrap();
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();

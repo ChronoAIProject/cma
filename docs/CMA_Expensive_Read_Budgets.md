@@ -1,21 +1,28 @@
 # Expensive read admission
 
-The public control plane applies a per-process budget to buffered Agent and
-document reads. This is the expensive GET slice of #1472/#1596. It complements
+The public control plane applies independent per-process budgets to buffered Agent,
+document and retained report descriptor reads. This is the expensive GET slice of #1472/#1596. It complements
 the existing network, authenticated-operation and identity-verification limits.
 
 ## Contract
 
-- At most two selected GET/HEAD requests are admitted per process. Admission
-  uses a nonwaiting semaphore; excess requests receive the existing typed
-  `429 rate_limited` problem and `Retry-After: 1` before downstream activity,
-  rate-limit storage, resource storage or provider work.
-- Each admitted response has a 64 MiB ceiling, matching native history export.
-  Artifact list and individual metadata responses have a 256 KiB ceiling.
+- Each lane admits at most two selected GET/HEAD requests per process using
+  nonwaiting semaphores. Excess requests receive `429 buffered_read_capacity_exhausted`
+  before downstream activity, rate-limit storage, resource storage or provider
+  work. This shared-capacity refusal is distinct from `429 rate_limited`, which
+  retains its caller allowance semantics. Diagnostics name only the fixed lane
+  and its refusal count, sampled at powers of two.
+- Bulk history/document reads retain a 64 MiB ceiling, matching native history
+  export. Artifact list and individual metadata responses retain 256 KiB.
+  Agent usage/resources use a separate two-slot lane with 64 KiB per response.
+  Report descriptors use another two-slot lane with 1 MiB per response.
+  Bulk and Agent observations return `Retry-After: 1`; report descriptors return
+  `Retry-After: 2`. No request waits in a capacity queue.
   Response collection checks actual bytes, including chunked bodies and bodies
   with an absent or incorrect Content-Length, before releasing any payload.
-- Handler execution and body collection share a 120-second deadline. Existing
-  shorter route/service/provider deadlines still apply. Timeout, body failure
+- Handler execution and body collection share a 120-second deadline for bulk
+  and Agent observation reads; report descriptors share a five-second deadline.
+  Existing shorter route/service/provider deadlines still apply. Timeout, body failure
   or oversized output returns typed `503 request_budget_unavailable` without
   releasing partial payload or internal error text.
 - A permit survives handler completion and remains attached to the response
@@ -26,8 +33,13 @@ the existing network, authenticated-operation and identity-verification limits.
 
 Covered Agent routes: events, transcript, history, usage, resources, artifact
 list/metadata/download, and file tree/content/download. All document GET/HEAD
-routes are covered. Classification uses Axum's matched route template so query
-parameters and encoded resource identifiers cannot bypass admission.
+routes are covered. Report descriptor admission covers exactly GET/HEAD
+`/api/v1/usage/metrics/view`, `/api/v1/admin/usage/metrics/view`, and
+`/api/v1/{admin/}usage/metrics/reports/{report}`. Series, Sandbox pages/detail,
+owner pages and owner-allocation projections retain their existing contracts;
+valid grouped series can exceed 1 MiB and do not inherit the descriptor cap.
+Classification uses Axum's matched route template so query parameters and
+encoded resource identifiers cannot bypass admission.
 
 Authentication runs before this budget. Passing admission grants no resource
 authority: the existing owner/share checks and final policy fences still decide
@@ -60,8 +72,26 @@ success, denied callers, revocation after I/O, stale ancestry and deadline
 coverage. Disposable Mongo tests cover projected pages, corrupt metadata and
 corrupt downloads after reopening the store.
 
-The maximum retained public response buffers are 2 × 64 MiB = 128 MiB per
-process. This is not an aggregate RSS measurement: store/provider working
+The selected response payload ceilings per process are bulk 2 × 64 MiB =
+128 MiB, Agent observations 2 × 64 KiB = 0.125 MiB, and report descriptors
+2 × 1 MiB = 2 MiB: 130.125 MiB total. Each lane admits at most 2N reads at
+N replicas (6N across all three lanes); this is not a pooled cluster semaphore.
+A hot process can refuse while another has spare slots. Caller rate limits stay
+shared across replicas and unchanged. The optional retained-frame policy extends
+permit ownership beyond body consumption while response byte clones remain alive.
+
+Two bulk slots remain intentional because increasing them doubles large payload
+exposure for each extra pair. A tab's concurrent usage and transcript previously
+consumed both slots; two such tabs could refuse each other. Separating fixed-shape
+usage/resources allows two transcript and two usage reads together with only
+128 KiB extra observation payload. Usage is not exempt: its fallback can still
+scan historical events. Report descriptor polling likewise remains bounded and
+independent. This is admission sizing, not a measured throughput/RSS guarantee.
+The matched frontend fixture measured 30 HTTP reads/minute with desktop open and
+28 with it closed, well below the declared shared Default allowance of 600/minute;
+no caller-rate allowance increase is justified by that fixture.
+
+This is not an aggregate RSS measurement: store/provider working
 memory, decoder allocations, transport buffers, other routes, SSE and desktop
 streams have separate ownership. Agent log scan amplification remains with
 #1475/#1591; this change does not claim the event scanned/returned byte ratio,

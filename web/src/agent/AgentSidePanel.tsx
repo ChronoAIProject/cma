@@ -4,6 +4,7 @@ import { changedFiles, homeFilePath } from './fileChanges';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentDetail } from '../api/types';
 import { useCmaClient } from '../api/context';
+import { detailReadSource } from '../api/detailReads';
 import { SharedAgentDetails } from '../resources/SharedAgentDetails';
 import { useAgentAccess } from '../resources/agentAccess';
 import type { ArtifactPublicationScope } from '../resources/artifactRecovery';
@@ -37,6 +38,7 @@ export function AgentSidePanel({
   onOpenSandbox,
   pending,
   historyLoading,
+  controlReady,
   publicationScope,
   conversation,
   onSelect,
@@ -56,6 +58,7 @@ export function AgentSidePanel({
   readonly onOpenSandbox?: () => void;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
+  readonly controlReady?: boolean;
   readonly publicationScope: ArtifactPublicationScope;
   readonly conversation?: ConversationState;
   readonly onSelect?: (panel: AgentPanel) => void;
@@ -120,8 +123,9 @@ export function AgentSidePanel({
     .reverse()
     .map(screenApplication)
     .find(Boolean);
+  const controlsReady = controlReady ?? historyLoaded;
   const running =
-    operations?.activeRunId !== undefined || (!historyLoaded && detail?.status === 'working');
+    operations?.activeRunId !== undefined || (!controlsReady && detail?.status === 'working');
   const agentBrowserActive =
     lastScreen === 'Browser' &&
     features?.browser.state === 'available' &&
@@ -399,18 +403,21 @@ export function AgentSidePanel({
           hidden={panel !== 'browser'}
         >
           <>
-            {machineAvailable && !agentBrowserActive ? (
+            {!shared && detail === undefined && features?.browser.state === 'unsupported' ? (
+              <p role="status">Checking Agent desktop availability…</p>
+            ) : machineAvailable && !agentBrowserActive ? (
               panel === 'browser' ? (
                 <DesktopPanel
-                  key={`${agentId}:${connectionRevision}`}
+                  key={agentId}
+                  reconnectRevision={connectionRevision}
                   agentId={agentId}
                   application="Desktop"
                   runtimeReady={desktopRuntimeReady(detail)}
                   running={running}
                   runId={operations?.activeRunId}
                   onStop={onStopForControl}
-                  controlUnavailable={!historyLoaded}
-                  preparation={{ context: client, owner: subject }}
+                  controlUnavailable={!controlsReady}
+                  preparation={{ context: detailReadSource(client), owner: subject }}
                   onClose={onClose}
                   embedded
                 />

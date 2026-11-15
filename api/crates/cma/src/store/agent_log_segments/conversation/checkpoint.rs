@@ -37,7 +37,13 @@ pub(in crate::store) async fn apply(
         if actual_agent != *current {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
-        domain::reopen::validate_and_fence(store, &actual_agent, guard, scope.session()).await?;
+        Box::pin(domain::reopen::validate_and_fence(
+            store,
+            &actual_agent,
+            guard,
+            scope.session(),
+        ))
+        .await?;
     } else if actual.as_ref().is_some_and(|checkpoint| {
         Some(checkpoint.runtime_generation) > current.conversation.runtime_generation
     }) {
@@ -56,7 +62,14 @@ pub(in crate::store) async fn apply(
         if let Some(outcome) =
             replay_at_anchor(actual.as_ref(), next, true).map_err(ApplyError::Domain)?
         {
-            super::require_replay(store, mutation, next, capacity.is_some(), scope).await?;
+            Box::pin(super::require_replay(
+                store,
+                mutation,
+                next,
+                capacity.is_some(),
+                scope,
+            ))
+            .await?;
             return Ok((outcome, None));
         }
         if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
@@ -66,7 +79,14 @@ pub(in crate::store) async fn apply(
         return Ok((next.outcome.clone(), None));
     }
     if let Some(outcome) = replay(actual.as_ref(), next).map_err(ApplyError::Domain)? {
-        super::require_replay(store, mutation, next, capacity.is_some(), scope).await?;
+        Box::pin(super::require_replay(
+            store,
+            mutation,
+            next,
+            capacity.is_some(),
+            scope,
+        ))
+        .await?;
         return Ok((outcome, None));
     }
     if actual_agent != *current || actual.as_ref() != previous || !current.status.is_live() {
@@ -82,7 +102,7 @@ pub(in crate::store) async fn apply(
                 .validate_snapshot(&actual_agent, actual.as_ref())
                 .map_err(ApplyError::Domain)?;
         }
-        let receipt = super::apply(
+        let receipt = Box::pin(super::apply(
             ScanCaller::Checkpoint,
             store,
             mutation,
@@ -90,7 +110,7 @@ pub(in crate::store) async fn apply(
             Some(next),
             adoption,
             scope,
-        )
+        ))
         .await?;
         if receipt.logs != next.outcome.appended {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
@@ -117,7 +137,13 @@ pub(in crate::store) async fn apply(
         // Replace the active checkpoint with the compact receipt before adding
         // the retained prefix, avoiding two large checkpoints in one document.
         // Both writes remain part of this same transaction.
-        capacity_prefix::preserve(store, &row, proof, scope.session()).await?;
+        Box::pin(capacity_prefix::preserve(
+            store,
+            &row,
+            proof,
+            scope.session(),
+        ))
+        .await?;
     }
     Ok((next.outcome.clone(), publication))
 }

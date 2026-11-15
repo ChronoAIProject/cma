@@ -18,8 +18,10 @@ inventory, application cutover gates and rollback, see
 CMAEG (CMA Event Gateway) is a separate stateless service that receives
 external event channels and call agent providers. Its management service
 listens on `CMAEG_LISTEN`, defaulting to `0.0.0.0:8090`. The deployment image is
-`cma-cmaeg`; `infra/cmaeg/` declares one replica in `chrono-bot`, with credentials
-injected from Kubernetes Secrets as environment variables.
+`cma-cmaeg`; `infra/cmaeg/` declares the conditional two-replica target in
+`chrono-bot`, with credentials injected from Kubernetes Secrets as environment
+variables. Apply that target only after the compatible binary and
+[staged scale gates](CMA_Scale_Apply.md) qualify.
 
 The gateway loads its outbound provider policy once at startup. `CMAEG_PROVIDERS`
 is a JSON array; an empty array is the default and means that no provider calls
@@ -745,6 +747,18 @@ not prove that a transaction failed to commit. Use the durable reconciliation
 result for that distinction. Timing instrumentation grants no authority and does
 not change startup checks, retries or readiness criteria.
 
+The pinned runtime defers the advisory command catalogue and goal snapshot on
+ACP session load until required preparation and complete history delivery have
+finished. Authentication, forced skill refresh, model/tool readiness and prepared
+close-before-load still gate completion. Metadata may arrive after the load
+response; first-turn skill and goal execution use their native paths. Deferred
+publication checks the exact session, generation and close state. At most 32
+session jobs run, with one latest replacement coalesced per session; overflow
+skips advisory publication and reports a fixed diagnostic. An in-flight read can
+finish after close, but cannot publish into a closed or replaced session. This
+behavior requires the updated runtime image; an API-only rollout does not change
+an existing Sandbox's provider bundle.
+
 Native inspection timings separate exclusive HTTP checkout, the authority graph,
 runtime policy, the process-status exchange and the fresh post-status home read.
 The graph and policy reads overlap. They and the status exchange are nested
@@ -960,6 +974,54 @@ same-account sign-in and continuation. Retain an ambiguous command's original
 key and body; use a fresh key only after a definitive refusal. A successful
 `GET /auth/session` alone does not prove that the next admission will succeed.
 
+## Desktop session compatibility across Agent Managers
+
+Replica-mode desktop admission is exclusive per Sandbox, including Agents in
+different Worktrees of that Sandbox. The default service mode remains the legacy
+single-manager path. Replica composition must explicitly enable the shared mode
+and provide a receiver implementing the ownership challenge/control protocol.
+An unsupported receiver or missing renewable credential proof refuses attachment;
+neither condition falls back to the local mutex.
+
+Shared admission uses the existing `sandbox_sessions` collection. One
+snapshot/majority transaction writes the Sandbox's `desktop_activity_fence`,
+increments its permanent `desktop_session_epoch`, checks for any unexpired
+session, and inserts an exact session token before runtime socket opening.
+Renewal fences the same Sandbox and requires the exact token, epoch, runtime
+binding and prior expiry. Mongo server time sets the lease to 14–15 seconds.
+The existing `{sandbox_id:1, lease_expires_at:1}` index serves the live-session
+check; no new collection or online index build is required. No database request
+is issued per desktop frame.
+
+The receiver issues a one-use challenge before each acquire/renew transaction.
+Its original monotonic deadline is at most ten seconds and cannot restart on
+confirmation. Renewal runs every three seconds independently of frame forwarding
+and rechecks the original credential custody and current Agent/runtime binding.
+Store/provider uncertainty stops forwarding. The receiver must reject stale
+epochs and expired challenges, persist its epoch floor across restart, revoke
+legacy sockets before first owned acceptance, and refuse subsequent legacy opens.
+The Mongo lease alone cannot stop a paused manager with a surviving socket.
+
+Normal close obtains exact receiver revocation before releasing the durable
+token. An uncertain revoke or ambiguous runtime-open result retains the claim
+until expiry; a definite unsupported/no-effect open releases its own claim.
+Discovery on another manager reports `desktop_busy` while the prior claim is
+live, with private/no-store and Retry-After. It is an advisory observation; socket
+opening still performs transactional admission. The legacy path drops its local
+socket and mutex before bounded persistence cleanup, preserving reconnect
+behavior when shared mode is disabled.
+
+The additive claim fields remain under document schema version 1. Current and
+legacy activity readers continue using `sandbox_id` and `lease_expires_at`.
+Expired session rows are disposable, but `desktop_session_epoch` on the Sandbox
+must not be erased or reset by cleanup, maintenance, recovery or rollback.
+Initial activation requires a verified complete drain of nonparticipating legacy
+writers. Rolling back to a receiver or writer which ignores the protocol floor
+is not a compatible live downgrade; retain the compatible receiver and drain
+owned streams before any separately authorized mode change. Source-level
+compatibility tests do not substitute for the release's image-bound migration
+and retained-runtime qualification.
+
 ## Configuration Inventory
 
 The lifecycle flags `machine_included` and `desktop` retain independent meanings.
@@ -996,6 +1058,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_PLATFORM_SPEND_WRITES_ENABLED` | Strict boolean, false by default in code and ConfigMap. Reader-before-write gate for the `cloud` platform policy fields and `POST /api/v1/admin/spend/observations`; the foundation model budget write gate must also be enabled. Exposed as read-only `platform_spend_writes_available`; does not activate enforcement or supply values. See CMA_Platform_Spend_Metering.md |
 | `CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED` | Strict boolean, false by default in code and ConfigMap. Enables atomic conversion of active platform period model balances to sixteen counters and allows independent settlements to bypass the local period queue. Admissions retain the existing settings fence and use the exact sum. Enable only after all serving, rollback and retirement-census readers support the counter layout and reservation bindings. OFF prevents new conversions but retains accounting and settlement for converted periods; it does not restore old-reader compatibility. See CMA_Platform_Spend_Metering.md section 4.1. |
 | `CHRONO_ADMISSION_CONTROL_WRITES_ENABLED` | Exact `true`/`false`, default `false` in code and ConfigMap. Independent gate for operator admission stop/resume writes; closed returns 503 `admission_control_writes_unavailable`. Reads and enforcement always run, including with spend metering off. Open only after every replica runs the compatible image. Never deploy or roll back while stopped; first resume the exact current stop. See [Operator admission stop](#operator-admission-stop). |
+| `CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED` | Strict boolean, default `false` in code and ConfigMap. Serializes response Stop, steer and approval admission with this process's Agent document writers while each transaction still validates its durable fences and keeps the existing five-second authority budget. Enable only after concurrent-writer staging evidence; disable and restart to roll back without a data migration. Cross-replica conflicts still use the existing bounded Mongo retries. |
 | `CHRONO_TASK_EXPERIENCE_POLICY` | Strict JSON, absent defaults to `{"mode":"disabled","accounts":[],"capabilities":[]}`; checked-in manifests disable it; live cohort selection must be observed at delivery. Modes: `disabled`, `accounts`, `all`. Exact authenticated subject ids only (at most1000, nonempty, at most256 UTF-8 bytes, no whitespace/control characters); ids are never returned to clients. Explicit capabilities: `task_home_admission`, `suggested_followup_admission`, `desktop_enable`, `browser_takeover`, `replay_presentation`. Unknown/duplicate fields, capabilities or accounts and contradictory settings fail startup: accounts must be empty outside accounts mode; disabled must have no capabilities. Empty account cohort admits nobody. Policy eligibility does not establish environment capability. Changes require an API rollout with compatible retained readers; closing new admission preserves exact accepted recovery, manual conversation, retained history/files/feedback, browser status and explicit return. See `plans/cma-ui-optimization/19-ROLLOUT-POLICY.md`. |
 | `CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED` | New authenticated Launch admission selects common first-message commands under retained personal ownership; false by default. Proven pre-write failure is terminal for new common prompts; ambiguous writes retain the same command/response and refuse legacy recovery. Accepted protocol is immutable; disabling the selector retains accepted common commands and legacy launches retain their original delivery/recovery behavior. Keep false until every worker and permitted rollback version recognizes and transactionally excludes common/legacy dispatch; older workers ignore additive sidecars. |
 | `CHRONO_TRUSTED_SUBJECT` | Local trusted-mode subject; default `local-developer`, irrelevant in provider mode |
@@ -1091,6 +1154,9 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_BASELINE_SERVICES` | Default `chrono-llm-public,ornn-api`; unioned into newly admitted Sandbox scope |
 | `CHRONO_SANDBOX_CPU` | Seed default Sandbox Profile size; default `1`, accepts positive cores or millicores |
 | `CHRONO_SANDBOX_MEMORY` | Seed default size; default `1Gi`, accepts positive whole Mi/Gi |
+| `CHRONO_AGENT_MANAGER_REPLICAS_ENABLED` | Strict `true`/`false`, default `false`. Enables ownership protocol v1 for any number of Agent Managers. Keep disabled until the no-overlap enablement and retained-runtime compatibility checks below are complete. Disabled processes use the existing single-instance path. |
+| `CHRONO_AGENT_MANAGER_RELAY_ADDRESS` | Required only in replica mode: an absolute HTTP(S) origin reachable by peers, without credentials, path, query or fragment. Deployment sets `http://$(POD_IP):8080` using the downward API. Each random process incarnation advertises its address through Mongo; no static peers or new secret are required. |
+| `CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS` | Positive per-process ownership capacity; default `256`. Rendezvous placement chooses compatible live members with remaining capacity, and existing owners cooperate on scale-up. This bounds transport ownership, independently of Sandbox admission quotas. |
 | `CHRONO_AGENT_MANAGER_SANDBOX_CPU` | New Agent Manager Sandbox CPU and native default warm/prepared capacity; default `2`, accepts positive cores or millicores. Independent of retained system Profiles. |
 | `CHRONO_AGENT_MANAGER_SANDBOX_MEMORY` | New Agent Manager Sandbox memory and native default warm/prepared capacity; default `8Gi`, accepts positive whole Mi/Gi. Existing Sandbox reservations are unchanged. |
 | `CHRONO_DEFAULT_AGENT_MODEL` | Seed default Agent model; default `gpt-5.6-sol`, nonblank |
@@ -1099,6 +1165,7 @@ are referenced in `infra/api/secret.yaml`, never stored in ConfigMaps.
 | `CHRONO_INSTALL_TOTAL_TIMEOUT_SECONDS` | Total ordered-command bound, at least command bound and at most 1800; default 1800 |
 | `CHRONO_CLONE_DEPTH` | Git clone depth 1-1000; default 50 |
 | `CHRONO_ACTIVITY_ASYNC_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Enables bounded asynchronous request telemetry only. Explicit authorization and operations audits still synchronously await majority persistence. See request activity buffering below. |
+| `CHRONO_ACTIVITY_OPERATIONAL_READ_SAMPLING_ENABLED` | Exact `true`/`false`; default `false` in code and ConfigMap. Owner approval required before activation. Samples only authenticated generic GET/HEAD HTTP 200 Sandbox/Workspace detail observations at 1/16 using record UUIDs. All other events, explicit domain/security audits and retention are unchanged. Omitted per-request evidence is unrecoverable; `cma_activity_operational_read_policy_total{decision="retained"} / {decision="sampled_out"}` counts decisions with no actor labels. Independent of async buffering; never enable to fix Activity listing. |
 | `CHRONO_ACTIVITY_RETENTION_DAYS` | Activity TTL, 1-3650 days; default 90 |
 | `CHRONO_SERVER_RATE_ADMISSION_PER_MINUTE` | Pre-auth network budget/burst; default 6000 |
 | `CHRONO_SERVER_RATE_HEALTH_PER_MINUTE` | Separate probe budget, minimum 30; default 120 |
@@ -1294,10 +1361,11 @@ Visitor daily charging happens only when idempotency proves a new Launch was
 created. Exact replay and later reviewed Start do not consume another unit.
 Exhaustion is `resource_quota` with the next UTC reset time. Sandbox counts are
 transactional, so concurrent Launches cannot bypass the visitor's one-Sandbox
-limit. The request and visitor daily counters are process-local: production
-must remain **one API replica**, with Recreate rollout, until a durable atomic
-ledger replaces them. Restart resets of process-local counters are a known
-operational limitation, not proof of a distributed quota.
+limit. Authenticated request budgets and visitor daily charges use shared Mongo
+records. Cheap pre-authentication network admission is per process. Multiple
+serving API replicas additionally require the Agent Manager ownership protocol
+and enablement procedure below; shared quotas alone do not establish transport
+ownership.
 
 ## Deployment continuity and historical reset procedure
 
@@ -2175,6 +2243,191 @@ URLs to `https://cma.nyxid.ai/event-gateway` and retain
 `https://bot-gateway.chrono-ai.fun` as the legacy public origin. On rollback retain
 readers and all three reachable bases for links and webhooks already issued.
 
+## Agent Manager active-active operation
+
+Replica mode uses the existing Mongo replica set, runtime control authentication
+and deployment encryption secret. It adds no broker or cache service. Every
+process registers a random incarnation in `cma_agent_manager_members`; its
+15-second expiry is nominally renewed every three seconds. TTL removes old membership
+records but never decides whether a member is live. `/ready` requires a healthy
+cached store probe, current membership and completed startup, and becomes false
+as soon as draining or ownership renewal fails. `/livez` remains a process probe.
+A failed incarnation exits; it cannot renew itself back into authority.
+
+`cma_agent_manager_owners` stores each Agent's permanent epoch, owner and 15-second lease.
+Never delete these rows or install a TTL index: that would reset fencing history.
+Majority writes and transaction fences protect transport-dependent publication;
+receiving runtimes also enforce the epoch for input, control effects and output
+ACKs. Their challenge/confirm lease lasts at most 10 seconds from the original
+challenge and expires before the corresponding Mongo lease without depending on
+synchronized wall clocks. These constants do not establish a 30-second recovery
+bound: loaded renewal scheduling, receiver expiry, takeover and client recovery
+must be qualified together. A stale provider response cannot
+publish a conversation mutation or checkpoint. Missing a local connection does
+not permit taking another live instance's ownership.
+
+Rendezvous order over discovered compatible members assigns new/expired claims,
+subject to the configured capacity. Scale-up rebalances existing owners through
+at most four cooperative handoffs per maintenance pass; busy Agents may defer a
+handoff for at most 60 seconds. Completed terminal work releases its ownership.
+Scale-down and SIGTERM close local task admission and cancel authority, then
+require lifecycle task joins and confirmed runtime receiver revocation before
+releasing durable claims. The preStop command invokes an authenticated loopback
+drain before the existing 30-second endpoint propagation delay. The server gives
+serialization, membership IO, lifecycle joins and receiver work one 23-second
+budget; its client has a 25-second timeout. An incomplete lifecycle or receiver
+drain returns failure and retains unconfirmed durable leases until expiry. A retry
+must still prove completion. Those code budgets do not establish a measured
+process-exit or successor-service bound. The manifest termination grace remains
+760 seconds, including preStop, propagation, HTTP and worker budgets.
+
+Accepted commands retain the durable command ledger and caller/resource authority.
+Only the transport owner executes them. Direct Agent runtime requests relay once
+to the current owner with original authorization, body and replay/request IDs.
+The destination rechecks authorization. Peer requests are signed with a separate
+key derived from `CHRONO_AUTH_ENCRYPTION_KEY`, scoped to the deployment, sender,
+request and expected epoch; proofs expire after ten seconds and cannot be replayed.
+Peers use advertised pod IP origins, with redirects and proxy discovery disabled.
+Missing membership, incompatible protocols and uncertain routing fail closed.
+Configure peer origins with discovered pod addresses, never public ingress URLs.
+The legacy API HTTPRoute has a catch-all path, so path reachability alone does not
+establish peer authority: every peer relay request requires a valid signed proof
+and live membership. Secret rotation requires all serving peers to use the same
+existing deployment key; do not rotate that key as part of scaling.
+
+Lifecycle recovery also routes each conversation reopen to its Agent owner.
+The owner records startup output and stages the connection under its captured
+epoch; the Sandbox worker fences all returned epochs in the final publication
+transaction. A staged connection activates only after that publication is visible.
+Changed lifecycle claims, failed ownership or expired leases discard the stage;
+normal lifecycle retries recover lost responses without publishing stale output.
+
+Live fragments use bounded authenticated subscriptions to the owner below the
+public SSE projections. Subscribers on any manager receive v1/v2, AG-UI and
+Responses live events while their existing Mongo catch-up remains authoritative.
+Every private frame names its exact owner epoch; buffered local frames lose
+validity when their authority is revoked. Reconnect/overflow signals a live gap
+and resumes durable catch-up. Each manager admits at most 256 relay operations
+or subscriptions, with 32 buffered fragments per public subscription. A public
+subscriber can continue durable catch-up when the optional live lane is full.
+Relayed request bodies share a 64 MiB reservation budget while preserving the
+existing file and attachment size limits. Direct responses retain their capacity
+slot until completion and have a total 60-second deadline.
+Desktop WebSockets already use a durable Sandbox route and the runtime's desktop
+connection lease; they do not use the conversation fragment hub.
+
+Application stores and runtime routing use independent Mongo clients in both
+replica modes. Both preserve the URI's explicit pool options, or the driver's
+defaults when omitted. Reporting uses a third, separately bounded client (default
+maximum 4). Enabling replicas does not impose a new 10-connection cap or share
+these pools. Budget the effective limits of every client, including monitoring
+sockets, using the deployed URI and reporting configuration.
+
+For main/routing/reporting maxima M/R/P, N live manager processes permit up to
+`N × (M + R + P)` application connections to one server. With explicit limits
+30/30/4, N=2/3/5 gives 128/192/320 application connections to the primary. For a
+three-member set, conservatively reserve up to 18 monitoring connections per
+process across the three clients as well. The corresponding totals across the
+set for primary-only application pools are 164/246/410. Failover or secondary
+reads can retain application pools on other servers; a conservative full-set
+bound is `N × (3 × (M + R + P) + 18)`, or 420/630/1050 with those example limits.
+These are budget bounds, not observed connection counts or capacity approval.
+
+Count surge and terminating processes in N while their clients remain alive,
+then add Event Gateway, Image Manager, migration and other consumers. Preserve
+at least 30% Mongo headroom under the qualified failure/load scenario. Explicit
+pool changes require a separate measured capacity decision; server headroom and
+historical outage cause are not established by these formulas.
+
+The reviewed PDB uses `minAvailable: 1` and
+`unhealthyPodEvictionPolicy: AlwaysAllow`. Hostname spread is required, zone spread
+is preferred, and both constraints count each `pod-template-hash` separately.
+The checked-in Deployment specifies the conditional two-replica target; the
+ConfigMap keeps ownership disabled until the qualified cutover. Merging these
+manifests does not activate that target. Apply the PDB only after both participating
+replicas and their canonical backends are qualified.
+
+The HPA manifests are delivered for stage S3: minimum two, maximum five; scale-up
+has zero stabilization and selects the maximum of +2 pods or +100% per 60 seconds.
+Scale-down uses 300 seconds of stabilization and one pod per 120 seconds. If the
+qualified p95 from drain initiation through owner handoff and successor service
+exceeds 90 seconds, increase the down period to ceil(p95 + 30 seconds). Missing
+qualifying timing holds S3. Hard process/socket lifetime and Mongo capacity need
+separate bounds that include terminating processes; a p95 is not that bound.
+See [scale capacity](CMA_Scale_Capacity.md) for the complete client inventory and
+[staged apply and rollback](CMA_Scale_Apply.md) for the executable release packet.
+
+### Production rollout (lead only)
+
+Use the exact reviewed stage packet in [staged apply and rollback](CMA_Scale_Apply.md).
+The packet binds final source, immutable AM/runtime images and build provenance,
+additive ownership collection/index/role changes, local correctness and real-Mongo
+results, matched complete-journey performance, process/fault/scale evidence and
+per-step production authorization. This section grants no deployment permission.
+
+Before stopping the old manager, inventory every traffic-capable retained native
+and hosted runtime. Require the exact image and ownership challenge-duration floor,
+including refusal of old 20-second v1 challenges, wrong durations and stale
+challenges. Protocol v1 presence or an updated default runtime image alone does
+not establish compatibility. Preserve retained resources through their reviewed
+lifecycle. All participating managers share the deployment/database identity and
+signing authority. The switch-on role verifier requires both ownership collections;
+the switch-off verifier accepts their additive grants without requiring them.
+
+S1 uses the owner-approved no-overlap sequence old 1→0, then new 0→2. Prepare and
+review the controller/template, image cache, nodes, routes and compatible recovery
+branch before the outage. A zero-sized template is not a running warm application.
+Prove every old effect-capable process/socket is stopped or safely revoked/expired
+before starting participating writers. No intermediate ON-one promotion gate is
+required. Each new replica must independently serve, with distinct hosts, current
+membership, qualified receivers, healthy endpoints and canonical backends.
+
+Measure from loss of the last healthy old backend to restored successful user
+service, and record both-ready time separately. The approved cutover targets less
+than 120 seconds; at 120 seconds without restored service, abort promotion through
+the preapproved compatible recovery branch. The outage target never shortens leases
+or permits force deletion or writer overlap. After both replicas qualify, apply
+and verify the PDB and complete the 30-minute stable S1 soak and matched performance
+comparison. S2 separately qualifies EG at fixed two; S3 activates the HPAs only
+after both fixed-two stages and their capacity/timing gates pass. A manual scale
+change is not evidence of automatic HPA behavior.
+
+Preserve failed, timed-out and incomplete journeys in the comparison. Include at
+least two five-minute background/metering cycles, real owner loss and successor
+service, no lost accepted custody or duplicate external effects, and per-route
+confidence bounds using preregistered baseline noise. Use the exact abort and
+rollback conditions in the stage packet. Missing evidence holds promotion.
+
+### Rollback and version compatibility
+
+The normal S1 rollback keeps ownership enabled and the compatible image, drains
+2→1 under the reviewed narrow operation, and preserves PDB `minAvailable: 1`.
+Require actual departing-process and receiver completion plus survivor service.
+When S3 HPAs are present, first use the reviewed freeze/removal procedure and
+one-at-a-time return to the last qualified fixed count. Never let HPA and rollout
+operations overlap or assume a desired replica count proves process exit.
+
+Wait for extra processes and their receivers to drain; verify the survivor's
+canary before any image change. Compatible binaries with protocol v1 may roll
+with surge one and zero unavailable. An incompatible live membership version
+fails closed; use an expand/contract reader release or a no-overlap window for
+future protocol changes. Never enable a new writer while an incompatible reader
+can still send input or ACK output.
+
+Disabling the switch or reverting to a nonparticipating manager requires another
+full stop: scale to zero, wait for every participating pod to terminate and every
+receiver lease to be revoked/expired. Use the authenticated runtime
+`POST /runtime/agents/{agent}/manager-ownership/legacy` operation with that runtime's last
+exact ownership token for each opted-in Agent; it preserves the epoch watermark
+and rejects old owned attachments. Inventory and review those runtime-specific
+operations before execution; there is no safe blanket downgrade command. Only
+then patch the switch off and start exactly one compatible legacy manager.
+If a receiver cannot be verified/reset, retain protocol mode at one replica and
+escalate instead of bypassing its fence. Do not delete ownership history, rotate
+Sandboxes, apply whole manifests or blindly run `rollout undo`. Restore only the
+captured narrow fields responsible for a regression. A full-stop rollback is an
+outage; no PDB can make it continuously available.
+
 ## Measured Sandbox reporting rollout
 
 See [Measured Sandbox resource reports](CMA_Sandbox_Metrics.md) for the new
@@ -2516,12 +2769,23 @@ exact `true` or `false`. With `true`, Cookie authentication joins the browser
 handle and its subject by their indexed keys in one Mongo aggregate. Both
 records retain their existing schema, revocation and token validation. Expired
 logins are rejected before interpreting subject authority. The post-verification
-custody check and the additional `/auth/session` logout check still run.
+custody check and final durable logout check still run on every browser request.
 
-Ordinary authenticated Cookie requests use two identity commands instead of
-three; `/auth/session` uses three instead of four, plus its settings read.
-No completed NyxID verification is reused on the normal path. The existing
-60-second outage fallback remains limited to `GET /auth/session`.
+With the final logout recheck, authenticated Cookie requests use three identity
+commands with the join and four without it; `/auth/session` adds its settings
+read. Every later request verifies with NyxID. Only overlapping callers can share
+an unfinished identical-credential verification. No completed-success cache or
+session outage fallback is available; an exhausted outage fails closed. See
+[identity policy](Identity_Outage_Policy.md) for exact live-receipt and retry rules.
+Completed-success reuse is deferred to #2002's authoritative revocation contract.
+
+Provider 429 observes Retry-After within the 2,500 ms/three-attempt budget. When
+that delay plus a complete attempt cannot fit, the response is a retryable
+`identity_unavailable` 503 with the remaining Retry-After. Compare per-minute
+`cma_identity_provider_calls_total` and `cma_identity_provider_results_total`
+(outcome `429`) across all replicas, stratified by route, endpoint and image.
+These are verification dispatch attempts and header outcomes; led/shared caller
+counters remain separate and must not inflate the upstream count.
 
 Rollback by setting the switch to `false` and restarting the API. No persisted
 format changes or data repair are required. Compare both paths using the
@@ -2673,6 +2937,26 @@ scan bytes, runtime inspections, checkout waits, CPU and route latency. Local
 correctness tests establish no production CPU or latency improvement; profile
 and production measurements remain required for #1421 and the #1786 rollout.
 
+### Activity list reads
+
+Operations uses `GET /api/v1/admin/activity?view=summary&limit=50`. The explicit
+summary view omits `detail`; requests without `view` retain complete records.
+Both require `ReadActivityLog`, use descending `(recorded_at, _id)` keyset
+pagination, fetch at most `limit + 1` rows, and never count or skip. Cursors use
+Mongo insertion time, not displayed event time. Pages are live observations,
+not a snapshot spanning multiple requests. Mongo execution is bounded to five
+seconds and one requested page batch; failures remain explicit.
+
+The nonunique `activity_recorded_at_id_desc` index has keys
+`{recorded_at:-1,_id:-1}`. Its explicit additive migration is
+`am-activity-page-index-v1`; requests and startup do not install it. Production
+builds require a lead-approved migration window and the reviewed release
+controller. Existing actor/action indexes and TTL remain unchanged. The release
+record must include plan, checksum, immutable image, index inventory, resource
+budget, and verified postconditions. See issue #1960 for the build/rollback plan.
+`cma_activity_read_seconds` reports Mongo list elapsed time with fixed `view`
+and `outcome` labels; it excludes HTTP authorization, names and audit append.
+
 ### Request activity buffering
 
 `CHRONO_ACTIVITY_ASYNC_ENABLED=false` preserves the existing awaited request
@@ -2811,6 +3095,14 @@ existing deadlines. They establish no end-to-end improvement on their own.
 
 ### Initial native readiness retry
 
+Claim-assignment observation has one five-second deadline. Pending reads start
+at least 250 ms apart, with response time counting toward that interval. Reads
+never overlap or catch up after a slow response, and no new read starts at the
+deadline. This allows up to 20 reads per window; delayed responses can use more
+of that budget than a full 250 ms sleep after each response. Include Kubernetes
+request load when measuring this observation change. It neither changes the
+retry switch nor shortens volume attachment or runtime boot.
+
 With `CHRONO_SANDBOX_NATIVE_CREATE_RETRY_ENABLED=true`, an explicit Claim assignment,
 home readiness or create-bind deadline reached after validated Pending can use a
 one-second retry after observation completion. An outstanding read or returned
@@ -2877,3 +3169,18 @@ Existing streams reconnect with their last durable cursor under the unchanged
 SSE contract. Sandbox state and ongoing turns do not change. Reordered live
 fragments, live delivery preceding durable catch-up, or delayed revocation
 closure are rollback signals.
+
+### Retained usage view controls
+
+The activation and rollback packet is [CMA Usage Report Views](CMA_Usage_Report_Views.md).
+
+| Configuration | Default and behavior |
+| --- | --- |
+| `CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED` | `false`. Enables separately approved daily/hourly allocation bucket maintenance and use by report generation. The isolated reporting pool, source snapshot and current report authority are retained. Initial bounded backfill must complete before covered history avoids raw reads; missing or stale boundary coverage falls back to the exact ledger projection. Disable to stop new bucket work and reads; disposable buckets may expire without altering the allocation ledger. See the usage view activation packet for reader floor and rollback. |
+| `CHRONO_USAGE_REPORT_VIEWS_ENABLED` | `false`. Allows the new immutable retained-report writer only after the complete compatible reader/worker deployment and individual owner approval. Existing report endpoints remain available. |
+| `CHRONO_USAGE_REPORT_WARMER_ENABLED` | `false`. Separately approved background materialization; requires enabled views and explicit scheduling scopes. Uses existing leased workers and admission budgets. |
+| `CHRONO_USAGE_REPORT_FRESH_SECONDS` | `300`, bounded 60–3600 seconds. A committed snapshot older than this is returned as stale and may enqueue one replacement. |
+| `CHRONO_USAGE_REPORT_RETAIN_SECONDS` | `86400`, bounded 3600–86400 seconds. Fixed before children are written; Ready expiry is never extended in place. Must exceed freshness. |
+| `CHRONO_USAGE_REPORT_WARM_SECONDS` | `300`, bounded 60–3600 seconds. Scheduling cadence, with missed ticks skipped and one refresh coalesced per semantic key. |
+| `CHRONO_USAGE_REPORT_WARM_SCOPES` | `[]`. Strict JSON array of at most eight operator-approved `{principal, admin, sandbox_id, window}` selections, at most 8192 bytes. `window` defaults to `24h`; explicitly supported values are `24h`, `7d`, and `30d`. Duplicate selections and custom ranges are rejected. The principal is an exact authenticated subject, never a role alias. No credentials. A canary Sandbox must currently belong to the named principal. Unfiltered Everyone and additional warm ranges require explicit expansion approval. Older images reject the new window field. |
+| `CHRONO_USAGE_REPORT_VIEW_SCOPES` | `[]`. Required explicit writer canary cohort when retained views are enabled; at most eight strict `{principal, admin, sandbox_id}` scopes and 8192 bytes. A named Sandbox restricts new retained admission to that exact selected Sandbox. Unlisted callers/selections receive `report_view_disabled` and retain the old workflow. Removing a cohort stops new latest-view work but preserves compatible explicit report reads and accepted-job draining. Warm scopes must be contained in this cohort. |

@@ -84,7 +84,22 @@ pub(in crate::store) enum Authority {
     Capacity(Box<layer2_core::sandbox::store::AgentConversationCapacitySettlement>),
 }
 
-pub(super) async fn commit(
+// Allocate the transaction future before the caller starts polling it. Boxing
+// inside an async caller still reserves its construction temporary on that stack.
+pub(super) fn commit(
+    store: &MongoSandboxStore,
+    current: Agent,
+    previous: Option<AgentMessageCheckpoint>,
+    next: AgentMessageCheckpoint,
+    mutation: Option<AgentConversationMutation>,
+    authority: Authority,
+) -> impl std::future::Future<Output = Result<AgentUpdateOutcome, SandboxStoreError>> + '_ {
+    Box::pin(commit_inner(
+        store, current, previous, next, mutation, authority,
+    ))
+}
+
+async fn commit_inner(
     store: &MongoSandboxStore,
     current: Agent,
     previous: Option<AgentMessageCheckpoint>,
@@ -109,7 +124,7 @@ pub(super) async fn commit(
     }
     let adoption = match (&authority, mutation.as_ref()) {
         (Authority::Live, Some(mutation)) => {
-            scoped::adoption::prepare(store, mutation, Some(&next)).await?
+            Box::pin(scoped::adoption::prepare(store, mutation, Some(&next))).await?
         }
         _ => None,
     };
@@ -134,7 +149,7 @@ pub(super) async fn commit(
             }
             Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
         };
-        let applied = scoped::checkpoint::apply(
+        let applied = Box::pin(scoped::checkpoint::apply(
             store,
             (&current, adoption.as_ref()),
             previous.as_ref(),
@@ -142,7 +157,7 @@ pub(super) async fn commit(
             mutation.as_ref(),
             &authority,
             &mut scope,
-        )
+        ))
         .await;
         scope.release();
         let (outcome, publication) = match applied {
@@ -164,6 +179,7 @@ pub(super) async fn commit(
         if let Some(mutation) = &mutation {
             admission::require_current(mutation, &mut session).await?;
         }
+        store.fence_agent_effect(&current.id, &mut session).await?;
         let published = publication.is_some();
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
@@ -187,7 +203,7 @@ pub(super) async fn commit(
                     _ => None,
                 };
                 return wait_for_reconciliation("agent message commit", async move {
-                    let confirmed = reconcile(
+                    let confirmed = Box::pin(reconcile(
                         &store,
                         &current.id,
                         &next,
@@ -195,7 +211,7 @@ pub(super) async fn commit(
                         reanchor,
                         capacity.as_deref(),
                         publication.as_ref(),
-                    )
+                    ))
                     .await?
                     .ok_or_else(|| {
                         SandboxStoreError::Unavailable(format!(

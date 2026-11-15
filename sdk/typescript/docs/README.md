@@ -41,3 +41,20 @@ ordinary backend clients do not load React.
 - [Operations](operations.md): operator controls and deployment discovery.
 - [Errors](errors.md): named refusals and uncertain command outcomes.
 - [Reference](reference.md): complete helper inventory and wire contracts.
+
+### Latest retained usage views
+
+The latest-view operation (`SandboxMetrics.latest` in TypeScript,
+`UsageMetrics::latest` in Rust) accepts a rolling `24h`, `7d`, or `30d` window,
+or `custom` with exact `from`/`to`, plus canonical usage filters. It returns
+`report`, `generated_at`, `stale`, `requested_range` and independent refresh
+state. Render an authorized ready summary immediately while any replacement
+runs; read pages/charts using that exact report ID. Keep at most one observation
+in flight per page and honor Retry-After. The operation does not automatically
+poll, retry, or reuse caller authority.
+
+Use the explicit compatibility predicate (`isUsageViewUnavailable` in
+TypeScript, `view_unavailable` in Rust) only for a disabled feature or missing
+route. Typed authority/resource refusals, malformed successes and general 503s
+must not invoke an old-endpoint fallback. Retained view writers and warming are
+separately disabled until the owner approves their staged activation.
