@@ -163,6 +163,52 @@ fn assignment_root_failures_are_distinguished_without_relaxing_the_contract() {
     );
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn retained_roots_on_three_devices_warn_once_without_holding() {
+    use std::os::unix::fs::MetadataExt;
+
+    let fixture = Fixture::new();
+    let mut config = fixture.config();
+    // Only metadata is read from these existing mounts; no mount privilege or
+    // files written outside the fixture are needed to exercise real st_dev.
+    config.state_root = PathBuf::from("/dev");
+    #[cfg(target_os = "linux")]
+    let transfer = Path::new("/proc");
+    #[cfg(target_os = "macos")]
+    let transfer = Path::new("/System/Volumes/Preboot");
+    config
+        .process_env
+        .insert("TMPDIR".into(), transfer.to_str().unwrap().into());
+    config.checkpoint_root = transfer.join("cma-checkpoints");
+    let roots = [config.home.as_path(), config.state_root.as_path(), transfer];
+    let devices: std::collections::HashSet<_> = roots
+        .iter()
+        .map(|path| std::fs::symlink_metadata(path).unwrap().dev())
+        .collect();
+    assert_eq!(devices.len(), 3, "regression requires three real devices");
+
+    let log = Log::default();
+    let output = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(move || output.clone())
+        .finish();
+    tracing::subscriber::with_default(subscriber, || retained_transfer(&config)).unwrap();
+    let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
+    assert!(text.contains("WARN"), "{text}");
+    assert!(
+        text.contains("predicate=\"transfer.same_device\""),
+        "{text}"
+    );
+    for root in roots {
+        assert!(!text.contains(root.to_str().unwrap()), "{text}");
+    }
+}
+
 #[test]
 fn partial_v2_state_keeps_its_fail_closed_disposition_and_bytes() {
     let fixture = Fixture::new();
