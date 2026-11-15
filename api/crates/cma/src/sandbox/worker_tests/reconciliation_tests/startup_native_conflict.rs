@@ -206,3 +206,41 @@ async fn startup_native_changed_binding_is_deferred_without_adopting_new_targets
     fixture.control.assert_no_cleanup();
     assert_retained(&fixture);
 }
+
+#[tokio::test]
+async fn startup_native_refreshes_first_attempt_after_authority_advanced_past_startup_time() {
+    let fixture = NativeStartup::new(false, false).await;
+    let durable_at = stamp_time(&fixture.original.updated_at);
+    let startup_floor = durable_at - Duration::from_secs(1);
+    // Lifecycle fixture timestamps can be ahead of the real clock. Let wall time
+    // catch up so this exercises stale startup time, not a future caller floor.
+    after_durable_boundary(&fixture.original).await;
+    assert!(SystemTime::now() >= durable_at);
+
+    let startup = fixture.reconciler.initialize_before_workers(startup_floor);
+    tokio::pin!(startup);
+    until(&mut startup, fixture.control.status_entered.notified()).await;
+    until(&mut startup, fixture.control.siblings_started(7)).await;
+    fixture.control.assert_no_cleanup();
+    fixture.control.status_gate.add_permits(1);
+    until(&mut startup, fixture.control.siblings_started(8)).await;
+    fixture.control.other_gate.add_permits(8);
+    tokio::time::timeout(Duration::from_secs(10), startup)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        fixture
+            .store
+            .inner
+            .get_sandbox(&fixture.original.id)
+            .await
+            .unwrap(),
+        Some(fixture.original.clone())
+    );
+    assert!(!fixture.reconciler.binding_is_held(&fixture.original.id));
+    assert_eq!(fixture.control.other_settled.load(Ordering::SeqCst), 8);
+    assert!(fixture.control.cleanup.load(Ordering::SeqCst) > 0);
+    assert_retained(&fixture);
+}

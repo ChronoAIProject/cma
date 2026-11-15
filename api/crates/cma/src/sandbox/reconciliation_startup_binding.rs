@@ -20,7 +20,9 @@ impl SandboxReconciler {
             let result = async {
                 let fresh;
                 let (current, now) = if attempt == 1 {
-                    (sandbox, floor)
+                    // Inventory and authority reads may outlive the startup
+                    // timestamp while another writer advances this parent.
+                    (sandbox, SystemTime::now().max(floor))
                 } else {
                     let Some(current) = self.store.get_sandbox(&sandbox.id).await? else {
                         return Ok(true);
