@@ -104,6 +104,55 @@ it.each([false, true])(
   },
 );
 
+it.each([
+  [429, false],
+  [429, true],
+  [503, false],
+  [503, true],
+] as const)(
+  'respects %s Retry-After for refresh triggers and its one retry (retry fails: %s)',
+  async (status, failsAgain) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const readAgent = vi.fn().mockResolvedValue(AGENT_DETAIL);
+    const client = agentClient({ readAgent });
+    const view = renderHook(() => useAgentController(client, 'agt_1'));
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    const before = view.result.current.state;
+    readAgent.mockRejectedValueOnce(new ApiError(status, 'Busy', undefined, undefined, 60_000));
+    if (failsAgain)
+      readAgent.mockRejectedValueOnce(
+        new ApiError(status, 'Still busy', undefined, undefined, 120_000),
+      );
+    readAgent.mockResolvedValue({ ...AGENT_DETAIL, title: 'Recovered' });
+    await act(async () => view.result.current.refreshDetail());
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await act(async () => view.result.current.refreshDetail());
+    expect(readAgent).toHaveBeenCalledTimes(2);
+    expect(view.result.current.state).toBe(before);
+    await act(() => vi.advanceTimersByTimeAsync(54_999));
+    await act(async () => view.result.current.refreshDetail());
+    expect(readAgent).toHaveBeenCalledTimes(2);
+    await act(() => vi.advanceTimersByTimeAsync(1));
+    expect(readAgent).toHaveBeenCalledTimes(3);
+    if (failsAgain) {
+      expect(view.result.current.state).toBe(before);
+      await act(async () => view.result.current.refreshDetail());
+      await act(() => vi.advanceTimersByTimeAsync(119_999));
+      await act(async () => view.result.current.refreshDetail());
+      expect(readAgent).toHaveBeenCalledTimes(3);
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      // Expiry permits a future event; it must not schedule a third automatic attempt.
+      expect(readAgent).toHaveBeenCalledTimes(3);
+      await act(async () => view.result.current.refreshDetail());
+      expect(readAgent).toHaveBeenCalledTimes(4);
+    }
+    expect(view.result.current.state).toMatchObject({ detail: { title: 'Recovered' } });
+    view.unmount();
+  },
+);
+
 it.each([401, 403, 404])(
   'uses full-load error handling after metadata access returns %s',
   async (status) => {
