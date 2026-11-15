@@ -1,9 +1,9 @@
 use mongodb::{
-    Client, ClientSession, Collection, Database,
-    bson::{self, Document, doc},
+    bson::{self, doc, Document},
     options::{CollectionOptions, ReadConcern, ReadPreference, SelectionCriteria, WriteConcern},
+    Client, ClientSession, Collection, Database,
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{de::DeserializeOwned, Serialize};
 
 use super::*;
 
