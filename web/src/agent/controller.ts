@@ -1,3 +1,4 @@
+import { useHistoryPublication } from './historyPublication';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule, rateLimitDelay } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
@@ -135,28 +136,7 @@ export function useAgentController(
     [agentId, setState],
   );
 
-  const publishHistory = useCallback(
-    (ready: import('./loadAgent').ReadyAgent, preserveEmpty = false) => {
-      if (agentId === undefined) return;
-      setState((current) => {
-        const conversation =
-          preserveEmpty &&
-          current.status === 'ready' &&
-          ready.conversation.agentCursor === undefined &&
-          ready.conversation.cursor === 0 &&
-          ready.conversation.messages.length === 0
-            ? current.conversation
-            : hydration.current.merge(
-                ready.conversation,
-                agentId,
-                !ready.historyLoading && !ready.historyUnavailable,
-              );
-        liveCursor.current = conversation.cursor;
-        return { status: 'ready', ...ready, conversation };
-      });
-    },
-    [agentId, setState],
-  );
+  const publishHistory = useHistoryPublication(agentId, setState, hydration, liveCursor);
 
   useEffect(() => {
     if (suspended) return;
