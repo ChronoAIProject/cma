@@ -4,7 +4,12 @@ use super::allocated::request;
 use super::*;
 use mongodb::event::{command::CommandEvent, EventHandler};
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, path::Path, sync::Mutex, time::Instant};
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    sync::{atomic::Ordering, Mutex},
+    time::Instant,
+};
 
 mod rss;
 use rss::Rss;
