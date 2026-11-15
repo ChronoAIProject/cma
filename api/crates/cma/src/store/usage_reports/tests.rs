@@ -421,3 +421,6 @@ mod bucket_ranges;
 mod rebaseline;
 
 mod range_measurement;
+
+mod on_demand_races;
+mod on_demand_views;
