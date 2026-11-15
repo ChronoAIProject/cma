@@ -6,6 +6,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
 };
+use tracing::instrument::WithSubscriber;
 
 #[derive(Default)]
 pub(super) struct Commands {
@@ -186,6 +187,7 @@ async fn dense_history_batches_preserve_exact_allocation_with_fewer_round_trips(
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn seven_day_history_generates_and_reuses_complete_421_member_report() {
+    let preparation = std::time::Instant::now();
     let (store, commands) = observed_store().await;
     let from = (now() / 86_400 - 8) * 86_400;
     let to = from + 7 * 86_400;
@@ -227,6 +229,7 @@ async fn seven_day_history_generates_and_reuses_complete_421_member_report() {
     }
     .validate(now())
     .unwrap();
+    let preparation_ms = preparation.elapsed().as_millis();
     for run in 0..2 {
         let principal = format!("operator-{run}");
         let pending = store
@@ -241,11 +244,30 @@ async fn seven_day_history_generates_and_reuses_complete_421_member_report() {
         assert_eq!(lease.report.report_id, pending.report_id);
         commands.event_reads.store(0, Ordering::SeqCst);
         commands.returned.store(0, Ordering::SeqCst);
+        // Capture only the existing content-free trace, including its Drop
+        // event when the helper's unchanged deadline cancels generation.
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .without_time()
+            .with_ansi(false)
+            .with_current_span(false)
+            .with_span_list(false)
+            .with_env_filter("off,cma::sandbox_metrics::report_trace=info")
+            .with_writer(std::io::stderr)
+            .finish();
         let start = std::time::Instant::now();
-        let generated =
+        let result =
             crate::sandbox_metrics::generate_fixture_with_collection(store.clone(), &lease, false)
-                .await
-                .unwrap();
+                .with_subscriber(subscriber)
+                .await;
+        eprintln!(
+            "history_week_generation run={run} members={MEMBERS} preparation_ms={preparation_ms} generation_ms={} success={} event_reads={} returned_events={}",
+            start.elapsed().as_millis(),
+            result.is_ok(),
+            commands.event_reads.load(Ordering::SeqCst),
+            commands.returned.load(Ordering::SeqCst)
+        );
+        let generated = result.unwrap();
         let summary = generated.summary.as_ref().unwrap();
         assert_eq!(summary.sandbox_count, MEMBERS as u64);
         assert!(summary.allocated_period.complete);
