@@ -115,3 +115,17 @@ test('duplicate observations cannot replace distinct runs before and after resta
   after.push(make('after_restart', 3));
   assert.equal(coverage(selected, mapping, before.concat(after)).verdict, 'PASS');
 });
+
+test('both-process features require both AMs in every counted iteration and restart phase', () => {
+  const selected = features.slice(1);
+  const mapping = {'admin.settings': {cases: ['cas'], minimum_runs: 3,
+    phases: ['before_restart', 'after_restart'], routing: 'both'}};
+  const make = (phase, iteration, ams) => ({case: 'cas', verdict: 'PASS', phase, iteration, ams});
+  const before = [1, 2, 3].map(i => make('before_restart', i, ['a', 'b']));
+  const after = [1, 2, 3].map(i => make('after_restart', i, ['a']));
+  assert.equal(coverage(selected, mapping, before.concat(after)).verdict, 'FAIL');
+  after.push(make('after_restart', 1, ['b']), make('after_restart', 2, ['b']));
+  assert.equal(coverage(selected, mapping, before.concat(after)).verdict, 'FAIL');
+  after.push(make('after_restart', 3, ['b']));
+  assert.equal(coverage(selected, mapping, before.concat(after)).verdict, 'PASS');
+});

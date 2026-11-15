@@ -43,6 +43,7 @@ const matrix = new ExtendedAdminMatrix({fixture,
   request: (role, ...args) => (role === 'admin' ? admin : user).request(...args),
   record: row => record({case: 'admin.' + row.feature, verdict: row.verdict,
     phase, iteration: row.iteration, elapsed_ms: row.elapsed_ms, error_code: row.error_code,
+    primary_error_code: row.primary_error_code, restoration_error_code: row.restoration_error_code,
     ams: [...new Set(row.requests.map(x => x.am))],
     routing: 'global_admin_has_no_agent_owner', requests: row.requests})});
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,

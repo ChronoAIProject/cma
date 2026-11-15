@@ -43,15 +43,16 @@ export function coverage(features, mappings, results) {
       const phases = mapping.phases ?? [undefined];
       return phases.every(phase => {
         const runs = group.filter(row => phase === undefined || row.phase === phase);
-        return new Set(runs.map(row => row.iteration).filter(Number.isSafeInteger)).size
+        const iterations = new Set(runs.map(row => row.iteration).filter(Number.isSafeInteger));
+        const complete = [...iterations].filter(iteration => mapping.routing !== 'both'
+          || ['a', 'b'].every(am => runs.some(row => row.iteration === iteration && row.ams?.includes(am))));
+        return complete.length
           >= (mapping.minimum_runs ?? 1);
       });
     };
     const pass = flat.every(x => x.verdict === 'PASS')
       && observations.every(repetitions)
       && (mapping.routing !== 'non_owner' || flat.every(x => x.non_owner === true))
-      && (mapping.routing !== 'both' || observations.every(group =>
-        ['a', 'b'].every(am => group.some(x => x.ams?.includes(am)))))
       && (mapping.browser !== true || flat.every(x => x.real_browser === true));
     return {id: feature.id, role: feature.role, verdict: pass ? 'PASS' : 'FAIL', cases: required};
   });

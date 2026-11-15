@@ -10,6 +10,8 @@ const other = am => am === 'a' ? 'b' : 'a';
 const hash = x => createHash('sha256').update(String(x)).digest('hex');
 const clone = x => structuredClone(x);
 const check = (v, code) => { if (!v) throw new Error(code); };
+const errorCode = error => /^[a-zA-Z0-9_:-]{1,160}$/.test(error?.message ?? '')
+  ? error.message : 'transport_or_contract_error';
 const revision = v => Number.isSafeInteger(v) && v >= 0;
 const page = v => Array.isArray(v?.items) && (v.next === null || typeof v.next === 'string');
 const settings = v => revision(v?.revision) && v.settings && v.settings.limits && v.settings.retention;
@@ -70,6 +72,22 @@ export class AdminMatrix {
     try {await work(); row.verdict='PASS';}
     catch(e) {row.verdict='FAIL'; row.error_code=/^[a-zA-Z0-9_:-]{1,160}$/.test(e?.message??'')?e.message:'transport_or_contract_error'; throw e;}
     finally {row.elapsed_ms=performance.now()-start;row.ended_at=new Date().toISOString();this.rows.push(row);this.current=null;await this.record(row);}
+  }
+  async withRestoration(work, restore) {
+    let primary, restoration, failed = false, restoreFailed = false;
+    try { await work(); }
+    catch (error) {
+      primary = error; failed = true;
+      if (this.current) this.current.primary_error_code = errorCode(error);
+    }
+    try { await restore(); }
+    catch (error) {
+      restoration = error; restoreFailed = true;
+      if (this.current) this.current.restoration_error_code = errorCode(error);
+    }
+    // A cleanup failure must not replace the first failed assertion or request.
+    if (failed) throw primary;
+    if (restoreFailed) throw restoration;
   }
   async reads(iteration) {
     for (const [id,path,shape] of READ_CASES) await this.runCase(id,iteration,async()=>{
@@ -159,20 +177,21 @@ export class AdminMatrix {
       const detail=await this.call(am,'GET',path),before=detail.sandbox;
       check(before?.id===fixture.sandbox_id && revision(before.revision),'sandbox_detail_identity');
       const old=before.profile.always_on===true,desired=!old;
-      try {
+      await this.withRestoration(async () => {
         const changed=await this.call(am,'POST',`${path}/always-on`,{always_on:desired,expected_revision:before.revision});
-        check(changed.id===fixture.sandbox_id && changed.profile.always_on===desired,'always_on_ack');
+        // POST returns SandboxView. The detail GET below returns an aggregate.
+        check(changed.id===fixture.sandbox_id && changed.always_on===desired,'always_on_ack');
         const current=(await this.call(peer,'GET',path)).sandbox;
         check(current.id===fixture.sandbox_id && current.profile.always_on===desired,'always_on_not_visible');
         await this.call(peer,'POST',`${path}/always-on`,{always_on:old,expected_revision:before.revision},[409]);
         const events=await this.call(peer,'GET',`${path}/events?limit=50`);
         check(Array.isArray(events) && events.every(e=>e.sandbox_id===fixture.sandbox_id),'sandbox_event_identity');
-      } finally {
+      }, async () => {
         const current=(await this.call(peer,'GET',path)).sandbox;
         if((current.profile.always_on===true)!==old)
           await this.call(peer,'POST',`${path}/always-on`,{always_on:old,expected_revision:current.revision});
         check(((await this.call(am,'GET',path)).sandbox.profile.always_on===true)===old,'always_on_restore_failed');
-      }
+      });
     });
   }
   async retireSandbox(iteration,fixture) {
