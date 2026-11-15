@@ -19,6 +19,9 @@ pub(crate) use capacity::reconnect::RecoveryReconnect;
 pub(crate) use capacity::reconnect::{CapacityRecoveryReconnect, ReconnectAction};
 mod cleanup;
 mod cleanup_publication;
+mod cleanup_retry;
+#[cfg(test)]
+pub(super) use cleanup_retry::same_cleanup_claim;
 mod completion_lookup;
 mod connection;
 mod connection_output;
@@ -372,8 +375,20 @@ impl AgentWorker {
         let started = tokio::time::Instant::now();
         let claimed = agent.clone();
         let result = self.execute_step(agent, now).await;
-        self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
+        let result = self
+            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
+            .await;
+        self.finish_cleanup_attempt(&claimed, result, now + started.elapsed())
             .await
+    }
+
+    #[cfg(test)]
+    pub(in crate::sandbox) async fn execute_claimed_for_test(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.execute(agent, now).await
     }
 
     /// Keep the per-step futures behind individual heap boundaries. The
