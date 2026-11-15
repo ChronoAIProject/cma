@@ -52,7 +52,7 @@ impl HostedControlTransport for HistoryTransport {
     }
 }
 
-fn native(transport: Arc<dyn HostedControlTransport>) -> Arc<dyn HostedBackend> {
+pub(super) fn native(transport: Arc<dyn HostedControlTransport>) -> Arc<AgentSandboxBackend> {
     let client = AgentSandboxClient::new(
         kube::Client::try_from(kube::Config::new("http://127.0.0.1:1".parse().unwrap())).unwrap(),
         AgentSandboxConfig {
@@ -70,6 +70,13 @@ fn native(transport: Arc<dyn HostedControlTransport>) -> Arc<dyn HostedBackend> 
     )
     .unwrap();
     Arc::new(AgentSandboxBackend::new(client, transport))
+}
+
+pub(super) fn empty_native() -> Arc<AgentSandboxBackend> {
+    native(Arc::new(HistoryTransport {
+        bytes: b"",
+        calls: Mutex::new(vec![]),
+    }))
 }
 
 fn legacy(transport: Arc<dyn HostedControlTransport>) -> Arc<dyn HostedBackend> {
@@ -150,7 +157,8 @@ async fn unavailable_history_provider_does_not_fall_back_to_another_provider() {
     for native_missing in [true, false] {
         let backend = RuntimeBackends {
             home_routes: None,
-            agent_sandbox: (!native_missing).then(|| native(transport.clone())),
+            agent_sandbox: (!native_missing)
+                .then(|| native(transport.clone()) as Arc<dyn HostedBackend>),
             opensandbox: native_missing.then(|| legacy(transport.clone())),
             allocate_agent_sandbox: !native_missing,
             routing: Arc::new(ExistingRuntimeRoutes),

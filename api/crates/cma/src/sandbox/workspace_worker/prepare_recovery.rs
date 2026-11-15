@@ -65,6 +65,7 @@ impl WorkspaceWorker {
                 )
                 .await;
         }
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self
             .dependencies
             .adapter

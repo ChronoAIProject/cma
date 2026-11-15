@@ -380,3 +380,46 @@ async fn native_status_post_reply_home_change_and_retirement_still_fail() {
 
 #[path = "binding_inflight_tests.rs"]
 mod inflight;
+
+#[tokio::test]
+async fn pending_parent_never_sends_authenticated_status_on_reused_connection() {
+    let mut fixture = fixture(true, true).await;
+    let (release, admission) = crate::InspectionAdmission::pending();
+    let adapter = fixture.adapter.clone();
+    let request = fixture.adoption.clone();
+    let task =
+        tokio::spawn(async move { adapter.inspect_runtime_after(&request, &admission).await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while fixture.bound.fixture.state.lock().unwrap().calls.len() < 6 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 0);
+    drop(release);
+    assert!(task.await.unwrap().is_err());
+    assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 0);
+    // Cancellation deliberately drops NativeLease and its stream, even when no
+    // bytes were sent. Observe that close, then supply a fresh fixture stream.
+    tokio::time::timeout(std::time::Duration::from_secs(2), &mut fixture.task)
+        .await
+        .unwrap()
+        .unwrap();
+    let socket = fixture
+        .transport
+        .seed_native_status_connection(&fixture.bound.runtime)
+        .await;
+    fixture.task = tokio::spawn(serve(
+        socket,
+        fixture.stream.clone(),
+        fixture.bound.fixture.state.clone(),
+    ));
+    assert!(fixture
+        .adapter
+        .inspect_runtime(&fixture.adoption)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 1);
+}

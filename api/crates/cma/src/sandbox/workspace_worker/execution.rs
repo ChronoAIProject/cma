@@ -45,6 +45,7 @@ impl WorkspaceWorker {
         id: &WorkspaceId,
         now: SystemTime,
     ) -> Result<WorkspaceDrain, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let mut executed_work = false;
         for _ in 0..4 {
             let current = self
@@ -64,7 +65,14 @@ impl WorkspaceWorker {
                     });
                 }
                 WorkspaceStatus::Preparing => {
-                    if !self.run_one(id, now).await? {
+                    let at = if self.config.renewable_work
+                        || current.work.authority_protocol.is_some()
+                    {
+                        now + started.elapsed()
+                    } else {
+                        now
+                    };
+                    if !self.run_one(id, at).await? {
                         return Ok(WorkspaceDrain {
                             workspace: current,
                             executed_work,

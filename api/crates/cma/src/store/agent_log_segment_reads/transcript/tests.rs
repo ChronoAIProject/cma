@@ -3,6 +3,8 @@ use layer2_core::sandbox::{store::AgentLogStore, AgentTitleTranscript};
 mod admission;
 mod answers;
 mod byte_pages;
+mod capture_admission;
+mod capture_commands;
 mod parity;
 mod refusal;
 mod reopen;

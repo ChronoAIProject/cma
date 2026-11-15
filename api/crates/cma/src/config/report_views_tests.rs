@@ -47,3 +47,53 @@ fn retained_usage_views_and_warmer_require_separate_explicit_activation() {
     }
     assert!(ViewPolicy::from_lookup(&mut |_| Err("lookup failed".into())).is_err());
 }
+
+#[test]
+fn warmer_windows_are_explicit_bounded_and_keep_legacy_default() {
+    let views = r#"[{"principal":"owner","admin":true,"sandbox_id":null}]"#;
+    let parse_warm = |warm: &str| {
+        parse(&[
+            ("CHRONO_USAGE_REPORT_VIEWS_ENABLED", "true"),
+            ("CHRONO_USAGE_REPORT_WARMER_ENABLED", "true"),
+            ("CHRONO_USAGE_REPORT_VIEW_SCOPES", views),
+            ("CHRONO_USAGE_REPORT_WARM_SCOPES", warm),
+        ])
+    };
+    assert_eq!(
+        parse_warm(views).unwrap().warm_scopes[0].window,
+        ViewWindow::Day
+    );
+    let warm = r#"[{"principal":"owner","admin":true,"sandbox_id":null,"window":"24h"},{"principal":"owner","admin":true,"sandbox_id":null,"window":"7d"},{"principal":"owner","admin":true,"sandbox_id":null,"window":"30d"}]"#;
+    let policy = parse_warm(warm).unwrap();
+    assert_eq!(
+        policy
+            .warm_scopes
+            .iter()
+            .map(|s| s.window)
+            .collect::<Vec<_>>(),
+        vec![ViewWindow::Day, ViewWindow::Week, ViewWindow::Month]
+    );
+    for invalid in [
+        warm.replace("30d", "custom"),
+        warm.replace("30d", "7d"),
+        warm.replace("30d", "31d"),
+        warm.replace("owner", "foreign"),
+        warm.replace("\"window\"", "\"windows\""),
+    ] {
+        assert!(parse_warm(&invalid).is_err());
+    }
+    assert!(parse(&[("CHRONO_USAGE_REPORT_VIEW_SCOPES", warm)]).is_err());
+}
+
+#[test]
+fn incremental_allocation_projection_requires_explicit_activation() {
+    assert!(!parse(&[]).unwrap().allocation_rollups_enabled);
+    assert!(
+        parse(&[("CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED", "true")])
+            .unwrap()
+            .allocation_rollups_enabled
+    );
+    for value in ["yes", "1", "TRUE", ""] {
+        assert!(parse(&[("CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED", value)]).is_err());
+    }
+}

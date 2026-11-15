@@ -108,10 +108,27 @@ impl AgentSandboxBackend {
         request: &ProviderSandboxRequest,
         home: &HomeVolumeAttachment,
     ) -> Result<Option<RuntimeInspection>> {
+        self.inspect_native_context_after(
+            handle,
+            request,
+            home,
+            &crate::InspectionAdmission::ready(),
+        )
+        .await
+    }
+
+    pub(super) async fn inspect_native_context_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<RuntimeInspection>> {
         if !home.request.policy.is_native_vct() {
             return Ok(None);
         }
         let inspection = NativeStatusInspection {
+            admission,
             backend: self,
             handle,
             request,
@@ -137,6 +154,7 @@ impl AgentSandboxBackend {
 /// Opaque call-local operation. Only this backend can construct its fresh proof;
 /// transports may opt in after taking exclusive ownership of a reusable stream.
 pub struct NativeStatusInspection<'a> {
+    admission: &'a crate::InspectionAdmission,
     backend: &'a AgentSandboxBackend,
     handle: &'a RuntimeHandle,
     request: &'a ProviderSandboxRequest,
@@ -205,9 +223,11 @@ impl NativeStatusInspection<'_> {
         ))
     }
 
-    pub(crate) async fn prove(&self) -> Result<Option<NativeStatusProof>> {
+    async fn read_authority(
+        &self,
+    ) -> (Result<crate::agent_sandbox::NativeRuntimeProof>, Result<()>) {
         let (backend, handle, request, home) = (self.backend, self.handle, self.request, self.home);
-        let (proof, policy) = tokio::join!(
+        tokio::join!(
             inspection_timing::measure(
                 &home.request.sandbox_id,
                 "native_authority_graph",
@@ -218,7 +238,21 @@ impl NativeStatusInspection<'_> {
                 "native_runtime_policy",
                 backend.client.verify_native_runtime_policy(handle, home),
             ),
-        );
+        )
+    }
+
+    pub(crate) async fn prove(&self) -> Result<Option<NativeStatusProof>> {
+        let (backend, handle, request, home) = (self.backend, self.handle, self.request, self.home);
+        let (proof, policy) = self.read_authority().await;
+        // Never carry a completed observation across an admission wait. The
+        // common case hides slow native reads behind parent loading; the other
+        // timing order repeats the reads after validation, retaining freshness.
+        let (proof, policy) = if self.admission.is_ready() {
+            (proof, policy)
+        } else {
+            self.admission.wait().await?;
+            self.read_authority().await
+        };
         // Consume graph errors and the bootstrap fallback before policy errors,
         // preserving the original authority/error precedence of this operation.
         let proof = proof?;

@@ -19,11 +19,18 @@ use layer2_core::{
         },
         *,
     },
-    Authorization, Caller, Capability, PlatformDefaults, SubjectId,
+    AgentId, Authorization, Caller, Capability, PlatformDefaults, SubjectId,
 };
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+    Mutex,
+};
 use tower::ServiceExt;
+
+#[path = "response_readers_fixture.rs"]
+mod fixture_support;
+use fixture_support::Fixture;
 
 const AT: &str = "2026-09-05T00:00:00Z";
 
@@ -77,9 +84,7 @@ impl AgentCommandAdmissionAuthority for Authority {
 }
 
 struct Source {
-    rows: Vec<AgentLogEntry>,
-    metadata: AgentOutputMetadata,
-    changes: Vec<AgentOutputChange>,
+    state: Mutex<fixture_support::SourceState>,
     opens: AtomicUsize,
     fail: AtomicBool,
 }
@@ -103,7 +108,7 @@ impl AgentResponseLogStore for Source {
                 "response source unavailable".into(),
             ));
         }
-        let mut metadata = self.metadata.clone();
+        let mut metadata = self.state.lock().unwrap().metadata.clone();
         metadata.through = agent.conversation.last_seq;
         metadata.active_turn = agent.conversation.active_turn;
         if turn.is_none() {
@@ -135,6 +140,9 @@ impl AgentOutputReader for Reader<'_> {
     ) -> Result<Vec<AgentOutputChange>, SandboxStoreError> {
         Ok(self
             .source
+            .state
+            .lock()
+            .unwrap()
             .changes
             .iter()
             .skip(from as usize)
@@ -150,6 +158,9 @@ impl AgentOutputReader for Reader<'_> {
             .iter()
             .map(|seq| {
                 self.source
+                    .state
+                    .lock()
+                    .unwrap()
                     .rows
                     .iter()
                     .find(|row| row.seq == *seq)
@@ -165,6 +176,9 @@ impl AgentOutputReader for Reader<'_> {
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
         Ok(self
             .source
+            .state
+            .lock()
+            .unwrap()
             .rows
             .iter()
             .filter(|row| row.seq > after)
@@ -172,11 +186,6 @@ impl AgentOutputReader for Reader<'_> {
             .cloned()
             .collect())
     }
-}
-
-struct Fixture {
-    router: Router,
-    source: Arc<Source>,
 }
 
 async fn fixture() -> Fixture {
@@ -260,24 +269,26 @@ async fn fixture() -> Fixture {
         .filter_map(|row| index.observe(row, AgentOutputTool::None).unwrap().change)
         .collect();
     let source = Arc::new(Source {
-        metadata: AgentOutputMetadata {
-            agent_id: agent.id.clone(),
-            through: 6,
-            created_at: agent.created_at.clone(),
-            runtime_generation: Some(1),
-            active_turn: None,
-            initial_model: agent.profile.content.model.clone(),
-            index: Some(index),
-            turn: Some(AgentOutputTurn {
-                legacy_model_known: facts.legacy_model_known,
-                usage_sequence: facts.response_usage_sequence,
-                terminal_sequence: facts.end_sequence,
-                prewrite_sequence: facts.prewrite_failure_sequence,
-                facts,
-            }),
-        },
-        rows,
-        changes,
+        state: Mutex::new(fixture_support::SourceState {
+            metadata: AgentOutputMetadata {
+                agent_id: agent.id.clone(),
+                through: 6,
+                created_at: agent.created_at.clone(),
+                runtime_generation: Some(1),
+                active_turn: None,
+                initial_model: agent.profile.content.model.clone(),
+                index: Some(index),
+                turn: Some(AgentOutputTurn {
+                    legacy_model_known: facts.legacy_model_known,
+                    usage_sequence: facts.response_usage_sequence,
+                    terminal_sequence: facts.end_sequence,
+                    prewrite_sequence: facts.prewrite_failure_sequence,
+                    facts,
+                }),
+            },
+            rows,
+            changes,
+        }),
         opens: AtomicUsize::new(0),
         fail: AtomicBool::new(false),
     });
@@ -312,7 +323,7 @@ async fn fixture() -> Fixture {
     let router = services
         .conversation_router(
             context,
-            DurableAgentUpdateRecorder::new(store),
+            DurableAgentUpdateRecorder::new(store.clone()),
             "https://cma.example",
         )
         .merge(layer1_public::responses::v2::router(
@@ -322,7 +333,11 @@ async fn fixture() -> Fixture {
                 services.reads(),
             ),
         ));
-    Fixture { router, source }
+    Fixture {
+        router,
+        store,
+        source,
+    }
 }
 
 fn request(method: Method, path: &str, subject: &str, body: Option<Value>) -> Request<Body> {
@@ -422,7 +437,36 @@ async fn composed_v2_create_stream_keeps_the_shared_reader_with_paging_disabled(
         .unwrap();
     let text = std::str::from_utf8(&first).unwrap();
     assert!(text.contains("response.created"), "{text}");
-    assert!(f.source.opens.load(SeqCst) > 0);
+    assert_eq!(f.source.opens.load(SeqCst), 0);
+    drop(frames);
+
+    fixture_support::bind(&f).await;
+    let response = f
+        .router
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/api/v2/responses",
+            "owner",
+            Some(json!({"conversation":"agt_composed", "input":"question", "stream":true})),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut frames = response.into_body().into_data_stream();
+    let bound_first = tokio::time::timeout(std::time::Duration::from_secs(2), frames.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let bound_text = std::str::from_utf8(&bound_first).unwrap();
+    assert!(bound_text.contains("response.created"), "{bound_text}");
+    assert!(
+        !bound_text.contains("response_observation_unavailable"),
+        "{bound_text}"
+    );
+    let opens_before_failure = f.source.opens.load(SeqCst);
+    assert!(opens_before_failure > 0);
     drop(frames);
     f.source.fail.store(true, SeqCst);
     let response = f
@@ -448,5 +492,6 @@ async fn composed_v2_create_stream_keeps_the_shared_reader_with_paging_disabled(
     let text = std::str::from_utf8(&error).unwrap();
     assert!(text.contains("response_observation_unavailable"), "{text}");
     assert!(!text.contains("response.created"), "{text}");
+    assert!(f.source.opens.load(SeqCst) > opens_before_failure);
     assert!(frames.next().await.is_none());
 }

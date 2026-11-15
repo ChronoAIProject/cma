@@ -15,6 +15,9 @@ async fn provided_custody_encrypts_round_trips_and_rejects_hash_or_source_tamper
     let client = Client::with_uri_str("mongodb://127.0.0.1:1").await.unwrap();
     let db = client.database("custody_serialization");
     let store = MongoSandboxCredentialStore {
+        client: client.clone(),
+        sandboxes: majority_collection(&db, "sandboxes"),
+        intents: majority_collection(&db, issuance::COLLECTION),
         collection: majority_collection(&db, SANDBOX_CREDENTIALS),
         revocations: majority_collection(&db, SANDBOX_CREDENTIAL_REVOCATIONS),
         cipher: AuthCipher::new("test", &key).unwrap(),

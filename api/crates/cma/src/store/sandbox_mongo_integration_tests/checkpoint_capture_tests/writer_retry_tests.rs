@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use mongodb::event::command::CommandEvent;
 use mongodb::event::EventHandler;
 use std::sync::{Arc, Mutex};
@@ -115,7 +116,7 @@ impl Fixture {
                 .map(|row| row.map(|row| row.revision))
         } else {
             self.store
-                .claim_workspace_work(&workspace.id, "writer", NOW.into(), MINUTE.into())
+                .claim_workspace_work(&workspace.id, "writer", NOW.into(), work_lease_deadline())
                 .await
                 .map(|row| row.map(|row| row.revision))
         }

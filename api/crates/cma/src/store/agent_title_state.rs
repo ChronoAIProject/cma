@@ -29,6 +29,8 @@ const COMMIT_EXPIRES_AT: &str = "title_commit_expires_at";
 
 const TITLE_FIELDS: &[&str] = &[
     TITLE,
+    super::agent_title_effect::FLOOR,
+    super::agent_title_effect::CUSTODY,
     "title_attempt_count",
     "title_next_attempt_at",
     "title_settled",
@@ -81,6 +83,8 @@ impl StoredClaim {
 }
 
 pub(super) struct TitleState {
+    pub(super) attempted: bool,
+    pub(super) effect: layer2_core::sandbox::AgentTitleEffectState,
     pub(super) retry: super::agent_title_retry::TitleRetry,
     pub(super) lease: Option<StoredClaim>,
     pub(super) stored: Option<StoredAgentTitle>,
@@ -216,6 +220,8 @@ pub(super) fn read_title_state(
         return corrupt();
     }
     Ok(TitleState {
+        attempted,
+        effect: super::agent_title_effect::read(document)?,
         retry: super::agent_title_retry::read(document)?,
         lease,
         stored,

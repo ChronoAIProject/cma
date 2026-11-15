@@ -1,0 +1,39 @@
+build-slot: all 6 slots busy; waiting for the first free slot
+build-slot: acquired slot 3/6 (CARGO_BUILD_JOBS=4)
+test_cleanup_distinguishes_absence_from_daemon_failure (mongo_local_test.FixtureRunnerTests) ... ok
+test_cleanup_does_not_delete_an_unowned_container (mongo_local_test.FixtureRunnerTests) ... ok
+test_existing_evidence_is_not_overwritten (mongo_local_test.FixtureRunnerTests) ... ok
+test_exited_parent_does_not_override_unconfirmed_group (mongo_local_test.FixtureRunnerTests) ... ok
+test_failure_keeps_only_numeric_and_fixed_diagnostics (mongo_local_test.FixtureRunnerTests) ... ok
+test_mongo_readiness_deadline_has_setup_phase_and_no_test_output (mongo_local_test.FixtureRunnerTests) ... ok
+test_partial_container_creation_is_cleaned_after_run_fails (mongo_local_test.FixtureRunnerTests) ... ok
+test_remote_published_endpoint_is_refused_before_binary_start (mongo_local_test.FixtureRunnerTests) ... ok
+test_setup_timeout_is_separate_from_test_deadline (mongo_local_test.FixtureRunnerTests) ... ok
+test_spawn_error_has_no_false_test_outcome (mongo_local_test.FixtureRunnerTests) ... ok
+test_success_has_owned_cleanup_exact_count_and_no_credential_argv (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeout_keeps_partial_whitelisted_output_and_never_claims_completion (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeout_retains_stage_start_without_end_or_success (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeouts_terminate_owned_process_group_and_clean_container (mongo_local_test.FixtureRunnerTests) ... ok
+test_unconfirmed_exit_retains_latest_partial_output_and_incomplete_cleanup (mongo_local_test.FixtureRunnerTests) ... ok
+test_unexpected_pipe_error_still_cleans_group_before_disposal (mongo_local_test.FixtureRunnerTests) ... ok
+test_zero_or_multiple_selected_tests_cannot_pass (mongo_local_test.FixtureRunnerTests) ... ok
+test_auto_reaping_or_threaded_callers_are_refused_before_spawn (owned_process_test.OwnedGroupTests) ... ok
+test_early_failed_parent_still_requires_descendant_cleanup (owned_process_test.OwnedGroupTests) ... ok
+test_failed_snapshot_attempts_termination_but_cannot_claim_absence (owned_process_test.OwnedGroupTests) ... ok
+test_lost_reservation_never_signals_a_reused_group (owned_process_test.OwnedGroupTests) ... ok
+test_normal_completion_and_already_absent_group_are_idempotent (owned_process_test.OwnedGroupTests) ... ok
+test_runner_early_failure_disposes_only_after_real_descendant_is_gone (owned_process_test.OwnedGroupTests) ... ok
+test_snapshot_rejects_failed_and_invalid_numeric_output (owned_process_test.OwnedGroupTests) ... ok
+test_term_exited_parent_with_file_backed_descendant_is_killed_and_observed (owned_process_test.OwnedGroupTests) ... ok
+test_interleaved_replica_headers_retain_failures_and_cohort_clock (replica_observations_test.ObservationTests) ... ok
+test_unapproved_fields_and_invalid_values_do_not_escape (replica_observations_test.ObservationTests) ... ok
+
+----------------------------------------------------------------------
+Ran 27 tests in 11.496s
+
+OK
+
+> lint
+> eslint . --max-warnings=0 && node check.mjs
+
+Syntax and source-size checks passed.

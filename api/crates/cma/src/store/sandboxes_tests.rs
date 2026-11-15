@@ -4,7 +4,7 @@ use layer2_core::profiles::{
 };
 use layer2_core::sandbox::store::{
     SandboxAdmission, SandboxAdmissionName, SandboxEventStore, SandboxStore, SandboxStoreError,
-    SandboxTransaction, SandboxTransactionStore,
+    SandboxTransaction, SandboxTransactionStore, WorkAuthorityProtocol,
 };
 use layer2_core::sandbox::{
     Sandbox, SandboxCredentialState, SandboxEventKind, SandboxLimits, SandboxOrigin,
@@ -104,6 +104,30 @@ fn manual_origin_query_fields_are_explicit_and_fingerprint_free() {
     assert_eq!(document.get("admission_fingerprint"), Some(&Bson::Null));
     assert_eq!(read_sandbox(&document).unwrap(), sandbox);
     assert!(read_sandbox_admission_replay(&document).is_err());
+}
+
+#[test]
+fn prepared_proof_envelope_round_trips_with_authority_off_or_on() {
+    for (authority_protocol, proof, expected_version) in [
+        (None, None, 1_i64),
+        (Some(WorkAuthorityProtocol::RenewedV1), None, 3_i64),
+        (None, Some("a".repeat(64)), 4_i64),
+        (
+            Some(WorkAuthorityProtocol::RenewedV1),
+            Some("b".repeat(64)),
+            4_i64,
+        ),
+    ] {
+        let mut value = sandbox(SandboxOrigin::Manual);
+        value.work.authority_protocol = authority_protocol;
+        value.work.prepared_installation_digest = proof;
+        let document = sandbox_document(&value, 0).unwrap();
+        assert_eq!(
+            document.get_i64("document_schema_version").unwrap(),
+            expected_version
+        );
+        assert_eq!(read_sandbox(&document).unwrap(), value);
+    }
 }
 
 #[test]

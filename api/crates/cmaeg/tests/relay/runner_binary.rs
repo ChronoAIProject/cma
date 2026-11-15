@@ -1,4 +1,7 @@
 //! Real executable, signed HTTP callback and process-signal evidence for runner composition.
+#[path = "replica_process.rs"]
+mod replicas;
+
 use super::{
     fake_provider::{FakeProvider, FakeProviderConfig},
     runner_process::Process,
