@@ -44,6 +44,20 @@ impl Write for Log {
 }
 
 fn capture_hold(operation: impl FnOnce() -> RuntimeError, fields: &[&str]) -> String {
+    capture_failure(
+        operation,
+        fields,
+        "mutation_ledger_format_hold",
+        "runtime mutation ledger format requires verification",
+    )
+}
+
+fn capture_failure(
+    operation: impl FnOnce() -> RuntimeError,
+    fields: &[&str],
+    code: &str,
+    detail: &str,
+) -> String {
     let log = Log::default();
     let output = log.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -53,22 +67,16 @@ fn capture_hold(operation: impl FnOnce() -> RuntimeError, fields: &[&str]) -> St
         .with_writer(move || output.clone())
         .finish();
     let error = tracing::subscriber::with_default(subscriber, operation);
-    assert_eq!(error.code, "mutation_ledger_format_hold");
-    assert_eq!(
-        error.detail,
-        "runtime mutation ledger format requires verification"
-    );
+    assert_eq!(error.code, code);
+    assert_eq!(error.detail, detail);
     assert!(!error.retryable);
     let layer3_adapter::wire::ResponseFrame::Failure(wire) =
         error.response(layer3_adapter::wire::WireOperation::RuntimeStatus)
     else {
         panic!("format hold must retain its wire failure");
     };
-    assert_eq!(wire.code, "mutation_ledger_format_hold");
-    assert_eq!(
-        wire.detail,
-        "runtime mutation ledger format requires verification"
-    );
+    assert_eq!(wire.code, code);
+    assert_eq!(wire.detail, detail);
     assert!(!wire.retryable);
     let text = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
     assert_eq!(text.lines().count(), 1, "{text}");
@@ -172,6 +180,27 @@ fn syscall_cause_logs_kind_and_errno_but_never_error_payload() {
             &format!("raw_os_error=Some({})", libc::EIO),
         ],
     );
+    capture_failure(
+        || {
+            lock_error(
+                std::fs::TryLockError::Error(std::io::Error::from_raw_os_error(libc::EIO)),
+                "lock_existing",
+            )
+        },
+        &[
+            "predicate=\"io.writer_lock_syscall\"",
+            &format!("raw_os_error=Some({})", libc::EIO),
+        ],
+        "mutation_ledger_writer_held",
+        "runtime mutation ledger has another writer",
+    );
+    let busy = capture_failure(
+        || lock_error(std::fs::TryLockError::WouldBlock, "lock_existing"),
+        &["predicate=\"io.writer_lock_busy\""],
+        "mutation_ledger_writer_held",
+        "runtime mutation ledger has another writer",
+    );
+    assert!(!busy.contains("raw_os_error"), "{busy}");
 }
 
 #[test]

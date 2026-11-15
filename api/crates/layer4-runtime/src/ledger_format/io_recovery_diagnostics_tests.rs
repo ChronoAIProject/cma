@@ -85,7 +85,7 @@ impl Write for Log {
     }
 }
 
-fn expect_cause(fixture: &Fixture, fields: &[&str]) {
+fn expect_cause(fixture: &Fixture, fields: &[&str]) -> String {
     let log = Log::default();
     let output = log.clone();
     let subscriber = tracing_subscriber::fmt()
@@ -117,6 +117,7 @@ fn expect_cause(fixture: &Fixture, fields: &[&str]) {
     }
     assert!(!text.contains(fixture.root.to_str().unwrap()), "{text}");
     assert!(!text.contains(&fixture.config.sandbox_id), "{text}");
+    text
 }
 
 #[tokio::test]
@@ -184,5 +185,20 @@ async fn intent_recovery_preserves_missing_reserve_errno_without_repair() {
     assert!(!reserve.exists());
     assert_eq!(std::fs::read(&saved).unwrap(), before[2]);
     std::fs::rename(saved, reserve).unwrap();
+    assert_eq!(fixture.snapshot(), before);
+    let writer = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(fixture.config.state_root.join(STAGE).join("writer.lock"))
+        .unwrap();
+    writer.try_lock().unwrap();
+    let busy = expect_cause(
+        &fixture,
+        &[
+            "predicate=\"storage.paths.writer_busy\"",
+            "object_role=\"writer_lock\"",
+        ],
+    );
+    assert!(!busy.contains("raw_os_error"), "{busy}");
     assert_eq!(fixture.snapshot(), before);
 }

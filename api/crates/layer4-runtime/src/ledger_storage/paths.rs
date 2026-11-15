@@ -104,12 +104,8 @@ pub(super) fn prepare(directory: &Path, create: bool) -> Result<File> {
             invalid,
         ));
     }
-    lock.try_lock().map_err(|_| {
-        crate::failure::RuntimeError::rejected(
-            "mutation_ledger_writer_held",
-            "runtime mutation ledger has another writer",
-        )
-    })?;
+    lock.try_lock()
+        .map_err(|error| lock_error(error, operation))?;
     let database = open_file(&directory.join("ledger.sqlite3"), create)?;
     if create {
         database.sync_all().map_err(|error| {
@@ -180,6 +176,34 @@ pub(super) fn prepare(directory: &Path, create: bool) -> Result<File> {
     }
     super::reserve::prepare(directory, create)?;
     Ok(lock)
+}
+
+fn writer_held() -> crate::failure::RuntimeError {
+    crate::failure::RuntimeError::rejected(
+        "mutation_ledger_writer_held",
+        "runtime mutation ledger has another writer",
+    )
+}
+
+fn lock_error(
+    error: std::fs::TryLockError,
+    operation: &'static str,
+) -> crate::failure::RuntimeError {
+    match error {
+        std::fs::TryLockError::WouldBlock => diagnostics::predicate(
+            "storage.paths.writer_busy",
+            operation,
+            "writer_lock",
+            writer_held,
+        ),
+        std::fs::TryLockError::Error(error) => diagnostics::io(
+            "storage.paths.lock_syscall",
+            operation,
+            "writer_lock",
+            &error,
+            writer_held,
+        ),
+    }
 }
 
 pub(super) fn open_file(path: &Path, create: bool) -> Result<File> {
