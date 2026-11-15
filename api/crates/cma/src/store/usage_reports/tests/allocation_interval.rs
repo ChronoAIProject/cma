@@ -8,7 +8,13 @@ use std::sync::Mutex;
 
 async fn observed(database_variable: &str) -> (Arc<ReportingStore>, Arc<Mutex<Vec<Document>>>) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
-    let database = std::env::var(database_variable).expect("named disposable database required");
+    let database = match std::env::var(database_variable) {
+        Ok(database) => database,
+        Err(std::env::VarError::NotPresent) => {
+            format!("metrics_2140_{}", uuid::Uuid::new_v4().simple())
+        }
+        Err(error) => panic!("invalid named disposable database: {error}"),
+    };
     assert!(database.starts_with("metrics_2140_"));
     let original = ReportingStore::connect(&uri, &database, &[19; 32])
         .await

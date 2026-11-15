@@ -116,6 +116,10 @@
     "reason": "Existing trigger-reference refusal mismatch; restore selection with its separately owned fix.",
     "issue": "https://github.com/ChronoAIProject/cma/issues/1854"
   },
+  "store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix": {
+    "kind": "fixture",
+    "reason": "Requires the dedicated exact-source usage matrix runner with two scoped disposable databases, frozen range, source SHA, private output directory and full 3,758,688-event capacity. Run separately from ordinary Mongo contracts."
+  },
   "store::worker_runtime_supervision_tests::scheduler_panic_preserves_native_task_home_and_conversation": {
     "kind": "fixture",
     "reason": "Requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh."
