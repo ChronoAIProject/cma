@@ -7,7 +7,8 @@
       "scenario": "admin_runtime_activity_operator",
       "request": {
         "method": "GET",
-        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity"
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
       },
       "response": {
         "status": 200,
@@ -28,7 +29,8 @@
       "scenario": "admin_runtime_activity_anonymous",
       "request": {
         "method": "GET",
-        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity"
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
       },
       "response": {
         "status": 401,
@@ -52,7 +54,8 @@
       "scenario": "admin_runtime_activity_ordinary",
       "request": {
         "method": "GET",
-        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity"
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
       },
       "response": {
         "status": 403,
@@ -76,7 +79,8 @@
       "scenario": "admin_runtime_activity_wrong_capability",
       "request": {
         "method": "GET",
-        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity"
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
       },
       "response": {
         "status": 403,
@@ -100,7 +104,8 @@
       "scenario": "admin_runtime_activity_unavailable",
       "request": {
         "method": "GET",
-        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity"
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
       },
       "response": {
         "status": 503,

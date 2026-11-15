@@ -107,6 +107,14 @@ pub(super) const CASES: &[(&str, Classification)] = &[
         Classification::RawJson,
     ),
     ("admin-runtime-update-invalid-json", Classification::RawJson),
+    (
+        "admin-runtime-migration-malformed",
+        Classification::TypedShape,
+    ),
+    (
+        "admin-runtime-migration-self-attestation",
+        Classification::TypedShape,
+    ),
     ("settings-state-agent-invalid-input", Classification::Local),
     (
         "preferences-state-agent-invalid-input",

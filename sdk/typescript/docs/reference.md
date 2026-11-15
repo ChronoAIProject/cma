@@ -55,6 +55,17 @@ explicit operator capabilities. Settings replace, patch and reset carry
 omitted sections unchanged. Null sections and empty patches are refused. Neither
 settings commands nor Trigger pause/resume invent an idempotency key or retry.
 
+`admin.migrateSandboxRuntime(id, body)` sends the exact custom-image guards and
+server authority reference, returning a 202 Sandbox projection for admission or
+accepted replay. Fresh admission is default-off and requires `ControlAnySandbox`.
+The immutable origin includes the exact retained `home` attachment; the SDK
+preserves that opaque provider lineage and the server validates it. Requests
+cannot supply clearance or proof, and this method does not invent a retry key.
+`admin.observeSandboxRuntimeActivity(id)` independently requires `ReadAllSandboxes`
+and returns a typed `unknown`, `active`, `observing`, or `quiet` status. Unknown
+is not inactivity approval; `proof_reference` is an opaque lookup handle, not
+permission to migrate. Neither capability implies the other.
+
 `readDefaults(options?)` performs the authenticated `GET /api/v1/defaults` and
 returns only `sandbox_profile`, `workspace_profile`, and `agent_profile`, each
 an immutable `{ id, revision }` reference. It requires `use_own_sandboxes`.

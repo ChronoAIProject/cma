@@ -29,10 +29,21 @@ returns `Conformance`, containing `service`, `status`, and the currently exposed
 | `responses_v2()` | `read_capabilities`, `create`, `create_for_agent`, `read`, `read_conversation`, `list_items`, `replay`, `observe_controls`, `submit_control`, `interrupt_with_input`, `read_command`, `observe_queued_cancellation`, `cancel_queued_response` |
 | `agent_events_v2()` | `read_transport_eligibility`, `snapshot`, `events` with `consume_next` and `acknowledged_cursor` |
 | `responses()` | `create_conversation`, `read_conversation`, `list_items`, `create`, `read`, unsupported `delete`, `cancel` |
-| `admin()` | `read_admission`, `stop_admission`, `resume_admission`, `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
+| `admin()` | `read_admission`, `stop_admission`, `resume_admission`, `list_sandboxes`, `read_sandbox`, `sandbox_events`, `retire_sandbox`, `migrate_sandbox_runtime`, `observe_sandbox_runtime_activity`, `list_profiles`, `retire_profile`, `read_settings`, `replace_settings`, `patch_settings`, `reset_settings`, `pause_triggers`, `resume_triggers`, `read_runtime_inventory`, `list_warm_pools`, `configure_warm_pool`, `resize_warm_pool`, `list_activity` |
 | `usage()` | `summary`, `sandboxes`, `sandbox`, `events`, `admin_summary`, `admin_sandboxes` |
 | `Client` reads | `read_conformance`, `read_openapi`, `read_defaults`, `read_trigger_preview`, `read_trigger_badge` |
 | Explicit refusals | `agents().terminal`, `unsupported().mcp`, `unsupported().a2a` |
+
+`admin().migrate_sandbox_runtime(id, &CustomRuntimeMigrationRequest)` sends exact
+custom-image guards and the server authority reference, returning a 202 Sandbox
+projection for admission or accepted replay. Fresh admission is default-off and
+requires `ControlAnySandbox`. The origin retains its exact opaque `home` JSON
+object; the server validates that provider lineage. The request type excludes
+caller-supplied clearance or proof and does not invent a retry key.
+`admin().observe_sandbox_runtime_activity(id)` independently requires
+`ReadAllSandboxes` and returns `RuntimeActivityStatus`. Unknown is not inactivity
+approval and a quiet `proof_reference` is not migration permission. Neither
+capability implies the other.
 
 `workspaces().recover_prepare(id, &key)` sends a keyed, bodyless command for the same failed,
 never-ready Workspace. HTTP 202 confirms recovery admission; read the original

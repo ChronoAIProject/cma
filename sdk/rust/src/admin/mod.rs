@@ -8,10 +8,12 @@ use crate::{
 };
 use reqwest::{Method, StatusCode};
 mod admission;
+mod runtime_migration;
 mod settings;
 mod types;
 mod warm_pools;
 pub use admission::*;
+pub use runtime_migration::*;
 pub use settings::*;
 pub use types::*;
 pub use warm_pools::*;

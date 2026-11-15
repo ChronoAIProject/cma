@@ -8,6 +8,12 @@ import {
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
 import {
+  customRuntimeMigrationRequest,
+  runtimeActivityStatus,
+  type CustomRuntimeMigrationRequest,
+} from './runtime-migration.js';
+export type * from './runtime-migration.js';
+import {
   admissionControl,
   admissionControlRead,
   changeAdmissionRequest,
@@ -226,6 +232,33 @@ export class Administration {
         expectedStatus: 202,
         body: input(updateSandboxRuntimeRequest, body),
       },
+    );
+  }
+  /** Exact custom migration or accepted replay; requires ControlAnySandbox. */
+  migrateSandboxRuntime(
+    id: string,
+    body: CustomRuntimeMigrationRequest,
+    options: OperationOptions = {},
+  ) {
+    return read(
+      this.config,
+      `/api/v1/admin/sandboxes/${segment(id)}/runtime-migration`,
+      identity(sandbox, id),
+      {
+        ...options,
+        method: 'POST',
+        expectedStatus: 202,
+        body: input(customRuntimeMigrationRequest, body),
+      },
+    );
+  }
+  /** Read-only observation; ReadAllSandboxes is independent of control capability. */
+  observeSandboxRuntimeActivity(id: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      `/api/v1/admin/sandboxes/${segment(id)}/runtime-update/activity`,
+      runtimeActivityStatus,
+      options,
     );
   }
   listProfiles(options: AdminProfileListOptions = {}) {

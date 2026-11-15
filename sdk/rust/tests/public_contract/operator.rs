@@ -84,6 +84,14 @@ pub async fn dispatch(c: &Context<'_>) -> Result<()> {
                 .update_sandbox_runtime(c.param("id"), &c.body()?)
                 .await,
         ),
+        "POST /api/v1/admin/sandboxes/{id}/runtime-migration" => c.check(
+            admin
+                .migrate_sandbox_runtime(c.param("id"), &c.body()?)
+                .await,
+        ),
+        "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity" => {
+            c.check(admin.observe_sandbox_runtime_activity(c.param("id")).await)
+        }
         "GET /api/v1/admin/profiles" => c.check(
             admin
                 .list_profiles(&ProfileListOptions {
