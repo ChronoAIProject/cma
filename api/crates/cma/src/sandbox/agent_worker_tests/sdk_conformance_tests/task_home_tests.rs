@@ -14,6 +14,7 @@ mod authority;
 mod desktop;
 mod desktop_native;
 mod environment;
+mod environment_identity;
 mod integrated_tests;
 mod recovery;
 mod restart;
