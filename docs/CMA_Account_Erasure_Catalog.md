@@ -354,3 +354,41 @@ subject-string overlap. Canonical retained pins and surviving roots still finish
 their precise declarations. See the fourth-review migration in
 [CMA Account Deletion](CMA_Account_Deletion.md#fourth-review-selector-and-permanent-refusal-migration)
 for the compound-index set, cursor reader floor and permanent cohort-block contract.
+## Optional namespace authority
+
+`sandbox_usage_allocation_buckets_v1` remains in the complete 157-collection
+catalog, including both its indexed Sandbox link and owner scan. Its derived
+projection is optional; permanent ownership epochs, aggregate usage authority,
+and credential custody retain their existing policies.
+
+Record effects receive `Options::allocation_rollups_enabled: Option<bool>` from
+the caller's deployment authority. `Options::from_config` records the existing
+allocation rollup setting; `None` means unknown, never disabled. No new deployment
+switch or database grant is introduced.
+
+Each batch obtains a fresh namespace receipt with `listCollections`, explicitly
+setting `authorizedCollections=false`. Only `Some(false)` and a successful exact
+namespace absence result permit omission. That receipt covers discovery-index
+preparation, context initialization, and both indexed and shared-scan effects;
+none sends a data query or creates an index/collection in the absent namespace.
+The current history sources and reference/residue selectors have no separate
+allocation namespace query. Selector matching remains unchanged. An independent
+future residue reconciler must obtain its own complete metadata receipt; this
+record-effects receipt is not a completion or zero-residue capability.
+
+If the namespace exists, including historical data, or enablement is true or
+unknown, the actual credential must pass `find` and `remove` command probes using
+an impossible `_id` selector. These commands cannot read/delete another tenant's
+row or create a namespace. Existing index preparation still requires its actual
+`listIndexes` and, where needed, `createIndex` authority. Unauthorized commands
+produce a typed `CollectionAuthority` cohort block; environmental errors remain
+errors. Filtered authorized-only metadata and failed metadata commands never
+mean absence or zero residue. No credential or grant is rewritten.
+
+Receipts are invocation-local. The additive, defaulted cursor absence marker is
+only a rescan hint: every resumed batch rechecks metadata and command authority,
+and a changed availability restarts keysets/index preparation. Unknown older
+cursors restart safely. Mandatory collections retain their existing initialization
+and permission requirements; frozen versioned-log carriers retain their explicit
+DDL rules. This exception does not skip arbitrary missing collections and does
+not enable the allocation feature.

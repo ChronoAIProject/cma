@@ -50,6 +50,7 @@ async fn deadline(unreadable: bool, configured: u64) {
         }],
         &mut cursor,
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
             transaction_drain_fallback_secs: configured,
         },
@@ -114,6 +115,7 @@ async fn invalid_configured_deadline_requires_cohort_intervention_without_subjec
         &mut Cursor::default(),
         "2026-11-14T00:00:00Z",
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
             transaction_drain_fallback_secs: u64::MAX,
         },
@@ -155,6 +157,7 @@ async fn invalid_worker_clock_is_retryable_without_attributing_the_first_cohort_
         &mut cursor,
         "invalid-worker-clock",
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
             transaction_drain_fallback_secs: 120,
         },
@@ -200,6 +203,7 @@ async fn server_clock_command_failure_is_retryable_and_a_fresh_attempt_succeeds(
     }];
     let mut cursor = Cursor::default();
     let options = Options {
+        allocation_rollups_enabled: Some(false),
         billing_enabled: false,
         transaction_drain_fallback_secs: 120,
     };
