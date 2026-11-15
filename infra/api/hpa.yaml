@@ -1,5 +1,5 @@
-# Apply only in S3 after ownership, capacity and qualified timing gates pass.
-# Extend the down period to ceil(p95 handoff + 30) when qualified p95 > 90s.
+# Lead instruction 2026-11-15 17:48 SGT: AM min2/max4 with S1.
+# Apply after S1's coordination activation and 1->0->2 replica transition.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -14,7 +14,7 @@ spec:
     kind: Deployment
     name: cma-agent-manager
   minReplicas: 2
-  maxReplicas: 5
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
