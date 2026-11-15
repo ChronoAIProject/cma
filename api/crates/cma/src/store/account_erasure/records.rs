@@ -99,13 +99,22 @@ async fn run(
         now,
         options,
     } = input;
+    let receipt = super::optional::inspect(db, options.allocation_rollups_enabled).await?;
+    if cursor.allocation_absent != Some(receipt.allocation_absent) {
+        // A persisted absence marker cannot hide a namespace created later.
+        cursor.operation = 0;
+        cursor.after = None;
+        cursor.selector = None;
+        cursor.indexes_ready = false;
+        cursor.allocation_absent = Some(receipt.allocation_absent);
+    }
     if !cursor.indexes_ready {
-        super::indexes::ensure(db).await?;
+        super::indexes::ensure_with_receipt(db, &receipt).await?;
         cursor.indexes_ready = true;
     }
     super::publisher_pending::preflight(db, targets).await?;
     if contexts.len() != targets.len() {
-        *contexts = context::load_cohort(db, targets).await?;
+        *contexts = context::load_cohort_with_receipt(db, targets, &receipt).await?;
     }
     let mut expanded = false;
     for context in contexts.iter_mut() {
@@ -157,6 +166,10 @@ async fn run(
     let agents = selectors::agents(contexts);
     let operations = progress::operations();
     while let Some((entry, indexed)) = operations.get(cursor.operation).copied() {
+        if receipt.skips(entry.collection) {
+            cursor.advance();
+            continue;
+        }
         let rules: Vec<_> = entry
             .rules
             .iter()

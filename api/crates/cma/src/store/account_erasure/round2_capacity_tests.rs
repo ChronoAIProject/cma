@@ -178,6 +178,7 @@ async fn capacity_rejection_keeps_the_real_erasure_cursor_bounded_before_effects
         &mut cursor,
         BTreeSet::from(["a".into(), "b".into()]),
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
         },
         &progress::operations(),

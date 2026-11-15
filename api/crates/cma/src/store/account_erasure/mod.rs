@@ -15,6 +15,7 @@ mod identity_activity;
 mod identity_refs;
 mod indexed;
 mod indexes;
+mod optional;
 mod progress;
 mod publisher_pending;
 mod records;
@@ -32,6 +33,16 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Options {
     pub billing_enabled: bool,
+    /// Only an explicitly disabled deployment can omit an absent projection.
+    pub allocation_rollups_enabled: Option<bool>,
+}
+impl Options {
+    pub fn from_config(config: &crate::config::Config, billing_enabled: bool) -> Self {
+        Self {
+            billing_enabled,
+            allocation_rollups_enabled: Some(config.usage_metrics.views.allocation_rollups_enabled),
+        }
+    }
 }
 // Test fixtures choose the disabled billing pilot explicitly. Production callers
 // must supply the actual deployment mode through erase_records_with_options.
@@ -49,6 +60,7 @@ pub(crate) async fn erase_records(
         now,
         Options {
             billing_enabled: false,
+            allocation_rollups_enabled: Some(false),
         },
     )
     .await
@@ -61,7 +73,13 @@ pub(crate) struct AttributedBlock {
 /// Permanent failures without evidence assigning them to a personal account.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CohortBlock {
-    CorruptRecord { collection: &'static str },
+    CorruptRecord {
+        collection: &'static str,
+    },
+    CollectionAuthority {
+        collection: &'static str,
+        operation: &'static str,
+    },
 }
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum Error {
@@ -146,6 +164,8 @@ pub(crate) struct Cursor {
     #[serde(skip)]
     capacity_subject: Option<String>,
     indexes_ready: bool,
+    // A rescan marker only: authorization always requires a fresh receipt.
+    allocation_absent: Option<bool>,
 }
 impl Cursor {
     fn advance(&mut self) {
@@ -160,6 +180,8 @@ mod batch_tests;
 mod catalog_fixture_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+pub(crate) mod optional_authority_tests;
 #[cfg(test)]
 mod organization_tests;
 #[cfg(test)]
