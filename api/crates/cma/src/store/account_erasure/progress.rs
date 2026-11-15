@@ -77,7 +77,11 @@ pub(super) fn prepare(
     operations: &[(&Entry, bool)],
 ) {
     let digest = layer2_core::document_artifacts::digest(
-        format!("account-record-effects-c1:{operations:?}").as_bytes(),
+        format!(
+            "account-record-effects-c1:{operations:?}:{:?}",
+            options.allocation_rollups_enabled
+        )
+        .as_bytes(),
     );
     let collection = operations
         .get(cursor.operation)
