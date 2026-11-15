@@ -40,6 +40,8 @@ async fn foreign_and_wrong_operation_callers_never_touch_ownership_or_effects() 
         ("POST", "attachments"),
         ("GET", "browser"),
         ("POST", "recover-worktree"),
+        ("PATCH", "preferences"),
+        ("PATCH", "settings"),
     ] {
         let response = call(&router, context("foreign"), method, suffix).await;
         assert!(
@@ -137,6 +139,8 @@ async fn view_link_cannot_route_writes_and_revocation_precedes_owner_lookup() {
         ("POST", "browser/control"),
         ("GET", "browser/control?operation_id=retained"),
         ("GET", "models"),
+        ("PATCH", "preferences"),
+        ("PATCH", "settings"),
     ] {
         assert!(
             call(&router, viewer.clone(), method, suffix)
@@ -176,6 +180,8 @@ async fn accepted_write_link_routes_files_and_upload_but_not_browser_management(
         ("DELETE", "files"),
         ("POST", "attachments"),
         ("GET", "models"),
+        ("PATCH", "preferences"),
+        ("PATCH", "settings"),
     ] {
         authorize(&f, &viewer, method, suffix).await.unwrap();
     }
@@ -192,6 +198,8 @@ async fn exact_read_proof_keeps_read_scope_without_ambient_owner_authority() {
     };
     authorize(&f, &proof, "GET", "environment").await.unwrap();
     assert!(authorize(&f, &proof, "POST", "files").await.is_err());
+    assert!(authorize(&f, &proof, "PATCH", "preferences").await.is_err());
+    assert!(authorize(&f, &proof, "PATCH", "settings").await.is_err());
     proof.credential_source = CredentialSource::RequestBoundRead {
         expires_at: SystemTime::now() - std::time::Duration::from_secs(1),
     };
@@ -212,6 +220,8 @@ async fn owner_preflight_preserves_head_skills_post_and_observer_release() {
         ("HEAD", "files/content"),
         ("POST", "skills"),
         ("POST", "recover-worktree"),
+        ("PATCH", "preferences"),
+        ("PATCH", "settings"),
         ("DELETE", "browser"),
         ("GET", "browser/control?operation_id=one"),
     ] {
