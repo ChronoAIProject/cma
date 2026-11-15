@@ -339,6 +339,25 @@ async fn native_usage_hotfix_full_report_six_case_matrix() {
             .unwrap(),
     );
     let second_startup_us = began.elapsed().as_micros();
+    // Reuse this one fixture to exercise an upgrade over retained history.
+    // Only the newly added index is removed from this exact disposable DB;
+    // all baseline indexes remain installed during the identical seed.
+    let interval_keys = doc! {"sandbox_id":1,"ended_at":1,"started_at":1,"revision":1};
+    let mut removed_empty_interval = false;
+    for index in &startup_indexes {
+        if index.keys == interval_keys {
+            let name = index
+                .options
+                .as_ref()
+                .and_then(|options| options.name.as_deref());
+            assert_eq!(name, Some("sandbox_usage_events_interval"));
+            db.collection::<Document>("sandbox_usage_events")
+                .drop_index(name.unwrap())
+                .await
+                .unwrap();
+            removed_empty_interval = true;
+        }
+    }
     let from = to - HISTORY_DAYS * DAY;
     let checkpoints = HISTORY_DAYS * DAY / CADENCE;
     let preparation = Instant::now();
@@ -384,12 +403,36 @@ async fn native_usage_hotfix_full_report_six_case_matrix() {
         .await
         .unwrap();
     assert_eq!(actual_events, MEMBERS as u64 * checkpoints);
+    let preparation_us = preparation.elapsed().as_micros();
+    let populated_began = Instant::now();
+    let populated_startup =
+        crate::store::sandbox_mongo::MongoSandboxStore::open(&setup, &database).await;
+    let populated_startup_us = populated_began.elapsed().as_micros();
+    let populated_startup_record = json!({"source":source,"events":actual_events,
+        "removed_empty_interval":removed_empty_interval,
+        "populated_startup_us":populated_startup_us,"success":populated_startup.is_ok(),
+        "error":populated_startup.as_ref().err().map(|error|format!("{error:?}")),
+        "scope":"actual startup over retained fixture history; seed excluded"});
+    save(
+        &output.join("populated-startup.json"),
+        &populated_startup_record,
+    );
+    drop(populated_startup.unwrap());
+    let populated_indexes: Vec<_> = db
+        .collection::<Document>("sandbox_usage_events")
+        .list_indexes()
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
     let mut result = json!({"source":source,"database":database,"fixture":{
         "members":MEMBERS,"personal_members":PERSONAL,"history_days":HISTORY_DAYS,
         "cadence_seconds":CADENCE,"events":actual_events,"from":from,"to":to,
         "rollups":false,"views":false,"warmer":false,"backfill":false},
         "startup_us":startup_us,"second_startup_us":second_startup_us,
-        "startup_indexes":startup_indexes,"preparation_us":preparation.elapsed().as_micros(),
+        "startup_indexes":startup_indexes,"preparation_us":preparation_us,
+        "populated_startup":populated_startup_record,"populated_indexes":populated_indexes,
         "trace_subscriber_installed":trace_installed,"cases":[],
         "clock":"native authenticated route admission through generated/finalized descriptor and first page; no external authentication, network, poll scheduling, or browser render",
         "sampling":"N1 per case; no percentile claim; legacy cache cleared before each case; Mongo cache not reset"});
