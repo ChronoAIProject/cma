@@ -185,7 +185,7 @@ pub(super) async fn fixture(
             .adapter
             .provision_runtime(&layer3_adapter::RuntimeProvisionRequest::new(
                 1,
-                sandbox_spec(&sandbox, "test"),
+                sandbox_spec(&sandbox, "test").expect("valid startup runtime authority"),
             ))
             .await
             .unwrap();
@@ -196,7 +196,7 @@ pub(super) async fn fixture(
         harness.store.create_sandbox(sandbox.clone()).await.unwrap();
         authority.insert(sandbox.id.clone(), sandbox);
     }
-    let mut orphan = sandbox_spec(&base, "test");
+    let mut orphan = sandbox_spec(&base, "test").expect("valid orphan fixture runtime authority");
     orphan.sandbox_id = "sbx_startup_orphan".into();
     harness.adapter.provision(&orphan).await.unwrap();
     let inventory = harness.adapter.runtime_inventory().await.unwrap();
