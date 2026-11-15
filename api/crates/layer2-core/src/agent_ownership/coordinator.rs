@@ -325,7 +325,7 @@ impl OwnershipCoordinator {
             return Ok(true);
         }
         let owner = bounded(self.store.owner(&authority.token.agent_id)).await?;
-        if !owner.is_some_and(|lease| lease.token.epoch > authority.token.epoch) {
+        if owner.is_none_or(|lease| lease.token.epoch <= authority.token.epoch) {
             return Ok(false);
         }
         let mut owned = self.owned.lock().await;
