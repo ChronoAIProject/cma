@@ -25,7 +25,6 @@ pub struct OwnershipCoordinator {
     registration: std::sync::Mutex<Option<Member>>,
     registered: AtomicBool,
     admission_readiness: OnceLock<Arc<dyn Fn() -> bool + Send + Sync>>,
-    admission_changes: watch::Sender<()>,
     uncertain_acquisitions: AtomicUsize,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,
@@ -274,7 +273,6 @@ impl OwnershipCoordinator {
 
     pub fn stop_admission(&self) {
         self.draining.store(true, Ordering::Release);
-        self.admission_changes.send_replace(());
     }
 
     pub async fn begin_drain(&self) -> Vec<Arc<Authority>> {
@@ -362,7 +360,6 @@ impl OwnershipCoordinator {
 
     pub async fn fail(&self) {
         self.failed.send_replace(true);
-        self.admission_changes.send_replace(());
         for authority in self.owned.lock().await.values() {
             authority.revoke();
         }
