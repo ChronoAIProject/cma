@@ -187,7 +187,12 @@ until a reviewed credential-safe early-drain boundary is implemented and qualifi
 do not reintroduce the shell/CLI hook or treat sleep as proof of early owned drain.
 SIGTERM must perform safe drain and failed close must retain authority until expiry.
 Neither grace nor a healthy probe proves failover performance. Budget
-AM25+30+660+30+15=760; EG reserves at least30+660+45 within760. Prove actual shutdown
+AM25+30+23+660+30=768, with an810s new-Pod grace for the #2146 image;
+EG reserves at least30+660+45 within760. The AM's23s ownership drain runs
+before the660s HTTP wait and is not repeated by successive shutdown branches.
+PreStop can finish that idempotent drain earlier. Long Pod grace never extends
+ownership retention: unconfirmed receiver/release outcomes are reported and
+retain only the existing expiring lease. Prove actual shutdown
 fits the grace; these sums are not measured process/client lifetime bounds.
 
 ## Controller and route packet: prepare before the outage
@@ -273,6 +278,21 @@ PASS. S2 also requires provider canaries: every accepted event terminal/reconcil
 no unsupported blind replay, and the assigned24h observation handoff. No ON1
 intermediate promotion gate is part of this cutover.
 
+For the #2146 AM image, application readiness requires completed startup,
+fresh successful store checks, available required workers, and a fresh proof of
+the exact own Pod name/namespace/UID and running `api` container incarnation.
+The Pod proof requires no deletion timestamp, startup completion, a container ID
+and restart count; it does not read the Kubernetes Ready condition. `/ready`
+and ownership acquisition use the same admission predicate. Kubernetes PodReady
+and NEG health follow that endpoint, avoiding a circular startup dependency.
+Read errors or stale proof withdraw admission while safe retained leases renew.
+Observed deletion, changed container incarnation, or the early-installed
+SIGTERM/SIGINT latch permanently closes admission and starts the bounded drain.
+Validate a never-ready third AM terminated during startup: zero acquisitions,
+both serving AMs retaining or claiming all attempted Agents within23s, then the
+full two-AM journey and local2->3->2 exercise. Production HPA replay requires
+the lead's separate clearance after those exact-image results.
+
 ## S3: HPA activation and measured automatic up/down
 
 For paired S3, require S1/S2 PASS, verified Atlas>=30% headroom, the full quota/node/provider bound
@@ -285,7 +305,8 @@ qualified p95 from drain initiation through all-owner handoff AND successor
 service. Missing timing HOLDs S3; p95 is never the hard client lifetime bound.
 Scale-down is fixed at **one Pod per 120 seconds**, with **300 seconds** of
 stabilization. Unknown p95 or p95>90s holds S3; never widen the interval. Both
-templates and every actual Pod must have **760 seconds** of termination grace,
+templates and every actual Pod must have the qualified termination grace
+(AM **810 seconds** for #2146; EG **760 seconds**),
 including preStop, before S3. Grace is not a measured hard process/socket bound.
 
 Use the guarded S3 quota raise (CPU requests40→64, limits80→128 with saved

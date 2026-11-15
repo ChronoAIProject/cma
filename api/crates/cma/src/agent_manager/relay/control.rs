@@ -31,7 +31,7 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
     if request.uri().path() == "/ready" && !state.manager.is_ready() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            axum::Json(serde_json::json!({"status":"not-ready", "reason":"membership"})),
+            axum::Json(serde_json::json!({"status":"not-ready", "reason":"ownership_admission"})),
         )
             .into_response();
     }
