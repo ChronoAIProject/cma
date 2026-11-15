@@ -100,7 +100,7 @@ pub(crate) struct TransitionRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "request", rename_all = "snake_case")]
 pub(crate) enum OperationRequest {
-    Bootstrap(BootstrapRequest),
+    Bootstrap(Box<BootstrapRequest>),
     Transition(Box<TransitionRequest>),
 }
 

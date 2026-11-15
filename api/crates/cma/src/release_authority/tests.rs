@@ -335,7 +335,7 @@ fn proof_is_bound_to_exact_action_revision_and_subject() {
         request_sha256: "a".repeat(64),
         state_sha256: "b".repeat(64),
         subject: EvidenceSubject::Bootstrap {
-            request: bootstrap(),
+            request: Box::new(bootstrap()),
         },
     };
     let proof = VerifiedEvidence::from_verified_observations(&request, "c".repeat(64)).unwrap();
