@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -73,7 +74,7 @@ async fn checkpoint_capture_begin_and_sandbox_writer_claim_have_one_winner() {
         let request = begin(&parent);
         let (capture, writer) = tokio::join!(
             store.commit_sandbox_lifecycle(request),
-            store.claim_sandbox_work(&parent.id, "writer", MINUTE.into(), TWO_MINUTES.into()),
+            store.claim_sandbox_work(&parent.id, "writer", MINUTE.into(), work_lease_deadline()),
         );
         match (capture, writer) {
             (Ok(()), Ok(None)) | (Err(SandboxStoreError::Conflict), Ok(Some(_))) => {}
@@ -128,7 +129,7 @@ async fn child_writer_claims_fence_a_capture_started_from_an_older_parent_snapsh
                 .await
                 .unwrap();
             assert!(store
-                .claim_workspace_work(&workspace.id, "writer", NOW.into(), MINUTE.into())
+                .claim_workspace_work(&workspace.id, "writer", NOW.into(), work_lease_deadline())
                 .await
                 .unwrap()
                 .is_some());
@@ -212,7 +213,7 @@ async fn capture_and_child_writer_claims_reconcile_ambiguous_commits_once() {
                 .unwrap();
             ambiguous_commits(&admin, &app_name).await;
             store
-                .claim_workspace_work(&workspace.id, "writer", NOW.into(), MINUTE.into())
+                .claim_workspace_work(&workspace.id, "writer", NOW.into(), work_lease_deadline())
                 .await
                 .map(|row| row.map(|row| row.revision))
         };

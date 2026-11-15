@@ -21,9 +21,17 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let now = if self.config.native_create_retry_enabled {
+            now.max(SystemTime::now())
+        } else {
+            now
+        };
         let mut timing = super::provision_timing::ProvisionTiming::new();
         if let Some(failure) = self.prepare_sandbox_home(&mut sandbox, now).await? {
-            return self.handle_failure(sandbox, failure, now).await;
+            return self
+                .handle_provision_failure(sandbox, failure, now, started)
+                .await;
         }
         timing.completed("home_preparation");
         let spec = sandbox_spec(&sandbox, &self.config.deployment_id);
@@ -38,11 +46,15 @@ impl SandboxWorker {
         }
         timing.completed("execution_policy");
         if sandbox.runtime.is_some() {
-            let digest = self
-                .dependencies
-                .store
-                .completed_installation_digest(&sandbox)
-                .await?;
+            let digest = match sandbox.work.prepared_installation_digest.clone() {
+                Some(digest) => Some(digest),
+                None => {
+                    self.dependencies
+                        .store
+                        .completed_installation_digest(&sandbox)
+                        .await?
+                }
+            };
             let Some(next) = self
                 .adopt_initial_runtime(sandbox, digest.as_deref(), now)
                 .await?
@@ -70,6 +82,7 @@ impl SandboxWorker {
         };
         let mut request = RuntimeProvisionRequest::new(generation, spec);
         request.funded_until = funded_until;
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self.dependencies.adapter.provision_runtime(&request).await {
             Ok(handle) => {
                 timing.completed("runtime_provision");
@@ -110,7 +123,7 @@ impl SandboxWorker {
                 result
             }
             Err(error) => {
-                self.handle_failure(sandbox, adapter_failure(error), now)
+                self.handle_provision_failure(sandbox, adapter_failure(error), now, started)
                     .await
             }
         }
@@ -135,6 +148,7 @@ impl SandboxWorker {
         }
         let request = super::initial_runtime::installation_request(&sandbox)
             .expect("execution policy was persisted");
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         match self
             .dependencies
             .adapter
@@ -270,6 +284,7 @@ impl SandboxWorker {
             value: RuntimeCredential::new(material.value.expose()),
             custody_generation: Some(pending.generation),
         };
+        layer2_core::sandbox::store::WorkAuthority::current()?;
         if let Err(error) = self
             .dependencies
             .adapter

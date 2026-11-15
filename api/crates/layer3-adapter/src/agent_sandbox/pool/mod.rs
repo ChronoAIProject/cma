@@ -1,4 +1,7 @@
 //! Native extension resources; pool members carry no tenant configuration.
+mod claim_guard;
+#[cfg(test)]
+mod claim_guard_tests;
 mod claims;
 mod cleanup;
 mod cleanup_inventory;
@@ -21,6 +24,8 @@ mod recovery;
 mod retirement;
 mod retirement_inventory;
 mod runtime;
+mod target_fence;
+pub use target_fence::NativePoolTarget;
 pub(crate) mod runtime_upgrade;
 
 use kube::{

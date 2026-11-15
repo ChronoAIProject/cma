@@ -57,7 +57,14 @@ async fn bearer_provider_rate_limits_and_outages_return_503_then_recover_without
                 .await
                 .unwrap();
             let body: Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(body["code"], "store_failed");
+            assert_eq!(
+                body["code"],
+                if status == StatusCode::TOO_MANY_REQUESTS {
+                    "identity_unavailable"
+                } else {
+                    "store_failed"
+                }
+            );
             assert!(!String::from_utf8_lossy(&bytes).contains("fixture-token"));
             reply.write().await.status = StatusCode::OK;
             assert_eq!(request(&app).await.status(), StatusCode::OK);

@@ -51,7 +51,7 @@ is 64 MiB of complete BSON log documents. A byte-budget rejection can leave room
 for a smaller entry, but repeating the rejected append with unchanged history
 cannot succeed. A full entry count leaves no normal append room at all.
 
-Every retained event counts, including lifecycle retries, tool output and turn
+Every retained event counts, including recorded lifecycle failures, tool output and turn
 boundaries. The native provider's context compaction does not free this budget.
 Restarting CMA, waiting for the 18-minute lease, refreshing the browser, or
 retrying a message does not reclaim capacity. A connected native process may
@@ -134,6 +134,45 @@ per-document and 64-entry per-batch checks remain independent.
    Surface an actionable remediation instead of presenting repeated retries as
    recovery. Describe any changed persisted semantic shape and reader floor.
 
+### Repeated ordinary failure markers (#1788)
+
+With the strict, default-off `CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED` switch,
+consecutive failures of the same step and class retain one `WorkStepFailed` row.
+Changing diagnostic detail alone does not create a new class. Each repeat still
+increments attempts and revision, advances ready time and releases the lease;
+it preserves last_seq, work, receipts, stop intent and every retained log row.
+The first failure, class/step change and successful completion still append.
+Capacity and ledger markers retain priority and their exact-detail checks.
+
+The worker point read is only selection evidence. Both memory and Mongo stores
+recheck the exact observed tail and the complete metadata proposal in their own
+fenced snapshot. Segmented publication uses the same marker validation and its
+existing zero-entry publication receipt. No schema migration or new persisted
+field is needed; an older or flag-off worker resumes ordinary failure appends.
+
+The separate bounded-close switch and cohort may bound zero-entry verification,
+including at-capacity markers, under the first/hourly full audit and conflict
+reuse contract in [Admission append](CMA_Admission_Append.md). Without that gate,
+every zero-entry retry still fully scans. The 10,000-entry/64-MiB normal limits,
+stop/delete reserves and counting of every actual retained row are unchanged.
+
+The exception requires a complete audit on the first eligible retry after
+process start or audit-cache eviction, and on the next retry when audit age is
+at least one hour. This is a fixed code constant, not an environment setting.
+Store clones share a monotonic clock record; only confirmed commits advance it.
+Aborted and unknown commits cannot defer the next required audit. Between audits,
+trusted metadata and exact same-snapshot tail proofs are mandatory; missing,
+stale or untrusted proof falls back, while corruption and quarantine refuse.
+First failures, successful effects and step advances retain full verification.
+Middle-history corruption missed by point reads is detected at the next complete
+audit under the existing verifier; immutability of retained history is assumed
+between audits. Unknown commits still use full receipt reconciliation.
+
+For activation, enable the default-off single-marker switch alone, holding the
+existing bounded-close/cohort, pool and worker settings fixed for the measurement
+packet. Use the retry audit and reason-labelled fallback counters documented in
+[Admission append](CMA_Admission_Append.md), alongside scan bytes and latency.
+
 ### Selecting an already-marked cleanup retry (#1583)
 
 Related to #1421 and #1321. The failed-work retry path may select the existing
@@ -157,6 +196,8 @@ its exact tail, reconstructs the only permitted retry, and validates the expecte
 revision, identity, status/work, holder/fence and lease. A changed observation,
 gap, invalid schema or extra tail cannot turn the hint into a publication.
 Transaction conflicts use the existing retry budget and revalidate each snapshot.
+The opt-in #1788 policy above can reuse identical verified history within a
+publication and bound repeated marker verification between complete audits.
 Unknown commits keep exact receipt reconciliation and refusal; they never grant
 permission for a normal append, another settlement or an external effect replay.
 
@@ -170,7 +211,8 @@ delay. No capacity, event schema, retained history or recovery eligibility chang
 
 Real-Mongo regressions count actual scanner `find` commands through worker/store
 paths: two traversals for a first marker and the known-abort control, one for an
-eligible repeat, and fresh traversals on transaction retries. They retain full
+eligible repeat with bounded verification disabled, and fresh traversals on
+transaction retries with that gate disabled. They retain full
 validation while exercising changed observations, authority/lease refusals,
 corruption and physical limits, committed/uncommitted unknown outcomes, seventy
 unchanged failed closes, and successful cleanup continuation. These tests prove

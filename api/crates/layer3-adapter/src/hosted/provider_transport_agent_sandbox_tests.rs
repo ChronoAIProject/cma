@@ -6,7 +6,7 @@ use crate::{
     RestoreBootstrapRequest, RestoreRequest,
 };
 
-fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTransport {
+pub(super) fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTransport {
     let client = AgentSandboxClient::new(
         kube::Client::try_from(kube::Config::new(
             format!("http://{address}").parse().unwrap(),
@@ -20,6 +20,7 @@ fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTrans
             image_pull_secrets: vec![],
             template_network_policy: None,
             template_fs_group_change_policy: None,
+            native_claim_guard_enabled: false,
             control_key: "fixture".repeat(8),
         },
         "fixture",

@@ -35,9 +35,7 @@ impl DeliveryGate {
     ) -> Arc<Self> {
         Arc::new(Self {
             journal,
-            lease: Lease {
-                state: lease.state.clone(),
-            },
+            lease: lease.clone(),
             authority,
             plan,
             target,

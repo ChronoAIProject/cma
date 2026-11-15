@@ -80,6 +80,16 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    /// Snapshot only: the caller must exclude all other binding-cache writers until done.
+    fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
+        None
+    }
+    fn desktop_ownership(
+        &self,
+        _: &RuntimeHandle,
+    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+        None
+    }
     /// Present only when this backend supplies an independent native proof.
     fn capacity_recovery_transport(
         &self,
@@ -275,6 +285,18 @@ pub trait HostedBackend: Send + Sync {
         _home: &crate::HomeVolumeAttachment,
     ) -> Result<Option<crate::RuntimeInspection>> {
         Ok(None)
+    }
+
+    /// Opt-in preparation must gate all binding, assignment and status dispatch.
+    async fn inspect_native_runtime_after(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        admission: &crate::InspectionAdmission,
+    ) -> Result<Option<crate::RuntimeInspection>> {
+        admission.wait().await?;
+        self.inspect_native_runtime(handle, request, home).await
     }
 
     /// Fresh observation only; this must never bind or start a runtime process.

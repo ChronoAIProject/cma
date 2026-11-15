@@ -9,11 +9,14 @@ use layer2_core::sandbox::{
 use super::SandboxWorker;
 
 mod checkpoint;
+mod checkpoint_retry;
 mod conversations;
 mod home_recovery;
 mod pause;
 mod queue;
 mod reopen_output;
+mod reopen_owned;
+pub(super) use reopen_owned::PendingReopen;
 mod restore;
 mod service_access;
 mod support;

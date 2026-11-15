@@ -1,0 +1,44 @@
+{
+  "tooling_source": "0dd2db92962eecea55ea70b21953ffbc92d49796",
+  "application_source": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+  "source_binding_sha256": "5ae8cc8af6291fd2f216221e324085e22aee29159b5948a067fc0caeedfb24b2",
+  "original_result": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/integration-aadd212/stages-0dd/mongo-process-results.json",
+    "sha256": "99f2033c552ea9a8613288b7d74d6f19ad4a13d0168f1a48f3bc7676ea72bf8d"
+  },
+  "published_result": {
+    "path": "mongo-diagnostic-0dd.json",
+    "sha256": "5ec550b1858cde829c0eb8bcf62f990aba4a53657c5e629606a6a8a3ec243918",
+    "normalization": "Compact each observation object into one row; no value, ordering or observation removed or added.",
+    "decoded_json_equal": true,
+    "exact_original_reconstruction": "(json.dumps(json.loads(published_bytes), indent=2) + \"\\n\").encode(\"utf-8\")",
+    "original_bytes_reconstruction_verified": true
+  },
+  "artifacts": {
+    "mongo-diagnostic-0dd.json": "5ec550b1858cde829c0eb8bcf62f990aba4a53657c5e629606a6a8a3ec243918",
+    "diagnostic-source-binding-0dd.json": "0fbd9c97411e83d136201c0443e462a145b1214f13c87744fc994da99992a9d6",
+    "diagnostic-outcome-0dd.json": "499c194f0158f02a390eb5c49aaf8563990f5b605d2a2510108e1fc35f6270b5",
+    "cleanup-0dd.json": "f5b7b9ccb4d1d741aa6773e3927f5e1e8b93475fd521e0ee8b8d7d6a26b176a1"
+  },
+  "retained_invocation_log": {
+    "path": "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/integration-aadd212/stages-0dd/invocation.log",
+    "sha256": "5ccfe85585c00e6491198b7ef6f757a4cc9bb25bf4c670c4b17df93e91e1c97c",
+    "kind": "sanitized runner output and normal-slot resource gate"
+  },
+  "validation": {
+    "six_bound_sources_match": true,
+    "custody_helper_matches": true,
+    "raw_result_immutable": true,
+    "historical_receipts_unchanged": true
+  },
+  "scope": "Evidence-only publication; no executable changes, additional diagnostic, revised threshold, corrective candidate acceptance or cluster qualification.",
+  "published_source_binding": {
+    "path": "diagnostic-source-binding-0dd.json",
+    "sha256": "0fbd9c97411e83d136201c0443e462a145b1214f13c87744fc994da99992a9d6",
+    "original_sha256": "5ae8cc8af6291fd2f216221e324085e22aee29159b5948a067fc0caeedfb24b2",
+    "normalization": "Rename compiled_api_source to compiled_fixture_source in the published copy; it identifies the compiled Git fixture revision. The original pre-run receipt remains unchanged.",
+    "reason": "Secret scanner generic-api-key false positive on the metadata key plus public Git revision; no credential and no scan exemption.",
+    "exact_original_reconstruction": "Rename compiled_fixture_source back to compiled_api_source preserving key order, then json.dumps(value, indent=2) plus newline.",
+    "original_bytes_reconstruction_verified": true
+  }
+}

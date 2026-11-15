@@ -323,3 +323,6 @@ fn partial_replacement_is_ambiguous_and_never_frees_capacity() {
 
 #[path = "mutation_journal_lookup_tests.rs"]
 mod lookup_tests;
+
+#[path = "mutation_recovery_tests.rs"]
+mod recovery_tests;

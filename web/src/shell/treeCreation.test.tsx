@@ -7,6 +7,7 @@ import { unavailableClient } from '../api/client';
 import { navigationFixture, workspaceFixture } from '../test/hierarchy';
 import { Tree } from './Tree';
 import { CreationSummary, useTreeCreation } from './treeCreation';
+import { TreeCreationScope } from './treeCreationScope';
 
 function fixture(count = 6) {
   const workspace = workspaceFixture();
@@ -105,13 +106,13 @@ it('clears every category on viewer/client changes and refuses stale or mismatch
   expect(result.current.get('agt_0')).toBe('unavailable');
 });
 
-it('revalidates categories on foreground and poll, skips hidden pages and cancels on unmount', async () => {
+it('retries unavailable categories, retains known origins, skips hidden pages and cancels on unmount', async () => {
   vi.useFakeTimers();
   const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
   const readAgentProvenance = vi
     .fn()
-    .mockResolvedValueOnce(facts('agt_0'))
-    .mockRejectedValue(new Error('Denied'));
+    .mockRejectedValueOnce(new Error('Denied'))
+    .mockResolvedValue(facts('agt_0'));
   const client = { ...unavailableClient, readAgentProvenance };
   const wrapper = ({ children }: { children: ReactNode }) => (
     <CmaClientProvider client={client}>{children}</CmaClientProvider>
@@ -122,9 +123,12 @@ it('revalidates categories on foreground and poll, skips hidden pages and cancel
   expect(readAgentProvenance).not.toHaveBeenCalled();
   hidden.mockReturnValue(false);
   await act(async () => document.dispatchEvent(new Event('visibilitychange')));
-  expect(result.current.get('agt_0')).toBe('manual');
-  await act(async () => vi.advanceTimersByTimeAsync(60_000));
   expect(result.current.get('agt_0')).toBe('unavailable');
+  await act(async () => vi.advanceTimersByTimeAsync(60_000));
+  expect(result.current.get('agt_0')).toBe('manual');
+  await act(async () => vi.advanceTimersByTimeAsync(120_000));
+  await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+  expect(readAgentProvenance).toHaveBeenCalledTimes(2);
   unmount();
   expect(readAgentProvenance.mock.calls[0]?.[1].signal.aborted).toBe(true);
   await act(async () => vi.advanceTimersByTimeAsync(60_000));
@@ -161,6 +165,37 @@ it('hides an incomplete child summary', () => {
   expect(screen.queryByTitle(/Agent creation/)).not.toBeInTheDocument();
   rerender(<CreationSummary ids={['agt_0', 'agt_1']} facts={categories} />);
   expect(screen.getByTitle('Agent creation origins: 1 manual, 1 trigger')).toBeVisible();
+});
+
+it('shares immutable origins between retained trees and reads only newly appearing Agents', async () => {
+  vi.useFakeTimers();
+  const readAgentProvenance = vi.fn(async (id: string) => facts(id));
+  const client = { ...unavailableClient, readAgentProvenance };
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <CmaClientProvider client={client}>
+      <TreeCreationScope viewerId="viewer">{children}</TreeCreationScope>
+    </CmaClientProvider>
+  );
+  const { result, rerender } = renderHook(
+    ({ view, count }) => ({
+      tasks: useTreeCreation('viewer', fixture(count), view === 'tasks'),
+      environments: useTreeCreation('viewer', fixture(count), view === 'environments'),
+    }),
+    { wrapper, initialProps: { view: 'tasks', count: 2 } },
+  );
+  await act(async () => {});
+  expect(readAgentProvenance).toHaveBeenCalledTimes(2);
+  expect(result.current.environments.size).toBe(0);
+  rerender({ view: 'environments', count: 2 });
+  await act(async () => {});
+  expect(result.current.environments.size).toBe(2);
+  expect(result.current.tasks.size).toBe(0);
+  await act(() => vi.advanceTimersByTimeAsync(120000));
+  expect(readAgentProvenance).toHaveBeenCalledTimes(2);
+  rerender({ view: 'tasks', count: 3 });
+  await act(async () => {});
+  expect(readAgentProvenance).toHaveBeenCalledTimes(3);
+  expect(result.current.tasks.size).toBe(3);
 });
 
 it('shows distinct sibling badges and preserves whole-parent summaries without tree filters', async () => {

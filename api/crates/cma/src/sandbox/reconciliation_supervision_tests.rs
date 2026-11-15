@@ -14,7 +14,27 @@ fn age(activity: &crate::worker_supervision::Activity) -> u64 {
 
 #[tokio::test(start_paused = true)]
 async fn runtime_reconciliation_retains_long_batch_through_panic_and_drains_it_once() {
+    for enabled in [false, true] {
+        assert_supervised_batch_survives_panic(enabled).await;
+    }
+}
+
+async fn assert_supervised_batch_survives_panic(enabled: bool) {
     let (store, reconciler) = setup(8, Duration::from_secs(2)).await;
+    let shared = crate::background::BackgroundBudget::new();
+    let budget = if enabled {
+        shared.reserve(1).unwrap()
+    } else {
+        shared
+    };
+    let reconciler = reconciler
+        .with_background_work(crate::background::BackgroundWork::new(
+            budget,
+            "sandbox_reconciliation",
+            Duration::from_secs(30),
+            Duration::from_secs(15),
+        ))
+        .with_background_resumption(enabled);
     let activity = crate::worker_supervision::Workers::new().get("sandbox_reconciliation");
     let (stop, signal) = tokio::sync::watch::channel(false);
     let scheduler = reconciler.spawn_supervised(signal, activity.clone());

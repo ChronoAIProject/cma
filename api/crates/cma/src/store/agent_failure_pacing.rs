@@ -69,8 +69,22 @@ pub(super) async fn record(
     mutation: &AgentWorkMutation,
     observed: &AgentRetryObservation,
 ) -> Result<(), SandboxStoreError> {
+    record_with_marker(store, mutation, observed, None).await
+}
+
+pub(super) async fn record_with_marker(
+    store: &MongoSandboxStore,
+    mutation: &AgentWorkMutation,
+    observed: &AgentRetryObservation,
+    repeated: Option<&AgentLogKind>,
+) -> Result<(), SandboxStoreError> {
     let next = &mutation.agent;
-    let class = match mutation.agent_logs.as_slice() {
+    let evidence = match (mutation.agent_logs.as_slice(), repeated) {
+        ([], Some(marker)) => std::slice::from_ref(marker),
+        (logs, None) => logs,
+        _ => return Ok(()),
+    };
+    let class = match evidence {
         [AgentLogKind::WorkStepFailed {
             step: AgentWorkStep::PublishConnection,
             failure,
@@ -186,8 +200,11 @@ pub(super) async fn decision(
         ),
     ] {
         let parent = collection
-            .find_one(doc! {"_id": id,
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION})
+            .find_one(super::work_schema::for_collection(
+                collection,
+                doc! {"_id": id,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION},
+            ))
             .projection(doc! {"revision": 1, "record.revision": 1})
             .await
             .map_err(unavailable)?;

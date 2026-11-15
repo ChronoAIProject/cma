@@ -2,6 +2,7 @@
 
 mod binding;
 mod custody;
+pub(super) mod issuance;
 #[cfg(test)]
 mod provided_tests;
 
@@ -57,6 +58,9 @@ struct RevocationDocument {
 }
 
 pub(crate) struct MongoSandboxCredentialStore {
+    client: Client,
+    sandboxes: Collection<mongodb::bson::Document>,
+    intents: Collection<mongodb::bson::Document>,
     collection: Collection<CredentialDocument>,
     revocations: Collection<RevocationDocument>,
     cipher: AuthCipher,
@@ -88,7 +92,11 @@ impl MongoSandboxCredentialStore {
         let database = client.database(database);
         initialize_collections(
             &database,
-            &[SANDBOX_CREDENTIALS, SANDBOX_CREDENTIAL_REVOCATIONS],
+            &[
+                SANDBOX_CREDENTIALS,
+                SANDBOX_CREDENTIAL_REVOCATIONS,
+                issuance::COLLECTION,
+            ],
         )
         .await?;
         let collection = majority_collection(&database, SANDBOX_CREDENTIALS);
@@ -125,6 +133,9 @@ impl MongoSandboxCredentialStore {
                 StoreError::Unavailable(format!("sandbox credential revocation index: {error}"))
             })?;
         Ok(Self {
+            client: client.clone(),
+            sandboxes: majority_collection(&database, "sandboxes"),
+            intents: majority_collection(&database, issuance::COLLECTION),
             collection,
             revocations,
             cipher: AuthCipher::new(deployment, key)?,
