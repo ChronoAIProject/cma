@@ -108,7 +108,11 @@ impl Commands {
         row["max_time_ms_counts"][limit] = json!(count);
     }
 }
-async fn observed(uri: &str, database: &str) -> (Arc<ReportingStore>, Arc<Commands>) {
+async fn observed(
+    uri: &str,
+    database: &str,
+    capture_commands: bool,
+) -> (Arc<ReportingStore>, Arc<Commands>) {
     let original = ReportingStore::connect(uri, database, &[19; 32])
         .await
         .unwrap();
@@ -116,6 +120,13 @@ async fn observed(uri: &str, database: &str) -> (Arc<ReportingStore>, Arc<Comman
     assert!(!original.view_policy.allocation_rollups_enabled);
     assert!(!original.view_policy.warm_enabled);
     let commands = Arc::new(Commands::default());
+    // The ordinary store installs metadata-only driver tracing. A standard
+    // command event handler eagerly decodes whole BSON replies in driver3.9.1,
+    // after the command's recorded duration. Keep it out of the primary clock.
+    if !capture_commands {
+        return (original, commands);
+    }
+    // Explicit diagnostic control only; its timing includes eager reply decode.
     let capture = commands.clone();
     let mut options = ClientOptions::parse(uri).await.unwrap();
     configure_pool(&mut options, 4);
@@ -305,6 +316,13 @@ async fn native_usage_hotfix_full_report_six_case_matrix() {
         .parse()
         .unwrap();
     assert!(to < now() && to.is_multiple_of(CADENCE) && !to.is_multiple_of(DAY));
+    let observer_mode =
+        std::env::var("CHRONO_USAGE_MATRIX_OBSERVER").unwrap_or_else(|_| "metadata_only".into());
+    assert!(matches!(
+        observer_mode.as_str(),
+        "metadata_only" | "eager_command"
+    ));
+    let capture_commands = observer_mode == "eager_command";
     let output =
         std::env::var("CHRONO_USAGE_MATRIX_OUTPUT").expect("private output directory required");
     let output = Path::new(&output);
@@ -429,7 +447,8 @@ async fn native_usage_hotfix_full_report_six_case_matrix() {
     let mut result = json!({"source":source,"database":database,"fixture":{
         "members":MEMBERS,"personal_members":PERSONAL,"history_days":HISTORY_DAYS,
         "cadence_seconds":CADENCE,"events":actual_events,"from":from,"to":to,
-        "rollups":false,"views":false,"warmer":false,"backfill":false},
+        "rollups":false,"views":false,"warmer":false,"backfill":false,
+        "observer_mode":observer_mode},
         "startup_us":startup_us,"second_startup_us":second_startup_us,
         "startup_indexes":startup_indexes,"preparation_us":preparation_us,
         "populated_startup":populated_startup_record,"populated_indexes":populated_indexes,
@@ -454,10 +473,11 @@ async fn native_usage_hotfix_full_report_six_case_matrix() {
                 .await
                 .unwrap();
         }
-        let (store, commands) = observed(&uri, &database).await;
+        let (store, commands) = observed(&uri, &database, capture_commands).await;
         let sample = Rss::start();
         let mut value = case(&store, admin, days, to).await;
         value["rss"] = sample.finish();
+        value["command_capture_available"] = json!(capture_commands);
         value["commands"] = json!(*commands.totals.lock().unwrap());
         value["circuit_until"] = json!(store.circuit.load(Ordering::Relaxed));
         eprintln!("hotfix_matrix_case scope={} days={days} completed={} first_page_us={} generation_us={}",if admin {"admin"} else {"personal"},value["completed"],value["first_page_us"],value["generation_us"]);
