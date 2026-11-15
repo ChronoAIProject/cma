@@ -78,6 +78,7 @@ mod encryption;
 mod execution_sections;
 mod media_uploads;
 pub(crate) mod provenance_progress;
+pub(crate) mod read_only;
 mod segment_response;
 pub(crate) use segment_response::emit as emit_response_reads;
 // Retain legacy persistence contracts for migration verification; production
