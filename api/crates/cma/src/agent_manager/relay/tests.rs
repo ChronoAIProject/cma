@@ -1,5 +1,6 @@
 use super::*;
 mod acceptance;
+mod readiness;
 mod transport_auth;
 use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
@@ -33,12 +34,19 @@ impl Drop for Instance {
 }
 
 pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
+    cluster_with_starting(count, false).await
+}
+
+async fn cluster_with_starting(
+    count: usize,
+    last_starting: bool,
+) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
     let store = Arc::new(MemoryOwnershipStore::default());
     let mut instances = Vec::new();
     for index in 0..count {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
-        let coordinator = OwnershipCoordinator::register(
+        let coordinator = OwnershipCoordinator::prepare(
             store.client(),
             Member {
                 instance_id: format!("instance-{index}"),
@@ -49,9 +57,10 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
                 owned_agents: 0,
                 max_owned_agents: 256,
             },
-        )
-        .await
-        .unwrap();
+        );
+        if !last_starting || index + 1 != count {
+            coordinator.activate().await.unwrap();
+        }
         let updates = DurableAgentUpdateRecorder::new(Arc::new(InMemorySandboxStore::default()));
         let relay = Relay::new(
             coordinator.clone(),

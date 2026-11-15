@@ -4,6 +4,14 @@ use layer2_core::agent_ownership::DEFAULT_MAX_OWNED_AGENTS;
 pub(crate) struct AgentManagerReplicas {
     pub relay_address: String,
     pub max_owned_agents: u32,
+    pub pod: Option<ManagerPod>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagerPod {
+    pub name: String,
+    pub namespace: String,
+    pub uid: String,
 }
 
 impl AgentManagerReplicas {
@@ -36,9 +44,36 @@ impl AgentManagerReplicas {
             1,
         )?
         .get();
+        let name = lookup("CHRONO_AGENT_MANAGER_POD_NAME")?.filter(|s| !s.is_empty());
+        let namespace = lookup("CHRONO_AGENT_MANAGER_POD_NAMESPACE")?.filter(|s| !s.is_empty());
+        let uid = lookup("CHRONO_AGENT_MANAGER_POD_UID")?.filter(|s| !s.is_empty());
+        let pod = match (name, namespace, uid) {
+            (None, None, None) if lookup("KUBERNETES_SERVICE_HOST")?.is_none() => None,
+            (Some(name), Some(namespace), Some(uid))
+                if [&name, &namespace, &uid].iter().all(|s| {
+                    !s.is_empty()
+                        && s.len() <= 253
+                        && s.bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+                }) =>
+            {
+                Some(ManagerPod {
+                    name,
+                    namespace,
+                    uid,
+                })
+            }
+            _ => {
+                return Err(
+                    "coordinated Kubernetes AM requires its exact Pod name, namespace and UID"
+                        .into(),
+                )
+            }
+        };
         Ok(Some(Self {
             relay_address: parsed.to_string(),
             max_owned_agents,
+            pod,
         }))
     }
 }
@@ -73,11 +108,38 @@ mod tests {
                     "CHRONO_AGENT_MANAGER_REPLICAS_ENABLED" => flag,
                     "CHRONO_AGENT_MANAGER_RELAY_ADDRESS" => address,
                     "CHRONO_AGENT_MANAGER_MAX_OWNED_AGENTS" => limit,
-                    _ => panic!("unexpected key"),
+                    _ => return Ok(None),
                 }
                 .into(),
             ))
         })
+    }
+
+    #[test]
+    fn coordinated_cluster_requires_complete_exact_pod_identity() {
+        for fields in [vec![], vec![("CHRONO_AGENT_MANAGER_POD_NAME", "manager")]] {
+            let mut values = std::collections::BTreeMap::from([
+                ("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED", "true"),
+                ("CHRONO_AGENT_MANAGER_RELAY_ADDRESS", "http://peer:8080"),
+                ("KUBERNETES_SERVICE_HOST", "10.0.0.1"),
+            ]);
+            values.extend(fields);
+            assert!(AgentManagerReplicas::from_lookup(&mut |key| Ok(values
+                .get(key)
+                .map(|v| v.to_string())))
+            .is_err());
+            values.extend([
+                ("CHRONO_AGENT_MANAGER_POD_NAME", "manager"),
+                ("CHRONO_AGENT_MANAGER_POD_NAMESPACE", "test"),
+                ("CHRONO_AGENT_MANAGER_POD_UID", "exact-uid"),
+            ]);
+            let settings = AgentManagerReplicas::from_lookup(&mut |key| {
+                Ok(values.get(key).map(|v| v.to_string()))
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(settings.pod.unwrap().uid, "exact-uid");
+        }
     }
 
     #[test]
@@ -87,6 +149,7 @@ mod tests {
             Some(AgentManagerReplicas {
                 relay_address: "http://10.0.0.1:8080/".into(),
                 max_owned_agents: 256,
+                pod: None,
             })
         );
         for flag in ["1", "TRUE", "true ", "", "yes"] {

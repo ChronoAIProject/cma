@@ -1,4 +1,3 @@
-//! Production control-plane service and router assembly.
 use std::sync::Arc;
 mod access;
 pub(crate) mod activity;
@@ -440,7 +439,8 @@ impl ControlPlaneComposition {
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
         let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
-        let health = crate::health::router_with_workers(stores.clone(), workers.clone());
+        let (health, readiness) =
+            agent_manager::health(stores.clone(), workers.clone(), agent_manager.as_ref());
         let relay = agent_manager::relay(
             config,
             &agent_manager,
@@ -476,6 +476,7 @@ impl ControlPlaneComposition {
         Ok(Self {
             activity_worker,
             workers,
+            readiness,
             document_blob_maintenance,
             worker_observations,
             router,

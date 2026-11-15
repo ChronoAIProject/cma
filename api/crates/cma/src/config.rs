@@ -22,7 +22,7 @@ pub(crate) use access_migration::AgentAccessMigration;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
 mod agent_manager;
 mod agent_sandbox;
-pub(crate) use agent_manager::AgentManagerReplicas;
+pub(crate) use agent_manager::{AgentManagerReplicas, ManagerPod};
 mod execution;
 mod gateway;
 mod home;
