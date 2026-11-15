@@ -5,6 +5,7 @@ mod artifacts;
 #[path = "media_obligation_text.rs"]
 mod text;
 use super::{model::Ownership, storage, ExecutionError, Journal};
+use crate::replicas::partition::{PartitionFence, PartitionLease};
 use crate::{
     ingress::routing_store::{AdmittedPlan, StoredTarget},
     turns::render_media,
@@ -112,6 +113,8 @@ pub struct MediaObligation {
     pub supplements: Vec<FrozenMediaSupplement>,
     pub refusal: Option<String>,
     pub(super) ownership: Option<Ownership>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    partition_fence: Option<PartitionFence>,
     #[serde(skip)]
     version: u64,
 }
@@ -119,6 +122,7 @@ pub struct MediaObligation {
 #[derive(Clone)]
 pub struct MediaLease {
     pub(super) record: MediaObligation,
+    pub(super) partition: Option<PartitionLease>,
 }
 impl MediaLease {
     pub fn state(&self) -> &MediaObligation {
@@ -174,6 +178,7 @@ impl MediaObligationStore {
             supplements: Vec::new(),
             refusal: None,
             ownership: None,
+            partition_fence: None,
             version: 0,
         };
         self.0
@@ -211,6 +216,18 @@ impl MediaObligationStore {
         index: u8,
         worker: &str,
     ) -> Result<MediaLease, ExecutionError> {
+        self.claim_partition(plan, target, index, worker, None)
+            .await
+    }
+    pub(crate) async fn claim_partition(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        index: u8,
+        worker: &str,
+        partition: Option<PartitionLease>,
+    ) -> Result<MediaLease, ExecutionError> {
+        self.0.guard_partition(&partition).await?;
         if worker.is_empty() || worker.len() > 128 {
             return Err(ExecutionError::Invalid);
         }
@@ -222,13 +239,25 @@ impl MediaObligationStore {
         if record.retained_until <= now {
             return Err(ExecutionError::Expired);
         }
-        if record
-            .ownership
-            .as_ref()
-            .is_some_and(|owner| owner.until > now)
+        let next_fence = partition.as_ref().map(PartitionLease::fence);
+        // A new FIFO generation fences the former media sublease immediately.
+        // Renewing the same claim must never permit a concurrent media writer.
+        let same_generation = match (&record.partition_fence, &next_fence) {
+            (_, None) => true,
+            (Some(old), Some(next)) => {
+                old.instance == next.instance && old.epoch == next.epoch && old.claim == next.claim
+            }
+            (None, Some(_)) => false,
+        };
+        if same_generation
+            && record
+                .ownership
+                .as_ref()
+                .is_some_and(|owner| owner.until > now)
         {
             return Err(ExecutionError::Busy);
         }
+        record.partition_fence = next_fence;
         record.ownership = Some(Ownership {
             worker: worker.into(),
             claim: uuid::Uuid::new_v4().to_string(),
@@ -239,7 +268,8 @@ impl MediaObligationStore {
         });
         record.version = self
             .0
-            .write(
+            .write_fenced(
+                &partition,
                 &record.id,
                 &record.owner,
                 record.retained_until,
@@ -247,10 +277,16 @@ impl MediaObligationStore {
                 Some(record.version),
             )
             .await?;
-        Ok(MediaLease { record })
+        Ok(MediaLease { record, partition })
     }
     pub async fn guard(&self, lease: &MediaLease) -> Result<(), ExecutionError> {
+        self.0.guard_partition(&lease.partition).await?;
         let record = &lease.record;
+        match (&lease.partition, &record.partition_fence) {
+            (Some(token), Some(fence)) if token.matches(fence) => {}
+            (None, None) => {}
+            _ => return Err(ExecutionError::LostLease),
+        }
         let now = (self.0.clock)();
         if record.retained_until <= now {
             return Err(ExecutionError::Expired);
@@ -296,7 +332,8 @@ impl MediaObligationStore {
         self.guard(lease).await?;
         next.version = self
             .0
-            .write(
+            .write_fenced(
+                &lease.partition,
                 &next.id,
                 &next.owner,
                 next.retained_until,
@@ -308,6 +345,12 @@ impl MediaObligationStore {
         Ok(())
     }
     pub async fn renew(&self, lease: &mut MediaLease) -> Result<(), ExecutionError> {
+        self.guard(lease).await?;
+        // Renewal belongs between settled stages. A cloned send gate keeps its
+        // earlier deadline and cannot inherit this extension after an await.
+        if let Some(token) = &mut lease.partition {
+            self.0.renew_partition(token).await?;
+        }
         let mut next = lease.record.clone();
         next.ownership
             .as_mut()

@@ -3,6 +3,15 @@ use crate::sandbox::store::SandboxStoreError;
 use crate::SandboxId;
 
 impl AgentReadService {
+    pub(in crate::sandbox) fn session_store(
+        &self,
+    ) -> Result<std::sync::Arc<dyn super::super::store::SandboxSessionStore>, SandboxStoreError>
+    {
+        self.sessions
+            .clone()
+            .ok_or_else(|| SandboxStoreError::Unavailable("session store is unavailable".into()))
+    }
+
     pub(crate) async fn open_sandbox_session(
         &self,
         sandbox_id: &SandboxId,

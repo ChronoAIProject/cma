@@ -30,6 +30,7 @@ mod shapes;
 mod snapshot;
 mod stream;
 mod stream_live;
+mod stream_wake;
 mod task_experience;
 #[cfg(test)]
 mod task_experience_tests;
@@ -45,6 +46,8 @@ pub struct AgentV2State {
     updates: Option<Arc<dyn AgentUpdateRecorder>>,
     ui_flag: bool,
     single_fence_pages: bool,
+    event_wake: bool,
+    fallback_poll: std::time::Duration,
     dependencies: UiTransportDependencies,
     task_experience: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
 }
@@ -57,12 +60,19 @@ impl AgentV2State {
             updates: None,
             ui_flag: false,
             single_fence_pages: false,
+            event_wake: false,
+            fallback_poll: std::time::Duration::from_secs(1),
             dependencies: Default::default(),
             task_experience: Default::default(),
         }
     }
     pub fn with_single_fence_pages(mut self, enabled: bool) -> Self {
         self.single_fence_pages = enabled;
+        self
+    }
+    pub fn with_event_wake(mut self, enabled: bool, fallback: std::time::Duration) -> Self {
+        self.event_wake = enabled;
+        self.fallback_poll = fallback.max(std::time::Duration::from_millis(100));
         self
     }
     pub fn with_updates(mut self, updates: Arc<dyn AgentUpdateRecorder>) -> Self {

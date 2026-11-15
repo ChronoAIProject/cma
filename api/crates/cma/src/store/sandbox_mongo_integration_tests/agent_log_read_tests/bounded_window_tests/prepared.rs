@@ -1,5 +1,6 @@
 use super::*;
 
+mod prefix;
 mod tail;
 use crate::store::agent_log_integrity::{INTEGRITY_FIELD, QUARANTINE_FIELD};
 use crate::store::agent_log_reads::integrity::PreparedIntegrity;

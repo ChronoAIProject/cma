@@ -1,6 +1,6 @@
 import { NavigationSettingsContext } from './sidebarContext';
 import type { ReactElement } from 'react';
-import { render as renderView, screen } from '@testing-library/react';
+import { act, fireEvent, render as renderView, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { ManagerNavigation } from './ManagerNavigation';
@@ -9,6 +9,9 @@ import type { AgentStatus } from '../api/types';
 import { navigationFixture } from '../test/hierarchy';
 import { chooseOption, expandNavigationFilters } from '../test/select';
 import { AGENT_DETAIL } from '../test/agent';
+import { createClient } from '@chronoai/cma-sdk';
+import { CmaClientProvider } from '../api/context';
+import { unavailableClient } from '../api/client';
 
 const permissions: TreePermissions = {
   createWorkspace: false,
@@ -414,4 +417,53 @@ it('keeps the Sandbox character colour and uses a documented task fallback only 
     draw(items.map((item) => ({ ...item, sandbox: { ...item.sandbox, color: undefined } }))),
   );
   expect(character().getAttribute('style')).toContain('var(--dsw-alias-workspace-');
+});
+
+it('keeps only the visible personal tree polling after visiting environments', async () => {
+  vi.useFakeTimers();
+  const provenance = vi.fn(async (id: string) => ({
+    agent_id: id,
+    created_at: '2026-09-06T00:00:00Z',
+    creation_origin: 'manual' as const,
+  }));
+  const channel = vi.fn(async () =>
+    Response.json({
+      agent_id: 'agt_1',
+      channel_usage: {
+        active: false,
+        has_history: false,
+        first_used_at: null,
+        last_used_at: null,
+      },
+    }),
+  );
+  const resources = createClient({ baseUrl: 'https://fixture.invalid', fetch: channel });
+  const client = { ...unavailableClient, readAgentProvenance: provenance };
+  const view = render(
+    <CmaClientProvider client={client}>
+      <ManagerNavigation
+        {...props}
+        client={resources}
+        navigation={{ status: 'ready', items: navigationFixture(), refresh: vi.fn() }}
+      />
+    </CmaClientProvider>,
+  );
+  try {
+    await act(async () => {});
+    expect(channel).toHaveBeenCalledOnce();
+    expect(provenance).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Manage environments' }));
+    await act(async () => {});
+    expect(channel).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to tasks' }));
+    await act(async () => {});
+    expect(channel).toHaveBeenCalledTimes(3);
+    await act(() => vi.advanceTimersByTimeAsync(120000));
+    expect(channel).toHaveBeenCalledTimes(7);
+    expect(provenance).toHaveBeenCalledOnce();
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
 });

@@ -1,0 +1,87 @@
+build-slot: acquired slot 1/6 (CARGO_BUILD_JOBS=4)
+test_cleanup_distinguishes_absence_from_daemon_failure (mongo_local_test.FixtureRunnerTests) ... ok
+test_cleanup_does_not_delete_an_unowned_container (mongo_local_test.FixtureRunnerTests) ... ok
+test_existing_evidence_is_not_overwritten (mongo_local_test.FixtureRunnerTests) ... ok
+test_exited_parent_does_not_override_unconfirmed_group (mongo_local_test.FixtureRunnerTests) ... ok
+test_failure_keeps_only_numeric_and_fixed_diagnostics (mongo_local_test.FixtureRunnerTests) ... ok
+test_mongo_readiness_deadline_has_setup_phase_and_no_test_output (mongo_local_test.FixtureRunnerTests) ... ok
+test_partial_container_creation_is_cleaned_after_run_fails (mongo_local_test.FixtureRunnerTests) ... ok
+test_remote_published_endpoint_is_refused_before_binary_start (mongo_local_test.FixtureRunnerTests) ... ok
+test_setup_timeout_is_separate_from_test_deadline (mongo_local_test.FixtureRunnerTests) ... ok
+test_spawn_error_has_no_false_test_outcome (mongo_local_test.FixtureRunnerTests) ... ok
+test_success_has_owned_cleanup_exact_count_and_no_credential_argv (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeout_keeps_partial_whitelisted_output_and_never_claims_completion (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeout_retains_stage_start_without_end_or_success (mongo_local_test.FixtureRunnerTests) ... ok
+test_timeouts_terminate_owned_process_group_and_clean_container (mongo_local_test.FixtureRunnerTests) ... ok
+test_unconfirmed_exit_retains_latest_partial_output_and_incomplete_cleanup (mongo_local_test.FixtureRunnerTests) ... ok
+test_unexpected_pipe_error_still_cleans_group_before_disposal (mongo_local_test.FixtureRunnerTests) ... ok
+test_zero_or_multiple_selected_tests_cannot_pass (mongo_local_test.FixtureRunnerTests) ... ok
+test_auto_reaping_or_threaded_callers_are_refused_before_spawn (owned_process_test.OwnedGroupTests) ... ok
+test_early_failed_parent_still_requires_descendant_cleanup (owned_process_test.OwnedGroupTests) ... ok
+test_failed_snapshot_attempts_termination_but_cannot_claim_absence (owned_process_test.OwnedGroupTests) ... ok
+test_lost_reservation_never_signals_a_reused_group (owned_process_test.OwnedGroupTests) ... ok
+test_normal_completion_and_already_absent_group_are_idempotent (owned_process_test.OwnedGroupTests) ... ok
+test_runner_early_failure_disposes_only_after_real_descendant_is_gone (owned_process_test.OwnedGroupTests) ... ok
+test_snapshot_rejects_failed_and_invalid_numeric_output (owned_process_test.OwnedGroupTests) ... ok
+test_term_exited_parent_with_file_backed_descendant_is_killed_and_observed (owned_process_test.OwnedGroupTests) ... ok
+test_cutoff_mid_record_cannot_invent_a_complete_boundary_or_status (replica_observations_test.ObservationTests) ... ok
+test_interleaved_replica_headers_retain_failures_and_cohort_clock (replica_observations_test.ObservationTests) ... ok
+test_unapproved_fields_and_invalid_values_do_not_escape (replica_observations_test.ObservationTests) ... ok
+
+----------------------------------------------------------------------
+Ran 28 tests in 11.411s
+
+OK
+test_cutoff_mid_record_cannot_invent_a_complete_boundary_or_status (replica_observations_test.ObservationTests) ... ok
+test_interleaved_replica_headers_retain_failures_and_cohort_clock (replica_observations_test.ObservationTests) ... ok
+test_unapproved_fields_and_invalid_values_do_not_escape (replica_observations_test.ObservationTests) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.015s
+
+OK
+lines   cov%   module   (path)
+  659     1%   _collections_abc   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/_collections_abc.py)
+   48    10%   abc   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/abc.py)
+ 1447    28%   argparse   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/argparse.py)
+  854     8%   collections.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/collections/__init__.py)
+  311     4%   contextlib   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py)
+  601     8%   enum   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/enum.py)
+  108    28%   fnmatch   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/fnmatch.py)
+  568     2%   functools   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/functools.py)
+   74    33%   genericpath   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/genericpath.py)
+  527    13%   gettext   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/gettext.py)
+   99    32%   json.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/__init__.py)
+  217    22%   json.decoder   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/decoder.py)
+  265    27%   json.encoder   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/encoder.py)
+   60    16%   json.scanner   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/json/scanner.py)
+ 1283     1%   locale   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/locale.py)
+  471    10%   ntpath   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/ntpath.py)
+  602     1%   os   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/os.py)
+  943    36%   pathlib   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/pathlib.py)
+  321    28%   posixpath   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/posixpath.py)
+  152    11%   re   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/re.py)
+   23   100%   replica_observations   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/replica_observations.py)
+   26    96%   replica_observations_test   (/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/test/replica_observations_test.py)
+  831     2%   shutil   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/shutil.py)
+  597    50%   sre_compile   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/sre_compile.py)
+  880    38%   sre_parse   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/sre_parse.py)
+  195     1%   types   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/types.py)
+   10   100%   unittest.__main__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/__main__.py)
+  839    13%   unittest.case   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/case.py)
+  342    25%   unittest.loader   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/loader.py)
+  191    53%   unittest.main   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/main.py)
+  140    20%   unittest.result   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/result.py)
+  165    50%   unittest.runner   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/runner.py)
+   48     2%   unittest.signals   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/signals.py)
+  258    39%   unittest.suite   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/suite.py)
+  129     1%   unittest.util   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/unittest/util.py)
+    1   100%   urllib.__init__   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/urllib/__init__.py)
+  629    26%   urllib.parse   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/urllib/parse.py)
+  358    11%   warnings   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/warnings.py)
+  435     0%   weakref   (/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/weakref.py)
+
+> lint
+> eslint . --max-warnings=0 && node check.mjs
+
+Syntax and source-size checks passed.

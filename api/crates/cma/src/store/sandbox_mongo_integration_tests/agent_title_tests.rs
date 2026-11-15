@@ -11,6 +11,7 @@ use crate::store::agent_log::log_document;
 use crate::store::agent_log_integrity::NORMAL_AGENT_LOG_ENTRIES;
 
 mod bounded;
+mod custody;
 mod integrity;
 
 fn claim_time() -> SystemTime {

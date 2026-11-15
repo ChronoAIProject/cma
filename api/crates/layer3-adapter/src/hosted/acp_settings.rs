@@ -2,6 +2,52 @@ use super::acp::Bridge;
 use crate::{AdapterError, PermissionLevel, ReasoningEffort};
 
 impl Bridge {
+    pub(super) async fn configure_channel_effort(&self, session: &str) {
+        let result = self
+            .call_within(
+                "session/set_config_option",
+                serde_json::json!({
+                    "sessionId": session, "configId": "reasoning_effort", "value": "low"
+                }),
+                std::time::Duration::from_secs(1),
+            )
+            .await;
+        let confirmed = result.as_ref().is_ok_and(|response| {
+            response
+                .get("configOptions")
+                .and_then(serde_json::Value::as_array)
+                .is_some_and(|options| {
+                    options.iter().any(|option| {
+                        option.get("id").and_then(serde_json::Value::as_str)
+                            == Some("reasoning_effort")
+                            && option
+                                .get("currentValue")
+                                .and_then(serde_json::Value::as_str)
+                                == Some("low")
+                            && option
+                                .get("options")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|values| {
+                                    values.iter().any(|value| {
+                                        value.get("value").and_then(serde_json::Value::as_str)
+                                            == Some("low")
+                                    })
+                                })
+                    })
+                })
+        });
+        if confirmed {
+            tracing::info!("channel session reasoning effort set to low");
+        } else {
+            // Effort is a latency preference, never delivery authority. An old
+            // runtime or unsupported value must not prevent the input opening.
+            // Do not retain remote error bodies or echoed session settings.
+            tracing::warn!(
+                "channel session reasoning effort was not confirmed; retaining runtime setting"
+            );
+        }
+    }
+
     pub(super) async fn configure_settings(
         &self,
         session: &str,

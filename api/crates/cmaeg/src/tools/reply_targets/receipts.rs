@@ -61,6 +61,35 @@ impl Store {
             keys,
         }
     }
+    /// Participating writers honor receipts and uncertainty created before
+    /// cutover. This lookup never creates a claim or releases its legacy fence.
+    pub(crate) async fn lookup_target(
+        &self,
+        target: &ReplyTargetPayload,
+        request_id: &str,
+        message: &OutboundMessage,
+        owner: &str,
+    ) -> Result<Option<IntentReceipt>, Problem> {
+        let scope = target_scope(target);
+        if let Some(receipt) = self
+            .lookup_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                scope,
+                request_id,
+                hash(message),
+                owner,
+                target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            )
+            .await?
+        {
+            return Ok(Some(receipt));
+        }
+        if super::fence::Fence::unresolved(&self.records, &self.keys, target, owner).await? {
+            return Ok(Some(uncertain("reply_target_delivery_uncertain")));
+        }
+        Ok(None)
+    }
     pub async fn claim(
         &self,
         target: &ReplyTargetPayload,
@@ -69,9 +98,7 @@ impl Store {
         owner: &str,
     ) -> Result<Admission, Problem> {
         // Exclude randomized token ciphertext and issuance time so reminting cannot bypass dedupe.
-        let scope = hash(&serde_json::json!({"channel":target.event.channel_id,
-            "record":target.event.record_id,"provider":target.provider,"binding":target.binding_id,
-            "key":target.agent_key_hash,"event":target.event}));
+        let scope = target_scope(target);
         let admission = self
             .claim_scoped(
                 "reply_delivery_v1",
@@ -314,3 +341,9 @@ pub(crate) fn uncertain(reason: &str) -> IntentReceipt {
 #[cfg(test)]
 #[path = "receipt_tests.rs"]
 mod tests;
+
+fn target_scope(target: &ReplyTargetPayload) -> String {
+    hash(&serde_json::json!({"channel":target.event.channel_id,
+        "record":target.event.record_id,"provider":target.provider,"binding":target.binding_id,
+        "key":target.agent_key_hash,"event":target.event}))
+}

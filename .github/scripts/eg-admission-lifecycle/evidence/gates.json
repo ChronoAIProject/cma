@@ -1,0 +1,116 @@
+{
+  "recorded_at_utc": "2026-11-14T07:44:03.026288+00:00",
+  "scope": "One N1/N2 lifecycle recorder and read-only capture component; no executor/watchdog or application acceptance verdict.",
+  "source_sha256": {
+    "lifecycle.py": "1021f343a9dac7cd2ff825757c8d7a380ce723f199c773ddd71d5334a5efd121",
+    "binding.py": "91e2393ad71b18015df16f448320eb7729844b9cb4f8ff56c04427047c63a1c0",
+    "capture.py": "7bdd4951d0a1fc3d59a3afdb368efe9229e5e15138d08084999d00cac069b688",
+    "test_lifecycle.py": "d7cd4d7c981fef7b2e3a039479655e9304119a5a2ee57a8f87073a3cc14f7c10",
+    "README.md": "ec1cad497a4dcdadc52604a3b1d8442a6e6d6d3a2b2603a415c6e92fae09f40e"
+  },
+  "logs_sha256": {
+    "python-gates.log": "eb832e1a7c4e49111d4dfd93927e31a49878c121264b46b156f64bcb743c7e9c",
+    "coverage.json": "6fda72f960d226a20756fcb85c92b97cec305f03c87d347b1bd7b39f6d33d537"
+  },
+  "tests": {
+    "passed": 18,
+    "failed": 0,
+    "kind": "pure Python clocks/files plus mocked Kubernetes; no actual child/network/application/Mongo/cluster"
+  },
+  "checks": {
+    "ast_syntax": "PASS",
+    "source_under_500_lines": "PASS",
+    "trailing_whitespace": "PASS"
+  },
+  "coverage": {
+    "lifecycle.py": {
+      "executable_lines": 181,
+      "covered_lines": 152,
+      "percent": 83.98,
+      "missing": [
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        18,
+        22,
+        23,
+        31,
+        35,
+        40,
+        45,
+        49,
+        50,
+        55,
+        86,
+        96,
+        105,
+        122,
+        128,
+        138,
+        148,
+        165,
+        191,
+        235
+      ]
+    },
+    "binding.py": {
+      "executable_lines": 43,
+      "covered_lines": 38,
+      "percent": 88.37,
+      "missing": [
+        6,
+        7,
+        9,
+        12,
+        17
+      ]
+    },
+    "capture.py": {
+      "executable_lines": 110,
+      "covered_lines": 89,
+      "percent": 80.91,
+      "missing": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        13,
+        14,
+        87,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        125,
+        126
+      ]
+    }
+  },
+  "coverage_method": "stdlib trace statement counts; module imports occurred before tracing and are conservatively counted missing; each production module >=80%. No branch/condition claim.",
+  "cleanup": {
+    "temporary_test_directories": 0,
+    "pycache_created": false
+  },
+  "limitations": [
+    "Requires exact tooling verdict before live capture.",
+    "Owner driver must enforce operation deadlines and provide independently bound process/finality proof.",
+    "No environment control, workload execution, disposal or next-cohort launch is implemented here.",
+    "Pod/container identity is not independent OS/process death.",
+    "No shared old-fixture teardown mechanism equivalence or live stall demonstrated.",
+    "No final candidate image/config/fixture/window or A3 measurements supplied."
+  ]
+}
