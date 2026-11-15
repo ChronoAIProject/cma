@@ -1,5 +1,7 @@
 //! Manifest is the only format commit point. Missing/partial V2 never means V1.
 mod descriptor;
+#[cfg(test)]
+mod diagnostics_tests;
 pub(crate) mod io;
 #[cfg(test)]
 mod tests;
@@ -45,9 +47,11 @@ impl Guard {
     fn new(descriptor: Descriptor, config: RuntimeConfig, writer: Arc<File>) -> Result<Self> {
         let inodes = inodes(&config)?;
         use std::os::unix::fs::MetadataExt;
-        let metadata = writer.metadata().map_err(|_| hold())?;
+        let metadata = writer
+            .metadata()
+            .map_err(|_| hold_at("guard.writer_metadata"))?;
         if inodes[2] != (metadata.dev(), metadata.ino()) {
-            return Err(hold());
+            return Err(hold_at("guard.writer_inode"));
         }
         Ok(Self {
             descriptor,
@@ -60,7 +64,7 @@ impl Guard {
         if inodes(&self.config)? != self.inodes
             || Descriptor::load(&self.config)? != self.descriptor
         {
-            return Err(hold());
+            return Err(hold_at("guard.identity"));
         }
         self.descriptor.verify(self.descriptor.base_markers())?;
         self.descriptor
@@ -77,7 +81,7 @@ impl Guard {
             || previous < self.descriptor.born
             || previous > self.config.generation
         {
-            return Err(hold());
+            return Err(hold_at("guard.store_or_generation"));
         }
         self.descriptor.verify(self.descriptor.base_markers())?;
         if previous < self.config.generation {
@@ -88,7 +92,7 @@ impl Guard {
             // A half-published new scope holds. Never repair a missing barrier
             // in an already used scope by treating the scope as fresh.
             if io::exists(&root)? {
-                return Err(hold());
+                return Err(hold_at("guard.existing_generation"));
             }
             self.descriptor
                 .publish(self.descriptor.markers(self.config.generation))?;
@@ -113,7 +117,7 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
     }
     for name in [LOCK, STAGE, DATABASE, TEMP] {
         if io::exists(&config.state_root.join(name))? {
-            return Err(hold());
+            return Err(hold_at("selection.partial_v2"));
         }
     }
     for path in [
@@ -122,7 +126,7 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
         config.state_root.join("runtime-mutations").join(BARRIER),
     ] {
         if io::exists(&path)? {
-            return Err(hold());
+            return Err(hold_at("selection.required_barrier"));
         }
     }
     // Legacy/no-home and previously initialized homes retain V1. An empty G+1
@@ -132,8 +136,10 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
         && io::empty(&config.checkpoint_root.join("runtime-state"))?;
     if fresh {
         io::directories(&config.state_root)?;
-        for entry in std::fs::read_dir(&config.state_root).map_err(|_| hold())? {
-            let entry = entry.map_err(|_| hold())?;
+        for entry in std::fs::read_dir(&config.state_root)
+            .map_err(|_| hold_at("selection.state_inventory"))?
+        {
+            let entry = entry.map_err(|_| hold_at("selection.state_entry"))?;
             if entry.file_name() != "workspace-removal-writer-v1.lock"
                 || !io::read(&entry.path())?.is_empty()
             {
@@ -156,7 +162,11 @@ impl Selection {
     /// Called after home initialization, still before installation/effects.
     pub(crate) async fn open(self, config: &RuntimeConfig) -> Result<Option<Arc<Ledger>>> {
         let (descriptor, writer) = if let Some(descriptor) = self.descriptor {
-            (descriptor, self.writer.ok_or_else(hold)?)
+            (
+                descriptor,
+                self.writer
+                    .ok_or_else(|| hold_at("selection.writer_absent"))?,
+            )
         } else if self.fresh {
             let writer = Arc::new(io::lock(&config.state_root.join(LOCK), true)?);
             #[cfg(test)]
@@ -169,16 +179,18 @@ impl Selection {
             ledger.close().await?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "closed")?;
-            crate::fs_durability::sync_tree(&stage).map_err(|_| hold())?;
+            crate::fs_durability::sync_tree(&stage)
+                .map_err(|_| hold_at("publication.stage_sync"))?;
             let descriptor = Descriptor::new(config, store)?;
             descriptor.publish(descriptor.base_markers())?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "barriers")?;
             let database = config.state_root.join(DATABASE);
             if io::exists(&database)? {
-                return Err(hold());
+                return Err(hold_at("publication.database_exists"));
             }
-            crate::fs_durability::rename(&stage, &database).map_err(|_| hold())?;
+            crate::fs_durability::rename(&stage, &database)
+                .map_err(|_| hold_at("publication.database_rename"))?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "renamed")?;
             io::create(&config.state_root.join(TEMP), &descriptor.bytes()?)?;
@@ -188,7 +200,7 @@ impl Selection {
                 &config.state_root.join(TEMP),
                 &config.state_root.join(MANIFEST),
             )
-            .map_err(|_| hold())?;
+            .map_err(|_| hold_at("publication.manifest_rename"))?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "committed")?;
             (descriptor, writer)
@@ -216,11 +228,14 @@ pub(crate) fn installation_marker(config: &RuntimeConfig) -> Result<()> {
 
 fn retained_transfer(config: &RuntimeConfig) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
-    let transfer = config.process_env.get("TMPDIR").ok_or_else(hold)?;
+    let transfer = config
+        .process_env
+        .get("TMPDIR")
+        .ok_or_else(|| hold_at("transfer.tmpdir_missing"))?;
     if config.home_identity.is_none()
         || std::path::Path::new(transfer).join("cma-checkpoints") != config.checkpoint_root
     {
-        return Err(hold());
+        return Err(hold_at("transfer.assignment_roots"));
     }
     // The supported provider mounts these three subpaths from one retained
     // claim. Assigned TMPDIR and same-device roots exclude legacy /tmp layouts;
@@ -232,9 +247,11 @@ fn retained_transfer(config: &RuntimeConfig) -> Result<()> {
         std::path::Path::new(transfer),
     ] {
         io::directories(path)?;
-        let dev = std::fs::symlink_metadata(path).map_err(|_| hold())?.dev();
+        let dev = std::fs::symlink_metadata(path)
+            .map_err(|_| hold_at("transfer.root_metadata"))?
+            .dev();
         if device.is_some_and(|expected| expected != dev) {
-            return Err(hold());
+            return Err(hold_at("transfer.same_device"));
         }
         device = Some(dev);
     }
@@ -248,6 +265,17 @@ fn hold() -> RuntimeError {
     )
 }
 
+// Predicate names are fixed source literals, logged separately because legacy
+// adapters recognize the exact wire code/detail pair. Never log paths,
+// identities, metadata contents, or the operating system error's payload.
+fn hold_at(predicate: &'static str) -> RuntimeError {
+    tracing::error!(
+        predicate,
+        "runtime mutation ledger format requires verification"
+    );
+    hold()
+}
+
 fn inodes(config: &RuntimeConfig) -> Result<[(u64, u64); 3]> {
     use std::os::unix::fs::MetadataExt;
     let paths = [
@@ -258,11 +286,12 @@ fn inodes(config: &RuntimeConfig) -> Result<[(u64, u64); 3]> {
     let mut result = [(0, 0); 3];
     for (index, path) in paths.iter().enumerate() {
         io::directories(path.parent().ok_or_else(hold)?)?;
-        let metadata = std::fs::symlink_metadata(path).map_err(|_| hold())?;
+        let metadata =
+            std::fs::symlink_metadata(path).map_err(|_| hold_at("guard.path_metadata"))?;
         if (index == 0 && !metadata.is_dir())
             || (index != 0 && (!metadata.is_file() || metadata.nlink() != 1))
         {
-            return Err(hold());
+            return Err(hold_at("guard.path_type_or_links"));
         }
         result[index] = (metadata.dev(), metadata.ino());
     }
