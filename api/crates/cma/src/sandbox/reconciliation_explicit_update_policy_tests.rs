@@ -50,6 +50,15 @@ async fn update_sweep(grace: bool) -> (Arc<fixtures::Store>, SandboxReconciler) 
     (store, reconciler)
 }
 
+async fn queue(store: &fixtures::Store, mut row: Sandbox, automatic: bool) -> Sandbox {
+    store.create_sandbox(row.clone()).await.unwrap();
+    let revision = row.revision;
+    row.request_runtime_update("image-v2".into(), automatic, rfc3339_at(now()))
+        .unwrap();
+    store.save_sandbox(revision, row.clone()).await.unwrap();
+    row
+}
+
 #[tokio::test(start_paused = true)]
 async fn explicit_updates_scan_past_unrelated_and_automatic_rows_when_auto_pause_is_off_or_in_grace(
 ) {
@@ -57,18 +66,10 @@ async fn explicit_updates_scan_past_unrelated_and_automatic_rows_when_auto_pause
         for paused in [false, true] {
             let (store, reconciler) = update_sweep(grace).await;
             let unrelated = retained(0, true);
-            let mut automatic = retained(1, true);
-            automatic
-                .request_runtime_update("image-v2".into(), true, rfc3339_at(now()))
-                .unwrap();
-            let mut explicit = retained(2, paused);
-            explicit
-                .request_runtime_update("image-v2".into(), false, rfc3339_at(now()))
-                .unwrap();
+            store.create_sandbox(unrelated.clone()).await.unwrap();
+            let automatic = queue(&store, retained(1, true), true).await;
+            let explicit = queue(&store, retained(2, paused), false).await;
             let original_home = explicit.lifecycle.home.clone();
-            for row in [&unrelated, &automatic, &explicit] {
-                store.create_sandbox(row.clone()).await.unwrap();
-            }
             assert!(reconciler.run_due(now()).await.unwrap());
             assert_eq!(store.keys("candidates"), ["start", "sbx_001"]);
             assert!(store.keys("pause").is_empty());
@@ -97,11 +98,7 @@ async fn explicit_updates_scan_past_unrelated_and_automatic_rows_when_auto_pause
 async fn explicit_updates_do_not_override_platform_spend_stop() {
     let (store, reconciler) = update_sweep(false).await;
     let reconciler = reconciler.with_platform_spend(Arc::new(Platform(Some(true))));
-    let mut queued = retained(0, true);
-    queued
-        .request_runtime_update("image-v2".into(), false, rfc3339_at(now()))
-        .unwrap();
-    store.create_sandbox(queued.clone()).await.unwrap();
+    let queued = queue(&store, retained(0, true), false).await;
     assert!(reconciler.run_due(now()).await.unwrap());
     assert_eq!(store.get_sandbox(&queued.id).await.unwrap(), Some(queued));
 }
@@ -110,9 +107,6 @@ async fn explicit_updates_do_not_override_platform_spend_stop() {
 async fn explicit_updates_defer_to_existing_worker_ownership() {
     let (store, reconciler) = update_sweep(false).await;
     let mut queued = retained(0, false);
-    queued
-        .request_runtime_update("image-v2".into(), false, rfc3339_at(now()))
-        .unwrap();
     queued.work.schedule(
         SandboxWorkStep::WaitForCredentialRotation,
         rfc3339_at(now()),
@@ -126,7 +120,7 @@ async fn explicit_updates_defer_to_existing_worker_ownership() {
         )
         .unwrap();
     queued.validate().unwrap();
-    store.create_sandbox(queued.clone()).await.unwrap();
+    let queued = queue(&store, queued, false).await;
     assert!(reconciler.run_due(now()).await.unwrap());
     assert_eq!(store.get_sandbox(&queued.id).await.unwrap(), Some(queued));
 }
