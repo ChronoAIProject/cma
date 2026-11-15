@@ -47,7 +47,7 @@ fn with_child_mask(test: &str, mask: libc::mode_t) {
 fn check_modes(mask: libc::mode_t) {
     let fixture = Fixture::new();
     fixture.write("new.txt", b"new file", None).unwrap();
-    assert_eq!(mode(&fixture, "new.txt"), 0o600 & !u32::from(mask));
+    assert_eq!(mode(&fixture, "new.txt"), 0o600 & !libc::c_uint::from(mask));
 
     // Read-only, executable, shared and private files retain ordinary bits;
     // set-user-ID is excluded from the replacement as before.
