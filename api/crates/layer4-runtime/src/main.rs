@@ -47,6 +47,7 @@ mod mutation_store;
 mod paths;
 mod persistent_home;
 mod pool_bootstrap;
+mod publication_qualification;
 mod repository_snapshot;
 mod resource_cgroup;
 mod resource_network;
@@ -179,7 +180,9 @@ async fn run() -> Result<(), String> {
     if arguments.len() == 1 && arguments[0] == "--assign-runtime" {
         return pool_bootstrap::assign_from_stdio().await;
     }
-    let waiting = arguments.len() == 1 && arguments[0] == "--wait-for-assignment";
+    let qualification = publication_qualification::requested(&arguments);
+    let waiting =
+        qualification || (arguments.len() == 1 && arguments[0] == "--wait-for-assignment");
     if let Some(command) = arguments.first() {
         if command == "--export-home-snapshot" {
             return snapshot_export::run(&arguments[1..])
@@ -189,6 +192,9 @@ async fn run() -> Result<(), String> {
         if !waiting {
             return Err("unknown runtime command".into());
         }
+    }
+    if qualification {
+        publication_qualification::arm();
     }
     let (config, control_auth, _assignment_server) = if waiting {
         let (assigned, server) = pool_bootstrap::wait_for_assignment().await?;
@@ -202,6 +208,11 @@ async fn run() -> Result<(), String> {
     let supervisor = supervisor::Supervisor::start(config, writer_boundary)
         .await
         .map_err(|error| error.to_string())?;
+    if qualification {
+        return Err(
+            "publication qualification did not reach the initial publication boundary".into(),
+        );
+    }
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
