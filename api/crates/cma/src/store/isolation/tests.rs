@@ -59,8 +59,10 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
             &key,
             std::time::Duration::from_secs(86_400),
             std::sync::Arc::new(super::super::checkpoint_storage::RetiredCheckpointStorage),
-            ("runtime-isolation-contract", None),
-            None,
+            super::super::mongo::RuntimeStorePolicy {
+                image: "runtime-isolation-contract",
+                release_session: None,
+            },
         )
         .await
         .expect("the complete production store assembly must initialize with runtime grants");

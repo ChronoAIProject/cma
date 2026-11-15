@@ -112,6 +112,24 @@ pub(super) fn read_private(path: &Path, limit: usize) -> Result<Vec<u8>, ReadErr
     Ok(bytes)
 }
 
+fn executable_digest() -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let path = std::env::current_exe().map_err(|_| "cannot identify current executable")?;
+    let mut file = std::fs::File::open(path).map_err(|_| "cannot read current executable")?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 65536];
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .map_err(|_| "cannot bind current executable bytes")?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,22 +164,4 @@ mod tests {
         assert!(matches!(read_private(&path, 1024), Err(ReadError::Invalid)));
         std::fs::remove_dir_all(directory).unwrap();
     }
-}
-
-fn executable_digest() -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    let path = std::env::current_exe().map_err(|_| "cannot identify current executable")?;
-    let mut file = std::fs::File::open(path).map_err(|_| "cannot read current executable")?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 65536];
-    loop {
-        let count = file
-            .read(&mut buffer)
-            .map_err(|_| "cannot bind current executable bytes")?;
-        if count == 0 {
-            break;
-        }
-        digest.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", digest.finalize()))
 }

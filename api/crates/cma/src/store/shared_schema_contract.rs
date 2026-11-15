@@ -67,8 +67,10 @@ async fn real_shared_database_bootstrap_preserves_foreign_schemas() {
             &key,
             std::time::Duration::from_secs(86400),
             std::sync::Arc::new(super::super::checkpoint_storage::RetiredCheckpointStorage),
-            ("runtime-shared-contract", None),
-            None,
+            super::super::mongo::RuntimeStorePolicy {
+                image: "runtime-shared-contract",
+                release_session: None,
+            },
         )
         .await
         .unwrap();
