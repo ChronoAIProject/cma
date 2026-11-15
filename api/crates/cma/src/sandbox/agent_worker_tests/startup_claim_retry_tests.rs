@@ -242,7 +242,7 @@ async fn retry_refuses_stop_changed_claim_expiry_and_parent_retirement() {
         assert_eq!(
             harness
                 .worker
-                .finish_startup_attempt(&claimed, Err(SandboxStoreError::Conflict), harness.now)
+                .aborted_intent_for_test(&claimed, harness.now)
                 .await,
             Err(SandboxStoreError::Conflict),
             "{change}"
