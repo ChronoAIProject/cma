@@ -55,7 +55,10 @@ impl AgentWorker {
         let result = self
             .open_conversation_with_context(claimed.clone(), Some(context), at)
             .await;
-        self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
+        let result = self
+            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
+            .await;
+        self.finish_startup_attempt(&claimed, result, now + started.elapsed())
             .await
     }
 

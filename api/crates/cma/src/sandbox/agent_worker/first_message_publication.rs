@@ -59,7 +59,7 @@ impl AgentWorker {
             }
             match publish(current, at).await {
                 Err(SandboxStoreError::Conflict) if attempt < 7 => {
-                    tokio::task::yield_now().await;
+                    super::startup_retry::publication_backoff(attempt).await;
                 }
                 result => return result,
             }

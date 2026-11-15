@@ -35,6 +35,7 @@ mod reconcile;
 mod startup;
 mod startup_open;
 mod startup_publication;
+mod startup_retry;
 mod startup_support;
 mod startup_timing;
 mod startup_wait;
@@ -372,7 +373,10 @@ impl AgentWorker {
         let started = tokio::time::Instant::now();
         let claimed = agent.clone();
         let result = self.execute_step(agent, now).await;
-        self.finish_capacity_attempt(&claimed, result, now + started.elapsed())
+        let result = self
+            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
+            .await;
+        self.finish_startup_attempt(&claimed, result, now + started.elapsed())
             .await
     }
 

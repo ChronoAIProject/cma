@@ -97,6 +97,7 @@ impl AgentWorker {
                         return Err(SandboxStoreError::Conflict);
                     }
                     agent = current;
+                    super::startup_retry::publication_backoff(attempt).await;
                 }
                 result => return result,
             }
