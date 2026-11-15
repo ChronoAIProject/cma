@@ -11,6 +11,7 @@ import type { AgentResourceState } from './controllerTypes';
 import { transientReadFailure, type AgentLoadLineage } from './loadAgent';
 import { reopenAgent } from './reopenAgent';
 import { agentReadRetryAt } from './controllerError';
+import { rateLimitDelay } from './transport/readRetry';
 
 interface Options {
   readonly client: CmaWebClient;
@@ -48,6 +49,7 @@ export function useAgentDetailRefresh({
     let inFlight: AbortController | undefined;
     let queued = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let retryAt = 0;
     const read = async (retry = false) => {
       const retained = stateRef.current;
       if (!active || retained.status !== 'ready' || retained.detail.id !== agentId) return;
@@ -77,12 +79,18 @@ export function useAgentDetailRefresh({
         queued = false;
         if (onIdentityChange(error)) return;
         if (transientReadFailure(error)) {
-          console.warn('[agent.detail] Metadata refresh unavailable.', { retryScheduled: !retry });
+          const delay = rateLimitDelay(error, 5000);
+          // Keep the server floor even after the single automatic retry is exhausted.
+          retryAt = Date.now() + delay;
+          console.warn('[agent.detail] Metadata refresh unavailable.', {
+            retryScheduled: !retry,
+            cooldownMs: delay,
+          });
           if (!retry)
             retryTimer = setTimeout(() => {
               retryTimer = undefined;
               void read(true);
-            }, 5000);
+            }, delay);
         } else {
           console.warn('[agent.detail] Metadata access changed; revalidating the Agent view.');
           reload();
@@ -94,7 +102,7 @@ export function useAgentDetailRefresh({
     };
     trigger.current = () => {
       // Triggers during a backoff share its single retry rather than bypassing it.
-      if (retryTimer !== undefined) return;
+      if (retryTimer !== undefined || Date.now() < retryAt) return;
       if (inFlight) queued = true;
       else void read();
     };
