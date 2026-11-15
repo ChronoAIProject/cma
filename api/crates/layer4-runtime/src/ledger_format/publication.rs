@@ -1,5 +1,5 @@
 //! A durable intent authorizes only completing its exact, unused fresh store.
-//! Older partial publications without this intent remain verification holds.
+//! No-intent initial staging recovery is separately bounded in aborted.
 use std::path::{Path, PathBuf};
 
 use super::{descriptor::Descriptor, hold_at, io, BARRIER, DATABASE, LOCK, MANIFEST, STAGE, TEMP};

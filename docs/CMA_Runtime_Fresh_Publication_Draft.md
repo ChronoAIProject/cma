@@ -1,9 +1,11 @@
-# Draft: complete an interrupted fresh runtime ledger publication
+# Recover interrupted initial runtime ledger publication
 
-This branch is a conditional incident candidate. It is not a qualified repair or
-permission to publish an image. Select it only after the real legacy-AM diagnostic
-identifies interruption of fresh V2 publication in the covered window. A root,
-device, ownership, mode or durable-I/O defect requires its own producer fix.
+The runtime supports two bounded recovery paths before installation or effect
+admission. Intent-bearing publications complete their exact existing store.
+Recognizable generation-one staging prefixes without an intent are discarded and
+initialized again. Neither path relaxes retained committed-store verification.
+The incident's generic format-hold error does not prove which prefix was present;
+root, device, ownership, mode and durable-I/O defects retain their own refusals.
 
 The writer records `.mutation-ledger-v2.fresh.json` after closing and syncing its
 new staged database, before publishing format barriers. The intent contains the
@@ -42,11 +44,45 @@ needed, commits the manifest, and durably consumes the intent. It never deletes
 unknown data or chooses V1 because the manifest is absent. A second interruption
 leaves either the same proof-bearing publication or an ordinary committed store.
 
-Existing 7a/10c5 partial publications lack this intent and remain held. An
-interruption before the new staged database and intent are durable also remains
-held. A malformed or partially written intent is not repair authority. This draft
-therefore prevents recurrence in a bounded later publication window; it does not
-automatically salvage the incident's existing retained PVCs.
+A legacy no-intent prefix is eligible only while the final database path and
+temporary/canonical manifest are absent. It requires the existing construction
+and outer ledger locks, the exact un-restored generation-one home binding, only
+recognized initial paths, no installation/archive/retirement state and no unknown
+or advanced-generation authority. A nonempty staged DB must pass the same exact
+read-only freshness proof above, and any existing barriers must match its store.
+A pre-schema prefix is limited to an empty directory, zero-length DB and writer,
+and bounded reserve bytes consisting solely of the allocator's `0xa5` pattern.
+Malformed or nonempty unexplained database/journal bytes remain held.
+
+Cleanup removes matching barriers first, then the proven unused database, reserve,
+inner lock and staging directory. Every removal syncs its parent, rechecks the
+complete path/inode inventory and keeps the outer lock inode held. If interrupted,
+the remaining files are another recognized staging prefix. A replacement store
+receives a new identity; a second ordinary restart retains that committed identity.
+No durable intent is discarded. No committed manifest, final database, installation,
+effects or retirement state enters cleanup. Final-DB-only and final-DB-plus-temporary
+states remain held, even if their database is empty: a missing manifest is not
+proof that a previously committed store was never served. Existing legacy PVCs
+outside the eligible staging prefixes still require separate diagnosis.
+
+“Committed assignment” here means the durable runtime publication/effect boundary,
+not the in-memory bootstrap Accepted reply or the earlier AM native Claim. The
+receiver can acknowledge assignment before Supervisor begins publication. The
+format manifest is the durable publication commit and the final database path is
+conservatively excluded from destructive recovery. Runtime readiness and AM's
+Installing/Ready transitions occur later. Ordinary runtime startup does not use a
+new-marker-absence assumption to classify old retained homes.
+
+The integrated release qualification uses the explicit local command
+`--qualify-first-publication-interruption`. It takes the real assignment receiver
+path and stops after closing/syncing the staged DB, before creating the intent.
+The process emits fixed boundary evidence and SIGSTOPs; the fixture must prove the
+stopped lifetime, staged files, absence of intent/manifest/final DB and same-PVC
+custody, then kill it and restart the ordinary `--wait-for-assignment` entry.
+There is no environment, remote request or file-content trigger in ordinary
+startup. This CLI is supplied by the integration component; the recovery component
+contains only its post-sync hook. Native error-injection tests are separate from
+actual release-container/PVC qualification and do not establish power-loss safety.
 
 The V2 manifest/schema and wire errors do not change. Older readers still refuse
 an absent manifest accompanied by its V2 artifacts. They do not understand the
@@ -58,8 +94,11 @@ claim rollback compatibility for this intermediate state without execution.
 The branch adds tests for each durable publication boundary, repeated recovery
 interruption, all effect/accounting tables, exact generation/schema/store checks,
 malformed/foreign/unsafe intent, unknown/retirement/journal state, and actual
-Supervisor installation only after intent consumption. Existing no-intent partial
-publication and G+1 refusal assertions remain. Process-loss checkpoints and
+Supervisor installation only after intent consumption. Additional tests cover
+no-intent empty creation/staged barrier prefixes, every cleanup boundary,
+committed/final-state preservation, all-table residue, unknown/unsafe/retirement
+state, path substitution and actual Supervisor installation after recovery.
+Ambiguous final-DB and G+1 refusal assertions remain. Process-loss checkpoints and
 manually truncated intent exercise retained states; they do not claim a real
 filesystem power-loss or failed-fsync experiment. Compilation and execution need
 the assigned native lane before any PASS claim.
