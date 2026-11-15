@@ -38,6 +38,8 @@ pub(super) fn spawn(
         }
         loop {
             let frame = tokio::select! {
+                biased;
+                _ = reader.owner_revoked() => break,
                 _ = reader_updates.closed(), if reader_updates.bounded() => break,
                 _ = ack_tasks.join_next(), if reader_updates.bounded() => break,
                 frame = source.next() => match frame {

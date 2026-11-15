@@ -28,6 +28,8 @@ jobs:
         run: ruby .github/scripts/ci-contract-tests.rb release
       - name: API Cargo cache bridge regressions
         run: python3 .github/scripts/api-cargo-cache-tests.py
+      - name: Local Gateway release gate regressions
+        run: python3 -B .github/scripts/prepare-cmaeg-release-dockerfile-tests.py
       - name: Runtime image evidence and provenance regressions
         run: node --test .github/scripts/runtime-image-evidence.test.mjs .github/scripts/release-runtime-input.test.mjs
       - name: Ledger image qualification regressions
@@ -311,7 +313,10 @@ jobs:
           # its own by design: the sandbox provider schedules that image, so
           # this repository never declares a Deployment or Service for it.
           expected=$(printf '%s\n' \
-            infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
+            infra/api/Dockerfile infra/api/activity-index-build-job.yaml \
+            infra/api/activity-index-execution.md infra/api/activity-index-job.yaml \
+            infra/api/activity-index-postcheck-job.yaml infra/api/index-toolkit-job.yaml \
+            infra/api/configmap.yaml infra/api/deployment.yaml \
             infra/api/secret.yaml infra/api/service.yaml \
             infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
             infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
@@ -346,6 +351,7 @@ jobs:
         run: |
           node --test .github/scripts/agent-sandbox-preflight.test.mjs
           ruby .github/scripts/agent-sandbox-manifest-contract.rb
+          ruby .github/scripts/index-toolkit-job-contract.rb
       - name: docs/ contains only markdown
         run: |
           bad=$(find docs -type f ! -name '*.md' || true)

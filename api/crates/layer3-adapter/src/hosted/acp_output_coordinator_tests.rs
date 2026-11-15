@@ -1,11 +1,13 @@
 use super::super::tests::{settings, socket_pair, stop};
 use super::budget_tests::{open_with_coordinator, retained};
 use super::*;
+use crate::hosted::process_ingress_test_support::process_budget_lock;
 use futures_util::StreamExt as _;
 use std::time::Duration;
 
 #[tokio::test]
 async fn process_pressure_refuses_before_cursor_but_durable_ack_still_progresses() {
+    let _process_budget = process_budget_lock().await;
     let root = IngressBudget::process();
     let before = root.available_bytes();
     let (opened, mut server, _received) = open_with_coordinator(true, true, true, true).await;
@@ -109,6 +111,7 @@ async fn invalid_coordinator_policy_refuses_before_reading_ready() {
 
 #[tokio::test]
 async fn disabled_coordinator_leaves_independent_component_policies_unchanged() {
+    let _process_budget = process_budget_lock().await;
     let root = IngressBudget::process();
     let before = root.available_bytes();
     let (opened, _server, _received) = open_with_coordinator(true, true, true, false).await;

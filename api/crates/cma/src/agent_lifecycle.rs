@@ -46,8 +46,11 @@ mod bootstrap;
 mod existing_sandbox;
 #[path = "agent_lifecycle_progress.rs"]
 mod progress;
+#[path = "agent_lifecycle_tasks.rs"]
+mod tasks;
 #[path = "agent_lifecycle_worker.rs"]
 mod worker;
+pub(crate) use tasks::{DrainTimeout as LifecycleDrainTimeout, TaskScope as LifecycleDrain};
 #[path = "agent_lifecycle_workspace.rs"]
 mod workspace;
 
@@ -84,6 +87,7 @@ pub(crate) struct InlineAgentLifecycle {
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
+    tasks: LifecycleDrain,
 }
 
 struct ProvisionInput {
@@ -136,6 +140,7 @@ impl InlineAgentLifecycle {
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
+            tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
         let _ = instance.self_ref.set(Arc::downgrade(&instance));
         instance
@@ -384,6 +389,9 @@ impl AgentLifecycleProvisioner for InlineAgentLifecycle {
         request: AgentLifecycleCreateRequest,
         idempotency_key: &str,
     ) -> Result<AgentLifecycleCreateReceipt, AgentLifecycleProvisioningError> {
+        if self.tasks.is_closed() {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
         validate_request(&request)?;
         caller
             .authorization
