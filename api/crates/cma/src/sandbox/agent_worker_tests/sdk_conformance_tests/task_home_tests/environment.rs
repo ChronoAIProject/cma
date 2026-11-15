@@ -353,25 +353,20 @@ async fn initial_task_environment(
             "External failure detail must not leak",
         );
     }
-    let environment_driver = tokio::spawn(async move {
-        loop {
-            sandbox_worker
-                .run_one(&sandbox_id, SystemTime::now())
-                .await
-                .unwrap();
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    });
-    let workspace_driver = tokio::spawn(async move {
-        loop {
-            workspace_worker.run_due(SystemTime::now()).await.unwrap();
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    });
+    // Advance each lifecycle worker in order: their claims fence the same
+    // Sandbox parent. Keep every error fatal while checking task conformance.
+    let advance_environment = || async {
+        sandbox_worker
+            .run_one(&sandbox_id, SystemTime::now())
+            .await
+            .unwrap();
+        workspace_worker.run_due(SystemTime::now()).await.unwrap();
+    };
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(code) = source_failure {
         tokio::time::timeout(Duration::from_secs(15), async {
             loop {
+                advance_environment().await;
                 harness
                     .worker
                     .run_one(&agent_id, SystemTime::now())
@@ -402,14 +397,13 @@ async fn initial_task_environment(
         assert_eq!(transcript["turns"], json!([]));
         let (_, replay) = create(&service, &input, "default-environment-task").await;
         assert_eq!(replay["id"], receipt["id"]);
-        environment_driver.abort();
-        workspace_driver.abort();
         provider_task.abort();
         database.drop().await.unwrap();
         return;
     }
     let completion = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
+            advance_environment().await;
             harness
                 .worker
                 .run_one(&agent_id, SystemTime::now())
@@ -435,8 +429,6 @@ async fn initial_task_environment(
         }
     })
     .await;
-    environment_driver.abort();
-    workspace_driver.abort();
     assert!(
         completion.is_ok(),
         "{}",
