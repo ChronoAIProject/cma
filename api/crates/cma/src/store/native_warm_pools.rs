@@ -14,6 +14,7 @@ use super::durability::majority_collection;
 use crate::warm_pools::{PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
+mod native_poll;
 mod release;
 mod retirement;
 mod schema;
@@ -22,6 +23,7 @@ const MAX_TARGETS: i64 = 1000;
 
 pub(crate) struct MongoNativeWarmPools {
     release_session: Option<std::sync::Arc<crate::runtime_release::Session>>,
+    managed_polls: Option<native_poll::ManagedPolls>,
     targets: Collection<PoolTarget>,
     deployment: String,
     database: Database,
@@ -41,6 +43,7 @@ impl MongoNativeWarmPools {
             .map_err(|_| StoreError::Unavailable("create native pool identity index".into()))?;
         Ok(Self {
             release_session: None,
+            managed_polls: None,
             targets,
             deployment: deployment.into(),
             database: database.clone(),
@@ -261,12 +264,19 @@ impl PoolTargetStore for MongoNativeWarmPools {
                 .update_one(fence(target), doc! {"$set":fields})
                 .await,
         )
-        .await
+        .await?;
+        if let Some(polls) = &self.managed_polls {
+            polls.finished(target).await;
+        }
+        Ok(())
     }
 }
 
 impl MongoNativeWarmPools {
     async fn claim_matching(&self, id: Option<&str>) -> Result<Option<PoolTarget>, WarmPoolError> {
+        if let Some(polls) = &self.managed_polls {
+            return polls.claim(id).await;
+        }
         let _permit = self.admit_mutation("pool_target_claim", &id).await?;
         let now = DateTime::now();
         let mut filter = self.scope();

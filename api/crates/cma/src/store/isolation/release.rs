@@ -102,6 +102,21 @@ mod tests {
                     != crate::release_authority::EFFECTS
             });
         assert!(super::super::validate(&status(partial), "local").is_err());
+        let mut old_managed_role = role("local");
+        old_managed_role
+            .get_array_mut("privileges")
+            .unwrap()
+            .retain(|grant| {
+                grant
+                    .as_document()
+                    .unwrap()
+                    .get_document("resource")
+                    .unwrap()
+                    .get_str("collection")
+                    .unwrap()
+                    != crate::release_authority::STORE_COMMANDS
+            });
+        assert!(super::super::validate(&status(old_managed_role), "local").is_err());
         let mut destructive = role("local");
         destructive.get_array_mut("privileges").unwrap().push(
             doc! {
