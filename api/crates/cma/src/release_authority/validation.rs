@@ -219,13 +219,24 @@ impl ReleaseOperation {
             return Err(AuthorityError::Invalid);
         }
         let mut previous = 0;
-        for receipt in &self.receipts {
+        for receipt in self
+            .receipts
+            .iter()
+            .chain(self.terminal_recovery_receipt.iter())
+        {
             digest(&receipt.request_sha256)?;
             digest(&receipt.evidence_sha256)?;
             if receipt.epoch < 1 || receipt.control_revision <= previous {
                 return Err(AuthorityError::Invalid);
             }
             previous = receipt.control_revision;
+        }
+        if let Some(receipt) = &self.terminal_recovery_receipt {
+            if self.receipts.len() != 32
+                || !matches!(receipt.phase, Phase::Active | Phase::FailedHold)
+            {
+                return Err(AuthorityError::Invalid);
+            }
         }
         Ok(())
     }

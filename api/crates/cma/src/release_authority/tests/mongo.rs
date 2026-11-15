@@ -314,6 +314,85 @@ impl EvidenceVerifier for RefuseEvidence {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing to an owned local replica set"]
+async fn repeated_hold_keeps_one_receipt_and_abort_remains_available() {
+    let (db, store) = fixture().await;
+    let h = boot(&store).await;
+    store.begin(&transition(&h), &TestEvidence).await.unwrap();
+    let receipt = advance(&store, AdvanceAction::Hold).await;
+    for _ in 0..40 {
+        assert_eq!(advance(&store, AdvanceAction::Hold).await, receipt);
+    }
+    let op = store
+        .operation("test-deployment", "restore")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(op.receipts.len(), 2);
+    assert_eq!(
+        advance(&store, AdvanceAction::Abort).await.phase,
+        Phase::Active
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing to an owned local replica set"]
+async fn full_immutable_audit_has_separate_terminal_recovery_and_replay() {
+    let (db, store) = fixture().await;
+    let h = boot(&store).await;
+    store.begin(&transition(&h), &TestEvidence).await.unwrap();
+    advance(&store, AdvanceAction::Hold).await;
+    let mut op = store
+        .operation("test-deployment", "restore")
+        .await
+        .unwrap()
+        .unwrap();
+    let template = op.receipts.last().unwrap().clone();
+    op.receipts = (1..=32)
+        .map(|revision| ControlReceipt {
+            control_revision: revision,
+            ..template.clone()
+        })
+        .collect();
+    let retained = op.receipts.clone();
+    db.collection::<mongodb::bson::Document>(OPERATIONS)
+        .replace_one(
+            doc! {"_id": &op.key},
+            super::super::store::document(&op).unwrap(),
+        )
+        .await
+        .unwrap();
+    db.collection::<mongodb::bson::Document>(HEADS)
+        .update_one(
+            doc! {"_id": "test-deployment"},
+            doc! {"$set": {"control_revision": 32_i64}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        advance(&store, AdvanceAction::Hold).await,
+        *retained.last().unwrap()
+    );
+    let h = store.load("test-deployment").await.unwrap().unwrap();
+    let abort = step(&h, AdvanceAction::Abort);
+    let recovered = store.advance(&abort, &TestEvidence).await.unwrap();
+    assert_eq!(recovered.phase, Phase::Active);
+    assert_eq!(
+        store.advance(&abort, &TestEvidence).await.unwrap(),
+        recovered
+    );
+    let saved = store
+        .operation("test-deployment", "restore")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.receipts, retained);
+    assert_eq!(saved.terminal_recovery_receipt, Some(recovered));
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing to an owned local replica set"]
 async fn empty_permits_cannot_substitute_for_legacy_bootstrap_proof() {
     let (db, store) = fixture().await;
     assert_eq!(
