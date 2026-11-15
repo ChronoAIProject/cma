@@ -46,79 +46,89 @@ fn process_hash() -> &'static str {
 /// One durable-admission invocation, including restored roots. An HTTP request
 /// may contain an ordinary attempt followed by a compatibility attempt; its
 /// existing cmaeg.request parent is the separate transport correlation domain.
-pub(super) async fn attempt<T>(
+pub(super) fn attempt<T, F: Future<Output = Result<T, Problem>>>(
     request: &LaunchRequest,
-    future: impl Future<Output = Result<T, Problem>>,
-) -> Result<T, Problem> {
-    let identity = super::routing_store::EventIdentity {
-        owner: request.channel.definition.owner.subject.clone(),
-        channel_id: request.channel.id.clone(),
-        record_id: request.channel.pointer.record_id.clone(),
-        event_id: request.activity.event_id.clone(),
-    };
-    // Match the existing queue-warning digest: canonical admission UUID bytes.
-    let admission_sha256 = hash(identity.admission_id().as_bytes());
-    let span = tracing::info_span!(
-        "eg_admission_attempt",
-        attempt_sha256 = random_hash(),
-        process_sha256 = process_hash(),
-        admission_sha256,
-    );
-    ACTIVE
-        .scope((), async {
-            let mut observation = Observation::new("eg_admission_attempt");
-            let result = future.await;
-            observation.finish(if result.is_ok() { "ok" } else { "refused" });
-            if let Err(problem) = &result {
-                tracing::info!(
-                    event = "eg_admission_response",
-                    public_status = problem.status,
-                    public_code = %problem.code,
-                    "Admission returned a refusal"
-                );
-            }
-            result
-        })
-        .instrument(span)
-        .await
+    future: F,
+) -> impl Future<Output = Result<T, Problem>> + use<'_, T, F> {
+    // Allocate before constructing async state so nested observation wrappers
+    // retain one pointer instead of repeatedly embedding the admission future.
+    // Work and observation still begin only when the returned future is polled.
+    let future = Box::pin(future);
+    async move {
+        let identity = super::routing_store::EventIdentity {
+            owner: request.channel.definition.owner.subject.clone(),
+            channel_id: request.channel.id.clone(),
+            record_id: request.channel.pointer.record_id.clone(),
+            event_id: request.activity.event_id.clone(),
+        };
+        // Match the existing queue-warning digest: canonical admission UUID bytes.
+        let admission_sha256 = hash(identity.admission_id().as_bytes());
+        let span = tracing::info_span!(
+            "eg_admission_attempt",
+            attempt_sha256 = random_hash(),
+            process_sha256 = process_hash(),
+            admission_sha256,
+        );
+        ACTIVE
+            .scope((), async {
+                let mut observation = Observation::new("eg_admission_attempt");
+                let result = future.await;
+                observation.finish(if result.is_ok() { "ok" } else { "refused" });
+                if let Err(problem) = &result {
+                    tracing::info!(
+                        event = "eg_admission_response",
+                        public_status = problem.status,
+                        public_code = %problem.code,
+                        "Admission returned a refusal"
+                    );
+                }
+                result
+            })
+            .instrument(span)
+            .await
+    }
 }
 
-pub(super) async fn admission<T>(
+pub(super) fn admission<T>(
     stage: Stage,
     future: impl Future<Output = Result<T, AdmissionError>>,
-) -> Result<T, AdmissionError> {
-    operation(stage, future, admission_class).await
+) -> impl Future<Output = Result<T, AdmissionError>> {
+    operation(stage, future, admission_class)
 }
 
-pub(super) async fn record<T>(
+pub(super) fn record<T>(
     stage: Stage,
     future: impl Future<Output = Result<T, RecordError>>,
-) -> Result<T, RecordError> {
-    operation(stage, future, record_class).await
+) -> impl Future<Output = Result<T, RecordError>> {
+    operation(stage, future, record_class)
 }
 
-async fn operation<T, E>(
+fn operation<T, E>(
     stage: Stage,
     future: impl Future<Output = Result<T, E>>,
     classify: fn(&E) -> &'static str,
-) -> Result<T, E> {
-    // Recovery reads share the store but are not request-attempt observations.
-    if ACTIVE.try_with(|_| ()).is_err() {
-        return future.await;
+) -> impl Future<Output = Result<T, E>> {
+    // Keep record/store futures out of each enclosing observation's state.
+    let future = Box::pin(future);
+    async move {
+        // Recovery reads share the store but are not request-attempt observations.
+        if ACTIVE.try_with(|_| ()).is_err() {
+            return future.await;
+        }
+        let span = tracing::info_span!(
+            "eg_admission_operation",
+            stage = stage.name(),
+            operation_sha256 = random_hash(),
+        );
+        async {
+            let mut observation = Observation::new("eg_admission_stage");
+            let result = future.await;
+            observation.finish(result.as_ref().err().map_or("ok", classify));
+            result
+        }
+        .instrument(span)
+        .await
     }
-    let span = tracing::info_span!(
-        "eg_admission_operation",
-        stage = stage.name(),
-        operation_sha256 = random_hash(),
-    );
-    async {
-        let mut observation = Observation::new("eg_admission_stage");
-        let result = future.await;
-        observation.finish(result.as_ref().err().map_or("ok", classify));
-        result
-    }
-    .instrument(span)
-    .await
 }
 
 pub(super) fn admission_class(error: &AdmissionError) -> &'static str {
@@ -192,3 +202,7 @@ impl Drop for Observation {
 #[cfg(test)]
 #[path = "admission_trace_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "admission_trace_memory_tests.rs"]
+mod memory_tests;
