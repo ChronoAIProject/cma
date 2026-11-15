@@ -19,6 +19,7 @@ fn labelled_error(labels: &[&str]) -> Error {
 fn ownership_fence_known_abort_is_a_retryable_store_conflict() {
     let error = labelled_error(&[TRANSIENT_TRANSACTION_ERROR]);
     assert!(error.contains_label(TRANSIENT_TRANSACTION_ERROR));
+    assert!(known_aborted(&error));
     assert_eq!(fence_write_error(error), SandboxStoreError::Conflict);
 }
 
@@ -32,8 +33,13 @@ fn ownership_fence_unknown_outcomes_and_unlabelled_errors_stay_unavailable() {
             UNKNOWN_TRANSACTION_COMMIT_RESULT,
         ],
     ] {
+        let error = labelled_error(&labels);
+        assert!(
+            !known_aborted(&error),
+            "uncertain outcomes must never replay"
+        );
         assert!(matches!(
-            fence_write_error(labelled_error(&labels)),
+            fence_write_error(error),
             SandboxStoreError::Unavailable(_)
         ));
     }
