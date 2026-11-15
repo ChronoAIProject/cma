@@ -1,0 +1,239 @@
+[
+  {
+    "id": "cma-user.files.answer-deliverables",
+    "role": "user",
+    "feature": "Preview, verify and download an answer deliverable",
+    "entry_point": "Completed answer → deliverable name / download / verify",
+    "steps": [
+      "Produce a harmless answer deliverable",
+      "Preview and download it",
+      "Locally change or remove the source and verify the status",
+      "Check a document-version deliverable"
+    ],
+    "expected_result": "Deliveries remain bound to the answer and selected resource version; changed, missing, denied or oversized resources are reported accurately.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/answers/{answer_id}/deliverables",
+        "openapi_path": "/api/v1/agents/{id}/answers/{answer_id}/deliverables",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+        "openapi_path": "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+        "openapi_path": "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AnswerDeliverables.tsx",
+        "line": 192,
+        "sha256": "ec155ad11becbf237eb2e6d99cde9ece9ba97cc8f4eb56fc24b8c708ab9069f1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/DeliverablePreview.tsx",
+        "line": 11,
+        "sha256": "3e0e2cf909fb750795ea24040b1af344b9bbd7c4617b1d052d4f3aadcb390e3d",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/agents/deliverables.ts",
+        "line": 198,
+        "sha256": "04d38ee0dfb82691369b88aae850adf685c47f90ff190966d12af94cfd2c5302",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.machine.view",
+    "role": "user",
+    "feature": "Watch the Machine/shared desktop",
+    "entry_point": "Agent → Screen / Machine desktop",
+    "steps": [
+      "Open the desktop-enabled disposable Agent",
+      "Wait for an actual rendered desktop frame",
+      "Watch a harmless Agent desktop action"
+    ],
+    "expected_result": "The current Agent’s desktop is shown with correct connected/working/idle status; socket-open alone is not treated as a rendered frame.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/desktop",
+        "openapi_path": "/api/v1/agents/{id}/desktop",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/desktop/ws",
+        "openapi_path": "/api/v1/agents/{id}/desktop/ws",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AgentSidePanel.tsx",
+        "line": 31,
+        "sha256": "a6ed9ca7ff1204f85870e79db14ff4954b6cd7301915bad974f2499a0632cb48",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/DesktopPanel.tsx",
+        "line": 11,
+        "sha256": "6ac179e81cac708fdf6c2154f965b53b271543d1d1d1dd29dd8f98f244af4caa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/useDesktopConnection.ts",
+        "line": 38,
+        "sha256": "479a58aabaade96e401f4b3551c4d65b3d08524b8846c3ec6083574c347e8278",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.machine.control",
+    "role": "user",
+    "feature": "Take desktop control and return it to the Agent",
+    "entry_point": "Desktop → Take control / Control desktop → Return to Agent",
+    "steps": [
+      "Request control during a bounded Agent turn",
+      "Confirm stopping when prompted",
+      "Wait for confirmed idle control and send harmless input",
+      "Return to Agent and send another harmless task"
+    ],
+    "expected_result": "User input is enabled only after the old turn stops; a new turn, unavailable runtime or reconnected stream removes prior input permission.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/desktop/ws",
+        "openapi_path": "/api/v1/agents/{id}/desktop/ws",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/DesktopPanel.tsx",
+        "line": 11,
+        "sha256": "6ac179e81cac708fdf6c2154f965b53b271543d1d1d1dd29dd8f98f244af4caa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/useDesktopConnection.ts",
+        "line": 38,
+        "sha256": "479a58aabaade96e401f4b3551c4d65b3d08524b8846c3ec6083574c347e8278",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/desktopInput.ts",
+        "line": 4,
+        "sha256": "e9b82cc660119b9bca39044dbc0b8004f62e8ae167aad68e59ecaf6df5ee6192",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.machine.reconnect-display",
+    "role": "user",
+    "feature": "Reconnect, maximize and close the desktop display",
+    "entry_point": "Machine desktop → Reconnect / Full screen / Close",
+    "steps": [
+      "Open the display",
+      "Reconnect it and check actual frame rendering",
+      "Enter/exit full screen",
+      "Close and reopen the display"
+    ],
+    "expected_result": "Display recovers for the same Agent and closes cleanly; reconnect does not silently grant keyboard/mouse control.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/desktop/ws",
+        "openapi_path": "/api/v1/agents/{id}/desktop/ws",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/DesktopPanel.tsx",
+        "line": 11,
+        "sha256": "6ac179e81cac708fdf6c2154f965b53b271543d1d1d1dd29dd8f98f244af4caa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/useDesktopConnection.ts",
+        "line": 38,
+        "sha256": "479a58aabaade96e401f4b3551c4d65b3d08524b8846c3ec6083574c347e8278",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.browser.enable",
+    "role": "user",
+    "feature": "Enable the Agent browser when policy permits",
+    "entry_point": "Screen → Enable browser",
+    "steps": [
+      "Use a local supported Agent with browser disabled",
+      "Choose Enable browser",
+      "Observe browser availability and a frame"
+    ],
+    "expected_result": "Browser configuration applies to the current runtime incarnation; unsupported or forbidden capability stays explicit.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PUT",
+        "path": "/api/v1/agents/{id}/browser",
+        "openapi_path": "/api/v1/agents/{id}/browser",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/browser",
+        "openapi_path": "/api/v1/agents/{id}/browser",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/environment/BrowserPanel.tsx",
+        "line": 16,
+        "sha256": "c5429a40fa92f3f252c371389a4eb244884fc3065df4d2b4ea87a3927efcf3bd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/AgentSidePanel.tsx",
+        "line": 31,
+        "sha256": "a6ed9ca7ff1204f85870e79db14ff4954b6cd7301915bad974f2499a0632cb48",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/agent-browser.ts",
+        "line": 60,
+        "sha256": "61148b19cdd054f352e26aec737fdb36afc43dddfa76f87da715cce2293c260e",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

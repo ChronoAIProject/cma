@@ -1,0 +1,26 @@
+{
+  "kind": "Role",
+  "apiVersion": "rbac.authorization.k8s.io/v1",
+  "metadata": {
+    "namespace": "cma-native-storage",
+    "name": "external-attacher-cfg"
+  },
+  "rules": [
+    {
+      "apiGroups": [
+        "coordination.k8s.io"
+      ],
+      "resources": [
+        "leases"
+      ],
+      "verbs": [
+        "get",
+        "watch",
+        "list",
+        "delete",
+        "update",
+        "create"
+      ]
+    }
+  ]
+}

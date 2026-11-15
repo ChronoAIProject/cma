@@ -1,0 +1,65 @@
+{
+  "kind": "Role",
+  "apiVersion": "rbac.authorization.k8s.io/v1",
+  "metadata": {
+    "namespace": "cma-native-storage",
+    "name": "external-provisioner-cfg"
+  },
+  "rules": [
+    {
+      "apiGroups": [
+        "coordination.k8s.io"
+      ],
+      "resources": [
+        "leases"
+      ],
+      "verbs": [
+        "get",
+        "watch",
+        "list",
+        "delete",
+        "update",
+        "create"
+      ]
+    },
+    {
+      "apiGroups": [
+        "storage.k8s.io"
+      ],
+      "resources": [
+        "csistoragecapacities"
+      ],
+      "verbs": [
+        "get",
+        "list",
+        "watch",
+        "create",
+        "update",
+        "patch",
+        "delete"
+      ]
+    },
+    {
+      "apiGroups": [
+        ""
+      ],
+      "resources": [
+        "pods"
+      ],
+      "verbs": [
+        "get"
+      ]
+    },
+    {
+      "apiGroups": [
+        "apps"
+      ],
+      "resources": [
+        "replicasets"
+      ],
+      "verbs": [
+        "get"
+      ]
+    }
+  ]
+}

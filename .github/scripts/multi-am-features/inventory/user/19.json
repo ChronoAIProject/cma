@@ -1,0 +1,233 @@
+[
+  {
+    "id": "cma-user.sharing.publish-artifact",
+    "role": "user",
+    "feature": "Publish an approved artifact to Agent readers",
+    "entry_point": "Shared-resource Details → Artifacts → Publish artifact, if manage_sharing is effective",
+    "steps": [
+      "Choose a harmless 1-byte–1-MiB supported file",
+      "Confirm exposure to current and future Agent readers",
+      "Publish once",
+      "Verify the approved artifact as a reader"
+    ],
+    "expected_result": "Exactly the confirmed file is retained with the Agent; an uncertain publication recovers its original identity and does not double-publish.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/artifacts",
+        "openapi_path": "/api/v1/agents/{id}/artifacts",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "openapi_path": "/api/v1/resource-access/{kind}/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/SharedAgentDetails.tsx",
+        "line": 16,
+        "sha256": "57749f7df1a240f2f6dbdccb1123be4e8f02a3196c9563a268bcfc96b818dfa8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/ArtifactButton.tsx",
+        "line": 15,
+        "sha256": "c1f93e0088c15b612f1e5226e3af9b1f73a717beaae2e1b2588fe167b0692ba0",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/PublishArtifact.tsx",
+        "line": 34,
+        "sha256": "49d4297f759501371faba6be144698b4c606d15c6a84f0f47deab14c2e455b38",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.channel-history",
+    "role": "user",
+    "feature": "Inspect an Agent’s channel binding and history",
+    "entry_point": "Shared Agent Details → channel usage/history, when permitted",
+    "steps": [
+      "Open current channel usage",
+      "Expand history",
+      "Page through actor attribution and before/after binding facts"
+    ],
+    "expected_result": "Channel provenance is scoped to this Agent and current permission; no raw bot credentials appear.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/channel-usage",
+        "openapi_path": "/api/v1/agents/{id}/channel-usage",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/channel-usage/history",
+        "openapi_path": "/api/v1/agents/{id}/channel-usage/history",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/SharedAgentDetails.tsx",
+        "line": 16,
+        "sha256": "57749f7df1a240f2f6dbdccb1123be4e8f02a3196c9563a268bcfc96b818dfa8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/ChannelUsage.tsx",
+        "line": 9,
+        "sha256": "008cee15e806a3d50c81aad19a79595a34421c159d5df143876e9e4b467ea1b9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/ChannelHistory.tsx",
+        "line": 126,
+        "sha256": "1667b5e75454cbabe3f90111340342a170e77de3d8941d9e6713777d1c937b44",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.browse",
+    "role": "user",
+    "feature": "Browse and search owned/shared documents",
+    "entry_point": "Sidebar Artifacts → /artifacts",
+    "steps": [
+      "Open Artifacts",
+      "Switch owned/shared/all tabs",
+      "Search a known document",
+      "Load more and open it"
+    ],
+    "expected_result": "Only authorized documents appear and selected document identity matches the route.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/documents",
+        "openapi_path": "/api/v1/documents",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentRegistry.tsx",
+        "line": 11,
+        "sha256": "2f57c87137a2d21e0dbfcdbaa900801230ecd40fdef756144c6724e7c587ac56",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/Documents.tsx",
+        "line": 9,
+        "sha256": "38c54336e4ab9ccc15c2f95b0cc8c2bd5cb2e274de30eac6942fdf39b3616c3e",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/ConsoleLinks.tsx",
+        "line": 4,
+        "sha256": "84f0303926504163f1ac7aee46f7250e0ffdd3a910c7c90afb0f0a40f7093176",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.create",
+    "role": "user",
+    "feature": "Create a document",
+    "entry_point": "Artifacts → New document / creation template",
+    "steps": [
+      "In the local document fixture, choose New document or an offered template",
+      "Enter a valid title",
+      "Create once and open it"
+    ],
+    "expected_result": "One owned document is created and opens in the editor; uncertain admission retains the original key.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "openapi_path": "/api/v1/documents",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentRegistry.tsx",
+        "line": 11,
+        "sha256": "2f57c87137a2d21e0dbfcdbaa900801230ecd40fdef756144c6724e7c587ac56",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/documents.ts",
+        "line": 98,
+        "sha256": "bb6a9b3525f68ccc594cb6ede5b119cb7e98af5cb64a86458b8ebe4138484207",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.edit",
+    "role": "user",
+    "feature": "Edit document title/content and save a revision",
+    "entry_point": "/artifacts/{docId} → Edit → Save",
+    "steps": [
+      "Open an owned local test document",
+      "Edit title and content",
+      "Save",
+      "Reload and verify the saved revision"
+    ],
+    "expected_result": "Revision-checked content is retained; another writer’s newer revision is not overwritten.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}",
+        "openapi_path": "/api/v1/documents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}/source",
+        "openapi_path": "/api/v1/documents/{id}/source",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v1/documents/{id}",
+        "openapi_path": "/api/v1/documents/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentPage.tsx",
+        "line": 22,
+        "sha256": "201832fd8e30ca5ee532de3ec3d2854c6756cf9cd3b3b4a16aa9030f2c86fb51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/RichDocumentEditor.tsx",
+        "line": 30,
+        "sha256": "a1264f898643377c894d1f784508cd7524dd29495c793630cf2a8b27b0c6488b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/documents.ts",
+        "line": 98,
+        "sha256": "bb6a9b3525f68ccc594cb6ede5b119cb7e98af5cb64a86458b8ebe4138484207",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]
