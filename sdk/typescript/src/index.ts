@@ -1,3 +1,4 @@
+export { retryAfterMilliseconds } from './http.js';
 /** Typed, repository-only client for CMA's public resource APIs. */
 
 export { Cma, createClient } from './client.js';

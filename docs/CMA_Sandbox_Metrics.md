@@ -440,3 +440,28 @@ and database/request time are bounded; name scans and grouping may still visit
 the candidate cohort. Results are private/no-store, and
 errors never log search text or display names. The Ops web filter requires this
 API extension; report endpoints remain compatible with #1398 and later.
+
+## Metric-specific chart interval compaction (#2032)
+
+Record `2026-11-14-am-usage-chart-compaction` covers future immutable report
+chart writes. Disk charts consume only each interval's `home` state; CPU and
+memory consume only `running`. The writer merges adjacent intervals with the
+same selected state. When the unrelated state differs, its merged value is
+`null`. Gaps, overlaps and selected-metric unknown states remain explicit.
+This changes neither allocation totals nor the numerical fold used to obtain them.
+
+| Release field | Contract |
+| --- | --- |
+| Owner and writer | Agent Manager report generation writes `sandbox_usage_report_charts` for admitted foreground and warmer reports. No client, runtime or external-service writer changes. |
+| Formats and identity | Existing `ChartChunk` fields/types, schema version, report/Sandbox/owner IDs, metric/chunk keys, ranks, indexes and TTL remain. Both expectation flags already permit `null`. Existing records are never rewritten. |
+| Reader floor | `charts.rs::read_series` and Core `series::complete` already select only the chart metric's flag. Parity tests exercise that unchanged decoder and compare complete returned buckets, including sparse measured points. This is source/decoder evidence, not execution of a separately deployed older image. The release's existing allocation/archive reader floor still applies. |
+| Writer admission | Existing report admission, authority and warmer gates apply; no new configuration or cohort expansion. A separate format gate is unnecessary because every persisted value uses the existing reader's accepted types and selected-metric semantics. |
+| Backfill and startup | No backfill, startup DDL, scan, migration executable or irreversible transformation. Old and compact records coexist until ordinary report expiration. |
+| Concurrency and budgets | Existing lease and generation fences, atomic report transactions and exact encoded-byte accounting continue. Compaction lowers stored bytes; it does not raise a budget or relax validation. |
+| Backup and recovery | No source history or existing report is mutated, so no new restore unit or backup operation is introduced. Existing archive/report recovery procedures remain. |
+| Rollback | Restore the prior compatible report writer without deleting or rewriting compact chart records. The unchanged reader interprets them. This optimization adds no permission to cross the existing compatible-image/archive floor. |
+| Verification | Exhaustive state-transition, unknown/gap/overlap, sparse-measurement and long-range decoder/payload regressions accompany the writer. The PR records executed results and release profiling; unrun artifact/production checks remain unqualified. Deployment owner retains production verification and closure authority. |
+
+Production acceptance remains the complete selected-range API and real-payload
+render budget for 24 h, 7 d and 30 d. Smaller chart BSON and local timing alone
+do not establish that production result.
