@@ -53,7 +53,7 @@ fn stamp(path: &Path, inventory: &mut Inventory) -> Result<()> {
     if !(metadata.is_dir() || (metadata.is_file() && metadata.nlink() == 1))
         || metadata.uid() != unsafe { libc::geteuid() }
     {
-        return Err(metadata_failure("recovery.path_shape", &metadata));
+        return Err(metadata_failure("recovery.path_shape", &metadata, None));
     }
     inventory.insert(
         path.to_owned(),
@@ -149,7 +149,7 @@ fn private_file(path: &Path, bound: u64) -> Result<File> {
         || m.mode() & 0o077 != 0
         || m.len() > bound
     {
-        return Err(metadata_failure("recovery.private_file", &m));
+        return Err(metadata_failure("recovery.private_file", &m, Some(bound)));
     }
     Ok(file)
 }
@@ -162,13 +162,17 @@ fn incomplete(config: &RuntimeConfig) -> Result<Option<File>> {
     let m = std::fs::symlink_metadata(&stage)
         .map_err(|error| io_failure("inspect_metadata", "recovery.metadata", error))?;
     if !m.is_dir() || m.mode() & 0o077 != 0 {
-        return Err(metadata_failure("recovery.stage_mode", &m));
+        return Err(metadata_failure("recovery.stage_mode", &m, None));
     }
     let writer = stage.join("writer.lock");
     let lock = if io::exists(&writer)? {
         let file = private_file(&writer, 0)?;
-        file.try_lock()
-            .map_err(|_| hold_at("recovery.writer_held"))?;
+        file.try_lock().map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => hold_at("recovery.writer_held"),
+            std::fs::TryLockError::Error(error) => {
+                io_failure("lock_existing", "recovery.writer_lock", error)
+            }
+        })?;
         Some(file)
     } else {
         None
@@ -297,12 +301,16 @@ fn io_failure(
 fn metadata_failure(
     predicate: &'static str,
     metadata: &std::fs::Metadata,
+    bound: Option<u64>,
 ) -> crate::failure::RuntimeError {
     tracing::error!(
         predicate,
         operation = "inspect_existing",
         object_role = "initial_publication",
         observed_mode = metadata.mode() & 0o7777,
+        observed_size = metadata.len(),
+        maximum_size = bound.unwrap_or(u64::MAX),
+        size_valid = bound.is_none_or(|limit| metadata.len() <= limit),
         required_group_other_mask = 0u32,
         regular_file = metadata.is_file(),
         directory = metadata.is_dir(),
