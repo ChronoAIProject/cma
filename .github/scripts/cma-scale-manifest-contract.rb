@@ -8,7 +8,7 @@ require "yaml"
 module CmaScaleManifests
   ROOT = File.expand_path("../..", __dir__)
   ROLES = {
-    "api" => { name: "cma-agent-manager", container: "api", readiness: "/ready", grace: 760 },
+    "api" => { name: "cma-agent-manager", container: "api", readiness: "/ready", grace: 810 },
     "cmaeg" => { name: "cma-event-gateway", container: "cmaeg", readiness: "/readyz", grace: 760 }
   }.freeze
 
