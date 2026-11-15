@@ -1,5 +1,11 @@
+import { useAgentDetailRefresh, useAgentReload } from './detailRefresh';
+import {
+  useHistoryPublication,
+  useHistoryRetry,
+  retainCurrentMetadata,
+} from './historyPublication';
 import { observeRead } from './transport/readObserver';
-import { retrySchedule, rateLimitDelay } from './transport/readRetry';
+import { retrySchedule } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
 import { usePreparationProgress } from './preparationProgress';
 import { queueObservationRevision } from './queueObservationRevision';
@@ -135,34 +141,34 @@ export function useAgentController(
     [agentId, setState],
   );
 
-  const publishHistory = useCallback(
-    (ready: import('./loadAgent').ReadyAgent, preserveEmpty = false) => {
-      if (agentId === undefined) return;
-      setState((current) => {
-        const conversation =
-          preserveEmpty &&
-          current.status === 'ready' &&
-          ready.conversation.agentCursor === undefined &&
-          ready.conversation.cursor === 0 &&
-          ready.conversation.messages.length === 0
-            ? current.conversation
-            : hydration.current.merge(
-                ready.conversation,
-                agentId,
-                !ready.historyLoading && !ready.historyUnavailable,
-              );
-        liveCursor.current = conversation.cursor;
-        return { status: 'ready', ...ready, conversation };
-      });
-    },
-    [agentId, setState],
+  const reload = useAgentReload(
+    agentId,
+    stateRef,
+    setState,
+    setRevision,
+    setActionError,
+    setStreamError,
   );
-
+  const { refreshDetail, metadataVersion } = useAgentDetailRefresh({
+    client,
+    agentId,
+    viewerId: options.viewerId,
+    suspended,
+    revision,
+    lineage,
+    ready: state.status === 'ready',
+    stateRef,
+    setState,
+    reload,
+    onIdentityChange,
+  });
+  const publishHistory = useHistoryPublication(agentId, setState, hydration, liveCursor);
   useEffect(() => {
     if (suspended) return;
     let failures = 0;
     const observer = observeRead(
       async (lifetimeSignal) => {
+        const metadataAtStart = metadataVersion.current;
         const operation = new AbortController();
         const signal = AbortSignal.any([lifetimeSignal, operation.signal]);
         setActionError(undefined);
@@ -197,11 +203,13 @@ export function useAgentController(
                 signal,
                 true,
                 (ready) => {
-                  if (!signal.aborted) publishHistory(ready);
+                  if (!signal.aborted)
+                    publishHistory(ready, false, metadataVersion.current !== metadataAtStart);
                 },
                 lineage,
                 (ready) => {
-                  if (!signal.aborted) publishHistory(ready, true);
+                  if (!signal.aborted)
+                    publishHistory(ready, true, metadataVersion.current !== metadataAtStart);
                 },
               )
         )
@@ -213,7 +221,13 @@ export function useAgentController(
                   ? current.conversation
                   : hydration.current.merge(ready.conversation, agentId, !ready.historyUnavailable);
               liveCursor.current = conversation.cursor;
-              return { status: 'ready', ...ready, conversation };
+              return {
+                status: 'ready',
+                ...(metadataVersion.current === metadataAtStart
+                  ? ready
+                  : retainCurrentMetadata(ready, current)),
+                conversation,
+              };
             });
             return undefined;
           })
@@ -246,7 +260,17 @@ export function useAgentController(
       { initialDelay: Math.max(0, agentReadRetryAt(stateRef.current) - Date.now()) },
     );
     return () => observer.dispose();
-  }, [agentId, client, lineage, publishHistory, revision, setState, stateRef, suspended]);
+  }, [
+    agentId,
+    client,
+    lineage,
+    publishHistory,
+    revision,
+    setState,
+    stateRef,
+    suspended,
+    metadataVersion,
+  ]);
 
   const historyUnavailable =
     state.status === 'ready' && state.detail.id === agentId && state.historyUnavailable === true;
@@ -255,38 +279,19 @@ export function useAgentController(
   const historyIncomplete = historyLoading || historyUnavailable;
   const v2 =
     !suspended && state.status === 'ready' && state.detail.id === agentId ? state.v2 : undefined;
-  useEffect(() => {
-    if (suspended || !historyUnavailable || agentId === undefined) return;
-    let failures = 0;
-    let fallback = 5000;
-    const observer = observeRead(
-      async (signal) => {
-        try {
-          const ready = await loadAgent(client, agentId, signal);
-          if (!signal.aborted) publishHistory(ready);
-        } catch (error) {
-          if (signal.aborted) return;
-          if (transientReadFailure(error)) {
-            fallback = Math.min(fallback * 2, 30000);
-            const next = rateLimitDelay(error, fallback, ++failures);
-            return { next, cooldown: next, failed: true };
-          }
-          actionAbortRef.current?.abort();
-          replayAbortRef.current?.abort();
-          hydration.current.reset();
-          setState({ status: 'error', message: errorMessage(error) });
-        }
-      },
-      {
-        initialDelay:
-          stateRef.current.status === 'ready' && stateRef.current.historyRetryAt
-            ? Math.max(1, stateRef.current.historyRetryAt - Date.now())
-            : 5000,
-      },
-    );
-    return () => observer.dispose();
-  }, [agentId, client, historyUnavailable, publishHistory, setState, stateRef, suspended]);
-
+  useHistoryRetry({
+    agentId,
+    client,
+    suspended,
+    historyUnavailable,
+    publishHistory,
+    setState,
+    stateRef,
+    actionAbortRef,
+    replayAbortRef,
+    hydration,
+    metadataVersion,
+  });
   const replayEnabled =
     !suspended &&
     agentId !== undefined &&
@@ -395,13 +400,6 @@ export function useAgentController(
     };
   }, [agentId, client, options.viewerId, suspended]);
   const applyAgentTitle = useAgentTitle(agentId, setState);
-  const reload = useCallback(() => {
-    if (agentReadRetryAt(stateRef.current) > Date.now()) return;
-    setActionError(undefined);
-    setStreamError(undefined);
-    setState(agentId === undefined ? { status: 'idle' } : { status: 'loading' });
-    setRevision((value) => value + 1);
-  }, [agentId, setState, stateRef]);
   const { run, command, recoverPending } = useAgentActions({
     agentId: suspended ? undefined : agentId,
     client,
@@ -420,6 +418,7 @@ export function useAgentController(
     setRequestRevision,
     applyLive,
     reload,
+    refreshDetail,
     errorMessage,
     onIdentityChange,
     options,
@@ -469,6 +468,7 @@ export function useAgentController(
     pending,
     actionError: actionError ?? streamError,
     reload,
+    refreshDetail,
     applyAgentTitle,
     clearActionError: () => {
       setActionError(undefined);

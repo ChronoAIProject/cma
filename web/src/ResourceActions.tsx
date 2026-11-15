@@ -1,4 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
+import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ResourceChange } from './agent/resourceChange';
 import { Presence } from './ui/Presence';
 import type { CmaWebClient } from './api/client';
 import { CommandKeys } from './api/client';
@@ -26,12 +27,17 @@ type LifecycleAction = Exclude<TreeAction, { kind: 'new_agent' | 'new_workspace'
 
 export function useResourceActions(
   client: CmaWebClient,
-  onChanged: () => void,
+  onChanged: (target: ResourceChange) => void,
   onCreate?: (action: CreateAction) => void,
   viewerId = 'current',
   onNavigate?: (route: AppRoute) => void,
   enabled = true,
 ) {
+  // Commands may settle after navigation; target matching belongs to the current view.
+  const changed = useRef(onChanged);
+  useLayoutEffect(() => {
+    changed.current = onChanged;
+  }, [onChanged]);
   const [deletion, setDeletion] = useState<
     { request: DeletionRequest; restored: boolean } | undefined
   >(() => {
@@ -41,7 +47,6 @@ export function useResourceActions(
   const [deletionRequests, setDeletionRequests] = useState(() => restoreDeletions(viewerId));
   const refreshDeletions = () => {
     setDeletionRequests(restoreDeletions(viewerId));
-    onChanged();
   };
   const [stopping, setStopping] = useState<{ agentId: string; key: string }>();
   const [sandboxRequests, setSandboxRequests] = useState<readonly SandboxActionRequest[]>([]);
@@ -114,7 +119,7 @@ export function useResourceActions(
           key: options.idempotencyKey,
           phase: 'accepted',
         });
-      onChanged();
+      if (action.kind !== 'export_history') changed.current(action);
     } catch (failure: unknown) {
       if (sandboxAction)
         setSandboxRequest({
@@ -238,7 +243,7 @@ export function useResourceActions(
                     : item,
                 ),
               );
-              onChanged();
+              changed.current(sandboxRequest.action);
             }}
             onClose={() =>
               setSandboxRequests((current) =>
@@ -264,7 +269,7 @@ export function useResourceActions(
             client={client}
             agentId={stopping.agentId}
             requestKey={stopping.key}
-            onChanged={onChanged}
+            onChanged={() => changed.current({ kind: 'stop_agent', agentId: stopping.agentId })}
             onStopped={() =>
               keys.current.settle(JSON.stringify({ kind: 'stop_agent', agentId: stopping.agentId }))
             }
@@ -280,7 +285,10 @@ export function useResourceActions(
               initial={deletion.request}
               restored={deletion.restored}
               backgroundOnAcceptance
-              onChanged={refreshDeletions}
+              onChanged={() => {
+                refreshDeletions();
+                changed.current(deletion.request.action);
+              }}
               onAccepted={(request) => {
                 if (request.action.kind === 'delete_sandbox') {
                   const sandboxId = request.action.sandboxId;
