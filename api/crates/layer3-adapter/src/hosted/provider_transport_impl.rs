@@ -295,9 +295,14 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             let epoch = state.runtime_epochs.entry(handle.clone()).or_default();
             *epoch = epoch.wrapping_add(1);
             state.bindings.remove(handle);
-            if let Some(slot) = state.native_http.remove(handle) {
-                slot.cancel();
-            }
+            state.native_http.retain(|(runtime, _), slot| {
+                if runtime == handle {
+                    slot.cancel();
+                    false
+                } else {
+                    true
+                }
+            });
             state
                 .slot_epochs
                 .retain(|(runtime, _), _| runtime != handle);
