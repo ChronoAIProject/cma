@@ -42,8 +42,24 @@ pub(super) fn advance(
         || request.expected_epoch != head.epoch
         || request.expected_control_revision != head.control_revision
         || request.expected_phase != head.phase
-        || operation.receipts.len() >= 32
+        || operation.terminal_recovery_receipt.is_some()
     {
+        return Err(AuthorityError::Conflict);
+    }
+    // Reasserting an existing hold records no new transition. In particular,
+    // an operator cannot exhaust recovery capacity by repeatedly holding it.
+    if request.action == AdvanceAction::Hold
+        && matches!(head.phase, Phase::AbortedHold | Phase::FailedHold)
+    {
+        return Ok(head.clone());
+    }
+    // One reserved terminal receipt remains available even at the ordinary
+    // audit bound. It can only close this operation, never enable another step.
+    let terminal = matches!(
+        request.action,
+        AdvanceAction::Abort | AdvanceAction::Activate
+    );
+    if operation.receipts.len() >= 32 && !terminal {
         return Err(AuthorityError::Conflict);
     }
     let mut next = head.clone();

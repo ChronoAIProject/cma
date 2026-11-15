@@ -96,6 +96,7 @@ fn operation(request: &TransitionRequest) -> ReleaseOperation {
         request_sha256: digest.clone(),
         request: original,
         predecessor_operation_id: None,
+        terminal_recovery_receipt: None,
         receipts: vec![ControlReceipt {
             request_sha256: digest,
             evidence_sha256: "a".repeat(64),
@@ -265,6 +266,47 @@ fn aborting_reversal_restores_failed_hold_without_reviving_a_writer() {
     // The original committed operation still needs fresh activation evidence.
     let resumed = transitions::advance(&h, &first_op, &step(&h, AdvanceAction::Activate)).unwrap();
     assert_eq!(resumed.writer, Some(first.next_writer));
+}
+
+#[test]
+fn repeated_hold_is_idempotent_and_audit_bound_preserves_terminal_recovery() {
+    let initial = head();
+    let request = transition(&initial);
+    let mut op = operation(&request);
+    let freezing = transitions::begin(&initial, &request).unwrap();
+    let mut held =
+        transitions::advance(&freezing, &op, &step(&freezing, AdvanceAction::Hold)).unwrap();
+    for _ in 0..64 {
+        assert_eq!(
+            transitions::advance(&held, &op, &step(&held, AdvanceAction::Hold)).unwrap(),
+            held
+        );
+    }
+    let template = op.receipts[0].clone();
+    op.receipts = (1..=32)
+        .map(|revision| ControlReceipt {
+            control_revision: revision,
+            phase: Phase::AbortedHold,
+            ..template.clone()
+        })
+        .collect();
+    held.control_revision = 32;
+    let recovered = transitions::advance(&held, &op, &step(&held, AdvanceAction::Abort)).unwrap();
+    assert_eq!(recovered.phase, Phase::Active);
+    assert_eq!(recovered.writer, initial.writer);
+    assert_eq!(recovered.control_revision, 33);
+    let committed = ReleaseHead {
+        phase: Phase::FailedHold,
+        writer: None,
+        epoch: 2,
+        writer_fence: 2,
+        pair: request.after.clone(),
+        ..held
+    };
+    let active =
+        transitions::advance(&committed, &op, &step(&committed, AdvanceAction::Activate)).unwrap();
+    assert_eq!(active.phase, Phase::Active);
+    assert_eq!(active.writer, Some(request.next_writer));
 }
 
 #[test]

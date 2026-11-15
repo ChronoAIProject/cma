@@ -161,6 +161,7 @@ impl AuthorityStore {
         if let Some(receipt) = operation
             .receipts
             .iter()
+            .chain(operation.terminal_recovery_receipt.iter())
             .find(|r| r.request_sha256 == digest)
         {
             return Ok(receipt.clone());
@@ -185,9 +186,31 @@ impl AuthorityStore {
             },
         };
         let evidence = verifier.verify(&evidence).await?.check(&evidence)?;
+        if next == observed {
+            // The same held state returns its existing durable receipt. A new
+            // request/revision does not consume an audit slot or fake progress.
+            if self.load(&request.deployment).await?.as_ref() != Some(&observed)
+                || self
+                    .operation(&request.deployment, &request.operation_id)
+                    .await?
+                    .as_ref()
+                    != Some(&operation)
+            {
+                return Err(AuthorityError::Conflict);
+            }
+            return operation
+                .receipts
+                .last()
+                .cloned()
+                .ok_or(AuthorityError::Invalid);
+        }
         let receipt = receipt(&next, digest, evidence);
         let previous_operation = operation.clone();
-        operation.receipts.push(receipt.clone());
+        if operation.receipts.len() >= 32 {
+            operation.terminal_recovery_receipt = Some(receipt.clone());
+        } else {
+            operation.receipts.push(receipt.clone());
+        }
         operation.validate()?;
         let mut session = self.transaction().await?;
         let result = async {
@@ -264,6 +287,7 @@ fn new_operation(
         request,
         predecessor_operation_id,
         receipts: vec![receipt(head, digest, evidence)],
+        terminal_recovery_receipt: None,
     };
     operation.validate()?;
     Ok(operation)

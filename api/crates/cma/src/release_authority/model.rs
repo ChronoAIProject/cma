@@ -150,6 +150,9 @@ pub(crate) struct ReleaseOperation {
     /// A precommit reversal abort returns to this held operation, never Active.
     pub predecessor_operation_id: Option<String>,
     pub receipts: Vec<ControlReceipt>,
+    /// Single terminal exit when the immutable ordinary audit is already full.
+    #[serde(default)]
+    pub terminal_recovery_receipt: Option<ControlReceipt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
