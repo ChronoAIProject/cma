@@ -1,0 +1,10 @@
+{
+  "recorded_at_utc": "2026-11-13T18:53:52.154881+00:00",
+  "counts": {
+    "anchors": 0,
+    "application_processes": 0,
+    "private_fixture_directories": 0,
+    "labelled_scale_fixture_containers": 0
+  },
+  "scope": "Point-in-time post-run inventory; application process executable paths and anchor script path are scoped to developer-17; fixture directories under task evidence; local Docker context desktop-linux and scale-test label. Current-run process-group confirmation is in the runner receipt; historical receipts unchanged."
+}

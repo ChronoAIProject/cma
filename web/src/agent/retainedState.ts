@@ -1,15 +1,29 @@
 import { useCallback, useLayoutEffect, useRef, useState, type SetStateAction } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AgentResourceState } from './controllerTypes';
+import { readCooldown, rememberReadCooldown } from './readCooldown';
+import { agentReadRetryAt } from './controllerError';
 
 /** Bounded, memory-only views belong to one mounted account and API client. */
 class AgentViews {
+  constructor(
+    private readonly client: CmaWebClient,
+    private readonly viewer?: string,
+  ) {}
   private readonly values = new Map<string, AgentResourceState>();
   get(id: string | undefined): AgentResourceState {
-    return id === undefined ? { status: 'idle' } : (this.values.get(id) ?? { status: 'loading' });
+    if (id === undefined) return { status: 'idle' };
+    const retryAt = readCooldown(this.client, this.viewer, id);
+    return (
+      this.values.get(id) ??
+      (retryAt > Date.now()
+        ? { status: 'error', message: 'Agent is busy. Retrying automatically.', retryAt }
+        : { status: 'loading' })
+    );
   }
   put(id: string | undefined, value: AgentResourceState) {
     if (id === undefined) return;
+    rememberReadCooldown(this.client, this.viewer, id, agentReadRetryAt(value));
     this.values.delete(id);
     if (value.status !== 'ready' || value.detail.id !== id) return;
     this.values.set(id, value);
@@ -22,10 +36,14 @@ export function useRetainedAgentState(
   viewer: string | undefined,
   agent: string | undefined,
 ) {
-  const [scope, setScope] = useState(() => ({ client, viewer, views: new AgentViews() }));
+  const [scope, setScope] = useState(() => ({
+    client,
+    viewer,
+    views: new AgentViews(client, viewer),
+  }));
   let views = scope.views;
   if (scope.client !== client || scope.viewer !== viewer) {
-    views = new AgentViews();
+    views = new AgentViews(client, viewer);
     setScope({ client, viewer, views });
   }
   const [rendered, render] = useState(() => ({ views, agent, value: views.get(agent) }));

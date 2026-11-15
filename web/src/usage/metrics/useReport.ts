@@ -1,8 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, type UsageMetricReport } from '@chronoai/cma-sdk';
-import { metricQuery, type MetricsClient, type Selection } from './model';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import type { MetricsClient, Selection } from './model';
 import { metricsFailure, type MetricsFailure } from './failure';
-import { usageRequest } from './request';
+import { startReportLoad } from './reportLoad';
+import { retryUsageRead } from './retry';
+import {
+  allowReportRetry,
+  abortWhenIdle,
+  bindCacheOwner,
+  entryFor,
+  nearestCommittedReport,
+  reportKey,
+  retainVisible,
+} from './reportCache';
+import {
+  UsageReportOwnerContext,
+  anonymousReportOwner,
+  type UsageReportOwner,
+} from './reportOwner';
 
 export function useUsageVisible(active = true): boolean {
   const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden');
@@ -14,29 +28,35 @@ export function useUsageVisible(active = true): boolean {
   return active && visible;
 }
 
-function delay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const aborted = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', aborted);
-      resolve();
-    }, milliseconds);
-    signal.addEventListener('abort', aborted, { once: true });
-    if (signal.aborted) aborted();
-  });
-}
-
-interface State {
-  readonly api: MetricsClient;
-  readonly key: string;
-  readonly report?: UsageMetricReport;
-  readonly reportKey?: string;
-  readonly pending?: UsageMetricReport;
-  readonly error?: MetricsFailure;
-  readonly busy: boolean;
+/** Warm the exact default filter key before the Operations tab is painted. */
+export function prefetchUsageReport(
+  api: MetricsClient,
+  selection: Selection,
+  admin: boolean,
+  owner: UsageReportOwner = anonymousReportOwner,
+) {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return () => {};
+  const scope = owner;
+  bindCacheOwner(api, scope.cacheKey);
+  const key = reportKey(selection, admin, scope.cacheKey);
+  const entry = entryFor(api, key, scope.cacheKey);
+  if (
+    entry.report &&
+    Date.now() - entry.completedAt < 60000 &&
+    !entry.stale &&
+    !entry.latestPending
+  )
+    return () => {};
+  return startReportLoad(
+    api,
+    selection,
+    admin,
+    scope.cacheKey,
+    entry,
+    true,
+    false,
+    scope.principal,
+  );
 }
 
 /** One snapshot for summary, charts, pages and detail; opening never changes a workload. */
@@ -45,123 +65,103 @@ export function useUsageReport(
   selection: Selection,
   admin: boolean,
   active = true,
+  owner?: UsageReportOwner,
+  forceOnMount = false,
 ) {
   const visible = useUsageVisible(active);
   const [revision, setRevision] = useState(0);
-  const [state, setState] = useState<State>();
-  const busy = useRef(false);
-  const retryAt = useRef(0);
-  const lastStarted = useRef(0);
-  const pendingRequest = useRef<
-    { api: MetricsClient; key: string; revision: number; report: UsageMetricReport } | undefined
-  >(undefined);
-  const completed = useRef<{ api: MetricsClient; key: string; revision: number } | undefined>(
-    undefined,
-  );
+  const [, redraw] = useState(0);
   // Sorting only changes a page of the existing report.
-  const key = JSON.stringify({ ...selection, sort: undefined, order: undefined });
+  const inheritedOwner = useContext(UsageReportOwnerContext);
+  const scope = owner ?? inheritedOwner;
+  const key = useMemo(
+    () => reportKey(selection, admin, scope.cacheKey),
+    [selection, admin, scope.cacheKey],
+  );
+  const entry = entryFor(api, key, scope.cacheKey);
   const refresh = useCallback(() => {
-    if (!busy.current && Date.now() >= retryAt.current) setRevision((value) => value + 1);
-  }, []);
+    if (!entry.inFlight && Date.now() >= entry.retryAt) {
+      allowReportRetry(entry);
+      setRevision((value) => value + 1);
+    }
+  }, [entry]);
+
+  useEffect(() => {
+    bindCacheOwner(api, scope.cacheKey);
+  }, [api, scope.cacheKey]);
+
+  useEffect(() => {
+    const listener = () => redraw((value) => value + 1);
+    entry.listeners.add(listener);
+    return () => {
+      entry.listeners.delete(listener);
+      abortWhenIdle(entry);
+    };
+  }, [entry]);
 
   useEffect(() => {
     if (!visible) return;
-    const prior = completed.current;
-    if (
-      prior?.api === api &&
-      prior.key === key &&
-      prior.revision === revision &&
-      Date.now() < Math.max(lastStarted.current + 60000, retryAt.current)
-    )
-      return;
-    const controller = new AbortController();
-    const signal = controller.signal;
-    const run = async () => {
-      busy.current = true;
-      lastStarted.current = Date.now();
-      completed.current = undefined;
-      setState((previous) => ({
-        api,
-        key,
-        report: previous?.api === api ? previous.report : undefined,
-        reportKey: previous?.api === api ? previous.reportKey : undefined,
-        busy: true,
-      }));
-      try {
-        const input = JSON.parse(key) as Selection;
-        const pending = pendingRequest.current;
-        let report =
-          pending?.api === api && pending.key === key && pending.revision === revision
-            ? pending.report
-            : await usageRequest(api, signal, () =>
-                api.create(metricQuery(input, admin), { signal }),
-              );
-        while (!signal.aborted && report.status === 'pending') {
-          pendingRequest.current = { api, key, revision, report };
-          setState((previous) => ({
-            api,
-            key,
-            report: previous?.api === api ? previous.report : undefined,
-            reportKey: previous?.api === api ? previous.reportKey : undefined,
-            pending: report,
-            busy: true,
-          }));
-          await delay(
-            Math.min(60000, Math.max(1000, Number(report.retry_after_seconds) * 1000)),
-            signal,
-          );
-          if (Date.now() / 1000 >= Number(report.expires_at)) throw new ApiError(410, 'Expired');
-          report = await usageRequest(api, signal, () => api.report(report.report_id, { signal }));
-        }
-        if (signal.aborted) return;
-        pendingRequest.current = undefined;
-        if (report.status !== 'ready' || !report.summary) throw new Error('Report failed');
-        retryAt.current = 0;
-        setState({ api, key, report, reportKey: key, busy: false });
-      } catch (error) {
-        if (signal.aborted) return;
-        pendingRequest.current = undefined;
-        const failure = metricsFailure(error);
-        retryAt.current = failure.retryAt ?? 0;
-        setState((previous) => ({
-          api,
-          key,
-          report:
-            failure.denied || failure.expired || previous?.api !== api
-              ? undefined
-              : previous.report,
-          reportKey: previous?.reportKey,
-          error: failure,
-          busy: false,
-        }));
-      } finally {
-        if (!signal.aborted) {
-          busy.current = false;
-          completed.current = { api, key, revision };
-        }
-      }
-    };
-    void run();
-    return () => {
-      controller.abort();
-      busy.current = false;
-    };
-  }, [api, key, admin, visible, revision]);
+    return retainVisible(entry);
+  }, [entry, visible]);
+
+  useEffect(() => {
+    if (!visible || entry.inFlight || entry.authorityBlocked || entry.stopped) return;
+    const recentlyCompleted =
+      entry.report !== undefined &&
+      !entry.stale &&
+      !entry.latestPending &&
+      Date.now() - entry.completedAt < 60000 &&
+      revision === 0;
+    if (recentlyCompleted && !forceOnMount) return;
+    startReportLoad(
+      api,
+      selection,
+      admin,
+      scope.cacheKey,
+      entry,
+      false,
+      revision > 0,
+      scope.principal,
+    );
+  }, [
+    admin,
+    api,
+    entry,
+    forceOnMount,
+    revision,
+    scope.cacheKey,
+    scope.principal,
+    selection,
+    visible,
+  ]);
 
   useEffect(() => {
     if (!visible) return;
     const timer = setInterval(() => {
-      if (Date.now() - lastStarted.current >= 60000) refresh();
+      if (!entry.authorityBlocked && !entry.stopped && Date.now() - entry.lastStarted >= 60000)
+        refresh();
     }, 60000);
     return () => clearInterval(timer);
-  }, [visible, refresh]);
+  }, [entry, refresh, visible]);
 
+  const report = entry.report;
+  const busy = visible && !report && (entry.inFlight !== undefined || !entry.attempted);
   return {
-    report: state?.api === api ? state.report : undefined,
-    pending: state?.api === api && state.key === key ? state.pending : undefined,
-    stale: state?.api === api && !!state.report && state.reportKey !== key,
-    error: state?.api === api && state.key === key ? state.error : undefined,
-    busy: visible && (state?.api !== api || state.key !== key || state.busy),
+    report,
+    fallback:
+      !report && !entry.authorityBlocked
+        ? nearestCommittedReport(api, selection, admin, scope.cacheKey)
+        : undefined,
+    startedAt: entry.observationStartedAt,
+    nextCheckAt: Math.max(entry.pollAt, entry.retryAt),
+    retrying: entry.retrying,
+    stopped: entry.stopped,
+    generatedAt: entry.generatedAt,
+    pending: entry.pending,
+    refreshing: entry.refreshing,
+    stale: Boolean(report && (entry.stale || entry.refreshing)),
+    error: entry.error,
+    busy,
     refresh,
   };
 }
@@ -182,7 +182,7 @@ export function useUsageRead<T>(
   useEffect(() => {
     if (!active) return;
     const controller = new AbortController();
-    void usageRequest(scope, controller.signal, load).then(
+    void retryUsageRead(scope, controller.signal, load).then(
       (data) => {
         if (!controller.signal.aborted) setStored({ load, revision, data });
       },

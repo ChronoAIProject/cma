@@ -1,7 +1,7 @@
 use super::*;
 use layer2_core::sandbox::store::SandboxMutationGuard;
 
-async fn prepared(f: &Fixture, request: &AgentAdmission) -> Agent {
+pub(super) async fn prepared(f: &Fixture, request: &AgentAdmission) -> Agent {
     let mut workspace = f
         .resources
         .get_workspace(&f.workspace.id)

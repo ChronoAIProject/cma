@@ -51,6 +51,15 @@ impl ProviderHostedControlTransport {
                 ))
             })?;
         Ok(Self {
+            desktop_http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(3))
+                .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
+                .build()
+                .map_err(|_| {
+                    AdapterError::Unavailable("desktop control client could not be built".into())
+                })?,
+            owner_router: None,
             output_json_budget: false,
             client,
             http,

@@ -94,6 +94,20 @@ impl SandboxControlStore for MongoSandboxStore {
         PageRequest::new(page.limit, page.cursor.clone())
             .map_err(|_| SandboxControlError::Invalid)?;
         let mut filter = doc! { "queued": true };
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Controls,
+                &self.sandbox_controls,
+                filter.clone(),
+            )
+            .await
+        {
+            return Ok(Page {
+                items: Vec::new(),
+                next: None,
+            });
+        }
         if let Some(cursor) = &page.cursor {
             filter.insert("_id", doc! { "$gt": cursor });
         }
@@ -112,6 +126,8 @@ impl SandboxControlStore for MongoSandboxStore {
         {
             items.push(records::read(&document)?);
         }
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Controls, items.is_empty());
         let more = items.len() > usize::from(page.limit);
         items.truncate(usize::from(page.limit));
         let next = more.then(|| {

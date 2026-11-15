@@ -1,7 +1,10 @@
 //! Strict Responses adapter for automatic agent titles through one sandbox proxy.
 
+use layer2_core::sandbox::PreparedAgentTitle;
+use sha2::{Digest, Sha256};
 use std::fmt;
 use std::time::Duration;
+mod prepared;
 
 use super::model_request_budget::RequestBudgetContext;
 use async_trait::async_trait;
@@ -113,10 +116,12 @@ impl HttpAgentTitleGenerator {
         .expect("the title-generator fixture configuration is valid")
     }
 
-    async fn send(
+    async fn prepare_request(
         &self,
-        request: &AgentTitleGenerationRequest,
-    ) -> Result<AgentTitleGenerationResponse, AgentTitleGenerationError> {
+        request: AgentTitleGenerationRequest,
+    ) -> Result<Box<dyn PreparedAgentTitle>, AgentTitleGenerationError> {
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(AGENT_TITLE_CALL_TIMEOUT_SECONDS);
         if nonempty(request.model()) != Some(self.deployment_model.as_str()) {
             return Err(AgentTitleGenerationError::unavailable());
         }
@@ -163,14 +168,30 @@ impl HttpAgentTitleGenerator {
             None => None,
         };
 
-        let response = self
+        let request_digest = format!("{:x}", Sha256::digest(&body));
+        let frozen = self
             .client
             .post(self.endpoint.clone())
             .headers(headers)
             .body(body)
-            .send()
-            .await
+            .build()
             .map_err(|_| AgentTitleGenerationError::unavailable())?;
+        Ok(Box::new(prepared::Prepared {
+            generator: self.clone(),
+            request,
+            frozen,
+            permit,
+            deadline,
+            request_digest,
+        }))
+    }
+
+    async fn receive(
+        &self,
+        request: &AgentTitleGenerationRequest,
+        response: reqwest::Response,
+        permit: Option<super::model_request_budget::RequestPermit>,
+    ) -> Result<AgentTitleGenerationResponse, AgentTitleGenerationError> {
         if response.status() != StatusCode::OK {
             let status = response.status();
             let mut body = Vec::new();
@@ -240,11 +261,18 @@ impl HttpAgentTitleGenerator {
 
 #[async_trait]
 impl AgentTitleGenerator for HttpAgentTitleGenerator {
+    async fn prepare(
+        &self,
+        request: AgentTitleGenerationRequest,
+    ) -> Result<Box<dyn PreparedAgentTitle>, AgentTitleGenerationError> {
+        self.prepare_request(request).await
+    }
+
     async fn generate(
         &self,
         request: AgentTitleGenerationRequest,
     ) -> Result<AgentTitleGenerationResponse, AgentTitleGenerationError> {
-        self.send(&request).await
+        self.prepare_request(request).await?.dispatch().await
     }
 }
 

@@ -41,49 +41,15 @@ pub(super) async fn is_segmented(
     Ok(crate::store::agent_log_segments::read_format(&row)?.is_some())
 }
 
-async fn segmented_source(
-    store: &MongoSandboxStore,
-    expected: &Agent,
-    session: &mut ClientSession,
-    snapshot: bool,
-) -> Result<Option<crate::store::agent_log_segments::Head>, SandboxStoreError> {
-    let find = store.agents.find_one(doc! {"_id": expected.id.as_str()});
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    let Some(row) = find
-        .session(&mut *session)
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-    else {
-        return Err(SandboxStoreError::NotFound);
-    };
-    let agent = crate::store::agents::read_agent(&row)?;
-    if agent != *expected {
-        return Err(SandboxStoreError::SequenceConflict);
-    }
-    if crate::store::agent_log_segments::read_format(&row)?.is_none() {
-        return Ok(None);
-    }
-    let head = crate::store::agent_log_segments::read_head(store, &row, session, snapshot)
-        .await
-        .map_err(segment_error)?;
-    if u64::try_from(head.last_seq).ok() != Some(expected.conversation.last_seq) {
-        return Err(SandboxStoreError::SequenceConflict);
-    }
-    Ok(Some(head))
-}
-
 pub(super) async fn projected_usage(
     store: &MongoSandboxStore,
     expected: &Agent,
     session: &mut ClientSession,
 ) -> Result<Option<AgentUsageReading>, SandboxStoreError> {
-    let Some(_) = segmented_source(store, expected, session, true).await? else {
-        return Ok(None);
-    };
+    // Capture below validates the head and source in this same snapshot.
+    if !is_segmented(store, expected, session).await? {
+        return super::agent_opening_reads::usage(store, expected, session).await;
+    }
     let source = segments::capture::capture(
         store,
         expected,
@@ -107,6 +73,8 @@ pub(super) async fn projected_transcript(
     transcript::complete(store, expected, session).await
 }
 
+pub(super) mod answer;
+pub(super) mod page;
 mod transcript;
 pub(super) use transcript::page as transcript_page;
 

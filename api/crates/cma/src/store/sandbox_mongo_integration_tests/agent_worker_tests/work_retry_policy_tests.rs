@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox::work_retry::{work_retry_policy, WorkRetryClass, WorkRetryFailure};
 use std::time::{Duration, SystemTime};
 
@@ -104,7 +105,7 @@ async fn retry_policy_mongo_sandbox_probe_is_pending_and_discovered_only_when_du
     let mut seconds = 0;
     for attempt in 0..5 {
         let current = store
-            .claim_sandbox_work(&initial.id, "worker", stamp(seconds), stamp(seconds + 60))
+            .claim_sandbox_work(&initial.id, "worker", stamp(seconds), work_lease_deadline())
             .await
             .unwrap()
             .unwrap();

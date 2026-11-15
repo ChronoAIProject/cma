@@ -10,8 +10,32 @@ use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_
 
 const MAX_SESSION_ID_BYTES: usize = 128;
 
+mod exclusive;
+
 #[async_trait::async_trait]
 impl SandboxSessionStore for MongoSandboxStore {
+    async fn acquire_exclusive_sandbox_session(
+        &self,
+        request: &layer2_core::sandbox::store::DesktopSessionRequest,
+    ) -> Result<layer3_adapter::DesktopOwnership, SandboxStoreError> {
+        exclusive::claim(self, request, None).await
+    }
+
+    async fn renew_exclusive_sandbox_session(
+        &self,
+        request: &layer2_core::sandbox::store::DesktopSessionRequest,
+        authority: &layer3_adapter::DesktopOwnership,
+    ) -> Result<layer3_adapter::DesktopOwnership, SandboxStoreError> {
+        exclusive::claim(self, request, Some(authority)).await
+    }
+
+    async fn release_exclusive_sandbox_session(
+        &self,
+        authority: &layer3_adapter::DesktopOwnership,
+    ) -> Result<(), SandboxStoreError> {
+        exclusive::release(self, authority).await
+    }
+
     async fn open_sandbox_session(
         &self,
         sandbox_id: &SandboxId,
@@ -157,11 +181,11 @@ async fn fence_active_sandbox(
     let changed = store
         .sandboxes
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": sandbox_id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "status": "active",
-            },
+            }),
             doc! { "$inc": { "desktop_activity_fence": 1_i64 } },
         )
         .await

@@ -8,6 +8,18 @@ use layer2_core::sandbox_metrics::{
 
 #[async_trait]
 impl MetricsStore for ReportingStore {
+    async fn latest(
+        &self,
+        scope: &Scope,
+        selection: &layer2_core::sandbox_metrics::ViewSelection,
+        at: u64,
+    ) -> Result<layer2_core::sandbox_metrics::ReportView> {
+        self.latest_view(scope, selection, at).await
+    }
+    async fn verify_snapshot(&self, report: &Report) -> Result<()> {
+        self.verify_retained_snapshot(report).await
+    }
+
     fn check_read_budget(&self) -> Result<()> {
         self.check_circuit(now())
     }
@@ -74,15 +86,7 @@ impl MetricsStore for ReportingStore {
         Ok(())
     }
     async fn submit(&self, scope: Scope, query: ReportQuery, at: u64) -> Result<Report> {
-        // Retry a transaction conflict/coalescing race only a bounded number of
-        // times. The unique hash and admission transaction remain authoritative.
-        for attempt in 0..3 {
-            match self.admit(scope.clone(), query.clone(), at).await {
-                Err(MetricsError::Unavailable) if attempt < 2 => tokio::task::yield_now().await,
-                result => return result,
-            }
-        }
-        Err(MetricsError::Unavailable)
+        self.submit_with_completion(scope, query, at).await
     }
     async fn report(&self, scope: &Scope, id: &str, at: u64) -> Result<Report> {
         let d = self
@@ -93,7 +97,10 @@ impl MetricsStore for ReportingStore {
             .map_err(unavailable)?
             .ok_or(MetricsError::NotFound)?;
         let report: Report = decode(&d)?;
-        if report.expires_at <= at {
+        if report.expires_at <= at
+            || d.get_i64("retire_after")
+                .is_ok_and(|until| until <= at as i64)
+        {
             return Err(MetricsError::Expired);
         }
         if report.status == layer2_core::sandbox_metrics::ReportStatus::Failed {
@@ -102,6 +109,7 @@ impl MetricsStore for ReportingStore {
         Ok(report)
     }
     async fn reauthorize(&self, report: &Report) -> Result<()> {
+        self.verify_retained_snapshot(report).await?;
         // Even admin cached membership must not retain another owner's old
         // attribution after a transfer. Owner changes invalidate the snapshot.
         let pipeline = [
@@ -134,6 +142,7 @@ impl MetricsStore for ReportingStore {
                 return Err(MetricsError::NotFound);
             }
         }
+        self.verify_retained_snapshot(report).await?;
         Ok(())
     }
     async fn page(&self, report: &Report, query: PageQuery) -> Result<Rows> {
@@ -179,6 +188,7 @@ impl MetricsStore for ReportingStore {
             .find(filter)
             .sort(doc! {&null_key:1,&value_key:direction,"sandbox_id":direction})
             .limit(i64::from(limit) + 1)
+            .batch_size(u32::from(limit) + 1)
             .max_time(DB_DEADLINE)
             .await
             .map_err(unavailable)?;
@@ -215,8 +225,11 @@ impl MetricsStore for ReportingStore {
         } else {
             None
         };
+        let mut items: Vec<Row> = docs.iter().map(decode).collect::<Result<_>>()?;
+        self.hydrate_owner_names(items.iter_mut().map(|row| &mut row.owner).collect())
+            .await?;
         Ok(Rows {
-            items: docs.iter().map(decode).collect::<Result<_>>()?,
+            items,
             next,
             report_id: report.report_id.clone(),
             as_of: report.as_of,
@@ -231,7 +244,9 @@ impl MetricsStore for ReportingStore {
             .await
             .map_err(unavailable)?
             .ok_or(MetricsError::NotFound)?;
-        decode(&d)
+        let mut row: Row = decode(&d)?;
+        self.hydrate_owner_names(vec![&mut row.owner]).await?;
+        Ok(row)
     }
     async fn owners(
         &self,

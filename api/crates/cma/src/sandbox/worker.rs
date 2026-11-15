@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
@@ -16,6 +18,7 @@ use super::live_agents::LiveAgentRegistry;
 #[cfg(test)]
 use layer2_core::sandbox::SandboxPolicy;
 
+mod authority;
 mod execute;
 mod home;
 mod initial_runtime;
@@ -27,6 +30,8 @@ mod retirement;
 mod retry;
 mod scheduling;
 mod support;
+mod teardown;
+mod teardown_timing;
 
 pub(crate) const CREDENTIAL_ROTATION_AGE: Duration = Duration::from_secs(12 * 60 * 60);
 pub(crate) const CREDENTIAL_EXPIRY_MARGIN: Duration = Duration::from_secs(5 * 60);
@@ -87,7 +92,9 @@ pub(crate) struct SandboxWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct SandboxWorkerConfig {
+    pub renewable_work: bool,
     pub work_retry_policy_enabled: bool,
+    pub native_create_retry_enabled: bool,
     pub home_policy: Option<layer3_adapter::HomeVolumePolicy>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub holder: String,
@@ -116,8 +123,10 @@ impl SandboxWorkerConfig {
         policy: Arc<dyn SandboxPolicySource>,
     ) -> Self {
         Self {
+            renewable_work: false,
             home_policy: None,
             work_retry_policy_enabled: false,
+            native_create_retry_enabled: false,
             execution: Default::default(),
             holder: holder.into(),
             deployment_id: deployment_id.into(),
@@ -128,19 +137,35 @@ impl SandboxWorkerConfig {
         }
     }
 
+    pub fn with_replicas(mut self, enabled: bool) -> Self {
+        self.renewable_work = enabled;
+        if enabled {
+            self.lease_duration =
+                Duration::from_secs(layer2_core::sandbox::store::WORK_LEASE_SECONDS);
+        }
+        self
+    }
+
     pub fn with_execution(
         mut self,
         execution: layer2_core::sandbox::ProvisioningExecution,
     ) -> Self {
         self.execution = execution;
-        self.lease_duration = self.lease_duration.max(Duration::from_secs(
-            layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
-        ));
+        if !self.renewable_work {
+            self.lease_duration = self.lease_duration.max(Duration::from_secs(
+                layer3_adapter::DEFAULT_TOTAL_TIMEOUT_SECONDS + 60,
+            ));
+        }
         self
     }
 
     pub fn with_home_policy(mut self, policy: Option<layer3_adapter::HomeVolumePolicy>) -> Self {
         self.home_policy = policy;
+        self
+    }
+
+    pub(crate) fn with_native_create_retry(mut self, enabled: bool) -> Self {
+        self.native_create_retry_enabled = enabled;
         self
     }
 
@@ -154,6 +179,12 @@ pub(crate) struct SandboxWorker {
     dependencies: SandboxWorkerDependencies,
     config: SandboxWorkerConfig,
     funding: Arc<dyn SandboxFundingAdapter>,
+    reopen_relay: std::sync::OnceLock<std::sync::Weak<crate::agent_manager::relay::Relay>>,
+    reopen_agents: std::sync::OnceLock<Arc<dyn layer2_core::sandbox::store::AgentStore>>,
+    reopen_gate: tokio::sync::Mutex<()>,
+    pending_reopens: std::sync::Mutex<
+        std::collections::BTreeMap<layer2_core::AgentId, lifecycle::PendingReopen>,
+    >,
 }
 
 impl SandboxWorker {
@@ -175,10 +206,24 @@ impl SandboxWorker {
             dependencies,
             config,
             funding,
+            reopen_relay: std::sync::OnceLock::new(),
+            reopen_agents: std::sync::OnceLock::new(),
+            reopen_gate: tokio::sync::Mutex::new(()),
+            pending_reopens: std::sync::Mutex::new(std::collections::BTreeMap::new()),
         })
     }
 
+    pub(crate) fn install_reopen_relay(
+        &self,
+        relay: &Arc<crate::agent_manager::relay::Relay>,
+        agents: Arc<dyn layer2_core::sandbox::store::AgentStore>,
+    ) {
+        assert!(self.reopen_agents.set(agents).is_ok());
+        assert!(self.reopen_relay.set(Arc::downgrade(relay)).is_ok());
+    }
+
     pub async fn run_due(&self, now: SystemTime) -> Result<usize, SandboxStoreError> {
+        let started = tokio::time::Instant::now();
         let stamp = rfc3339_at(now);
         let due = self
             .dependencies
@@ -188,7 +233,12 @@ impl SandboxWorker {
         let mut completed = 0;
         let mut first_error = None;
         for id in due {
-            match self.run_scheduled(&id, now).await {
+            let at = if self.config.renewable_work {
+                now + started.elapsed()
+            } else {
+                now
+            };
+            match self.run_scheduled(&id, at).await {
                 Ok(true) => completed += 1,
                 Ok(false) => {}
                 Err(error) => {
@@ -199,7 +249,18 @@ impl SandboxWorker {
         first_error.map_or(Ok(completed), Err)
     }
 
-    pub async fn run_one(
+    /// Run one claimed item behind a boxed boundary so callers do not inherit
+    /// the full execution and renewal state-machine stack frame.
+    pub fn run_one(
+        &self,
+        id: &SandboxId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, SandboxStoreError>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move { self.run_one_inner(&id, now).await })
+    }
+
+    async fn run_one_inner(
         &self,
         id: &SandboxId,
         now: SystemTime,
@@ -207,16 +268,35 @@ impl SandboxWorker {
         let claiming = tokio::time::Instant::now();
         let now_stamp = rfc3339_at(now);
         let lease_expires = rfc3339_at(now + self.config.lease_duration);
-        let Some(sandbox) = self
-            .dependencies
-            .store
-            .claim_sandbox_work(id, &self.config.holder, now_stamp, lease_expires)
-            .await?
-        else {
+        let claiming_work = self.dependencies.store.claim_sandbox_work(
+            id,
+            &self.config.holder,
+            now_stamp,
+            lease_expires,
+        );
+        let granted = if self.config.renewable_work {
+            tokio::time::timeout(
+                Duration::from_secs(layer2_core::sandbox::store::WORK_RENEW_SECONDS),
+                claiming_work,
+            )
+            .await
+            .map_err(|_| {
+                SandboxStoreError::Unavailable("work acquisition acknowledgement timed out".into())
+            })??
+        } else {
+            claiming_work.await?
+        };
+        let Some(sandbox) = granted else {
             return Ok(false);
         };
+        if self.config.renewable_work || sandbox.work.authority_protocol.is_some() {
+            return Box::pin(self.run_renewable(sandbox, now, claiming)).await;
+        }
         let claim_ms = claiming.elapsed().as_millis() as u64;
-        self.run_claimed(sandbox, now, claim_ms).await
+        layer2_core::agent_ownership::transport_observation_scope(Box::pin(
+            self.run_claimed(sandbox, now, claim_ms),
+        ))
+        .await
     }
 
     async fn run_claimed(
@@ -267,7 +347,9 @@ impl SandboxWorker {
             let Some(current) = self.dependencies.store.get_sandbox(&claimed.id).await? else {
                 return Ok(false);
             };
-            if current.work.lease != claimed.work.lease
+            if !matches!((&current.work.lease, &claimed.work.lease),
+                (Some(current), Some(original)) if current.holder == original.holder
+                    && current.fence == original.fence && current.expires_at >= original.expires_at)
                 || current.work.step != claimed.work.step
                 || current.lifecycle.operation != claimed.lifecycle.operation
                 || current.runtime != claimed.runtime

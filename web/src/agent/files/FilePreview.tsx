@@ -1,4 +1,9 @@
-import { fileBytes, type AgentFileContent, type AgentFileEntry } from '../../api/agentFiles';
+import {
+  PREVIEW_BYTES,
+  fileBytes,
+  type AgentFileContent,
+  type AgentFileEntry,
+} from '../../api/agentFiles';
 import { Button } from '../../ui/Button';
 import { IconDownloadOutline16, IconTrashOutline16 } from '../../ui/icons';
 
@@ -131,6 +136,13 @@ export function FilePreview({
                 </div>
               ) : null}
             </>
+          ) : !content && file.size_bytes <= PREVIEW_BYTES ? (
+            <div role="status">
+              <p>File preview unavailable.</p>
+              <Button size="sm" disabled={busy} onClick={onReload}>
+                Retry preview
+              </Button>
+            </div>
           ) : (
             <p className="agent-files__empty">Download this file to view its contents.</p>
           )}
