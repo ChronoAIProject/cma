@@ -57,6 +57,22 @@ impl ReportingStore {
     async fn read_allocation_events(
         &self,
         session: &mut mongodb::ClientSession,
+        filter: mongodb::bson::Document,
+        range: Range,
+        revision_seek: bool,
+    ) -> Result<BTreeMap<String, Vec<UsageEvent>>> {
+        allocation_operation(self.read_allocation_events_inner(
+            session,
+            filter,
+            range,
+            revision_seek,
+        ))
+        .await
+    }
+
+    async fn read_allocation_events_inner(
+        &self,
+        session: &mut mongodb::ClientSession,
         mut filter: mongodb::bson::Document,
         range: Range,
         revision_seek: bool,
@@ -75,7 +91,7 @@ impl ReportingStore {
         };
         let mut cursor = find
             .batch_size(2_000)
-            .max_time(DB_DEADLINE)
+            .max_time(ALLOCATION_DB_DEADLINE)
             .session(&mut *session)
             .await
             .map_err(unavailable)?;
