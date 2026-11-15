@@ -43,6 +43,7 @@ export interface AgentController {
   readonly pending?: AgentCommand;
   readonly actionError?: string;
   readonly reload: () => void;
+  readonly refreshDetail: () => void;
   readonly clearActionError: () => void;
   readonly send: (
     content: string,
