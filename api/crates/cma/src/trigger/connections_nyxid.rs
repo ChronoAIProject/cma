@@ -18,6 +18,7 @@ mod catalog;
 mod composition;
 mod credentials;
 mod protocol;
+mod read_retry;
 mod response;
 
 use protocol::{
@@ -133,10 +134,7 @@ impl NyxidServiceConnectionBroker {
         request: RequestBuilder,
         missing_is_not_found: bool,
     ) -> Result<Response, ServiceConnectionError> {
-        let response = request
-            .send()
-            .await
-            .map_err(|_| unavailable(PROVIDER_UNAVAILABLE))?;
+        let response = read_retry::send(request).await?;
         let status = response.status();
         if status.is_success() {
             return Ok(response);
