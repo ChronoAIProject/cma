@@ -304,7 +304,7 @@ async fn native_usage_hotfix_full_report_six_case_matrix() {
         .expect("same frozen endpoint for both binaries")
         .parse()
         .unwrap();
-    assert!(to < now() && to % CADENCE == 0 && to % DAY != 0);
+    assert!(to < now() && to.is_multiple_of(CADENCE) && !to.is_multiple_of(DAY));
     let output =
         std::env::var("CHRONO_USAGE_MATRIX_OUTPUT").expect("private output directory required");
     let output = Path::new(&output);

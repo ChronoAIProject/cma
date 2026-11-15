@@ -62,6 +62,7 @@ impl ReportingStore {
             .map_err(unavailable)
     }
 
+    #[cfg(test)]
     pub(crate) async fn bulk_updates(
         &self,
         collection: &str,
