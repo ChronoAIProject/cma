@@ -52,6 +52,7 @@ class Fixture:
         self.killed={}
         self.events=[]
         self.provider_observation_lock=threading.Lock()
+        self.mongo_observation_lock=threading.Lock()
         self.server=None
         self.thread=None
 
@@ -70,8 +71,11 @@ class Fixture:
 
     def mongo(self, script):
         prefix="const admin=db.getSiblingDB('admin');if(!admin.auth(process.env.MONGO_INITDB_ROOT_USERNAME,process.env.MONGO_INITDB_ROOT_PASSWORD))quit(2);const d=db.getSiblingDB('cma_native_am');"
-        raw=self.client.k(['exec','mongo','--','mongosh','--quiet','mongodb://127.0.0.1:27017/admin',
-            '--eval',prefix+script],timeout=20)
+        # Each mongosh lives in the Mongo cgroup. Do not overlap observation
+        # shells when HTTP/control handlers ask for ownership concurrently.
+        with self.mongo_observation_lock:
+            raw=self.client.k(['exec','mongo','--','mongosh','--quiet','mongodb://127.0.0.1:27017/admin',
+                '--eval',prefix+script],timeout=20)
         return json.loads(raw)
 
     def initialize(self):
@@ -290,8 +294,8 @@ class Fixture:
         return 'http://127.0.0.1:'+str(self.server.server_port)
 
     def captureFailure(self, reason=None, **_):
-        destination=self.output/'diagnosis-before-cleanup'
-        destination.mkdir(mode=0o700,exist_ok=True)
+        destination=self.output/('diagnosis-'+str(time.time_ns()))
+        destination.mkdir(mode=0o700,exist_ok=False)
         result={'started_at':utc(),'reason':reason,'mutating_requests':0,'errors':[]}
         previous_deadline=self.client.deadline
         self.client.deadline=time.monotonic()+90

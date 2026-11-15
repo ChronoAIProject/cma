@@ -38,6 +38,10 @@ ownership coordinator, command ledger, Mongo transactions, runtime, files and
 desktop are real. No application store is patched to create ownership, force
 completion, or repair a failed run. Controller scaling is the planned restart
 scenario; failure handling preserves diagnostics and tears down the owned cluster.
+Requests are paced across clients sharing a fixture identity to stay within the
+default Create and read budgets. Pacing happens before owner observation and does
+not retry failed mutations. Mongo observation shells are serialized within a
+2 GiB request / 3 GiB limit, and each failure capture has a unique directory.
 
 ## CI inputs and execution
 

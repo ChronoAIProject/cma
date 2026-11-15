@@ -410,6 +410,8 @@ export async function runJourney(raw, {adoptionHook, featureHook} = {}) {
     result.verdict = 'LOCAL_TWO_AM_JOURNEY_PASS';
   } catch (error) {
     result.verdict = 'FAIL'; result.failure = safeError(error); await save();
+    if (error.response) await writeFile(join(config.output_dir, 'failure-response.private.json'),
+      JSON.stringify(error.response, null, 2), {flag: 'wx', mode: 0o600});
     // The sole owner joins bounded read-only diagnostics before any stream
     // release or public retirement can remove the failing runtime evidence.
     if (typeof adapter.captureFailure === 'function') {

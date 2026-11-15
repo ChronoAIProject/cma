@@ -1,5 +1,6 @@
 import {createHash} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
+import {requestPacer} from '../pacing.mjs';
 
 export const hash = x => createHash('sha256').update(String(x)).digest('hex');
 export const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -156,15 +157,25 @@ export class API {
   constructor(config, observe = () => {}) {
     this.config = config; this.observe = observe; this.streams = new Set();
     this.routedAgents = new Set(); this.responseAgents = new Map(); this.routingEnabled = true;
+    this.commandAgents = new Map();
   }
   headers(extra = {}) { return {Authorization: 'Bearer ' + this.config.bearer, Host: this.config.host, Origin: this.config.public_origin, ...extra}; }
   url(am, path) { check(['a', 'b'].includes(am) && path.startsWith('/api/'), 'api_target_invalid'); return new URL(path, this.config.ams[am]); }
   async request(am, method, path, options = {}) {
+    await requestPacer.wait(this.config.bearer, method);
     const agent = path.match(/^\/api\/v[12]\/agents\/([^/?]+)/)?.[1]
-      ?? this.responseAgents.get(path.match(/^\/api\/v2\/responses\/([^/?]+)/)?.[1]);
-    if (this.router && this.routingEnabled && this.routedAgents.has(agent))
-      return this.router.dispatch(agent, ingress => this.rawRequest(ingress, method, path, options));
-    return this.rawRequest(am, method, path, options);
+      ?? this.responseAgents.get(path.match(/^\/api\/v2\/responses\/([^/?]+)/)?.[1])
+      ?? this.commandAgents.get(path.match(/^\/api\/v2\/commands\/([^/?]+)/)?.[1]);
+    const response = this.router && this.routingEnabled && this.routedAgents.has(agent)
+      ? await this.router.dispatch(agent, ingress => this.rawRequest(ingress, method, path, options))
+      : await this.rawRequest(am, method, path, options);
+    const command = response.body?.control?.receipt?.command_id ?? response.body?.receipt?.command_id;
+    if (agent && id(command)) {
+      check(!this.commandAgents.has(command) || this.commandAgents.get(command) === agent,
+        'command_agent_binding_changed');
+      this.commandAgents.set(command, agent);
+    }
+    return response;
   }
   async rawRequest(am, method, path, {body, key, allowed = [200], timeout = 30000} = {}) {
     const start = performance.now();
@@ -176,7 +187,8 @@ export class API {
     const observation = {am, method, route: path.split('?')[0].replace(/(\/(?:agents|sandboxes|agent-lifecycle|responses|commands))\/[^/]+/g, '$1/{id}'),
       status: result.status, header_ms: headerMs, body_ms: performance.now() - start};
     this.observe(observation);
-    const response = {status: result.status, body: value, timing: observation};
+    const response = {status: result.status, body: value, timing: observation,
+      retry_after: result.headers.get('retry-after')};
     if (!allowed.includes(result.status)) {
       const error = new Error('api_status_' + result.status);
       // Caller may retain this privately; public errors contain only the fixed code.
@@ -185,6 +197,7 @@ export class API {
     return response;
   }
   async send(am, agentId, input, key) {
+    await requestPacer.wait(this.config.bearer, 'POST');
     const value = this.router && this.routingEnabled
       ? await this.router.dispatch(agentId, ingress => this.rawSend(ingress, agentId, input, key))
       : await this.rawSend(am, agentId, input, key);
