@@ -8,7 +8,8 @@ mod pools;
 mod readonly;
 mod selection;
 mod session;
-pub(crate) mod settings;
+pub(crate) use crate::config::runtime_release as settings;
+pub(crate) use bootstrap::image as valid_image;
 mod standby;
 mod verifier;
 

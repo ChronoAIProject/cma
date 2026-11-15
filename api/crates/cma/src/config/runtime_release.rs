@@ -39,7 +39,7 @@ impl Settings {
         let grant_path = path(required("CHRONO_RUNTIME_RELEASE_GRANT_PATH")?)?;
         let challenge_path = path(required("CHRONO_RUNTIME_RELEASE_CHALLENGE_PATH")?)?;
         let binary_image = required("CHRONO_RUNTIME_RELEASE_BINARY_IMAGE")?;
-        if grant_path == challenge_path || !super::bootstrap::image(&binary_image) {
+        if grant_path == challenge_path || !crate::runtime_release::valid_image(&binary_image) {
             return Err("runtime release paths and binary identity are invalid".into());
         }
         Ok(Self::Managed {
