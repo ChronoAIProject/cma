@@ -122,9 +122,15 @@ async fn rotated_cookie_credential_does_not_inherit_previous_tokens_cooldown() {
     fixture.auth.metadata().await.unwrap();
     throttle_both(&fixture, "60").await;
     assert_throttled(read(&app, &login, false, "/auth/session").await);
+    let previous = state.clone();
+    state.revision += 1;
     state.token_generation += 1;
     state.tokens.as_mut().unwrap().access_token = SecretValue::new("rotated-access-fixture".into());
-    fixture.store.put_subject(state).await.unwrap();
+    assert!(fixture
+        .store
+        .replace_subject(&previous.incarnation, previous.revision, state)
+        .await
+        .unwrap());
     for endpoint in [&fixture.control.userinfo, &fixture.control.introspection] {
         endpoint.write().await.status = StatusCode::OK;
     }
