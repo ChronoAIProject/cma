@@ -1,9 +1,18 @@
 //! CMA control plane composition while replacement resource routes are rebuilt.
 
+// Avoid libc allocator retention and contention across async worker threads.
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(test)]
+#[path = "../../cmaeg/tests/support/global_allocator.rs"]
+mod global_allocator_tests;
+
 mod activity;
 mod agent_access;
 mod agent_access_worker;
 mod agent_lifecycle;
+mod agent_manager;
 mod agent_models;
 mod auth;
 mod background;
@@ -34,6 +43,8 @@ mod retirement_archive;
 mod sandbox;
 mod sandbox_metrics;
 mod shutdown;
+mod startup;
+mod startup_timing;
 mod store;
 mod telemetry;
 mod trigger;
@@ -41,7 +52,9 @@ mod usage_billing;
 mod warm_pools;
 mod worker_supervision;
 
-use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
+use std::sync::Arc;
+
+use startup::serve;
 
 use axum::{
     body::Body,
@@ -59,24 +72,34 @@ use tower_http::{
 };
 use tracing::Level;
 
-use crate::{
-    composition::ControlPlaneComposition,
-    config::Config,
-    shutdown::{signalled, ShutdownCoordinator},
-};
-
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
 pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
     "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
 );
 
 const DEFAULT_LOG_FILTER: &str = "info";
-// Match the Gateway's longest accepted connection before draining workers.
-const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
+fn main() {
+    let mut arguments = std::env::args_os().skip(1);
+    if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--allocator-self-test")) {
+        // Qualify this executable's allocator before Tokio starts threads or
+        // any serving, configuration, metrics or database composition runs.
+        if arguments.next().is_some() {
+            eprintln!("usage: cma --allocator-self-test");
+            std::process::exit(2);
+        }
+        if let Err(error) = cma_allocator_qualification::run() {
+            eprintln!("allocator-self-test outcome=failed error={error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    run();
+}
+
 #[tokio::main]
-async fn main() {
+async fn run() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
     if retirement_archive::is_command(&arguments) {
         match retirement_archive::command(&arguments).await {
@@ -143,13 +166,7 @@ async fn main() {
         return;
     }
     if store::migrations::is_command(&arguments) {
-        match store::migrations::command(&arguments).await {
-            Ok(result) => println!("{result}"),
-            Err(reason) => {
-                eprintln!("migration refused: {reason}");
-                std::process::exit(2);
-            }
-        }
+        store::migrations::run_command_line(&arguments).await;
         return;
     }
     if store::segment_operations::is_command(&arguments) {
@@ -164,7 +181,13 @@ async fn main() {
     }
     if arguments == ["--print-runtime-role"] {
         match std::env::var("CHRONO_MONGODB_DATABASE") {
-            Ok(database) => println!("{}", store::isolation::role(&database)),
+            Ok(database) => println!(
+                "{}",
+                store::isolation::replicas::role(
+                    &database,
+                    std::env::var("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED").as_deref() == Ok("true"),
+                )
+            ),
             Err(_) => {
                 eprintln!("CHRONO_MONGODB_DATABASE is required");
                 std::process::exit(2)
@@ -182,127 +205,13 @@ async fn main() {
         }
         return;
     }
-    if !arguments.is_empty() {
-        eprintln!("usage: cma [--print-runtime-role | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE]");
+    if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --allocator-self-test]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
         tracing::error!(error = %error, "CMA stopped");
         std::process::exit(1);
-    }
-}
-
-async fn serve() -> Result<(), String> {
-    let config =
-        Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
-    let recorder = telemetry::install()?;
-    let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
-    let composition = ControlPlaneComposition::build(&config).await?;
-    let auth_mode = config.auth_mode_name();
-    let app = with_request_context(with_cors(composition.router, config.cors_origins));
-
-    // Do not admit allocations against a newly promoted runtime until its
-    // exact default pool has ready capacity (unless an operator disabled it).
-    composition
-        .native_warm_pools
-        .ensure_default()
-        .await
-        .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
-    composition
-        .native_warm_pools
-        .await_default_ready()
-        .await
-        .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
-
-    let listener = tokio::net::TcpListener::bind(config.bind)
-        .await
-        .map_err(|error| format!("cannot bind {}: {error}", config.bind))?;
-    composition.sandbox_lifecycle.initialize().await?;
-    tracing::info!(
-        bind = %config.bind,
-        public_url = %config.public_url,
-        auth_mode,
-        "CMA listening"
-    );
-    let mut shutdown = ShutdownCoordinator::new();
-    shutdown.push(read_telemetry::spawn(shutdown.subscribe()));
-    shutdown.push(
-        composition
-            .auth
-            .spawn_actor_link_renewal(shutdown.subscribe()),
-    );
-    shutdown.push(composition.bindings.spawn(shutdown.subscribe()));
-    if let Some(bots) = composition.bots {
-        shutdown.push(bots.spawn(shutdown.subscribe()));
-    }
-    if let Some(continuations) = composition.actor_continuations {
-        shutdown.push(continuations.spawn(shutdown.subscribe()));
-    }
-    let worker_signal = shutdown.subscribe();
-    shutdown.push(
-        composition
-            .launch_scheduler
-            .spawn_supervised(worker_signal, composition.workers.get("launches")),
-    );
-    shutdown.push(composition.command_scheduler.spawn_supervised(
-        shutdown.subscribe(),
-        composition.workers.get("agent_commands"),
-    ));
-    shutdown.push(composition.sandbox_control_scheduler.spawn_supervised(
-        shutdown.subscribe(),
-        composition.workers.get("sandbox_commands"),
-    ));
-    shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
-    shutdown.push(
-        composition
-            .native_warm_pools
-            .clone()
-            .spawn_observations(shutdown.subscribe()),
-    );
-    shutdown.push(composition.native_warm_pools.spawn_supervised(
-        shutdown.subscribe(),
-        composition.workers.get("native_warm_pools"),
-    ));
-    shutdown.push(composition.native_prepared.spawn(shutdown.subscribe()));
-    shutdown.push(composition.agent_access_worker.spawn(shutdown.subscribe()));
-    composition
-        .sandbox_lifecycle
-        .spawn(&mut shutdown, &composition.workers);
-    shutdown.push(composition.provenance_backfill.spawn(shutdown.subscribe()));
-    shutdown.push(composition.document_maintenance.spawn_supervised(
-        shutdown.subscribe(),
-        composition.workers.get("document_maintenance"),
-    ));
-    composition.usage.spawn(&mut shutdown);
-    composition.usage_metrics.spawn(&mut shutdown);
-    let (http_stop, http_signal) = tokio::sync::watch::channel(false);
-    let server_result = {
-        let server = axum::serve(
-            listener,
-            app.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(signalled(http_signal))
-        .into_future();
-        tokio::pin!(server);
-        tokio::select! {
-            result = &mut server => result.map_err(|error| format!("HTTP server failed: {error}")),
-            () = shutdown_signal() => {
-                // Existing streams still need their workers until HTTP finishes.
-                let _ = http_stop.send(true);
-                match tokio::time::timeout(HTTP_DRAIN_TIMEOUT, &mut server).await {
-                    Ok(result) => result.map_err(|error| format!("HTTP server failed: {error}")),
-                    Err(_) => Err("HTTP server exceeded its shutdown drain deadline".into()),
-                }
-            }
-        }
-    };
-    let aborted = shutdown.drain().await;
-    match (server_result, aborted) {
-        (Err(error), _) => Err(error),
-        (Ok(()), 0) => Ok(()),
-        (Ok(()), count) => Err(format!(
-            "{count} background workers exceeded shutdown drain"
-        )),
     }
 }
 
@@ -467,31 +376,6 @@ async fn discard_unusable_request_id(mut request: Request, next: Next) -> Respon
         request.headers_mut().insert(X_REQUEST_ID, normalized);
     }
     next.run(request).await
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
-        }
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut signal) => {
-                signal.recv().await;
-            }
-            Err(_) => std::future::pending::<()>().await,
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        () = ctrl_c => {},
-        () = terminate => {},
-    }
 }
 
 #[cfg(test)]

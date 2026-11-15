@@ -182,7 +182,7 @@ it('follows operator Pause and Resume at the lifecycle cadence and permits only 
   expect(result.current.notice).toContain('Resuming');
   expect(result.current.allowed).toBe(false);
   await act(() => vi.advanceTimersByTimeAsync(1500));
-  expect(result.current.notice).toContain('Reconnecting');
+  expect(result.current.notice).toContain('Resuming');
   expect(result.current.allowed).toBe(false);
   await act(() => vi.advanceTimersByTimeAsync(1500));
   expect(result.current).toEqual({ allowed: true });

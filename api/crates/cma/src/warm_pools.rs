@@ -156,6 +156,7 @@ pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
 
 const SYSTEM_ACTOR: &str = "cma-system";
 
+#[derive(Clone)]
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
@@ -164,6 +165,7 @@ pub(crate) struct NativeWarmPools {
     default_capacity: layer3_adapter::SandboxCapacity,
     default_target: u32,
     machine: Option<(RuntimeImage, u32)>,
+    target_fencing: bool,
 }
 
 impl NativeWarmPools {
@@ -184,7 +186,15 @@ impl NativeWarmPools {
             default_capacity,
             default_target,
             machine: machine.map(|(image, target)| (deployment_image(image), target)),
+            target_fencing: false,
         })
+        .with_target_fencing(false)
+    }
+
+    /// The integrator binds this to the default-off AM replica writer gate.
+    pub(crate) fn with_target_fencing(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::make_mut(&mut self).target_fencing = enabled;
+        self
     }
 
     async fn reconcile_one(&self) -> Result<bool, WarmPoolError> {
@@ -197,7 +207,7 @@ impl NativeWarmPools {
         if target.retiring || !self.current_plan(&target)? {
             return self.retire_claimed(provider, target).await;
         }
-        reconcile_claimed(self.store.as_ref(), provider, target).await
+        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
     }
 
     fn default_config_sha256(&self) -> Option<String> {
@@ -393,13 +403,14 @@ async fn reconcile_one(
     let Some(target) = store.claim().await? else {
         return Ok(false);
     };
-    reconcile_claimed(store, provider, target).await
+    reconcile_claimed(store, provider, target, false).await
 }
 
 async fn reconcile_claimed(
     store: &dyn PoolTargetStore,
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
+    target_fencing: bool,
 ) -> Result<bool, WarmPoolError> {
     if target.retiring {
         return Err(WarmPoolError::Conflict);
@@ -414,13 +425,22 @@ async fn reconcile_claimed(
             store.bind(&target, &status.binding).await?;
             target.binding = Some(status.binding);
         }
-        provider
-            .resize(
-                target.binding.as_ref().ok_or(WarmPoolError::Conflict)?,
-                target.target_replicas,
-            )
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
+        let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
+        if target_fencing {
+            provider
+                .resize_fenced(
+                    binding,
+                    &layer3_adapter::agent_sandbox::NativePoolTarget {
+                        target_id: target.id.clone(),
+                        revision: target.revision,
+                        replicas: target.target_replicas,
+                    },
+                )
+                .await
+        } else {
+            provider.resize(binding, target.target_replicas).await
+        }
+        .map_err(|_| WarmPoolError::Unavailable)?;
         Ok::<(), WarmPoolError>(())
     };
     let success = matches!(

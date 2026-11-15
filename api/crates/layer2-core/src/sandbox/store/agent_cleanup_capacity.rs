@@ -14,15 +14,22 @@ pub const AGENT_RUNTIME_LEDGER_HOLD_DETAIL: &str = "Runtime mutation ledger capa
 
 const DETAIL: &str = "Cleanup publication reached the normal Agent history limit. The original cleanup request remains pending; no process or filesystem effect is claimed complete. Inspect runtime access and retained recovery evidence. Further retries retain timing and attempt counts without appending duplicate capacity diagnostics.";
 
-/// Whether this is a bounded cleanup/ledger retry, not completion or fresh work.
+/// Select cleanup/ledger markers and ordinary zero-entry retries. The store
+/// separately proves the retained marker; this shape alone grants no authority.
 pub fn agent_cleanup_capacity_retry(current: &Agent, mutation: &AgentWorkMutation) -> bool {
-    current.status == mutation.agent.status
-        && current.work.step == mutation.agent.work.step
-        && mutation.agent.work.lease.is_none()
-        && (cleanup_step(current) || ledger_step(current))
-        && ((mutation.agent_logs.is_empty() && current.work.step != AgentWorkStep::InstallSkill)
-            || marker(&mutation.agent_logs, current.work.step, false)
-            || marker(&mutation.agent_logs, current.work.step, true))
+    (super::agent_repeated_failure::retry_shape(current, mutation)
+        && !matches!(
+            current.work.step,
+            AgentWorkStep::WaitForWorkspace | AgentWorkStep::InstallSkill
+        ))
+        || current.status == mutation.agent.status
+            && current.work.step == mutation.agent.work.step
+            && mutation.agent.work.lease.is_none()
+            && (cleanup_step(current) || ledger_step(current))
+            && ((mutation.agent_logs.is_empty()
+                && current.work.step != AgentWorkStep::InstallSkill)
+                || marker(&mutation.agent_logs, current.work.step, false)
+                || marker(&mutation.agent_logs, current.work.step, true))
 }
 
 /// Validate the retained evidence authorizing a metadata-only retry. Stores
@@ -33,6 +40,20 @@ pub fn validate_agent_cleanup_capacity_log(
     mutation: &AgentWorkMutation,
     last_log: Option<&AgentLogEntry>,
 ) -> Result<(), SandboxStoreError> {
+    validate_agent_cleanup_capacity_log_with_retry(current, mutation, last_log, None)
+}
+
+/// Repeated ordinary failures carry their observed tail separately from append
+/// entries so that a concurrent class or tail change cannot authorize a retry.
+pub fn validate_agent_cleanup_capacity_log_with_retry(
+    current: &Agent,
+    mutation: &AgentWorkMutation,
+    last_log: Option<&AgentLogEntry>,
+    repeated_marker: Option<&AgentLogEntry>,
+) -> Result<(), SandboxStoreError> {
+    if let Some(marker) = repeated_marker {
+        return super::validate_agent_repeated_failure(current, mutation, marker, last_log);
+    }
     if !agent_cleanup_capacity_retry(current, mutation) {
         return Ok(());
     }

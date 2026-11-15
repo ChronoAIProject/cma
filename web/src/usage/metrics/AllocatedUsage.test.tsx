@@ -1,10 +1,12 @@
-import { render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError } from '@chronoai/cma-sdk';
 import { MetricsDashboard } from './MetricsDashboard';
 import { defaultSelection, type Selection } from './model';
 import { metricsClient, reportFixture } from './testFixtures';
+
+afterEach(() => vi.useRealTimers());
 
 vi.mock('./MetricChart', () => ({
   MetricChart: ({ series }: { series: { metric: string } }) => (
@@ -129,9 +131,11 @@ it.each([false, true])(
 
 it.each([403, 410, 429, 503])('preserves report failure %s in allocated mode', async (status) => {
   const api = metricsClient();
-  api.create.mockRejectedValue(new ApiError(status, 'Fixture failure'));
+  vi.useFakeTimers();
+  api.create.mockRejectedValue(new ApiError(status, 'Fixture failure', undefined, undefined, 1000));
   setup(false, defaultSelection, api);
-  const notice = await screen.findByRole('alert');
+  await act(async () => vi.advanceTimersByTimeAsync(10000));
+  const notice = screen.getByRole('alert');
   expect(notice).not.toHaveTextContent(/Measured usage/);
   expect(screen.queryByText('No Sandboxes match this selection.')).not.toBeInTheDocument();
   expect(
@@ -141,12 +145,16 @@ it.each([403, 410, 429, 503])('preserves report failure %s in allocated mode', a
 });
 
 it('keeps allocation visible after a detail failure and never requests measured series', async () => {
+  vi.useFakeTimers();
   const api = metricsClient();
   api.sandbox.mockRejectedValue(new ApiError(503, 'Fixture detail failure'));
-  const { actor } = setup(false, defaultSelection, api);
-  await actor.click(await screen.findByRole('button', { name: 'Research Sandbox' }));
+  setup(false, defaultSelection, api);
+  await act(async () => {});
+  fireEvent.click(screen.getByRole('button', { name: 'Research Sandbox' }));
+  await act(async () => vi.advanceTimersByTimeAsync(10000));
   const detail = screen.getByRole('region', { name: 'Sandbox usage details' });
-  await within(detail).findByRole('alert');
+  expect(within(detail).getByRole('alert')).toBeInTheDocument();
+  expect(api.sandbox).toHaveBeenCalledTimes(4);
   expect(screen.getByRole('region', { name: 'Allocated resource-hours' })).toBeInTheDocument();
   expect(api.series).not.toHaveBeenCalled();
 });

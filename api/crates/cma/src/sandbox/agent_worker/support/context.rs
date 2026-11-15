@@ -2,6 +2,9 @@
 use super::*;
 use layer2_core::sandbox::{SandboxStatus, WorkspaceStatus};
 
+#[path = "context_overlap.rs"]
+mod overlap;
+
 impl AgentWorker {
     pub(in crate::sandbox::agent_worker) async fn startup_context(
         &self,
@@ -38,6 +41,11 @@ impl AgentWorker {
         &self,
         agent: &Agent,
     ) -> Result<AgentContext, WorkerFailure> {
+        if agent.status == AgentStatus::Starting
+            && agent.work.step == AgentWorkStep::OpenConversation
+        {
+            return self.overlapped_open_context(agent).await;
+        }
         // These IDs come from the claimed Agent. Read independently, then retain
         // the existing error precedence and validate all lineage before adoption.
         let (sandbox, workspace, worktree) = tokio::join!(
@@ -54,20 +62,7 @@ impl AgentWorker {
         let worktree = worktree
             .map_err(parent_store_failure)?
             .ok_or_else(missing_parent)?;
-        validate_lineage(agent, &sandbox, &workspace, &worktree)?;
-        if sandbox.status == SandboxStatus::Rotating && !sandbox.restored_connection_is_ready(agent)
-        {
-            return Err(WorkerFailure::retryable(
-                "agent_runtime_update_in_progress",
-                "the retained runtime update is pending",
-            ));
-        }
-        if sandbox.lifecycle.checkpoint_capture.is_some() {
-            return Err(WorkerFailure::retryable(
-                "agent_checkpoint_in_progress",
-                "checkpoint writer resumption is pending",
-            ));
-        }
+        validate_parents(agent, &sandbox, &workspace, &worktree)?;
         let command_generation = if agent.work.step == AgentWorkStep::PublishConnection {
             self.dependencies
                 .store
@@ -178,4 +173,26 @@ impl AgentWorker {
         tracing::info!(agent_id = %agent.id, "Prepared Agent Open retained unchanged parent observation");
         Ok(prepared)
     }
+}
+
+fn validate_parents(
+    agent: &Agent,
+    sandbox: &Sandbox,
+    workspace: &Workspace,
+    worktree: &Worktree,
+) -> Result<(), WorkerFailure> {
+    validate_lineage(agent, sandbox, workspace, worktree)?;
+    if sandbox.status == SandboxStatus::Rotating && !sandbox.restored_connection_is_ready(agent) {
+        return Err(WorkerFailure::retryable(
+            "agent_runtime_update_in_progress",
+            "the retained runtime update is pending",
+        ));
+    }
+    if sandbox.lifecycle.checkpoint_capture.is_some() {
+        return Err(WorkerFailure::retryable(
+            "agent_checkpoint_in_progress",
+            "checkpoint writer resumption is pending",
+        ));
+    }
+    Ok(())
 }

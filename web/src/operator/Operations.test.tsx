@@ -2,10 +2,9 @@ import { chooseOptionValue } from '../test/select';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { ApiError } from '@chronoai/cma-sdk';
 import { Operations, canOpenOperations } from './Operations';
 import { detail, now, operatorClient, sandboxRow } from './testFixtures';
-import { metricRow } from '../usage/metrics/testFixtures';
+import { metricRow, reportFixture } from '../usage/metrics/testFixtures';
 
 describe('operator capabilities and record views', () => {
   it("shows people by name and keeps another owner's Agents under the right Workspace", async () => {
@@ -37,7 +36,7 @@ describe('operator capabilities and record views', () => {
 
   it('uses explicit unavailable names for unknown Activity users without exposing their IDs', async () => {
     const client = operatorClient();
-    client.admin.listActivity.mockResolvedValue({
+    client.admin.listActivitySummary.mockResolvedValue({
       items: [
         {
           id: 'act-test',
@@ -48,7 +47,6 @@ describe('operator capabilities and record views', () => {
           target: { kind: 'subject', id: 'unknown-target-id' },
           target_name: null,
           outcome: { status: 'succeeded' },
-          detail: {},
         },
       ],
       next: null,
@@ -194,17 +192,17 @@ describe('operator capabilities and record views', () => {
   it('filters and pages activity without exposing raw detail', async () => {
     const client = operatorClient();
     const user = userEvent.setup();
-    client.admin.listActivity.mockResolvedValueOnce({ items: [], next: 'page-2' });
+    client.admin.listActivitySummary.mockResolvedValueOnce({ items: [], next: 'page-2' });
     render(<Operations client={client} capabilities={['read_activity_log']} />);
     await screen.findByText('No records match these filters.');
     await user.click(screen.getByRole('button', { name: 'Next page' }));
     await screen.findByRole('cell', { name: 'Morgan Park' });
-    expect(client.admin.listActivity).toHaveBeenLastCalledWith(
+    expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
       expect.objectContaining({ cursor: 'page-2' }),
     );
     await user.click(screen.getByRole('button', { name: 'Previous page' }));
     await waitFor(() =>
-      expect(client.admin.listActivity).toHaveBeenLastCalledWith(
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
         expect.objectContaining({ cursor: undefined }),
       ),
     );
@@ -214,7 +212,7 @@ describe('operator capabilities and record views', () => {
     await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'delete');
     await user.click(screen.getByRole('button', { name: 'Apply filters' }));
     await waitFor(() =>
-      expect(client.admin.listActivity).toHaveBeenLastCalledWith(
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
         expect.objectContaining({ actor: 'operator-1', action: 'delete' }),
       ),
     );
@@ -247,17 +245,21 @@ describe('operator record tables', () => {
   });
   it('keeps a failed metrics report from claiming an empty inventory', async () => {
     const client = operatorClient();
-    client.adminUsageMetrics.create.mockRejectedValue(new ApiError(503, 'Unavailable'));
+    client.adminUsageMetrics.create.mockResolvedValue({
+      ...reportFixture(true),
+      status: 'failed',
+      summary: null,
+    });
     render(<Operations client={client} capabilities={['read_all_sandboxes']} />);
-    await screen.findByText('Usage reporting is unavailable');
+    await screen.findByText('Could not load usage');
     expect(screen.queryByText('No Sandboxes match this selection.')).not.toBeInTheDocument();
     expect(client.admin.listSandboxes).not.toHaveBeenCalled();
   });
 
   it('draws each Activity outcome in its own tone under an SGT time column', async () => {
     const client = operatorClient();
-    const base = (await client.admin.listActivity({})).items[0]!;
-    client.admin.listActivity.mockResolvedValue({
+    const base = (await client.admin.listActivitySummary({})).items[0]!;
+    client.admin.listActivitySummary.mockResolvedValue({
       items: [
         base,
         { ...base, id: 'act-2', outcome: { status: 'refused', code: 'quota_exceeded' } },

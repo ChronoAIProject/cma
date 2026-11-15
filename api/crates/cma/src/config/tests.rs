@@ -199,3 +199,18 @@ fn control_policy_requires_an_explicit_strict_boolean() {
         assert!(configured(&[(key, invalid)]).unwrap_err().contains(key));
     }
 }
+
+#[test]
+fn activity_async_configuration_reaches_composition_and_rejects_invalid_values() {
+    assert!(
+        configured(&[("CHRONO_ACTIVITY_ASYNC_ENABLED", "true")])
+            .unwrap()
+            .activity_async_enabled
+    );
+    assert!(
+        !configured(&[("CHRONO_ACTIVITY_ASYNC_ENABLED", "false")])
+            .unwrap()
+            .activity_async_enabled
+    );
+    assert!(configured(&[("CHRONO_ACTIVITY_ASYNC_ENABLED", "TRUE")]).is_err());
+}

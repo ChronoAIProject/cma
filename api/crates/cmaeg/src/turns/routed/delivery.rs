@@ -17,7 +17,7 @@ use crate::{
         intents::{DeliveryOutcome, IntentReceipt},
     },
     ingress::routing_store::{AdmittedPlan, EventIdentity, PlanStore, StoredTarget},
-    providers::{parse_event, RecoveryEvent, ResponsesEvent, SseFrame},
+    providers::{RecoveryEvent, ResponsesEvent},
 };
 use cmaeg_core::{channel::ReplyChoice, message::OutboundMessage, seal::ReplyAddress};
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,7 @@ pub enum FrameDelivery {
     Unknown,
 }
 pub struct RoutedDelivery {
+    pub(super) stream_relay: Option<reqwest::Client>,
     pub(super) plans: PlanStore,
     pub(super) journal: Journal,
     pub(super) authority: Arc<dyn Authority>,
@@ -52,6 +53,7 @@ impl RoutedDelivery {
         coordinator: DeliveryCoordinator,
     ) -> Self {
         Self {
+            stream_relay: None,
             plans,
             journal,
             authority,
@@ -119,17 +121,12 @@ impl RoutedDelivery {
         // The SSE decoder bounds raw frames. Persist only their digest, using
         // the same encoding as ReplayProjection, so every accepted frame can
         // be acknowledged even when its snapshot exceeds the effect budget.
-        let frame_hash = storage::hash(&storage::bytes(&frame.raw)?);
-        if parse_event(&SseFrame {
-            event: None,
-            id: Some(frame.sequence_number.to_string()),
-            data: frame.raw.to_string(),
-            retry: None,
-        })
-        .ok()
-        .as_ref()
-            != Some(&frame.event)
-        {
+        let trace_contract = frame.trace_contract
+            || lease.state.delivery.as_ref().is_some_and(|previous| {
+                previous.cursor == frame.sequence_number && previous.trace_contract
+            });
+        let frame_hash = super::replay_frame::hash(frame, trace_contract)?;
+        if !super::replay_frame::shape_matches(frame) {
             return Err(ExecutionError::Invalid);
         }
         let effect_hash = bounded_effect_hash(&effect)?;
@@ -180,6 +177,7 @@ impl RoutedDelivery {
             return Err(ExecutionError::Unsupported);
         }
         let checkpoint = DeliveryCheckpoint {
+            trace_contract,
             response_id: response_id.clone(),
             cursor: frame.sequence_number,
             frame_hash,
@@ -231,7 +229,7 @@ impl RoutedDelivery {
                             ),
                             None => None,
                         };
-                        if checkpoint.terminal && !self.close(&plan, target).await? {
+                        if checkpoint.terminal && !self.close(&plan, target, lease).await? {
                             return Ok(FrameDelivery::Unknown);
                         }
                         self.journal
@@ -318,7 +316,7 @@ impl RoutedDelivery {
         }
         // This shared CAS reservation closes the race between projection's
         // suppression lookup and a concurrently admitted tool reply.
-        let store = ReplyStore(self.journal.clone());
+        let store = ReplyStore(self.journal.clone(), lease.partition.clone());
         let mut automatic = None;
         let mut suppressed = false;
         let mut replayed = None;
@@ -419,7 +417,7 @@ impl RoutedDelivery {
             .delivery
             .as_ref()
             .is_some_and(|value| value.terminal)
-            && !self.close(&plan, target).await?
+            && !self.close(&plan, target, lease).await?
         {
             return Ok(FrameDelivery::Unknown);
         }
@@ -436,8 +434,12 @@ impl RoutedDelivery {
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
+        lease: &Lease,
     ) -> Result<bool, ExecutionError> {
-        match ReplyStore(self.journal.clone()).close(plan, target).await? {
+        match ReplyStore(self.journal.clone(), lease.partition.clone())
+            .close(plan, target)
+            .await?
+        {
             ToolReplyStatus::Pending => Err(ExecutionError::Busy),
             ToolReplyStatus::Unknown => Ok(false),
             ToolReplyStatus::None | ToolReplyStatus::Confirmed => Ok(true),

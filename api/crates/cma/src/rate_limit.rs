@@ -43,6 +43,7 @@ use axum::{
 use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
+mod lease;
 mod shared;
 mod tiers;
 mod visitor;
@@ -95,6 +96,7 @@ pub(crate) struct RateLimiters {
     control: KeyedLimiter,
     response_input_tier_enabled: bool,
     control_tier_enabled: bool,
+    default_leases: lease::LeaseTable,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
@@ -142,6 +144,7 @@ impl RateLimiters {
             control: RateLimiter::keyed(control),
             response_input_tier_enabled: false,
             control_tier_enabled: false,
+            default_leases: lease::LeaseTable::default(),
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),
@@ -410,3 +413,7 @@ mod input_tests;
 #[cfg(test)]
 #[path = "rate_limit_control_tests.rs"]
 mod control_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/desktop_tests.rs"]
+mod desktop_tests;

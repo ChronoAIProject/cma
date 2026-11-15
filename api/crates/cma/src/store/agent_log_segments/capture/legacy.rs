@@ -3,6 +3,7 @@ use super::*;
 use crate::store::{agent_log::read_entry, agent_log_integrity::read::legacy_proof_for_context};
 use layer2_core::sandbox::{AgentLogKind, BoundedAgentLogFold};
 use mongodb::bson::RawDocumentBuf;
+use std::future::IntoFuture;
 
 use super::super::{corrupt, digest, MAX_BYTES, MAX_ENTRIES, MIGRATION, READER};
 
@@ -34,8 +35,8 @@ pub(super) async fn read(
     } else {
         query
     };
-    let mut cursor = query
-        .session(&mut *session)
+    let mut cursor = scan
+        .observe(query.session(&mut *session).into_future(), false)
         .await
         .map_err(TransactionLogError::Driver)?;
     let mut fold = BoundedAgentLogFold::default();
@@ -45,8 +46,8 @@ pub(super) async fn read(
     let mut latest_entry = None;
     let mut max_opened_generation = 0;
     let mut max_retired_generation = 0;
-    while let Some(raw) = read
-        .next_in_session(&mut cursor, session)
+    while let Some(raw) = scan
+        .observe(read.next_in_session(&mut cursor, session), true)
         .await
         .map_err(TransactionLogError::Driver)?
     {

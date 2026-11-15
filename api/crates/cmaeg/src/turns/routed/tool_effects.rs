@@ -1,0 +1,171 @@
+//! Delayed replies have distinct FIFO work IDs and retain original capability
+//! authority. A completed parent target is never reopened for a later effect.
+mod executor;
+mod gate;
+mod model;
+#[cfg(test)]
+mod mongo_failure_tests;
+#[cfg(test)]
+mod mongo_tests;
+mod store;
+use super::{
+    dispatcher::{admission_error, current_target},
+    model::delivery_event,
+    tool_replies::same_event,
+    ExecutionError, Phase, RoutedToolReplies, TargetState,
+};
+use crate::{
+    auth::AgentCaller,
+    delivery::intents::IntentReceipt,
+    ingress::routing_store::{AdmittedPlan, StoredTarget},
+    replicas::effects::EffectExecutor,
+};
+use cmaeg_core::{
+    message::OutboundMessage,
+    seal::{ReplyTargetPayload, ReplyTargetRef},
+};
+use model::Payload;
+use std::{sync::Arc, time::Duration};
+use store::Store;
+
+impl RoutedToolReplies {
+    pub fn replica_effect_executor(self: &Arc<Self>) -> Arc<dyn EffectExecutor> {
+        Arc::new(executor::Handler(self.clone()))
+    }
+    /// None retains the pre-replica path. Enabled mode never falls through to an
+    /// unfenced send; a queued operation returns Busy until its receipt exists.
+    pub async fn reply_delayed(
+        &self,
+        caller: AgentCaller,
+        capability: &ReplyTargetPayload,
+        key: &str,
+        message: OutboundMessage,
+    ) -> Result<Option<IntentReceipt>, ExecutionError> {
+        if self.journal.partitions.is_none() {
+            return Ok(None);
+        }
+        if key.is_empty()
+            || key.len() > 128
+            || !key.bytes().all(|b| (33..=126).contains(&b))
+            || message.structured_content.is_some()
+        {
+            return Err(ExecutionError::Invalid);
+        }
+        message.validate().map_err(|_| ExecutionError::Invalid)?;
+        let now = (self.journal.clock)();
+        ReplyTargetRef::seal(capability, &self.journal.keys)
+            .map_err(|_| ExecutionError::Invalid)?
+            .open(&self.journal.keys, now)
+            .map_err(|_| ExecutionError::Invalid)?;
+        let binding = self
+            .journal
+            .tool_reply_binding(&capability.event)
+            .await?
+            .ok_or(ExecutionError::Unsupported)?;
+        let plan = self
+            .plans
+            .load(&binding.identity)
+            .await
+            .map_err(admission_error)?
+            .ok_or(ExecutionError::Corrupt)?;
+        let target = plan
+            .targets
+            .iter()
+            .find(|target| target.id == binding.target)
+            .ok_or(ExecutionError::Corrupt)?;
+        if plan.admission_id != binding.root
+            || plan.request_hash != binding.request_hash
+            || !same_event(&delivery_event(&plan, target), &capability.event, true)
+        {
+            return Err(ExecutionError::Corrupt);
+        }
+        self.authorize_delayed(caller, capability, &plan, target)
+            .await?;
+        let legacy = crate::tools::reply_targets::receipts::Store::new(
+            self.journal.records.clone(),
+            self.journal.keys.clone(),
+        );
+        if let Some(receipt) = legacy
+            .lookup_target(capability, key, &message, &plan.identity.owner)
+            .await
+            .map_err(|error| match error.code {
+                cmaeg_core::problem::ProblemCode::Conflict => ExecutionError::IdempotencyConflict,
+                _ => ExecutionError::Unavailable,
+            })?
+        {
+            return Ok(Some(receipt));
+        }
+        let payload = Payload {
+            capability: capability.clone(),
+            caller: caller.key_hash,
+            message,
+        };
+        let store = Store(self.journal.clone());
+        let root = store.admit(&plan, target, key, &payload).await?;
+        if let Some(receipt) = store.receipt(&root).await? {
+            return Ok(Some(receipt));
+        }
+        self.journal.enqueue_effect(&plan, target, &root.id).await?;
+        metrics::counter!("cmaeg_replica_delayed_reply_total", "outcome" => "queued").increment(1);
+        // Discovery owns execution. This bounded wait only reads the same root;
+        // cancellation of the HTTP caller cannot cancel accepted durable custody.
+        let until = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let root = store
+                .read(&root.id, &plan, target)
+                .await?
+                .ok_or(ExecutionError::Corrupt)?;
+            if let Some(receipt) = store.receipt(&root).await? {
+                return Ok(Some(receipt));
+            }
+            if tokio::time::Instant::now() >= until {
+                return Err(ExecutionError::Busy);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    async fn authorize_delayed(
+        &self,
+        caller: AgentCaller,
+        capability: &ReplyTargetPayload,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<Arc<crate::channels::resolver::ResolvedChannel>, ExecutionError> {
+        let current = current_target(self.authority.as_ref(), plan, target).await?;
+        let (execution, _) = self
+            .journal
+            .read::<TargetState>(&target.id)
+            .await?
+            .ok_or(ExecutionError::Invalid)?;
+        // A capability cannot manufacture a provider invocation or revive a
+        // refused parent. Delayed authority only extends the reply window.
+        if execution.root != plan.admission_id
+            || execution.owner != plan.identity.owner
+            || execution.request_hash != plan.request_hash
+            || execution.body.is_none()
+            || !matches!(
+                execution.phase,
+                Phase::Starting | Phase::Accepted { .. } | Phase::Completed { .. } | Phase::Unknown
+            )
+        {
+            return Err(ExecutionError::AuthorityChanged);
+        }
+        crate::tools::reply_targets::validate_current_target(
+            caller,
+            capability,
+            &current,
+            (self.journal.clock)(),
+        )
+        .map_err(|_| {
+            if capability.expires_at <= (self.journal.clock)() {
+                ExecutionError::Expired
+            } else {
+                ExecutionError::AuthorityChanged
+            }
+        })?;
+        if !same_event(&delivery_event(plan, target), &capability.event, true) {
+            return Err(ExecutionError::AuthorityChanged);
+        }
+        Ok(current)
+    }
+}

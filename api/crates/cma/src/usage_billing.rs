@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
+mod lease;
 mod payload;
 
 pub(crate) struct UsageWorkers {
@@ -106,7 +107,12 @@ impl Exporter {
             }
         }
     }
-    async fn deliver(&self, delivery: &Delivery) -> Result<(), &'static str> {
+    async fn deliver_claimed(
+        &self,
+        delivery: &Delivery,
+        clock: &lease::Clock,
+        post_started: &std::sync::atomic::AtomicBool,
+    ) -> Result<(), &'static str> {
         let batch: FrozenBatch = match &delivery.payload {
             Some(payload) => {
                 serde_json::from_value(payload.clone()).map_err(|_| "invalid_frozen_payload")?
@@ -114,7 +120,7 @@ impl Exporter {
             None => {
                 let batch = payload::freeze(&delivery.event, &self.config)?;
                 self.store
-                    .freeze_usage_delivery(delivery, &json!(batch))
+                    .freeze_usage_delivery(delivery, &json!(batch), clock.now())
                     .await
                     .map_err(|_| "freeze_failed")?;
                 batch
@@ -130,12 +136,22 @@ impl Exporter {
             return Ok(());
         }
         self.verify_subscription(&batch).await?;
+        // Verification may take several HTTP round trips. Re-establish the exact
+        // claim immediately before sending the immutable idempotent request.
+        self.store
+            .begin_usage_delivery(delivery, clock.now())
+            .await
+            .map_err(|_| "billing_claim_lost")?;
+        post_started.store(true, std::sync::atomic::Ordering::Relaxed);
         let response = self
             .request(reqwest::Method::POST, &["events", "batch"])?
             .json(&json!({ "events": batch.events }))
             .send()
             .await
-            .map_err(|_| "provider_transport")?;
+            .map_err(|_| "provider_outcome_unknown")?;
+        if response.status().is_server_error() {
+            return Err("provider_outcome_unknown");
+        }
         if !response.status().is_success() {
             return Err("provider_rejected_events");
         }

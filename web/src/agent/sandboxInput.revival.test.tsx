@@ -84,7 +84,7 @@ it('requires a fresh Agent and parent, keeps resources inactive, and withdraws s
   expect(view.result.current.inputAvailability).toEqual({ allowed: true });
   expect(view.result.current.resourceAvailability.state).toBe('inactive');
   readAgent.mockImplementation(() => new Promise(() => {}));
-  await act(() => vi.advanceTimersByTimeAsync(10000));
+  await act(() => vi.advanceTimersByTimeAsync(11500));
   expect(view.result.current.inputAvailability.allowed).toBe(false);
   view.unmount();
 });

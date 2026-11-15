@@ -3,12 +3,15 @@ use layer2_core::sandbox::agent_io::{
 };
 
 use super::ApplyError;
+use crate::store::agent_log_segments::{
+    command_worker, terminal, transaction_scope::TransactionScope,
+};
 use crate::store::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-    MongoSandboxStore, TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, is_transient, CommitOutcome, MongoSandboxStore,
+    TRANSACTION_ATTEMPTS,
 };
 
-mod apply;
+pub(in crate::store) mod apply;
 pub(super) mod fences;
 
 pub(super) async fn run(
@@ -23,10 +26,12 @@ pub(super) async fn run(
             .start_session()
             .await
             .map_err(|_| CommandLedgerError::Unavailable)?;
-        start_transaction(&mut session)
+        let mut scope = TransactionScope::start(&mut session)
             .await
             .map_err(|_| CommandLedgerError::Unavailable)?;
-        let result = match apply::apply(store, &request, &mut session).await {
+        let applied = Box::pin(command_worker::cancel(store, &request, &mut scope)).await;
+        let session = scope.release();
+        let (result, receipt) = match applied {
             Ok(result) => result,
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
@@ -45,12 +50,16 @@ pub(super) async fn run(
             let _ = session.abort_transaction().await;
             return Err(error);
         }
-        match commit_transaction(&mut session).await {
+        match commit_transaction(session).await {
             CommitOutcome::Committed => return Ok(result),
             CommitOutcome::Retry(_) => continue,
-            CommitOutcome::Unknown(_) | CommitOutcome::Failed(_) => {
-                return Err(CommandLedgerError::Unavailable)
+            CommitOutcome::Unknown(_) => {
+                if terminal::reconcile(store, receipt.as_ref(), session.operation_time()).await? {
+                    return Ok(result);
+                }
+                return Err(CommandLedgerError::Unavailable);
             }
+            CommitOutcome::Failed(_) => return Err(CommandLedgerError::Unavailable),
         }
     }
     Err(CommandLedgerError::Conflict)

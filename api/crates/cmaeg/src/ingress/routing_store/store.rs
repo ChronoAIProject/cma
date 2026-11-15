@@ -1,4 +1,5 @@
 use super::{codec, types::*, Candidate};
+use crate::ingress::admission_trace::{self as trace, Stage};
 use crate::records::{AuthorityGuard, RecordClient, RecordError};
 use cmaeg_core::{
     ids::RecordId,
@@ -14,10 +15,12 @@ pub struct PlanStore {
     pub(super) records: RecordClient,
     pub(super) keys: Arc<MasterKeyRing>,
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    pub(super) admission_queue: Option<Arc<dyn super::AdmissionQueue>>,
 }
 impl PlanStore {
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
+            admission_queue: None,
             records: records.interactions(),
             keys,
             clock: Arc::new(|| {
@@ -116,10 +119,17 @@ impl PlanStore {
         {
             return Err(AdmissionError::Conflict);
         }
-        Ok(restored)
+        if let Some(plan) = &restored {
+            plan.check_compatibility_replay(request, &event)?;
+        }
+        match restored {
+            Some(plan) => self.queue_committed(plan).await.map(Some),
+            None => Ok(None),
+        }
     }
 
-    /// Returns only after the root is committed and the complete payload verifies.
+    /// Returns after the root and payload verify and any installed admission
+    /// queue acknowledges every target. Queue failure retains the original root.
     /// A duplicate logical request restores the original plan despite policy edits.
     pub async fn admit(&self, candidate: &Candidate) -> Result<AdmittedPlan, AdmissionError> {
         self.admit_inner(candidate, None).await
@@ -152,35 +162,29 @@ impl PlanStore {
     ) -> Result<AdmittedPlan, AdmissionError> {
         candidate.live((self.clock)())?;
         if let Some(plan) = self.load(candidate.identity()).await? {
-            return same_request(candidate, plan);
+            return self.queue_committed(same_request(candidate, plan)?).await;
         }
         for (index, chunk) in candidate.bytes.chunks(CHUNK_BYTES).enumerate() {
             candidate.live((self.clock)())?;
             let bytes = codec::chunk_bytes(&candidate.manifest, index, chunk)?;
-            self.create_immutable(
-                &candidate.manifest.chunk_id(index),
-                &candidate.manifest,
-                &bytes,
+            trace::admission(
+                Stage::ChunkWrite,
+                self.create_immutable(
+                    &candidate.manifest.chunk_id(index),
+                    &candidate.manifest,
+                    &bytes,
+                ),
             )
             .await?;
         }
         candidate.live((self.clock)())?;
         let manifest = &candidate.manifest;
         let bytes = codec::encode(manifest)?;
-        let result = match github_guard {
-            Some((record_id, version, authority_guards)) => {
-                self.create_guarded(
-                    &manifest.id,
-                    manifest,
-                    &bytes,
-                    &record_id,
-                    version,
-                    &authority_guards,
-                )
-                .await
-            }
-            None => self.create(&manifest.id, manifest, &bytes).await,
-        };
+        let result = trace::record(
+            Stage::RootWrite,
+            self.create_root(manifest, &bytes, github_guard),
+        )
+        .await;
         if matches!(&result, Err(RecordError::GuardConflict { .. })) {
             return Err(AdmissionError::GuardConflict);
         }
@@ -188,8 +192,8 @@ impl PlanStore {
             Ok(()) | Err(RecordError::Conflict { .. }) | Err(RecordError::Unavailable(_)) => {
                 // A lost response is resolved by reading the immutable root. A
                 // competing same-body candidate may have a different routing plan.
-                match self.load(&manifest.identity).await {
-                    Ok(Some(plan)) => same_request(candidate, plan),
+                match trace::admission(Stage::RootReadback, self.load(&manifest.identity)).await {
+                    Ok(Some(plan)) => self.queue_committed(same_request(candidate, plan)?).await,
                     Ok(None) if matches!(result, Err(RecordError::Conflict { .. })) => {
                         Err(AdmissionError::ExpiredOrUnavailable)
                     }
@@ -204,6 +208,13 @@ impl PlanStore {
     /// A retained record can be read after event authority expires. This never
     /// renews its event references or authorizes a new provider turn.
     pub async fn load(
+        &self,
+        identity: &EventIdentity,
+    ) -> Result<Option<AdmittedPlan>, AdmissionError> {
+        trace::admission(Stage::RootLookup, self.load_observed(identity)).await
+    }
+
+    async fn load_observed(
         &self,
         identity: &EventIdentity,
     ) -> Result<Option<AdmittedPlan>, AdmissionError> {
@@ -267,8 +278,7 @@ impl PlanStore {
     ) -> Result<AdmittedPlan, AdmissionError> {
         let mut payload = Vec::with_capacity(manifest.payload_len);
         for index in 0..manifest.chunk_hashes.len() {
-            let bytes = self
-                .read(&manifest.chunk_id(index))
+            let bytes = trace::admission(Stage::ChunkRead, self.read(&manifest.chunk_id(index)))
                 .await?
                 .ok_or(AdmissionError::MissingChunk)?;
             payload.extend(codec::open_chunk(manifest, index, &bytes)?);
@@ -332,7 +342,12 @@ impl PlanStore {
         }
     }
 
-    async fn create(&self, id: &str, manifest: &Manifest, bytes: &[u8]) -> Result<(), RecordError> {
+    pub(super) async fn create(
+        &self,
+        id: &str,
+        manifest: &Manifest,
+        bytes: &[u8],
+    ) -> Result<(), RecordError> {
         let blob = seal_interaction(&self.keys, id, bytes)
             .map_err(|_| RecordError::Rejected("routed record encryption failed".into()))?;
         self.records
@@ -354,7 +369,7 @@ impl PlanStore {
             })
     }
 
-    async fn create_guarded(
+    pub(super) async fn create_guarded(
         &self,
         id: &str,
         manifest: &Manifest,
@@ -386,6 +401,21 @@ impl PlanStore {
 }
 
 fn same_request(candidate: &Candidate, plan: AdmittedPlan) -> Result<AdmittedPlan, AdmissionError> {
+    if plan.is_compatibility() {
+        let incoming: AdmittedPlan = codec::decode(&candidate.bytes)?;
+        let [target] = incoming.targets.as_slice() else {
+            return Err(AdmissionError::Conflict);
+        };
+        let retained = &plan.targets[0].launch;
+        if retained.idempotency_key != target.launch.idempotency_key
+            || retained.event.consumer != target.launch.event.consumer
+            || retained.event.conversation_id != target.launch.event.conversation_id
+            || retained.event.partition_key != target.launch.event.partition_key
+            || retained.event.lineage != target.launch.event.lineage
+        {
+            return Err(AdmissionError::Conflict);
+        }
+    }
     if plan.request_hash != candidate.request_hash() {
         Err(AdmissionError::Conflict)
     } else {

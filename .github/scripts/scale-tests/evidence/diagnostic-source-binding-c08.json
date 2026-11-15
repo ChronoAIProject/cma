@@ -1,0 +1,64 @@
+{
+  "recorded_at_utc": "2026-11-13T18:22:45.543280+00:00",
+  "tooling_commit": "c08c55341edbe0d72c6d21b7eba8d49fbd5fd126",
+  "application_integration": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
+  "compiled_fixture_commit": "643461b62298a8deb9bc382e9eb67c32154be859",
+  "application_and_fixture_api_tree_unchanged_since_compilation": true,
+  "binaries": {
+    "test": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/deps/relay_ingress-4ffc7afe85db2aba",
+      "sha256": "67e7e9fc04bf52340c62ec200340f216d22dee1877fb0870ed65c4ac38fc0e82"
+    },
+    "application": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/cmaeg",
+      "sha256": "54cbd773129c6f0bc3b98fd3900b9d5508ea0d0d76a6f1eca31c7ff0d933ece0"
+    }
+  },
+  "tooling_sources": {
+    "mongo-local.py": "1d75f6004aa79b2258fc53eb97dacfd5387b1aa7e2ba0083bbe7126188dc5988",
+    "owned_process.py": "3fd09309fb6a0127d4d641e7ce7f96156bf6fb4e2936e9677ecba76ec80d045d",
+    "lib/kubernetes.mjs": "7bb2b106ee062c9b1301ff2a78884d54a7a380c51253251d0c0b7f0828f99c38",
+    "test/mongo_local_test.py": "c9a06240e5a8c96648ae6ecf2f14528b8875c019824b897235d75bd87a749834",
+    "test/owned_process_test.py": "272cf0675991510270b837845b7c1af279a3b88d7d14a5c957cbeb394e9c7d79",
+    "test/adapters.test.mjs": "d37da4d0156051710a72c657f2f33c6e9ff8f2cc42188fe2dad1c51483467bbc"
+  },
+  "fixture_sources": {
+    "api/crates/cmaeg/tests/relay/replica_process.rs": "ad1aace0e8be29951270bf7f68f0caa4dca27a3cd1483390b1fcd1ad9a51311a",
+    "api/crates/cmaeg/tests/relay/runner_process.rs": "7da85fc66c19e991a961c352a12fd2a3c695dbb9226356f927e18edfebaeb5e3",
+    "api/crates/cmaeg/tests/support/database.rs": "6ff4c945f1385b0dc11aae6c5b3a1dba20b1773d99a85d5d30078b460653bb81"
+  },
+  "readiness_initializer_sha256": "620e77865ce9b455cab264e56fce732de1e91a65ec0fba17f3ca68fa5367fc26",
+  "reviews": {
+    "architect": {
+      "path": "/Users/shining/code/work/tech-lead.staff/solution-architect-04/reviews/scale-tests-c08c55341.md",
+      "sha256": "da55b25019ba12206805b6af9763662a799d9da04f9b7e942934798ee372c194"
+    },
+    "debugger02": {
+      "path": "/Users/shining/code/work/tech-lead.staff/debugger-02/eg-failure-analysis/runner-review-c08c5534/verdict.md",
+      "sha256": "1957b177bbeec149770cbd1f796461d29261231c610905c6673c7e90dbcef533"
+    },
+    "developer13": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-13/runner-c08-review.json",
+      "sha256": "a3122b6e6efcd27098336c550cb60fe414b144c9e8affcfae211adf9bf28d3bc"
+    },
+    "developer15": {
+      "path": "/Users/shining/code/work/tech-lead.staff/developer-15/evidence/review-1982-c08c5534.md",
+      "sha256": "321ffd2a7e8a0ce991f39b43a3cbfebdf3484f818d994ac877e17b1c4602d994"
+    }
+  },
+  "environment": {
+    "docker_context": "desktop-linux",
+    "docker_socket_sha256": "5aa61f171c27b612dfbe906965e4375533faab9cf859f3f0a03f7e3c14a0e962",
+    "load_average_1m": 9.84228515625,
+    "free_disk_bytes": 1601138442240
+  },
+  "command": [
+    "python3",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/source/.github/scripts/scale-tests/mongo-local.py",
+    "--binary",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/deps/relay_ingress-4ffc7afe85db2aba",
+    "--out",
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/integration-aadd212/custody-c08"
+  ],
+  "execution": "PREPARED; original diagnostic scope; no new candidate or fault; normal shared build slot required"
+}

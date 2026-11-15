@@ -1,4 +1,5 @@
 import { connectionClient, type ConnectionReport } from './client';
+import { readWithConnectionCooldown } from './readCooldown';
 
 export const PREPARED_SEND_WINDOW_MS = 1000;
 
@@ -32,8 +33,16 @@ interface Preparation {
 
 const preparations = new WeakMap<object, Preparation>();
 
-async function check(agentId: string, signal: AbortSignal, prepared: boolean) {
-  const report = await connectionClient.check({ type: 'agent', id: agentId }, undefined, signal);
+async function check(
+  context: object | undefined,
+  agentId: string,
+  owner: string | undefined,
+  signal: AbortSignal,
+  prepared: boolean,
+) {
+  const report = await readWithConnectionCooldown(context, owner, signal, () =>
+    connectionClient.check({ type: 'agent', id: agentId }, undefined, signal),
+  );
   signal.throwIfAborted();
   return { report, observedAt: performance.now(), prepared };
 }
@@ -61,7 +70,7 @@ export function prepareAgentConnections(context: object, agentId: string, owner:
     agentId,
     owner,
     request,
-    result: check(agentId, request.signal, true).then(
+    result: check(context, agentId, owner, request.signal, true).then(
       (observation) => {
         if (reusable) expiry = setTimeout(discard, PREPARED_SEND_WINDOW_MS);
         else stopWatching();
@@ -99,11 +108,12 @@ export async function readAgentConnections(
 ): Promise<AgentConnectionObservation> {
   signal.throwIfAborted();
   const value = context === undefined ? undefined : preparations.get(context);
-  if (value === undefined || !value.transferred) return check(agentId, signal, false);
+  if (value === undefined || !value.transferred)
+    return check(context, agentId, owner, signal, false);
   preparations.delete(context!);
   if (value.agentId !== agentId || value.owner !== owner) {
     value.request.abort();
-    return check(agentId, signal, false);
+    return check(context, agentId, owner, signal, false);
   }
   const abort = () => value.request.abort();
   signal.addEventListener('abort', abort, { once: true });

@@ -14,6 +14,52 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it('submits exactly once during a slow successful Sandbox refresh without losing the draft', async () => {
+  vi.useFakeTimers();
+  const readSandbox = vi.fn(async () => sandboxFixture());
+  const runAgent = vi.fn().mockResolvedValue(undefined);
+  const client = agentClient({ readSandbox, runAgent });
+  function ObservedAgent() {
+    const controller = useAgentController(client, 'agt_1');
+    return (
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+  }
+  render(
+    <CmaClientProvider client={client}>
+      <ObservedAgent />
+    </CmaClientProvider>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  readSandbox.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        setTimeout(() => resolve(sandboxFixture()), 7000);
+      }),
+  );
+  const draft = screen.getByRole('textbox', { name: 'Message' });
+  fireEvent.change(draft, { target: { value: 'Send while refreshing' } });
+  // Previously the observation expired here, two seconds before this read completed.
+  await act(() => vi.advanceTimersByTimeAsync(10_500));
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+  expect(draft).toHaveValue('Send while refreshing');
+  expect(
+    screen.queryByText('Sandbox status is unavailable. Reconnecting.'),
+  ).not.toBeInTheDocument();
+  await act(async () => {
+    fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+  });
+  expect(runAgent).toHaveBeenCalledOnce();
+  await act(() => vi.advanceTimersByTimeAsync(1500));
+  expect(runAgent).toHaveBeenCalledOnce();
+});
+
 it('retains usage and drafts across lifecycle changes without polling machine resources from the conversation', async () => {
   vi.useFakeTimers();
   let sandbox: SandboxDetail = { ...sandboxFixture('paused'), runtimeVersion: undefined };
@@ -179,6 +225,9 @@ it.each(['minimum', 'maximum', 'changing'] as const)(
     }
 
     unavailable = true;
+    await observeNext();
+    expect(draft).toHaveAccessibleDescription(/Updating runtime/);
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     await observeNext();
     expect(draft).toHaveAccessibleDescription(/Reconnecting/);
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
