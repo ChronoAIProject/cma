@@ -5,6 +5,9 @@ use layer2_core::agent_ownership::{
 };
 use std::sync::atomic::AtomicUsize;
 
+#[path = "receiver_fairness_tests.rs"]
+mod receiver_fairness;
+
 struct DelayedStore {
     inner: Arc<MemoryOwnershipStore>,
     delay: Duration,
