@@ -1,5 +1,5 @@
 use super::*;
-use std::os::unix::fs::{symlink, PermissionsExt as _};
+use std::os::unix::fs::symlink;
 
 #[path = "agent_filesystem_permission_tests.rs"]
 mod permissions;
