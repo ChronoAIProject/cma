@@ -21,6 +21,33 @@ test('command polling follows its Agent receipt to the current non-owner', async
   assert.deepEqual(calls.map(row => row.am), ['b', 'b']);
 });
 
+test('Agent-bound admin Sandbox writes follow the current non-owner without rebinding another Agent', async () => {
+  const api = new API({bearer: 'sandbox-routing-fixture'}), calls = [];
+  api.bindSandbox('sandbox', 'agent');
+  assert.throws(() => api.bindSandbox('sandbox', 'another-agent'), /sandbox_agent_binding_changed/);
+  api.router = {dispatch: async (agent, run) => { assert.equal(agent, 'agent'); return run('b'); }};
+  api.rawRequest = async (am, method, path) => { calls.push({am, method, path}); return {body: {}}; };
+  await api.request('a', 'POST', '/api/v1/admin/sandboxes/sandbox/always-on');
+  await api.request('a', 'GET', '/api/v1/admin/sandboxes/sandbox');
+  assert.deepEqual(calls.map(row => row.am), ['b', 'b']);
+});
+
+test('known admission replay follows its original Agent to the current non-owner', async () => {
+  const api = new API({bearer: 'admission-routing-fixture'});
+  assert.throws(() => api.bindAdmission('known-key', 'agent'), /admission_agent_binding_invalid/);
+  api.routedAgents.add('agent'); api.bindAdmission('known-key', 'agent');
+  api.routedAgents.add('another-agent');
+  assert.throws(() => api.bindAdmission('known-key', 'another-agent'), /admission_agent_binding_changed/);
+  api.router = {dispatch: async (agent, run) => { assert.equal(agent, 'agent'); return run('b'); }};
+  const calls = [];
+  api.rawRequest = async (am, method, path, options) => {
+    calls.push({am, method, path, key: options.key}); return {body: {id: 'known-operation'}};
+  };
+  const result = await api.request('a', 'POST', '/api/v1/agents', {key: 'known-key'});
+  assert.equal(result.body.id, 'known-operation');
+  assert.deepEqual(calls, [{am: 'b', method: 'POST', path: '/api/v1/agents', key: 'known-key'}]);
+});
+
 test('requests sharing a credential reserve distinct slots across AM clients and preserve independent actors', async () => {
   const waits = [];
   const pacer = new RequestPacer({now: () => 100, sleep: async ms => { waits.push(ms); }});

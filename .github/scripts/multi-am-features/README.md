@@ -32,6 +32,11 @@ An executable subset passing is never a full-inventory PASS.
   full replacement, inactivity grace, orchestration pause/resume, admission
   stop/resume and complete usage reports. Global admin operations have no Agent
   owner; their results explicitly identify that scope and both AMs.
+- Agent-bound Always-on writes use the known Sandbox-to-Agent binding to select
+  the live non-owner. Public Agent reads must remain valid through both AMs after
+  enable/revoke, and replaying the already acknowledged create intent must retain
+  its original lifecycle identity. Rename and Always-on failures retain typed
+  private responses, request IDs, and separate primary/restoration evidence.
 - Feature hooks run before and after the owner restart. Each selected feature case
   repeats three times in each phase. The actual owner StatefulSet scales to zero;
   the old native container task must be absent. The survivor must recover a higher

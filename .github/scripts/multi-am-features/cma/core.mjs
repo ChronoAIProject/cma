@@ -157,7 +157,19 @@ export class API {
   constructor(config, observe = () => {}) {
     this.config = config; this.observe = observe; this.streams = new Set();
     this.routedAgents = new Set(); this.responseAgents = new Map(); this.routingEnabled = true;
-    this.commandAgents = new Map();
+    this.commandAgents = new Map(); this.sandboxAgents = new Map(); this.admissionAgents = new Map();
+  }
+  bindSandbox(sandbox, agent) {
+    check(id(sandbox) && id(agent), 'sandbox_agent_binding_invalid');
+    check(!this.sandboxAgents.has(sandbox) || this.sandboxAgents.get(sandbox) === agent,
+      'sandbox_agent_binding_changed');
+    this.sandboxAgents.set(sandbox, agent); this.routedAgents.add(agent);
+  }
+  bindAdmission(key, agent) {
+    check(id(key) && this.routedAgents.has(agent), 'admission_agent_binding_invalid');
+    check(!this.admissionAgents.has(key) || this.admissionAgents.get(key) === agent,
+      'admission_agent_binding_changed');
+    this.admissionAgents.set(key, agent);
   }
   headers(extra = {}) { return {Authorization: 'Bearer ' + this.config.bearer, Host: this.config.host, Origin: this.config.public_origin, ...extra}; }
   url(am, path) { check(['a', 'b'].includes(am) && path.startsWith('/api/'), 'api_target_invalid'); return new URL(path, this.config.ams[am]); }
@@ -165,7 +177,9 @@ export class API {
     await requestPacer.wait(this.config.bearer, method);
     const agent = path.match(/^\/api\/v[12]\/agents\/([^/?]+)/)?.[1]
       ?? this.responseAgents.get(path.match(/^\/api\/v2\/responses\/([^/?]+)/)?.[1])
-      ?? this.commandAgents.get(path.match(/^\/api\/v2\/commands\/([^/?]+)/)?.[1]);
+      ?? this.commandAgents.get(path.match(/^\/api\/v2\/commands\/([^/?]+)/)?.[1])
+      ?? this.sandboxAgents.get(path.match(/^\/api\/v1\/admin\/sandboxes\/([^/?]+)/)?.[1])
+      ?? (method === 'POST' && path === '/api/v1/agents' ? this.admissionAgents.get(options.key) : undefined);
     const response = this.router && this.routingEnabled && this.routedAgents.has(agent)
       ? await this.router.dispatch(agent, ingress => this.rawRequest(ingress, method, path, options))
       : await this.rawRequest(am, method, path, options);
@@ -185,7 +199,8 @@ export class API {
     const text = await result.text(); check(text.length < 4 * 1024 * 1024, 'api_body_limit');
     let value = null; if (text) { try { value = JSON.parse(text); } catch { throw new Error('api_json_invalid'); } }
     const observation = {am, method, route: path.split('?')[0].replace(/(\/(?:agents|sandboxes|agent-lifecycle|responses|commands))\/[^/]+/g, '$1/{id}'),
-      status: result.status, header_ms: headerMs, body_ms: performance.now() - start};
+      status: result.status, header_ms: headerMs, body_ms: performance.now() - start,
+      request_id: result.headers.get('x-request-id')};
     this.observe(observation);
     const response = {status: result.status, body: value, timing: observation,
       retry_after: result.headers.get('retry-after')};
@@ -216,6 +231,10 @@ export class API {
         const response = await fetch(this.url(am, `/api/v2/agents/${agentId}/responses`), {
           method: 'POST', headers: this.headers({'Content-Type': 'application/json', 'Idempotency-Key': key}),
           body: JSON.stringify({input, stream: true}), signal: abort.signal, redirect: 'error'});
+        handle.timing = {am, method: 'POST', route: '/api/v2/agents/{id}/responses',
+          status: response.status, header_ms: performance.now() - start,
+          request_id: response.headers.get('x-request-id')};
+        this.observe(handle.timing);
         check(response.status === 200 || response.status === 202, 'send_status_' + response.status);
         check((response.headers.get('content-type') ?? '').includes('text/event-stream'), 'send_not_sse');
         const decoder = new TextDecoder(); let buffer = ''; let bytes = 0;

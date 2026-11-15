@@ -9,6 +9,8 @@ import {userCases} from './features/user.mjs';
 import {documentCases} from './features/documents.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
+import {retainFailure} from './failure.mjs';
+import {NonOwnerRouter} from './routing.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -16,7 +18,7 @@ const config = await readConfig(process.stdin);
 const inventory = await loadInventory(join(root, 'inventory'));
 const mappings = JSON.parse(await readFile(join(root, 'case-mapping.json'), 'utf8'));
 await mkdir(config.matrix_output, {recursive: true, mode: 0o700});
-const rows = [], observations = [], apiObservations = [], savedDocuments = [];
+const rows = [], observations = [], adminOwnerProofs = [], apiObservations = [], savedDocuments = [];
 let phase;
 const journal = await open(join(config.matrix_output, 'cases.private.jsonl'), 'ax', 0o600);
 async function record(row) {
@@ -40,12 +42,23 @@ const fixture = {scope: 'LOCAL_DISPOSABLE_TWO_AM', source: config.expected_api_s
   manifest: config.expected_api_image.split('@')[1], database_disposable: true, single_matrix_writer: true,
   am_origins: normal.ams, run_id: config.run_id, admin_permissions: ADMIN_PERMISSIONS, ordinary_user_has_admin: false};
 const matrix = new ExtendedAdminMatrix({fixture,
+  onFailure: (stage, error, row) => retainFailure(config.matrix_output, stage, error,
+    {case: 'admin.' + row?.feature, phase, iteration: row?.iteration}),
   request: (role, ...args) => (role === 'admin' ? admin : user).request(...args),
-  record: row => record({case: 'admin.' + row.feature, verdict: row.verdict,
+  record: row => {
+    const scoped = row.feature === 'sandbox_always_on_cross_am';
+    const ids = row.requests.map(request => request.request_id).filter(Boolean);
+    const proofs = adminOwnerProofs.filter(proof => ids.includes(proof.request_id));
+    return record({case: 'admin.' + row.feature, verdict: row.verdict,
     phase, iteration: row.iteration, elapsed_ms: row.elapsed_ms, error_code: row.error_code,
     primary_error_code: row.primary_error_code, restoration_error_code: row.restoration_error_code,
+    failures: row.failures,
     ams: [...new Set(row.requests.map(x => x.am))],
-    routing: 'global_admin_has_no_agent_owner', requests: row.requests})});
+    non_owner: scoped && ids.length === row.requests.length && proofs.length === ids.length
+      && proofs.every(proof => proof.verdict === 'PASS' && proof.owner !== proof.ingress),
+    routing: scoped ? 'agent_bound_sandbox_non_owner' : 'global_admin_has_no_agent_owner',
+    requests: row.requests, owner_proofs: proofs});
+  }});
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
 try {
@@ -54,6 +67,9 @@ try {
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);
+    admin.router = new NonOwnerRouter({adapter: context.adapter,
+      record: proof => { adminOwnerProofs.push(proof); }});
+    admin.bindSandbox(context.record.sandboxId, context.record.agentId);
     if (phase === 'after_restart') for (const [index, document] of savedDocuments.entries()) {
       await documentCase(index + 1, 'user.documents_survive_restart', async () => {
         for (const am of ['a', 'b']) {
@@ -77,10 +93,18 @@ try {
     const previousRecorder = context.api.router.record;
     context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
     try {
-      for (let iteration = 1; iteration <= 3; iteration++) await userCases({...context,
+      for (let iteration = 1; iteration <= 3; iteration++) {
+        let activeRow;
+        await userCases({...context,
+        recordFailure: async (stage, error) => {
+          const receipt = await retainFailure(config.matrix_output, stage, error,
+            {case: activeRow?.case, phase: context.phase, iteration});
+          if (activeRow) (activeRow.failures ??= []).push(receipt);
+        },
         runCase: async (name, operation) => {
           const start = performance.now(), first = observations.length;
           const row = {case: name, phase: context.phase, iteration, verdict: 'RUNNING'};
+          activeRow = row;
           try { await operation(); row.verdict = 'PASS'; }
           catch (error) { row.verdict = 'FAIL'; throw error; }
           finally {
@@ -89,6 +113,24 @@ try {
             row.elapsed_ms = performance.now() - start; await record(row);
           }
         }});
+        await matrix.sandboxAlwaysOn(iteration, {
+          created_by_run: config.run_id, sandbox_id: context.record.sandboxId,
+          verifyAdmission: async stage => {
+            for (const am of ['a', 'b']) {
+              const detail = (await context.api.rawRequest(am, 'GET',
+                '/api/v1/agents/' + context.record.agentId)).body;
+              check(detail.id === context.record.agentId && detail.sandbox?.id === context.record.sandboxId
+                && detail.status === 'ready', 'always_on_public_agent_unavailable_' + stage);
+              // Replay only an already acknowledged intent. A mutable policy
+              // must not change its immutable admission identity or create again.
+              const replay = await context.api.request(am, 'POST', '/api/v1/agents', {
+                body: context.record.createBody, key: context.record.key, allowed: [202]});
+              check(replay.body.id === context.record.operationId,
+                'always_on_admission_replay_identity_changed_' + stage);
+            }
+          },
+        });
+      }
     } finally { context.api.router.record = previousRecorder; }
     return {assertions: rows.length, non_owner_requests: observations.length};
   }});
