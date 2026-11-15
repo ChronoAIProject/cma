@@ -188,6 +188,7 @@ impl MetricsStore for ReportingStore {
             .find(filter)
             .sort(doc! {&null_key:1,&value_key:direction,"sandbox_id":direction})
             .limit(i64::from(limit) + 1)
+            .batch_size(u32::from(limit) + 1)
             .max_time(DB_DEADLINE)
             .await
             .map_err(unavailable)?;
