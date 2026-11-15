@@ -1,11 +1,18 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { createClient, ApiError } from '@chronoai/cma-sdk';
 import { Console } from './Console';
 import { CmaClientProvider } from './api/context';
 import { AGENT_DETAIL, agentClient } from './test/agent';
 import { WIRE_AGENT } from './test/rest';
 import { connectionClient } from './connections/client';
+
+// Existing fixtures model a fresh cache miss; cached responses have dedicated tests.
+beforeEach(() => {
+  vi.spyOn(connectionClient, 'open').mockImplementation((target, signal) =>
+    connectionClient.check(target, undefined, signal),
+  );
+});
 
 afterEach(() => vi.restoreAllMocks());
 

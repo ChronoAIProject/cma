@@ -113,7 +113,7 @@ it('keeps idle input in one ordinary bubble through queued discovery and its own
   expect(h.post).toHaveBeenCalledOnce();
 });
 
-it('skips the per-message catalog wait, retains identity and acknowledgement gates, and merges exactly once', async () => {
+it('waits for fresh connections, identity and acknowledgement and merges exactly once', async () => {
   const { h, field } = await setup();
   const connections = deferred<ConnectionReport>();
   vi.mocked(connectionClient.check).mockReturnValueOnce(connections.promise);
@@ -127,10 +127,12 @@ it('skips the per-message catalog wait, retains identity and acknowledgement gat
   expect(screen.getByText('Sending…')).toBeInTheDocument();
   expect(h.post).not.toHaveBeenCalled();
   expect(field).toHaveValue('');
-  expect(connectionClient.check).toHaveBeenCalledTimes(initialChecks);
+  expect(connectionClient.check).toHaveBeenCalledTimes(initialChecks + 1);
   click();
   expect(h.post).not.toHaveBeenCalled();
   expect(bubbles('Immediate local message')).toHaveLength(1);
+  await act(async () => connections.resolve(connected));
+  expect(h.post).not.toHaveBeenCalled();
   await act(async () => identity.resolve('alice'));
   expect(h.post).toHaveBeenCalledOnce();
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
@@ -144,7 +146,7 @@ it('skips the per-message catalog wait, retains identity and acknowledgement gat
   expect(bubbles('Immediate local message')).toHaveLength(1);
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
   expect(h.post).toHaveBeenCalledOnce();
-  expect(connectionClient.check).toHaveBeenCalledTimes(initialChecks);
+  expect(connectionClient.check).toHaveBeenCalledTimes(initialChecks + 1);
 });
 
 it('retains exact command ownership through completion before acknowledgement and never matches old identical text', async () => {

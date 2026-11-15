@@ -85,6 +85,18 @@ advances automatically. Recovery checks the current owner before restoring a
 saved handoff; cancelled or superseded async responses cannot release an action.
 Forced subscription re-login stays pending even if an older credential works.
 
+Ordinary Agent opening also uses `POST /auth/connections/open` with an Agent
+target and no active handoff. This private/no-store endpoint returns the same
+report fields plus `verification` (`fresh` or `cached`) and `valid_for_ms`
+(remaining cache lifetime, zero for a fresh response). A cache hit retains the
+original `checked_at` and starts a bounded asynchronous requirements recheck.
+Identity and target authorization remain current. Cached evidence is scoped to
+the user and service, expires within 30 seconds, and is only for presentation;
+every Send still waits for a fresh `/check` result. See
+[the freshness and revocation boundaries](Web_Agent_Performance.md#boundaries-that-must-stay-intact).
+Older AMs without this route fall back to fresh checks; typed refusals and
+throttling never trigger that fallback.
+
 The same browser wizard covers trigger review and recovery, manual resource
 creation, direct sandbox opening/resume and agent opening/messaging. Resource
 creation and reopening also enforce the gate on the server. Read-only admin
