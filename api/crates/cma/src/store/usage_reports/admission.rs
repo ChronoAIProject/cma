@@ -23,6 +23,16 @@ impl ReportingStore {
             }
             return Ok(report);
         }
+        self.admit_new(scope, query, at, hash).await
+    }
+
+    pub(super) async fn admit_new(
+        &self,
+        scope: Scope,
+        query: ReportQuery,
+        at: u64,
+        hash: String,
+    ) -> Result<Report> {
         let mut session = self.client.start_session().await.map_err(unavailable)?;
         session.start_transaction().await.map_err(unavailable)?;
         // Serialize admission across replicas without involving Agent sessions.
