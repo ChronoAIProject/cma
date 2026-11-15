@@ -25,7 +25,7 @@ fn pair(agent: char, machine: char) -> ReleasePair {
     }
 }
 
-fn writer(epoch: i64, fence: i64) -> WriterIdentity {
+pub(super) fn writer(epoch: i64, fence: i64) -> WriterIdentity {
     WriterIdentity {
         deployment: "test-deployment".into(),
         instance_id: format!("instance-{epoch}"),
@@ -42,7 +42,7 @@ fn operator() -> OperatorIdentity {
     }
 }
 
-fn bootstrap() -> BootstrapRequest {
+pub(super) fn bootstrap() -> BootstrapRequest {
     BootstrapRequest {
         deployment: "test-deployment".into(),
         operation_id: "bootstrap".into(),
@@ -53,11 +53,11 @@ fn bootstrap() -> BootstrapRequest {
     }
 }
 
-fn head() -> ReleaseHead {
+pub(super) fn head() -> ReleaseHead {
     let b = bootstrap();
     ReleaseHead {
         deployment: b.deployment,
-        schema_version: 1,
+        schema_version: HEAD_SCHEMA_VERSION,
         epoch: 1,
         control_revision: 1,
         admission_sequence: 0,
@@ -72,7 +72,7 @@ fn head() -> ReleaseHead {
     }
 }
 
-fn transition(head: &ReleaseHead) -> TransitionRequest {
+pub(super) fn transition(head: &ReleaseHead) -> TransitionRequest {
     TransitionRequest {
         deployment: head.deployment.clone(),
         operation_id: "restore".into(),
@@ -119,7 +119,7 @@ fn step(head: &ReleaseHead, action: AdvanceAction) -> AdvanceRequest {
     }
 }
 
-struct TestEvidence;
+pub(super) struct TestEvidence;
 
 #[async_trait::async_trait]
 impl EvidenceVerifier for TestEvidence {

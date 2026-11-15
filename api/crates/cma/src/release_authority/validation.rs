@@ -111,7 +111,7 @@ impl ReleaseHead {
     pub(crate) fn validate(&self) -> Result<()> {
         identity(&self.deployment)?;
         self.pair.validate()?;
-        if self.schema_version != 1
+        if self.schema_version != HEAD_SCHEMA_VERSION
             || self.epoch < 1
             || self.control_revision < 1
             || self.admission_sequence < 0
