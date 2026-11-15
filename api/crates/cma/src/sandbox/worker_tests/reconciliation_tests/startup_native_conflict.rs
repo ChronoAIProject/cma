@@ -132,11 +132,12 @@ async fn startup_native_repeated_parent_conflict_is_bounded_and_protected_until_
         fixture.control.other_settled.store(0, Ordering::SeqCst);
         fixture.control.status_gate.add_permits(1);
         fixture.control.other_gate.add_permits(8);
+        // Lifecycle setup advances its durable clock ahead of wall time.
+        // Preserve that caller floor for this later initialization too.
+        let retry_at = SystemTime::now().max(fixture.now);
         tokio::time::timeout(
             Duration::from_secs(10),
-            fixture
-                .reconciler
-                .initialize_before_workers(SystemTime::now()),
+            fixture.reconciler.initialize_before_workers(retry_at),
         )
         .await
         .unwrap()
