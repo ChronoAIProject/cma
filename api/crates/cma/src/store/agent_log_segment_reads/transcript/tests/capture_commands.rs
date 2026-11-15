@@ -9,16 +9,17 @@ use std::sync::{Arc, Mutex};
 #[derive(Default)]
 struct Commands {
     finds: Vec<String>,
+    point_reads: usize,
     writes: usize,
 }
 
 impl Commands {
-    fn assert_single_head_check(&self) {
+    fn assert_capture_and_point_checks(&self) {
         for collection in [segments::HEADS, segments::AUDITS] {
             assert_eq!(
                 self.finds.iter().filter(|name| *name == collection).count(),
-                1,
-                "{collection} must be checked once"
+                1 + self.point_reads,
+                "{collection}: one capture check plus each retained point-read check"
             );
         }
         assert_eq!(self.writes, 0);
@@ -36,6 +37,16 @@ async fn observed_store(name: &str) -> (MongoSandboxStore, Arc<Mutex<Commands>>)
             let mut observed = observed.lock().unwrap();
             if let Ok(collection) = event.command.get_str("find") {
                 observed.finds.push(collection.to_owned());
+                if collection == "agent_log"
+                    && event
+                        .command
+                        .get_document("filter")
+                        .ok()
+                        .and_then(|filter| filter.get_document("seq").ok())
+                        .is_some_and(|seq| seq.contains_key("$in"))
+                {
+                    observed.point_reads += 1;
+                }
             }
             if matches!(
                 event.command_name.as_str(),
@@ -97,7 +108,7 @@ async fn projections_capture_head_once_with_equal_results_and_fewer_find_command
         let after = std::mem::take(&mut *commands.lock().unwrap());
         assert_eq!(usage, baseline);
         assert_eq!(usage.usage.output_tokens, 8);
-        after.assert_single_head_check();
+        after.assert_capture_and_point_checks();
         let saved = if closed == 0 { 4 } else { 3 };
         assert_eq!(before.finds.len(), after.finds.len() + saved);
         eprintln!(
@@ -111,7 +122,7 @@ async fn projections_capture_head_once_with_equal_results_and_fewer_find_command
             store.agent_log_transcript_projection(&agent).await.unwrap(),
             Some(transcript.clone())
         );
-        std::mem::take(&mut *commands.lock().unwrap()).assert_single_head_check();
+        std::mem::take(&mut *commands.lock().unwrap()).assert_capture_and_point_checks();
 
         let page = store
             .agent_log_transcript_page(&agent, &first(32))
@@ -124,7 +135,7 @@ async fn projections_capture_head_once_with_equal_results_and_fewer_find_command
             page.transcript.turns[0].owner_message,
             transcript.turns[0].owner_message
         );
-        std::mem::take(&mut *commands.lock().unwrap()).assert_single_head_check();
+        std::mem::take(&mut *commands.lock().unwrap()).assert_capture_and_point_checks();
 
         let expected_answer = transcript.turns[0].final_answer().unwrap();
         let answer = store
@@ -134,7 +145,7 @@ async fn projections_capture_head_once_with_equal_results_and_fewer_find_command
             .unwrap();
         assert_eq!(&answer.message, expected_answer);
         assert_eq!(answer.turn_sequence, transcript.turns[0].turn_sequence);
-        std::mem::take(&mut *commands.lock().unwrap()).assert_single_head_check();
+        std::mem::take(&mut *commands.lock().unwrap()).assert_capture_and_point_checks();
         assert_eq!(collect(&store, &agent, 4).await, transcript);
         db.drop().await.unwrap();
     }
