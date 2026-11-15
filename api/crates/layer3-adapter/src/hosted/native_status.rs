@@ -8,6 +8,10 @@ impl ProviderHostedControlTransport {
         &self,
         inspection: &NativeStatusInspection<'_>,
     ) -> crate::Result<Option<crate::RuntimeInspection>> {
+        // Owned status requires the ordinary control path's receiver negotiation.
+        if crate::owner_protocol::current_authority().is_some() {
+            return Ok(None);
+        }
         let RuntimeDiscovery::AgentSandbox(client) = &self.client else {
             return Ok(None);
         };
