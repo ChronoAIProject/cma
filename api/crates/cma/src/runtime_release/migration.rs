@@ -59,6 +59,8 @@ pub(super) fn plan() -> serde_json::Value {
         "legacy_finality_verified": false,
         "requires": ["actual legacy process and restart-source closure", "provider/controller/receiver finality", "exact original row snapshot and per-row CAS", "qualified original positive Ready pools", "separate authorized migration executor"],
         "collections": crate::release_authority::COLLECTIONS,
+        "head_reader_floor": {"collection": crate::release_authority::HEADS, "schema_version": 2, "legacy_head_1": "explicit quiescent migration only; never auto-upgrade"},
+        "store_commands": {"collection": crate::release_authority::STORE_COMMANDS, "schema_version": 1, "kinds": ["native_target_poll_cursor", "native_target_poll_receipt"], "receipt_retention": "immutable; no TTL or deletion; capacity qualification required", "effect_permits_settled": false},
         "runtime_role_template_database": "REPLACE_WITH_OWNED_DATABASE",
         "runtime_role_template": crate::store::isolation::release::role("REPLACE_WITH_OWNED_DATABASE"),
         "pool_floor": {"collection": POOLS, "validator": pool_validator(), "validationLevel": "strict", "validationAction": "error"},

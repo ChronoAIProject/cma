@@ -75,7 +75,7 @@ fn restart_foreign_config_frozen_head_and_mixed_image_pair_cannot_be_writer() {
     fallback.agent.target_id = format!("wp_{}", "c".repeat(64));
     let head = ReleaseHead {
         deployment: "test".into(),
-        schema_version: 1,
+        schema_version: 2,
         epoch: 1,
         control_revision: 1,
         admission_sequence: 0,
@@ -98,6 +98,9 @@ fn restart_foreign_config_frozen_head_and_mixed_image_pair_cannot_be_writer() {
         }
         assert!(selected_writer(&head, &changed).is_err());
     }
+    let mut legacy = head.clone();
+    legacy.schema_version = 1;
+    assert!(selected_writer(&legacy, &process).is_err());
     let mut frozen = head;
     frozen.phase = Phase::Freezing;
     frozen.operation_id = Some("transition".into());

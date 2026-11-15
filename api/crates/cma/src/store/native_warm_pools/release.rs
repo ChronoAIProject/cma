@@ -40,6 +40,7 @@ impl MongoNativeWarmPools {
             targets: majority_collection(database, COLLECTION),
             deployment: deployment.into(),
             database: database.clone(),
+            managed_polls: Some(super::native_poll::ManagedPolls::new(session.clone())),
             release_session: Some(session),
         })
     }

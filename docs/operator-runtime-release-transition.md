@@ -17,6 +17,12 @@ original pool/template/home/Claim identities and activation history.
   permits, same-ID replay, and unresolved same-request deduplication. Only a
   newly acknowledged permit allows dispatch. An uncertain transaction outcome
   never allows automatic replay.
+- Managed native target polling uses a closed Mongo transaction for head admission,
+  original target lease, fixed-lane cursor and immutable result. Empty results
+  do not leave provider permits behind. Cancellation retains the same command;
+  historical Empty does not rescan, and positive Replay never dispatches.
+  Another poll on that lane waits for the exact target/revision/lease finish CAS.
+  This acknowledges only the store operation, without settling provider effects.
 - Freeze and effect admission update the same head in their transactions.
   Provider ACKs append observations; only verified terminal evidence may settle
   an effect. Cancellation, process exit and elapsed deadlines are not terminal
@@ -63,9 +69,10 @@ These are implementation dependencies, not optional operating caveats:
    exact operation identities across epochs. A request can pass the advisory
    HTTP check before freeze and persist later. Process lifetime prevents a
    false drain while the process lives; it does not prove queued work terminal
-   after exit. Native target polling also needs actual no-op/store settlement:
-   its unresolved identical claim permit currently blocks a later identical
-   poll, including after an empty poll.
+   after exit. Native polling now has a store-only result, but other target
+   writes and downstream logical workflows still require complete admission,
+   settlement and recovery. Unknown positive poll replay stays held; elapsed
+   lease time never permits another lane to acquire that unresolved target.
 3. Implement a guarded migration executor, source-bound per-row CAS, collection
    validators/indexes and authoritative completion receipts. Current code only
    emits a plan and inspects the installed strict schema3/4 floor. It never
@@ -99,17 +106,27 @@ be bounded private regular files. Receipts use a new path and are never
 silently replaced.
 
 An uninstalled deployment remains compatible with its ordinary Mongo role.
-The optional managed role adds the three authority collections as a complete
+The optional managed role adds the four authority collections as a complete
 set with only `find`, `insert`, and `update`: it does not grant remove, DDL or
 foreign-service access. Partial and destructive isolated grants refuse.
 Managed startup requires the complete role; migration authority remains a
 separate, unimplemented executor. The existing configured isolated/shared
 schema authority is also verified before inert reads.
 
+The release head requires schema2. An installed head1 requires an explicit
+quiescent migration and cannot start a writer through automatic compatibility
+fallback. Existing operation/effect rows remain schema1. The fourth collection,
+`native_runtime_store_commands`, stores schema1 cursors and immutable poll
+receipts. It has no TTL or receipt deletion; polling volume and retained storage
+must be qualified. The existing default-disabled installation check also
+recognizes this collection before any ordinary composition effects.
+
 The explicit interface is `cma --runtime-release REQUEST_FILE RECEIPT_FILE`.
 The `migration_plan` request returns planning metadata and a role template,
 with `apply_authority=false` and no database connection. Status, operation and
-effect commands inspect existing authority records. Control requests remain
+effect commands inspect existing authority records. `native_poll_tip` reads
+the latest fixed-lane receipt for an exact writer. It grants neither dispatch
+nor permission to replace a pending command. Control requests remain
 subject to fresh operator authorization and exact state binding. A receipt
 file or command exit is never a substitute for inspecting the operation state.
 

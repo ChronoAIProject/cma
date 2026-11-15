@@ -18,6 +18,10 @@ enum Command {
         deployment: String,
         id: String,
     },
+    NativePollTip {
+        writer: WriterIdentity,
+        lane: NativePollLane,
+    },
     MigrationPlan,
     Bootstrap {
         request: BootstrapRequest,
@@ -88,6 +92,15 @@ pub(super) async fn command(args: &[String]) -> std::result::Result<String, Stri
             serde_json::to_value(
                 store
                     .effect(&deployment, &id)
+                    .await
+                    .map_err(|error| error.to_string())?,
+            )
+        }
+        Command::NativePollTip { writer, lane } => {
+            same_deployment(&config, &writer.deployment)?;
+            serde_json::to_value(
+                store
+                    .native_poll_tip(&writer, lane)
                     .await
                     .map_err(|error| error.to_string())?,
             )
