@@ -1,5 +1,8 @@
 //! Replayable allocation-day projection. The allocated ledger is read-only.
-use super::usage_reports::{decode, encode, expires, unavailable, ReportingStore, DB_DEADLINE};
+use super::usage_reports::{
+    allocation_operation, decode, encode, expires, unavailable, ReportingStore,
+    ALLOCATION_DB_DEADLINE,
+};
 use layer2_core::{
     sandbox_metrics::{allocation, MetricsError, Range, Result},
     sandbox_usage::SandboxUsage,
@@ -34,6 +37,15 @@ impl ReportingStore {
         states: &[SandboxUsage],
         range: Range,
     ) -> Result<BTreeMap<String, allocation::Projection>> {
+        allocation_operation(self.allocation_periods_inner(session, states, range)).await
+    }
+
+    async fn allocation_periods_inner(
+        &self,
+        session: &mut mongodb::ClientSession,
+        states: &[SandboxUsage],
+        range: Range,
+    ) -> Result<BTreeMap<String, allocation::Projection>> {
         let _timer = self.time_read("allocation_rollups")?;
         if states.len() > 200 || range.seconds() > 86_400 {
             return Err(MetricsError::Busy);
@@ -44,7 +56,7 @@ impl ReportingStore {
         let mut cursor = self
             .collection(COLLECTION)
             .find(doc! {"sandbox_id":{"$in":&ids},"day":day as i64})
-            .max_time(DB_DEADLINE)
+            .max_time(ALLOCATION_DB_DEADLINE)
             .session(&mut *session)
             .await
             .map_err(unavailable)?;
@@ -104,7 +116,7 @@ impl ReportingStore {
             cached.insert(s.sandbox_id.to_string(), p);
         }
         if !updates.is_empty() {
-            self.bulk_updates(COLLECTION, updates).await?;
+            self.allocation_cache_updates(updates).await?;
         }
         Ok(cached)
     }

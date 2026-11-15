@@ -6,17 +6,29 @@ use layer2_core::sandbox_usage::UsageEvent;
 use mongodb::event::{command::CommandEvent, EventHandler};
 use std::sync::Mutex;
 
-async fn observed() -> (Arc<ReportingStore>, Arc<Mutex<Vec<Document>>>) {
-    let original = fixture().await;
+async fn observed(database_variable: &str) -> (Arc<ReportingStore>, Arc<Mutex<Vec<Document>>>) {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
+    let database = std::env::var(database_variable).expect("named disposable database required");
+    assert!(database.starts_with("metrics_2140_"));
+    let original = ReportingStore::connect(&uri, &database, &[19; 32])
+        .await
+        .unwrap();
     let commands = Arc::new(Mutex::new(Vec::new()));
     let recorded = commands.clone();
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
     configure_pool(&mut options, 4);
+    super::super::budget::observe(&mut options, original.circuit.clone());
     options.command_event_handler = Some(EventHandler::callback(move |event| match event {
         CommandEvent::Started(event)
-            if event.command.get_str("find").ok() == Some("sandbox_usage_events") =>
+            if matches!(
+                event.command.get_str("find").ok(),
+                Some("sandbox_usage_events" | "sandbox_usage_rollups")
+            ) || matches!(
+                event.command.get_str("update").ok(),
+                Some("sandbox_usage_rollups" | "sandbox_usage_report_control")
+            ) =>
         {
             recorded.lock().unwrap().push(event.command);
         }
@@ -61,7 +73,7 @@ async fn baseline(
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn allocation_interval_native_cursor_matches_projection_with_and_without_index() {
-    let (store, commands) = observed().await;
+    let (store, commands) = observed("CHRONO_TEST_ALLOCATION_DB_01").await;
     let day = (now() / 86_400 - 2) * 86_400;
     let range = Range {
         from: day + 60,
@@ -143,7 +155,36 @@ async fn allocation_interval_native_cursor_matches_projection_with_and_without_i
                 .unwrap(),
             "snapshot"
         );
-        assert_eq!(integer("maxTimeMS"), Some(2_000));
+        assert_eq!(integer("maxTimeMS"), Some(5_000));
+    }
+    commands.lock().unwrap().clear();
+    let projections = store
+        .allocation_periods(&mut store.snapshot().await.unwrap(), &states, range)
+        .await
+        .unwrap();
+    assert!(projections.values().all(|p| p.period.complete));
+    // The longer command budget is confined to the allocation cache/raw path.
+    store
+        .bulk_updates(
+            CONTROL,
+            vec![doc! {"q":{"_id":"deadline-test"},
+            "u":{"$set":{"document_schema_version":1_i64}},"upsert":true,"multi":false}],
+        )
+        .await
+        .unwrap();
+    {
+        let recorded = commands.lock().unwrap();
+        assert_eq!(recorded.len(), 4);
+        for command in recorded.iter() {
+            let ordinary = command.get_str("update").ok() == Some(CONTROL);
+            let max_time = command.get("maxTimeMS").unwrap();
+            assert_eq!(
+                max_time
+                    .as_i64()
+                    .or_else(|| max_time.as_i32().map(i64::from)),
+                Some(if ordinary { 2_000 } else { 5_000 })
+            );
+        }
     }
     // A corrupt later event must reject the complete day, never publish a prefix.
     let corrupt_state = state(2, day);
@@ -168,7 +209,7 @@ async fn allocation_interval_native_cursor_matches_projection_with_and_without_i
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn allocation_interval_native_boundaries_delta_and_snapshot_remain_exact() {
-    let (store, commands) = observed().await;
+    let (store, commands) = observed("CHRONO_TEST_ALLOCATION_DB_02").await;
     let day = (now() / 86_400 - 2) * 86_400;
     let state = state(0, day);
     let range = Range {
