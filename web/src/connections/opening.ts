@@ -9,6 +9,12 @@ interface Observation {
   readonly prepared: false;
 }
 
+function transferWindow(report: ConnectionReport) {
+  return report.verification === 'cached'
+    ? Math.min(completedWindowMs, report.valid_for_ms ?? 0)
+    : completedWindowMs;
+}
+
 interface Opening {
   readonly agent: string;
   readonly owner: string;
@@ -42,13 +48,13 @@ export function prepareOpeningConnections(context: object, agent: string, owner:
     request.abort();
   };
   const result = readWithConnectionCooldown(context, owner, request.signal, () =>
-    connectionClient.check({ type: 'agent', id: agent }, undefined, request.signal),
+    connectionClient.open({ type: 'agent', id: agent }, request.signal),
   ).then((report): Observation => {
     request.signal.throwIfAborted();
     const observation = { report, observedAt: performance.now(), prepared: false as const };
     value.observation = observation;
     // A completed result can only continue this opening, not a later visit.
-    if (openings.get(context) === value) expiry = setTimeout(release, completedWindowMs);
+    if (openings.get(context) === value) expiry = setTimeout(release, transferWindow(report));
     return observation;
   });
   const value: Opening = { agent, owner, request, result, release, stopWatching };
@@ -77,12 +83,12 @@ export function takeOpeningConnections(
     document.hidden ||
     value.agent !== agent ||
     value.owner !== owner ||
-    (age !== undefined && (age < 0 || age >= completedWindowMs))
+    (age !== undefined && (age < 0 || age >= transferWindow(value.observation!.report)))
   ) {
     value.release();
     return undefined;
   }
-  // The authorized view now owns an ordinary fresh read. Preserve its existing
+  // The authorized view now owns this opening read. Preserve its existing
   // visibility behavior; only an unconsumed speculative transfer expires on blur.
   value.stopWatching();
   const abort = () => value.release();

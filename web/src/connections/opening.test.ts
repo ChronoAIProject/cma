@@ -7,6 +7,13 @@ import {
   readAgentConnections,
 } from './preparation';
 
+// Existing fixtures model a fresh cache miss; cached responses have dedicated tests.
+beforeEach(() => {
+  vi.spyOn(connectionClient, 'open').mockImplementation((target, signal) =>
+    connectionClient.check(target, undefined, signal),
+  );
+});
+
 const ready: ConnectionReport = {
   owner: 'alice',
   ready: true,
@@ -89,6 +96,21 @@ it('releases a completed unconsumed result after its window', async () => {
   expect(vi.mocked(connectionClient.check).mock.calls[0]![2]?.aborted).toBe(true);
   await read(context);
   expect(connectionClient.check).toHaveBeenCalledTimes(2);
+});
+
+it('does not transfer cached readiness that expires while access is loading', async () => {
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(1000);
+  vi.mocked(connectionClient.open).mockResolvedValueOnce({
+    ...ready,
+    verification: 'cached',
+    valid_for_ms: 50,
+  });
+  const { context } = prepare();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  clock.mockReturnValue(1050);
+  const observation = await read(context);
+  expect(observation.report).toEqual(ready);
+  expect(connectionClient.check).toHaveBeenCalledOnce();
 });
 
 it.each(['route', 'consumer'] as const)(

@@ -7,6 +7,13 @@ import { connectionClient, type ConnectionReport } from '../connections/client';
 import { harness } from '../agent/transport/controller.fixture';
 import { WIRE_AGENT } from '../test/rest';
 
+// Existing fixtures model a fresh cache miss; cached responses have dedicated tests.
+beforeEach(() => {
+  vi.spyOn(connectionClient, 'open').mockImplementation((target, signal) =>
+    connectionClient.check(target, undefined, signal),
+  );
+});
+
 const ready: ConnectionReport = {
   owner: 'alice',
   ready: true,

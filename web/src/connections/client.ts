@@ -34,6 +34,9 @@ export interface ConnectionReport {
   readonly checked_at: string;
   readonly services: readonly ConnectionRow[];
   readonly active_state?: 'pending' | 'satisfied' | 'expired' | 'cancelled' | 'failed';
+  /** Presentation evidence only. Every Send still uses the fresh check endpoint. */
+  readonly verification?: 'cached' | 'fresh';
+  readonly valid_for_ms?: number;
 }
 
 export interface StartedConnection extends ActiveConnection {
@@ -44,6 +47,10 @@ export interface StartedConnection extends ActiveConnection {
 }
 
 export interface ConnectionClient {
+  open(
+    target: { readonly type: 'agent'; readonly id: string },
+    signal?: AbortSignal,
+  ): Promise<ConnectionReport>;
   check(
     target: ConnectionTarget,
     active?: ActiveConnection,
@@ -103,8 +110,43 @@ async function post<T>(action: string, body: unknown, signal?: AbortSignal): Pro
 }
 
 export const connectionClient: ConnectionClient = {
-  check: (target, active, signal) =>
-    post('check', { target, active: active === undefined ? undefined : intent(active) }, signal),
+  open: async (target, signal) => {
+    const started = performance.now();
+    try {
+      const report = await post<ConnectionReport>('open', { target }, signal);
+      signal?.throwIfAborted();
+      if (report.verification !== 'fresh' && report.verification !== 'cached')
+        throw new ConnectionFailure(503, 'connection_unavailable');
+      const elapsed = performance.now() - started;
+      if (
+        report.verification === 'cached' &&
+        (!Number.isFinite(report.valid_for_ms) ||
+          report.valid_for_ms! > 30_000 ||
+          elapsed < 0 ||
+          report.valid_for_ms! <= elapsed)
+      )
+        return connectionClient.check(target, undefined, signal);
+      return report.verification === 'cached'
+        ? { ...report, valid_for_ms: report.valid_for_ms! - elapsed }
+        : report;
+    } catch (error) {
+      // Old AMs do not implement Open readiness; refusals and throttles never
+      // fall back to a different authority or bypass their retry deadline.
+      if (error instanceof ConnectionFailure && error.status === 404 && error.code === undefined)
+        return connectionClient.check(target, undefined, signal);
+      throw error;
+    }
+  },
+  check: async (target, active, signal) => {
+    const report = await post<ConnectionReport>(
+      'check',
+      { target, active: active === undefined ? undefined : intent(active) },
+      signal,
+    );
+    if (report.verification === 'cached')
+      throw new ConnectionFailure(503, 'connection_unavailable');
+    return report;
+  },
   start: (target, active, force, signal) =>
     post('start', { target, ...intent(active), force }, signal),
   cancel: async (target, active) => {

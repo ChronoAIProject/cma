@@ -16,8 +16,6 @@ export function messageSubmission({
   readOnly,
   running,
   steeringMode,
-  detailsOpen,
-  v2,
 }: {
   readonly controller: AgentController;
   readonly optimistic: ReturnType<typeof useOptimisticMessages>;
@@ -87,20 +85,15 @@ export function messageSubmission({
               : controller.send(...args);
         void request.then(settled, settled);
       };
-      if (
-        v2?.owner === (viewerId ?? verified.owner) &&
-        controller.resourceAvailability.state === 'live'
-      ) {
-        send();
-      } else {
-        void connections.checkAndRun(
-          { type: 'agent', id: agentId },
-          viewerId ?? verified.owner,
-          send,
-          v2 !== undefined && !detailsOpen ? connection.takePrepared : undefined,
-          cancelled,
-        );
-      }
+      // Open readiness is bounded presentation evidence. Even a live V2 route
+      // must freshly verify connections before submitting a command.
+      void connections.checkAndRun(
+        { type: 'agent', id: agentId },
+        viewerId ?? verified.owner,
+        send,
+        undefined,
+        cancelled,
+      );
     });
   };
 }
