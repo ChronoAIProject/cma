@@ -125,3 +125,46 @@ it('consumes the owner creation socket through a scoped read wrapper without ope
   view.unmount();
   scope.dispose();
 });
+
+it('retains desktop takeover through history loading and revokes it when the control baseline is lost', async () => {
+  const sdk = createClient({ baseUrl: 'https://fixture.invalid' });
+  vi.spyOn(sdk.agents, 'desktop').mockResolvedValue({
+    websocket_url: '/api/v1/agents/agt_1/desktop/ws',
+  });
+  const client = agentClient({ resourceViews: sdk });
+  const conversation = conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] });
+  const scope = new ArtifactPublicationScope();
+  const draw = (controlReady = true, loading = true) => (
+    <CmaClientProvider client={client}>
+      <AgentSidePanel
+        agentId="agt_1"
+        viewerId="owner"
+        shared={false}
+        panel="browser"
+        detail={{ ...AGENT_DETAIL, desktop: true, status: 'working' }}
+        conversation={conversation}
+        controlReady={controlReady}
+        historyLoading={loading}
+        onClose={vi.fn()}
+        onAccessChanged={vi.fn()}
+        publicationScope={scope}
+      />
+    </CmaClientProvider>
+  );
+  const view = render(draw());
+  await act(async () => {});
+  act(() => connections[0]!.dispatchEvent(new Event('connect')));
+  expect(screen.getByRole('button', { name: 'Take control' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Take control' }));
+  // An idle authoritative head overrides stale working metadata.
+  expect(screen.getByRole('button', { name: 'Return to Agent' })).toBeEnabled();
+  expect(connections[0]!.viewOnly).toBe(false);
+  view.rerender(draw(true, false));
+  view.rerender(draw(true, true));
+  expect(screen.getByRole('button', { name: 'Return to Agent' })).toBeEnabled();
+  expect(connections[0]!.viewOnly).toBe(false);
+  view.rerender(draw(false));
+  expect(screen.getByRole('button', { name: 'Take control' })).toBeDisabled();
+  expect(connections[0]!.viewOnly).toBe(true);
+  view.unmount();
+});
