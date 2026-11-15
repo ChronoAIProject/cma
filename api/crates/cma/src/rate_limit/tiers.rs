@@ -43,7 +43,9 @@ pub(super) fn request_tier(
     if request.method() != Method::POST
         || matches!(
             path,
-            "/api/v1/profile-authoring/repositories/resolve" | "/auth/connections/check"
+            "/api/v1/profile-authoring/repositories/resolve"
+                | "/auth/connections/check"
+                | "/auth/connections/open"
         )
     {
         return RequestTier::Default;
@@ -110,7 +112,10 @@ pub(super) fn uses_client_operation_key(path: &str) -> bool {
     // users behind the same network from consuming each other's login budget.
     if matches!(
         path,
-        "/auth/connections/check" | "/auth/connections/start" | "/auth/connections/cancel"
+        "/auth/connections/check"
+            | "/auth/connections/open"
+            | "/auth/connections/start"
+            | "/auth/connections/cancel"
     ) {
         return false;
     }

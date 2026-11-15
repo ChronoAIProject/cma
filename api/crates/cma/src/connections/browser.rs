@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use crate::store::MongoStores;
 
 use super::{
+    readiness_cache::{exact, ReadinessCache},
     targets::{ConnectionTarget, ConnectionTargets, StoredConnectionTargets},
     CodexSubscriptions,
 };
@@ -138,6 +139,7 @@ pub(crate) struct BrowserConnections {
     targets: Arc<dyn ConnectionTargets>,
     broker: Arc<dyn ServiceConnectionBroker>,
     subscriptions: Arc<CodexSubscriptions>,
+    readiness: Arc<ReadinessCache>,
 }
 
 impl BrowserConnections {
@@ -151,6 +153,7 @@ impl BrowserConnections {
             targets: Arc::new(StoredConnectionTargets { stores, policy }),
             broker,
             subscriptions,
+            readiness: Arc::new(ReadinessCache::default()),
         })
     }
 
@@ -163,15 +166,32 @@ impl BrowserConnections {
         let services = self.targets.services(caller, &request.target).await;
         check_timing("target_authorization", started, services.is_ok());
         let services = services?;
+        self.check_authorized(caller, request, services).await
+    }
+
+    async fn check_authorized(
+        &self,
+        caller: &Caller,
+        request: CheckRequest,
+        services: Vec<ServiceId>,
+    ) -> Result<ConnectionReport, ConnectionError> {
         // A ready Agent needs fresh requirements, but no catalog or repair choices.
         // Do not start metadata speculatively: resolving its credential can refresh
         // OAuth custody, which must not be cancelled by a successful early return.
         let ordinary_agent =
             matches!(&request.target, ConnectionTarget::Agent { .. }) && request.active.is_none();
         let requirements_read = async {
+            let ticket = self.readiness.begin(&caller.subject, &services);
             let started = std::time::Instant::now();
             let result = self.broker.requirements(&caller.subject, &services).await;
             check_timing("requirements", started, result.is_ok());
+            let verified = result.as_ref().ok().filter(|rows| exact(&services, rows));
+            self.readiness.finish(
+                ticket,
+                verified
+                    .filter(|_| request.active.is_none())
+                    .map(Vec::as_slice),
+            );
             result
         };
         let metadata_read = async {
@@ -300,6 +320,7 @@ impl BrowserConnections {
         {
             return Err(ConnectionError::Invalid);
         }
+        self.readiness.invalidate(&caller.subject);
         let metadata = self
             .broker
             .describe_services(&caller.subject, std::slice::from_ref(&request.service_id))
@@ -352,12 +373,85 @@ impl BrowserConnections {
     }
 }
 
+#[derive(Serialize)]
+struct OpenReport {
+    #[serde(flatten)]
+    report: ConnectionReport,
+    verification: &'static str,
+    valid_for_ms: u64,
+}
+
+impl BrowserConnections {
+    async fn open(
+        &self,
+        caller: &Caller,
+        request: CheckRequest,
+    ) -> Result<OpenReport, ConnectionError> {
+        if !matches!(&request.target, ConnectionTarget::Agent { .. }) || request.active.is_some() {
+            return Err(ConnectionError::Invalid);
+        }
+        // Identity and exact target/service scope are always authorized freshly.
+        let services = self.targets.services(caller, &request.target).await?;
+        if let Some(cached) = self.readiness.get(&caller.subject, &services) {
+            self.readiness.refresh(
+                self.broker.clone(),
+                caller.subject.clone(),
+                services.clone(),
+            );
+            let rows = services
+                .into_iter()
+                .map(|service| {
+                    let is_model = CONNECTION_SERVICES.contains(service.as_str());
+                    let display_name = match service.as_str() {
+                        CODEX_SUBSCRIPTION_CONNECTION => "My Codex subscription",
+                        PUBLIC_CODEX_SERVICE => "Chrono LLM (public)",
+                        _ => "Required NyxID service",
+                    }
+                    .to_owned();
+                    ConnectionRow {
+                        service,
+                        display_name,
+                        kind: if is_model { "codex" } else { "nyxid" },
+                        state: ServiceRequirementState::Satisfied,
+                        connection_mode: "unknown",
+                    }
+                })
+                .collect();
+            return Ok(OpenReport {
+                report: ConnectionReport {
+                    owner: caller.subject.to_string(),
+                    ready: true,
+                    checked_at: cached.checked_at,
+                    services: rows,
+                    active_state: None,
+                },
+                verification: "cached",
+                valid_for_ms: cached.valid_for_ms,
+            });
+        }
+        Ok(OpenReport {
+            report: self.check_authorized(caller, request, services).await?,
+            verification: "fresh",
+            valid_for_ms: 0,
+        })
+    }
+}
+
 pub(crate) fn router(state: Arc<BrowserConnections>) -> Router {
     Router::new()
         .route("/auth/connections/check", post(check))
+        .route("/auth/connections/open", post(open))
         .route("/auth/connections/start", post(start))
         .route("/auth/connections/cancel", post(cancel))
         .with_state(state)
+}
+
+async fn open(
+    State(state): State<Arc<BrowserConnections>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Json(request): Json<CheckRequest>,
+) -> Result<Response, ConnectionError> {
+    Ok(no_store(state.open(&caller, request).await?))
 }
 
 async fn check(
@@ -386,6 +480,7 @@ async fn cancel(
     if !services.contains(&active.service_id) {
         return Err(ConnectionError::Invalid);
     }
+    state.readiness.invalidate(&caller.subject);
     if active.service_id.as_str() == CODEX_SUBSCRIPTION_CONNECTION {
         state
             .subscriptions

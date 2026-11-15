@@ -1,7 +1,7 @@
 //! Ready-only Agent checks preserve fresh authority without waiting for labels.
 use super::*;
 
-fn gate(broker: &Broker) -> Arc<ReadGate> {
+pub(super) fn gate(broker: &Broker) -> Arc<ReadGate> {
     let gate = Arc::new(ReadGate {
         requirements_started: AtomicUsize::new(0),
         metadata_started: AtomicUsize::new(0),

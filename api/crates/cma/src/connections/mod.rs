@@ -3,6 +3,7 @@
 mod browser;
 mod native_codex;
 mod prerequisite;
+mod readiness_cache;
 mod runtime;
 pub(crate) mod subscription_store;
 mod subscription_tokens;
