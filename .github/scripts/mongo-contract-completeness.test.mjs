@@ -186,6 +186,16 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
     cases[name] = caseMetadata(true);
   }
   const exclusions = {...exceptions, [matrix]: declared[matrix]};
+  const cpuFixtures = [
+    'store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison',
+    'store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration',
+  ];
+  for (const name of cpuFixtures) {
+    assert.ok(source.includes(`not test(=${name})`));
+    assert.equal(declared[name].kind, 'fixture');
+    exclusions[name] = declared[name];
+    cases[name] = caseMetadata(false);
+  }
   assert.equal(check(metadata, exclusions).status, 0);
   for (const name of names) {
     cases[name] = caseMetadata(false);
