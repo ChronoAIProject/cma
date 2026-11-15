@@ -80,6 +80,10 @@ pub trait HostedAgentRuntime: Send + Sync {
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
+    /// Snapshot only: the caller must exclude all other binding-cache writers until done.
+    fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
+        None
+    }
     fn desktop_ownership(
         &self,
         _: &RuntimeHandle,

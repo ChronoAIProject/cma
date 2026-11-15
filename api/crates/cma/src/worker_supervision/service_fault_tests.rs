@@ -98,7 +98,7 @@ async fn whole_service_worker_failures_recover_over_http() {
         std::env::var("CHRONO_TEST_WORKER_SERVICE_FAULTS").as_deref(),
         Ok("isolated")
     );
-    let config = crate::Config::from_env().unwrap();
+    let config = crate::config::Config::from_env().unwrap();
     let mongo = url::Url::parse(&config.mongodb_uri).expect("single loopback Mongo URI");
     assert!(matches!(
         mongo.host_str(),
