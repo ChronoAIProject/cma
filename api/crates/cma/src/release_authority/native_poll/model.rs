@@ -95,6 +95,9 @@ impl NativePollReceipt {
 pub(crate) enum NativePollExecution {
     Fresh(NativePollReceipt),
     Replay(NativePollReceipt),
+    /// Store-issued certificate: this invocation never requested commit.
+    /// Retry may use only the same command after revalidating current authority.
+    NotCommitted(AuthorityError),
     Uncertain,
 }
 

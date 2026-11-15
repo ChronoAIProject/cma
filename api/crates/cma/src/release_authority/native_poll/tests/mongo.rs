@@ -181,7 +181,7 @@ async fn malformed_target_aborts_lease_head_cursor_and_receipt_together() {
     let command = prepare(&store, None).await;
     assert!(matches!(
         store.execute_native_poll(&command).await,
-        Err(AuthorityError::Invalid)
+        Ok(NativePollExecution::NotCommitted(AuthorityError::Invalid))
     ));
     assert!(store
         .reconcile_native_poll(&command)
@@ -253,7 +253,7 @@ async fn changed_command_and_missing_observation_cannot_skip_sequence() {
     changed.0.previous_receipt_sha256 = Some("b".repeat(64));
     assert!(matches!(
         store.execute_native_poll(&changed).await,
-        Err(AuthorityError::Conflict)
+        Ok(NativePollExecution::NotCommitted(AuthorityError::Conflict))
     ));
     let first = fresh(store.execute_native_poll(&command).await.unwrap());
     changed = command.clone();
@@ -261,7 +261,7 @@ async fn changed_command_and_missing_observation_cannot_skip_sequence() {
     changed.0.key = command_key(&changed.0.writer, changed.0.lane, 1).unwrap();
     assert!(matches!(
         store.execute_native_poll(&changed).await,
-        Err(AuthorityError::Closed)
+        Ok(NativePollExecution::NotCommitted(AuthorityError::Closed))
     ));
     let (_, foreign) = testing::fixture(NativePollLane::StartupAgent, None);
     assert!(matches!(
@@ -288,7 +288,7 @@ async fn head_one_refuses_without_migration_and_receipt_tampering_is_invalid() {
         .unwrap();
     assert!(matches!(
         store.execute_native_poll(&command).await,
-        Err(AuthorityError::Invalid)
+        Ok(NativePollExecution::NotCommitted(AuthorityError::Invalid))
     ));
     assert_eq!(
         store.store_commands.count_documents(doc! {}).await.unwrap(),
