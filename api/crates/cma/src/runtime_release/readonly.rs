@@ -48,8 +48,17 @@ async fn client(config: &Config) -> Result<mongodb::Client, String> {
     options.read_concern = Some(mongodb::options::ReadConcern::majority());
     options.server_selection_timeout = Some(std::time::Duration::from_secs(10));
     options.connect_timeout = Some(std::time::Duration::from_secs(10));
-    mongodb::Client::with_options(options)
-        .map_err(|_| "inert read database client is unavailable".into())
+    let client = mongodb::Client::with_options(options)
+        .map_err(|_| "inert read database client is unavailable")?;
+    // Inert composition must preserve the configured database authority. This
+    // inspects connectionStatus only; it creates no collection, role or index.
+    crate::store::isolation::verify_with_authority(
+        &client.database(&config.mongodb_database),
+        config.mongodb_authority,
+    )
+    .await
+    .map_err(|_| "inert read database authority is unavailable")?;
+    Ok(client)
 }
 
 async fn authentication(
