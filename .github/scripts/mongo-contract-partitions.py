@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import re
 from pathlib import Path
 import runpy
 import signal
@@ -63,10 +64,21 @@ def partition_count(script):
 
 def run(script):
     try:
+        shard = re.fullmatch(r"([12])/([12])", os.environ.get("CMA_MONGO_SHARD", "1/1"))
+        if shard is None or int(shard[1]) > int(shard[2]):
+            raise ValueError("CMA_MONGO_SHARD must be 1/1, 1/2 or 2/2")
+        shard_index, shard_count = map(int, shard.groups())
         count = partition_count(script)
+        if count < shard_count:
+            raise ValueError("Every Mongo shard must own an ordinary partition")
     except (OSError, subprocess.CalledProcessError, ValueError, KeyError, TypeError) as error:
         print(f"Cannot enumerate Mongo contracts: {error}", file=sys.stderr)
         return 1
+    isolated_tests = ISOLATED_TESTS[shard_index - 1::shard_count]
+    assigned_partitions = range(shard_index, count + 1, shard_count)
+    print(f"Mongo shard {shard_index}/{shard_count}: "
+          f"{len(isolated_tests)} isolated contracts, "
+          f"ordinary partitions {list(assigned_partitions)}", flush=True)
     children = []
     interrupted = 0
     cleanup_failed = False
@@ -80,7 +92,7 @@ def run(script):
     try:
         # A fresh fixture gets the entire resource window. Its exit includes
         # owned-container/volume cleanup before any ordinary fixture starts.
-        for option, _ in ISOLATED_TESTS:
+        for option, _ in isolated_tests:
             if interrupted:
                 break
             isolated = subprocess.Popen(["bash", str(script), option], start_new_session=True)
@@ -90,7 +102,7 @@ def run(script):
             if isolated.returncode == CLEANUP_FAILURE:
                 # A surviving fixture could invalidate the next exclusive phase.
                 return 1
-        next_partition = 1
+        next_partition = shard_index
         # Test failures retain full coverage. Uncertain cleanup stops allocation.
         while not interrupted:
             statuses = [child.poll() for child in children]
@@ -105,7 +117,7 @@ def run(script):
                 children.append(subprocess.Popen(
                     ["bash", str(script), partition], start_new_session=True,
                 ))
-                next_partition += 1
+                next_partition += shard_count
                 active += 1
             if next_partition > count and active == 0:
                 break
@@ -132,7 +144,8 @@ def run(script):
                     pass
                 child.wait()
         return 128 + interrupted if interrupted else 1
-    return 0 if len(children) == count + len(ISOLATED_TESTS) and all(child.returncode == 0 for child in children) else 1
+    expected = len(assigned_partitions) + len(isolated_tests)
+    return 0 if len(children) == expected and all(child.returncode == 0 for child in children) else 1
 
 
 if __name__ == "__main__":

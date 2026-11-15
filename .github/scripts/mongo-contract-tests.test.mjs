@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 import './mongo-contract-completeness.test.mjs';
 import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
+import { registerShardTests } from './mongo-contract-shard-tests.mjs';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
@@ -122,7 +123,10 @@ if (command === 'cargo') {
   if ((scenario === 'batches-cleanup-error' && index === 2) || (scenario === 'cancel' && !isolated) || (scenario === 'cancel-scale' && scale) || (scenario === 'cancel-owner' && owner) || (scenario === 'cancel-audit' && audit) || (scenario === 'cancel-diagnostics' && diagnostics) || (scenario === 'cancel-scan' && scan) || (scenario === 'cancel-history' && history)) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
-    while (index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
+    const [first, stride] = (process.env.CMA_MONGO_SHARD || '1/1').split('/').map(Number);
+    const second = first + stride;
+    const peer = index === first ? second : first;
+    while (second <= Number(match[2]) && (index === first || index === second) && !fs.existsSync(log+'.started-'+peer)) {
       if (Date.now() >= deadline) process.exit(9);
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
@@ -190,6 +194,7 @@ if (command === 'cargo') {
     CMA_IM_TEST_MONGODB_URI: 'must-not-use-authenticated-caller-uri',
   };
   if (reuse) env.CMA_NEXTEST_REUSE = '1'; else delete env.CMA_NEXTEST_REUSE;
+  delete env.CMA_MONGO_SHARD;
   return {
     directory, log, env, foreignVolume, metadata,
     args: [join(scripts, 'mongo-contract-tests.sh')],
@@ -465,3 +470,4 @@ for (const reuse of [false, true]) {
 }
 
 registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, historyTest, fixturePredicate, ordinaryPredicate});
+registerShardTests(fixture);
