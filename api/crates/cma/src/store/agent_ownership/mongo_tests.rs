@@ -3,6 +3,10 @@ use layer2_core::agent_ownership::{candidates, DEFAULT_MAX_OWNED_AGENTS};
 
 #[path = "mongo_effect_tests.rs"]
 mod effects;
+#[path = "mongo_renewal_tests.rs"]
+mod renewal;
+#[path = "mongo_two_manager_tests.rs"]
+mod two_manager;
 
 async fn fixture() -> MongoAgentOwnership {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
