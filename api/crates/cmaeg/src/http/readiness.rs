@@ -27,6 +27,8 @@ struct Inner {
     cma_reachable: AtomicBool,
     draining: AtomicBool,
     routed_recovery_failed: AtomicBool,
+    replica_required: AtomicBool,
+    replica_joined: AtomicBool,
     /// Set once `/readyz` first answered ready; background work that must
     /// never compete with startup waits for it.
     served_ready: AtomicBool,
@@ -48,6 +50,8 @@ impl Readiness {
                 cma_reachable: false.into(),
                 draining: false.into(),
                 routed_recovery_failed: false.into(),
+                replica_required: false.into(),
+                replica_joined: false.into(),
                 served_ready: false.into(),
                 served: Notify::new(),
             }),
@@ -75,6 +79,12 @@ impl Readiness {
     pub fn start_draining(&self) {
         self.inner.draining.store(true, Ordering::Release);
     }
+    pub(crate) fn require_replica_membership(&self) {
+        self.inner.replica_required.store(true, Ordering::Release);
+    }
+    pub(crate) fn replica_membership(&self, joined: bool) {
+        self.inner.replica_joined.store(joined, Ordering::Release);
+    }
     pub fn routed_recovery_failed(&self) {
         self.inner
             .routed_recovery_failed
@@ -82,6 +92,11 @@ impl Readiness {
     }
     pub fn report(&self) -> ReadinessReport {
         let mut reasons = Vec::new();
+        if self.inner.replica_required.load(Ordering::Acquire)
+            && !self.inner.replica_joined.load(Ordering::Acquire)
+        {
+            reasons.push("replica_membership_unavailable");
+        }
         if self.inner.routed_recovery_failed.load(Ordering::Acquire) {
             reasons.push("routed_recovery_failed");
         }

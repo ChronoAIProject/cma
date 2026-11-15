@@ -42,7 +42,8 @@ impl Bridge {
         phase: &mut &'static str,
     ) -> crate::Result<()> {
         validate_settings(&cwd, &settings)?;
-        let mut timing = super::startup_timing::StartupTiming::new();
+        let mut timing =
+            super::startup_timing::StartupTiming::for_agent(self.agent_correlation_digest.clone());
         *phase = "protocol_initialize";
         let greeting = self
             .greet(serde_json::json!({
@@ -197,27 +198,48 @@ impl Bridge {
         let session = match (greeting, resume) {
             (Greeting::Fresh(_), Some(conversation)) => {
                 *phase = "session_load";
-                self.activate_session(conversation.clone(), updates).await?;
-                self.load_retained_session(serde_json::json!({
-                    "sessionId": conversation,
-                    "cwd": cwd,
-                    "mcpServers": tool_servers,
-                }))
-                .await
-                .map_err(|error| error.context("could not resume conversation"))?;
+                timing
+                    .subphase(
+                        "fresh_load",
+                        "activate_session",
+                        self.activate_session(conversation.clone(), updates),
+                    )
+                    .await?;
+                timing
+                    .subphase(
+                        "fresh_load",
+                        "session_load",
+                        self.load_retained_session(serde_json::json!({
+                            "sessionId": conversation,
+                            "cwd": cwd,
+                            "mcpServers": tool_servers,
+                        })),
+                    )
+                    .await
+                    .map_err(|error| error.context("could not resume conversation"))?;
                 conversation
             }
             (Greeting::Fresh(_), None) => {
                 *phase = "session_new";
-                let started = self
-                    .call(
-                        "session/new",
-                        serde_json::json!({ "cwd": cwd, "mcpServers": tool_servers }),
+                let started = timing
+                    .subphase(
+                        "fresh_new",
+                        "session_new",
+                        self.call(
+                            "session/new",
+                            serde_json::json!({ "cwd": cwd, "mcpServers": tool_servers }),
+                        ),
                     )
                     .await?;
                 let conversation =
                     super::acp_session_identity::read(&started, self.json_pools.is_some())?;
-                self.activate_session(conversation.clone(), updates).await?;
+                timing
+                    .subphase(
+                        "fresh_new",
+                        "activate_session",
+                        self.activate_session(conversation.clone(), updates),
+                    )
+                    .await?;
                 conversation
             }
             (Greeting::Existing, Some(conversation)) => {
@@ -243,24 +265,46 @@ impl Bridge {
                     // ordinary retained conversations never take it.
                     let mut rebinding = super::startup_timing::StartupTiming::new();
                     *phase = "prepared_session_close";
-                    self.call(
-                        "session/close",
-                        serde_json::json!({ "sessionId": conversation }),
-                    )
-                    .await?;
+                    timing
+                        .subphase(
+                            "prepared_rejoin",
+                            "session_close",
+                            self.call(
+                                "session/close",
+                                serde_json::json!({ "sessionId": conversation }),
+                            ),
+                        )
+                        .await?;
                     rebinding.completed("prepared_protocol_close");
                     *phase = "prepared_session_load";
-                    self.activate_session(conversation.clone(), updates).await?;
-                    self.load_retained_session(serde_json::json!({
-                        "sessionId": conversation,
-                        "cwd": cwd,
-                        "mcpServers": tool_servers,
-                    }))
-                    .await
-                    .map_err(|error| error.context("could not bind prepared conversation"))?;
+                    timing
+                        .subphase(
+                            "prepared_rejoin",
+                            "activate_session",
+                            self.activate_session(conversation.clone(), updates),
+                        )
+                        .await?;
+                    timing
+                        .subphase(
+                            "prepared_rejoin",
+                            "session_load",
+                            self.load_retained_session(serde_json::json!({
+                                "sessionId": conversation,
+                                "cwd": cwd,
+                                "mcpServers": tool_servers,
+                            })),
+                        )
+                        .await
+                        .map_err(|error| error.context("could not bind prepared conversation"))?;
                     rebinding.completed("prepared_protocol_load");
                 } else {
-                    self.activate_session(conversation.clone(), updates).await?;
+                    timing
+                        .subphase(
+                            "existing_rejoin",
+                            "activate_session",
+                            self.activate_session(conversation.clone(), updates),
+                        )
+                        .await?;
                 }
                 tracing::info!("rejoining the conversation held by the runtime");
                 conversation
@@ -304,52 +348,6 @@ impl Bridge {
             self.recheck_open_completion(protocol, receipt).await?;
         }
         Ok(())
-    }
-
-    async fn configure_channel_effort(&self, session: &str) {
-        let result = self
-            .call_within(
-                "session/set_config_option",
-                serde_json::json!({
-                    "sessionId": session, "configId": "reasoning_effort", "value": "low"
-                }),
-                std::time::Duration::from_secs(1),
-            )
-            .await;
-        let confirmed = result.as_ref().is_ok_and(|response| {
-            response
-                .get("configOptions")
-                .and_then(serde_json::Value::as_array)
-                .is_some_and(|options| {
-                    options.iter().any(|option| {
-                        option.get("id").and_then(serde_json::Value::as_str)
-                            == Some("reasoning_effort")
-                            && option
-                                .get("currentValue")
-                                .and_then(serde_json::Value::as_str)
-                                == Some("low")
-                            && option
-                                .get("options")
-                                .and_then(serde_json::Value::as_array)
-                                .is_some_and(|values| {
-                                    values.iter().any(|value| {
-                                        value.get("value").and_then(serde_json::Value::as_str)
-                                            == Some("low")
-                                    })
-                                })
-                    })
-                })
-        });
-        if confirmed {
-            tracing::info!("channel session reasoning effort set to low");
-        } else {
-            // Effort is a latency preference, never delivery authority. An old
-            // runtime or unsupported value must not prevent the input opening.
-            // Do not retain remote error bodies or echoed session settings.
-            tracing::warn!(
-                "channel session reasoning effort was not confirmed; retaining runtime setting"
-            );
-        }
     }
 
     async fn greet(

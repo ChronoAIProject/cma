@@ -6,7 +6,10 @@ impl LifecycleLease {
     fn filter(&self) -> Document {
         doc! { "_id": &self.id, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "status": "running", "lease_token": &self.token,
-        "lease_expires_at": { "$gt": DateTime::now() } }
+        "$expr": { "$and": [
+            { "$eq": [{ "$type": "$lease_expires_at" }, "date"] },
+            { "$gt": ["$lease_expires_at", "$$NOW"] },
+        ] } }
     }
 }
 
@@ -19,20 +22,21 @@ impl MongoAgentLifecycleStore {
         attempts: u32,
     ) -> Result<(), StoreError> {
         let delay = Duration::from_secs((5_u64 << attempts.saturating_sub(1).min(4)).min(60));
-        let retry_at = SystemTime::now()
-            .checked_add(delay)
-            .ok_or_else(|| StoreError::Malformed("lifecycle retry time overflowed".into()))?;
         self.write(
             lease,
-            doc! { "$set": { "status": "queued",
-            "retry_at": DateTime::from_system_time(retry_at),
+            vec![doc! { "$set": { "status": "queued",
+            "retry_at": { "$add": ["$$NOW", delay.as_millis() as i64] },
             "lease_token": Bson::Null, "lease_expires_at": Bson::Null,
-            "updated_at": DateTime::now() } },
+            "updated_at": "$$NOW" } }],
         )
         .await
     }
 
-    async fn write(&self, lease: &LifecycleLease, update: Document) -> Result<(), StoreError> {
+    async fn write(
+        &self,
+        lease: &LifecycleLease,
+        update: impl Into<mongodb::options::UpdateModifications>,
+    ) -> Result<(), StoreError> {
         let result = self
             .operations
             .update_one(lease.filter(), update)
@@ -48,10 +52,14 @@ impl MongoAgentLifecycleStore {
     }
 
     pub(crate) async fn renew(&self, lease: &LifecycleLease) -> Result<(), StoreError> {
-        let deadline = SystemTime::now()
-            .checked_add(LEASE)
-            .ok_or_else(|| StoreError::Malformed("lifecycle lease overflowed".into()))?;
-        self.write(lease, doc! { "$set": { "lease_expires_at": DateTime::from_system_time(deadline), "updated_at": DateTime::now() } }).await
+        self.write(
+            lease,
+            vec![doc! { "$set": {
+                "lease_expires_at": { "$add": ["$$NOW", LEASE.as_millis() as i64] },
+                "updated_at": "$$NOW",
+            } }],
+        )
+        .await
     }
 
     #[cfg(test)]

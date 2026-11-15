@@ -58,6 +58,7 @@ async fn lifecycle_queue_write_conflicts_release_the_original_lease_and_settle_o
             },
             config,
         );
+        wait_until_server_due(&admin, queue_at).await;
         let claimed = store
             .claim_sandbox_work(
                 &created.id,
@@ -103,6 +104,7 @@ async fn lifecycle_queue_write_conflicts_release_the_original_lease_and_settle_o
             assert!(retry_at >= queue_at + Duration::from_secs(delay));
             assert!(retry_at <= queue_at + Duration::from_secs(delay + 3));
             assert!(!worker.run_one(&created.id, queue_at).await.unwrap());
+            wait_until_server_due(&admin, retry_at).await;
             assert!(worker.run_one(&created.id, retry_at).await.unwrap());
             retry_at
         } else {
@@ -135,4 +137,18 @@ async fn lifecycle_queue_write_conflicts_release_the_original_lease_and_settle_o
         assert_eq!(harness.backend.requests().await, requests);
         client.database(&database).drop().await.unwrap();
     }
+}
+
+async fn wait_until_server_due(client: &Client, due: SystemTime) {
+    let server = client
+        .database("admin")
+        .run_command(doc! {"hello":1_i32})
+        .await
+        .unwrap();
+    let now = server.get_datetime("localTime").unwrap().to_system_time();
+    let remaining = due.duration_since(now).unwrap_or_default();
+    assert!(remaining <= Duration::from_secs(40));
+    // This fixture exercises real authority now: advancing its caller clock
+    // must not bypass the persisted retry schedule at the acquisition write.
+    tokio::time::sleep(remaining + Duration::from_millis(20)).await;
 }

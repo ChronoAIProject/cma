@@ -21,6 +21,8 @@ pub(super) struct MediaResponseState {
     pub text_chunks: Vec<String>,
     pub custom: Option<CustomCheckpoint>,
     pub native: NativeOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_receipt: Option<crate::delivery::retained_receipt::StoredReceipt>,
     #[serde(skip)]
     pub version: u64,
 }
@@ -83,6 +85,17 @@ impl MediaObligationStore {
         {
             return Err(ExecutionError::Corrupt);
         }
+        if let Some(receipt) = &state.native_receipt {
+            if !matches!(&state.native, NativeOutcome::Settled { outcome } if outcome == &receipt.delivery)
+            {
+                return Err(ExecutionError::Corrupt);
+            }
+            self.0
+                .receipts(&state.id, &record.owner, record.retained_until)
+                .load(receipt)
+                .await
+                .map_err(|_| ExecutionError::Corrupt)?;
+        }
         state.version = version;
         Ok(Some(state))
     }
@@ -132,7 +145,8 @@ impl MediaObligationStore {
                 text: text[offset..end].into(),
             };
             self.0
-                .write(
+                .write_fenced(
+                    &lease.partition,
                     &chunk_id,
                     &lease.record.owner,
                     lease.record.retained_until,
@@ -155,12 +169,14 @@ impl MediaObligationStore {
             text_chunks: chunks,
             custom,
             native: NativeOutcome::NotStarted,
+            native_receipt: None,
             version: 0,
         };
         self.guard_effect(lease).await?;
         state.version = self
             .0
-            .write(
+            .write_fenced(
+                &lease.partition,
                 &state.id,
                 &lease.record.owner,
                 lease.record.retained_until,
@@ -211,7 +227,8 @@ impl MediaObligationStore {
         self.guard(lease).await?;
         state.version = self
             .0
-            .write(
+            .write_fenced(
+                &lease.partition,
                 &state.id,
                 &lease.record.owner,
                 lease.record.retained_until,

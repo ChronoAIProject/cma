@@ -57,6 +57,7 @@ function openCompletion(source) {
   return source;
 }
 function withoutOpenCompletion(source) {
+  source = require("./deferred_session_metadata.cjs").withoutDeferredSessionMetadata(source);
   if (source.includes(initializedAgent)) {
     for (const [before, after] of [...replacements].reverse()) source = source.replaceAll(after, before);
     assert.equal(createHash("sha256").update(source).digest("hex"), sourceSha256, "Unexpected pre-open-completion ACP composition");

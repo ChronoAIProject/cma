@@ -85,7 +85,7 @@ impl MetricsWorkers {
                     }
                     // Serialize mapping revision/CAS commits after concurrent I/O.
                     self.store
-                        .reconcile_bindings(sandbox.id.as_str(), bindings, at)
+                        .reconcile_bindings(holder, sandbox.id.as_str(), bindings, at)
                         .await?;
                     max_proof_age_seconds = max_proof_age_seconds
                         .max(crate::store::usage_reports::now().saturating_sub(at));
@@ -98,7 +98,7 @@ impl MetricsWorkers {
             }
         }
         self.store
-            .expire_missing_bindings(crate::store::usage_reports::now())
+            .expire_missing_bindings(holder, crate::store::usage_reports::now())
             .await?;
         tracing::info!(
             verified,

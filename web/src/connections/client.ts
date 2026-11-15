@@ -1,3 +1,5 @@
+import { ApiError, retryAfterMilliseconds } from '@chronoai/cma-sdk';
+
 export const subscriptionService = 'cma:codex-subscription';
 
 export type ConnectionTarget =
@@ -56,19 +58,22 @@ export interface ConnectionClient {
   cancel(target: ConnectionTarget, active: ActiveConnection): Promise<void>;
 }
 
-export class ConnectionFailure extends Error {
-  constructor(
-    readonly status: number,
-    readonly code?: string,
-  ) {
+export class ConnectionFailure extends ApiError {
+  constructor(status: number, code?: string, retryAfterMs?: number) {
     super(
+      status,
       status === 401
         ? 'Your CMA sign-in has expired. Sign in again to continue.'
         : code === 'connection_target_not_found'
           ? 'This sandbox or session is no longer available.'
           : code === 'connection_changed'
             ? 'This sign-in attempt has changed. Connect again to continue.'
-            : 'The connection could not be verified. Please try again.',
+            : status === 429
+              ? 'The service is busy. Please try again shortly.'
+              : 'The connection could not be verified. Please try again.',
+      code,
+      undefined,
+      retryAfterMs,
     );
     this.name = 'ConnectionFailure';
   }
@@ -84,8 +89,15 @@ async function post<T>(action: string, body: unknown, signal?: AbortSignal): Pro
     signal,
   });
   if (!response.ok) {
-    const problem = (await response.json().catch(() => ({}))) as { code?: string };
-    throw new ConnectionFailure(response.status, problem.code);
+    const problem: unknown = await response.json().catch(() => undefined);
+    const code =
+      typeof problem === 'object' &&
+      problem !== null &&
+      'code' in problem &&
+      typeof problem.code === 'string'
+        ? problem.code
+        : undefined;
+    throw new ConnectionFailure(response.status, code, retryAfterMilliseconds(response));
   }
   return response.json() as Promise<T>;
 }
