@@ -10,8 +10,8 @@ use layer3_adapter::{
 };
 
 mod adoption_tests;
-pub(in crate::store) mod agent_replay_tests;
 mod agent_replay_schema_tests;
+pub(in crate::store) mod agent_replay_tests;
 mod claim_race_tests;
 mod guidance_revision_tests;
 mod installation_transfer_tests;
