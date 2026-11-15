@@ -64,6 +64,9 @@ pub async fn capabilities(State(service): State<ConnectionService>, _creator: Cr
                 if service.management.github.get().is_some() {
                     features.push("github_native_receipts_v1".into());
                 }
+                if let Some(capability) = service.management.providers.turn_trace_capability() {
+                    features.push(capability.into());
+                }
                 features
             },
             relay_authoring: Some(super::relay_capabilities::view(&service.management)),

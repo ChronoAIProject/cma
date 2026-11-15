@@ -10,7 +10,7 @@ use super::super::sandbox_mongo::{signed, MongoSandboxStore};
 use super::worker::Change;
 use super::{lane_records, records, ApplyError};
 
-pub(super) async fn apply(
+pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     change: &Change,
     session: &mut ClientSession,
@@ -181,9 +181,9 @@ pub(super) async fn write(
             }
             _ => ApplyError::Domain(CommandLedgerError::Unavailable),
         })?;
-    super::super::trigger_first_messages::project_terminal(store, command, session)
-        .await
-        .map_err(|_| CommandLedgerError::Conflict)?;
+    // Terminal Trigger projection is completed by the scoped transaction root.
+    // Dispatch binding and reconciliation already have dispatch evidence;
+    // queued input edits are nonterminal and require no first-message event.
     let mut fields = records::document(command)?;
     fields.remove("_id");
     let result = store.agent_commands.update_one(doc! { "_id": command.receipt.envelope.command_id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(expected_revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)? }, doc! { "$set": fields }).session(&mut *session).await?;

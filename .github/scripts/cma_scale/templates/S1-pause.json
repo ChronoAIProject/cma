@@ -1,0 +1,15 @@
+{
+  "id": "s1-pause",
+  "stage": "S1",
+  "context": "gke_chronoai-501608_asia-northeast1_chronoai-prod-asia-northeast1-gke",
+  "namespace": "chrono-bot",
+  "kind": "Deployment",
+  "name": "cma-agent-manager",
+  "action": "patch",
+  "changes": {
+    "deployment": {
+      "paused": true
+    }
+  },
+  "a2_phase": "pause-legacy"
+}

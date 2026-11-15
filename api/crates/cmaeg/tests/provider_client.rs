@@ -110,6 +110,7 @@ async fn bind_conversation_probe_and_stream_round_trip() {
         .start_turn(
             &provider,
             TurnRequest {
+                nyxid_trace: false,
                 timing: None,
                 conversation_id: conversation.clone(),
                 input: vec![serde_json::json!({"role":"user","content":"hello"})],
@@ -188,6 +189,7 @@ async fn busy_and_missing_conversation_errors_are_typed() {
         .start_turn(
             &provider,
             TurnRequest {
+                nyxid_trace: false,
                 timing: None,
                 conversation_id: conversation,
                 input: Vec::new(),
@@ -251,6 +253,7 @@ async fn full_provider_semaphore_returns_busy_without_waiting() {
     let provider = provider();
     let secret = Secret::new("agent-secret");
     let request = |event: &str| TurnRequest {
+        nyxid_trace: false,
         timing: None,
         conversation_id: ConversationId::new("conv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
         input: Vec::new(),
@@ -284,6 +287,7 @@ async fn one_hundred_sequential_turns_accept_with_low_latency() {
             .start_turn(
                 &provider,
                 TurnRequest {
+                    nyxid_trace: false,
                     timing: None,
                     conversation_id: conversation_id.clone(),
                     input: Vec::new(),
@@ -325,6 +329,7 @@ async fn streaming_lifetime_outlives_header_timeout_and_drop_releases_capacity()
     )
     .unwrap();
     let request = |event: &str| TurnRequest {
+        nyxid_trace: false,
         timing: None,
         conversation_id: ConversationId::new("conv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
         input: vec![],

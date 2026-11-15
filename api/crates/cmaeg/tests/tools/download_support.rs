@@ -87,8 +87,7 @@ pub async fn download_with(app: &App, query: &str, authorization: &[String]) -> 
     request.send().await.unwrap()
 }
 
-/// Store `edit`ed as the channel's definition and drop the cached one, as
-/// an owner's update does.
+/// Update the backing record as another replica would, retaining the local cache.
 pub async fn redefine(app: &App, edit: impl FnOnce(&mut ChannelDefinition)) {
     let current = app
         .state
@@ -105,7 +104,6 @@ pub async fn redefine(app: &App, edit: impl FnOnce(&mut ChannelDefinition)) {
         definition.to_blob_json().to_string().as_bytes(),
     )
     .unwrap();
-    app.state.resolver.invalidate(app.fixture.id.as_str());
 }
 
 /// Assert the exact hardened head of a served original and return its body.

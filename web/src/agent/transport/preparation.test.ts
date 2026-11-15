@@ -133,6 +133,7 @@ it('cancels ordinary modal cleanup before a delayed initial account result can w
   const current = deferred<string | undefined>();
   h.currentUser.mockReturnValueOnce(current.promise);
   const preparation = h.client.agentTransport!.prepare('agt_1', 'alice');
+  await Promise.resolve();
   preparation.release();
   current.resolve('alice');
   await Promise.resolve();
@@ -167,13 +168,16 @@ it('supersedes old preparation without letting a late owner lookup erase the new
   const first = deferred<string | undefined>();
   h.currentUser.mockReturnValueOnce(first.promise);
   const old = h.client.agentTransport!.prepare('old-agent', 'alice');
+  await Promise.resolve();
   const next = h.client.agentTransport!.prepare('agt_1', 'alice');
   next.handoff();
-  const loaded = await h.client.agentTransport!.openForLoad('agt_1');
+  const loading = h.client.agentTransport!.openForLoad('agt_1');
   old.handoff();
   old.release();
+  // A provider ignoring cancellation must settle before the queued proof can
+  // start; the gate never overlaps network authority reads.
   first.resolve('alice');
-  await Promise.resolve();
+  const loaded = await loading;
   expect(loaded?.journal.selected()).toBe('responses_v2');
   expect(agentTransportJournal(sessionStorage, 'alice', 'old-agent').selected()).toBeUndefined();
   expect(h.eligibility).toHaveBeenCalledOnce();

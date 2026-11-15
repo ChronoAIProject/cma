@@ -45,7 +45,9 @@ pub(crate) mod mutation;
 mod normalize;
 mod runtime_source;
 pub mod selection;
+mod socket_close;
 mod source_discovery;
+mod source_fence;
 mod source_worker;
 pub(crate) mod status;
 pub(crate) mod thread_authority;
@@ -86,7 +88,7 @@ mod tests;
 #[cfg(test)]
 mod activity_tests;
 #[cfg(test)]
-mod journal_fixture;
+pub(crate) mod journal_fixture;
 #[cfg(test)]
 mod journal_tests;
 

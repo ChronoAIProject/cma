@@ -145,7 +145,7 @@ impl Sender {
             .chain(uploads);
         let mut confirmed = 0;
         let mut first = None;
-        for operation in operations {
+        for (index, operation) in operations.enumerate() {
             let Ok(Some(mut slot)) = timeout_at(deadline, self.pacing.acquire(&route)).await else {
                 receipt.delivery = expired();
                 break;
@@ -222,9 +222,17 @@ impl Sender {
                     }
                 }
             };
-            let sent = timeout_at(deadline, send)
-                .await
-                .unwrap_or(Err(Error::Unconfirmed));
+            let sent = super::trace::native::part(
+                index,
+                false,
+                async {
+                    timeout_at(deadline, send)
+                        .await
+                        .unwrap_or(Err(Error::Unconfirmed))
+                },
+                super::trace::native::telegram,
+            )
+            .await;
             drop(permit);
             ctx.gate.progress();
             match sent {

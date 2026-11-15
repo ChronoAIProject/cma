@@ -167,32 +167,30 @@ impl Open {
         if self.seen.as_ref() == Some(&current) {
             return Ok(false);
         }
-        let origin = self.state.agent_page_origin.clone();
-        let reading = current.command.clone();
-        let next = self.next;
-        let page = self
-            .state
-            .reads
-            .with_output_observation(
-                &self.authorization,
-                reading.command.turn_sequence,
-                move |source| {
+        if let Some(turn) = current.command.command.turn_sequence {
+            let origin = self.state.agent_page_origin.clone();
+            let reading = current.command.clone();
+            let next = self.next;
+            let page = self
+                .state
+                .reads
+                .with_output_observation(&self.authorization, Some(turn), move |source| {
                     Box::pin(async move { indexed::read(source, &origin, reading, next).await })
-                },
-            )
-            .await
-            .map_err(|error| match error {
-                layer2_core::sandbox::AgentReadError::InvalidPage => "invalid_replay_cursor",
-                _ => "response_observation_unavailable",
-            })?;
-        if let Some(page) = page {
-            self.terminal = page.terminal;
-            self.more = page.more;
-            self.last = Some(page.last);
-            self.pagination_required = page.pagination_required;
-            self.pending = page.events.into();
-            self.seen = (!page.more && page.through == current.header.head).then_some(current);
-            return Ok(true);
+                })
+                .await
+                .map_err(|error| match error {
+                    layer2_core::sandbox::AgentReadError::InvalidPage => "invalid_replay_cursor",
+                    _ => "response_observation_unavailable",
+                })?;
+            if let Some(page) = page {
+                self.terminal = page.terminal;
+                self.more = page.more;
+                self.last = Some(page.last);
+                self.pagination_required = page.pagination_required;
+                self.pending = page.events.into();
+                self.seen = (!page.more && page.through == current.header.head).then_some(current);
+                return Ok(true);
+            }
         }
         let bound = current.command.command.turn_sequence.is_some();
         let history = self

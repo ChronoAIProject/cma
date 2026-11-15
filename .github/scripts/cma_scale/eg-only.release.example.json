@@ -1,0 +1,90 @@
+{
+  "source": null,
+  "images": {
+    "am": null,
+    "eg": null
+  },
+  "am_max_owned_agents": null,
+  "recovery": {
+    "am": {
+      "image": null,
+      "compatible_mode_on": false
+    },
+    "eg": {
+      "image": null,
+      "compatible_mode_on": false
+    }
+  },
+  "controller_order_approved": false,
+  "no_overlap_under_120s_proven": false,
+  "hpa": {
+    "am": {
+      "handoff_p95_seconds": null,
+      "hard_lifetime_seconds": null,
+      "capacity_processes_per_service": null,
+      "cpu_signal_qualified": false
+    },
+    "eg": {
+      "handoff_p95_seconds": null,
+      "hard_lifetime_seconds": null,
+      "capacity_processes_per_service": null,
+      "cpu_signal_qualified": false
+    }
+  },
+  "survivor_capacity": {
+    "am": {
+      "observed_at": null,
+      "minimum_safe_replicas": null,
+      "qualified": false
+    },
+    "eg": {
+      "observed_at": null,
+      "minimum_safe_replicas": null,
+      "qualified": false
+    }
+  },
+  "eg_only_hpa": {
+    "s2": {
+      "state": "NOT_RUN",
+      "source": null,
+      "images": {
+        "am": null,
+        "eg": null
+      },
+      "evidence_sha256": null,
+      "started_at": null,
+      "completed_at": null,
+      "deployments": {
+        "am": {
+          "uid_sha256": null,
+          "generation": null,
+          "spec_sha256": null
+        },
+        "eg": {
+          "uid_sha256": null,
+          "generation": null,
+          "spec_sha256": null
+        }
+      }
+    },
+    "capacity": {
+      "evidence_sha256": null,
+      "topology": "am1-off-eg2-on",
+      "observed_at": null,
+      "eg_processes": null,
+      "am_processes": 1,
+      "mongo_headroom_percent": null,
+      "quota_cpu": {
+        "requests.cpu": "64",
+        "limits.cpu": "128"
+      },
+      "other_consumers_included": false,
+      "all_live_terminating_clients_included": false,
+      "node_placement_qualified": false,
+      "provider_budgets_qualified": false,
+      "survivor_qualified": false,
+      "early_drain_qualified": false,
+      "quota_qualified": false
+    }
+  }
+}

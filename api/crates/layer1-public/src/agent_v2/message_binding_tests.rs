@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
 
-async fn steered() -> (Fixture, String) {
+pub(super) async fn steered() -> (Fixture, String) {
     let f = fixture(true, false).await;
     let control_fixture = controls::Fixture {
         router: f.router.clone(),
@@ -166,34 +166,38 @@ impl AgentCommandStore for Altered {
 }
 #[tokio::test]
 async fn steering_correlation_fails_closed_on_wrong_ledger_evidence() {
-    for fault in [
-        "owner",
-        "agent",
-        "operation",
-        "fence",
-        "incarnation",
-        "kind",
-        "unavailable",
-    ] {
-        let (f, _) = steered().await;
-        let commands = AgentCommandService::new(
-            Arc::new(Altered {
-                inner: f.store.clone(),
-                fault,
-            }),
-            f.access.clone(),
-            Arc::new(NoAdmission),
-        );
-        let router = super::router(AgentV2State::new(f.state.reads.clone(), commands));
-        let (status, raw) = preferred(&router, SNAPSHOT).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{fault}: {raw}");
-        assert!(!raw.contains("foreign-owner"));
-        assert!(!raw.contains("foreign-agent"));
-        let (status, _) = call(&router, Method::GET, SNAPSHOT, "owner-a", None, None).await;
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "unrequested extension affected old readers: {fault}"
-        );
+    for enabled in [false, true] {
+        for fault in [
+            "owner",
+            "agent",
+            "operation",
+            "fence",
+            "incarnation",
+            "kind",
+            "unavailable",
+        ] {
+            let (f, _) = steered().await;
+            let commands = AgentCommandService::new(
+                Arc::new(Altered {
+                    inner: f.store.clone(),
+                    fault,
+                }),
+                f.access.clone(),
+                Arc::new(NoAdmission),
+            );
+            let router = super::router(
+                AgentV2State::new(f.state.reads.clone(), commands).with_single_fence_pages(enabled),
+            );
+            let (status, raw) = preferred(&router, SNAPSHOT).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{fault}: {raw}");
+            assert!(!raw.contains("foreign-owner"));
+            assert!(!raw.contains("foreign-agent"));
+            let (status, _) = call(&router, Method::GET, SNAPSHOT, "owner-a", None, None).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "unrequested extension affected old readers: {fault}"
+            );
+        }
     }
 }

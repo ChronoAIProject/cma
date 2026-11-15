@@ -6,6 +6,8 @@ use std::time::{Duration, SystemTime};
 use crate::ids::AgentId;
 use crate::now_rfc3339;
 
+mod custody;
+
 use super::store::{Page, PageRequest};
 use super::{
     AgentTitle, AgentTitleClaimMode, AgentTitleClaimRequest, AgentTitleGenerationContext,
@@ -30,6 +32,8 @@ pub enum AgentTitleServiceError {
     InconsistentEvidence,
     #[error("agent title generation is temporarily unavailable")]
     GenerationUnavailable,
+    #[error("agent title provider effect is unresolved; redispatch is forbidden")]
+    EffectUnknown,
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
     #[error(transparent)]
@@ -106,10 +110,22 @@ impl AgentTitleService {
         generator: Option<&dyn AgentTitleGenerator>,
         now: SystemTime,
     ) -> Result<AgentTitleOutcome, AgentTitleServiceError> {
+        // Start before acquisition: a delayed acknowledgement cannot extend the
+        // originating capability's local deadline.
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_secs(super::AGENT_TITLE_CLAIM_SECONDS);
         let request = AgentTitleClaimRequest::new(id.clone(), &self.coordination_holder);
         let Some(mut claim) = self.store.acquire_agent_title_claim(&request, now).await? else {
             return Ok(AgentTitleOutcome::Skipped);
         };
+        match self.store.agent_title_effect(id).await? {
+            super::AgentTitleEffectState::Legacy => {}
+            state => {
+                return self
+                    .generate_with_custody(claim, state, context, generator, deadline)
+                    .await
+            }
+        }
         let transcript = self
             .store
             .agent_title_transcript(id)

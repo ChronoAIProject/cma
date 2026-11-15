@@ -24,6 +24,7 @@ it('preserves the same draft and uploaded attachment through settings disclosure
   });
   vi.spyOn(accessRequests, 'list').mockResolvedValue([]);
   const runAgent = vi.fn().mockResolvedValue(undefined);
+  const models = vi.fn().mockResolvedValue([{ id: 'gpt-6', label: 'GPT-6', available: true }]);
   const upload = vi.fn().mockResolvedValue({
     id: 'att_notes',
     agentId: 'agt_1',
@@ -39,7 +40,7 @@ it('preserves the same draft and uploaded attachment through settings disclosure
       reasoning_effort: 'high',
       permission_mode: 'autonomous',
     }),
-    readAgentModels: async () => [{ id: 'gpt-6', label: 'GPT-6', available: true }],
+    readAgentModels: models,
     updateAgentSettings: vi.fn(),
     uploadAgentAttachment: upload,
     runAgent,
@@ -69,10 +70,13 @@ it('preserves the same draft and uploaded attachment through settings disclosure
   });
   await screen.findByText('Ready');
   const summary = await screen.findByRole('button', { name: /^Agent settings:/ });
-  expect(summary).toHaveTextContent('GPT-6 · High');
+  expect(summary).toHaveTextContent('gpt-6 · High');
+  expect(models).not.toHaveBeenCalled();
   expect(summary).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByRole('button', { name: 'Permission mode' })).not.toBeInTheDocument();
   await user.click(summary);
+  await waitFor(() => expect(summary).toHaveTextContent('GPT-6 · High'));
+  expect(models).toHaveBeenCalledOnce();
   expect(screen.getByRole('region', { name: 'Agent settings' })).toBeVisible();
   expect(screen.getByRole('button', { name: 'Permission mode' })).toBeEnabled();
   await user.click(summary);

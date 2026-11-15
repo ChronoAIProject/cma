@@ -112,14 +112,14 @@ async fn only_due_deadline_or_cancelled_holds_reserve_an_empty_slice() {
         let row = sandbox(0);
         drop(reconciler.binding_holds.begin(&row, &[]).unwrap());
         reconciler.binding_holds.failed(&row.id, reason);
-        assert!(!reconciler.binding_holds.reserved_retry_due(&row.id));
+        assert!(!reconciler.binding_holds.reserved_retry_due(&row.id, false));
         tokio::time::advance(Duration::from_secs(29)).await;
         complete(&reconciler).await;
         assert_eq!(store.keys("get"), ["sbx_001"]);
         tokio::time::advance(Duration::from_secs(1)).await;
         let reserved = matches!(reason, "deadline" | "cancelled");
         assert_eq!(
-            reconciler.binding_holds.reserved_retry_due(&row.id),
+            reconciler.binding_holds.reserved_retry_due(&row.id, false),
             reserved
         );
         bindings(&reconciler, 2).await;
@@ -159,7 +159,9 @@ async fn a_late_reserved_item_yields_without_advancing_its_cursor_or_extending_b
             .binding_cursor,
         Some(sandbox(3).id)
     );
-    assert!(reconciler.binding_holds.reserved_retry_due(&sandbox(4).id));
+    assert!(reconciler
+        .binding_holds
+        .reserved_retry_due(&sandbox(4).id, false));
     store.fail("get", "sbx_004", Failure::Delay(Duration::from_secs(19)));
     let started = Instant::now();
     assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
@@ -250,9 +252,13 @@ async fn reserved_deadline_and_outer_cancellation_release_permits_and_allow_late
             retry_at.saturating_duration_since(Instant::now()) - Duration::from_secs(1),
         )
         .await;
-        assert!(!reconciler.binding_holds.reserved_retry_due(&sandbox(0).id));
+        assert!(!reconciler
+            .binding_holds
+            .reserved_retry_due(&sandbox(0).id, false));
         tokio::time::advance(Duration::from_secs(1)).await;
-        assert!(reconciler.binding_holds.reserved_retry_due(&sandbox(0).id));
+        assert!(reconciler
+            .binding_holds
+            .reserved_retry_due(&sandbox(0).id, false));
         let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
         let outcome = if cancel { "cancelled" } else { "deadline" };
         assert!(logs
@@ -260,4 +266,61 @@ async fn reserved_deadline_and_outer_cancellation_release_permits_and_allow_late
             .any(|line| line.contains("stage=\"durable_read\"")
                 && line.contains(&format!("outcome=\"{outcome}\""))));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn bounded_recovery_reserves_races_and_caps_an_empty_slice_at_twenty_five_seconds() {
+    for delay in [24, 26] {
+        let (store, reconciler) = setup(2, Duration::ZERO).await;
+        let reconciler = reconciler.with_runtime_loss_bounded_proof(true);
+        reserve(&reconciler, 0, "raced").await;
+        assert!(reconciler
+            .binding_holds
+            .reserved_retry_due(&sandbox(0).id, true));
+        assert!(!reconciler
+            .binding_holds
+            .reserved_retry_due(&sandbox(0).id, false));
+        bindings(&reconciler, 2).await;
+        store.fail("get", "sbx_000", Failure::Delay(Duration::from_secs(delay)));
+        let started = Instant::now();
+        assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
+        assert_eq!(started.elapsed(), Duration::from_secs(delay.min(25)));
+        assert_eq!(reconciler.binding_holds.contains("sbx_000"), delay > 25);
+        complete(&reconciler).await;
+        assert!(store.keys("pause").contains(&"sbx_001".into()));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelled_loss_reports_one_identified_outcome_and_keeps_binding_protection() {
+    let (store, reconciler) = setup(1, Duration::ZERO).await;
+    let mut original = sandbox(0);
+    original.runtime = Some(layer2_core::sandbox::RuntimeBinding {
+        runtime_id: "absent-original-runtime".into(),
+        runtime_version: "image".into(),
+        provision_generation: Some(1),
+        boot_id: None,
+        bound_at: original.updated_at.clone(),
+    });
+    original.lifecycle.runtime_generation_high_water = 1;
+    original.revision += 1;
+    store.inner.save_sandbox(1, original).await.unwrap();
+    store.fail("loss_reply", "sbx_000", Failure::Deadline);
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(output.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    reconciler.run_due(SystemTime::now()).await.unwrap();
+    assert!(reconciler.binding_holds.contains("sbx_000"));
+    let logs = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    let results = logs
+        .lines()
+        .filter(|line| line.contains("runtime loss reconciliation outcome"))
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 1);
+    assert!(results[0].contains("sandbox_id=sbx_000"));
+    assert!(results[0].contains("outcome=\"cancelled\""));
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) async fn advance_workspace(
+pub(in crate::store) async fn advance_workspace(
     store: &MongoSandboxStore,
     previous: &layer2_core::sandbox::Workspace,
     next: &layer2_core::sandbox::Workspace,
@@ -9,7 +9,7 @@ pub(super) async fn advance_workspace(
     let advanced = store
         .workspaces
         .update_one(
-            doc! {
+            crate::store::work_schema::query(doc! {
                 "_id": previous.id.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
@@ -21,8 +21,10 @@ pub(super) async fn advance_workspace(
                     "workspace next worktree number",
                 )
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! { "$set": workspace_replacement_fields(next).map_err(ApplyError::Domain)? },
+            }),
+            crate::store::work_lease_update::replacement(
+                workspace_replacement_fields(next).map_err(ApplyError::Domain)?,
+            ),
         )
         .session(session)
         .await
@@ -34,31 +36,28 @@ pub(super) async fn advance_workspace(
     }
 }
 
-pub(super) async fn advance_sandbox(
+pub(in crate::store) async fn advance_sandbox(
     store: &MongoSandboxStore,
     previous: &layer2_core::sandbox::Sandbox,
     next: &layer2_core::sandbox::Sandbox,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
-    let advanced = store
-        .sandboxes
-        .update_one(
-            doc! {
-                "_id": previous.id.as_str(),
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "channel_reuse_cleanup_execution": { "$exists": false },
-                "owned_workspace_cleanup_admission_v1": { "$exists": false },
-                "revision": signed(previous.revision, "sandbox revision")
-                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-            },
-            doc! {
-                "$set": sandbox_replacement_fields(next).map_err(ApplyError::Domain)?,
-                "$inc": { "workspace_admission_fence": 1_i64 },
-            },
-        )
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
+    let advanced = crate::store::work_lease_update::with_fence(
+        &store.sandboxes,
+        doc! {
+            "_id": previous.id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "channel_reuse_cleanup_execution": { "$exists": false },
+            "owned_workspace_cleanup_admission_v1": { "$exists": false },
+            "revision": signed(previous.revision, "sandbox revision")
+                .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+        },
+        Some(sandbox_replacement_fields(next).map_err(ApplyError::Domain)?),
+        "workspace_admission_fence",
+        session,
+    )
+    .await
+    .map_err(ApplyError::Driver)?;
     if advanced.matched_count == 1 {
         crate::store::sandbox_usage::save::record_saved(store, session, next, previous.revision)
             .await?;

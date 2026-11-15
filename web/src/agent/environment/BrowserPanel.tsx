@@ -1,3 +1,4 @@
+import { rateLimitDelay } from '../transport/readRetry';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
@@ -57,6 +58,7 @@ export function BrowserPanel({
     let location: string | undefined;
     let address: string | undefined;
     let failures = 0;
+    let retryAt = 0;
     let terminal = false;
     const observer = crypto.randomUUID();
     const publish = (state: BrowserStatus, retained: Frame | null | undefined = frame) => {
@@ -83,6 +85,10 @@ export function BrowserPanel({
     };
     const observe = async () => {
       if (!alive || terminal || hidden()) return;
+      if (Date.now() < retryAt) {
+        timer = setTimeout(read, retryAt - Date.now());
+        return;
+      }
       const version = generation;
       const request = new AbortController();
       const deadline = setTimeout(() => request.abort(), 4000);
@@ -122,10 +128,12 @@ export function BrowserPanel({
         if (['unsupported', 'not_enabled', 'paused'].includes(value.state)) frame = undefined;
         terminal = ['unsupported', 'not_enabled'].includes(value.state);
         failures = 0;
+        retryAt = 0;
         publish(value.state);
       } catch (error) {
         if (!alive || version !== generation) return;
-        failures += 1;
+        retryAt =
+          Date.now() + rateLimitDelay(error, Math.min(8000, 1000 * 2 ** ++failures), failures);
         if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) {
           frame = undefined;
           location = undefined;
@@ -140,7 +148,7 @@ export function BrowserPanel({
             () => {
               void read();
             },
-            Math.min(8000, 1000 * 2 ** failures),
+            Math.max(1000, retryAt - Date.now()),
           );
       }
     };

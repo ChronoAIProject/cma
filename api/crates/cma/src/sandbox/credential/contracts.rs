@@ -54,6 +54,49 @@ pub(crate) enum CredentialCustodyError {
 
 #[async_trait::async_trait]
 pub(crate) trait SandboxCredentialCustody: Send + Sync {
+    async fn requires_no_resend(&self, _sandbox: &Sandbox) -> Result<bool, CredentialCustodyError> {
+        Ok(false)
+    }
+
+    async fn issuance(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<super::CredentialIssuance>, CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "issuance custody is not supported".into(),
+        ))
+    }
+    async fn begin_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "issuance custody is not supported".into(),
+        ))
+    }
+    async fn accept_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+        _material: &CredentialMaterial,
+    ) -> Result<(), CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "issuance custody is not supported".into(),
+        ))
+    }
+    async fn observe_issuance(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+        _observation: super::IssuanceObservation,
+        _now: SystemTime,
+    ) -> Result<(), CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "issuance custody is not supported".into(),
+        ))
+    }
+
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError>;
     async fn get(
         &self,
@@ -86,6 +129,8 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CredentialError {
+    #[error("credential issuance is uncertain; retry reconciliation")]
+    Uncertain,
     #[error("service is not granted: {0}")]
     ServiceNotGranted(ServiceId),
     #[error("credential dependency unavailable: {0}")]
