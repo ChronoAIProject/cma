@@ -177,3 +177,7 @@ pub(super) fn make_directory(path: &Path) -> Result<()> {
 #[cfg(test)]
 #[path = "io_diagnostics_tests.rs"]
 mod diagnostics_tests;
+
+#[cfg(test)]
+#[path = "io_recovery_diagnostics_tests.rs"]
+mod recovery_diagnostics_tests;
