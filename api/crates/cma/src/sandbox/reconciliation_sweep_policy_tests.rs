@@ -5,6 +5,9 @@ use layer2_core::{
 };
 use std::sync::{Arc, Mutex};
 
+#[path = "reconciliation_explicit_update_policy_tests.rs"]
+mod explicit_updates;
+
 struct Settings(Mutex<Option<StoredPlatformSettings>>);
 
 #[async_trait::async_trait]

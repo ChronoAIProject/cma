@@ -59,7 +59,7 @@ it('searches all owner subjects and pages their frozen cohort without scanning S
 it('distinguishes failed choices from empty choices and retries without changing the filter', async () => {
   const actor = userEvent.setup();
   const api = metricsClient(true);
-  api.owners.mockRejectedValueOnce(new ApiError(503, 'Unavailable'));
+  api.owners.mockRejectedValueOnce(new ApiError(400, 'Invalid selection'));
   const change = vi.fn();
   render(
     <ReportSelector

@@ -15,7 +15,7 @@ their own Layer 3 directory and evidence against pinned versions.
 
 | Pod | Contains | Responsibility |
 |---|---|---|
-| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. One API replica with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. |
+| **Control plane pod** | Layers 1, 2, 3 | Public interfaces, the sandbox model, orchestration, and the sandbox adapter. Staged, ownership-qualified two-replica floor with rolling overlap; operation budgets and visitor quotas are shared through MongoDB. Activation follows `docs/CMA_Scale_Apply.md`. |
 | **Sandbox pod** | Layer 4 | One isolated CMA Sandbox containing Workspaces, Worktrees, and Agents. Many, provisioned by the sandbox provider. |
 
 The control plane never executes agent code. Sandbox pods never serve public
@@ -65,7 +65,11 @@ README.md
 .dockerignore
 ```
 
-Adding any other root-level file or directory is a CI failure. Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, or the SDK it governs.
+Adding any other root-level file or directory is a CI failure. Explicit operator stage patches live in `.github/agent-log-stages/`; their approval
+packet is [CMA Agent-log activation](docs/CMA_Agent_Log_Activation.md). They are
+operator inputs, not additional deployed resources or automatic CI actions.
+
+Tooling config that would normally sit at root (`Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, `package.json`, `tsconfig.json`, lockfiles) lives inside `api/`, `web/`, or the SDK it governs.
 
 `sdk/` contains repository-only client SDKs. Each immediate subdirectory is one
 self-contained package, with its own manifest, toolchain configuration, lockfile,
@@ -124,7 +128,14 @@ infra/web/secret.yaml
 infra/web/service.yaml
 infra/web/gcpbackendpolicy.yaml
 infra/api/Dockerfile
+infra/api/activity-index-build-job.yaml
+infra/api/activity-index-execution.md
+infra/api/activity-index-job.yaml
+infra/api/activity-index-postcheck-job.yaml
+infra/api/index-toolkit-job.yaml
 infra/api/deployment.yaml
+infra/api/hpa.yaml
+infra/api/pdb.yaml
 infra/api/configmap.yaml
 infra/api/secret.yaml
 infra/api/service.yaml
@@ -135,6 +146,8 @@ infra/api/healthcheckpolicy.yaml
 infra/api/gcpbackendpolicy.yaml
 infra/cmaeg/Dockerfile
 infra/cmaeg/deployment.yaml
+infra/cmaeg/hpa.yaml
+infra/cmaeg/pdb.yaml
 infra/cmaeg/configmap.yaml
 infra/cmaeg/secret.yaml
 infra/cmaeg/service.yaml
@@ -155,7 +168,11 @@ infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
 ```
 
-No additional manifests, no Helm charts, no kustomize overlays.
+No additional manifests, no Helm charts, no kustomize overlays. The Activity
+index and named-query toolkit files are explicit operator Job templates and
+their execution contract; merging them does not run an index operation. The
+execution contract stays beside those templates as an operational documentation
+exception to the `docs/` rule below.
 
 The two `infra/storage/` manifests initialize the legacy persistent-home
 StorageClass, snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot.
@@ -194,7 +211,9 @@ infrastructure this repository consumes rather than owns.
 `infra/cmaeg/` is the CMA Event Gateway, a separate service with its own sealed-record schema in the shared `chrono-bot`
 database and Kubernetes namespace. The explicit `shared-schema` deployment mode
 uses the existing database credential; service collection ownership, validators
-and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG each run one replica. Kubernetes Secrets inject
+and migrations remain separate. Default `isolated` mode retains exact grant checks. CMA and CMAEG declare two replicas and separate staged CPU HPAs (two through five).
+Activation requires the compatible ownership images, capacity gates and approved
+stages in `docs/CMA_Scale_Apply.md`; merging manifests does not apply them. Kubernetes Secrets inject
 the gateway's master keys and CMA service credential as environment variables.
 
 ### `docs/`
@@ -413,7 +432,10 @@ split or deployment complete; live continuity remains mandatory.
 
 CMAEG lives in this repository: `api/crates/cmaeg-core` (pure protocol library,
 depends on no other crate of this workspace) and `api/crates/cmaeg` (the service
-binary, depends only on `cmaeg-core`, the technical `cma-service-auth` library and third-party crates). It is a separate
+binary, depends only on `cmaeg-core`, the technical `cma-service-auth` and
+`cma-allocator-qualification` libraries, and third-party crates). The std-only
+allocator qualification library is also used by CMA; it owns no service or
+domain state and exercises each executable's selected allocator. It is a separate
 deployment in namespace `chrono-bot` with manifests under `infra/cmaeg/`.
 Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;

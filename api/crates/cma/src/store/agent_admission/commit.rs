@@ -1,8 +1,24 @@
-//! Retry catalogue and snapshot Agent admissions without changing durable replay.
+//! Retry admissions with durable replay and exclusive segmented publication.
 use super::*;
 
 impl MongoSandboxStore {
-    pub(super) async fn admit_agent_with_reuse(
+    pub(super) fn admit_agent_with_reuse(
+        &self,
+        admission: AgentAdmission,
+        reuse_existing: bool,
+        catalogue: bool,
+        initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
+    ) -> impl std::future::Future<Output = Result<AgentAdmissionResult, SandboxStoreError>> + '_
+    {
+        Box::pin(self.admit_agent_with_reuse_inner(
+            admission,
+            reuse_existing,
+            catalogue,
+            initiation,
+        ))
+    }
+
+    async fn admit_agent_with_reuse_inner(
         &self,
         admission: AgentAdmission,
         reuse_existing: bool,
@@ -17,7 +33,23 @@ impl MongoSandboxStore {
         Ok(result)
     }
 
-    async fn commit_agent_admission(
+    fn commit_agent_admission(
+        &self,
+        admission: AgentAdmission,
+        reuse_existing: bool,
+        catalogue: bool,
+        initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
+    ) -> impl std::future::Future<Output = Result<AgentAdmissionResult, SandboxStoreError>> + '_
+    {
+        Box::pin(self.commit_agent_admission_inner(
+            admission,
+            reuse_existing,
+            catalogue,
+            initiation,
+        ))
+    }
+
+    async fn commit_agent_admission_inner(
         &self,
         admission: AgentAdmission,
         reuse_existing: bool,
@@ -35,25 +67,31 @@ impl MongoSandboxStore {
                 }
                 Err(error) => return Err(SandboxStoreError::Unavailable(error.to_string())),
             };
-            if let Err(error) = start_transaction(&mut session).await {
-                if is_transient(&error) {
-                    last_transient = Some(error.to_string());
-                    continue;
+            let mut scope = match TransactionScope::start(&mut session).await {
+                Ok(scope) => scope,
+                Err(error) => {
+                    if is_transient(&error) {
+                        last_transient = Some(error.to_string());
+                        continue;
+                    }
+                    return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
-                return Err(SandboxStoreError::Unavailable(error.to_string()));
-            }
-            let receipt = match apply_catalogue_admission(
-                self,
-                &admission,
-                reuse_existing,
-                catalogue,
-                initiation.as_ref(),
-                &mut session,
+            };
+            let applied = Box::pin(
+                super::super::agent_log_segments::admission::apply_catalogue(
+                    self,
+                    &admission,
+                    reuse_existing,
+                    catalogue,
+                    initiation.as_ref(),
+                    &mut scope,
+                ),
             )
-            .await
-            {
+            .await;
+            let session = scope.release();
+            let receipt = match applied {
                 Ok(AdmissionReceipt::Existing(creation)) => {
-                    match commit_transaction(&mut session).await {
+                    match commit_transaction(session).await {
                         CommitOutcome::Committed => {
                             return Ok(AgentAdmissionResult::Existing(*creation));
                         }
@@ -66,6 +104,27 @@ impl MongoSandboxStore {
                         }
                     }
                 }
+                Ok(AdmissionReceipt::Reused(receipt)) => match commit_transaction(session).await {
+                    CommitOutcome::Committed => {
+                        return Ok(AgentAdmissionResult::Existing(receipt.creation))
+                    }
+                    CommitOutcome::Retry(error) => {
+                        last_transient = Some(error.to_string());
+                        continue;
+                    }
+                    CommitOutcome::Unknown(_) => {
+                        return Box::pin(reuse_reconciliation::after_unknown(
+                            self,
+                            &admission,
+                            receipt,
+                            session.operation_time(),
+                        ))
+                        .await;
+                    }
+                    CommitOutcome::Failed(error) => {
+                        return Err(SandboxStoreError::Unavailable(error.to_string()))
+                    }
+                },
                 Ok(AdmissionReceipt::Created(receipt)) => receipt,
                 Err(ApplyError::Domain(error)) => {
                     let _ = session.abort_transaction().await;
@@ -83,7 +142,7 @@ impl MongoSandboxStore {
                     return wait_for_reconciliation(
                         "agent admission duplicate replay",
                         async move {
-                            replay_after_duplicate(&store, &admission, replay_time)
+                            Box::pin(replay_after_duplicate(&store, &admission, replay_time))
                                 .await?
                                 .ok_or(SandboxStoreError::Duplicate)
                         },
@@ -101,7 +160,7 @@ impl MongoSandboxStore {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
-            match commit_transaction(&mut session).await {
+            match commit_transaction(session).await {
                 CommitOutcome::Committed => {
                     return Ok(AgentAdmissionResult::Created(receipt.creation));
                 }
@@ -116,7 +175,9 @@ impl MongoSandboxStore {
                     let unresolved_error = commit_error.clone();
                     let store = self.clone();
                     return wait_for_reconciliation("agent admission commit", async move {
-                        if reconcile_created(&store, &receipt, reconciliation_time).await? {
+                        if Box::pin(reconcile_created(&store, &receipt, reconciliation_time))
+                            .await?
+                        {
                             Ok(AgentAdmissionResult::Created(receipt.creation))
                         } else {
                             Err(SandboxStoreError::Unavailable(format!(

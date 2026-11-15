@@ -1,0 +1,259 @@
+{
+  "scope": "Local developer evidence for #1929; parent #1421 remains open for production and multi-replica acceptance",
+  "captured_at_utc": "2026-11-13T14:52:17.839130+00:00",
+  "base_commit": "fc1e5a570c7f0ad152417883a092bf42177497f2",
+  "tested_implementation_commit": "855bb09f7652389aa451a2bfd9fd42a99fdf59a3",
+  "activation": "Both switches default false; no production activation or writes",
+  "fixture": {
+    "mongo_image": "mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c",
+    "source": "owned disposable replica set; normal build-slot; cleanup trap exited successfully",
+    "test_thread_stack_bytes": 33554432
+  },
+  "limits": [
+    "Synthetic 200-Agent population with approximately 2.5 KiB complete BSON rows; bounded scanner concurrency, not 200 production runtime sessions.",
+    "Validation CPU is process user+system time (10 ms ps resolution), includes foreground reads/assertions, excludes Mongo CPU; shared-host scheduling makes tails variable.",
+    "Discovery read-command counts include find, aggregate and listCollections; they do not claim all wire commands or exclusive Mongo CPU.",
+    "Discovery sweeps deliberately overlap all nine boundaries. Staggered singleton requests bypass probing; production overlap and benefit require independent observation.",
+    "Positive-heavy evidence covers probe bypass on all nine pending populations, not end-to-end throughput of every durable worker.",
+    "Every existing scheduler cadence remains; a participating request can add up to 50 ms coordinator wait subject to executor scheduling."
+  ],
+  "gates": {
+    "format": "cargo fmt --all --check passed",
+    "clippy": "cargo clippy -p cma --all-targets -- -D warnings passed",
+    "unit_summary": "Summary [   0.919s] 65 tests run: 65 passed, 3360 skipped",
+    "mongo_summary": "Summary [  28.668s] 14 tests run: 14 passed, 3411 skipped",
+    "configuration_keys": "Configuration key check passed: 186 code key(s) match 186 manifest key(s).\nConfiguration key check passed: 187 code key(s) match 187 manifest key(s).\nConfiguration key check passed: 12 code key(s) match 12 manifest key(s).",
+    "configuration_docs": "Operations documentation covers every quoted deployment configuration key.",
+    "file_sizes": "Source file size check passed: 6906 files checked.",
+    "completeness": "Mongo selection completeness: 1398 ignored CMA tests; 1377 selected; 18 separate-fixture tests; 2 child helpers; 1 tracked deferrals; 0 unclassified omissions"
+  },
+  "source_sha256": {
+    "api/crates/cma/src/composition/stores.rs": "0342b22492c36d47d91af6c4bf751ae7ea1c581cec8695ae2cb0fbd5bb5a077e",
+    "api/crates/cma/src/config/features.rs": "623297f8d94d6e4226148bc7fbe12d1cb730faecc8029ba0b93fcd977762528b",
+    "api/crates/cma/src/config/features/reconciliation_tests.rs": "f78fc2fd213a1e617f99505f33d6fba03ab1811b2b81df03881915a900134bcb",
+    "api/crates/cma/src/store/agent_access_requests/worker.rs": "f6905d18c2ee96cb127a415138ffd386db3453f6f319f6dee776ef6c59c27795",
+    "api/crates/cma/src/store/agent_commands/worker.rs": "e6550011758879157fa4c7f835e0ff593e9861b5e93ff232e87274718bc9c529",
+    "api/crates/cma/src/store/agent_connection_observations.rs": "37a9333e938459cdc3a40eeca02cb2ed1058134fafa0023836d7c5845770dcb3",
+    "api/crates/cma/src/store/agent_connection_observations/tests.rs": "9a17d7bc9a0928096e3618858cc913e68250e7508218916a351d95f0a93c4ee2",
+    "api/crates/cma/src/store/agent_worker_store.rs": "bf0be66be29aef671ab91e6d9d6e60d5dcd854a7e8b618c819b150dacbd9ebc1",
+    "api/crates/cma/src/store/bindings.rs": "4d2bcc96ec2d838048082174adbb568bffbaf0361098aaeaf2fe9c5db1c47413",
+    "api/crates/cma/src/store/empty_discovery.rs": "f8200cc5c65e16402cc1203b8a47905a70dd989fb33b194616d67b685b54ed7b",
+    "api/crates/cma/src/store/mod.rs": "931b458869744bd79ef32e309b651b76f056918cf48aded8f8e13e20dbf6c07c",
+    "api/crates/cma/src/store/mongo.rs": "112ae72e1ee167bf816360a679599d274c63728e6183c29d6fb20bc2c3e891b6",
+    "api/crates/cma/src/store/sandbox_controls.rs": "3f18bff33a81fe25f059e5f35e67c61473004eb63ea292b5260723ea2d0be9d7",
+    "api/crates/cma/src/store/sandbox_mongo.rs": "99d920a05ec4c5df8e887e5976007fe6f4e282c9af2a9caf8d05775630da00db",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/agent_worker_tests.rs": "ae97fceb86f9ef30c73a11a52de234102a6c4aeb2666124d036927b879c6ec00",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/agent_worker_tests/empty_discovery_tests.rs": "be7dd38f479cc7c3eab81881e2487d0d11aaddb3e2d558d5ffe9a5f9cbfae35b",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/agent_worker_tests/empty_discovery_tests/measurement.rs": "146acd2d1689a4f43d2f8fe79d0245c5be73947f996a7fbde36677ce50642602",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/agent_worker_tests/reconciliation_context_tests.rs": "c563f1adef108d7f9b4ad8ea88c98d0cadb75bbd78387ac7ca81da118602ceb0",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/agent_worker_tests/reconciliation_context_tests/eligibility_tests.rs": "5437cf4abf9ea28dd0d48d9b9b98eb4bdae334e0f4f323cb8187812a3e1eb224",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/agent_worker_tests/reconciliation_context_tests/validation_reuse_tests.rs": "635f7e495ce268703a0b7e489da5c2439c7c4c936b21d71b526164dd5bcea1f4",
+    "api/crates/cma/src/store/sandbox_mongo_integration_tests/agent_worker_tests/reconciliation_context_tests/validation_reuse_tests/measurement.rs": "6378cf81fc59dab6c4ebb2a2f13ee1a18fa6211343ea8abac5850f5589dacf3a",
+    "api/crates/cma/src/store/sandbox_worker_store.rs": "b9f3ff8844cf78c02805231c93a9a62db965c203c1df85c4f9aa791885a05a8a",
+    "api/crates/cma/src/store/trigger_definitions.rs": "3603391056c1d2eb6167d519504b392d428ac9630f3a4a4b7cfe4850432a13d4",
+    "api/crates/cma/src/store/trigger_definitions/launches/queries.rs": "931287b52eabbea28b6e54a0d2a191303b20df1868a20a5fa119b7802a4df0ec",
+    "api/crates/cma/src/store/workspace_worker_store.rs": "267ee2dc70c29242d96cdb20186239a3407741df3b9783437fb777d4a989700b"
+  },
+  "measurements": {
+    "agent_validation": [
+      {
+        "phase": "off_a",
+        "candidates": 200,
+        "sweeps": 40,
+        "documents": 8040,
+        "bytes": 20401800,
+        "wall_ms": 1186.35125,
+        "process_cpu_ms": 1070.0,
+        "scan_p95_ms": 32.520583,
+        "foreground_p95_ms": 2.41925,
+        "retained": null,
+        "cache_before": null,
+        "cache_after": null
+      },
+      {
+        "phase": "on_b",
+        "candidates": 200,
+        "sweeps": 40,
+        "documents": 8040,
+        "bytes": 20401800,
+        "wall_ms": 224.412125,
+        "process_cpu_ms": 99.99999999999987,
+        "scan_p95_ms": 8.362333,
+        "foreground_p95_ms": 2.500042,
+        "retained": [
+          200,
+          1342879
+        ],
+        "cache_before": [
+          200,
+          403
+        ],
+        "cache_after": [
+          200,
+          8443
+        ]
+      },
+      {
+        "phase": "on_b2",
+        "candidates": 200,
+        "sweeps": 40,
+        "documents": 8040,
+        "bytes": 20401800,
+        "wall_ms": 207.13595800000002,
+        "process_cpu_ms": 100.00000000000009,
+        "scan_p95_ms": 7.006084,
+        "foreground_p95_ms": 2.550666,
+        "retained": [
+          200,
+          1342879
+        ],
+        "cache_before": [
+          200,
+          8443
+        ],
+        "cache_after": [
+          200,
+          16483
+        ]
+      },
+      {
+        "phase": "off_a2",
+        "candidates": 200,
+        "sweeps": 40,
+        "documents": 8040,
+        "bytes": 20401800,
+        "wall_ms": 1154.6680000000001,
+        "process_cpu_ms": 1049.9999999999998,
+        "scan_p95_ms": 31.705917,
+        "foreground_p95_ms": 2.281,
+        "retained": null,
+        "cache_before": null,
+        "cache_after": null
+      }
+    ],
+    "empty_discovery": [
+      {
+        "population": "empty",
+        "phase": "off_a",
+        "sweeps": 40,
+        "commands": 360,
+        "mean_ms": 4.678937474999999,
+        "p95_ms": 5.6377500000000005,
+        "probe_batches": 0,
+        "coalesced_requests": 0
+      },
+      {
+        "population": "empty",
+        "phase": "on_b",
+        "sweeps": 40,
+        "commands": 80,
+        "mean_ms": 3.2171812500000003,
+        "p95_ms": 3.5555,
+        "probe_batches": 40,
+        "coalesced_requests": 360
+      },
+      {
+        "population": "empty",
+        "phase": "on_b2",
+        "sweeps": 40,
+        "commands": 80,
+        "mean_ms": 3.1428677250000003,
+        "p95_ms": 3.49075,
+        "probe_batches": 40,
+        "coalesced_requests": 360
+      },
+      {
+        "population": "empty",
+        "phase": "off_a2",
+        "sweeps": 40,
+        "commands": 360,
+        "mean_ms": 4.4494967999999995,
+        "p95_ms": 5.4455,
+        "probe_batches": 0,
+        "coalesced_requests": 0
+      },
+      {
+        "population": "mixed_future",
+        "phase": "off_a",
+        "sweeps": 40,
+        "commands": 360,
+        "mean_ms": 4.376282274999999,
+        "p95_ms": 5.6014159999999995,
+        "probe_batches": 0,
+        "coalesced_requests": 0
+      },
+      {
+        "population": "mixed_future",
+        "phase": "on_b",
+        "sweeps": 40,
+        "commands": 120,
+        "mean_ms": 3.199644825,
+        "p95_ms": 3.44075,
+        "probe_batches": 40,
+        "coalesced_requests": 320
+      },
+      {
+        "population": "mixed_future",
+        "phase": "on_b2",
+        "sweeps": 40,
+        "commands": 120,
+        "mean_ms": 3.180632325,
+        "p95_ms": 3.5495,
+        "probe_batches": 40,
+        "coalesced_requests": 320
+      },
+      {
+        "population": "mixed_future",
+        "phase": "off_a2",
+        "sweeps": 40,
+        "commands": 360,
+        "mean_ms": 4.3046812249999995,
+        "p95_ms": 5.14,
+        "probe_batches": 0,
+        "coalesced_requests": 0
+      },
+      {
+        "population": "mixed_due",
+        "phase": "off_a",
+        "sweeps": 40,
+        "commands": 360,
+        "mean_ms": 4.418665599999999,
+        "p95_ms": 5.563125,
+        "probe_batches": 0,
+        "coalesced_requests": 0
+      },
+      {
+        "population": "mixed_due",
+        "phase": "on_b",
+        "sweeps": 40,
+        "commands": 120,
+        "mean_ms": 3.137047949999999,
+        "p95_ms": 3.603584,
+        "probe_batches": 40,
+        "coalesced_requests": 320
+      },
+      {
+        "population": "mixed_due",
+        "phase": "on_b2",
+        "sweeps": 40,
+        "commands": 120,
+        "mean_ms": 3.3560698249999987,
+        "p95_ms": 3.859917,
+        "probe_batches": 40,
+        "coalesced_requests": 320
+      },
+      {
+        "population": "mixed_due",
+        "phase": "off_a2",
+        "sweeps": 40,
+        "commands": 360,
+        "mean_ms": 4.48448435,
+        "p95_ms": 5.8081249999999995,
+        "probe_batches": 0,
+        "coalesced_requests": 0
+      }
+    ]
+  },
+  "probe_plan_assertion": "Explain of the captured nine-branch aggregate pipeline: no COLLSCAN; populated Workspace branch uses workspaces_due_work",
+  "positive_population_assertion": "180 follow-up probe opportunities across nine nonempty populations produce zero extra probe commands and skip zero ordinary queries"
+}

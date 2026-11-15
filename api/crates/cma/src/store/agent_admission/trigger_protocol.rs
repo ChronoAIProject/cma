@@ -4,7 +4,7 @@ use layer2_core::sandbox::AgentOrigin;
 use layer2_core::trigger_domain::Launch;
 use mongodb::bson::Document;
 
-pub(super) async fn selected(
+pub(in crate::store) async fn selected(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,
     session: &mut mongodb::ClientSession,

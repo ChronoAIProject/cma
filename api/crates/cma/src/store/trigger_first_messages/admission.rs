@@ -59,12 +59,12 @@ pub(in crate::store) async fn attach(
     let (mut binding, request) =
         TriggerFirstMessageBinding::prepare(launch, admission, agent, &parent, fence, owner)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    let accepted = super::super::agent_commands::reserve::apply_with_cause(
+    let accepted = Box::pin(super::super::agent_commands::reserve::apply_with_cause(
         store,
         &request,
         layer2_core::admission::AdmissionCause::Continuation,
         session,
-    )
+    ))
     .await
     .map_err(|error| match error {
         super::super::agent_commands::ApplyError::Domain(error) => {

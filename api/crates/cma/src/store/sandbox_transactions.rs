@@ -98,6 +98,9 @@ async fn apply_transaction(
     session: &mut mongodb::ClientSession,
     transaction: &SandboxTransaction,
 ) -> Result<Receipt, ApplyError> {
+    crate::store::work_publication::fence(store, session)
+        .await
+        .map_err(ApplyError::Domain)?;
     match transaction {
         SandboxTransaction::CreateWorktreeAndAgent {
             worktree,
@@ -142,10 +145,10 @@ async fn apply_transaction(
             }
             let aggregate = store
                 .sandboxes
-                .find_one(doc! {
+                .find_one(crate::store::work_schema::query(doc! {
                     "_id": sandbox.id.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                })
+                }))
                 .session(&mut *session)
                 .await
                 .map_err(ApplyError::Driver)?;
@@ -221,19 +224,25 @@ async fn apply_transaction(
             let advanced = store
                 .sandboxes
                 .update_one(
-                    doc! {
-                        "_id": sandbox.id.as_str(),
-                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                        "channel_reuse_cleanup_execution": { "$exists": false },
-                        "revision": signed(*expected_revision, "expected sandbox revision")
-                            .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                        "last_seq": signed(previous, "sandbox event sequence")
-                            .map_err(SandboxStoreError::Corrupt)
-                            .map_err(ApplyError::Domain)?,
-                        "origin_type": origin_type, "origin_launch_id": origin_launch_id,
-                        "origin_operation_id": origin_operation_id,
-                    },
-                    doc! { "$set": fields },
+                    crate::store::work_schema::query(
+                        crate::store::work_publication::sandbox(
+                            doc! {
+                                "_id": sandbox.id.as_str(),
+                                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                                "channel_reuse_cleanup_execution": { "$exists": false },
+                                "revision": signed(*expected_revision, "expected sandbox revision")
+                                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                                "last_seq": signed(previous, "sandbox event sequence")
+                                    .map_err(SandboxStoreError::Corrupt)
+                                    .map_err(ApplyError::Domain)?,
+                                "origin_type": origin_type, "origin_launch_id": origin_launch_id,
+                                "origin_operation_id": origin_operation_id,
+                            },
+                            sandbox.id.as_str(),
+                        )
+                        .map_err(ApplyError::Domain)?,
+                    ),
+                    crate::store::work_lease_update::replacement(fields),
                 )
                 .session(&mut *session)
                 .await
@@ -285,16 +294,17 @@ async fn apply_transaction(
             let advanced = store
                 .workspaces
                 .update_one(
-                    doc! {
+                    crate::store::work_schema::query(crate::store::work_publication::workspace(doc! {
                             "_id": workspace.id.as_str(),
                             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                             "channel_reuse_cleanup_execution": { "$exists": false },
                     "owned_workspace_cleanup_admission_v1": { "$exists": false },
                             "revision": signed(*expected_revision, "expected workspace revision")
                                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                        },
-                    doc! { "$set": workspace_replacement_fields(workspace)
-                    .map_err(ApplyError::Domain)? },
+                        }, workspace.id.as_str()).map_err(ApplyError::Domain)?),
+                    crate::store::work_lease_update::replacement(
+                        workspace_replacement_fields(workspace).map_err(ApplyError::Domain)?,
+                    ),
                 )
                 .session(&mut *session)
                 .await
@@ -393,7 +403,7 @@ async fn reconcile(
                 .transpose()?;
             Ok(
                 command_revival::matches(store, &mut session, revival.as_ref()).await?
-                    && stored.as_ref() == Some(sandbox.as_ref())
+                    && crate::store::work_lease_update::sandbox_matches(stored.as_ref(), sandbox)
                     && reconcile_event_with_snapshot_session(store, event, &mut session)
                         .await?
                         .is_some(),
@@ -413,10 +423,12 @@ async fn reconcile(
                 .as_ref()
                 .map(read_workspace)
                 .transpose()?;
-            Ok(stored.as_ref() == Some(workspace.as_ref())
-                && reconcile_event_with_snapshot_session(store, event, &mut session)
-                    .await?
-                    .is_some())
+            Ok(
+                crate::store::work_lease_update::workspace_matches(stored.as_ref(), workspace)
+                    && reconcile_event_with_snapshot_session(store, event, &mut session)
+                        .await?
+                        .is_some(),
+            )
         }
         _ => Err(SandboxStoreError::Corrupt(
             "transaction receipt kind does not match its command".into(),

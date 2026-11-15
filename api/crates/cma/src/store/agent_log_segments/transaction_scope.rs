@@ -36,6 +36,13 @@ impl<'session> TransactionScope<'session> {
         })
     }
 
+    pub(in crate::store) async fn fence_ordinary_work(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+    ) -> Result<(), SandboxStoreError> {
+        crate::store::work_publication::fence(store, self.session).await
+    }
+
     /// Release consumes the scope. The caller may commit/abort and do normal
     /// outcome reconciliation; a later transaction requires a new scope/stamp.
     pub(in crate::store) fn release(self) -> &'session mut ClientSession {
@@ -50,7 +57,9 @@ impl<'session> TransactionScope<'session> {
         filter: Document,
     ) -> Result<Option<Document>, mongodb::error::Error> {
         collection
-            .find_one(filter)
+            .find_one(crate::store::work_schema::for_collection(
+                collection, filter,
+            ))
             .session(&mut *self.session)
             .await
     }
@@ -66,7 +75,9 @@ impl<'session> TransactionScope<'session> {
     ) -> Result<Vec<Document>, mongodb::error::Error> {
         page::validate_limit(limit)?;
         let mut cursor = collection
-            .find(filter)
+            .find(crate::store::work_schema::for_collection(
+                collection, filter,
+            ))
             .sort(sort)
             .limit(i64::from(limit))
             .batch_size(limit)
@@ -82,7 +93,11 @@ impl<'session> TransactionScope<'session> {
         update: Document,
     ) -> Result<mongodb::results::UpdateResult, mongodb::error::Error> {
         collection
-            .update_one(filter, update)
+            .update_one(
+                crate::store::work_publication::for_collection(collection, filter)
+                    .map_err(mongodb::error::Error::custom)?,
+                update,
+            )
             .session(&mut *self.session)
             .await
     }

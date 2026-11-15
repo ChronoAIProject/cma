@@ -23,6 +23,7 @@ pub mod openapi;
 pub mod outbound;
 pub mod providers;
 pub mod records;
+pub mod replicas;
 pub mod runtime;
 mod serve;
 mod serve_routed;

@@ -158,6 +158,7 @@ export function AgentSurface({
     return (
       <AgentUnavailable
         message={state.message}
+        retryAt={state.retryAt}
         headingRef={headingRef}
         onRetry={controller.reload}
       />
@@ -178,6 +179,7 @@ export function AgentSurface({
   const running = conversation.activeRunId !== undefined;
   const starting = controller.pending === 'send' && !running;
   const historyIncomplete = state.historyLoading === true || state.historyUnavailable === true;
+  const controlReady = controller.controlBaselineReady ?? !historyIncomplete;
   const submitMessage = messageSubmission({
     controller,
     optimistic,
@@ -193,7 +195,7 @@ export function AgentSurface({
   });
   const approvalBusy =
     controller.pending === 'approval' ||
-    historyIncomplete ||
+    !controlReady ||
     !controller.inputAvailability.allowed ||
     controller.controlsUnavailable === true;
   const issue = state.historyLoading
@@ -225,7 +227,7 @@ export function AgentSurface({
           onTitleUpdated={controller.applyAgentTitle}
           detail={detail}
           readOnly={readOnly}
-          actionsBusy={actionsBusy || controller.pending !== undefined || historyIncomplete}
+          actionsBusy={actionsBusy || controller.pending !== undefined || !controlReady}
           busy={
             status !== 'ready' ||
             actionsBusy ||
@@ -324,7 +326,7 @@ export function AgentSurface({
 
           <AgentCommandNotices
             controller={controller}
-            unavailable={readOnly || historyIncomplete}
+            unavailable={readOnly || !controlReady}
             starting={status === 'starting'}
           />
 
@@ -399,7 +401,7 @@ export function AgentSurface({
           {controller.queuedInputs === undefined ? null : (
             <QueuedMessages
               items={messageQueue.items}
-              disabled={readOnly || historyIncomplete || !controller.inputAvailability.allowed}
+              disabled={readOnly || !controlReady || !controller.inputAvailability.allowed}
               onEdit={controller.queuedInputs.edit}
               onRemove={controller.queuedInputs.remove}
               onRecover={controller.queuedInputs.recover}
@@ -448,7 +450,7 @@ export function AgentSurface({
             queueWhileRunning={state.v2 !== undefined}
             queueWhileStarting={state.v2 !== undefined}
             starting={starting}
-            controlsUnavailable={controller.controlsUnavailable || historyIncomplete}
+            controlsUnavailable={controller.controlsUnavailable || !controlReady}
             requestPending={
               controller.pendingMessage !== undefined || controller.pendingControl === true
             }

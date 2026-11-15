@@ -13,6 +13,9 @@ use serde::Deserialize;
 
 use crate::sandbox::SandboxCredentialController;
 
+mod cache;
+pub(crate) use cache::CachedModelSupport;
+
 const MAX_BYTES: usize = 1024 * 1024;
 const MAX_MODELS: usize = 1000;
 const USER_AGENT: &str = concat!("chrono-cma/", env!("CARGO_PKG_VERSION"));
@@ -21,6 +24,7 @@ pub(crate) struct ChronoAgentModels {
     http: reqwest::Client,
     origin: reqwest::Url,
     credentials: Arc<dyn SandboxCredentialController>,
+    cache: Option<cache::CatalogCache>,
 }
 
 impl ChronoAgentModels {
@@ -37,7 +41,20 @@ impl ChronoAgentModels {
                 .map_err(|_| "model catalogue HTTP client is unavailable")?,
             origin: reqwest::Url::parse(origin).map_err(|_| "model catalogue origin is invalid")?,
             credentials,
+            cache: None,
         }))
+    }
+
+    pub(crate) fn with_cache(self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        if !enabled {
+            return self;
+        }
+        Arc::new(Self {
+            http: self.http.clone(),
+            origin: self.origin.clone(),
+            credentials: self.credentials.clone(),
+            cache: Some(cache::CatalogCache::new()),
+        })
     }
 
     async fn fetch(
@@ -128,17 +145,7 @@ impl AgentModelCatalog for ChronoAgentModels {
                 Reason::CredentialMissing,
             )
         })?;
-        if sandbox.credential.source.is_managed() {
-            let expiry = seconds_from_rfc3339(&current.expires_at).ok_or_else(|| {
-                unavailable(Dependency::AuthenticationAuthority, Reason::InvalidEvidence)
-            })?;
-            if SystemTime::now() >= SystemTime::UNIX_EPOCH + Duration::from_secs(expiry) {
-                return Err(unavailable(
-                    Dependency::AuthenticationAuthority,
-                    Reason::CredentialExpired,
-                ));
-            }
-        }
+        validate_expiry(sandbox)?;
         let material = self
             .credentials
             .material(&sandbox.id, current.generation)
@@ -165,8 +172,36 @@ impl AgentModelCatalog for ChronoAgentModels {
                 Reason::CredentialMismatch,
             ));
         }
-        self.fetch(service, material.value.expose()).await
+        let fetch = || self.fetch(service, material.value.expose());
+        let result = match &self.cache {
+            Some(cache) => cache.get(sandbox, service, fetch).await,
+            None => fetch().await,
+        };
+        // A custody read or a shared in-flight fetch may outlive the admitted
+        // credential. A cache hit cannot extend its original validity.
+        validate_expiry(sandbox)?;
+        result
     }
+}
+
+fn validate_expiry(sandbox: &Sandbox) -> Result<(), AgentModelCatalogError> {
+    if sandbox.credential.source.is_managed() {
+        let expiry = sandbox
+            .credential
+            .current
+            .as_ref()
+            .and_then(|current| seconds_from_rfc3339(&current.expires_at))
+            .ok_or_else(|| {
+                unavailable(Dependency::AuthenticationAuthority, Reason::InvalidEvidence)
+            })?;
+        if SystemTime::now() >= SystemTime::UNIX_EPOCH + Duration::from_secs(expiry) {
+            return Err(unavailable(
+                Dependency::AuthenticationAuthority,
+                Reason::CredentialExpired,
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]

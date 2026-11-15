@@ -1,6 +1,7 @@
 # Account erasure catalog ownership evidence (C2)
 
-This audit names every collection in `store/isolation.rs` exactly once. Source
+This audit names every collection in `store/isolation.rs` and its optional
+`isolation/replicas.rs` authority exactly once. Source
 paths are relative to `api/crates/cma/src/store/` unless another crate is named.
 The executable catalog is `store/account_erasure/catalog.rs`. The table records
 ownership/reference classification and writer/index evidence; a reference rule
@@ -51,6 +52,7 @@ delegation debt handoff are delivered together in C3.
 | `sandbox_metric_bindings` | `Linked(Sandboxes, &["sandbox_id"])` | yes | sandbox_metric_bindings/mod.rs writes sandbox_id; compound index begins sandbox_id |
 | `sandbox_metric_rollups` | `Linked(Sandboxes, &["sandbox_id"])` | yes | sandbox_metric_rollups/mod.rs writes sandbox_id; compound index begins sandbox_id |
 | `sandbox_usage_rollups` | `Linked(Sandboxes, &["sandbox_id"])` | yes | sandbox_usage_rollups/mod.rs writes sandbox_id; compound index begins sandbox_id |
+| `sandbox_usage_allocation_buckets_v1` | `Linked(Sandboxes, &["sandbox_id"])`; `Owner(&["owner"])` | yes; no | allocation_buckets/schema.rs projects sandbox_id and owner; compound sandbox_id/day index; owner fallback covers buckets whose Sandbox has already gone |
 | `sandbox_usage_reports` | `Owner(&["principal"])` | yes | usage_reports/admission.rs report.scope.principal projection; schema.rs principal/state/lease index |
 | `sandbox_usage_report_rows` | `Linked(Reports, &["report_id"])`; `Owner(&["owner"])` | yes; no | usage_reports/{work,charts}.rs; schema.rs compound index begins report_id; usage_reports/{work,charts}.rs frozen resource owner; indexes begin report_id, not owner |
 | `sandbox_usage_report_charts` | `Linked(Reports, &["report_id"])`; `Owner(&["owner"])` | yes; no | usage_reports/{work,charts}.rs; schema.rs compound index begins report_id; usage_reports/{work,charts}.rs frozen resource owner; indexes begin report_id, not owner |
@@ -60,6 +62,8 @@ delegation debt handoff are delivered together in C3.
 | `cma_document_artifacts` | `Owner(&["owner_subject"])`; `Reference(Documents)` | yes; no | document_artifacts/mongo.rs encode/ensure_indexes owner_subject; independent owner, not originating Agent; document_artifacts/mongo.rs and layer2-core/document_artifacts/types.rs: recipient projection indexed, embedded shares/comments/receipts not indexed; one shared page handles all |
 | `cma_document_quotas` | `ObjectAccounting` | no | document_artifacts/quota.rs owner:<hash>, document:<hash>:*, object:<hash>:*; defer until object finality |
 | `native_warm_pool_targets` | `Global` | yes | native_warm_pools.rs target is deployment resource plan; no human owner |
+| `cma_agent_manager_members` | `Global` | yes | agent_ownership/{mod,records}.rs process membership and relay endpoints; no personal owner; existing expiry index remains authoritative |
+| `cma_agent_manager_owners` | `Retained("agent-ownership-fence")` | yes | agent_ownership/mod.rs requires permanent Agent epoch high watermarks; account erasure must not reset takeover fencing; existing _id index |
 | `native_prepared_sandboxes` | `Owner(&["record.ownership.owner"])` | no | native_prepared.rs document + native_prepared/model.rs Ownership; consumed reservation retains explicit owner; index begins kind/state |
 | `runtime_backend_routes` | `Linked(Sandboxes, &["sandbox_id"])` | no | runtime_routing.rs setOnInsert sandbox_id; no sandbox_id index (migration control rows remain) |
 | `activity` | `Owner(&["record.actor"])`; `Reference(ActivityTargets)`; `Reference(Identities)` | yes; no; no | activity.rs ActivityDoc and actor/recorded_at/_id index; layer2-core/activity.rs ActivityTarget kind/id; target subject has no index |
@@ -176,6 +180,7 @@ delegation debt handoff are delivered together in C3.
 | `sandbox_colors` | `OwnerKey(Subject)` | yes | sandbox_colors.rs Palette _id = owner |
 | `sandbox_controls` | `Linked(Sandboxes, &["sandbox_id"])`; `Reference(Identities)` | no; no | sandbox_controls/records.rs document; sandbox_id-leading index is partial queued=true, not all historical receipts |
 | `sandbox_credential_revocations` | `Custody(&["owner"])` | no | sandbox_credentials.rs RevocationDoc owner; revocation authority needed until key finality; index begins sandbox_id |
+| `sandbox_credential_issuance` | `Custody(&["record.owner"])` | no | sandbox_credentials/issuance.rs retains one unresolved issuance barrier per Sandbox; record.owner is the exact subject; preserve custody until credential finality, without adding effects in this slice |
 | `sandbox_credentials` | `Custody(&["owner"])` | no | sandbox_credentials.rs CredentialDoc owner; key material needed for credential step; index begins sandbox_id |
 | `sandbox_events` | `Linked(Sandboxes, &["sandbox_id"])` | yes | sandbox_events.rs event_document + sandbox_id/seq index |
 | `sandbox_usage` | `Owner(&["owner"])` | yes | sandbox_usage.rs state_document owner projection + owner/_id index |

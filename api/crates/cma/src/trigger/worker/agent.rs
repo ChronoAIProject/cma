@@ -68,7 +68,16 @@ impl LaunchWorker {
         }
     }
 
-    async fn create_agent(
+    fn create_agent<'a>(
+        &'a self,
+        launch: Launch,
+        context: &'a FrozenLaunchContext,
+        now: SystemTime,
+    ) -> impl std::future::Future<Output = Result<(), LaunchWorkerError>> + 'a {
+        Box::pin(self.create_agent_inner(launch, context, now))
+    }
+
+    async fn create_agent_inner(
         &self,
         launch: Launch,
         context: &FrozenLaunchContext,
