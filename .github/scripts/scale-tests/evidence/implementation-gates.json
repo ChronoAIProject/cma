@@ -1,0 +1,130 @@
+{
+  "recorded_at_utc": "2026-11-13T17:04:45.589303+00:00",
+  "qualification": "Implementation gates and host EG process fixture only. Shared Kubernetes acceptance is BLOCKED; track NO_GO.",
+  "issue": 1957,
+  "integration_base": "d6fc953a6cb43f8d9c90337b4e4ce17ecb291fbc",
+  "rust_test_content_commit": "0dbfb7eeca7878a511937da5cfb3ff9cb56f311d",
+  "source_inventory": "source-hashes.json",
+  "source_inventory_sha256": "1f3011f49c43249e9fa44346beefc18243a081553ed7b9d331a0edaa38a4dc8e",
+  "host": {
+    "system": "Darwin",
+    "architecture": "arm64",
+    "logical_cpus": 18,
+    "memory_bytes": 137438953472,
+    "performance_isolation": false
+  },
+  "tools": {
+    "rust": "1.96.1-aarch64-apple-darwin",
+    "node": "v26.13.1",
+    "python": "3.9.6",
+    "build_slot_sha256": "ba6faed78c26f961ec642667942d090e2425669650c6ec0dd2402dd62e659940",
+    "build_slot_authority": "Lead brief developer-08/20261114-001147-send.md, explicitly includes developer-17",
+    "build_lane": "normal, jobs4"
+  },
+  "binaries": {
+    "cmaeg": "0516021358b8c1d13fadd115d520a87af83eccc34d550a48649d32f4e9e75842",
+    "relay_ingress-befedda2535c629b": "ccafdfe46060c2c20578bb8bcc49b52d2a1778287704bfe171601495fccbb4cf"
+  },
+  "gates": [
+    {
+      "command": "cargo fmt --all --check",
+      "cwd": "api",
+      "result": "PASS",
+      "receipt": "observed tool session 80822"
+    },
+    {
+      "command": "cargo clippy --offline --locked -p cmaeg --all-targets --all-features -- -D warnings",
+      "cwd": "api",
+      "result": "PASS",
+      "receipt": "observed tool session 14743"
+    },
+    {
+      "command": "cargo test --offline --locked -p cmaeg --test relay_ingress --no-run",
+      "cwd": "api",
+      "result": "PASS",
+      "receipt": "observed tool session 50034"
+    },
+    {
+      "command": "cargo test --offline --locked -p cmaeg --test replica_delivery_contract",
+      "cwd": "api",
+      "result": "PASS",
+      "passed": 3,
+      "receipt": "observed tool session 53726"
+    },
+    {
+      "command": "mongo-local.py --binary relay_ingress-befedda2535c629b --out TASK_EVIDENCE/mongo-replicas",
+      "result": "PASS",
+      "evidence": "mongo-routed.json",
+      "passed_tests": 1,
+      "tested_replica_counts": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "command": "mongo-local.py --binary relay_ingress-befedda2535c629b --out TASK_EVIDENCE/mongo-control --test-name runner_binary::executable_accepts_signed_custom_events_and_curl_streams_through_completion",
+      "result": "PASS",
+      "evidence": "mongo-control.json",
+      "passed_tests": 1
+    },
+    {
+      "command": "npm run lint",
+      "result": "PASS",
+      "evidence": "javascript-lint.log"
+    },
+    {
+      "command": "npm run coverage",
+      "result": "PASS",
+      "evidence": "javascript-coverage.log",
+      "passed": 26,
+      "line_percent": 99.65,
+      "branch_percent": 97.84,
+      "function_percent": 98.54
+    },
+    {
+      "command": "npm run test:python",
+      "result": "PASS",
+      "evidence": "python-tests.log",
+      "passed": 9,
+      "trace_hit_lines": 119,
+      "trace_missed_lines": 12,
+      "trace_percent": 90.84,
+      "coverage_artifact": "mongo-local.cover"
+    }
+  ],
+  "cleanup": {
+    "all_completed_disposable_mongo_runs": true,
+    "process_test_temp_dirs_removed": true,
+    "stale_zero_test_python_trace_removed": true,
+    "cluster_mutations": false,
+    "active_local_build_caches_retained": true,
+    "checkout_cleanup_owner": "lead"
+  },
+  "blockers": [
+    "CMA driver integration unfinished (developer-17)",
+    "No approved usable synthetic user/auth/runtime/frontend/provider fixture in shared cluster",
+    "Directed coordination routes to manager-02/verifier-02 require lead relay or grant",
+    "Final integration ownership candidate, reviewed controls and coordinated mutation window missing",
+    "A2 max5/terminating-process capacity unresolved",
+    "No same-final-candidate user-journey baseline or N2/scaling numeric deltas; noise policy review pending"
+  ],
+  "log_normalization": {
+    "javascript-coverage.log": {
+      "raw_sha256": "82ca56dc2aace74e1b556179f540e2bb2bd0044ce10734c977b098dad37f7e3a",
+      "normalization": "strip trailing whitespace only",
+      "retained_sha256": "36ee58dc1f878112954ce252fe84a0155b253cb33864a5f19e8d430b5cb0314e"
+    },
+    "mongo-local.cover": {
+      "raw_sha256": "a71e21e814af3ead75a95522dc8953cc8497bc85b320434a4daf142f2f1b5cc6",
+      "normalization": "strip trailing whitespace only",
+      "retained_sha256": "9e1c7061aa88acfcac8fb73a442e4dee7ad2c0b6ebe45ee1969bffa802509220"
+    }
+  },
+  "secret_scan": {
+    "result": "PASS",
+    "tool": "gitleaks stdin --redact",
+    "scope": "staged changes",
+    "findings": 0
+  }
+}

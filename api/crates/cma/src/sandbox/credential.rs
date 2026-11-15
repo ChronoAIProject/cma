@@ -8,6 +8,10 @@ use crate::auth::keys::{KeyIssuer, KeyIssuerError};
 use crate::auth::persistence::SecretValue;
 
 mod contracts;
+mod issuance;
+pub(crate) use issuance::{
+    CredentialIssuance, IssuanceIdentity, IssuanceObservation, IssuanceState,
+};
 pub(crate) mod owner_tokens;
 mod provided;
 pub(crate) use contracts::*;
@@ -95,6 +99,15 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
             return Err(CredentialError::Security(
                 "credential generation does not cover the current service access".into(),
             ));
+        }
+        if sandbox.work.authority_protocol.is_some()
+            || self
+                .custody
+                .requires_no_resend(sandbox)
+                .await
+                .map_err(custody_error)?
+        {
+            return self.issue_protected(sandbox, generation, now).await;
         }
         self.settle_queued(sandbox).await?;
         if let Some(existing) = self.material(&sandbox.id, generation).await? {

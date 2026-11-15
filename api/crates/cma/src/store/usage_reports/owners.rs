@@ -89,6 +89,7 @@ impl ReportingStore {
         } else {
             None
         };
+        self.hydrate_owner_names(items.iter_mut().collect()).await?;
         Ok(Owners {
             items,
             next,

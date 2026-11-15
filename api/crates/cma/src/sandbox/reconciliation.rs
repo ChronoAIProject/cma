@@ -18,6 +18,9 @@ use super::runtime_mapping::sandbox_spec;
 #[path = "reconciliation_supervision.rs"]
 mod supervision;
 
+#[path = "reconciliation_startup.rs"]
+mod startup;
+
 #[path = "reconciliation_interruption.rs"]
 mod interruption;
 
@@ -141,23 +144,6 @@ impl SandboxReconciler {
     ) -> Self {
         self.failed_runtime_recovery = Some(service);
         self
-    }
-
-    /// Fail closed before starting any worker if either authority is incomplete.
-    pub(crate) async fn initialize(&self, now: SystemTime) -> Result<(), SandboxStoreError> {
-        let inventory = self
-            .adapter
-            .runtime_inventory()
-            .await
-            .map_err(provider_error)?;
-        let authority = self.authority().await?;
-        for sandbox in authority.values() {
-            self.reconcile_binding(sandbox, &inventory, now).await?;
-        }
-        for observation in &inventory {
-            self.reconcile_runtime(observation).await?;
-        }
-        self.reconcile_homes().await
     }
 
     // Each resumed cleanup item repeats this complete pool-first/owned fence.

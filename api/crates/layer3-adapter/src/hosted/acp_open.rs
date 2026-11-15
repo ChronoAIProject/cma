@@ -1,5 +1,6 @@
 //! Open one attachment under its explicit transport flow-control policy.
 use super::*;
+use sha2::{Digest as _, Sha256};
 
 impl Bridge {
     #[cfg(test)]
@@ -164,11 +165,13 @@ impl Bridge {
         let (acknowledgements, acknowledged) = mpsc::channel(128);
 
         let bridge = Arc::new(Self {
+            authority: crate::owner_protocol::current_authority(),
             json_pools: json_pools.clone(),
             bounded_raw_output: settings.bounded_raw_output,
             shared_runtime_output: settings.shared_runtime_output,
             output_json_budget,
             permission_state,
+            agent_correlation_digest: format!("{:x}", Sha256::digest(expected_agent.as_bytes())),
             subscription,
             sink: Arc::new(Mutex::new(sink)),
             pending: Arc::new(Mutex::new(HashMap::new())),

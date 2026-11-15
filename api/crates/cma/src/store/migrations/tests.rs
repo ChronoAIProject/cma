@@ -2,6 +2,7 @@ use super::*;
 use cma_service_auth::mongodb_authority::MongoAuthorityMode;
 use mongodb::bson::{DateTime, Document};
 
+mod activity_page;
 mod collection;
 mod failpoints;
 mod key_order;
@@ -52,6 +53,14 @@ fn additive_indexes_accept_exact_existing_state_and_refuse_semantic_drift() {
 #[test]
 fn migration_identity_refuses_tags_other_services_and_unstamped_builds() {
     identity();
+    assert!(ledger::Identity::new(
+        &"a".repeat(40),
+        &format!(
+            "us-central1-docker.pkg.dev/example-project-01/example-registry-02/cma-api@sha256:{}",
+            "b".repeat(64)
+        ),
+    )
+    .is_ok());
     for (source, image) in [
         (
             "development".to_owned(),

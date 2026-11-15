@@ -6,7 +6,7 @@ use crate::{
     RestoreBootstrapRequest, RestoreRequest,
 };
 
-fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTransport {
+pub(super) fn native_transport(address: std::net::SocketAddr) -> ProviderHostedControlTransport {
     let client = AgentSandboxClient::new(
         kube::Client::try_from(kube::Config::new(
             format!("http://{address}").parse().unwrap(),
