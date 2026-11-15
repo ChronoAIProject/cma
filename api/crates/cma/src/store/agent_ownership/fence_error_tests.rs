@@ -1,7 +1,7 @@
 use super::*;
 use mongodb::error::{
-    Error, ErrorKind, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
-    WriteConcernError, WriteFailure,
+    Error, ErrorKind, WriteConcernError, WriteFailure, TRANSIENT_TRANSACTION_ERROR,
+    UNKNOWN_TRANSACTION_COMMIT_RESULT,
 };
 
 fn labelled_error(labels: &[&str]) -> Error {
