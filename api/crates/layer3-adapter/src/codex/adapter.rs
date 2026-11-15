@@ -2,6 +2,9 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
+        self.hosted.startup_binding_headroom(handles)
+    }
     fn desktop_ownership(
         &self,
         handle: &RuntimeHandle,
@@ -42,7 +45,6 @@ impl SandboxAdapter for CodexAdapter {
     ) -> crate::Result<crate::AgentFileDeleteReceipt> {
         self.delete_agent_file_protected(handle, request).await
     }
-
     async fn upload_agent_attachment(
         &self,
         handle: &RuntimeHandle,
@@ -53,7 +55,6 @@ impl SandboxAdapter for CodexAdapter {
             .upload_agent_attachment(handle, request, content)
             .await
     }
-
     async fn reserve_home_request(
         &self,
         runtime: &RuntimeProvisionRequest,
