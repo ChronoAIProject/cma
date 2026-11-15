@@ -145,6 +145,7 @@ async fn absurd_readable_server_lifetime_is_a_permanent_cohort_block() {
         }],
         &mut cursor,
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
             transaction_drain_fallback_secs: 120,
         },
@@ -173,6 +174,7 @@ async fn absurd_readable_server_lifetime_is_a_permanent_cohort_block() {
         }],
         &mut cursor,
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
             transaction_drain_fallback_secs: 120
         },
@@ -198,6 +200,7 @@ async fn absurd_configured_drain_is_permanent_instead_of_an_infinite_retry() {
         }],
         &mut cursor,
         Options {
+            allocation_rollups_enabled: Some(false),
             billing_enabled: false,
             transaction_drain_fallback_secs: u64::MAX,
         },

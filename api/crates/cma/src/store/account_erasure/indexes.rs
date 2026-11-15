@@ -8,7 +8,16 @@ use mongodb::{
 };
 use std::collections::BTreeMap;
 
+#[cfg(test)]
 pub(super) async fn ensure(db: &Database) -> Result<(), Error> {
+    let receipt = super::optional::inspect(db, Some(false)).await?;
+    ensure_with_receipt(db, &receipt).await
+}
+
+pub(super) async fn ensure_with_receipt(
+    db: &Database,
+    receipt: &super::optional::Receipt,
+) -> Result<(), Error> {
     let mut fields: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (name, field) in super::context::history_indexes() {
         fields.entry(name).or_default().push(field);
@@ -42,6 +51,9 @@ pub(super) async fn ensure(db: &Database) -> Result<(), Error> {
         }
     }
     for (name, mut paths) in fields {
+        if receipt.skips(name) {
+            continue;
+        }
         paths.sort_unstable();
         paths.dedup();
         let collection = db.collection::<Document>(name);
@@ -98,12 +110,18 @@ pub(super) async fn ensure(db: &Database) -> Result<(), Error> {
                 .await?;
         }
     }
-    ensure_effect_keysets(db).await?;
+    ensure_effect_keysets(db, receipt).await?;
     Ok(())
 }
 
-async fn ensure_effect_keysets(db: &Database) -> Result<(), Error> {
+async fn ensure_effect_keysets(
+    db: &Database,
+    receipt: &super::optional::Receipt,
+) -> Result<(), Error> {
     for entry in super::catalog::ERASURE {
+        if receipt.skips(entry.collection) {
+            continue;
+        }
         let fields = super::indexed::fields(entry);
         if fields.iter().all(|field| *field == "_id") {
             continue;
@@ -128,7 +146,8 @@ async fn ensure_effect_keysets(db: &Database) -> Result<(), Error> {
         let mut existing = if exists {
             collection
                 .list_indexes()
-                .await?
+                .await
+                .map_err(|error| effect_error(entry.collection, error, "listIndexes"))?
                 .try_collect::<Vec<_>>()
                 .await?
         } else {
@@ -148,9 +167,20 @@ async fn ensure_effect_keysets(db: &Database) -> Result<(), Error> {
                 continue;
             }
             let index = IndexModel::builder().keys(keys).build();
-            collection.create_index(index.clone()).await?;
+            collection
+                .create_index(index.clone())
+                .await
+                .map_err(|error| effect_error(entry.collection, error, "createIndex"))?;
             existing.push(index);
         }
     }
     Ok(())
+}
+
+fn effect_error(collection: &str, error: mongodb::error::Error, operation: &'static str) -> Error {
+    if collection == crate::store::allocation_buckets::COLLECTION {
+        super::optional::failure(error, operation)
+    } else {
+        error.into()
+    }
 }

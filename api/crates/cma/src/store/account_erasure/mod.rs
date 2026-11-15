@@ -16,6 +16,7 @@ mod identity_activity;
 mod identity_refs;
 mod indexed;
 mod indexes;
+mod optional;
 mod profile_refs;
 mod progress;
 mod records;
@@ -34,12 +35,15 @@ use std::collections::{BTreeMap, BTreeSet};
 pub(crate) struct Options {
     pub billing_enabled: bool,
     pub transaction_drain_fallback_secs: u64,
+    /// Only an explicitly disabled deployment can omit an absent projection.
+    pub allocation_rollups_enabled: Option<bool>,
 }
 impl Options {
     pub fn from_config(config: &crate::config::Config, billing_enabled: bool) -> Self {
         Self {
             billing_enabled,
             transaction_drain_fallback_secs: config.account_erasure_transaction_drain_seconds,
+            allocation_rollups_enabled: Some(config.usage_metrics.views.allocation_rollups_enabled),
         }
     }
 }
@@ -61,6 +65,7 @@ pub(crate) async fn erase_records(
         Options {
             billing_enabled: false,
             transaction_drain_fallback_secs: 120,
+            allocation_rollups_enabled: Some(false),
         },
     )
     .await
@@ -79,6 +84,10 @@ pub(crate) enum CohortBlock {
     InvalidTransactionDrain {
         parameter: &'static str,
         maximum_seconds: u64,
+    },
+    CollectionAuthority {
+        collection: &'static str,
+        operation: &'static str,
     },
 }
 #[derive(Debug, thiserror::Error)]
@@ -172,6 +181,8 @@ pub(crate) struct Cursor {
     #[cfg(test)]
     #[serde(skip)]
     test_drain_seconds: Option<u64>,
+    // A rescan marker only: authorization always requires a fresh receipt.
+    allocation_absent: Option<bool>,
 }
 impl Cursor {
     fn advance(&mut self) {
@@ -192,6 +203,8 @@ mod draft_admission_tests;
 mod history_tests;
 #[cfg(test)]
 mod identity_pending_tests;
+#[cfg(test)]
+pub(crate) mod optional_authority_tests;
 #[cfg(test)]
 mod organization_tests;
 #[cfg(test)]

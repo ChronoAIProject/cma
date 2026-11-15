@@ -78,8 +78,8 @@ pub(super) fn prepare(
 ) {
     let digest = layer2_core::document_artifacts::digest(
         format!(
-            "account-record-effects-v7:{operations:?}:{}",
-            options.transaction_drain_fallback_secs
+            "account-record-effects-v8:{operations:?}:{}:{:?}",
+            options.transaction_drain_fallback_secs, options.allocation_rollups_enabled
         )
         .as_bytes(),
     );
