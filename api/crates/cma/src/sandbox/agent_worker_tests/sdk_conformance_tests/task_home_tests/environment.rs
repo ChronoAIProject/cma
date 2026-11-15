@@ -354,29 +354,89 @@ async fn initial_task_environment(
         );
     }
     // Advance each lifecycle worker in order: their claims fence the same
-    // Sandbox parent. Keep every error fatal while checking task conformance.
+    // Sandbox parent. Do not enter the Agent's bounded parent wait while this
+    // same serial fixture still needs to drive the parent's next work item.
+    // Keep every error fatal while checking task conformance.
     let advance_environment = || async {
         sandbox_worker
             .run_one(&sandbox_id, SystemTime::now())
             .await
             .unwrap();
-        workspace_worker.run_due(SystemTime::now()).await.unwrap();
+        let sandbox = harness
+            .store
+            .get_sandbox(&sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        // Premature Workspace claims only schedule dependency retries; a
+        // subsequent profile drain can then defer the Sandbox for 30 seconds.
+        if matches!(
+            sandbox.status,
+            SandboxStatus::Installing | SandboxStatus::Active
+        ) && sandbox.credential.delivered
+            && sandbox.lifecycle.checkpoint_capture.is_none()
+        {
+            workspace_worker.run_due(SystemTime::now()).await.unwrap();
+        }
+        let agent = harness.store.get_agent(&agent_id).await.unwrap().unwrap();
+        let workspace = harness
+            .store
+            .get_workspace(&agent.workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let parents_settled = matches!(
+            sandbox.status,
+            SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
+        ) || matches!(
+            workspace.status,
+            WorkspaceStatus::Failed | WorkspaceStatus::Removing | WorkspaceStatus::Removed
+        ) || (sandbox.status == SandboxStatus::Active
+            && sandbox.credential.delivered
+            && sandbox.lifecycle.operation.is_none()
+            && sandbox.lifecycle.checkpoint_capture.is_none()
+            && workspace.status == WorkspaceStatus::Ready);
+        let disposition = json!({
+            "sandbox": {
+                "id": sandbox.id, "status": sandbox.status, "work": sandbox.work.step,
+                "leased": sandbox.work.lease.is_some(), "ready_at": sandbox.work.ready_at,
+                "credential_delivered": sandbox.credential.delivered,
+            },
+            "workspace": {
+                "id": workspace.id, "status": workspace.status, "work": workspace.work.step,
+                "leased": workspace.work.lease.is_some(), "ready_at": workspace.work.ready_at,
+                "failure_class": workspace.failed.as_ref().map(|failure| &failure.class),
+            },
+            "agent": {
+                "id": agent.id, "status": agent.status, "work": agent.work.step,
+                "leased": agent.work.lease.is_some(), "ready_at": agent.work.ready_at,
+            },
+        });
+        (parents_settled, disposition)
     };
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(code) = source_failure {
-        tokio::time::timeout(Duration::from_secs(15), async {
+        let mut last_disposition = Value::Null;
+        let mut last_operation = Value::Null;
+        let failed = tokio::time::timeout(Duration::from_secs(15), async {
             loop {
-                advance_environment().await;
-                harness
-                    .worker
-                    .run_one(&agent_id, SystemTime::now())
-                    .await
-                    .unwrap();
+                let (parents_settled, disposition) = advance_environment().await;
+                last_disposition = disposition;
+                if parents_settled {
+                    harness
+                        .worker
+                        .run_one(&agent_id, SystemTime::now())
+                        .await
+                        .unwrap();
+                }
                 let operation: Value = serde_json::from_str(
                     &cross_interface_tests::read(&service, &operation_path).await,
                 )
                 .unwrap();
+                last_operation = operation.clone();
                 if operation["status"] == "failed" {
+                    assert_eq!(last_disposition["workspace"]["status"], "failed");
+                    assert_eq!(last_disposition["workspace"]["failure_class"], code);
                     assert!(
                         operation["error"]
                             .as_str()
@@ -389,8 +449,11 @@ async fn initial_task_environment(
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
-        .await
-        .unwrap();
+        .await;
+        assert!(
+            failed.is_ok(),
+            "source_failure={code}; environment={last_disposition}; operation={last_operation}"
+        );
         let transcript: Value =
             serde_json::from_str(&cross_interface_tests::read(&service, &transcript_path).await)
                 .unwrap();
@@ -403,12 +466,14 @@ async fn initial_task_environment(
     }
     let completion = tokio::time::timeout(Duration::from_secs(60), async {
         loop {
-            advance_environment().await;
-            harness
-                .worker
-                .run_one(&agent_id, SystemTime::now())
-                .await
-                .unwrap();
+            let (parents_settled, _) = advance_environment().await;
+            if parents_settled {
+                harness
+                    .worker
+                    .run_one(&agent_id, SystemTime::now())
+                    .await
+                    .unwrap();
+            }
             let transcript: Value = serde_json::from_str(
                 &cross_interface_tests::read(&service, &transcript_path).await,
             )
