@@ -30,7 +30,7 @@ test("pinned Codex keeps exact native tool names through live key rotation and c
     assert.equal(response.status, 200);
     return response.json();
   };
-  let program = bridgePath;
+  let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
   if (process.env.CMA_ACP_UPSTREAM_SOURCE) {
     program = join(directory, "bridge.mjs");
     writeFileSync(program, managedModelCatalog(subscriptionAuth(persistConversations(readFileSync(process.env.CMA_ACP_UPSTREAM_SOURCE, "utf8")))));

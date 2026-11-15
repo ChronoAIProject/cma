@@ -128,6 +128,11 @@ infra/web/secret.yaml
 infra/web/service.yaml
 infra/web/gcpbackendpolicy.yaml
 infra/api/Dockerfile
+infra/api/activity-index-build-job.yaml
+infra/api/activity-index-execution.md
+infra/api/activity-index-job.yaml
+infra/api/activity-index-postcheck-job.yaml
+infra/api/index-toolkit-job.yaml
 infra/api/deployment.yaml
 infra/api/hpa.yaml
 infra/api/pdb.yaml
@@ -163,7 +168,11 @@ infra/storage/home-seed.yaml
 infra/storage/home-template.yaml
 ```
 
-No additional manifests, no Helm charts, no kustomize overlays.
+No additional manifests, no Helm charts, no kustomize overlays. The Activity
+index and named-query toolkit files are explicit operator Job templates and
+their execution contract; merging them does not run an index operation. The
+execution contract stays beside those templates as an operational documentation
+exception to the `docs/` rule below.
 
 The two `infra/storage/` manifests initialize the legacy persistent-home
 StorageClass, snapshot class, credential-free seed Pod/PVC and its VolumeSnapshot.
@@ -423,7 +432,10 @@ split or deployment complete; live continuity remains mandatory.
 
 CMAEG lives in this repository: `api/crates/cmaeg-core` (pure protocol library,
 depends on no other crate of this workspace) and `api/crates/cmaeg` (the service
-binary, depends only on `cmaeg-core`, the technical `cma-service-auth` library and third-party crates). It is a separate
+binary, depends only on `cmaeg-core`, the technical `cma-service-auth` and
+`cma-allocator-qualification` libraries, and third-party crates). The std-only
+allocator qualification library is also used by CMA; it owns no service or
+domain state and exercises each executable's selected allocator. It is a separate
 deployment in namespace `chrono-bot` with manifests under `infra/cmaeg/`.
 Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;

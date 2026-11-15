@@ -152,6 +152,7 @@ pub(crate) async fn callback(
     let Some(endpoints) = console.endpoints() else {
         return clear_login(pages::unavailable());
     };
+    let exchange_started = std::time::Instant::now();
     let tokens = {
         let Ok(Ok(_permit)) = tokio::time::timeout(EXCHANGE_WAIT, console.exchange_permit()).await
         else {
@@ -168,7 +169,7 @@ pub(crate) async fn callback(
             )
             .await
     };
-    let tokens = match tokens {
+    let mut tokens = match tokens {
         Ok(tokens) => tokens,
         Err(TokenFailure::Definitive) => {
             tracing::warn!(
@@ -211,8 +212,15 @@ pub(crate) async fn callback(
             };
         }
     };
+    // Anchor the provider lifetime before exchange/identity I/O. Durable
+    // creation additionally reserves its bounded database operation budget.
+    tokens.expires_in = tokens.expires_in.saturating_sub(exchange_started.elapsed());
     let subject_hash = subject_hash_prefix(&creator.subject);
-    let Some((sid, _)) = console.sessions().create(creator.subject, tokens) else {
+    let Ok((sid, _)) = console
+        .sessions()
+        .create_session(creator.subject, tokens)
+        .await
+    else {
         count("unavailable");
         return clear_login(pages::unavailable());
     };

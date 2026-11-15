@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
-import { LocalUsageMetrics } from './usage-metrics.fixture';
+import { LocalRetainedUsageMetrics } from './usage-retained.fixture';
 
 // Use the image's real nginx headers. Production returned no CSP on 2026-11-06;
 // Vite preview cannot exercise the retained-volume overlay or nginx fallback.
@@ -17,7 +17,7 @@ for (const admin of [false, true]) {
         await page.evaluate(() => window.document.fonts.ready.then(() => undefined));
       };
       const boundary = new LocalStartup();
-      const metrics = new LocalUsageMetrics();
+      const metrics = new LocalRetainedUsageMetrics();
       const errors: string[] = [];
       const failedAssets: string[] = [];
       page.on('console', (message) => {
@@ -80,6 +80,14 @@ for (const admin of [false, true]) {
       await page.screenshot({ path: info.outputPath('overview.png'), animations: 'disabled' });
       expect(failedAssets).toEqual([]);
       expect(errors).toEqual([]);
+      expect(metrics.creates).toEqual([]);
+      expect(metrics.views.length).toBeGreaterThan(0);
+      expect(metrics.views.every((url) => url.pathname.includes('/admin/') === admin)).toBe(true);
+      for (const url of metrics.views) {
+        expect(url.searchParams.has('step_seconds')).toBe(false);
+        expect(url.searchParams.get('refresh')).toBe('false');
+      }
+      expect(metrics.reads.some((url) => url.pathname.includes('/reports/retained-'))).toBe(true);
       expect(boundary.errors).toEqual([]);
       expect(boundary.writes).toEqual([]);
       const retained = await request.get('/assets/retained-smoke.js');

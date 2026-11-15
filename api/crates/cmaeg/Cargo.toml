@@ -1,10 +1,12 @@
 [package]
 name = "cmaeg"
+default-run = "cmaeg"
 version.workspace = true
 edition.workspace = true
 publish = false
 
 [dependencies]
+cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 aes = "0.8"
 cbc = "0.1"
 cfb = "=0.7.3"
@@ -58,6 +60,13 @@ zip = { workspace = true }
 name = "cmaeg-media-probe"
 path = "tests/support/media_probe.rs"
 test = false
+doc = false
+bench = false
+
+# Isolated admission diagnostic fixture; production images build --bin cmaeg.
+[[bin]]
+name = "cmaeg-admission-fixture"
+path = "tests/admission_fixture/fixture.rs"
 doc = false
 bench = false
 

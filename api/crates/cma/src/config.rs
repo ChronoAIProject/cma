@@ -23,8 +23,9 @@ pub(crate) use access_migration::AgentAccessMigration;
 #[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
-pub use rate_limits::RateLimitConfig;
+mod agent_manager;
 mod agent_sandbox;
+pub(crate) use agent_manager::AgentManagerReplicas;
 mod execution;
 mod gateway;
 mod home;
@@ -33,6 +34,7 @@ mod profiles;
 mod public_streams;
 mod rate_default_lease;
 mod rate_limits;
+pub use rate_limits::RateLimitConfig;
 mod runtime;
 
 mod features;
@@ -166,6 +168,7 @@ pub struct Config {
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
+    pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
@@ -373,6 +376,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
+            agent_manager_replicas: AgentManagerReplicas::from_lookup(&mut lookup)?,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
             agent_log_fleet_percent,

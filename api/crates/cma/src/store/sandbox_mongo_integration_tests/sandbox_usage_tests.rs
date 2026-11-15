@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox_usage::{timestamp, UsageTotals};
 use layer2_core::sandbox_usage_service::SandboxUsageStore;
 
@@ -384,7 +385,7 @@ async fn sandbox_usage_checkpoint_and_multi_event_phase_preserve_watermarks() {
         .await
         .unwrap();
     let claimed = store
-        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), TWO_MINUTES.into())
+        .claim_sandbox_work(&claimed.id, "worker", MINUTE.into(), work_lease_deadline())
         .await
         .unwrap()
         .unwrap();

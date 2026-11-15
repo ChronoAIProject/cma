@@ -25,6 +25,7 @@ pub(crate) struct Composition {
     pub tool_replies: Arc<RoutedToolReplies>,
     pub scheduler: Scheduler,
     pub media_scheduler: Option<Scheduler>,
+    pub replica_routes: axum::Router,
 }
 pub(crate) fn start_workers(
     composition: Option<Composition>,
@@ -46,6 +47,7 @@ pub(crate) struct Deps {
     pub delivery: Arc<dyn DeliverySink>,
     pub tracker: Arc<TurnTracker>,
     pub custom: CustomDelivery,
+    pub partitions: Option<crate::replicas::partition::Partitions>,
 }
 
 pub(crate) async fn compose(
@@ -66,9 +68,21 @@ pub(crate) async fn compose(
             "binding preparation requires exact configured CMA management authority".into(),
         );
     }
-    let plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
-    let journal = Journal::new((*state.records).clone(), state.master_keys.clone())
+    let mut plans = PlanStore::new((*state.records).clone(), state.master_keys.clone());
+    let mut journal = Journal::new((*state.records).clone(), state.master_keys.clone())
         .with_activity(state.activity.clone());
+    if let Some(partitions) = &deps.partitions {
+        plans = plans.with_admission_queue(Arc::new(partitions.clone()));
+        journal = journal.with_partitions(partitions.clone());
+    }
+    let recovery: Arc<dyn crate::turns::routed::scheduler::RecoverySource> = match &deps.partitions
+    {
+        Some(partitions) => Arc::new(crate::replicas::partition_discovery::Frontier {
+            partitions: partitions.clone(),
+            plans: plans.clone(),
+        }),
+        None => Arc::new(plans.clone()),
+    };
     let authority: Arc<dyn Authority> = Arc::new(state.resolver.clone());
     let media_ready = state.records.media_continuations_ready().await;
     if config.routing.media_continuations_enabled && (!media_ready || deps.media.is_none()) {
@@ -83,7 +97,12 @@ pub(crate) async fn compose(
         } else {
             Default::default()
         };
+    let stream_monitor = deps
+        .partitions
+        .as_ref()
+        .map(|_| crate::turns::routed::StreamMonitor::new(journal.clone(), deps.custom.clone()));
     let coordinator = DeliveryCoordinator::new(deps.delivery).with_custom_stream(deps.custom);
+    let mut media_effects: Option<Arc<dyn crate::replicas::effects::EffectExecutor>> = None;
     let media_scheduler = if media_ready {
         let media = deps
             .media
@@ -107,6 +126,7 @@ pub(crate) async fn compose(
             delivery: media_delivery,
             worker: format!("media-{}", uuid::Uuid::new_v4()),
         });
+        media_effects = Some(executor.clone());
         let (scheduler, _) = Scheduler::new(
             Arc::new(index),
             executor,
@@ -142,19 +162,54 @@ pub(crate) async fn compose(
         )
         .with_media_continuations(media_ready),
     );
-    let delivery = RoutedDelivery::new(plans.clone(), journal, authority, coordinator);
-    let tool_replies = Arc::new(delivery.tool_replies());
-    let executor = Arc::new(RoutedTargetExecutor::new(
-        port,
-        delivery,
-        deps.tracker,
-        &config.delivery,
-    ));
+    let delivery = RoutedDelivery::new(plans.clone(), journal.clone(), authority, coordinator);
+    let delivery = if deps.partitions.is_some() {
+        delivery
+            .with_stream_relay()
+            .map_err(|_| "replica stream relay initialization failed")?
+    } else {
+        delivery
+    };
+    let tools = delivery.tool_replies();
+    let tool_replies = Arc::new(if deps.partitions.is_some() {
+        tools
+            .with_replica_relay()
+            .map_err(|_| "replica tool relay initialization failed")?
+    } else {
+        tools
+    });
+    let executor: Arc<dyn crate::turns::routed::scheduler::TargetExecutor> = Arc::new(
+        RoutedTargetExecutor::new(port, delivery, deps.tracker, &config.delivery),
+    );
+    let (recovery, executor, replica_routes) = if deps.partitions.is_some() {
+        let effects = match media_effects {
+            Some(media) => tool_replies.replica_effect_executor_with_media(media),
+            None => tool_replies.replica_effect_executor(),
+        };
+        let executor = journal
+            .effect_executor(plans.clone(), executor, effects.clone())
+            .map_err(|_| "replica effect executor initialization failed")?;
+        let recovery: Arc<dyn crate::turns::routed::scheduler::RecoverySource> = Arc::new(
+            crate::replicas::effect_recovery::Recovery::new(recovery, effects),
+        );
+        (
+            recovery,
+            executor,
+            tool_replies.clone().replica_relay_router(),
+        )
+    } else {
+        (recovery, executor, axum::Router::new())
+    };
     let (scheduler, schedule) = Scheduler::new(
-        Arc::new(plans.clone()),
+        recovery,
         executor,
         ScheduleConfig {
             drain_timeout: config.turns.drain,
+            sweep_delay: if deps.partitions.is_some() {
+                std::time::Duration::from_millis(100)
+            } else {
+                ScheduleConfig::default().sweep_delay
+            },
             ..Default::default()
         },
     )?;
@@ -181,6 +236,7 @@ pub(crate) async fn compose(
         .with_admissions_enabled(config.routing.admission_enabled)
         .with_quoted_context(config.routing.quoted_context_enabled)
         .with_sync_delivery(true)
+        .with_stream_monitor(stream_monitor)
         .with_custom_media_providers(state.custom_existing_agent_media_providers.clone()),
     );
     Ok(Some(Composition {
@@ -188,5 +244,6 @@ pub(crate) async fn compose(
         tool_replies,
         scheduler,
         media_scheduler,
+        replica_routes,
     }))
 }

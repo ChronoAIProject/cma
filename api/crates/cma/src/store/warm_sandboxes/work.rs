@@ -35,6 +35,12 @@ impl MongoSandboxStore {
         until: &str,
         states: &[&str],
     ) -> Result<Option<WarmSandboxClaim>, SandboxStoreError> {
+        if layer2_core::seconds_from_rfc3339(at).is_none()
+            || layer2_core::seconds_from_rfc3339(until).is_none()
+            || until <= at
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
         let token = uuid::Uuid::new_v4().to_string();
         let document = self
             .warm_sandboxes
@@ -42,6 +48,11 @@ impl MongoSandboxStore {
                 doc! {
                     "state": { "$in": states },
                     "lease_until": { "$lte": at }, "check_after": { "$lte": at },
+                    "$expr":{"$and":[
+                        {"$lte":["$lease_until",server_now()]},
+                        {"$lte":["$check_after",server_now()]},
+                        {"$gt":[{"$literal":until},server_now()]},
+                    ]},
                 },
                 doc! { "$set": { "lease_token": &token, "lease_until": until } },
             )
@@ -65,12 +76,17 @@ impl MongoSandboxStore {
         claim: &WarmSandboxClaim,
         until: &str,
     ) -> Result<(), SandboxStoreError> {
+        if layer2_core::seconds_from_rfc3339(until).is_none() {
+            return Err(SandboxStoreError::Conflict);
+        }
+        let mut filter = claim_filter(claim)?;
+        filter.insert(
+            "$and",
+            vec![doc! {"$expr":{"$gt":[{"$literal":until},server_now()]}}],
+        );
         let result = self
             .warm_sandboxes
-            .update_one(
-                claim_filter(claim)?,
-                doc! { "$set": { "lease_until": until } },
-            )
+            .update_one(filter, doc! { "$max": { "lease_until": until } })
             .await
             .map_err(unavailable)?;
         if result.matched_count != 1 {
@@ -102,9 +118,11 @@ impl MongoSandboxStore {
         value.insert("lease_token", Bson::Null);
         value.insert("lease_until", at);
         value.insert("check_after", check_after);
+        let mut filter = claim_filter(claim)?;
+        filter.insert("lease_until", doc! {"$gt":at});
         let result = self
             .warm_sandboxes
-            .replace_one(claim_filter(claim)?, value)
+            .replace_one(filter, value)
             .await
             .map_err(unavailable)?;
         if result.matched_count != 1 {
@@ -117,8 +135,15 @@ impl MongoSandboxStore {
 
 fn claim_filter(claim: &WarmSandboxClaim) -> Result<mongodb::bson::Document, SandboxStoreError> {
     Ok(
+        // Token identity never revives an expired cleanup attempt, even before
+        // another replica acquires the durable retirement debt.
         doc! { "_id": claim.record.id.as_str(), "lease_token": &claim.token,
+            "$expr":{"$gt":["$lease_until",server_now()]},
             "revision": signed(claim.record.revision, "warm Sandbox revision").map_err(SandboxStoreError::Corrupt)?,
         },
     )
+}
+
+fn server_now() -> mongodb::bson::Document {
+    doc! {"$dateToString":{"date":"$$NOW","format":"%Y-%m-%dT%H:%M:%SZ","timezone":"UTC"}}
 }
