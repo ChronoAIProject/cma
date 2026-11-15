@@ -65,6 +65,61 @@ test('real usage status field and report identity govern completion, not state g
   assert.equal(calls.filter(x=>x.method==='POST').length,3);assert.ok(calls.filter(x=>x.method==='GET').every(x=>x.am==='b'));
 });
 
+function alwaysOnServer({badAck=false,unavailableAfterWrite=false,loseAck=false}={}) {
+  const rows=[],requests=[];
+  let state={id:'sbx_fixture',revision:1,profile:{always_on:false}};
+  const matrix=new AdminMatrix({fixture:fixture(),record:row=>rows.push(row),request:async(role,am,method,path,{body})=>{
+    requests.push({am,method,path,body:structuredClone(body)});
+    if(method==='GET') {
+      if(unavailableAfterWrite && state.revision>1)return {status:503,body:{code:'operator_service_unavailable'}};
+      if(path.includes('/events'))return {status:200,body:[{sandbox_id:state.id}]};
+      return {status:200,body:{sandbox:structuredClone(state)}};
+    }
+    if(body.expected_revision!==state.revision)return {status:409,body:{code:'revision_conflict'}};
+    state={...state,revision:state.revision+1,profile:{always_on:body.always_on}};
+    if(loseAck && state.revision===2)throw Error('lost_ack');
+    // SandboxView, from instances_openapi_shapes.rs, differs from the detail aggregate.
+    return {status:200,body:{id:state.id,revision:state.revision,
+      profile:{id:'profile_fixture',revision:1},...(badAck?{}:{always_on:state.profile.always_on})}};
+  }});
+  return {rows,requests,state:()=>state,run:()=>matrix.sandboxAlwaysOn(1,{
+    created_by_run:fixture().run_id,sandbox_id:state.id})};
+}
+
+test('always-on uses the POST SandboxView and GET aggregate contracts with peer restoration',async()=>{
+  const x=alwaysOnServer();await x.run();
+  assert.equal(x.rows[0].verdict,'PASS');assert.equal(x.state().profile.always_on,false);
+  assert.ok(x.requests.some(r=>r.am==='b'&&r.method==='POST'&&r.body.expected_revision===1));
+  assert.equal(x.requests.at(-2).body.expected_revision,2);
+});
+
+test('acknowledged always-on mutation followed by product 503 remains a failing read',async()=>{
+  const x=alwaysOnServer({unavailableAfterWrite:true});
+  await assert.rejects(x.run(),/unexpected_http_503/);
+  assert.equal(x.rows[0].primary_error_code,'unexpected_http_503');
+  assert.equal(x.rows[0].restoration_error_code,'unexpected_http_503');
+  assert.equal(x.requests.filter(r=>r.method==='POST').length,1);
+  assert.equal(x.state().profile.always_on,true);
+});
+
+test('a restoration 503 cannot replace the original always-on acknowledgement failure',async()=>{
+  const x=alwaysOnServer({badAck:true,unavailableAfterWrite:true});
+  await assert.rejects(x.run(),/always_on_ack/);
+  assert.equal(x.rows[0].error_code,'always_on_ack');
+  assert.equal(x.rows[0].primary_error_code,'always_on_ack');
+  assert.equal(x.rows[0].restoration_error_code,'unexpected_http_503');
+  assert.equal(x.requests.filter(r=>r.method==='POST').length,1);
+});
+
+test('uncertain always-on acknowledgement restores once through its peer without replay',async()=>{
+  const x=alwaysOnServer({loseAck:true});await assert.rejects(x.run(),/lost_ack/);
+  assert.equal(x.rows[0].primary_error_code,'lost_ack');
+  assert.equal(x.rows[0].restoration_error_code,undefined);
+  assert.equal(x.requests.filter(r=>r.method==='POST'&&r.body.always_on===true).length,1);
+  assert.equal(x.requests.filter(r=>r.method==='POST'&&r.body.always_on===false).length,1);
+  assert.equal(x.state().profile.always_on,false);
+});
+
 import {ExtendedAdminMatrix} from './admin_extended.mjs';
 test('extended settings replacement preserves restored semantic settings after lost ACK',async()=>{
   let state={revision:1,settings:{retention:{agent_log_days:7},limits:{visitor_max_launches_per_day:3},inactivity:{auto_pause_enabled:false,pause_after_seconds:900,grace_started_at:null}}};
