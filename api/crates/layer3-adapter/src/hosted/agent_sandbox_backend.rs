@@ -55,6 +55,9 @@ impl AgentSandboxBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
+    fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
+        Some(binding::MAX_ASSIGNMENTS.saturating_sub(self.assignments.lock().unwrap().len()))
+    }
     fn desktop_ownership(
         &self,
         _: &RuntimeHandle,

@@ -2,6 +2,10 @@ use super::*;
 
 #[async_trait::async_trait]
 impl SandboxAdapter for HostedAdapter {
+    fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
+        self.backend.startup_binding_headroom(handles)
+    }
+
     fn desktop_ownership(
         &self,
         handle: &RuntimeHandle,
