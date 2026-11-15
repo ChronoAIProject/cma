@@ -108,6 +108,10 @@ pub struct InMemoryHostedBackend {
 
 #[async_trait::async_trait]
 impl HostedBackend for InMemoryHostedBackend {
+    fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
+        // This backend retains all runtime entries; adoption has no eviction cache.
+        Some(usize::MAX)
+    }
     async fn provision(&self, request: ProviderSandboxRequest) -> crate::Result<RuntimeHandle> {
         let identity = provider_request_identity(&request)?;
         let mut runtimes = self.runtimes.lock().await;
@@ -150,7 +154,6 @@ impl HostedBackend for InMemoryHostedBackend {
         runtimes.insert(handle.clone(), runtime);
         Ok(handle)
     }
-
     async fn inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
         if self.inventory_unavailable.load(Ordering::SeqCst) {
             return Err(AdapterError::Unavailable(
