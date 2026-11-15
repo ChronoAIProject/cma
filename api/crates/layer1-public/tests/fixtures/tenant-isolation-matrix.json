@@ -115,6 +115,8 @@
   {"operation":"PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}","positive":"share-update-success","negative":"share-update-not-found","proof":"contract"},
   {"operation":"POST /api/v1/admin/sandboxes/{id}/always-on","positive":"auto-pause-admin-always-on","negative":"auto-pause-admin-forbidden","proof":"operator"},
   {"operation":"POST /api/v1/admin/sandboxes/{id}/retire","positive":"admin-sandbox-retire-success","negative":"admin-sandbox-retire-missing-denied","proof":"operator"},
+  {"operation":"POST /api/v1/admin/sandboxes/{id}/runtime-migration","positive":"admin-runtime-migration-accepted-replay","negative":"admin-runtime-migration-ordinary","proof":"operator"},
+  {"operation":"GET /api/v1/admin/sandboxes/{id}/runtime-update/activity","positive":"admin-runtime-activity-unknown","negative":"admin-runtime-activity-wrong-capability","proof":"operator"},
   {"operation":"POST /api/v1/admin/sandboxes/{id}/runtime-update","positive":"admin-runtime-update-noop","negative":"admin-runtime-update-forbidden","proof":"operator"},
   {"operation":"POST /api/v1/admin/usage/metrics/options","positive":"metrics-options-owners","negative":"metrics-options-forbidden","proof":"operator"},
   {"operation":"POST /api/v1/admin/usage/metrics/reports","positive":"metrics-1-create-ready","negative":"metrics-1-create-forbidden","proof":"operator"},

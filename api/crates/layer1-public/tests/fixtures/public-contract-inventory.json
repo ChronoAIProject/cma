@@ -1,7 +1,28 @@
 {
   "version": 1,
-  "openapi_operations": 291,
+  "openapi_operations": 293,
   "operations": {
+    "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/runtime_migration.rs# Independent operator capabilities, strict identity guards and typed migration or observation outcomes define this route.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "invalid_runtime_migration",
+        "not_authenticated",
+        "runtime_migration_not_admitted",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/runtime_migration.rs# Independent operator capabilities, strict identity guards and typed migration or observation outcomes define this route.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated"
+      ]
+    },
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/agent_environment.rs# Authorized read-only Agent environment observations preserve file scope and explicit feature availability without contacting the runtime.",
