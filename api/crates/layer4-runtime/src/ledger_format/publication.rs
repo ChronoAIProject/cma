@@ -2,7 +2,7 @@
 //! No-intent initial staging recovery is separately bounded in aborted.
 use std::path::{Path, PathBuf};
 
-use super::{descriptor::Descriptor, hold_at, io, BARRIER, DATABASE, LOCK, MANIFEST, STAGE, TEMP};
+use super::{BARRIER, DATABASE, LOCK, MANIFEST, STAGE, TEMP, descriptor::Descriptor, hold_at, io};
 use crate::config::RuntimeConfig;
 use crate::failure::Result;
 use crate::mutation_ledger::Ledger;
@@ -91,8 +91,12 @@ fn verify(
 
 fn only_entries(path: &Path, allowed: &[&str]) -> Result<()> {
     io::directories(path)?;
-    for entry in std::fs::read_dir(path).map_err(|_| hold_at("publication.intent_inventory"))? {
-        let entry = entry.map_err(|_| hold_at("publication.intent_inventory"))?;
+    for entry in std::fs::read_dir(path)
+        .map_err(|error| io::io_error("publication.intent_inventory", "intent_inventory", &error))?
+    {
+        let entry = entry.map_err(|error| {
+            io::io_error("publication.intent_inventory", "intent_inventory", &error)
+        })?;
         if !entry
             .file_name()
             .to_str()
@@ -117,7 +121,8 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
         &database,
         intent_identity,
     )?;
-    crate::fs_durability::sync_tree(&database).map_err(|_| hold_at("publication.stage_sync"))?;
+    crate::fs_durability::sync_tree(&database)
+        .map_err(|error| io::io_error("publication.stage_sync", "stage_sync", &error))?;
     for path in descriptor.base_markers() {
         if !io::exists(&path)? {
             check_paths(
@@ -140,8 +145,13 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
             &database,
             intent_identity,
         )?;
-        crate::fs_durability::rename(&database, &final_database)
-            .map_err(|_| hold_at("publication.database_rename"))?;
+        crate::fs_durability::rename(&database, &final_database).map_err(|error| {
+            io::io_error(
+                "publication.database_rename",
+                "database_rename_and_sync",
+                &error,
+            )
+        })?;
     }
     #[cfg(test)]
     super::tests::checkpoint(&config.state_root, "recovery-renamed")?;
@@ -166,8 +176,15 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
             &final_database,
             intent_identity,
         )?;
-        crate::fs_durability::rename(&temporary, &config.state_root.join(MANIFEST))
-            .map_err(|_| hold_at("publication.manifest_rename"))?;
+        crate::fs_durability::rename(&temporary, &config.state_root.join(MANIFEST)).map_err(
+            |error| {
+                io::io_error(
+                    "publication.manifest_rename",
+                    "manifest_rename_and_sync",
+                    &error,
+                )
+            },
+        )?;
     }
     #[cfg(test)]
     super::tests::checkpoint(&config.state_root, "recovery-committed")?;
@@ -186,7 +203,7 @@ pub(super) fn resume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result<
 fn intent_identity(config: &RuntimeConfig) -> Result<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::symlink_metadata(config.state_root.join(INTENT))
-        .map_err(|_| hold_at("publication.intent_identity"))?;
+        .map_err(|error| io::io_error("publication.intent_identity", "intent_metadata", &error))?;
     Ok((metadata.dev(), metadata.ino()))
 }
 
@@ -228,8 +245,13 @@ pub(super) fn consume(config: &RuntimeConfig, descriptor: &Descriptor) -> Result
     }
     #[cfg(test)]
     super::tests::checkpoint(&config.state_root, "intent-removal")?;
-    crate::fs_durability::remove_file(&config.state_root.join(INTENT))
-        .map_err(|_| hold_at("publication.intent_consume"))?;
+    crate::fs_durability::remove_file(&config.state_root.join(INTENT)).map_err(|error| {
+        io::io_error(
+            "publication.intent_consume",
+            "intent_remove_and_sync",
+            &error,
+        )
+    })?;
     #[cfg(test)]
     super::tests::checkpoint(&config.state_root, "intent-consumed")?;
     Ok(())
