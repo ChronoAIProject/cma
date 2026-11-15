@@ -62,7 +62,14 @@ impl OwnershipCoordinator {
         if !self.can_acquire() {
             return Err(OwnershipError::Stale);
         }
-        let cancelled = match self.owned.lock().await.get(id).cloned() {
+        let cached = {
+            let owned = self.owned.lock().await;
+            if !self.can_acquire() {
+                return Err(OwnershipError::Stale);
+            }
+            owned.get(id).cloned()
+        };
+        let cancelled = match cached {
             Some(authority) if authority.is_current() => return Ok(Some(authority)),
             Some(authority) if authority.receiver_cancelled() => Some(authority),
             Some(_) => return Err(OwnershipError::Stale),

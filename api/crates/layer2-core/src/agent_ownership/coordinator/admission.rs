@@ -112,3 +112,6 @@ impl OwnershipCoordinator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
