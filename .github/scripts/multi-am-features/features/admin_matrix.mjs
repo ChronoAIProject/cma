@@ -3,6 +3,7 @@
 import { performance } from 'node:perf_hooks';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import {errorCode, withRestoration} from '../failure.mjs';
 
 export const ADMIN_PERMISSIONS = ['sandboxes','events','activity','users','control','settings'].map(x=>`cma:admin:${x}`);
 const P = '/api/v1/admin';
@@ -10,8 +11,6 @@ const other = am => am === 'a' ? 'b' : 'a';
 const hash = x => createHash('sha256').update(String(x)).digest('hex');
 const clone = x => structuredClone(x);
 const check = (v, code) => { if (!v) throw new Error(code); };
-const errorCode = error => /^[a-zA-Z0-9_:-]{1,160}$/.test(error?.message ?? '')
-  ? error.message : 'transport_or_contract_error';
 const revision = v => Number.isSafeInteger(v) && v >= 0;
 const page = v => Array.isArray(v?.items) && (v.next === null || typeof v.next === 'string');
 const settings = v => revision(v?.revision) && v.settings && v.settings.limits && v.settings.retention;
@@ -48,10 +47,10 @@ export const READ_CASES = [
 export class AdminMatrix {
   // request(role, am, method, path, {body,key,allowed,timeout}) must make a real
   // owner-authenticated local request and return {status,body}; no auto retries.
-  constructor({fixture, request, record, onBoundary = async()=>{}}) {
+  constructor({fixture, request, record, onBoundary = async()=>{}, onFailure = async()=>{}}) {
     validateFixture(fixture);
     check(typeof request==='function' && typeof record==='function','owner_callbacks_required');
-    Object.assign(this,{fixture,request,record,onBoundary}); this.rows=[]; this.current=null;
+    Object.assign(this,{fixture,request,record,onBoundary,onFailure}); this.rows=[]; this.current=null;
   }
   async call(am,method,path,body,allowed=[200],role='admin',key) {
     const started=performance.now();
@@ -59,6 +58,8 @@ export class AdminMatrix {
     try {
       const response=await this.request(role,am,method,path,{body,key,allowed,timeout:30000});
       observation.status=response?.status;
+      observation.am=response?.timing?.am ?? am;
+      observation.request_id=response?.timing?.request_id;
       check(allowed.includes(response?.status),'unexpected_http_'+response?.status);
       return response.body;
     } catch(error) {
@@ -74,20 +75,11 @@ export class AdminMatrix {
     finally {row.elapsed_ms=performance.now()-start;row.ended_at=new Date().toISOString();this.rows.push(row);this.current=null;await this.record(row);}
   }
   async withRestoration(work, restore) {
-    let primary, restoration, failed = false, restoreFailed = false;
-    try { await work(); }
-    catch (error) {
-      primary = error; failed = true;
-      if (this.current) this.current.primary_error_code = errorCode(error);
-    }
-    try { await restore(); }
-    catch (error) {
-      restoration = error; restoreFailed = true;
-      if (this.current) this.current.restoration_error_code = errorCode(error);
-    }
-    // A cleanup failure must not replace the first failed assertion or request.
-    if (failed) throw primary;
-    if (restoreFailed) throw restoration;
+    return withRestoration(work, restore, async (stage, error) => {
+      if (this.current) this.current[stage + '_error_code'] = errorCode(error);
+      const receipt = await this.onFailure(stage, error, this.current);
+      if (this.current && receipt) (this.current.failures ??= []).push(receipt);
+    });
   }
   async reads(iteration) {
     for (const [id,path,shape] of READ_CASES) await this.runCase(id,iteration,async()=>{
@@ -183,6 +175,7 @@ export class AdminMatrix {
         check(changed.id===fixture.sandbox_id && changed.always_on===desired,'always_on_ack');
         const current=(await this.call(peer,'GET',path)).sandbox;
         check(current.id===fixture.sandbox_id && current.profile.always_on===desired,'always_on_not_visible');
+        if (fixture.verifyAdmission) await fixture.verifyAdmission('changed');
         await this.call(peer,'POST',`${path}/always-on`,{always_on:old,expected_revision:before.revision},[409]);
         const events=await this.call(peer,'GET',`${path}/events?limit=50`);
         check(Array.isArray(events) && events.every(e=>e.sandbox_id===fixture.sandbox_id),'sandbox_event_identity');
@@ -191,6 +184,7 @@ export class AdminMatrix {
         if((current.profile.always_on===true)!==old)
           await this.call(peer,'POST',`${path}/always-on`,{always_on:old,expected_revision:current.revision});
         check(((await this.call(am,'GET',path)).sandbox.profile.always_on===true)===old,'always_on_restore_failed');
+        if (fixture.verifyAdmission) await fixture.verifyAdmission('restored');
       });
     });
   }

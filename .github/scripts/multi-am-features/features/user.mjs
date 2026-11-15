@@ -1,12 +1,13 @@
 import {randomUUID, createHash} from 'node:crypto';
 import {check} from '../cma/core.mjs';
+import {withRestoration} from '../failure.mjs';
 
 const hash = text => createHash('sha256').update(text).digest('hex');
 const encoded = text => Buffer.from(text).toString('base64');
 
 // Reuses the run17-created Agent, native home, provider and real authentication.
 // Every request on this API object is routed using the current live owner.
-export async function userCases({record: resource, api, runCase}) {
+export async function userCases({record: resource, api, runCase, recordFailure}) {
   const base = `/api/v1/agents/${resource.agentId}`;
   await runCase('user.files_roundtrip', async () => {
     const directory = `ci-${randomUUID()}`;
@@ -50,14 +51,14 @@ export async function userCases({record: resource, api, runCase}) {
     const before = (await api.request('a', 'GET', base + '/preferences')).body;
     check(Number.isSafeInteger(before.revision), 'preference_revision_missing');
     const title = 'CI ' + randomUUID();
-    try {
+    await withRestoration(async () => {
       await api.request('a', 'PATCH', base + '/preferences', {
         body: {expected_revision: before.revision, title}, key: randomUUID()});
       const visible = (await api.request('a', 'GET', base)).body;
       check(visible.id === resource.agentId && (visible.owner_title === title || visible.title === title), 'rename_readback');
       await api.request('a', 'PATCH', base + '/preferences', {allowed: [409],
         body: {expected_revision: before.revision, title: resource.name}, key: randomUUID()});
-    } finally {
+    }, async () => {
       const current = (await api.request('a', 'GET', base + '/preferences')).body;
       if (current.title !== before.title) {
         check(current.title === title, 'rename_restore_foreign_title');
@@ -66,6 +67,6 @@ export async function userCases({record: resource, api, runCase}) {
       }
       const restored = (await api.request('a', 'GET', base)).body;
       check([restored.title, restored.owner_title].includes(resource.name), 'rename_restore_missing');
-    }
+    }, recordFailure);
   });
 }

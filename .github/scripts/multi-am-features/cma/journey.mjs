@@ -58,8 +58,10 @@ export async function runJourney(raw, {adoptionHook, featureHook} = {}) {
   async function create(am, desktop) {
     const record = {name: 'e2e-slo-ws4-' + randomUUID(), key: randomUUID(), desktop, am}; records.push(record);
     const start = performance.now();
-    const receipt = await api.request(am, 'POST', '/api/v1/agents', {body: {name: record.name, machine_included: desktop, desktop,
-      ...(desktop ? {initial_message: 'Report local readiness briefly without using tools or changing files.'} : {})}, key: record.key, allowed: [202]});
+    record.createBody = {name: record.name, machine_included: desktop, desktop,
+      ...(desktop ? {initial_message: 'Report local readiness briefly without using tools or changing files.'} : {})};
+    const receipt = await api.request(am, 'POST', '/api/v1/agents', {
+      body: record.createBody, key: record.key, allowed: [202]});
     check(id(receipt.body?.id), 'lifecycle_receipt_invalid'); record.operationId = receipt.body.id;
     const op = await poll(async () => {
       const {body} = await api.request(other(am), 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
@@ -105,6 +107,7 @@ export async function runJourney(raw, {adoptionHook, featureHook} = {}) {
     record.runtime = runtime;
     await poll(() => adapter.ownerOf({agentId: record.agentId}), owner => owner !== null, {timeout: 30000, code: 'initial_owner_missing'});
     api.routedAgents.add(record.agentId);
+    api.bindAdmission(record.key, record.agentId);
     result.resources.push({name: record.name, desktop, agent_sha256: hash(record.agentId), sandbox_sha256: hash(record.sandboxId), operation_sha256: hash(record.operationId),
       create_to_ready_ms: performance.now() - start, lifecycle_status: op.status, runtime_family: family,
       runtime_source: runtimes[family].source, runtime_image: runtime.image,

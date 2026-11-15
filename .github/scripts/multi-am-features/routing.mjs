@@ -35,6 +35,8 @@ export class NonOwnerRouter {
     try {
       // Exactly one invocation: an uncertain mutation is never replayed.
       const result = await operation(ingress);
+      // Raw correlation IDs remain only in private journey evidence.
+      proof.request_id = result?.timing?.request_id ?? null;
       const after = await this.adapter.ownerOf({agentId});
       requireValue(after?.instance_id === owner.instance_id && after.epoch === owner.epoch
         && after.pod_uid === owner.pod_uid && after.am === owner.am,
@@ -43,6 +45,7 @@ export class NonOwnerRouter {
       return result;
     } catch (error) {
       proof.verdict = 'FAIL';
+      proof.request_id ??= error?.response?.timing?.request_id ?? null;
       throw error;
     } finally { await this.record(proof); }
   }
