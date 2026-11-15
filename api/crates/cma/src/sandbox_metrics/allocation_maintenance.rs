@@ -3,10 +3,7 @@ use crate::store::allocation_buckets::Lane;
 
 impl MetricsWorkers {
     pub(super) async fn maintain_allocation_history(&self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(2));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            interval.tick().await;
             for lane in [Lane::Live, Lane::Backfill] {
                 let started = std::time::Instant::now();
                 let result = tokio::time::timeout(
@@ -24,24 +21,27 @@ impl MetricsWorkers {
                 } else {
                     tracing::warn_span!(parent:None, "usage_allocation_maintenance")
                 };
-                if root.is_disabled() {
-                    continue;
-                }
-                let _entered = root.enter();
-                match result {
-                    Ok(Ok(done)) if done.claimed => tracing::info!(parent:&root,
+                if !root.is_disabled() {
+                    let _entered = root.enter();
+                    match result {
+                        Ok(Ok(done)) if done.claimed => tracing::info!(parent:&root,
                         lane=lane.label(), states=done.states, source_rows=done.source_rows,
                         reused=done.reused, written=done.written, pass_complete=done.pass_complete,
                         elapsed_ms=started.elapsed().as_millis() as u64,
                         outcome="published", "Usage allocation maintenance completed"),
-                    Ok(Ok(_)) => {}
-                    Ok(Err(_)) => tracing::warn!(parent:&root, lane=lane.label(),
+                        Ok(Ok(_)) => {}
+                        Ok(Err(_)) => tracing::warn!(parent:&root, lane=lane.label(),
                         elapsed_ms=started.elapsed().as_millis() as u64,
                         outcome="unavailable", "Usage allocation maintenance incomplete"),
-                    Err(_) => tracing::warn!(parent:&root, lane=lane.label(),
+                        Err(_) => tracing::warn!(parent:&root, lane=lane.label(),
                         elapsed_ms=started.elapsed().as_millis() as u64,
                         outcome="deadline", "Usage allocation maintenance incomplete"),
+                    }
                 }
+                // Give request work a full idle interval after each lane call,
+                // including failures and unclaimed work. A slow page must not
+                // consume the pause or make the next lane run immediately.
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
     }
