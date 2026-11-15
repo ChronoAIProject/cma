@@ -3,6 +3,7 @@ mod descriptor;
 #[cfg(test)]
 mod diagnostics_tests;
 pub(crate) mod io;
+mod publication;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -32,6 +33,7 @@ const PAGES: u32 = 262_144;
 
 pub(crate) struct Selection {
     fresh: bool,
+    pending_publication: bool,
     descriptor: Option<Descriptor>,
     writer: Option<Arc<File>>,
 }
@@ -103,6 +105,17 @@ impl Guard {
 
 /// Called under the construction writer lock, before home initialization.
 pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
+    if io::exists(&config.state_root.join(publication::INTENT))? {
+        retained_transfer(config)?;
+        let writer = Arc::new(io::lock(&config.state_root.join(LOCK), false)?);
+        let descriptor = publication::inspect(config)?;
+        return Ok(Selection {
+            fresh: false,
+            pending_publication: true,
+            descriptor: Some(descriptor),
+            writer: Some(writer),
+        });
+    }
     let current = config.state_root.join(MANIFEST);
     if io::exists(&current)? {
         retained_transfer(config)?;
@@ -111,6 +124,7 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
         descriptor.verify(descriptor.base_markers())?;
         return Ok(Selection {
             fresh: false,
+            pending_publication: false,
             descriptor: Some(descriptor),
             writer: Some(writer),
         });
@@ -153,6 +167,7 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
     }
     Ok(Selection {
         fresh,
+        pending_publication: false,
         descriptor: None,
         writer: None,
     })
@@ -162,6 +177,9 @@ impl Selection {
     /// Called after home initialization, still before installation/effects.
     pub(crate) async fn open(self, config: &RuntimeConfig) -> Result<Option<Arc<Ledger>>> {
         let (descriptor, writer) = if let Some(descriptor) = self.descriptor {
+            if self.pending_publication {
+                publication::resume(config, &descriptor)?;
+            }
             (
                 descriptor,
                 self.writer
@@ -182,6 +200,12 @@ impl Selection {
             crate::fs_durability::sync_tree(&stage)
                 .map_err(|_| hold_at("publication.stage_sync"))?;
             let descriptor = Descriptor::new(config, store)?;
+            io::create(
+                &config.state_root.join(publication::INTENT),
+                &descriptor.bytes()?,
+            )?;
+            #[cfg(test)]
+            tests::checkpoint(&config.state_root, "intent")?;
             descriptor.publish(descriptor.base_markers())?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "barriers")?;
@@ -203,6 +227,7 @@ impl Selection {
             .map_err(|_| hold_at("publication.manifest_rename"))?;
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "committed")?;
+            publication::consume(config, &descriptor)?;
             (descriptor, writer)
         } else {
             return Ok(None);

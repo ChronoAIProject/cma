@@ -125,7 +125,8 @@ async fn legacy_binding_nonempty_ledgers_and_no_home_never_select_fresh_from_an_
 }
 
 #[tokio::test]
-async fn interrupted_publication_holds_until_manifest_commit_without_fallback() {
+async fn legacy_interrupted_publication_without_intent_holds_until_manifest_commit_without_fallback(
+) {
     for step in [
         "locked",
         "database",
@@ -139,6 +140,12 @@ async fn interrupted_publication_holds_until_manifest_commit_without_fallback() 
         set_failure(&fixture.config, step);
         assert!(fixture.open().await.is_err(), "{step}");
         set_failure(&fixture.config, "");
+        // Reconstruct the original writer's no-intent format. Its ambiguous
+        // partial states must retain every existing refusal assertion.
+        let intent = fixture.config.state_root.join(publication::INTENT);
+        if intent.exists() {
+            std::fs::remove_file(intent).unwrap();
+        }
         // The worker releases its lock on sender destruction; the outer lock
         // never authorizes a second writer before the connection is gone.
         if step == "committed" {
@@ -350,4 +357,11 @@ async fn interrupted_new_generation_barriers_hold_without_rebinding_the_database
         .query_row("SELECT generation FROM metadata", [], |row| row.get(0))
         .unwrap();
     assert_eq!(generation, 1u64.to_be_bytes());
+}
+
+#[path = "publication_tests.rs"]
+mod publication_tests;
+
+pub(super) fn replace_publication_path(config: &RuntimeConfig, phase: &str) {
+    publication_tests::replace_path(config, phase);
 }
