@@ -32,6 +32,7 @@ pub struct PlatformSettingsService {
     activity: Arc<ActivityService>,
     model_budget_writes_enabled: bool,
     model_request_budget_writes_enabled: bool,
+    platform_spend_writes_enabled: bool,
 }
 
 impl PlatformSettingsService {
@@ -41,6 +42,7 @@ impl PlatformSettingsService {
             activity,
             model_budget_writes_enabled: false,
             model_request_budget_writes_enabled: false,
+            platform_spend_writes_enabled: false,
         }
     }
 
@@ -62,6 +64,16 @@ impl PlatformSettingsService {
 
     pub fn model_request_budget_writes_enabled(&self) -> bool {
         self.model_budget_writes_enabled && self.model_request_budget_writes_enabled
+    }
+
+    /// Cloud spend fields need a later reader baseline than the foundation.
+    pub fn with_platform_spend_writes_enabled(mut self, enabled: bool) -> Self {
+        self.platform_spend_writes_enabled = enabled;
+        self
+    }
+
+    pub fn platform_spend_writes_enabled(&self) -> bool {
+        self.model_budget_writes_enabled && self.platform_spend_writes_enabled
     }
 
     /// Read policy for another application service, without opening an
@@ -96,6 +108,15 @@ impl PlatformSettingsService {
         }
         if !self.model_request_budget_writes_enabled()
             && !settings.model_budget.request_models.is_empty()
+        {
+            return Err(CoreError::ModelBudgetWritesUnavailable);
+        }
+        if !self.platform_spend_writes_enabled()
+            && settings
+                .model_budget
+                .platform
+                .as_ref()
+                .is_some_and(|platform| platform.cloud.is_some())
         {
             return Err(CoreError::ModelBudgetWritesUnavailable);
         }

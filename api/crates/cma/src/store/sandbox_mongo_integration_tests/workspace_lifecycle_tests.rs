@@ -1,4 +1,7 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
+
+mod authority_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -84,18 +87,10 @@ async fn workspace_claims_survive_reopen_and_fence_out_an_expired_worker() {
         store.due_workspace_work(NOW, 10).await.unwrap(),
         vec![candidate.id.clone()]
     );
-    let first = store.claim_workspace_work(
-        &candidate.id,
-        "worker-a",
-        NOW.into(),
-        "2026-09-05T00:01:00Z".into(),
-    );
-    let second = store.claim_workspace_work(
-        &candidate.id,
-        "worker-b",
-        NOW.into(),
-        "2026-09-05T00:01:00Z".into(),
-    );
+    let first =
+        store.claim_workspace_work(&candidate.id, "worker-a", NOW.into(), work_lease_deadline());
+    let second =
+        store.claim_workspace_work(&candidate.id, "worker-b", NOW.into(), work_lease_deadline());
     let (first, second) = tokio::join!(first, second);
     let claims = [first.unwrap(), second.unwrap()];
     assert_eq!(claims.iter().filter(|claim| claim.is_some()).count(), 1);
@@ -104,12 +99,21 @@ async fn workspace_claims_survive_reopen_and_fence_out_an_expired_worker() {
     let stale_fence = stale.work.lease.as_ref().unwrap().fence;
     assert_eq!(stale_fence, 1);
 
+    // Expire both mirrors; a fabricated caller clock is no longer authority.
+    store
+        .workspaces
+        .update_one(
+            doc! {"_id":candidate.id.as_str()},
+            doc! {"$set":{"work_lease_expires_at":NOW,"record.work.lease.expires_at":NOW}},
+        )
+        .await
+        .unwrap();
     let takeover = store
         .claim_workspace_work(
             &candidate.id,
             "worker-c",
             "2026-09-05T00:01:00Z".into(),
-            "2026-09-05T00:02:00Z".into(),
+            work_lease_deadline(),
         )
         .await
         .unwrap()
@@ -191,18 +195,10 @@ async fn claims_are_exclusive_and_an_expired_lease_gets_a_higher_fence() {
     let sandbox = provisioning_sandbox("sbx_claims");
     store.create_sandbox(sandbox.clone()).await.unwrap();
 
-    let first = store.claim_sandbox_work(
-        &sandbox.id,
-        "worker-a",
-        NOW.into(),
-        "2026-09-05T00:01:00Z".into(),
-    );
-    let second = store.claim_sandbox_work(
-        &sandbox.id,
-        "worker-b",
-        NOW.into(),
-        "2026-09-05T00:01:00Z".into(),
-    );
+    let first =
+        store.claim_sandbox_work(&sandbox.id, "worker-a", NOW.into(), work_lease_deadline());
+    let second =
+        store.claim_sandbox_work(&sandbox.id, "worker-b", NOW.into(), work_lease_deadline());
     let (first, second) = tokio::join!(first, second);
     let claims = [first.unwrap(), second.unwrap()];
     assert_eq!(claims.iter().filter(|claim| claim.is_some()).count(), 1);
@@ -210,12 +206,21 @@ async fn claims_are_exclusive_and_an_expired_lease_gets_a_higher_fence() {
     assert_eq!(claimed.work.lease.as_ref().unwrap().fence, 1);
     assert_eq!(claimed.revision, 2);
 
+    // Expire both mirrors; a fabricated caller clock is no longer authority.
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id":sandbox.id.as_str()},
+            doc! {"$set":{"work_lease_expires_at":NOW,"record.work.lease.expires_at":NOW}},
+        )
+        .await
+        .unwrap();
     let takeover = store
         .claim_sandbox_work(
             &sandbox.id,
             "worker-c",
             "2026-09-05T00:01:00Z".into(),
-            "2026-09-05T00:02:00Z".into(),
+            work_lease_deadline(),
         )
         .await
         .unwrap()

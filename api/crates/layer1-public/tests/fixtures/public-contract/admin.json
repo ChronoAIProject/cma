@@ -61,7 +61,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -135,7 +136,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -274,7 +276,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -345,7 +348,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -481,7 +485,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -547,7 +552,8 @@
             }
           },
           "model_budget_writes_available": false,
-          "model_request_budget_writes_available": false
+          "model_request_budget_writes_available": false,
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -1164,6 +1170,635 @@
         "admin_activity_at": "/items/0/at",
         "admin_activity_id": "/items/0/id"
       }
+    },
+    {
+      "id": "admin-admission-read",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_control_read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "history": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-stop",
+      "operation": "POST /api/v1/admin/admission/stop",
+      "scenario": "admission_control_stop",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "contain incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 1,
+          "operator_stop": {
+            "since": 100,
+            "revision": 1,
+            "actor": "operator-a",
+            "reason": "contain incident"
+          },
+          "last_change": {
+            "revision": 1,
+            "at": 100,
+            "actor": "operator-a",
+            "reason": "contain incident",
+            "old_stop": null,
+            "new_stop": {
+              "since": 100,
+              "revision": 1,
+              "actor": "operator-a",
+              "reason": "contain incident"
+            }
+          },
+          "writes_available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admission_stop_time": "/operator_stop/since"
+      }
+    },
+    {
+      "id": "admin-admission-resume",
+      "operation": "POST /api/v1/admin/admission/resume",
+      "scenario": "admission_control_resume",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "resolved",
+          "expected_revision": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 2,
+          "operator_stop": null,
+          "last_change": {
+            "revision": 2,
+            "at": 200,
+            "actor": "operator-a",
+            "reason": "resolved",
+            "old_stop": {
+              "since": 100,
+              "revision": 1,
+              "actor": "operator-a",
+              "reason": "contain incident"
+            },
+            "new_stop": null
+          },
+          "writes_available": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "admission_resume_time": "/last_change/at"
+      }
+    },
+    {
+      "id": "admin-admission-admission-forbidden",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-admission-anonymous",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-admission-unavailable",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-control-unavailable",
+          "title": "admission control unavailable",
+          "status": 503,
+          "detail": "Admission control could not be read or changed. Read the current state before retrying an uncertain command.",
+          "code": "admission_control_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-stop-forbidden",
+      "operation": "POST /api/v1/admin/admission/stop",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-stop-anonymous",
+      "operation": "POST /api/v1/admin/admission/stop",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-stop-unavailable",
+      "operation": "POST /api/v1/admin/admission/stop",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-control-unavailable",
+          "title": "admission control unavailable",
+          "status": 503,
+          "detail": "Admission control could not be read or changed. Read the current state before retrying an uncertain command.",
+          "code": "admission_control_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-stop-gate-closed",
+      "operation": "POST /api/v1/admin/admission/stop",
+      "scenario": "admission_control_closed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-control-writes-unavailable",
+          "title": "admission control writes unavailable",
+          "status": 503,
+          "detail": "Saving admission control is not available yet.",
+          "code": "admission_control_writes_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-stop-invalid",
+      "operation": "POST /api/v1/admin/admission/stop",
+      "scenario": "admission_control_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": " ",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admission-control",
+          "title": "invalid admission control",
+          "status": 422,
+          "detail": "Supply a bounded reason and the expected admission revision.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-stop-conflict",
+      "operation": "POST /api/v1/admin/admission/stop",
+      "scenario": "admission_control_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-control-conflict",
+          "title": "admission control conflict",
+          "status": 409,
+          "detail": "Admission control changed. Read the current state before issuing a new command.",
+          "code": "admission_control_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-resume-forbidden",
+      "operation": "POST /api/v1/admin/admission/resume",
+      "scenario": "admin_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-resume-anonymous",
+      "operation": "POST /api/v1/admin/admission/resume",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-resume-unavailable",
+      "operation": "POST /api/v1/admin/admission/resume",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-control-unavailable",
+          "title": "admission control unavailable",
+          "status": 503,
+          "detail": "Admission control could not be read or changed. Read the current state before retrying an uncertain command.",
+          "code": "admission_control_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-resume-gate-closed",
+      "operation": "POST /api/v1/admin/admission/resume",
+      "scenario": "admission_control_closed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-control-writes-unavailable",
+          "title": "admission control writes unavailable",
+          "status": 503,
+          "detail": "Saving admission control is not available yet.",
+          "code": "admission_control_writes_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-resume-invalid",
+      "operation": "POST /api/v1/admin/admission/resume",
+      "scenario": "admission_control_invalid",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": " ",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admission-control",
+          "title": "invalid admission control",
+          "status": 422,
+          "detail": "Supply a bounded reason and the expected admission revision.",
+          "code": "invalid_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-resume-conflict",
+      "operation": "POST /api/v1/admin/admission/resume",
+      "scenario": "admission_control_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/admission/resume",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "incident",
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/admission-control-conflict",
+          "title": "admission control conflict",
+          "status": 409,
+          "detail": "Admission control changed. Read the current state before issuing a new command.",
+          "code": "admission_control_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-admission-history",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_control_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 2,
+          "operator_stop": null,
+          "last_change": {
+            "revision": 2,
+            "at": 101,
+            "actor": "operator-b",
+            "reason": "resolved",
+            "old_stop": {
+              "since": 100,
+              "revision": 1,
+              "actor": "operator-a",
+              "reason": "contain incident"
+            },
+            "new_stop": null
+          },
+          "writes_available": false,
+          "history": [
+            {
+              "revision": 2,
+              "at": 101,
+              "actor": "operator-b",
+              "reason": "resolved",
+              "old_stop": {
+                "since": 100,
+                "revision": 1,
+                "actor": "operator-a",
+                "reason": "contain incident"
+              },
+              "new_stop": null
+            },
+            {
+              "revision": 1,
+              "at": 100,
+              "actor": "operator-a",
+              "reason": "contain incident",
+              "old_stop": null,
+              "new_stop": {
+                "since": 100,
+                "revision": 1,
+                "actor": "operator-a",
+                "reason": "contain incident"
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
     }
   ]
 }

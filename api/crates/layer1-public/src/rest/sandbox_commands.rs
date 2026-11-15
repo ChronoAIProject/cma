@@ -115,6 +115,9 @@ fn private(mut response: Response) -> Response {
 fn problem(error: SandboxControlServiceError) -> Response {
     use SandboxControlServiceError::*;
     let (status, code, detail) = match error {
+        AdmissionPaused | Store(SandboxControlError::AdmissionPaused) => return private(super::admission_problem::paused()),
+        // A final 402 like every budget refusal, so no Retry-After below.
+        Budget(reason) | Store(SandboxControlError::Budget(reason)) => (StatusCode::PAYMENT_REQUIRED, reason.code(), reason.guidance()),
         Access(error) => return private(ResourceProblem(error).into_response()),
         Authority(CommandAuthorizationError::Revoked) => (StatusCode::FORBIDDEN, "command_authority_required", "Current credential custody does not authorize durable command execution."),
         Store(SandboxControlError::Invalid) => (StatusCode::BAD_REQUEST, "invalid_sandbox_command", "A Sandbox command and a positive expected revision are required."),
@@ -134,4 +137,29 @@ fn problem(error: SandboxControlServiceError) -> Response {
             .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
     }
     response
+}
+
+#[cfg(test)]
+mod admission_pause_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn revive_pause_problem_keeps_the_sixty_second_retry_header() {
+        let response = problem(SandboxControlServiceError::AdmissionPaused);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[header::RETRY_AFTER], "60");
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "private, no-store"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["code"], "admission_paused");
+        assert_eq!(
+            body["detail"],
+            layer2_core::admission::ADMISSION_PAUSED_GUIDANCE
+        );
+    }
 }

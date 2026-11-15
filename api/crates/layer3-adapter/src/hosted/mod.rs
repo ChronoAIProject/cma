@@ -2,6 +2,7 @@
 
 mod acp;
 mod acp_context_refresh;
+mod acp_correlation;
 mod acp_credit_failure;
 mod acp_handshake;
 mod acp_inbound;
@@ -88,6 +89,9 @@ pub use subscriptions::{HostedSubscriptionCredential, HostedSubscriptionSource};
 mod tests;
 
 #[cfg(test)]
+mod process_ingress_test_support;
+
+#[cfg(test)]
 #[path = "provision_tests.rs"]
 mod provision_tests;
 
@@ -112,7 +116,7 @@ pub fn observed_permission_id(
     request: &crate::RequestPermissionRequest,
     call: &serde_json::Value,
 ) -> Option<String> {
-    if !acp_inbound::valid_call(call)
+    if !acp_correlation::valid_call(call)
         || permission_state::validate(&request.options).is_err()
         || request.options.is_empty()
         || request.options.iter().any(|option| {

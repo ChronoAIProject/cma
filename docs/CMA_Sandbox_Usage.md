@@ -23,6 +23,10 @@ hours are derived at the API boundary.
 | RAM      | MiB-seconds       | Pinned RAM allocation multiplied by runtime uptime                 |
 | Disk     | GiB-seconds       | Retained home capacity from its attachment receipt until release   |
 
+These allocation quantities attribute capacity to owners; they are not the
+platform cap's cloud source, which is an operator observation (see
+[platform spend metering](CMA_Platform_Spend_Metering.md) §2.2).
+
 CPU core-hours divide millicore-seconds by 3,600,000. RAM GiB-hours divide
 MiB-seconds by 3,686,400. Disk GiB-hours divide GiB-seconds by 3,600.
 These quantities measure allocated capacity, not sampled CPU load, resident

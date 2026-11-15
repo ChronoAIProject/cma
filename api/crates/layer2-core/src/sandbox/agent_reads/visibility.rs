@@ -117,6 +117,7 @@ fn redact_failure(failure: &mut crate::sandbox::TypedFailure) {
         "owner_budget_exhausted" => crate::budget::BudgetError::OwnerExhausted.guidance(),
         "turn_budget_exhausted" => crate::budget::BudgetError::TurnExhausted.guidance(),
         "budget_unavailable" => crate::budget::BudgetError::Unavailable.guidance(),
+        "platform_budget_exhausted" => crate::budget::BudgetError::PlatformExhausted.guidance(),
         "insufficient_credits" => "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.",
         _ => "This Agent turn failed.",
     }.into();
@@ -152,6 +153,29 @@ mod credit_failure_tests {
             } else {
                 assert_eq!(failure.detail, "This Agent turn failed.");
             }
+        }
+    }
+    #[test]
+    fn shared_budget_failures_expose_their_static_guidance() {
+        use crate::budget::BudgetError;
+        for reason in [
+            BudgetError::OwnerExhausted,
+            BudgetError::TurnExhausted,
+            BudgetError::Unavailable,
+            BudgetError::PlatformExhausted,
+        ] {
+            let Some(AgentLogKind::TurnFailed { failure, .. }) =
+                shared_kind(AgentLogKind::TurnFailed {
+                    turn_sequence: 3,
+                    failure: crate::sandbox::TypedFailure {
+                        class: reason.code().into(),
+                        detail: "private settlement diagnostics".into(),
+                    },
+                })
+            else {
+                panic!("terminal failure must remain visible")
+            };
+            assert_eq!(failure.detail, reason.guidance(), "{}", reason.code());
         }
     }
 }

@@ -3,6 +3,8 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['admin-admission-stop-invalid', 'invalid_request'],
+  ['admin-admission-resume-invalid', 'invalid_request'],
   ['deliverables-owner-invalid-revision', 'invalid_deliverable_reference'],
   ['deliverables-owner-invalid-answer-list', 'invalid_deliverable_reference'],
   ['deliverables-owner-invalid-answer-read', 'invalid_deliverable_reference'],

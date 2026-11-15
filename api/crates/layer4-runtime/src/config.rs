@@ -34,6 +34,7 @@ pub(crate) struct RuntimeConfig {
     /// Set only on a Sandbox whose immutable profile requested a desktop.
     pub machine_included: bool,
     pub capacity_recovery_enabled: bool,
+    pub legacy_journal_recovery_enabled: bool,
 }
 
 impl RuntimeConfig {
@@ -99,6 +100,19 @@ impl RuntimeConfig {
                 )
             }
         };
+
+        let legacy_journal_recovery_enabled =
+            match process_env
+                .get("CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED")
+                .map(String::as_str)
+            {
+                None | Some("0") | Some("false") => false,
+                Some("1") | Some("true") => true,
+                Some(_) => return Err(
+                    "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED must be 0, 1, false or true"
+                        .into(),
+                ),
+            };
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -166,6 +180,7 @@ impl RuntimeConfig {
             allow_local_git: false,
             machine_included,
             capacity_recovery_enabled,
+            legacy_journal_recovery_enabled,
         })
     }
 
@@ -205,6 +220,7 @@ impl RuntimeConfig {
             allow_local_git: true,
             machine_included: false,
             capacity_recovery_enabled: false,
+            legacy_journal_recovery_enabled: false,
         }
     }
 }

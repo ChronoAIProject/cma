@@ -4,6 +4,10 @@ use super::*;
 mod fences;
 #[path = "reads/history.rs"]
 mod history_tests;
+#[path = "reads/list.rs"]
+mod list;
+#[path = "reads/prefix.rs"]
+mod prefix;
 #[path = "reads/response.rs"]
 mod response;
 #[path = "reads/stream.rs"]

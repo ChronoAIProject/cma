@@ -1,6 +1,7 @@
 //! Durable external environment bindings and conversation ownership.
 mod access;
 mod commands;
+mod conversation_retirement;
 mod credential;
 mod existing;
 mod inspection;

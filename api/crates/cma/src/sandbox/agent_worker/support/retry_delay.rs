@@ -1,24 +1,54 @@
-//! Pace failed final filesystem cleanup without delaying live recovery or stop.
+//! Preserve legacy retry floors while sharing durable failure budgets.
+use layer2_core::sandbox::work_retry::{work_retry_policy, WorkRetryDecision, WorkRetryFailure};
 use std::time::Duration;
 
-use super::{Agent, AgentWorkStep, AgentWorker};
+use super::{Agent, AgentWorkStep, AgentWorker, WorkerFailure};
 
 impl AgentWorker {
     pub(in crate::sandbox::agent_worker) fn failure_retry_delay(
         &self,
         agent: &Agent,
-        ledger_hold: bool,
+        failure: &WorkerFailure,
     ) -> Duration {
-        if ledger_hold {
-            return removal_delay(
-                self.config.retry_delay.max(Duration::from_secs(30)),
-                agent.work.attempts,
-            );
+        self.retry_decision(agent, failure, self.config.retry_delay)
+            .delay
+    }
+
+    pub(in crate::sandbox::agent_worker) fn retry_decision(
+        &self,
+        agent: &Agent,
+        failure: &WorkerFailure,
+        base: Duration,
+    ) -> WorkRetryDecision {
+        let legacy = if failure.is_ledger_hold() {
+            removal_delay(base.max(Duration::from_secs(30)), agent.work.attempts)
+        } else if agent.work.step == AgentWorkStep::RemoveWorktree {
+            removal_delay(base, agent.work.attempts)
+        } else {
+            base
+        };
+        if !self.config.work_retry_policy_enabled {
+            return WorkRetryDecision {
+                delay: legacy,
+                parked: false,
+            };
         }
-        if agent.work.step != AgentWorkStep::RemoveWorktree {
-            return self.config.retry_delay;
-        }
-        removal_delay(self.config.retry_delay, agent.work.attempts)
+        let mut decision = work_retry_policy(
+            crate::sandbox::work_retry::agent_class(agent.work.step),
+            failure.retry_kind,
+            agent.work.attempts,
+            base,
+        );
+        // Existing cleanup/ledger protection may be slower than an interactive
+        // grace period. Enabling this policy must never accelerate those paths.
+        decision.delay = decision.delay.max(legacy);
+        decision
+    }
+}
+
+impl WorkerFailure {
+    pub(in crate::sandbox::agent_worker) fn retry_kind(&self) -> WorkRetryFailure {
+        self.retry_kind
     }
 }
 

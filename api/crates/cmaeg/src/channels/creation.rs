@@ -116,6 +116,7 @@ pub async fn create(
         .await
         .map_err(ManagementError::Provider)?;
     current.definition.provider.level = binding.level;
+    current.definition.provider.capabilities = binding.capabilities.clone();
     crate::connections::binding::activate(state, &current.definition, &current.channel_id).await?;
     current.definition.creation.as_mut().unwrap().ready = true;
     let blob = seal_definition(&state.master_keys, &current.definition)?;
@@ -162,6 +163,7 @@ pub async fn create(
 
 fn completed(current: LoadedChannel) -> CreatedChannel {
     let binding = BindingResponse {
+        capabilities: current.definition.provider.capabilities.clone(),
         binding_id: current.definition.provider.binding_id.clone(),
         level: current.definition.provider.level,
         honoured: Vec::new(),

@@ -77,3 +77,200 @@ No identity, error text, document content or request-span field is emitted.
 For comparisons with images before #1785, sum `command_admission` and
 `command_reconciliation` for scans, documents, bytes and duration. Splitting the
 label changes attribution only; it does not reduce any reads.
+
+### Scan execution sections (#1787)
+
+Each full-scan attempt now emits `cma_agent_log_scan_longest_section_seconds{caller}`
+and `cma_agent_log_scan_driver_poll_seconds{caller}` once on drop, including
+validation failure and cancellation. `cma_agent_log_scan_yields_total{caller}`
+counts explicit cooperative yields. Labels use only the existing closed caller
+names; no Agent, Sandbox, request, user, query or document content is retained.
+The existing full-scan count, document/byte counts and success/failure accounting
+retain their meanings. Measurements accumulate in local variables, with no
+per-document atomics or logging; optional debug output is once per attempt.
+
+An execution section closes only when an observed future actually returns
+`Pending` or the scan explicitly yields. Time spent waiting to be polled again
+is excluded. Initial-find suspension is observed too, so Mongo/network wait
+does not become a CPU section. Driver-poll duration measures the final `Ready`
+poll of cursor advancement, including batch copying on the owned-row path; it does not include
+I/O wait or the subsequent row decode, visitor and hash. Both histograms include
+submillisecond, 2 ms, 5 ms and 10 ms boundaries, supporting the issue's A/B/C
+decisions. These are wall-time observations, not CPU profiles or proof that
+a particular task occupied a Tokio LIFO slot.
+
+The legacy capture reader also observes its existing find/cursor awaits because
+it shares scan accounting. It retains its existing 64-document batches; the
+cooperative switch targets the complete integrity scanner (`scan_rows`).
+
+The histograms aggregate all scan sizes for a caller. For case A's at-least-1,000-
+row subset, the once-per-attempt debug event includes numeric `documents` and
+`bytes`, outcome, section count and both maxima. Use those observations to
+select the subset; an average documents-per-scan ratio cannot prove it.
+
+These #1787 families add at most 481 series: 13 closed caller names, including
+`command_reconciliation`, times two histograms with 15 finite buckets, +Inf,
+sum and count, plus one counter. Worker steps do not label these families.
+This is separate from the #1805 bound of `2 * min(workers, 64) + 195`.
+
+Together #1805 and #1787 add `2 * min(workers, 64) + 676` series: **692 at eight
+workers**, at most **804 per process**. This bound covers those two issues'
+metric families only; existing metrics and the separate retry-audit and command
+reconciliation outcome families are not included. The combined rendered-exposition
+regression uses the production histogram configuration, every closed scan caller
+on success and failure, all checkout classes, and 0, 8, 63, 64 and 100 workers.
+It enforces the total, the 481 scan-series contribution and absence of private
+identity labels, including the overflow case.
+
+### Local cooperation comparison (2026-11-13)
+
+The disposable-Mongo `--scan-cooperation` contract runs an eight-worker Tokio
+runtime with six concurrent scanning tasks, eight scans per task, and 200 pairs
+of sequential point reads. Each scan traverses the same indexed 10,001-row
+fixture with 256-byte message content. After warming both strategies, the
+measured order is off/on/on/off. The native macOS ARM64 debug build uses the
+pinned toolchain and Mongo 8.0.13 on a shared development host. Reproduce with
+`bash .github/scripts/mongo-contract-tests.sh --scan-cooperation`.
+
+Every measured round completed exactly 48 scans, 480,048 rows and 262,586,256
+raw BSON bytes, plus 200 point-read pairs. Each made 448 find and 48 getMore
+commands, for 496 command round trips. Both strategies had zero failed scans.
+No query batch limit was set. The comparison retains each round's percentiles;
+only means are combined using observation counts.
+
+| Observation | Off (rounds 0, 3) | On (rounds 1, 2) |
+| --- | --- | --- |
+| Longest execution section p99, ms | 430.68; 435.01 | 4.04; 4.04 |
+| Longest driver poll p95, ms | 3.81; 3.73 | 3.81; 3.74 |
+| Maximum task poll across both rounds, ms | 435.03 | 4.04 |
+| Mean scan latency across both rounds, ms | 864.40 | 485.26 |
+| Point-read pair latency p95, ms | 428.02; 427.00 | 4.48; 17.03 |
+| Checkout wait p99, ms | 426.85; 427.32 | 1.51; 2.42 |
+| Mean checkout wait across both rounds, ms | 16.94 | 0.072 |
+| Maximum checkout/check-in event gap, ms | 432.34 | 296.06 |
+| Maximum connections in use / configured limit | 7 / 30 | 7 / 30 |
+| Explicit yields across both rounds | 0 | 19,010 |
+
+Mean scan latency decreased by 43.86% in this local run. Metadata-only command
+tracing counts round trips; CMAP events supply checkout durations and event
+spacing without installing a command-event handler that decodes reply bodies.
+The raw benchmark log SHA-256 is
+`6b877092165870dd4058b0751e9f327777910605e953e5871986bf8726ca38b9`.
+
+This reproduces long uninterrupted scans and improved scheduling with unchanged
+work on this fixture. It does not identify production CPU costs, prove Tokio
+LIFO-slot residency, or satisfy the production A/B/C decision. Driver-poll p95
+remained below 5 ms here, so no optional batch-size setting was added. The switch
+stays off until the release owner collects the required production baseline,
+checks scan failures and publication retries, and verifies activation/rollback
+under the procedure in [Operations](CMA_Operations.md#cooperative-full-scan-activation-and-rollback).
+
+The full-contract repeat after develop integration used the same scan and
+benchmark implementation and preserved all of those work and command counts,
+but did not reproduce the first run's sub-10 ms section tail. Disabled section
+p99 was 469.99 and 443.17 ms; enabled section p99 was 23.84 and 28.76 ms.
+Mean scan latency was 806.03 ms off and 512.75 ms on
+(-36.39%). Enabled point-read pair p95 was 14.79 and 43.29 ms, versus 430.99 and
+427.25 ms disabled; enabled checkout-wait p99 was 3.21 and 2.97 ms, versus
+436.93 and 423.64 ms disabled. Driver-poll p95 stayed below 4.76 ms in all four
+rounds, although one enabled round contained a 22.84 ms driver poll. The cause
+of these wall-time outliers has not been isolated. With only 48 scans per phase,
+the reported nearest-rank p99 is also that phase's maximum. Both runs support
+keeping the measurements and the default-off option; neither establishes a
+reliable 10 ms section bound or substitutes for the required production study.
+The full-contract repeat log SHA-256 is
+`9638f1a4e0fdc5b54aedfac01478fd8063d12db7fbbc816d753b8996ba4b3570`.
+
+### Borrowed cursor rows (#1320, 2026-11-13)
+
+With cooperation enabled, complete integrity scans now use the MongoDB 3.9.1
+`SessionRawBatchCursor` API. The ordinary cursor copies all documents in a ready
+batch before returning its first row, outside the application's row checkpoints.
+Borrowed batch iteration removes those copies and lets the existing checkpoints
+separate row processing. Both paths use one shared validator/visitor, preserving
+sequence checks, byte limits, hashing and accounting. The query/sort/limit,
+server batch sizing, session and read concern stay the same. Malformed wire
+items remain driver errors; corrupt stored rows keep the existing quarantine
+rules. Cancellation still drops the cursor and caller-owned transaction.
+
+The existing `CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED` flag gates both raw
+batch delivery and cooperative checkpoints and still defaults to `false`.
+No new switch, pool increase, session transfer or persistence change is added.
+The legacy capture reader retains its existing delivery and batch settings.
+
+The scheduling reproduction now also runs a second, same-binary ABBA comparison
+with cooperation enabled in both arms: owned/raw/raw/owned. The owned control is
+a test-only override. This isolates delivery from the existing checkpoint change.
+The fixture and command observer are the same as above. Every round again reads
+48 scans / 480,048 documents / 262,586,256 BSON bytes, plus 200 point-read pairs,
+with exactly 448 find + 48 getMore commands and at most 7/30 connections in use.
+All scans succeed. The six local Mongo tests also verify full row/summary parity,
+later-batch corruption, capacity errors and head-plus-one rejection, visitor
+refusal/quarantine, cancellation before and after getMore with killCursors,
+abortTransaction and exact consumed-byte accounting, and snapshot/transaction visibility while
+another session changes a later-batch row and appends a row.
+
+| Observation | Cooperative owned (rounds 0, 3) | Cooperative raw (rounds 1, 2) |
+| --- | --- | --- |
+| Longest driver poll p95, ms | 3.00; 3.47 | 0.046; 0.049 |
+| Longest execution section p99, ms | 4.53; 9.34 | 4.13; 6.05 |
+| Mean scan latency across both rounds, ms | 417.78 | 395.78 |
+| Point-read pair latency p95, ms | 7.53; 7.60 | 6.95; 7.81 |
+| Checkout wait p99, ms | 1.823; 1.825 | 2.128; 1.718 |
+
+The 5.27% lower mean scan time and removal of the batch-copy driver-poll cost
+support this narrow implementation on the local fixture. Checkout and point-read
+tails are mixed; this does not establish an incremental production checkout or
+route-latency improvement. Raw-row iteration/validation remains included in
+execution-section and task-poll timing, even though it no longer appears inside
+a driver advancement poll. Individual rows/visitors and OS preemption still
+permit sections beyond the 2 ms checkpoint budget. Each phase has 48 per-scan
+maxima, so its nearest-rank section p99 is also its maximum.
+
+The same run's disabled/raw-enabled comparison preserves the earlier cooperation
+benefit: section p99 328.01/322.19 ms versus 3.01/3.78 ms and checkout p99
+316.22/312.47 ms versus 1.764/1.913 ms. Do not attribute this whole effect to the
+new delivery change. All eight round summaries, source fingerprints, environment
+and command are retained in [the measurement artifact](../.github/evidence/agent-log-cursor-20261113.json).
+These shared-host debug measurements are not production acceptance. The release
+owner must bind natural-load before/after cohorts to image, flag, workload and
+observer, then verify whole-request Agent/tab/send/interrupt latency, scan failure
+and publication retry rates, pool/hold/runtime telemetry and probes. Activation
+and rollback remain governed by the operations procedure above.
+
+The integration repeat at `54c2a1594` passed 25 targeted unit tests and all six
+Mongo tests after strict Clippy and formatting. All work and query counts stayed
+equal. Paired cooperative-owned driver-poll p95 was 9.71/6.51 ms versus
+0.084/0.092 ms raw; mean scan time was 709.53 versus 559.42 ms (-21.16%).
+The host was noisier: section p99 was 48.87/36.72 ms owned and 30.11/14.91 ms
+raw. Checkout p99 was 1.848/2.492 ms owned and 1.427/1.416 ms raw. Both runs
+support removing the batch-copy cost, but the varying tails and effect size
+reinforce the production and hard-bound limitations. The same artifact retains
+all eight integration-repeat round summaries and their exact source commit.
+Subsequent contract expansion covers later-batch corruption, head-plus-one
+rejection and cancellation with an open cursor after getMore; it does not alter
+the scanner or benchmark implementation. Six scanning tasks do not constitute
+a 200-session workload or replace a realistic bounded-concurrency production study.
+
+Runtime-loss recovery (`CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED`, default
+`false`) rejects stale Sandbox/Agent observations before reading logs. Ineligible
+requests therefore no longer discover unrelated log corruption; eligible recovery
+and the Agent's ordinary append, publication, and read paths retain their audits.
+Terminal legacy Agents consume only an exact head proof (head exists with matching
+identity/sequence, no later rows; empty head means no rows). Failed proofs fall back
+to the complete structural/semantic audit. Live legacy Agents require the existing
+cohort-gated trusted summary or use the same complete audit. Segment proof and
+publication retain the existing exclusive transaction scope. No proof is cached
+across attempts, and terminal Agents still receive the CAS recovery fence.
+
+`runtime loss transaction phase` records fixed stages (`sandbox_read`,
+`agent_rows`, `log_full`, `log_bounded`, `agent_writes`, `event_validation`,
+`sandbox_writes`, `commit`), duration, outcome and consumed log-document counts.
+`runtime loss transaction agents` records total/live rows. The existing scan
+counters include full-scan fallback. `runtime loss reconciliation outcome` records
+one result with Sandbox ID, including cancellation. Event validation still scans
+the complete event stream; production p95 above 1 s requires a separate issue.
+The enabled reserved binding ceiling is 25 s, leaving 5 s under the background
+hard deadline; production stage measurements must validate this ceiling before
+activation. The owner controls activation and the deployment engineers own the
+before/after recovery, latency, and rollback evidence described in #1790.

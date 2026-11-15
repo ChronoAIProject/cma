@@ -443,3 +443,6 @@ async fn unseen_identity_callback_records_sign_in_without_aggregate_bootstrap() 
         assert_eq!(activity[0].target, Some(ActivityTarget::Subject(subject)));
     }
 }
+
+#[path = "flow_registration_tests/platform_closure.rs"]
+mod platform_closure;

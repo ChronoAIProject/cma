@@ -85,11 +85,15 @@ impl Sender {
                 .await
                 .map_err(|_| rejected())?;
             let permit = ctx.gate.attempt().await.map_err(|error| error.outcome())?;
-            let uploaded = self
-                .relay
-                .native_lark
-                .upload_media(&token, &destination.reply, upload)
-                .await;
+            let uploaded = super::trace::native::part(
+                images.len(),
+                true,
+                self.relay
+                    .native_lark
+                    .upload_media(&token, &destination.reply, upload),
+                super::trace::native::lark_write,
+            )
+            .await;
             drop(permit);
             ctx.gate.progress();
             let uploaded = uploaded.map_err(outcome)?;

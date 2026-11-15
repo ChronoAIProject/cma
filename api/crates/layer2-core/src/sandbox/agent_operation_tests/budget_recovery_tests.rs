@@ -186,3 +186,89 @@ fn unattempted_first_message_budget_refusal_is_terminal_and_not_replayable() {
         .authorize_recovery(&first.payload_sha256.clone(), true, LATEST.into())
         .is_err());
 }
+
+#[tokio::test]
+async fn terminal_evidence_after_a_platform_stop_fails_the_turn_with_platform_budget_exhausted() {
+    let (store, agent, parent) = fixture(AgentStatus::Ready).await;
+    let admitted = admit(
+        &store,
+        &agent,
+        &parent,
+        "platform-original",
+        AgentCommand::message("Begin"),
+    )
+    .await;
+    let (sender, inputs) = recording_sender(Ok(()));
+    let service = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+    let work = store
+        .claim_next_command(request(&agent, "worker", &crate::now_rfc3339()))
+        .await
+        .unwrap()
+        .unwrap();
+    service
+        .execute_claimed_command(&owner(), &work)
+        .await
+        .unwrap();
+    let working = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let turn = working.conversation.active_turn.unwrap();
+    let source = Arc::new(Source(Mutex::new(Some(BudgetStop {
+        agent_id: agent.id.clone(),
+        runtime_generation: 3,
+        turn_sequence: turn,
+        reason: BudgetError::PlatformExhausted,
+    }))));
+    let recorder = DurableAgentUpdateRecorder::with_spend_source(
+        store.clone(),
+        Arc::default(),
+        Some(source.clone()),
+    );
+    let mut assembly = AgentMessageAssembly::default();
+    assert!(recorder.budget_stop(&agent.id, 3).await.unwrap().is_some());
+    let terminal = ConversationUpdate::TurnEndedForPrompt {
+        prompt_id: PromptIdentity::new(
+            working.conversation.conversation_id.as_deref().unwrap(),
+            3,
+            turn,
+        ),
+        response: PromptResponse::new(TurnStopReason::Cancelled),
+    };
+    assert!(
+        recorder
+            .record_update(&agent.id, 3, &mut assembly, terminal, crate::now_rfc3339())
+            .await
+            .unwrap()
+            .turn_closed
+    );
+    let failed = store
+        .reconcile_command(&admitted.receipt.envelope.command_id)
+        .await
+        .unwrap();
+    assert_eq!(failed.status, AgentResponseStatus::Failed);
+    assert_eq!(failed.receipt, admitted.receipt);
+    let history = store.agent_log(&agent.id, 0, 100).await.unwrap();
+    assert!(history.iter().any(
+        |entry| matches!(&entry.kind, AgentLogKind::TurnFailed { failure, .. }
+        if failure.class == "platform_budget_exhausted"
+            && failure.detail.contains("platform's spend limit"))
+    ));
+    assert_eq!(inputs.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn unattempted_first_message_platform_refusal_is_terminal_and_not_replayable() {
+    let mut agent = test_agent(AgentStatus::Ready, Some("Begin"));
+    let first = agent.conversation.first_message.as_mut().unwrap();
+    first
+        .refuse_budget(BudgetError::PlatformExhausted, LATER.into())
+        .unwrap();
+    first.validate().unwrap();
+    assert_eq!(first.state, FirstMessageDelivery::Failed);
+    assert_eq!(
+        first.failure.as_ref().unwrap().code,
+        "platform_budget_exhausted"
+    );
+    assert!(!first.failure.as_ref().unwrap().retryable);
+}

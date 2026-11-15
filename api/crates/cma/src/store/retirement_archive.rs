@@ -20,7 +20,9 @@ mod census;
 mod census_catalog;
 mod completion;
 mod export;
-pub(crate) use export::{capture, schema_sha256};
+mod schema;
+pub(crate) use export::capture;
+pub(crate) use schema::{matches_current, schema_sha256, validate_manifest_census};
 #[cfg(test)]
 mod tests;
 const ORIGINAL: &str = "retirement_archive_original_v1";

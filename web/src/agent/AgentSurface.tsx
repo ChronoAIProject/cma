@@ -158,6 +158,7 @@ export function AgentSurface({
     return (
       <AgentUnavailable
         message={state.message}
+        retryAt={state.retryAt}
         headingRef={headingRef}
         onRetry={controller.reload}
       />
@@ -283,6 +284,8 @@ export function AgentSurface({
             owner={viewerId}
             granted={detail.reach}
             sandboxStatus={detail.sandbox.status}
+            running={running}
+            eventRevision={conversation.agentCursor ?? conversation.cursor}
             enabled={!readOnly && viewerId !== undefined}
           />
           <Presence>

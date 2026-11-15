@@ -116,6 +116,7 @@ fn policy_scope_is_explicit_and_invalid_settings_fail_closed() {
             stop_percent: 100,
             protected_reserve: 0,
             lag_allowance: 0,
+            cloud: None,
         }),
         default_policy: None,
         request_models: Vec::new(),
@@ -168,4 +169,22 @@ fn admin_json_numbers_must_be_exact_in_browser_clients() {
     let mut policy = policy();
     policy.owner_day_limit = 1_u64 << 53;
     assert_eq!(policy.validate(), Err(BudgetError::InvalidPolicy));
+}
+
+#[test]
+fn platform_exhaustion_guidance_holds_for_a_refused_allowance_and_for_a_stop() {
+    assert_eq!(
+        BudgetError::PlatformExhausted.code(),
+        "platform_budget_exhausted"
+    );
+    let guidance = BudgetError::PlatformExhausted.guidance();
+    assert_eq!(
+        guidance,
+        "The platform's spend limit for this period does not allow new work right now. \
+         Completed work is preserved. After the limit is raised, send a new message to \
+         continue; this turn will not replay automatically."
+    );
+    // A refused allowance pauses nothing; the pause reason text says so when
+    // a Sandbox is actually paused.
+    assert!(!guidance.contains("paused"));
 }

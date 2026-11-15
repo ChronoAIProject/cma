@@ -118,7 +118,12 @@ impl Sender {
         } else {
             Capabilities::telegram()
         };
-        let (parts, mut rendering) = RelayText.render(message, &capabilities);
+        let (parts, mut rendering) = if self.relay.commonmark_for(&event.reply) {
+            let (part, report) = RelayText.whole_with_commonmark(message, &capabilities, true);
+            (vec![part], report)
+        } else {
+            RelayText.render(message, &capabilities)
+        };
         if lark {
             let render = if native_form {
                 crate::interactions::lark::render_form

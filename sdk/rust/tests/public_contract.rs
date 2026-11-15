@@ -174,7 +174,7 @@ async fn shared_backend_corpus_replays_through_typed_sdk_methods() {
     let mut wire_shape = 0;
     let mut browser_owned = 0;
     if std::env::var_os("CMA_SDK_CONTRACT_FILE").is_none() {
-        for (id, _) in classification::LOCAL_CASES {
+        for (id, _) in classification::local_cases() {
             assert!(
                 corpus.iter().any(|case| case.id == *id),
                 "stale local classification {id}"

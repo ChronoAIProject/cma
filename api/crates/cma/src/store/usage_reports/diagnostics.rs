@@ -5,19 +5,43 @@ use std::collections::BTreeSet;
 impl ReportingStore {
     pub(crate) async fn diagnostic_bindings(
         &self,
+        holder: &str,
         candidates: Vec<Binding>,
     ) -> Result<Vec<Binding>> {
-        use futures_util::TryStreamExt;
+        if candidates.len() > 200 {
+            return Err(MetricsError::Busy);
+        }
+        self.check_circuit(now())?;
+        let mut session = self.client.start_session().await.map_err(unavailable)?;
+        session.start_transaction().await.map_err(unavailable)?;
+        let result = self
+            .diagnostic_bindings_in_session(candidates, &mut session)
+            .await;
+        self.commit_controlled_write("diagnostics", holder, &mut session, result)
+            .await
+    }
+
+    async fn diagnostic_bindings_in_session(
+        &self,
+        candidates: Vec<Binding>,
+        session: &mut mongodb::ClientSession,
+    ) -> Result<Vec<Binding>> {
         let keys: Vec<_> = candidates.iter().map(Binding::physical_key).collect();
         let mut cursor = self
             .collection(super::super::sandbox_metric_bindings::COLLECTION)
             .find(doc! {"active_physical":{"$in":keys}})
             .projection(doc! {"active_physical":1})
+            .session(&mut *session)
             .max_time(DB_DEADLINE)
             .await
             .map_err(unavailable)?;
         let mut assigned = BTreeSet::new();
-        while let Some(d) = cursor.try_next().await.map_err(unavailable)? {
+        while let Some(d) = cursor
+            .next(&mut *session)
+            .await
+            .transpose()
+            .map_err(unavailable)?
+        {
             assigned.insert(
                 d.get_str("active_physical")
                     .map_err(unavailable)?
@@ -33,6 +57,7 @@ impl ReportingStore {
             if let Some(d) = self
                 .collection(CONTROL)
                 .find_one(doc! {"_id":&key})
+                .session(&mut *session)
                 .max_time(DB_DEADLINE)
                 .await
                 .map_err(unavailable)?
@@ -47,20 +72,25 @@ impl ReportingStore {
             }
             self.collection(CONTROL).replace_one(doc!{"_id":&key},
                 doc!{"_id":key,"document_schema_version":1_i64,"record":encode(&b)?,"expires_at":expires(b.observed_at+86_400)})
-                .upsert(true).await.map_err(unavailable)?;
+                .upsert(true).session(&mut *session).await.map_err(unavailable)?;
             result.push(b);
         }
         Ok(result)
     }
     pub(crate) async fn save_infrastructure(
         &self,
+        holder: &str,
         value: &Infrastructure,
         revision: u64,
     ) -> Result<()> {
-        self.collection(CONTROL).replace_one(doc!{"_id":"infrastructure"},
+        self.check_circuit(now())?;
+        let mut session = self.client.start_session().await.map_err(unavailable)?;
+        session.start_transaction().await.map_err(unavailable)?;
+        let result = self.collection(CONTROL).replace_one(doc!{"_id":"infrastructure"},
             doc!{"_id":"infrastructure","document_schema_version":1_i64,"revision":revision as i64,"record":encode(value)?})
-            .upsert(true).await.map_err(unavailable)?;
-        Ok(())
+            .upsert(true).session(&mut session).await.map(|_| ()).map_err(unavailable);
+        self.commit_controlled_write("diagnostics", holder, &mut session, result)
+            .await
     }
     pub(crate) async fn infrastructure_at(
         &self,

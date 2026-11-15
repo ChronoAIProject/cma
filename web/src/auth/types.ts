@@ -47,6 +47,15 @@ export interface User {
   readonly visitor: boolean;
 }
 
+/** Failure disposition only: no response headers, credentials or identity data. */
+export type AuthRetryMetadata =
+  | { readonly kind: 'transport' }
+  | {
+      readonly kind: 'http';
+      readonly status: 429 | 502 | 503 | 504;
+      readonly retryAfterMs?: number;
+    };
+
 export type AuthState =
   | { readonly status: 'checking' }
   | { readonly status: 'anonymous' }
@@ -55,10 +64,11 @@ export type AuthState =
       readonly status: 'error';
       readonly message: string;
       readonly reason?: 'identity_unavailable' | 'service_unavailable';
+      readonly retry?: AuthRetryMetadata;
     };
 
 export interface AuthProvider {
-  current(): Promise<AuthState>;
+  current(signal?: AbortSignal): Promise<AuthState>;
   signIn(returnTo?: string, options?: SignInOptions): Promise<void>;
   signOut(): Promise<void>;
   /**

@@ -16,6 +16,7 @@ const recorded = cases.find((entry) => entry.id === 'admin-settings-read')!.resp
 const availabilityFields = [
   'model_budget_writes_available',
   'model_request_budget_writes_available',
+  'platform_spend_writes_available',
 ] as const;
 const availableValues = [true, false, undefined] as const;
 
@@ -62,3 +63,24 @@ for (const field of availabilityFields) {
     expect(t.calls).toHaveLength(3);
   });
 }
+
+it.each(availableValues)(
+  'preserves platform spend availability %s outside policy',
+  async (value) => {
+    const t = transport();
+    const body = { ...recorded };
+    for (const field of availabilityFields) delete body[field];
+    const metadata = value === undefined ? {} : { platform_spend_writes_available: value };
+    t.answer({ ...body, ...metadata });
+    const read = await t.client.admin.readSettings();
+    expect(read).toEqual({ ...body, ...metadata });
+    const saved = await t.client.admin.replaceSettings({
+      expected_revision: read.revision,
+      settings: read.settings,
+    });
+    expect(saved).toEqual(read);
+    expect(JSON.parse(String(t.calls.at(-1)!.init.body))).not.toHaveProperty(
+      'platform_spend_writes_available',
+    );
+  },
+);

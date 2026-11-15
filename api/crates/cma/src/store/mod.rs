@@ -1,6 +1,8 @@
 //! Durable adapters that do not depend on a resource aggregate.
+mod admission_checks;
 
 pub mod activity;
+pub(crate) mod admission_control;
 #[cfg(test)]
 mod admission_wake_test_support;
 pub(crate) mod agent_access_requests;
@@ -11,6 +13,7 @@ pub(crate) mod agent_capacity_recovery;
 mod agent_capacity_recovery_presence;
 mod agent_channel_usage;
 mod agent_commands;
+mod agent_connection_observations;
 mod agent_control_lineage;
 mod agent_control_receipt;
 mod agent_control_store;
@@ -28,6 +31,8 @@ mod agent_log_store;
 pub(crate) mod agent_log_telemetry;
 mod agent_log_transcript;
 mod agent_log_usage;
+mod agent_opening_reads;
+pub(crate) mod agent_ownership;
 mod agent_profiles;
 mod agent_provenance;
 mod agent_provenance_backfill;
@@ -35,6 +40,7 @@ mod agent_provenance_inventory;
 mod agent_reads;
 mod agent_task_status;
 mod agent_title_claims;
+mod agent_title_effect;
 mod agent_title_retry;
 mod agent_title_state;
 mod agent_title_writes;
@@ -62,10 +68,14 @@ mod checkpoint_storage;
 mod checkpoints;
 mod child_writer_claims;
 mod codex_subscriptions;
+mod contention;
+mod cooperative_budget;
 mod default_profiles;
 pub mod directory;
 mod durability;
+mod empty_discovery;
 mod encryption;
+mod execution_sections;
 mod media_uploads;
 pub(crate) mod provenance_progress;
 mod segment_response;
@@ -108,6 +118,7 @@ pub(crate) mod native_prepared;
 pub mod operation;
 mod operator_profiles;
 mod operator_sandboxes;
+mod platform_write_coordination;
 mod profile_documents;
 #[cfg(test)]
 mod profile_index_tests;
@@ -128,7 +139,7 @@ pub(crate) mod sandbox_colors;
 mod sandbox_controls;
 mod sandbox_credentials;
 mod sandbox_events;
-mod sandbox_maintenance;
+pub(crate) mod sandbox_maintenance;
 mod sandbox_mongo;
 pub(crate) use sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
@@ -166,6 +177,12 @@ mod trigger_first_messages;
 mod warm_sandboxes;
 pub(crate) mod worker_observations;
 pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
+mod work_claim_authority;
+mod work_lease_parent;
+mod work_lease_renewal;
+mod work_lease_update;
+mod work_publication;
+mod work_schema;
 mod workspace_admission;
 mod workspace_prepare_recovery;
 mod workspace_profiles;
@@ -175,14 +192,15 @@ mod workspaces;
 mod worktrees;
 
 pub use activity::MongoActivityStore;
+pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
 pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
 pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
 #[cfg(test)]
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
-    CreateResult, LifecycleBehavior, LifecycleInput, LifecycleLease, MongoAgentLifecycleStore,
-    DISCOVERY_BATCH, HEARTBEAT,
+    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
+    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
@@ -210,6 +228,7 @@ pub(crate) mod runtime_routing;
 pub(crate) mod native_warm_pools;
 
 // Measured reporting read models (#1332); independent of lifecycle writes.
+pub(crate) mod allocation_buckets;
 pub(crate) mod sandbox_metric_bindings;
 pub(crate) mod sandbox_metric_rollups;
 pub(crate) mod sandbox_usage_rollups;

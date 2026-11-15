@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox::store::{AgentWorkerStore, WorkspaceWorkerStore};
 
 fn workspace(sandbox: &Sandbox) -> Workspace {
@@ -139,12 +140,7 @@ async fn runtime_update_mongo_defers_work_and_fences_all_children_when_idle() {
                 .await
                 .unwrap();
             assert!(store
-                .claim_workspace_work(
-                    &workspace.id,
-                    "late",
-                    LATER.into(),
-                    "2026-09-05T00:40:00Z".into()
-                )
+                .claim_workspace_work(&workspace.id, "late", LATER.into(), work_lease_deadline())
                 .await
                 .unwrap()
                 .is_none());

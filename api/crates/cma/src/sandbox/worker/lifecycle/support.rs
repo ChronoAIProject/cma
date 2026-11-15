@@ -144,9 +144,15 @@ impl SandboxWorker {
         let stamp = rfc3339_at(now);
         let lease = lifecycle_lease(&sandbox, &self.config.holder)?;
         let mut next = sandbox.clone();
+        let decision = self.retry_decision(&sandbox, &failure, retry_delay);
+        let telemetry = if failure.is_retryable() {
+            self.retry_telemetry(&sandbox, &failure, decision, now)
+        } else {
+            None
+        };
         let recorded_failure = if failure.is_retryable() {
             next.retry_lifecycle(
-                rfc3339_at(now + retry_delay),
+                rfc3339_at(now + decision.delay),
                 &lease.holder,
                 lease.fence,
                 stamp.clone(),
@@ -187,7 +193,11 @@ impl SandboxWorker {
                 failure: recorded_failure,
             }],
         )
-        .await
+        .await?;
+        if let Some(telemetry) = telemetry {
+            telemetry.published();
+        }
+        Ok(())
     }
 
     pub(super) async fn lifecycle_state_matches(
@@ -197,7 +207,9 @@ impl SandboxWorker {
         Ok(
             SandboxStore::get_sandbox(self.dependencies.store.as_ref(), &expected.id)
                 .await?
-                .is_some_and(|stored| stored == *expected),
+                .is_some_and(|stored| {
+                    layer2_core::sandbox::store::sandbox_content_matches(Some(&stored), expected)
+                }),
         )
     }
 }

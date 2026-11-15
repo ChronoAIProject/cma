@@ -20,7 +20,7 @@ use layer2_core::sandbox::{
 };
 use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, ActivityStore,
-    Authorization, Capability, Page, PlatformSettings, PlatformSettingsService,
+    ActivityTarget, Authorization, Capability, Page, PlatformSettings, PlatformSettingsService,
     PlatformSettingsStore, ProviderInventory, RuntimeEntry, RuntimeInventory, RuntimeStatus,
     SandboxId, StoreError, StoredPlatformSettings, SubjectId,
 };
@@ -29,6 +29,9 @@ use tower::ServiceExt;
 
 use super::*;
 use crate::auth::AuthenticatedSubject;
+
+#[path = "admin/admission_tests.rs"]
+pub(crate) mod admission_control_tests;
 
 const NOW: &str = "2026-09-05T00:00:00Z";
 

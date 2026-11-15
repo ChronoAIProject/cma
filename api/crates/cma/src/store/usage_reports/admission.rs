@@ -53,7 +53,7 @@ impl ReportingStore {
         let tenant = reserved("tenant")?;
         let queued = self
             .collection(JOBS)
-            .count_documents(doc! {"state":"pending","logical_expires_at":{"$gt":at as i64}})
+            .count_documents(doc! {"state":{"$in":["pending","view_pending"]},"logical_expires_at":{"$gt":at as i64}})
             .session(&mut session)
             .await
             .map_err(unavailable)?;
@@ -110,7 +110,9 @@ impl ReportingStore {
             .await
             .map_err(unavailable)?;
         session.commit_transaction().await.map_err(unavailable)?;
+        self.notifications.wake();
         tracing::info!(
+            report_id = %report.report_id,
             queued_jobs = queued + 1,
             reserved_bytes = global + self.budgets.report_bytes,
             "sandbox report admitted"

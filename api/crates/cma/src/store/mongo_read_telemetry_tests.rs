@@ -153,3 +153,31 @@ async fn final_sample_includes_completed_and_cancelled_worker_drain_reads() {
         .await;
     }
 }
+
+#[tokio::test(start_paused = true)]
+async fn scoped_document_counts_isolate_collections_nested_work_and_cancelled_reads() {
+    let outer = DocumentObserver::new("agent_log");
+    let nested = DocumentObserver::new("agent_log");
+    outer
+        .scope(async {
+            Read::find("agents").document(10);
+            Read::find("agent_log").document(10);
+            nested
+                .scope(async {
+                    Read::find("agent_log").document(10);
+                })
+                .await;
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                    Read::find("agent_log").document(10);
+                    std::future::pending::<()>().await;
+                })
+                .await
+                .is_err()
+            );
+        })
+        .await;
+    Read::find("agent_log").document(10);
+    assert_eq!(outer.documents(), 2);
+    assert_eq!(nested.documents(), 1);
+}

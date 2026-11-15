@@ -88,6 +88,44 @@ fn output(ack: mpsc::Sender<RuntimeOutputSource>) -> ConversationUpdate {
 }
 
 #[tokio::test]
+async fn expired_reopen_authority_never_polls_a_ready_effect() {
+    let recorder = Recorder {
+        entered: Notify::new(),
+        release: Notify::new(),
+        committed: Mutex::new(Vec::new()),
+        refuse: false,
+    };
+    let (_send, mut receiver) = mpsc::channel(1);
+    let mut observed = guard();
+    observed.sandbox.lease = Some(layer2_core::sandbox::SandboxWorkLease {
+        holder: "expired-worker".into(),
+        fence: 1,
+        expires_at: "2000-01-01T00:00:00Z".into(),
+    });
+    let mut polls = 0;
+    let effect = async {
+        polls += 1;
+        Ok(())
+    };
+    let result = drain_while(
+        effect,
+        &mut receiver,
+        &recorder,
+        &AgentId("agt_reopen".into()),
+        &observed,
+    )
+    .await;
+    assert_eq!(
+        result,
+        Err(AdapterError::Unavailable(
+            "reopen output lifecycle lease expired".into()
+        ))
+    );
+    assert_eq!(polls, 0);
+    assert!(recorder.committed.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn reopen_ack_follows_commit_even_when_handshake_then_fails() {
     let recorder = Arc::new(Recorder {
         entered: Notify::new(),

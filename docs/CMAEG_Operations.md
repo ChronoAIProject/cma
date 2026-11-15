@@ -335,6 +335,7 @@ applies with all media flags off.**
 | `CMAEG_PROVIDER_REQUEST_TIMEOUT_MS` | positive integer, ms | `30000` | Deadline for provider setup and probe requests, and receipt of streaming HTTP response headers. Active streams are owned and bounded by their consumer. CMA verified-sender input uses a 2-second attestation deadline inside a 5-second preflight budget; keep the provider POST budget at least 10 seconds when enabling that extension (the deployed 30000 ms value is capped at 20 seconds for frozen submission). |
 | `CMAEG_PROVIDER_MAX_INFLIGHT` | positive integer | `256` | Deployment-wide upper bound applied to each provider's semaphore. Calls wait at most 50 ms for a provider permit before returning a typed busy result. |
 | `CMAEG_PUBLIC_URL` | origin URL | Required | Retained event identity and legacy callback authority, without a trailing slash. Production `https://bot-gateway.chrono-ai.fun`. HTTPS, or loopback HTTP for local tests. |
+| `CMAEG_CONSOLE_SHARED_SESSIONS` | `true` or `false` | `false` | Shared durable Console authority in `eg_console_sessions`. Requires the separately approved migration, collection-scoped roles and exclusion of all legacy Console-serving processes. Replica mode with Console enabled refuses startup while this switch is off; enabled storage prerequisites are verified before replica startup. No startup DDL. See [Console authority](#console-authority). |
 | `CMAEG_CONSOLE_NYXID_PUBLIC_URL` | origin URL | `CMAEG_NYXID_BASE_URL` | Console OAuth discovery, authorization, token, revocation and organization-list origin. Production `https://api.nyxid.ai`; HTTPS required except loopback tests. Discovery must advertise endpoints on this exact origin. Does not change shared creator authentication, retained issuer, service audiences or credentials. |
 | `CMAEG_CONSOLE_PUBLIC_URL` | origin URL | `CMAEG_PUBLIC_URL` | Browser console OAuth/CSRF origin. Production `https://cma.nyxid.ai`; register `/console/callback` on the existing OAuth client and route `/console` to CMAEG before enabling. Same strict origin rules as the public origin. Does not change event identities, master keys, or agent credentials. |
 | `CMAEG_PUBLIC_API_URL` | public base URL | `CMAEG_PUBLIC_URL` | Canonical API, setup, webhook and media URL base. Production `https://cma.nyxid.ai/event-gateway`. HTTPS with clean optional path segments; no credentials, query, fragment or trailing slash. Loopback HTTP is allowed for local tests. |
@@ -374,6 +375,8 @@ applies with all media flags off.**
 | `CMAEG_NYXID_REPLY_TIMEOUT_MS` | positive integer, ms | `5000` | NyxID reply connect/send/read timeout; uncertain sends are never blindly retried. |
 | `CMAEG_OUTBOUND_MESSAGES_WRITES_ENABLED` | boolean | `false` | Enables owner-reviewed preparation and explicit commit to an existing authorized relay destination. Does not grant native media, templates or interaction authority. Retained receipts and pre-commit cancellation remain available when disabled. |
 | `CMAEG_NYXID_COMPLETE_REPLIES` | boolean | `false` | `true` selects one complete ordinary relay request and attests that the deployed NyxID ordinary/thread splitters and full-send receipts have been verified. `false` preserves legacy chunking. Only exact `true`/`false` are accepted; see the coordinated rollout below. |
+| `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED` | boolean | `false` | Preserves original CommonMark for Telegram NyxID relay replies, keyboard replies, media captions and edits using explicit CommonMark routes. Requires verified deployed NyxID support; never falls back to legacy after submission. Only exact `true`/`false` are accepted; see [CommonMark relay rollout](#commonmark-relay-rollout). |
+| `CMAEG_NYXID_TURN_TRACE_ENABLED` | boolean | `false` | The enabled gateway interprets bounded, single-value W3C `traceparent` headers only after the existing reply or edit authority checks. Both the process switch and this binding's retained acknowledgement are required before native response, snapshot or replay requests send `X-NyxID-Turn-Trace-Contract: 1`. Missing, null, unknown or malformed echoes leave the binding unnegotiated. With the switch disabled, capability requests and trace headers are absent and existing wire bodies are unchanged. See [authenticated delivery traces](CMAEG_Protocol.md#authenticated-delivery-traces) and [optional NyxID turn correlation](CMAEG_Protocol.md#optional-nyxid-turn-correlation). |
 | `CMAEG_NYXID_NATIVE_MEDIA_ENABLED` | boolean | `false` | Advertises and accepts explicit `native_attachments` on verified NyxID Telegram, Lark/Feishu, Discord and WhatsApp relays. This relay-only gate does not control native Telegram Bot API or native Discord media uploads. Enable only after every serving NyxID replica honors the attachment contract and controlled file/image/audio/video sends confirm actual platform attachments. An older replica may ignore an unknown attachment field. Native media uses a single bounded 60 s exchange and a 65 s non-routed tool deadline; legacy text keeps its configured timeout and 8 s tool deadline. Complete ordinary replies use 15 s/18 s. Compatible runtime tool proxies wait 70 s; retained older Sandbox images may still cut off at 10 s. Routed sends retain their independent 20 s window. Only exact `true`/`false` are accepted. |
 | `CMAEG_CONSUMER_INTERACTIONS_ENABLED` | boolean | `false` | Enables new named-consumer native controls after every callback reader supports the optional encrypted owner snapshot. Requires each platform's own gate. Retained callbacks remain executable with this flag off. Removed, pending or rebound consumers are refused; credential rotation is allowed. Default records and dispatch remain unchanged. |
 | `CMAEG_DISCORD_INTERACTIONS_ENABLED` | boolean | `false` | Issues native Discord buttons and single-select menus in ordinary channels and verified existing threads after all serving and rollback readers support native card identity, optional thread proof, callback inbox snapshots and durable interaction admission. Named consumers also require `CMAEG_CONSUMER_INTERACTIONS_ENABLED`. Disabling stops new issuance; retained callbacks and recovery remain readable. Gateway type-3 callbacks persist Activity before a single type-6 acknowledgement attempt within a 2.5-second budget. Thread controls require retained exact-thread event/reply evidence plus authenticated channel metadata at issuance and for fresh clicks; replies stay in that thread. Multi-select additionally requires `CMAEG_DISCORD_MULTISELECT_ENABLED`; one mixed native upload requires `CMAEG_NATIVE_DISCORD_MEDIA_CONTROLS_ENABLED`, and interactive edits have a separate gate. See [Native Discord controls](CMAEG_Native_Discord_Interactions.md). |
@@ -401,7 +404,7 @@ applies with all media flags off.**
 | `CMAEG_FAILURE_TEXT` | string | `Sorry, I couldn’t finish that request. Please try again.` | Short failure notice; same bounds as acknowledgement text. |
 | `CMAEG_DRAIN_SECONDS` | positive integer, seconds | `600` | Maximum shutdown drain for tracked turns and HTTP requests. |
 | `CMAEG_BUSY_RETRY_MAX_MS` | positive integer, ms | `180000` | Maximum interval for retrying upstream busy refusals, including first-conversation preparation. Jitter is added after the provider's `Retry-After` minimum. |
-| `CMAEG_CONSOLE_ENABLED` | `true` or `false` | `false` | Switch for the sign-in console at `/console`. Exactly `true` or `false`; any other value fails startup. Off, no `/console` route exists (404, as before) and nothing console-related is allocated. On, the console never blocks startup or readiness: while its OAuth client is incomplete or NyxID discovery has not succeeded, `/console*` answers a generic 503 page and ingress is unaffected. Enabling it requires its in-memory state to fit in an eighth of the `cmaeg` memory limit: `CMAEG_CONSOLE_ACTIVITY_MAX_BYTES` + `CMAEG_CONSOLE_INDEX_MAX_RECORDS` × 300 B + `CMAEG_CONSOLE_CHANNEL_IDS_MAX` × 600 B + `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` × 2 KiB + `CMAEG_CONSOLE_SESSIONS_MAX` × 4 KiB, about 80 MiB at the defaults against 128 MiB at a 1Gi limit; `tests/infra_manifests.rs` enforces this. See [Console OAuth client](#console-oauth-client). |
+| `CMAEG_CONSOLE_ENABLED` | `true` or `false` | `false` | Switch for the sign-in console at `/console`. Exactly `true` or `false`; any other value fails startup. Off, no `/console` route exists (404, as before) and nothing console-related is allocated. On, its configured shared storage must pass startup verification; while its OAuth client is incomplete or NyxID discovery has not succeeded, `/console*` answers a generic 503 page and ingress is unaffected. Enabling it requires its in-memory state to fit in an eighth of the `cmaeg` memory limit: `CMAEG_CONSOLE_ACTIVITY_MAX_BYTES` + `CMAEG_CONSOLE_INDEX_MAX_RECORDS` × 300 B + `CMAEG_CONSOLE_CHANNEL_IDS_MAX` × 600 B + `CMAEG_CONSOLE_SUMMARY_CACHE_MAX` × 2 KiB + `CMAEG_CONSOLE_SESSIONS_MAX` × 4 KiB, about 80 MiB at the defaults against 128 MiB at a 1Gi limit; `tests/infra_manifests.rs` enforces this. See [Console OAuth client](#console-oauth-client). |
 | `CMAEG_CONSOLE_CLIENT_ID` | string | `""` | The NyxID OAuth client id the console signs people in with: at most 256 printable characters without spaces. Empty leaves the console at its 503 page, with an `error` log naming this key. |
 | `CMAEG_CONSOLE_CLIENT_SECRET` | secret string | unset | The console client's secret, injected from Kubernetes Secret `cmaeg-console-oauth` through an optional `secretKeyRef`; never a ConfigMap value, never logged. Unset or empty leaves the console at its 503 page, with an `error` log naming this key. |
 | `CMAEG_CONSOLE_LOGIN_RATE_PER_MINUTE` | unsigned decimal | `60` | 1..=6000. One gateway-wide limit shared by `/console/login` and `/console/callback`; over it, either renders the sign-in page with 429. It also bounds the token requests the console sends NyxID. |
@@ -1191,12 +1194,55 @@ that need a refresh end. Ingress, tools and delivery are unaffected.
 
 ### Console authority
 
+Shared mode uses encrypted Mongo session authority across independently constructed
+replicas. Install the exact schema and collection-scoped roles only through the
+owner-approved data route: print the role documents with
+`--print-console-sessions-runtime-role` and
+`--print-console-sessions-migration-role`, then run
+`--migrate-console-sessions` with the migrator. Application startup only verifies
+effective grants, schema marker and required indexes. The new collection is
+`eg_console_sessions`; existing `eg_auth_sessions` is unchanged.
+
+Enable `CMAEG_CONSOLE_SHARED_SESSIONS=true` only after every legacy
+Console-serving process has ceased or is excluded. Legacy cookies require a new
+sign-in. Normal recovery uses a compatible shared-session image and the same
+master-key ring/collection, preserving the independent EG replica protocol floor.
+Owner decision #139 A permits neither affinity-only S2 nor a Console-disable
+fallback; image 67d1 cannot honor shared revocation.
+
+In shared mode, every request checks durable live state with Mongo time; TTL
+deletion is cleanup only. Refresh claims a durable single-use attempt before
+contacting NyxID. Provider uncertainty or process loss never makes the old token
+eligible for replay. A published result can be reconciled across later owner or
+display changes; unavailable readback never revokes a possibly published token.
+Unresolved attempts fail closed and require sign-in. Token expiry is anchored
+before provider I/O. Final admission after identity checks compares the exact
+checked snapshot and requires more than 33 seconds of access-token lifetime
+(the 30-second useful margin plus the 3-second storage acknowledgement budget).
+A request already admitted before durable logout may finish.
+
+Logout clears the browser cookie only after majority-confirmed deletion or
+authoritative absence. Database failure returns 503 and retains the cookie for
+retry. Late refresh results, touches and owner updates never upsert revoked
+sessions. Provider cleanup is bounded best effort: logout uses the latest deleted
+token, quota creation returns at most four victim receipts, and uncertain
+acknowledgement may lose a cleanup receipt without restoring session authority.
+Shared expiry is enforced on reads; database TTL cleanup does not promise
+provider-token revocation. The legacy in-memory sweeper remains local-only.
+
+Per instance, shared mode permits 64 requests and 16 refresh/wait operations,
+refusing excess work immediately. Fresh active sessions bypass the refresh
+budget after durable observation. Waiters poll every 100 ms with an 8-second
+polling deadline; individual storage operations are bounded to 3 seconds.
+Metadata revision contention returns 503 for a new request rather than applying
+an old authority verdict to a new selection.
+
 A session's selected owner is a selection, never a grant. Every `/console*`
 request except the sign-in, login, callback and signed-out pages and
 `POST /console/logout` derives owner authority again before it reads or
 writes anything (Amendment R6 §R6.4). Reads and writes, the owner switch
 included, take the same check; there is no separate mutation path. Under the
-session's own lock, each request:
+session's own lock, legacy single-process mode handles tokens as follows:
 
 1. ends a session idle for `CMAEG_CONSOLE_SESSION_IDLE_MS` (30 minutes) or
    older than `CMAEG_CONSOLE_SESSION_TTL_MS` (8 hours), revoking its refresh
@@ -1220,12 +1266,11 @@ session's own lock, each request:
 | Organization | Refused | The selection becomes Personal with "Your admin access to … has ended", and the Personal check runs: a GET is served as Personal (an organization record answers 404), and a POST changes nothing and goes to `/console` |
 | Either | Unavailable, including the 3-second timeout | The generic 503 page with no channel data; the session and its selection are kept |
 
-Logout derives no authority, so it ends the session even during an outage.
+Logout derives no NyxID authority and works during an identity-provider outage. Shared mode still requires a durable revocation result.
 
 **Owner switcher.** The signed-in layout shows the masked subject, a
 switcher offering "Personal" and the organizations NyxID's
-`GET /api/v1/orgs` lists for the session's own token (fetched at most once a
-minute per session; display only), and sign-out. Organizations where the
+`GET /api/v1/orgs` lists for the session's own token (display only; legacy mode caches this list for a minute, while shared requests use their current token), and sign-out. Organizations where the
 account is not an admin are shown disabled with "Admin role required".
 `POST /console/owner` first passes the same per-request check for the current
 selection, then verifies the requested owner with `authenticate_token` and
@@ -1242,9 +1287,9 @@ record_hash, outcome, subject_hash_prefix, owner_kind}` and login
 | Organization admin demoted or removed; organization deleted | 60 s (the cache's success TTL), as on REST |
 | User deactivated, or grant revoked, on a Personal or organization view | 60 s, as on REST |
 | Logout in this console | At once |
-| Console disabled and the rollout restarted | At once (sessions live only in memory) |
+| Legacy process restart | Local sessions end; shared sessions survive instance loss |
 
-**Load.** Per session there is at most one cache fill per 60 seconds, or per
+**Load.** Per process and token there is at most one cache fill per 60 seconds, or per
 10 seconds after a failure; concurrent requests of one session wait on its
 lock and share that fill. Each refresh, about every 870 seconds with NyxID's
 900-second tokens, changes the token and so starts a new fill. A Personal
@@ -1259,7 +1304,7 @@ because NyxID could not answer, sustained for 10 minutes:
 `sum(increase(cmaeg_console_authorizations_total{outcome=~"unavailable|refresh_transient"}[10m])) > 0`.
 Console users are seeing the generic 503 page because NyxID's `users/me`,
 organization authorization or token endpoint is slow or unreachable; their
-sessions are kept and recover by themselves. Ingress is unaffected.
+identity-authority outages preserve sessions; a shared rotating-token attempt with an unknown outcome requires sign-in. Ingress is unaffected.
 
 ### Console memory
 
@@ -1417,18 +1462,29 @@ chunk. They are expected, not a fault, and need no repair.
 
 #### Media download links
 
-A media link is redeemed in a per-replica set before the download is checked
-any further. The set keeps a redeemed link's jti for ten minutes, the longest
-a link can live, and holds up to 16,384 entries (about 2 MiB). A replica
-mints at most 600 links per minute, so at most 6,000 of its links are live at
-once and the set never evicts one that is still live: a second use on the same
-replica is always refused with `410 media_link_used`. The set is not shared and does not survive a
-restart, so during a rollout surge, or after a restart, a link can be redeemed
-once more on another replica before it expires. That is the accepted bound:
-links expire within minutes and every request re-validates the channel, the
-binding, the agent key and the source, so rotating the agent key, switching
-the binding to guarded, or removing the source revokes every outstanding link
-at once on every replica.
+A media link is consumed by an atomic create in shared encrypted interaction
+storage before authority checks or source fetch. The record survives gateway
+restart and replica replacement and expires at the sealed link's deadline.
+Conflicts return `410 media_link_used`; storage failures or lost acknowledgements
+return `503 media_redemption_unavailable` without fetching or releasing bytes.
+The existing record transport uses create-only CAS; Gateway Mongo uses its
+unique record ID and majority write concern. No additional collection or index
+is required. A local cache retains up to 16,384 refusals (about 2 MiB) for ten
+minutes, but an empty or evicted cache never authorizes consumption.
+
+Each fresh attempt adds one indexed record create, retained for at most ten
+minutes, and one uncached channel authority read. At the existing maximum mint
+rate, each replica contributes at most 6,000 live redemption rows. Refused
+authority checks also consume their links. Changing the binding, agent key or
+source is checked from the backing channel record even when the serving
+replica's channel cache remains warm. An unreadable authority fails closed.
+No token, filename, source locator or bytes enter diagnostics.
+
+Before enabling native download issuance, drain serving binaries that only keep
+process-local redemption state and let their outstanding links expire (at most
+600 seconds). Keep the existing issuance switches off until the entire serving
+and rollback set understands the shared claim. Older binaries can ignore these
+rows, so a mixed fleet cannot provide the shared single-use guarantee.
 
 ### Media turn preparation
 
@@ -2731,6 +2787,44 @@ rendering or callback acceptance.
 
 ## Coordinated complete-reply rollout
 
+### CommonMark relay rollout
+
+Keep `CMAEG_NYXID_COMMONMARK_RELAY_ENABLED=false` until every serving NyxID
+replica supports `/api/v1/channel-relay/reply/commonmark`,
+`/api/v1/channel-relay/thread-reply/commonmark`, and
+`/api/v1/channel-relay/reply/update/commonmark`. This is an independent switch:
+Telegram relay replies use one original CommonMark request when enabled, even
+with `CMAEG_NYXID_COMPLETE_REPLIES=false`. Native Telegram and other platforms
+retain their existing rendering. Initiated `/send` messages retain their existing
+contract. Enabling the switch attests to deployed support; a 404 does not trigger
+a legacy retry.
+
+The counterpart source inspected at NyxID
+`da70dddc9ad9a8de7026b4319909a6927cd2d3e1` marks these requests as CommonMark,
+preserves keyboard/attachment metadata for single-part output, and refuses
+multipart output with keyboards or attachments before platform sends. Source
+inspection is not deployment evidence. Before activation, verify on the intended
+builds the multilingual control from #1602, literal brackets/backslashes, inline
+and fenced code, astral/combining characters, and at least 11k characters in
+ordered ordinary and thread replies. Verify keyboard callbacks and updates,
+media captions, and the one-part refusal boundary after CommonMark conversion.
+Exercise a formatting failure with NyxID's plain fallback, then failed/lost
+fallback and an accepted multipart prefix; confirm terminal outcomes and no
+replay of accepted or uncertain parts. Record exact serving build IDs and safe
+receipt evidence. No production rendering or root cause is proved by local mocks.
+
+Ordinary CommonMark exchanges use 15 s and Telegram reply tools wait 18 s;
+media uses the existing 60 s/65 s budgets. Keyboards and edits retain the configured
+exchange timeout. Routed 20 s windows, leases and retained runtime proxy budgets
+remain as described below. Timeout, malformed receipt, non-200 response and
+possibly delivered multipart prefixes remain unknown. Neither 502 nor an absent
+receipt proves that nothing was delivered. NyxID owns per-part fallback and
+receipts; CMAEG submits each logical reply once and never changes endpoints after
+submission. Disable the switch for future operations to roll back; do not replay
+uncertain sends.
+
+### Complete ordinary reply activation
+
 Keep `CMAEG_NYXID_COMPLETE_REPLIES=false` until the NyxID dependency is ready.
 This default preserves existing short and long reply behavior and its known
 chunk/URL/reply-token limitations. Enabling the switch is the operator's explicit
@@ -3415,3 +3509,30 @@ Use `time() - cmaeg_provider_permit_oldest_wait_timestamp_seconds` only with
 See [permit semantics](CMA_Observability.md#admission-terminal-browser-and-eg-coverage).
 Worker/readiness changes belong to [CMA #1740](https://github.com/ChronoAIProject/cma/issues/1740)
 and a separate PR.
+
+## Provider refusal reason verification
+
+The optional `upstream` problem extension in [the protocol](CMAEG_Protocol.md)
+adds a closed reason code, failing operation and actual provider HTTP status.
+It adds no configuration, storage operation, retry or platform send. The outer
+callback status and configured failure reply keep their existing behavior.
+
+After an authorized CMAEG deployment, the release owner should record the
+serving source SHA and image digest, deployment time, and matched natural-traffic
+windows. Compare guest and owner `telegram-new` outcomes using aggregate counts
+and hashed correlations only. Guests should receive ordinary assistant answers;
+a delivered failure notification is not a successful turn. Count relay 502s and
+provider-start refusals by operation, status and allowlisted code, and confirm
+that successful traffic does not gain additional provider attempts. Stop the
+rollout investigation on new failure classes or evidence of changed retry,
+authorization or delivery behavior; preserve the original correlation hashes.
+
+Owner-visible reasons also require the NyxID callback consumer to read the
+bounded problem extension on non-2xx replies, validate its operation/status/code,
+and retain only those safe fields for owner diagnostics. At NyxID source
+`da70dddc9ad9a8de7026b4319909a6927cd2d3e1`, `channel_relay_service.rs` only
+reads the 202 disposition body and does not consume non-2xx problem metadata.
+Verify a compatible NyxID reader and owner surface before claiming that reasons
+are visible there. Older consumers retain their existing HTTP failure behavior.
+No production verification or downstream-reader deployment is established by
+the local refusal, logging, OpenAPI or latency tests.

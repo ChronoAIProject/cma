@@ -12,6 +12,15 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTI
 
 #[async_trait::async_trait]
 impl WorkspaceWorkerStore for MongoSandboxStore {
+    async fn scope_workspace_publication<'a>(
+        &'a self,
+        work: std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<bool, SandboxStoreError>> + Send + 'a>,
+        >,
+    ) -> Result<bool, SandboxStoreError> {
+        super::work_publication::scope(self, work).await
+    }
+
     async fn prepared_workspace_completion(
         &self,
         sandbox: &layer2_core::sandbox::Sandbox,
@@ -31,9 +40,20 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        if self
+            .empty_discovery
+            .empty(
+                super::empty_discovery::Kind::Workspaces,
+                &self.workspaces,
+                doc! {"work_pending":true},
+            )
+            .await
+        {
+            return Ok(Vec::new());
+        }
         let mut cursor = self
             .workspaces
-            .find(doc! {
+            .find(crate::store::work_schema::query(doc! {
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "work_pending": true,
                 "work_ready_at": { "$lte": now },
@@ -41,7 +61,7 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
                     { "work_lease_expires_at": Bson::Null },
                     { "work_lease_expires_at": { "$lte": now } },
                 ],
-            })
+            }))
             .projection(doc! { "_id": 1 })
             .sort(doc! { "work_ready_at": 1, "_id": 1 })
             .limit(i64::from(limit))
@@ -60,7 +80,29 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
                     .to_string(),
             ));
         }
+        self.empty_discovery
+            .observed(super::empty_discovery::Kind::Workspaces, ids.is_empty());
         Ok(ids)
+    }
+
+    async fn renew_workspace_work(
+        &self,
+        claimed: &layer2_core::sandbox::Workspace,
+        _now: &str,
+        requested_until: &str,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        super::work_lease_parent::grant(self, claimed, requested_until, false)
+            .await
+            .map(|grant| grant.map(|grant| grant.expires_at))
+    }
+
+    async fn renew_workspace_authority(
+        &self,
+        claimed: &layer2_core::sandbox::Workspace,
+        _now: &str,
+        requested_until: &str,
+    ) -> Result<Option<layer2_core::sandbox::store::WorkLeaseGrant>, SandboxStoreError> {
+        super::work_lease_parent::grant(self, claimed, requested_until, true).await
     }
 
     async fn claim_workspace_work(
@@ -77,6 +119,10 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
             if !workspace.work.is_due(&now) {
                 return Ok(None);
             }
+            if self.renewable_work {
+                workspace.work.authority_protocol =
+                    Some(layer2_core::sandbox::store::WorkAuthorityProtocol::RenewedV1);
+            }
             let expected = workspace.revision;
             workspace
                 .work
@@ -90,7 +136,31 @@ impl WorkspaceWorkerStore for MongoSandboxStore {
             )
             .await
             {
-                Ok(true) => return Ok(Some(workspace)),
+                Ok(true) => {
+                    if workspace.work.authority_protocol.is_none() {
+                        return Ok(Some(workspace));
+                    }
+                    let stored = self
+                        .get_workspace(id)
+                        .await?
+                        .ok_or(SandboxStoreError::Conflict)?;
+                    if stored
+                        .work
+                        .lease
+                        .as_ref()
+                        .map(|lease| (&lease.holder, lease.fence))
+                        != workspace
+                            .work
+                            .lease
+                            .as_ref()
+                            .map(|lease| (&lease.holder, lease.fence))
+                        || stored.work.step != workspace.work.step
+                        || stored.owner != workspace.owner
+                    {
+                        return Err(SandboxStoreError::Conflict);
+                    }
+                    return Ok(Some(stored));
+                }
                 Ok(false) => return Ok(None),
                 Err(SandboxStoreError::Conflict) => tokio::task::yield_now().await,
                 Err(error) => return Err(error),

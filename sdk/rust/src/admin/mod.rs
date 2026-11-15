@@ -7,9 +7,11 @@ use crate::{
     resources::identity,
 };
 use reqwest::{Method, StatusCode};
+mod admission;
 mod settings;
 mod types;
 mod warm_pools;
+pub use admission::*;
 pub use settings::*;
 pub use types::*;
 pub use warm_pools::*;

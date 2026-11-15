@@ -26,22 +26,23 @@ pub(crate) struct Occupancy {
 }
 
 impl Occupancy {
-    fn require_headroom(&self) -> Result<()> {
-        // One terminal replacement can coexist with all canonical journals.
-        // One new fence can coexist with the folded authority before pruning.
-        if self.journal_entries + self.missing_receipts + self.cleanup_receipts
-            >= mutation_journal::MAX_JOURNAL_ENTRIES
-            || self.authority_records >= mutation_authority::MAX_AUTHORITY_RECORDS
-            || self.reserved_authority_records >= mutation_authority::MAX_AUTHORITY_RECORDS
-        {
+    fn fits(&self, journals: usize, authorities: usize) -> bool {
+        self.journal_entries + self.missing_receipts + self.cleanup_receipts < journals
+            && self.authority_records < authorities
+            && self.reserved_authority_records < authorities
+    }
+
+    fn require_headroom(&self, journals: usize, authorities: usize) -> Result<()> {
+        // Reserve one terminal replacement and one authority append before fold.
+        if !self.fits(journals, authorities) {
             tracing::warn!(
                 journal_entries = self.journal_entries,
                 missing_receipts = self.missing_receipts,
                 cleanup_receipts = self.cleanup_receipts,
                 authority_records = self.authority_records,
                 reserved_authority_records = self.reserved_authority_records,
-                terminal_headroom = 1,
-                authority_append_headroom = 1,
+                journal_limit = journals,
+                authority_limit = authorities,
                 "runtime mutation ledger admission held"
             );
             return Err(exhausted());
@@ -61,10 +62,41 @@ pub(crate) fn check_loaded(
     incoming: &[Operation],
 ) -> Result<()> {
     let journals = mutation_journal::inventory(config)?;
-    // Do not prune or extend an unsafe legacy ledger to make it fit. Neither
-    // admission nor an ambiguous outcome can release an existing reservation.
-    occupancy(&journals, authority, &[])?.require_headroom()?;
-    occupancy(&journals, authority, incoming)?.require_headroom()
+    let baseline = occupancy(&journals, authority, &[])?;
+    let proposed = occupancy(&journals, authority, incoming)?;
+    let normal_journals = mutation_journal::MAX_JOURNAL_ENTRIES;
+    let normal_authorities = mutation_authority::MAX_AUTHORITY_RECORDS;
+    if config.legacy_journal_recovery_enabled
+        && crate::mutation_recovery::eligible(&journals, authority, incoming)
+    {
+        baseline.require_headroom(
+            crate::mutation_recovery::JOURNALS,
+            crate::mutation_recovery::AUTHORITIES,
+        )?;
+        proposed.require_headroom(
+            crate::mutation_recovery::JOURNALS,
+            crate::mutation_recovery::AUTHORITIES,
+        )?;
+        if !baseline.fits(normal_journals, normal_authorities) {
+            tracing::info!(
+                journal_entries = baseline.journal_entries,
+                authority_records = baseline.authority_records,
+                missing_receipts = baseline.missing_receipts,
+                cleanup_receipts = baseline.cleanup_receipts,
+                incoming_operations = incoming.len(),
+                "runtime legacy ledger recovery envelope in use"
+            );
+        }
+        return Ok(());
+    }
+    baseline.require_headroom(normal_journals, normal_authorities)?;
+    proposed.require_headroom(normal_journals, normal_authorities)
+}
+
+/// Recovery validates the same identities/reservations before reconciling any
+/// temporary or replaying effects, independently of normal admission headroom.
+pub(crate) fn check_recovery(config: &RuntimeConfig) -> Result<()> {
+    check(config, &[])
 }
 
 #[derive(Default)]

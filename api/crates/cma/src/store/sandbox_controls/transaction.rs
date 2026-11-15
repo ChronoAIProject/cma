@@ -10,7 +10,9 @@ pub(super) async fn apply(
     session: &mut ClientSession,
 ) -> Result<SandboxControlRecord, ApplyError> {
     let (record, proof) = match change {
-        Change::Reserve(record, proof) => return reserve(store, record, proof, session).await,
+        Change::Reserve(record, proof, new_commitment) => {
+            return reserve(store, record, proof, *new_commitment, session).await
+        }
         Change::Apply(record, proof) => (*record, Some(*proof)),
         Change::Reject(record, _) => (*record, None),
     };
@@ -67,8 +69,8 @@ pub(super) async fn apply(
                     let fields = sandboxes::sandbox_replacement_fields(&sandbox)
                         .map_err(|_| SandboxControlError::Corrupt)?;
                     let result = store.sandboxes.update_one(
-                        doc! { "channel_reuse_cleanup_execution": { "$exists": false }, "_id": sandbox.id.as_str(), "revision": snapshot.lineage.sandbox.revision as i64, "document_schema_version": DOCUMENT_SCHEMA_VERSION },
-                        doc! { "$set": fields },
+                        crate::store::work_schema::query(doc! { "channel_reuse_cleanup_execution": { "$exists": false }, "_id": sandbox.id.as_str(), "revision": snapshot.lineage.sandbox.revision as i64, "document_schema_version": DOCUMENT_SCHEMA_VERSION }),
+                        crate::store::work_lease_update::replacement(fields),
                     ).session(&mut *session).await?;
                     if result.matched_count != 1 {
                         return Err(SandboxControlError::Conflict.into());
@@ -136,6 +138,7 @@ async fn reserve(
     store: &MongoSandboxStore,
     record: &SandboxControlRecord,
     proof: &SandboxControlAuthorization,
+    new_commitment: Result<(), layer2_core::admission::AdmissionRefusal>,
     session: &mut ClientSession,
 ) -> Result<SandboxControlRecord, ApplyError> {
     record.validate()?;
@@ -159,6 +162,7 @@ async fn reserve(
     {
         return Ok(record.replay(records::read(&previous)?)?);
     }
+    new_commitment.map_err(SandboxControlError::from)?;
     if record.envelope.expected_revision != snapshot.lineage.sandbox.revision
         || record.expired(&layer2_core::now_rfc3339())?
     {

@@ -106,6 +106,7 @@ async fn memory_maintenance_skips_always_on_then_pauses_after_revocation() {
         requested_at: NOW.into(),
         pause_after_seconds: 900,
         auto_pause_enabled: true,
+        cause: Default::default(),
     };
     assert_eq!(
         store

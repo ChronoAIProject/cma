@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 287,
+  "openapi_operations": 292,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3931,6 +3931,65 @@
       "non_problem_statuses": {
         "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
       }
+    },
+    "GET /api/v1/admin/admission": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects the shared control snapshot and its at most twenty newest immutable changes; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/admission/stop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
+      ]
+    },
+    "POST /api/v1/admin/admission/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
+      ]
+    },
+    "GET /api/v1/usage/metrics/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_view_disabled"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_view_disabled"
+      ]
     },
     "GET /api/v1/usage/documents": {
       "classification": "openapi",

@@ -26,6 +26,29 @@ const LABELS: [&str; 5] = [
 ];
 const OUTCOMES: [&str; 3] = ["quiet", "output", "failed"];
 
+#[derive(Clone, Copy)]
+pub(crate) enum AgentWake {
+    Live,
+    Head,
+    Fallback,
+    Authorization,
+}
+
+pub(crate) fn agent_wake(source: AgentWake) {
+    let source = match source {
+        AgentWake::Live => "live",
+        AgentWake::Head => "head",
+        AgentWake::Fallback => "fallback",
+        AgentWake::Authorization => "authorization",
+    };
+    metrics::counter!("cma_agent_event_stream_wakes_total", "source" => source).increment(1);
+}
+
+pub(crate) fn agent_live_delivered(published: tokio::time::Instant) {
+    metrics::histogram!("cma_agent_event_stream_delivery_lag_seconds")
+        .record(published.elapsed().as_secs_f64());
+}
+
 #[derive(Default)]
 struct Counters {
     active: [AtomicU64; LABELS.len()],

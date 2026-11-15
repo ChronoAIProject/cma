@@ -223,6 +223,14 @@ pub(super) fn reserve(
         .get(&agent.sandbox_id)
         .ok_or(CommandLedgerError::NotFound)?;
     validate_command_reservation(request, agent, parent)?;
+    if matches!(
+        request.envelope.command,
+        crate::sandbox::agent_io::AgentCommand::Message { .. }
+    ) && request.envelope.continuation.is_none()
+        && state.admission_control.operator_stop.is_some()
+    {
+        return Err(CommandLedgerError::AdmissionPaused);
+    }
     if agent.bootstrap_operation(parent).is_some()
         && state
             .workspaces

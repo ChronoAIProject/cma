@@ -139,3 +139,59 @@ async fn runtime_inventory_and_activity_each_require_their_exact_capability() {
     .await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
+
+#[tokio::test]
+async fn activity_summary_is_explicit_preserves_full_records_and_refuses_bad_queries() {
+    let available = fixture(true);
+    let mut row = ActivityRecord::new(ActivityAction::Read, ActivityOutcome::Succeeded)
+        .by(SubjectId::new("operator-a"));
+    row.detail
+        .record(layer2_core::DetailKey::ResourceName, "retained detail");
+    available.activity.append(&row).await.unwrap();
+    for (suffix, summary) in [("", false), ("?view=summary", true)] {
+        let response = send(
+            &available.app,
+            Method::GET,
+            &format!("/api/v1/admin/activity{suffix}"),
+            None,
+            [Capability::ReadActivityLog],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["items"][0]["actor_name"], "Morgan Park");
+        assert_eq!(body["items"][0].get("detail").is_none(), summary);
+        if !summary {
+            assert_eq!(
+                body["items"][0]["detail"]["resource_name"],
+                "retained detail"
+            );
+        }
+        let denied = send(
+            &available.app,
+            Method::GET,
+            &format!("/api/v1/admin/activity{suffix}"),
+            None,
+            [Capability::ReadAllSandboxes],
+        )
+        .await;
+        assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    }
+    for suffix in [
+        "view=unknown",
+        "view=summary&limit=0",
+        "view=summary&cursor=bad",
+        "view=summary&cursor=1%3A",
+        "view=summary&limit=201",
+    ] {
+        let response = send(
+            &available.app,
+            Method::GET,
+            &format!("/api/v1/admin/activity?{suffix}"),
+            None,
+            [Capability::ReadActivityLog],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{suffix}");
+    }
+}

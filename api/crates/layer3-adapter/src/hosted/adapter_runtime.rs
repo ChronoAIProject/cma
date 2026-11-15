@@ -1,3 +1,4 @@
+use crate::file_read_diagnostics::{measure, Stage};
 use std::collections::BTreeSet;
 
 use super::runtime_identity::{exact_identity_predicate, identity_rejection};
@@ -48,7 +49,7 @@ impl HostedAdapter {
             .home_volume
             .as_ref()
             .ok_or_else(|| AdapterError::Unsupported("runtime has no persistent home".into()))?;
-        self.verify_home(home).await?;
+        measure(Stage::HomeBeforeStatus, self.verify_home(home)).await?;
         let request = crate::RuntimeStatusRequest {
             sandbox_id: state.provision.sandbox_id,
             generation: state.provision.generation,
@@ -64,7 +65,7 @@ impl HostedAdapter {
             return Err(AdapterError::unexpected_reply("runtime status"));
         };
         status.validate_for(&request)?;
-        self.verify_home(home).await?;
+        measure(Stage::HomeAfterStatus, self.verify_home(home)).await?;
         Ok(status)
     }
 

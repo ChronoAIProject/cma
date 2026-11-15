@@ -160,12 +160,24 @@ pub struct AttachmentImage {
     pub width: u64,
 }
 
+/// CMAEG `MediaAuthorization` wire shape: the structured header credential
+/// for clients that cannot execute shell text.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct MediaAuthorization {
+    /// Wire field `scheme`; CMAEG currently returns `Bearer`.
+    pub scheme: String,
+    /// Wire field `token`; this is scoped to one attachment and accepted once.
+    pub token: String,
+}
+
 /// CMAEG `MediaDownload` wire shape: a ready download as one `curl` command
-/// that works once and expires at `expires_at`. Only `curl` carries the
-/// single-use link.
+/// and a structured authorization header that work once and expire at
+/// `expires_at`.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaDownload {
-    /// Wire field `curl`.
+    /// Wire field `authorization`.
+    pub authorization: MediaAuthorization,
+    /// Wire field `curl`; it carries the same token as `authorization`.
     pub curl: String,
     /// Wire field `expires_at`.
     pub expires_at: i64,
