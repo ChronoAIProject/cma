@@ -52,7 +52,7 @@ impl Guard {
         use std::os::unix::fs::MetadataExt;
         let metadata = writer
             .metadata()
-            .map_err(|error| io::io_error("guard.writer_metadata", "writer_metadata", &error))?;
+            .map_err(|error| hold_io("guard.writer_metadata", "inspect_writer_metadata", error))?;
         if inodes[2] != (metadata.dev(), metadata.ino()) {
             return Err(hold_at("guard.writer_inode"));
         }
@@ -163,11 +163,10 @@ pub(crate) fn select(config: &RuntimeConfig) -> Result<Selection> {
     if fresh {
         io::directories(&config.state_root)?;
         for entry in std::fs::read_dir(&config.state_root)
-            .map_err(|error| io::io_error("selection.state_inventory", "state_inventory", &error))?
+            .map_err(|error| hold_io("selection.state_inventory", "read_state_directory", error))?
         {
-            let entry = entry.map_err(|error| {
-                io::io_error("selection.state_entry", "state_inventory", &error)
-            })?;
+            let entry = entry
+                .map_err(|error| hold_io("selection.state_entry", "read_state_entry", error))?;
             if entry.file_name() != "workspace-removal-writer-v1.lock"
                 || !io::read(&entry.path())?.is_empty()
             {
@@ -215,7 +214,7 @@ impl Selection {
             #[cfg(test)]
             tests::checkpoint(&config.state_root, "closed")?;
             crate::fs_durability::sync_tree(&stage)
-                .map_err(|error| io::io_error("publication.stage_sync", "stage_sync", &error))?;
+                .map_err(|error| hold_io("publication.stage_sync", "sync_stage_tree", error))?;
             crate::publication_qualification::stop_before_intent()?;
             let descriptor = Descriptor::new(config, store)?;
             io::create(
@@ -232,10 +231,10 @@ impl Selection {
                 return Err(hold_at("publication.database_exists"));
             }
             crate::fs_durability::rename(&stage, &database).map_err(|error| {
-                io::io_error(
+                hold_io(
                     "publication.database_rename",
-                    "database_rename_and_sync",
-                    &error,
+                    "rename_database_and_sync_parents",
+                    error,
                 )
             })?;
             #[cfg(test)]
@@ -248,10 +247,10 @@ impl Selection {
                 &config.state_root.join(MANIFEST),
             )
             .map_err(|error| {
-                io::io_error(
+                hold_io(
                     "publication.manifest_rename",
-                    "manifest_rename_and_sync",
-                    &error,
+                    "rename_manifest_and_sync_parents",
+                    error,
                 )
             })?;
             #[cfg(test)]
@@ -302,7 +301,13 @@ fn retained_transfer(config: &RuntimeConfig) -> Result<()> {
     ] {
         io::directories(path)?;
         let dev = std::fs::symlink_metadata(path)
-            .map_err(|error| io::io_error("transfer.root_metadata", "root_metadata", &error))?
+            .map_err(|error| {
+                hold_io(
+                    "transfer.root_metadata",
+                    "inspect_assigned_root_metadata",
+                    error,
+                )
+            })?
             .dev();
         if device.is_some_and(|expected| expected != dev) {
             return Err(hold_at("transfer.same_device"));
@@ -330,6 +335,17 @@ fn hold_at(predicate: &'static str) -> RuntimeError {
     hold()
 }
 
+// Preserve the actual failing syscall category without formatting its payload.
+fn hold_io(
+    predicate: &'static str,
+    operation: &'static str,
+    error: std::io::Error,
+) -> RuntimeError {
+    tracing::error!(predicate, operation, object_role = "ledger_format", error_kind = ?error.kind(), raw_errno = error.raw_os_error(),
+        "runtime mutation ledger format requires verification");
+    hold()
+}
+
 fn inodes(config: &RuntimeConfig) -> Result<[(u64, u64); 3]> {
     use std::os::unix::fs::MetadataExt;
     let paths = [
@@ -340,8 +356,13 @@ fn inodes(config: &RuntimeConfig) -> Result<[(u64, u64); 3]> {
     let mut result = [(0, 0); 3];
     for (index, path) in paths.iter().enumerate() {
         io::directories(path.parent().ok_or_else(hold)?)?;
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|error| io::io_error("guard.path_metadata", "path_metadata", &error))?;
+        let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+            hold_io(
+                "guard.path_metadata",
+                "inspect_guarded_path_metadata",
+                error,
+            )
+        })?;
         if (index == 0 && !metadata.is_dir())
             || (index != 0 && (!metadata.is_file() || metadata.nlink() != 1))
         {

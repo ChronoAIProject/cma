@@ -9,7 +9,7 @@ use crate::failure::{Result, RuntimeError};
 
 // Log only bounded classifications. Error Display can contain paths or caller
 // payloads, and these diagnostics must never change the legacy wire failure.
-pub(super) fn io_error(
+fn io_error(
     predicate: &'static str,
     operation: &'static str,
     error: &std::io::Error,
