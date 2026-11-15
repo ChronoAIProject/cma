@@ -1172,7 +1172,11 @@ visible. The existing status band names incomplete activity and automatic retry;
 it is not complete-history acceptance. Keep ordinary message input available once
 current access, identity, connections and Sandbox eligibility are verified. Hold
 approval actions and history-dependent turn controls until their recorded targets
-are available. Retry
+are available. For Responses v2, the published live head supplies the recorded
+targets for Stop, queue actions and desktop takeover. Approvals received on the
+live stream can be handled immediately; approvals preceding the head remain
+hidden until history completes. A missing head or suspended access keeps controls
+unavailable. Legacy AG-UI still waits for complete history. Retry
 from the start so missing tool and approval pages are not skipped. Authentication
 or permission denials and malformed identities remain explicit failures.
 
@@ -6513,3 +6517,4 @@ same-range display is a separate measurement stratum.
 | 2026-11-14 | Correct preset bucket selection, bound long-range report observation and transient retries, label neighboring committed previews, and sequentially warm seven-day/thirty-day views with exact-ID polling and cancellable ownership (#2013). |
 
 | 2026-11-14 | Label allocation cards, inventory, charts and history by the report period so a neighboring-range preview is never described as selected-period data (#2013, #2024). |
+| 2026-11-15 | Enable Responses v2 Stop, live approvals, queue actions and desktop takeover from the authorized live head while rich history loads; preserve legacy gates and live outcomes during hydration (#1800). |
