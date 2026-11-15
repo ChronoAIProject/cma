@@ -96,7 +96,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 134);
+  assert.equal(new Set(requiredPrefixes).size, 135);
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
   assert.ok(requiredPrefixes.includes('store::agent_ownership::mongo_tests::'));
@@ -105,6 +105,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   assert.ok(requiredPrefixes.includes('store::allocation_buckets::'));
   assert.ok(requiredPrefixes.includes(taskHome));
   assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
+  assert.ok(requiredPrefixes.includes('store::sandbox_usage::interval_index::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
@@ -159,4 +160,38 @@ test('desktop completeness refuses omitted parents, selected children and unclas
     assert.equal(result.status, 1, name);
     assert.ok(result.stderr.includes(name), result.stderr);
   }
+});
+
+
+test('usage hotfix keeps reader and startup contracts while assigning only the exact large matrix to its fixture', () => {
+  const matrix = 'store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix';
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const names = [
+    'store::usage_reports::tests::allocation_interval::allocation_interval_native_cursor_matches_projection_with_and_without_index',
+    'store::usage_reports::tests::allocation_interval::allocation_interval_native_boundaries_delta_and_snapshot_remain_exact',
+    'store::sandbox_usage::interval_index::tests::interval_index_real_startup_creates_and_reopens_without_replacing_existing_indexes',
+    'store::sandbox_usage::interval_index::tests::interval_index_resumes_partial_startup_and_coalesces_concurrent_ensure',
+    'store::sandbox_usage::interval_index::tests::interval_index_real_startup_accepts_equivalent_existing_name',
+    'store::sandbox_usage::interval_index::tests::interval_index_real_startup_refuses_conflicting_options_without_repair',
+  ];
+  assert.ok(source.includes(`not test(=${matrix})`));
+  assert.equal(declared[matrix].kind, 'fixture');
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  cases[matrix] = caseMetadata(false);
+  for (const name of names) {
+    assert.ok(!source.includes(`not test(=${name})`));
+    assert.equal(declared[name], undefined);
+    cases[name] = caseMetadata(true);
+  }
+  const exclusions = {...exceptions, [matrix]: declared[matrix]};
+  assert.equal(check(metadata, exclusions).status, 0);
+  for (const name of names) {
+    cases[name] = caseMetadata(false);
+    assert.equal(check(metadata, exclusions).status, 1, name);
+    cases[name] = caseMetadata(true);
+  }
+  cases[`${matrix}_another_contract`] = caseMetadata(false);
+  assert.equal(check(metadata, exclusions).status, 1);
 });
