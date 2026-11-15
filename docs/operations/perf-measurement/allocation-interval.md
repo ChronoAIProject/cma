@@ -17,6 +17,11 @@ The snapshot session, strict overlap predicates, schema/query-field validation,
 record returns an error rather than a partially usable day. Cache ownership,
 watermark, and exact-range checks are unchanged.
 
+The reader consumes raw BSON and charges the received document length against
+the byte cap. It decodes each event once while preserving strict nested-record
+validation, exact typed envelope comparisons, and refusal of duplicate authority
+fields. This removes repeated document reconstruction and serialization.
+
 ## Index dependency
 
 The existing awaited Sandbox store startup path now ensures this additive index:
@@ -98,9 +103,11 @@ cargo test --locked -p cma --bin cma allocation_interval -- --include-ignored --
 ```
 
 `CHRONO_TEST_MONGODB_URI` must point to that disposable replica set. The integration
-tests require the explicit `CHRONO_TEST_ALLOCATION_DB_01` and
-`CHRONO_TEST_ALLOCATION_DB_02` disposable database names. They run serially and
-create/drop only those assigned databases. The `interval_index` filter covers
+tests accept explicit `CHRONO_TEST_ALLOCATION_DB_01` and
+`CHRONO_TEST_ALLOCATION_DB_02` disposable database names for the scoped local
+lane. Ordinary CI uses unique disposable databases when these overrides are
+absent. Scoped local invocations run serially and create/drop only their assigned
+databases. The `interval_index` filter covers
 startup inventory, creation, idempotence, and refusal of drift; the
 `usage_reports::budget::tests` filter covers existing pressure behavior.
 

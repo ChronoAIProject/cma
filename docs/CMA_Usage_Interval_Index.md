@@ -47,7 +47,10 @@ serial, authority-scoped fixture; otherwise tests create a unique disposable DB.
 The ordinary readers remain unhinted: presence alone does not prove the query
 planner uses this index or that complete reports meet two seconds. The integrated
 hotfix qualification separately records six personal/admin window cases, complete
-values, cold/warm cache state, maximum operation/connection-hold time and RSS.
+values, cold allocation-cache state, complete first-page latency and native RSS.
+Focused native tests check the operation and connection-hold boundaries. The
+primary matrix retains production metadata-only observation; command-level
+timing is unavailable in that mode and must not be reported as zero work.
 
 Production index presence, startup execution and customer report completion are
 unverified until the release operator records the exact image, deployment,
