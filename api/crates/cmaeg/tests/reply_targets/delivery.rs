@@ -116,11 +116,71 @@ async fn concurrent_retry_has_one_dispatch_and_eventually_replays_the_durable_re
 }
 
 #[tokio::test]
+async fn concurrent_replacement_key_is_fenced_but_later_distinct_results_remain_sendable() {
+    let mut slow = Reply::status(200);
+    slow.delay = Duration::from_millis(100);
+    slow.body = serde_json::json!({"message_id":"outbound","platform_message_id":"123"});
+    let mut app = App::new(vec![slow]).await;
+    let target = app
+        .target(&app.event("alice", "concurrent-keys").await)
+        .await;
+    let first = app.send(&target, "first-result", "first result");
+    let sending = tokio::spawn(async move { first.send().await.unwrap() });
+    app.relay.wait(1).await;
+    let blocked = receipt(
+        app.send(
+            &target,
+            "replacement-key",
+            "even changed text cannot bypass uncertainty",
+        )
+        .send()
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(blocked["delivery"]["outcome"], "unknown");
+    assert_eq!(
+        blocked["delivery"]["reason"],
+        "reply_target_delivery_uncertain"
+    );
+    assert_eq!(
+        receipt(sending.await.unwrap()).await["delivery"]["outcome"],
+        "confirmed"
+    );
+    assert_eq!(app.relay.requests.lock().unwrap().len(), 1);
+    app.restart().await;
+    let distinct = receipt(
+        app.send(&target, "second-result", "a separate completed result")
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(distinct["delivery"]["outcome"], "confirmed");
+    assert_eq!(app.relay.requests.lock().unwrap().len(), 2);
+    // The refused occurrence itself remains effect-free under its original key.
+    let replay = receipt(
+        app.send(
+            &target,
+            "replacement-key",
+            "even changed text cannot bypass uncertainty",
+        )
+        .send()
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(replay, blocked);
+    assert_eq!(app.relay.requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn unknown_delivery_and_store_outage_never_blindly_resend() {
     let mut slow = Reply::status(200);
     slow.delay = Duration::from_secs(1);
     let mut app = App::new(vec![slow]).await;
-    let target = app.target(&app.event("alice", "uncertain").await).await;
+    let event = app.event("alice", "uncertain").await;
+    let target = app.target(&event).await;
     app.backend.fail_put.store(true, Ordering::SeqCst);
     assert_eq!(
         app.send(&target, "same", "once")
@@ -139,6 +199,16 @@ async fn unknown_delivery_and_store_outage_never_blindly_resend() {
         receipt(app.send(&target, "same", "once").send().await.unwrap()).await,
         first
     );
+    let reminted = app.target(&event).await;
+    // Reminting the same occurrence or replacing its request key cannot resend it.
+    let replacement = receipt(
+        app.send(&reminted, "replacement", "once")
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(replacement["delivery"]["outcome"], "unknown");
     assert_eq!(app.relay.requests.lock().unwrap().len(), 1);
 }
 
@@ -158,6 +228,14 @@ async fn a_lost_final_receipt_leaves_a_durable_claim_that_cannot_dispatch_again(
     app.restart().await;
     let replay = receipt(app.send(&target, "same", "once").send().await.unwrap()).await;
     assert_eq!(replay["delivery"]["outcome"], "unknown");
+    let replacement = receipt(
+        app.send(&target, "replacement", "once")
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(replacement["delivery"]["outcome"], "unknown");
     assert_eq!(
         replay["delivery"]["reason"],
         "delivery_in_progress_or_uncertain"

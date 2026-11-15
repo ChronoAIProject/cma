@@ -219,9 +219,27 @@ pub struct AgentRetryObservation {
     pub worktree_revision: u64,
 }
 
+/// Original durable admission boundary for the create completion measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentCreateAdmission {
+    pub admitted_at_ms: i64,
+    pub desktop: Option<bool>,
+    pub machine_included: Option<bool>,
+}
+
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
+    /// Original lifecycle admission in BSON millisecond precision, when this
+    /// store can resolve the operation that admitted the Agent. Legacy and
+    /// existing-workspace records intentionally return no boundary.
+    async fn agent_create_admission(
+        &self,
+        _agent: &Agent,
+    ) -> Result<Option<AgentCreateAdmission>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Observe durable command admission before inspection. Stores without this
     /// evidence retain ordinary retries rather than pacing unobserved work.
     async fn agent_command_admission_generation(
@@ -240,6 +258,18 @@ pub trait AgentWorkerStore: Send + Sync {
         _observed: AgentRetryObservation,
     ) -> Result<(), SandboxStoreError> {
         self.commit_agent_work(mutation).await
+    }
+
+    /// Publish a metadata-only retry after verifying the supplied marker in the
+    /// same snapshot as the Agent CAS. Unsupported stores must fail closed.
+    async fn commit_agent_work_repeated_failure(
+        &self,
+        _retry: super::AgentRepeatedFailure,
+        _observed: Option<AgentRetryObservation>,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "repeated failure publication is unsupported",
+        ))
     }
 
     /// Exact durable preparation authority for replaying a worktree/home pair.

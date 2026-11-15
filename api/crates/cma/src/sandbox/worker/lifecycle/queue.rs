@@ -59,6 +59,10 @@ impl SandboxWorker {
                 && dispatch_grace_elapsed(fenced_at.as_deref(), now)
             {
                 let stamp = rfc3339_at(now);
+                let failure =
+                    WorkerFailure::waiting("lifecycle queued messages still require settlement");
+                let decision = self.retry_decision(&sandbox, &failure, self.config.retry_delay);
+                let telemetry = self.retry_telemetry(&sandbox, &failure, decision, now);
                 let recovery = self
                     .dependencies
                     .operations
@@ -66,12 +70,17 @@ impl SandboxWorker {
                         &sandbox,
                         &agent_id,
                         sequence,
-                        rfc3339_at(now + self.config.retry_delay),
+                        rfc3339_at(now + decision.delay),
                         stamp,
                     )
                     .await;
                 return match recovery {
-                    Ok(()) => Ok(()),
+                    Ok(()) => {
+                        if let Some(telemetry) = telemetry {
+                            telemetry.published();
+                        }
+                        Ok(())
+                    }
                     Err(AgentOperationError::Conflict) => {
                         self.retry_queue_phase(sandbox, now).await
                     }
@@ -180,7 +189,7 @@ impl SandboxWorker {
         // backoff or the grace period for an ambiguous message dispatch.
         self.handle_lifecycle_failure_after(
             sandbox,
-            WorkerFailure::retryable("lifecycle queued messages still require settlement"),
+            WorkerFailure::waiting("lifecycle queued messages still require settlement"),
             now,
             self.config.retry_delay.min(Duration::from_secs(5)),
         )
@@ -194,7 +203,7 @@ impl SandboxWorker {
     ) -> Result<(), SandboxStoreError> {
         self.handle_lifecycle_failure(
             sandbox,
-            WorkerFailure::retryable("lifecycle queued messages still require settlement"),
+            WorkerFailure::waiting("lifecycle queued messages still require settlement"),
             now,
         )
         .await

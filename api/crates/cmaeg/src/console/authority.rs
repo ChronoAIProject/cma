@@ -94,19 +94,19 @@ impl ConsoleAuthority {
     /// requests make one cache fill) while other sessions proceed.
     pub async fn authorize(&self, cell: &Arc<SessionCell>) -> Result<Authorized, Denied> {
         let mut auth = cell.lock_auth().await;
-        let subject = self.live(cell)?;
+        let subject = self.live(cell, &mut auth).await?;
         let refreshed = self.usable_token(cell, &mut auth, &subject).await?;
         let selected = cell.meta().selected.clone();
         match self.check(&auth, &selected).await {
             Ok(creator) => {
-                let authorized = self.accept(cell, &subject, &selected, creator)?;
+                let authorized = self.accept(cell, &subject, &selected, creator).await?;
                 record(if refreshed { "refreshed" } else { "ok" });
                 Ok(authorized)
             }
             Err(CreatorAuthError::ProviderUnavailable) => Err(self.unavailable(&subject)),
             Err(CreatorAuthError::NotAuthenticated | CreatorAuthError::Forbidden) => match selected
             {
-                OwnerSelection::Personal => Err(self.end(cell, &subject)),
+                OwnerSelection::Personal => Err(self.end(cell, &subject).await),
                 OwnerSelection::Organization(organization) => {
                     self.downgrade(cell, &auth, &subject, organization).await
                 }
@@ -123,20 +123,27 @@ impl ConsoleAuthority {
         requested: OwnerSelection,
     ) -> Result<Authorized, Denied> {
         let mut auth = cell.lock_auth().await;
-        let subject = self.live(cell)?;
+        let subject = self.live(cell, &mut auth).await?;
         self.usable_token(cell, &mut auth, &subject).await?;
         match self.check(&auth, &requested).await {
             Ok(creator) => {
-                let authorized = self.accept(cell, &subject, &requested, creator)?;
-                cell.meta().selected = requested;
+                let authorized = self.accept(cell, &subject, &requested, creator).await?;
+                self.sessions
+                    .selection(cell, requested, None)
+                    .await
+                    .map_err(|_| Denied::Unavailable)?;
+                self.final_admission(cell).await?;
                 Ok(authorized)
             }
             Err(CreatorAuthError::ProviderUnavailable) => Err(self.unavailable(&subject)),
             Err(CreatorAuthError::NotAuthenticated | CreatorAuthError::Forbidden) => {
                 match requested {
-                    OwnerSelection::Personal => Err(self.end(cell, &subject)),
+                    OwnerSelection::Personal => Err(self.end(cell, &subject).await),
                     OwnerSelection::Organization(_) => {
-                        cell.meta().flash = Some(Flash::OwnerRefused);
+                        self.sessions
+                            .set_flash(cell, Some(Flash::OwnerRefused))
+                            .await
+                            .map_err(|_| Denied::Unavailable)?;
                         Err(Denied::Refused)
                     }
                 }
@@ -146,8 +153,17 @@ impl ConsoleAuthority {
 
     /// The session's subject, unless it ended or expired while this request
     /// waited for the `auth` lock.
-    fn live(&self, cell: &Arc<SessionCell>) -> Result<String, Denied> {
-        if self.sessions.end_if_expired(cell) {
+    async fn live(
+        &self,
+        cell: &Arc<SessionCell>,
+        auth: &mut SessionAuth,
+    ) -> Result<String, Denied> {
+        if !self
+            .sessions
+            .synchronize(cell, auth)
+            .await
+            .map_err(|_| Denied::Unavailable)?
+        {
             return Err(Denied::SignedOut);
         }
         Ok(cell.meta().subject.clone())
@@ -195,7 +211,7 @@ impl ConsoleAuthority {
 
     /// A positive check for `owner`. Personal must still be the subject the
     /// session signed in as; anyone else ends it.
-    fn accept(
+    async fn accept(
         &self,
         cell: &Arc<SessionCell>,
         subject: &str,
@@ -204,11 +220,12 @@ impl ConsoleAuthority {
     ) -> Result<Authorized, Denied> {
         let scope = match owner {
             OwnerSelection::Personal if creator.subject != subject => {
-                return Err(self.end(cell, subject))
+                return Err(self.end(cell, subject).await)
             }
             OwnerSelection::Personal => OwnerScope::Personal,
             OwnerSelection::Organization(_) => OwnerScope::Organization,
         };
+        self.final_admission(cell).await?;
         Ok(Authorized::new(creator, scope))
     }
 
@@ -221,31 +238,51 @@ impl ConsoleAuthority {
         subject: &str,
         organization: String,
     ) -> Result<Authorized, Denied> {
-        {
-            let mut meta = cell.meta();
-            meta.selected = OwnerSelection::Personal;
-            meta.flash = Some(Flash::AdminEnded { organization });
-        }
+        self.sessions
+            .selection(
+                cell,
+                OwnerSelection::Personal,
+                Some(Flash::AdminEnded { organization }),
+            )
+            .await
+            .map_err(|_| Denied::Unavailable)?;
         record("downgraded");
         tracing::info!(subject_hash_prefix = %subject_hash_prefix(subject), outcome = "downgraded", "console authorization");
         match self.check(auth, &OwnerSelection::Personal).await {
             Ok(creator) => {
-                let personal = self.accept(cell, subject, &OwnerSelection::Personal, creator)?;
+                let personal = self
+                    .accept(cell, subject, &OwnerSelection::Personal, creator)
+                    .await?;
                 Err(Denied::Downgraded(personal))
             }
             Err(CreatorAuthError::NotAuthenticated | CreatorAuthError::Forbidden) => {
-                Err(self.end(cell, subject))
+                Err(self.end(cell, subject).await)
             }
             Err(CreatorAuthError::ProviderUnavailable) => Err(self.unavailable(subject)),
         }
     }
 
     /// End the session NyxID refused, revoking its refresh token.
-    fn end(&self, cell: &Arc<SessionCell>, subject: &str) -> Denied {
-        self.sessions.end(cell, EndReason::Refused);
+    async fn end(&self, cell: &Arc<SessionCell>, subject: &str) -> Denied {
+        if self
+            .sessions
+            .end_session(cell, EndReason::Refused)
+            .await
+            .is_err()
+        {
+            return Denied::Unavailable;
+        }
         record("ended");
         tracing::info!(subject_hash_prefix = %subject_hash_prefix(subject), outcome = "ended", reason = "identity", "console authorization");
         Denied::SignedOut
+    }
+
+    async fn final_admission(&self, cell: &Arc<SessionCell>) -> Result<(), Denied> {
+        match self.sessions.admit(cell).await {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(Denied::SignedOut),
+            Err(_) => Err(Denied::Unavailable),
+        }
     }
 
     fn unavailable(&self, subject: &str) -> Denied {

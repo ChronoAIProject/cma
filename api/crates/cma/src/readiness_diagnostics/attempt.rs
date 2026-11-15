@@ -190,40 +190,4 @@ impl Recorder {
             });
         }
     }
-    fn timer(&self, scheduled: Instant) {
-        let lag = Instant::now().saturating_duration_since(scheduled);
-        metrics::gauge!("cma_readiness_diagnostic_timer_lag_seconds").set(lag.as_secs_f64());
-        metrics::histogram!("cma_readiness_diagnostic_timer_lag_duration_seconds")
-            .record(lag.as_secs_f64());
-        self.record(Record::Timer {
-            stamp: self.stamp(),
-            lag_us: micros(lag),
-        });
-    }
-}
-
-pub(crate) struct Timer(Option<tokio::task::JoinHandle<()>>);
-impl Timer {
-    pub(crate) fn start(recorder: Option<&Arc<Recorder>>) -> Self {
-        Self(recorder.map(|r| {
-            let weak = Arc::downgrade(r);
-            tokio::spawn(async move {
-                loop {
-                    let scheduled = Instant::now() + Duration::from_secs(1);
-                    tokio::time::sleep_until(scheduled).await;
-                    let Some(recorder) = weak.upgrade() else {
-                        break;
-                    };
-                    recorder.timer(scheduled);
-                }
-            })
-        }))
-    }
-}
-impl Drop for Timer {
-    fn drop(&mut self) {
-        if let Some(task) = &self.0 {
-            task.abort();
-        }
-    }
 }

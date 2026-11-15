@@ -89,6 +89,9 @@ pub use subscriptions::{HostedSubscriptionCredential, HostedSubscriptionSource};
 mod tests;
 
 #[cfg(test)]
+mod process_ingress_test_support;
+
+#[cfg(test)]
 #[path = "provision_tests.rs"]
 mod provision_tests;
 

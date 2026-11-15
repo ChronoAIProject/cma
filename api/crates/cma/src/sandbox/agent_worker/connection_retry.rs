@@ -35,16 +35,15 @@ impl AgentWorker {
         claimed: &Agent,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.retry_connection_with_failure(
-            claimed,
-            WorkerFailure::retryable(
-                "agent_connection_publication_conflict",
-                "connection publication conflicted; retrying the unchanged connection claim",
-            ),
-            now,
-            Duration::from_secs(1),
-        )
-        .await
+        let failure = WorkerFailure::retryable(
+            "agent_connection_publication_conflict",
+            "connection publication conflicted; retrying the unchanged connection claim",
+        );
+        let delay = self
+            .retry_decision(claimed, &failure, Duration::from_secs(1))
+            .delay;
+        self.retry_connection_with_failure(claimed, failure, now, delay)
+            .await
     }
 
     pub(super) async fn retry_connection_failure(
@@ -53,7 +52,7 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let delay = self.failure_retry_delay(claimed, failure.is_ledger_hold());
+        let delay = self.failure_retry_delay(claimed, &failure);
         self.retry_connection_with_failure(claimed, failure, now, delay)
             .await
     }

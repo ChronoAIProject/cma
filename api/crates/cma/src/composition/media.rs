@@ -51,12 +51,23 @@ pub(super) fn compose(
 pub(super) fn commands(
     dependencies: crate::commands::ProductionCommandDependencies,
     holder: String,
+    ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     reconcile_pacing: bool,
 ) -> Result<crate::commands::CommandScheduler, String> {
     let store = dependencies.store.clone();
+    let execution: Arc<dyn layer2_core::sandbox::agent_io::AgentCommandExecution> =
+        crate::commands::ResourceCommandExecution::production(dependencies);
+    let execution = match ownership {
+        Some(ownership) => Arc::new(crate::commands::ownership::OwnedCommandExecution {
+            inner: execution,
+            ownership,
+        })
+            as Arc<dyn layer2_core::sandbox::agent_io::AgentCommandExecution>,
+        None => execution,
+    };
     let worker = AgentCommandWorker::with_recheck_delay(
         store,
-        crate::commands::ResourceCommandExecution::production(dependencies),
+        execution,
         holder,
         std::time::Duration::from_secs(u64::from(reconcile_pacing)),
     )

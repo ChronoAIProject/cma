@@ -2,12 +2,32 @@
 
 use std::sync::Arc;
 
-use crate::{ActivityQuery, ActivityRecord, Caller, Capability, CoreError, Page, StoreError};
+use crate::{
+    ActivityQuery, ActivityRecord, ActivitySummary, Caller, Capability, CoreError, Page, StoreError,
+};
 
 #[async_trait::async_trait]
 pub trait ActivityStore: Send + Sync {
     async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError>;
+    /// Adapters may batch this operation; retries must preserve record IDs.
+    async fn append_many(&self, records: &[ActivityRecord]) -> Result<(), StoreError> {
+        for record in records {
+            self.append(record).await?;
+        }
+        Ok(())
+    }
     async fn list(&self, query: &ActivityQuery) -> Result<Page<ActivityRecord>, StoreError>;
+    /// Compatibility adapters may project after loading; persisted adapters should narrow the read.
+    async fn list_summaries(
+        &self,
+        query: &ActivityQuery,
+    ) -> Result<Page<ActivitySummary>, StoreError> {
+        let page = self.list(query).await?;
+        Ok(Page::new(
+            page.items.into_iter().map(ActivitySummary::from).collect(),
+            page.next_cursor,
+        ))
+    }
 }
 
 pub struct ActivityService {
@@ -23,6 +43,19 @@ impl ActivityService {
         self.store.append(record).await
     }
 
+    pub async fn list_summaries(
+        &self,
+        caller: &Caller,
+        query: &ActivityQuery,
+    ) -> Result<Page<ActivitySummary>, CoreError> {
+        caller.require(Capability::ReadActivityLog)?;
+        query.validate()?;
+        self.store
+            .list_summaries(query)
+            .await
+            .map_err(|error| CoreError::RuntimeUnavailable(error.to_string()))
+    }
+
     pub async fn list(
         &self,
         caller: &Caller,
@@ -36,3 +69,7 @@ impl ActivityService {
             .map_err(|error| CoreError::RuntimeUnavailable(error.to_string()))
     }
 }
+
+#[cfg(test)]
+#[path = "activity_service_tests.rs"]
+mod tests;

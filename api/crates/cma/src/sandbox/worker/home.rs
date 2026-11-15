@@ -15,6 +15,20 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         now: SystemTime,
     ) -> Result<Option<WorkerFailure>, SandboxStoreError> {
+        // A Ready warm reservation already verified this exact native home.
+        // Keep the owner-side runtime inspection below as the live fence, but
+        // avoid repeating the storage read before it. If the runtime vanished,
+        // retain the marker so replacement provisioning re-enters this path.
+        if sandbox.runtime.is_some()
+            && sandbox
+                .lifecycle
+                .home
+                .as_ref()
+                .is_some_and(|home| home.native_pool.is_some() && home.attachment().is_some())
+            && sandbox.work.prepared_installation_digest.is_some()
+        {
+            return Ok(None);
+        }
         // Existing ephemeral bindings retain their exact request identity. A
         // later revival can allocate a home before restoring their checkpoint.
         if sandbox.runtime.is_some() && sandbox.lifecycle.home.is_none() {
@@ -121,7 +135,10 @@ impl SandboxWorker {
                     previous.revision = sandbox.revision;
                     previous.updated_at = sandbox.updated_at.clone();
                     previous.last_activity_at = sandbox.last_activity_at.clone();
-                    if previous != *sandbox {
+                    if !layer2_core::sandbox::store::sandbox_content_matches(
+                        Some(&previous),
+                        sandbox,
+                    ) {
                         return Err(SandboxStoreError::Conflict);
                     }
                     *sandbox = current;
