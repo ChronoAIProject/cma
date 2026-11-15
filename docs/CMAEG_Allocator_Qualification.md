@@ -1,9 +1,10 @@
-# Event Gateway allocator qualification
+# API and Event Gateway allocator qualification
 
-The gateway's memory qualification runs in the executable that will ship:
+Memory qualification runs in the executable that will ship:
 
 ```sh
 cmaeg --allocator-self-test
+cma --allocator-self-test
 ```
 
 It transfers bounded batches of small allocations from one producer to 18
@@ -17,7 +18,25 @@ The final worker joins and zero-live-payload check are mandatory. The final RSS
 sample must also meet the same retention bound, and completion (including
 startup and worker shutdown) must remain within the deadline.
 
-The normal Dockerfile runs this gate before its existing sandbox and nine-case
+Both services use the same std-only `cma-allocator-qualification` library. It
+does not select an allocator: the API exercises its existing global mimalloc,
+while the gateway exercises its existing system allocator. The API command runs
+before Tokio, configuration, metrics, serving or database initialization. Extra
+arguments are refused with exit 2; measurement or workload failures exit 1.
+Unsupported platforms fail rather than skip qualification.
+
+`infra/api/Dockerfile` executes `/out/cma --allocator-self-test` with networking
+disabled after compilation and before the runtime copies that exact ELF. A local
+API packaging route must preserve this gate on the compiled executable and run
+it again on the final image before qualification PASS or image save/publication.
+Use network-none, read-only, capability-drop and no-new-privileges flags with a
+130-second outer timeout. Require compiler-to-runtime ELF equality and retain
+the API's source labels, UID 10001, entrypoint, CA and auxiliary-tool checks.
+Static Rust-to-mimalloc routing checks remain necessary but cannot replace
+execution. An API self-test failure does not authorize changing the workload,
+retention threshold, allocator or production memory limits.
+
+The normal gateway Dockerfile runs this gate before its existing sandbox and nine-case
 media gates. An alternative packaging route must execute all three gates on
 the exact final executable and retain their output. A static musl ELF check
 alone does not identify which malloc implementation the linker selected.

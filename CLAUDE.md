@@ -432,7 +432,10 @@ split or deployment complete; live continuity remains mandatory.
 
 CMAEG lives in this repository: `api/crates/cmaeg-core` (pure protocol library,
 depends on no other crate of this workspace) and `api/crates/cmaeg` (the service
-binary, depends only on `cmaeg-core`, the technical `cma-service-auth` library and third-party crates). It is a separate
+binary, depends only on `cmaeg-core`, the technical `cma-service-auth` and
+`cma-allocator-qualification` libraries, and third-party crates). The std-only
+allocator qualification library is also used by CMA; it owns no service or
+domain state and exercises each executable's selected allocator. It is a separate
 deployment in namespace `chrono-bot` with manifests under `infra/cmaeg/`.
 Nothing in `layer1-public`, `layer2-core`, `layer3-adapter`, `layer4-runtime` or
 `cma` may depend on the CMAEG crates, and CMAEG crates may not depend on them;
