@@ -10,6 +10,10 @@ enum Execution {
     Fresh,
     Uncertain,
     AwaitCancellation,
+    PrecommitThenFresh,
+    PrecommitThenCancellation,
+    UnclassifiedError,
+    PrecommitAlways,
 }
 
 struct Transactions {
@@ -57,12 +61,29 @@ impl PollTransactions for Transactions {
 
     async fn execute(&self, command: &NativePollCommand) -> AuthorityResult<NativePollExecution> {
         assert_eq!(command.key(), self.command.key());
-        self.execute_calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(command.lane(), self.command.lane());
+        assert_eq!(command.sequence(), self.command.sequence());
+        let attempt = self.execute_calls.fetch_add(1, Ordering::SeqCst);
         self.entered.notify_one();
         match self.outcome {
             Execution::Fresh => Ok(NativePollExecution::Fresh(self.receipt.clone())),
             Execution::Uncertain => Ok(NativePollExecution::Uncertain),
             Execution::AwaitCancellation => std::future::pending().await,
+            Execution::PrecommitThenFresh | Execution::PrecommitThenCancellation
+                if attempt == 0 =>
+            {
+                Ok(NativePollExecution::NotCommitted(
+                    crate::release_authority::AuthorityError::Unavailable,
+                ))
+            }
+            Execution::PrecommitThenFresh => Ok(NativePollExecution::Fresh(self.receipt.clone())),
+            Execution::PrecommitThenCancellation => std::future::pending().await,
+            Execution::UnclassifiedError => {
+                Err(crate::release_authority::AuthorityError::Unavailable)
+            }
+            Execution::PrecommitAlways => Ok(NativePollExecution::NotCommitted(
+                crate::release_authority::AuthorityError::Conflict,
+            )),
         }
     }
 
@@ -74,6 +95,144 @@ impl PollTransactions for Transactions {
         self.reconcile_calls.fetch_add(1, Ordering::SeqCst);
         Ok(self.durable.lock().unwrap().clone())
     }
+}
+
+#[tokio::test]
+async fn known_precommit_failure_retries_same_command_and_delivers_once() {
+    let state = Mutex::new(PendingPoll::default());
+    let authority = Transactions::new(Some(target()), Execution::PrecommitThenFresh);
+    assert!(poll(&state, &authority, NativePollLane::Background)
+        .await
+        .is_err());
+    assert!(state.lock().await.retry_noncommitted);
+    let delivered = poll(&state, &authority, NativePollLane::Background)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivered.id, target().id);
+    assert!(poll(&state, &authority, NativePollLane::Background)
+        .await
+        .is_err());
+    assert_eq!(authority.prepare_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(authority.execute_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(authority.reconcile_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn noncommit_retries_are_bounded_and_unclassified_errors_remain_held() {
+    for outcome in [Execution::PrecommitAlways, Execution::UnclassifiedError] {
+        let state = Mutex::new(PendingPoll::default());
+        let authority = Transactions::new(None, outcome);
+        for _ in 0..3 {
+            assert!(poll(&state, &authority, NativePollLane::Background)
+                .await
+                .is_err());
+        }
+        assert_eq!(authority.prepare_calls.load(Ordering::SeqCst), 1);
+        let retryable = matches!(authority.outcome, Execution::PrecommitAlways);
+        assert_eq!(
+            authority.execute_calls.load(Ordering::SeqCst),
+            if retryable { 3 } else { 1 }
+        );
+        assert_eq!(
+            authority.reconcile_calls.load(Ordering::SeqCst),
+            if retryable { 0 } else { 2 }
+        );
+    }
+}
+
+#[tokio::test]
+async fn cancellation_during_certified_retry_consumes_retry_authority() {
+    let state = Arc::new(Mutex::new(PendingPoll::default()));
+    let authority = Arc::new(Transactions::new(
+        Some(target()),
+        Execution::PrecommitThenCancellation,
+    ));
+    assert!(poll(&state, authority.as_ref(), NativePollLane::Background)
+        .await
+        .is_err());
+    authority.entered.notified().await;
+    let task_state = state.clone();
+    let task_authority = authority.clone();
+    let task = tokio::spawn(async move {
+        poll(
+            &task_state,
+            task_authority.as_ref(),
+            NativePollLane::Background,
+        )
+        .await
+    });
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        authority.entered.notified(),
+    )
+    .await
+    .unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(!state.lock().await.retry_noncommitted);
+    assert!(poll(&state, authority.as_ref(), NativePollLane::Background)
+        .await
+        .is_err());
+    *authority.durable.lock().unwrap() = Some(authority.receipt.clone());
+    assert!(poll(&state, authority.as_ref(), NativePollLane::Background)
+        .await
+        .is_err());
+    assert_eq!(authority.execute_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(authority.prepare_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn retirement_acknowledgements_preserve_exact_revision_lease_and_original_receipt() {
+    let state = Mutex::new(PendingPoll::default());
+    let authority = Transactions::new(Some(target()), Execution::Fresh);
+    let original = poll(&state, &authority, NativePollLane::Background)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut next = original.clone();
+    next.revision += 1;
+    next.retiring = true;
+    next.target_replicas = 0;
+    for mismatch in 0..4 {
+        let mut foreign = next.clone();
+        match mismatch {
+            0 => foreign.revision += 1,
+            1 => foreign.id.push_str("-foreign"),
+            2 => foreign.lease = Some("foreign-lease".into()),
+            _ => foreign.retiring = false,
+        }
+        state
+            .lock()
+            .await
+            .acknowledged_retirement(&original, &foreign);
+        state.lock().await.acknowledged_finish(&foreign);
+        assert!(poll(&state, &authority, NativePollLane::Background)
+            .await
+            .is_err());
+        assert!(state
+            .lock()
+            .await
+            .delivered
+            .as_ref()
+            .unwrap()
+            .matches(&original));
+    }
+    state.lock().await.acknowledged_retirement(&original, &next);
+    state.lock().await.acknowledged_finish(&original);
+    assert!(state
+        .lock()
+        .await
+        .delivered
+        .as_ref()
+        .unwrap()
+        .matches(&next));
+    state.lock().await.acknowledged_finish(&next);
+    assert!(state.lock().await.delivered.is_none());
+    assert_eq!(
+        state.lock().await.previous.as_ref().unwrap().sha256(),
+        authority.receipt.sha256()
+    );
 }
 
 fn target() -> PoolTarget {

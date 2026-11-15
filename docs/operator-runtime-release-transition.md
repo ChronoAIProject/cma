@@ -21,7 +21,13 @@ original pool/template/home/Claim identities and activation history.
   original target lease, fixed-lane cursor and immutable result. Empty results
   do not leave provider permits behind. Cancellation retains the same command;
   historical Empty does not rescan, and positive Replay never dispatches.
-  Another poll on that lane waits for the exact target/revision/lease finish CAS.
+  Another poll on that lane waits for the exact target/revision/lease finish or
+  tombstone CAS. An acknowledged begin-retirement CAS advances the tracked
+  delivered revision while retaining the original immutable receipt. Only an
+  explicit store-owned pre-commit failure permits retry of the same frozen
+  command, at most once per poll invocation. Missing receipts, unclassified
+  errors, commit uncertainty and cancellation remain reconcile-only; a positive
+  replay never redispatches provider work.
   This acknowledges only the store operation, without settling provider effects.
 - Freeze and effect admission update the same head in their transactions.
   Provider ACKs append observations; only verified terminal evidence may settle
