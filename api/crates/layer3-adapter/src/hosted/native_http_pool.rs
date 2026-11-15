@@ -192,20 +192,20 @@ impl ProviderHostedControlTransport {
             };
             let current = client.pod_binding(handle).await?;
             state = self.state.lock().await;
-            let unchanged = captured.iter().all(|slot| {
-                state
-                    .native_http
-                    .get(&(handle.clone(), slot.lane))
-                    .is_some_and(|cached| Arc::ptr_eq(cached, slot))
-            }) && state
+            let compatible = state
                 .native_http
-                .keys()
-                .filter(|(runtime, _)| runtime == handle)
-                .count()
-                == captured.len();
-            if identity(&state, handle) != *expected || !unchanged {
-                // A late proof cannot replace/cancel slots installed while it
-                // was awaiting discovery, even if its endpoint is older.
+                .iter()
+                .filter(|((runtime, _), _)| runtime == handle)
+                .all(|(_, slot)| {
+                    (slot.identity == *expected && slot.binding == current)
+                        || captured
+                            .iter()
+                            .any(|old| slot.identity == old.identity && slot.binding == old.binding)
+                });
+            if identity(&state, handle) != *expected || !compatible {
+                // A late proof cannot remove a different incarnation installed
+                // during discovery. A new sibling of a captured old incarnation
+                // is still fenced below, even if its Arc was not yet captured.
                 return Err(retired());
             }
             for slot in &captured {
