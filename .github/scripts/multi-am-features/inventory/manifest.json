@@ -1,0 +1,15 @@
+{
+  "schema": "multi-am-inventory-v1",
+  "counts": {
+    "user": 120,
+    "admin": 76
+  },
+  "id_set_sha256": {
+    "user": "9c5d5d8a591874240705f82eb7970602b5285a6b4529685e14e745a403f25285",
+    "admin": "ec3a0c1b16451b8a0263bef97e3c4617c449ca1a0f99a038b96e7d0547e4fb6e"
+  },
+  "source_sha256": {
+    "user": "f988889a1e4e3697915785b7bc5930f964c1172d2500b19433bad0ffea97d1f8",
+    "admin": "17f75eaf0f9baef42f6ad7ff3feef66380fc42c3ecb3556c03852fcccaae646c"
+  }
+}

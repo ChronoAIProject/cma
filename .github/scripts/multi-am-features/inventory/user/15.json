@@ -1,0 +1,243 @@
+[
+  {
+    "id": "cma-user.sandbox.delete",
+    "role": "user",
+    "feature": "Delete/retire an owned Sandbox and follow progress",
+    "entry_point": "Sandbox More/tree → Delete Sandbox",
+    "steps": [
+      "Select only a Sandbox created by this verification run",
+      "Read affected-resource confirmation and confirm",
+      "Observe retiring/retired progress and resource cleanup"
+    ],
+    "expected_result": "Only the selected disposable environment is retired; pending cleanup is reported honestly and history/access loss is not proof of completion.",
+    "writes": true,
+    "api": [
+      {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}/events",
+        "openapi_path": "/api/v1/sandboxes/{id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/sandbox/sandboxHeaderActions.tsx",
+        "line": 32,
+        "sha256": "2d8fca05bf4babe0383c71cf1eb114ea2f39f37d09301debc87ad0dc0c267843",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/DeletionDialog.tsx",
+        "line": 21,
+        "sha256": "b1acdb99137bc8c40be3a7b7026c45d2f698bcaaaa98bd8a4b8391448bc17a96",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/deletion.ts",
+        "line": 27,
+        "sha256": "611504fbea75eec1290e678557956bddc36149b6fde013df903dc38266e1b8f5",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.workspace.create-empty",
+    "role": "user",
+    "feature": "Create a Workspace: empty",
+    "entry_point": "Sandbox → New workspace",
+    "steps": [
+      "Choose Empty workspace and enter a name",
+      "Submit once",
+      "Observe preparation and open the Workspace"
+    ],
+    "expected_result": "The requested Workspace is created in the selected Sandbox and reaches ready or a concrete preparation error.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/workspaces/inline",
+        "openapi_path": "/api/v1/sandboxes/{id}/workspaces/inline",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/workspaces/{id}",
+        "openapi_path": "/api/v1/workspaces/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/InlineWorkspaceCard.tsx",
+        "line": 18,
+        "sha256": "5e2fb337bace36be0cb54c3eeeb79bb2e7fd20915d339dbccfab01bd32c8b1a9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxWorkspaces.tsx",
+        "line": 63,
+        "sha256": "0a630014fc7e6b32a823109708d2d5f9e52c24409c2b8c87426e857d099748c1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/OwnerWorkspacePage.tsx",
+        "line": 166,
+        "sha256": "2d1b45257530eb3e30448662093e9c317a2a526d484cb2abc277f0dfa925ab08",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.workspace.create-git_repository",
+    "role": "user",
+    "feature": "Create a Workspace: git_repository",
+    "entry_point": "Sandbox → New workspace",
+    "steps": [
+      "Choose Clone a GitHub repository and enter a permitted URL/ref",
+      "Submit once",
+      "Observe preparation and open the Workspace"
+    ],
+    "expected_result": "The requested Workspace is created in the selected Sandbox and reaches ready or a concrete preparation error.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/workspaces/inline",
+        "openapi_path": "/api/v1/sandboxes/{id}/workspaces/inline",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/workspaces/{id}",
+        "openapi_path": "/api/v1/workspaces/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/InlineWorkspaceCard.tsx",
+        "line": 18,
+        "sha256": "5e2fb337bace36be0cb54c3eeeb79bb2e7fd20915d339dbccfab01bd32c8b1a9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxWorkspaces.tsx",
+        "line": 63,
+        "sha256": "0a630014fc7e6b32a823109708d2d5f9e52c24409c2b8c87426e857d099748c1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/OwnerWorkspacePage.tsx",
+        "line": 166,
+        "sha256": "2d1b45257530eb3e30448662093e9c317a2a526d484cb2abc277f0dfa925ab08",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.workspace.inspect",
+    "role": "user",
+    "feature": "Inspect Workspace source, Agents and worktrees",
+    "entry_point": "/workspaces/{id}",
+    "steps": [
+      "Open the Workspace",
+      "Read repository/ref/preparation details",
+      "Inspect Agents and worktrees",
+      "Open an authorized child Agent"
+    ],
+    "expected_result": "The page shows the correct Sandbox relationship and prepared source/branch details with access-appropriate child data.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/workspaces/{id}",
+        "openapi_path": "/api/v1/workspaces/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/workspaces/{id}/worktrees",
+        "openapi_path": "/api/v1/workspaces/{id}/worktrees",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/OwnerWorkspacePage.tsx",
+        "line": 166,
+        "sha256": "2d1b45257530eb3e30448662093e9c317a2a526d484cb2abc277f0dfa925ab08",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/WorkspaceContents.tsx",
+        "line": 70,
+        "sha256": "0cb81019958fe64d0fb4c260d7da6d7ae1ef2590ba6fbe792b903354e924dc08",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.workspace.delete",
+    "role": "user",
+    "feature": "Remove a Workspace",
+    "entry_point": "Workspace menu → Delete workspace; tree → Remove",
+    "steps": [
+      "Use a disposable Workspace with no required work",
+      "Choose removal and confirm affected resources",
+      "Observe removal without changing unrelated Workspaces"
+    ],
+    "expected_result": "Only the confirmed Workspace and intended children are removed; progress and failure remain explicit.",
+    "writes": true,
+    "api": [
+      {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/{id}",
+        "openapi_path": "/api/v1/workspaces/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/workspaces/{id}",
+        "openapi_path": "/api/v1/workspaces/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/OwnerWorkspacePage.tsx",
+        "line": 166,
+        "sha256": "2d1b45257530eb3e30448662093e9c317a2a526d484cb2abc277f0dfa925ab08",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/shell/treeActions.tsx",
+        "line": 14,
+        "sha256": "d89c9ceab7f688b29abe77b96b9272f197b076cb99ed3650703adf9e356d6c70",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/DeletionDialog.tsx",
+        "line": 21,
+        "sha256": "b1acdb99137bc8c40be3a7b7026c45d2f698bcaaaa98bd8a4b8391448bc17a96",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

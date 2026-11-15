@@ -1,0 +1,258 @@
+[
+  {
+    "id": "cma-user.agent.rename",
+    "role": "user",
+    "feature": "Rename an Agent",
+    "entry_point": "Agent header → More → Rename",
+    "steps": [
+      "Open Rename",
+      "Enter a unique valid 1–64-character name and save",
+      "Reload and check title/navigation while conversation remains intact"
+    ],
+    "expected_result": "The revision-checked name persists without remounting or losing the conversation; stale preference conflicts require reloading.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/preferences",
+        "openapi_path": "/api/v1/agents/{id}/preferences",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v1/agents/{id}/preferences",
+        "openapi_path": "/api/v1/agents/{id}/preferences",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/OwnerAgentHeader.tsx",
+        "line": 11,
+        "sha256": "67cb5e9b603d368d9699d1a96775274c2c49759e6c46e4961b51d782bf173590",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/AgentPreferencesDialog.tsx",
+        "line": 12,
+        "sha256": "0fcf8660a0b656c43c3b2cbbabbf0017ca9e74eeff7f9c93ff6b649e5a3ce4cf",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentPreferences.ts",
+        "line": 4,
+        "sha256": "ff1e0b343eb0b2b39c0cc2b99601c7b6a9964d151c4b929d176d3ab8ffb9e4ae",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.system-prompt",
+    "role": "user",
+    "feature": "Update the Agent system prompt",
+    "entry_point": "Agent header → More → Update system prompt",
+    "steps": [
+      "Wait for the Agent and pending actions to be idle",
+      "Edit the system prompt within 32 KiB and save",
+      "Observe pending/application state and a subsequent turn"
+    ],
+    "expected_result": "The new prompt applies to subsequent turns; unsupported runtimes, busy state and revision conflicts are explicit.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/preferences",
+        "openapi_path": "/api/v1/agents/{id}/preferences",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v1/agents/{id}/preferences",
+        "openapi_path": "/api/v1/agents/{id}/preferences",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/OwnerAgentHeader.tsx",
+        "line": 11,
+        "sha256": "67cb5e9b603d368d9699d1a96775274c2c49759e6c46e4961b51d782bf173590",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/AgentPreferencesDialog.tsx",
+        "line": 12,
+        "sha256": "0fcf8660a0b656c43c3b2cbbabbf0017ca9e74eeff7f9c93ff6b649e5a3ce4cf",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentPreferences.ts",
+        "line": 4,
+        "sha256": "ff1e0b343eb0b2b39c0cc2b99601c7b6a9964d151c4b929d176d3ab8ffb9e4ae",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.session-settings",
+    "role": "user",
+    "feature": "Change model, reasoning effort and permission mode",
+    "entry_point": "Composer → Agent settings",
+    "steps": [
+      "Open settings while idle",
+      "Choose an available model, effort and Guarded/Autonomous mode",
+      "Apply changes",
+      "Confirm effective settings before a new turn"
+    ],
+    "expected_result": "Only available supported choices are offered and confirmed settings persist; an active turn blocks incompatible changes.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/models",
+        "openapi_path": "/api/v1/agents/{id}/models",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/agent-manager/v1/agents/{id}/settings",
+        "openapi_path": "/api/v1/agents/{id}/settings",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/agent-manager/v1/agents/{id}/settings",
+        "openapi_path": "/api/v1/agents/{id}/settings",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/SessionSettings.tsx",
+        "line": 17,
+        "sha256": "9c15889cb5330c105c32540cc7105ce7a6a53e628ec3c6caba4b27c24e9bd9ec",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/ModelEffortPicker.tsx",
+        "line": 54,
+        "sha256": "9e5f50a0e0e914b2642c23be4236ffff1f36cad7dd1bc081807fb0def38937fe",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/PermissionChip.tsx",
+        "line": 10,
+        "sha256": "14bf43e373f6e75e49950e1323fd6c91d3eb643130e5035adc4512762cfd0e93",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentSettings.ts",
+        "line": 5,
+        "sha256": "e728d2105862aa0015b32b42384d6b9b43bbd8f14f316305492567ebdf1d64c5",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.skills",
+    "role": "user",
+    "feature": "Inspect, search and install an Ornn skill/version",
+    "entry_point": "More → Update skills or Details → Skills",
+    "steps": [
+      "Read installed/pending/failed skills",
+      "Search and page through the Ornn catalog",
+      "Choose a harmless available version and install once",
+      "Refresh until the actual result appears"
+    ],
+    "expected_result": "The selected skill/version is installed once or a concrete error is shown; pending installation is not reported as complete.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/skills",
+        "openapi_path": "/api/v1/agents/{id}/skills",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/skills",
+        "openapi_path": "/api/v1/agents/{id}/skills",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "openapi_path": "/api/v1/profile-authoring/skills",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/SkillsSettings.tsx",
+        "line": 15,
+        "sha256": "7b1824cbe30ab78003b77d644ec4ce6fe737b0a421f784a37786fe0557cef5bf",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest/agentSkills.ts",
+        "line": 4,
+        "sha256": "0381ce3a7e35dbcb1b27d5314b7e37aa66f4b3abb41d4a872cd39e437a2ae696",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.stop",
+    "role": "user",
+    "feature": "Stop the Agent lifecycle",
+    "entry_point": "Manage environments → Agent tree row menu → Stop",
+    "steps": [
+      "Select Stop agent on a disposable running Agent",
+      "Observe the stop request and confirmed stopped state",
+      "Reload its history"
+    ],
+    "expected_result": "Agent reaches stopped and history remains readable; the modal distinguishes accepted request from confirmed stopped state.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/stop",
+        "openapi_path": "/api/v1/agents/{id}/stop",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/StopAgentDialog.tsx",
+        "line": 9,
+        "sha256": "3f2557b5fdc763a087d8ebdaaadfaa62f1653bd0ba9184ac9eab9a28a1a1bdc5",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/ResourceActions.tsx",
+        "line": 28,
+        "sha256": "a5a57035c5001c96f2677ec13a0801b9e9bc47adcecb993caa7c9600dcedb094",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/shell/treeActions.tsx",
+        "line": 14,
+        "sha256": "d89c9ceab7f688b29abe77b96b9272f197b076cb99ed3650703adf9e356d6c70",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

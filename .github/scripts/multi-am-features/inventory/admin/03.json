@@ -1,0 +1,230 @@
+[
+  {
+    "id": "ADM-017",
+    "role": "admin",
+    "feature": "Admin usage runtime choices, search, selection and pagination",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → runtime filter",
+    "steps": [
+      "Open the runtime picker before the report is ready.",
+      "Search by displayed name/context, move through choices, and select a result.",
+      "For Sandbox choices, restrict to an owner and verify selection resets when owner changes."
+    ],
+    "expected_result": "Bounded choices load independently of report completion; stable identities back readable labels; search text is in the POST body, not the URL.",
+    "writes": false,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_options"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/FilterOptionPicker.tsx",
+        "line": 1,
+        "sha256": "167c70aa2a6f1f2842d57ab780ababba423970da80a0ecdb0d1fd277fc4acb30"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/options.ts",
+        "line": 1,
+        "sha256": "bfd0d40ae31246f03f5bcbe1b21102e4c5f1d1c2289e802abde2bb09607cd9f5"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox_metrics/options.rs",
+        "line": 1,
+        "sha256": "34951df32f92e80fa28005feac657f1fecb5a2b12e53a80b316f8702a71f576b"
+      }
+    ]
+  },
+  {
+    "id": "ADM-018",
+    "role": "admin",
+    "feature": "Admin usage sandbox choices, search, selection and pagination",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → sandbox filter",
+    "steps": [
+      "Open the sandbox picker before the report is ready.",
+      "Search by displayed name/context, move through choices, and select a result.",
+      "For Sandbox choices, restrict to an owner and verify selection resets when owner changes."
+    ],
+    "expected_result": "Bounded choices load independently of report completion; stable identities back readable labels; search text is in the POST body, not the URL.",
+    "writes": false,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_options"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/FilterOptionPicker.tsx",
+        "line": 1,
+        "sha256": "167c70aa2a6f1f2842d57ab780ababba423970da80a0ecdb0d1fd277fc4acb30"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/options.ts",
+        "line": 1,
+        "sha256": "bfd0d40ae31246f03f5bcbe1b21102e4c5f1d1c2289e802abde2bb09607cd9f5"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox_metrics/options.rs",
+        "line": 1,
+        "sha256": "34951df32f92e80fa28005feac657f1fecb5a2b12e53a80b316f8702a71f576b"
+      }
+    ]
+  },
+  {
+    "id": "ADM-019",
+    "role": "admin",
+    "feature": "Apply, clear and retain admin usage filters",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Usage filters",
+    "steps": [
+      "Combine owner, Sandbox, runtime and status; apply.",
+      "Reload the URL and confirm scope; clear filters.",
+      "Open a legacy search URL; replace it with current picker selection."
+    ],
+    "expected_result": "Displayed report and URL match current filters; owner changes clear dependent Sandbox/Agent scope; Clear restores defaults while retaining table sort.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/selection.ts",
+        "line": 1,
+        "sha256": "8f766579e57322a8b96504ac9e771100e01090ff51f2498365b26e40e4fb8733"
+      },
+      {
+        "path": "web/src/usage/metrics/model.ts",
+        "line": 1,
+        "sha256": "e64e367538e84cedefb59746ffa85d14e955543e3ecdd0f2544c968e37f0476a"
+      }
+    ]
+  },
+  {
+    "id": "ADM-020",
+    "role": "admin",
+    "feature": "Usage inventory sorting, page traversal and empty results",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Usage inventory",
+    "steps": [
+      "Sort by name, owner, status, last activity and each allocated metric; reverse direction.",
+      "When measured usage is enabled, sort measured CPU/memory/disk.",
+      "Traverse next/previous pages and test an empty selection."
+    ],
+    "expected_result": "Pages belong to the same report, sorting and cursors remain coherent across AMs, and no rows are silently duplicated or omitted.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/sandboxes",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_sandboxes"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricTable.tsx",
+        "line": 1,
+        "sha256": "770bb17a5b6fb4e2427b8213885982f056ac6baf1e1608edd50887830e4aeb3c"
+      },
+      {
+        "path": "web/src/usage/metrics/UsageInventoryRow.tsx",
+        "line": 1,
+        "sha256": "746fafae64c5253c3a10bdff832c1e41a07a03609d4ebe93c5836905bc5bfccb"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      }
+    ]
+  },
+  {
+    "id": "ADM-021",
+    "role": "admin",
+    "feature": "Allocation comparison by Sandbox and by owner",
+    "entry_point": "Account menu → Operations; /operations → Allocation comparison chart",
+    "steps": [
+      "Switch CPU, memory and disk.",
+      "Switch By Sandbox / By owner; exercise owner ranking and data-table pagination.",
+      "Compare totals and units with the same report and verify incomplete-history labels."
+    ],
+    "expected_result": "Sandbox chart clearly describes its page scope; owner ranking covers the frozen report cohort, with core-hours/GiB-hours and completeness preserved.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_owner_allocations"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/sandboxes",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_sandboxes"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/AllocationChart.tsx",
+        "line": 1,
+        "sha256": "7157f9eb18a9927ae01fc08c406ad4c063763d5c5eab08e0f5a2a788a71ef061"
+      },
+      {
+        "path": "web/src/usage/metrics/OwnerAllocationChart.tsx",
+        "line": 1,
+        "sha256": "0364f2f642ab75d2852b7ee659985298517eb28304bb3bd06300d98e61469827"
+      },
+      {
+        "path": "web/src/usage/metrics/OwnerAllocationTable.tsx",
+        "line": 1,
+        "sha256": "6a4fa6ad5df814efe637186c9bdea989943e2f7eb7c2e581eb0dfe7e0fa42dcb"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/owner-allocation.ts",
+        "line": 1,
+        "sha256": "24a6a030da88b8a9ec996693a6a6276cecec7ac0f1f60c65f822230b46140e52"
+      }
+    ]
+  }
+]
