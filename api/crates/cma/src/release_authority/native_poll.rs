@@ -58,17 +58,39 @@ impl AuthorityStore {
         &self,
         command: &NativePollCommand,
     ) -> Result<NativePollExecution> {
-        command.0.validate()?;
-        let mut session = self.transaction().await?;
+        if let Err(error) = command.0.validate() {
+            return Ok(NativePollExecution::NotCommitted(error));
+        }
+        let session = match self.transaction().await {
+            Ok(session) => session,
+            Err(error) => return Ok(NativePollExecution::NotCommitted(error)),
+        };
+        Ok(self.execute_native_poll_in(command, session).await)
+    }
+
+    // Closed implementation seam, also used by the controlled snapshot-conflict
+    // fixture. No caller callback/provider action or external session is exposed.
+    async fn execute_native_poll_in(
+        &self,
+        command: &NativePollCommand,
+        mut session: mongodb::ClientSession,
+    ) -> NativePollExecution {
         let result = transaction::execute(self, &command.0, &mut session).await;
         match result {
             Ok(NativePollExecution::Fresh(receipt)) => match session.commit_transaction().await {
-                Ok(()) => Ok(NativePollExecution::Fresh(receipt)),
-                Err(_) => Ok(NativePollExecution::Uncertain),
+                Ok(()) => NativePollExecution::Fresh(receipt),
+                // Once commit was invoked, no error is a retry certificate.
+                Err(_) => NativePollExecution::Uncertain,
             },
-            other => {
+            Ok(other) => {
                 let _ = session.abort_transaction().await;
                 other
+            }
+            Err(error) => {
+                // All body writes belong to this transaction. Commit was never
+                // requested, even if abort's ACK is lost. No provider was called.
+                let _ = session.abort_transaction().await;
+                NativePollExecution::NotCommitted(error)
             }
         }
     }

@@ -183,3 +183,89 @@ async fn fixed_lanes_cannot_both_claim_the_same_original_target() {
     assert_eq!(retained.lease, target.lease);
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires owned CHRONO_TEST_MONGODB_URI replica set"]
+async fn known_precommit_conflict_recovers_with_the_same_distinct_lane_command() {
+    let (db, store) = fixture().await;
+    let background = prepare(&store, None).await;
+    let startup = store
+        .prepare_native_poll(&writer(1, 1), NativePollLane::StartupAgent, None)
+        .await
+        .unwrap();
+    assert_ne!(background.key(), startup.key());
+    // Pin the second transaction's snapshot before the first command commits.
+    // Its subsequent write to the common head must conflict, not commit Empty.
+    let mut stale = store.transaction().await.unwrap();
+    store.head_in("test-deployment", &mut stale).await.unwrap();
+    let first = fresh(store.execute_native_poll(&background).await.unwrap());
+    assert!(matches!(first.outcome(), NativePollOutcome::Empty));
+    let refused = store.execute_native_poll_in(&startup, stale).await;
+    assert!(matches!(
+        refused,
+        NativePollExecution::NotCommitted(AuthorityError::Unavailable)
+    ));
+    assert!(store
+        .reconcile_native_poll(&startup)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store
+            .load("test-deployment")
+            .await
+            .unwrap()
+            .unwrap()
+            .admission_sequence,
+        1
+    );
+
+    // The explicit certificate, not the absent receipt, permits this one new
+    // invocation. Its command identity/producer/sequence remain unchanged.
+    store
+        .native_targets
+        .insert_one(testing::bound_target())
+        .await
+        .unwrap();
+    let second = fresh(store.execute_native_poll(&startup).await.unwrap());
+    assert_eq!(second.key(), startup.key());
+    assert_eq!(second.lane(), startup.lane());
+    assert_eq!(second.sequence(), startup.sequence());
+    let NativePollOutcome::Claimed(target) = second.outcome() else {
+        panic!("recovered original lease")
+    };
+    let NativePollExecution::Replay(replay) = store.execute_native_poll(&startup).await.unwrap()
+    else {
+        panic!("successful retry cannot grant another Fresh")
+    };
+    assert_eq!(replay.sha256(), second.sha256());
+    assert_eq!(
+        store
+            .native_targets
+            .find_one(doc! {"_id": &target.id})
+            .await
+            .unwrap()
+            .unwrap()
+            .lease,
+        target.lease
+    );
+    assert_eq!(
+        store
+            .load("test-deployment")
+            .await
+            .unwrap()
+            .unwrap()
+            .admission_sequence,
+        2
+    );
+    assert_eq!(
+        store
+            .store_commands
+            .count_documents(doc! {"kind": "native_target_poll_receipt"})
+            .await
+            .unwrap(),
+        2
+    );
+    assert_eq!(store.effects.count_documents(doc! {}).await.unwrap(), 0);
+    db.drop().await.unwrap();
+}
