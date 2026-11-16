@@ -56,9 +56,10 @@ impl ResponsesV2State {
             .await
             .map_err(binding_error)?;
         if let Some(event) = event {
-            if proof.conversation.conversation_id != event.conversation_id {
-                event.provider_conversation_id = Some(proof.conversation.conversation_id);
-            }
+            bindings
+                .bind_transport_context(&proof, event)
+                .await
+                .map_err(binding_error)?;
         }
         Ok(proof.conversation.agent_id)
     }

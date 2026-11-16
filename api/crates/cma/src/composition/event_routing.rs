@@ -159,32 +159,7 @@ impl CmaEventRouter {
             return Ok(Some(conversation.agent_id));
         }
         if binding.profile.session_affinity == SessionAffinity::Conversation {
-            let resets = self
-                .store
-                .conversation_reset_state(&binding.binding_id)
-                .await
-                .map_err(|_| E::Unavailable)?;
-            if resets
-                .head(binding.generation, &event.conversation_id)
-                .is_none()
-            {
-                return Ok(None);
-            }
-            let (conversation, _) = self
-                .bindings
-                .ensure_conversation_at_generation(
-                    &manager,
-                    &binding.binding_id,
-                    &event.conversation_id,
-                    Some(binding.generation),
-                )
-                .await
-                .map_err(binding_route_error)?;
-            if conversation.state != BindingConversationState::Ready {
-                return Err(E::NotReady);
-            }
-            event.provider_conversation_id = Some(conversation.conversation_id);
-            return Ok(Some(conversation.agent_id));
+            return Ok(None);
         }
         let credential = caller.credential.as_ref().ok_or(E::Forbidden)?;
         let activity = verify_activity(
