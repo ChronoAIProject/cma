@@ -11,6 +11,7 @@ const SHA256_SEPARATOR: &str = "@sha256:";
 /// Deployment-owned endpoints and runtime identity validated at startup.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
+    pub capacity: layer3_adapter::agent_sandbox::RuntimeCapacityConfig,
     pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
@@ -41,6 +42,7 @@ impl fmt::Debug for RuntimeConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RuntimeConfig")
+            .field("capacity", &self.capacity)
             .field("sandbox_base_url", &self.sandbox_base_url)
             .field("sandbox_api_key", &"<redacted>")
             .field("sandbox_image", &self.sandbox_image)
@@ -234,6 +236,7 @@ impl RuntimeConfig {
         }
 
         Ok(Self {
+            capacity: super::runtime_capacity::from_lookup(lookup)?,
             agent_sandbox,
             agent_sandbox_connection,
             agent_sandbox_runtime_transport,
