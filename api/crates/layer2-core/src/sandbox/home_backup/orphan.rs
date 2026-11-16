@@ -10,6 +10,7 @@ pub struct HomeBackupOrphanObservation {
     pub home_source_id: String,
     pub home_identity: String,
     pub snapshot_name: String,
+    pub snapshot_class: String,
     pub snapshot_generation: String,
     pub source_reference: Option<String>,
     pub creation_time: Option<String>,
@@ -35,6 +36,7 @@ impl HomeBackupOrphanObservation {
             &self.home_source_id,
             &self.home_identity,
             &self.snapshot_name,
+            &self.snapshot_class,
             &self.snapshot_generation,
         ]
         .into_iter()
@@ -71,6 +73,7 @@ pub fn decide_orphan(
             || known.source.home_source_id != observed.home_source_id
             || known.source.home_identity != observed.home_identity
             || known.storage.snapshot_name != observed.snapshot_name
+            || known.storage.snapshot_class != observed.snapshot_class
             || different(&known.storage.source_reference, &observed.source_reference)
             || different(&known.cut.source_creation_time, &observed.creation_time)
         {

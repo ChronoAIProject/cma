@@ -152,17 +152,83 @@ impl DeletionProvider for Fixture {
     }
 }
 
+#[async_trait::async_trait]
+impl orphans::OrphanInventory for Fixture {
+    async fn list_page(
+        &self,
+        _: Option<&str>,
+        _: u32,
+    ) -> Result<orphans::OrphanPage, HomeBackupError> {
+        self.record("list");
+        if self.outcome == "inventory_error" {
+            return Err(HomeBackupError::Unavailable);
+        }
+        Ok(orphans::OrphanPage {
+            entries: vec![],
+            next: None,
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl orphans::OrphanCatalog for Fixture {
+    async fn reconcile_observed(
+        &self,
+        _: &HomeBackupOrphanObservation,
+        _: &str,
+    ) -> Result<(), HomeBackupError> {
+        panic!("empty inventory must not admit a catalog record")
+    }
+}
+
+#[tokio::test]
+async fn orphan_discovery_respects_admission_and_failure_leaves_deletion_recovery_available() {
+    for (enabled, outcome) in [
+        (false, "success"),
+        (true, "success"),
+        (true, "inventory_error"),
+    ] {
+        let fixture = Fixture::new(outcome);
+        let worker = ExpiryWorker::new(
+            enabled,
+            fixture.clone(),
+            Some(fixture.clone()),
+            Some(orphans::OrphanSources {
+                inventory: fixture.clone(),
+                catalog: fixture.clone(),
+            }),
+            "expiry-fixture",
+        )
+        .unwrap();
+        let result = worker.reconcile_orphan_page().await;
+        assert_eq!(result.is_err(), outcome == "inventory_error");
+        assert_eq!(
+            *fixture.calls.lock().unwrap(),
+            if enabled { vec!["list"] } else { vec![] }
+        );
+        if outcome == "inventory_error" {
+            assert!(worker.reconcile_one().await.unwrap());
+            assert_eq!(
+                fixture.backup.lock().unwrap().state,
+                HomeBackupState::Deleted
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn disabled_worker_performs_no_discovery_or_provider_calls() {
     let fixture = Fixture::new("success");
-    let worker = ExpiryWorker::new(false, fixture.clone(), None, "expiry-fixture").unwrap();
+    let worker = ExpiryWorker::new(false, fixture.clone(), None, None, "expiry-fixture").unwrap();
     assert!(!worker.reconcile_one().await.unwrap());
     assert!(fixture.calls.lock().unwrap().is_empty());
 }
 
 #[test]
 fn enabled_worker_requires_a_real_provider_boundary() {
-    assert!(ExpiryWorker::new(true, Fixture::new("success"), None, "expiry-fixture").is_err());
+    assert!(
+        ExpiryWorker::new(true, Fixture::new("success"), None, None, "expiry-fixture").is_err()
+    );
 }
 
 #[tokio::test]
@@ -172,6 +238,7 @@ async fn worker_persists_authority_then_deletes_observes_and_publishes_exact_rec
         true,
         fixture.clone(),
         Some(fixture.clone()),
+        None,
         "expiry-fixture",
     )
     .unwrap();
@@ -194,6 +261,7 @@ async fn provider_errors_or_present_copy_preserve_expiring_and_do_not_record_del
             true,
             fixture.clone(),
             Some(fixture.clone()),
+            None,
             "expiry-fixture",
         )
         .unwrap();
@@ -214,6 +282,7 @@ async fn worker_refuses_an_external_step_when_the_remaining_lease_is_too_short()
         true,
         fixture.clone(),
         Some(fixture.clone()),
+        None,
         "expiry-fixture",
     )
     .unwrap();
@@ -228,7 +297,7 @@ async fn worker_refuses_an_external_step_when_the_remaining_lease_is_too_short()
 #[tokio::test]
 async fn disabled_supervision_heartbeats_and_shuts_down_without_store_work() {
     let fixture = Fixture::new("success");
-    let worker = ExpiryWorker::new(false, fixture.clone(), None, "expiry-fixture").unwrap();
+    let worker = ExpiryWorker::new(false, fixture.clone(), None, None, "expiry-fixture").unwrap();
     let workers = crate::worker_supervision::Workers::new();
     let (shutdown, signal) = tokio::sync::watch::channel(false);
     let task = worker.spawn_supervised(signal, workers.get("home_backup_expiry"));
@@ -248,6 +317,7 @@ async fn closing_admission_recovers_expiring_without_admitting_a_ready_backup() 
         false,
         fixture.clone(),
         Some(fixture.clone()),
+        None,
         "expiry-fixture",
     )
     .unwrap();

@@ -11,6 +11,7 @@ pub(super) fn home_backup_expiry(
         config.features.home_backup_expiry_enabled,
         stores.home_backups.clone(),
         None,
+        None,
         &config.deployment_id,
     )
 }
