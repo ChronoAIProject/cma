@@ -78,6 +78,7 @@ export async function defaultOwnerPolicyScenario(ctx) {
       while (pending.size) await Promise.allSettled([...pending]);
       const proof = await reports.capture('admin_default_policy_browser_final', true);
       check(proof.authentication === 'browser_session', 'admin_default_policy_cookie_session');
+      await ctx.observe('admin_default_policy_mutations', () => structuredClone(mutations));
       const writes = proof.requests.filter(row => !READS.has(row.method));
       check(writes.length === mutations.length && writes.length === saveReceipts.length && writes.length === 2,
         'admin_default_policy_write_count');
