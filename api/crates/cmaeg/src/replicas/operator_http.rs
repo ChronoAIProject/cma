@@ -1,6 +1,6 @@
 //! Master-key loopback operations; no downstream transport authority.
 use super::{
-    unresolved::{Operator, Request},
+    unresolved::{Failure, Operator, Request},
     Error,
 };
 use axum::{
@@ -123,27 +123,33 @@ async fn handle(
     let mutation = command.action == "apply";
     let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         match (command.action.as_str(), command.request, command.audit) {
-            ("list", None, None) => {
-                serde_json::to_value(control.operator.inspect().await?).map_err(|_| Error::Corrupt)
-            }
+            ("list", None, None) => serde_json::to_value(control.operator.inspect().await?)
+                .map_err(|_| Failure::from(Error::Corrupt)),
             ("dry_run", Some(req), None) => {
                 serde_json::to_value(control.operator.preview(&req).await?)
-                    .map_err(|_| Error::Corrupt)
+                    .map_err(|_| Failure::from(Error::Corrupt))
             }
             ("apply", Some(req), None) => {
                 serde_json::to_value(control.operator.apply(&req, authority_key_id).await?)
-                    .map_err(|_| Error::Corrupt)
+                    .map_err(|_| Failure::from(Error::Corrupt))
             }
-            ("audit", None, Some(id)) => {
-                serde_json::to_value(control.operator.audit(&id).await?).map_err(|_| Error::Corrupt)
-            }
-            _ => Err(Error::Corrupt),
+            ("audit", None, Some(id)) => serde_json::to_value(control.operator.audit(&id).await?)
+                .map_err(|_| Failure::from(Error::Corrupt)),
+            _ => Err(Failure::from(Error::Corrupt)),
         }
     })
     .await
-    .unwrap_or(Err(Error::Unavailable));
+    .unwrap_or(Err(Failure::from(Error::Unavailable)));
     match result {
         Ok(value) => ([("cache-control", "no-store")], Json(value)).into_response(),
-        Err(error) => (StatusCode::CONFLICT, Json(serde_json::json!({"code":match error { Error::Lost => "capability_or_evidence_unavailable", Error::Busy => "binding_or_live_authority_conflict", Error::Expired => "evidence_expired", Error::Capacity => "inspection_capacity", Error::Corrupt => "invalid_operator_evidence", Error::Unavailable if mutation => "operator_outcome_uncertain", Error::Unavailable => "store_unavailable" }}))).into_response(),
+        Err(error) => (
+            if matches!(error, Failure::Store(Error::Unavailable)) {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::CONFLICT
+            },
+            Json(error.document(mutation)),
+        )
+            .into_response(),
     }
 }

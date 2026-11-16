@@ -7,7 +7,7 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 
 impl Operator {
-    pub async fn apply(&self, req: &Request, authority_key_id: u8) -> Result<Receipt, Error> {
+    pub async fn apply(&self, req: &Request, authority_key_id: u8) -> Result<Receipt, Failure> {
         self.validate_request(req)?;
         let audit_id = identifier("replica-abandonment-v1", &req.request_id);
         if let Some((saved, _)) = self
@@ -17,19 +17,36 @@ impl Operator {
             .await?
         {
             if hash(&saved.request)? != hash(req)? {
-                return Err(Error::Busy);
+                return Err(Failure::refuse(
+                    "request_id_reuse",
+                    serde_json::json!({"existing_binding":saved.request.binding,"target":saved.target}),
+                ));
             }
             return Ok(saved);
         }
         let mut selected = self.select(&req.binding, true).await?;
-        if !selected.candidate.eligible
-            || selected.candidate.lease_live
-            || selected.candidate.guard_live
-        {
-            return Err(Error::Busy);
+        if selected.candidate.lease_live {
+            return Err(selected.refusal("live_lease"));
+        }
+        if selected.candidate.guard_live {
+            return Err(selected.refusal("live_guard_attempt"));
+        }
+        let prior_quarantine = self
+            .journal
+            .quarantined(
+                &selected.plan,
+                &selected.plan.targets[selected.target_index],
+            )
+            .await
+            .map_err(execution_error)?;
+        if prior_quarantine {
+            return Err(selected.refusal("already_quarantined"));
+        }
+        if !selected.candidate.eligible {
+            return Err(selected.refusal("ineligible_state"));
         }
         if req.plan_digest.as_deref() != Some(self.digest(req, &selected)?.as_str()) {
-            return Err(Error::Busy);
+            return Err(selected.refusal("plan_digest_mismatch"));
         }
         let target = &selected.plan.targets[selected.target_index];
         let members = self
@@ -38,7 +55,10 @@ impl Operator {
             .capabilities(&self.partitions.store)
             .await?;
         if members.iter().any(|m| !m.quarantine) {
-            return Err(Error::Lost);
+            return Err(Failure::refuse(
+                "cohort_incompatible",
+                serde_json::json!({"members":members}),
+            ));
         }
         let snapshot = Snapshot {
             execution_version: selected.evidence.execution_version,
@@ -66,7 +86,7 @@ impl Operator {
                 .await?
             {
                 if existing != chunk {
-                    return Err(Error::Corrupt);
+                    return Err(Error::Corrupt.into());
                 }
             } else {
                 self.partitions
@@ -120,13 +140,19 @@ impl Operator {
             .read::<quarantine::Quarantine>(&quarantine_id, true)
             .await?;
         if prior.is_some() {
-            return Err(Error::Busy);
+            return Err(Failure::refuse(
+                "already_quarantined",
+                serde_json::json!({"target":target.id,"state":receipt.prior_state}),
+            ));
         }
-        let (mut index, index_version) = self.index().await?;
+        let (mut index, index_version, _) = self.active_index().await?;
         if index.audits.len() >= 512 {
-            return Err(Error::Capacity);
+            return Err(Error::Capacity.into());
         }
         index.audits.push(audit_id.clone());
+        index
+            .deadlines
+            .insert(audit_id.clone(), quarantine.rollback_safe_after);
         index.rollback_safe_after = Some(
             index
                 .rollback_safe_after
@@ -230,21 +256,27 @@ impl Operator {
         }
         // Recheck the cohort after evidence staging, before the single commit.
         // The runbook excludes concurrent old joins/rollouts; this is no join lock.
-        if self
-            .partitions
-            .membership
-            .capabilities(store)
-            .await?
-            .iter()
-            .any(|m| !m.quarantine)
-        {
-            return Err(Error::Lost);
+        let members = self.partitions.membership.capabilities(store).await?;
+        if members.iter().any(|m| !m.quarantine) {
+            return Err(Failure::refuse(
+                "cohort_incompatible",
+                serde_json::json!({"members":members}),
+            ));
         }
         match store.batch(&writes).await {
             Ok(_) => Ok(receipt),
             Err(error) => match store.read::<Receipt>(&audit_id, true).await? {
                 Some((saved, _)) if hash(&saved.request)? == hash(req)? => Ok(saved),
-                _ => Err(error),
+                _ => {
+                    if error == Error::Busy {
+                        if let Err(changed) = self.select(&req.binding, false).await {
+                            if changed.code() == "binding_version_mismatch" {
+                                return Err(changed);
+                            }
+                        }
+                    }
+                    Err(error.into())
+                }
             },
         }
     }

@@ -3218,7 +3218,10 @@ for an accepted or deferred turn, and the same synchronous refusals with
 Replica-mode ordinary dispatch and delayed effects retain their shared durable
 FIFO order. An Accepted target with retained delivery/guard uncertainty stays at
 the head; the gateway stops futile provider snapshot/events GETs when those reads
-cannot resolve chat delivery. It still checks for already-retained receipts.
+cannot resolve chat delivery. It still checks for already-retained receipts. A live Pending tool attempt causes
+the parent to wait under its current renewed ownership and continue after receipt
+publication; it does not impose an additional lease-expiry wait. Concurrent renewals
+of that same generation are retried without treating a version race as lost authority.
 There is no automatic retained-unknown head advancement. An explicit operator
 `unknown_abandoned` disposition is the exception: its audit, quarantine, guard
 closure and frontier advance commit under one exact fence. It performs no provider
