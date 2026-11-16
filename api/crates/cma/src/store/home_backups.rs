@@ -9,6 +9,7 @@ use mongodb::{
 mod capture;
 mod codec;
 mod discovery;
+mod expiry;
 mod retirement;
 pub(in crate::store) mod schema_v1;
 #[cfg(test)]
