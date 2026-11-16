@@ -1,0 +1,202 @@
+[
+  {
+    "id": "cma-user.documents.format",
+    "role": "user",
+    "feature": "Use rich document formatting and inserted content",
+    "entry_point": "Document editor toolbar",
+    "steps": [
+      "Apply paragraph/headings, font, bold/italic/underline",
+      "Insert lists/checklists, quote, code, Mermaid, details, date, divider and an approved image URL",
+      "Insert a table and add/remove rows/columns as offered",
+      "Use undo/redo, save and preview"
+    ],
+    "expected_result": "Supported formatting and structured content round-trip through the saved document and render safely in Preview.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PATCH",
+        "path": "/api/v1/documents/{id}",
+        "openapi_path": "/api/v1/documents/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/RichDocumentEditor.tsx",
+        "line": 30,
+        "sha256": "a1264f898643377c894d1f784508cd7524dd29495c793630cf2a8b27b0c6488b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/DocumentExtensions.ts",
+        "line": 11,
+        "sha256": "cb1198fc1158ce9889b26fe60330fce8eb17e1e32c849f903b69400fdf046b76",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/DocumentPage.tsx",
+        "line": 22,
+        "sha256": "201832fd8e30ca5ee532de3ec3d2854c6756cf9cd3b3b4a16aa9030f2c86fb51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.preview-outline",
+    "role": "user",
+    "feature": "Preview a document and navigate its outline",
+    "entry_point": "Document → Preview / On this page",
+    "steps": [
+      "Open a permitted document",
+      "Switch to Preview",
+      "Use heading outline links and code/diagram views"
+    ],
+    "expected_result": "The saved/current draft content renders with working heading navigation; read-only users have no editor mutations.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}",
+        "openapi_path": "/api/v1/documents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}/source",
+        "openapi_path": "/api/v1/documents/{id}/source",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentPage.tsx",
+        "line": 22,
+        "sha256": "201832fd8e30ca5ee532de3ec3d2854c6756cf9cd3b3b4a16aa9030f2c86fb51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/DocumentOutline.tsx",
+        "line": 5,
+        "sha256": "d9e1b79175bf8fd443a31e8830692403fd28d9cbba47fc35574e67fce37bbe68",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/RichDocumentEditor.tsx",
+        "line": 30,
+        "sha256": "a1264f898643377c894d1f784508cd7524dd29495c793630cf2a8b27b0c6488b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.conflict-draft",
+    "role": "user",
+    "feature": "Recover a document draft after save conflict",
+    "entry_point": "Document conflict notice → Download draft / Reload latest",
+    "steps": [
+      "Create a stale local edit using two test sessions",
+      "Attempt save",
+      "Download the retained draft",
+      "Confirm discard/reload only when intended"
+    ],
+    "expected_result": "Conflict preserves local work and requires an explicit choice before discarding it; the newer saved revision remains intact.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PATCH",
+        "path": "/api/v1/documents/{id}",
+        "openapi_path": "/api/v1/documents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}/source",
+        "openapi_path": "/api/v1/documents/{id}/source",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentPage.tsx",
+        "line": 22,
+        "sha256": "201832fd8e30ca5ee532de3ec3d2854c6756cf9cd3b3b4a16aa9030f2c86fb51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/drafts.ts",
+        "line": 12,
+        "sha256": "ad3719cb967a1cb01250062cee3d83ed58967848a41772ea08ac7adb4d6cf60e",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.comments-read",
+    "role": "user",
+    "feature": "Read document comments",
+    "entry_point": "Document → Comments",
+    "steps": [
+      "Open comments on an authorized document",
+      "Load additional comments",
+      "Verify author and document-revision attribution"
+    ],
+    "expected_result": "Only accessible comments appear and read-only access does not enable comment submission.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}/comments",
+        "openapi_path": "/api/v1/documents/{id}/comments",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentComments.tsx",
+        "line": 9,
+        "sha256": "087669741d04e05f7f4628fd193c85b7d12f630218f6f320fa1ef697f7b4099e",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.comment",
+    "role": "user",
+    "feature": "Comment on a document",
+    "entry_point": "Document → Comments → Add a comment",
+    "steps": [
+      "Use a local owned/comment-enabled document",
+      "Enter a harmless bounded comment",
+      "Submit and reload"
+    ],
+    "expected_result": "One comment is saved with the current document revision; duplicate retry and comment limits are handled explicitly.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/documents/{id}/comments",
+        "openapi_path": "/api/v1/documents/{id}/comments",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentComments.tsx",
+        "line": 9,
+        "sha256": "087669741d04e05f7f4628fd193c85b7d12f630218f6f320fa1ef697f7b4099e",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/documents.ts",
+        "line": 98,
+        "sha256": "bb6a9b3525f68ccc594cb6ede5b119cb7e98af5cb64a86458b8ebe4138484207",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

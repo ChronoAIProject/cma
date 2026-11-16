@@ -1,0 +1,211 @@
+[
+  {
+    "id": "ADM-027",
+    "role": "admin",
+    "feature": "Legacy deployment-wide allocated usage totals and inventory",
+    "entry_point": "SDK usage.adminSummary / usage.adminSandboxes",
+    "steps": [
+      "Read overall totals and owner-filtered totals.",
+      "Page allocated Sandbox records and reconcile counts/totals with their documented as_of time."
+    ],
+    "expected_result": "Allocated resource-time summaries remain available independently of measured reports and enforce read_all_sandboxes.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/sandboxes",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_sandboxes"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/usage.ts",
+        "line": 1,
+        "sha256": "d3c9cfbe936e978cd14a3188286914985a912886ad53db895425073eb37c9614"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/sandbox_usage.rs",
+        "line": 1,
+        "sha256": "ac4a53c0c01410eede1a924110e4fb4613dff7233cf4f2b8480acad84d7ece45"
+      }
+    ]
+  },
+  {
+    "id": "ADM-028",
+    "role": "admin",
+    "feature": "User names and directory-restricted owner context",
+    "entry_point": "Account menu → Operations; /operations → owner choices, owner allocation, Activity and runtime details",
+    "steps": [
+      "Compare local operators with and without read_user_directory.",
+      "Use duplicate display names to verify disambiguation without exposing unauthorized identity context."
+    ],
+    "expected_result": "Readable public names remain usable; additional directory context is only returned with its independent capability.",
+    "writes": false,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_options"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/owner-allocations",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_owner_allocations"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer2-core/src/directory.rs",
+        "line": 1,
+        "sha256": "96cb82da3e2e8f88e94a3752d8880cdc802cbbf61add0eb89e372abcd7088b48"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox_metrics/options.rs",
+        "line": 1,
+        "sha256": "34951df32f92e80fa28005feac657f1fecb5a2b12e53a80b316f8702a71f576b"
+      },
+      {
+        "path": "web/src/usage/metrics/UsageIdentity.tsx",
+        "line": 1,
+        "sha256": "4fe8c9bcf05d1b4f1f5c2362d1de551baf396fad417bcc16a96d888f353f4167"
+      },
+      {
+        "path": "web/src/operator/Activity.tsx",
+        "line": 1,
+        "sha256": "6c44efa634d6b587e82817ba704d52951eb3a6b96d6897d1b0c390cbb92417f8"
+      }
+    ]
+  },
+  {
+    "id": "ADM-029",
+    "role": "admin",
+    "feature": "Admin/personal report isolation across sign-out and identity changes",
+    "entry_point": "Operations and Your usage on local identities",
+    "steps": [
+      "Load admin report, switch to personal usage, then sign out or switch user while reads are pending.",
+      "Reopen Operations on another AM; attempt the old report identifier."
+    ],
+    "expected_result": "Principal, admin flag, range and report identity are checked; late responses never populate a new user’s UI.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/reportOwner.ts",
+        "line": 1,
+        "sha256": "a5cea119c223ae6782e327fe5a9fa09324f68b1fb6d9f2198e5aa5c2af1aee67"
+      },
+      {
+        "path": "web/src/usage/metrics/reportCache.ts",
+        "line": 1,
+        "sha256": "057bd94659800e86b19605cc89d7cbded748a3f4c751e84757f12a2b7e44990d"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 1,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "web/src/operator/Operations.tsx",
+        "line": 1,
+        "sha256": "136e42a2fc9ddd0987809754733f6fb9c0626221b9b7cbf2946ad99d5d01bacf"
+      }
+    ]
+  },
+  {
+    "id": "ADM-030",
+    "role": "admin",
+    "feature": "Fleet-wide Sandbox inventory API with filters",
+    "entry_point": "SDK admin.listSandboxes; current UI inventory is the usage dashboard",
+    "steps": [
+      "Filter by owner, state, runtime image and always_on.",
+      "Traverse bounded cursor pages; compare an original identity across AMs."
+    ],
+    "expected_result": "Cross-owner inventory returns only authorized records and stable paging; a read-only operator cannot mutate them.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/sandboxes.rs",
+        "line": 1,
+        "sha256": "deaac75ee2f9f8575def719f889a348dbf809797acf1a1d5c79cf3d599b65f3c"
+      }
+    ]
+  },
+  {
+    "id": "ADM-031",
+    "role": "admin",
+    "feature": "Runtime details, Workspace and Agent hierarchy",
+    "entry_point": "Account menu → Operations; /operations → row → Runtime details",
+    "steps": [
+      "Open Runtime details; inspect owner, status, runtime, profile revision and creation time.",
+      "Inspect Workspace/Agent states and refresh."
+    ],
+    "expected_result": "The selected original Sandbox hierarchy renders without exposing credential values; refresh reauthorizes the same identity.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes_by_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SandboxDetail.tsx",
+        "line": 1,
+        "sha256": "a2604de5793e52d4908e5db6a405cace29fc317a78588ad35ae5b5fda73b097f"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/sandboxes.rs",
+        "line": 1,
+        "sha256": "deaac75ee2f9f8575def719f889a348dbf809797acf1a1d5c79cf3d599b65f3c"
+      }
+    ]
+  }
+]

@@ -1,0 +1,225 @@
+[
+  {
+    "id": "EG-021",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Recover channel address and uncertain create/save result",
+    "entry_point": "Channel editor / Existing channel -> recovery",
+    "steps": [
+      "Retain the durable record ID from a disposable channel.",
+      "Locally interrupt a create response; recover by record ID and compare version before deciding whether to resume the exact intent."
+    ],
+    "expected_result": "The same channel is recovered without creating another channel or replacing credentials; ambiguous outcomes remain explicit.",
+    "writes": false,
+    "api": [
+      "GET /v1/channel-records/{record_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelEditor.tsx",
+        "line": 221,
+        "anchor": "async function recover",
+        "sha256": "08b57a858e8f321172020103c0667e4ce472144a730654a936b553fdacf8012c"
+      },
+      {
+        "path": "web/src/services/ExistingChannel.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "2d5349303517a035694067051e07b8320b5fd6a63abb497dfd0493fd3055248d"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10498,
+        "anchor": "\"operationId\": \"recoverChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-022",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Rename and update channel settings with version checks",
+    "entry_point": "Channel -> inspector -> Channel settings",
+    "steps": [
+      "Rename a disposable channel and change one non-secret setting.",
+      "Save and reload; locally attempt a stale expected_version update."
+    ],
+    "expected_result": "Saved name/settings converge across replicas; stale updates are refused without overwriting a newer revision.",
+    "writes": true,
+    "api": [
+      "PUT /v1/channels/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelEditor.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "08b57a858e8f321172020103c0667e4ce472144a730654a936b553fdacf8012c"
+      },
+      {
+        "path": "web/src/services/channelForm/ChannelPolicyFields.tsx",
+        "line": 39,
+        "anchor": "Channel name",
+        "sha256": "7ce4854c706673d914ccc86d0069ebf45875765ea02ad12c94732b8273a81458"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10794,
+        "anchor": "\"operationId\": \"updateChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-023",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Add, edit and remove producers and credential-preserving edits",
+    "entry_point": "Channel -> producer inspector",
+    "steps": [
+      "On a fixture, add/edit a supported producer and preserve omitted stored credentials.",
+      "Remove only the test producer after checking routing references."
+    ],
+    "expected_result": "Exact source verification/admission survives edits; saved secrets are not rendered and unsupported modes are not silently replaced.",
+    "writes": true,
+    "api": [
+      "PUT /v1/channels/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/NodeFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "f50590a24e8e30cbcd861d997e7079d92158ab9e933092dafb1950a797eb2cd6"
+      },
+      {
+        "path": "web/src/services/channelForm/CredentialsFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "64ce1eeab2b5a9726ea5b3e9cdac956b64e2884879d96bb55af1fc6670cb9002"
+      },
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10794,
+        "anchor": "\"operationId\": \"updateChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-024",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Admission, conversation grouping and reply policy",
+    "entry_point": "Channel settings -> Admission / Conversation grouping / Replies",
+    "steps": [
+      "Configure allowlist/scoped sender/chat/group admission in a fixture.",
+      "Choose conversation grouping and auto-final/ack/sink behavior; compare two senders and two conversations."
+    ],
+    "expected_result": "Only admitted events dispatch. Configured grouping shares or isolates Agent context as selected; reply destination and acknowledgement policy are respected.",
+    "writes": true,
+    "api": [
+      "PUT /v1/channels/{channel_id}",
+      "GET /v1/channels/{channel_id}/partition"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/AdmissionFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c8578b41c847a4d497577eb16b34103b5ee639808206f47d5a545231d527a92a"
+      },
+      {
+        "path": "web/src/services/channelForm/ChannelPolicyFields.tsx",
+        "line": 70,
+        "anchor": "Conversation grouping",
+        "sha256": "7ce4854c706673d914ccc86d0069ebf45875765ea02ad12c94732b8273a81458"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10794,
+        "anchor": "\"operationId\": \"updateChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11580,
+        "anchor": "\"operationId\": \"inspectChannelPartition\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-025",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Configure consumers, Agent destination and execution profile",
+    "entry_point": "Channel -> consumer inspector -> Agent destination/settings",
+    "steps": [
+      "Select a configured provider and existing Agent or supported profile target.",
+      "Set model/effort/permission, service scope, prompt, skills and supported MCP/environment settings in a fixture."
+    ],
+    "expected_result": "Saved consumer resolves the intended owner and Agent configuration, with allowed scopes and no credential disclosure.",
+    "writes": true,
+    "api": [
+      "PUT /v1/channels/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/ProfileFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b7732c4ed47bed3aa0431188cb573534be868ebdcf37e6baff861567e1bcc763"
+      },
+      {
+        "path": "web/src/services/channelForm/NodeFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "f50590a24e8e30cbcd861d997e7079d92158ab9e933092dafb1950a797eb2cd6"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10794,
+        "anchor": "\"operationId\": \"updateChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

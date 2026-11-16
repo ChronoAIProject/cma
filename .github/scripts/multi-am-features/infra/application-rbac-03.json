@@ -1,0 +1,20 @@
+{
+  "apiVersion": "rbac.authorization.k8s.io/v1",
+  "kind": "RoleBinding",
+  "metadata": {
+    "name": "cma-native-am",
+    "namespace": "cma-native-am"
+  },
+  "roleRef": {
+    "apiGroup": "rbac.authorization.k8s.io",
+    "kind": "Role",
+    "name": "cma-native-am"
+  },
+  "subjects": [
+    {
+      "kind": "ServiceAccount",
+      "name": "cma-native-am",
+      "namespace": "cma-native-am"
+    }
+  ]
+}

@@ -1,0 +1,236 @@
+[
+  {
+    "id": "EG-061",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Reply to event, create bounded reply target and send follow-up",
+    "entry_point": "Agent reply tool -> event/target",
+    "steps": [
+      "Reply to a designated event with a stable key for durable routing.",
+      "Create a permitted reply target and send a follow-up; locally replay the same operation and reject changed-content reuse."
+    ],
+    "expected_result": "Replies reach only the authorized destination. Durable retries reuse exact content/key; an unknown effect is not retried under a new key.",
+    "writes": true,
+    "api": [
+      "POST /v1/events/{event_ref}/replies",
+      "POST /v1/events/{event_ref}/reply-target",
+      "POST /v1/reply-targets/{reply_target_ref}/messages"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/tools.rs",
+        "line": 87,
+        "anchor": "name: \"replyToEvent\"",
+        "sha256": "31a5f7cdf1d0db8e3e4efea29450fa80f14a96f7362c9a80f4f99c1d00d91339"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12291,
+        "anchor": "\"operationId\": \"replyToEvent\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12373,
+        "anchor": "\"operationId\": \"createReplyTarget\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13851,
+        "anchor": "\"operationId\": \"replyToTarget\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-062",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Typing indicators",
+    "entry_point": "Agent -> sendTyping",
+    "steps": [
+      "Read reply capabilities for a test event.",
+      "Send typing only where supported and observe the correct destination."
+    ],
+    "expected_result": "Typing is bounded to the event destination and capability; unsupported transports return an explicit result.",
+    "writes": true,
+    "api": [
+      "POST /v1/events/{event_ref}/typing"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/tools.rs",
+        "line": 105,
+        "anchor": "name: \"sendTyping\"",
+        "sha256": "31a5f7cdf1d0db8e3e4efea29450fa80f14a96f7362c9a80f4f99c1d00d91339"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12540,
+        "anchor": "\"operationId\": \"sendTyping\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-063",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Message capabilities, edit, reaction and delete",
+    "entry_point": "Agent tools -> retained message reference",
+    "steps": [
+      "Read capabilities of a test-owned confirmed message.",
+      "Exercise supported text/media edit, reaction and delete using exact event/message references; test stale references locally."
+    ],
+    "expected_result": "Only permitted effects occur on the intended message; unsupported edits/reactions/deletes are refused and uncertain effects remain reconciled.",
+    "writes": true,
+    "api": [
+      "GET /v1/messages/{message_ref}/capabilities",
+      "POST /v1/messages/{message_ref}/update",
+      "POST /v1/messages/{message_ref}/reaction",
+      "POST /v1/messages/{message_ref}/delete"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/message_effects.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "8841da7c9d2feeb963f417fc1d8084f4d742dd7373f25c3fa702d26c3c9dc0fe"
+      },
+      {
+        "path": "api/crates/cmaeg/src/mcp/tools.rs",
+        "line": 96,
+        "anchor": "name: \"updateMessage\"",
+        "sha256": "31a5f7cdf1d0db8e3e4efea29450fa80f14a96f7362c9a80f4f99c1d00d91339"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13465,
+        "anchor": "\"operationId\": \"readMessageCapabilities\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13636,
+        "anchor": "\"operationId\": \"updateMessage\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13573,
+        "anchor": "\"operationId\": \"setMessageReaction\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13510,
+        "anchor": "\"operationId\": \"deleteMessage\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-064",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Inbound attachment views and bounded download",
+    "entry_point": "Agent -> readEventAttachment; returned media capability",
+    "steps": [
+      "Send an allowed test image/document/audio/video through a designated source.",
+      "Read the advertised attachment view or download with the exact capability; reject unrelated indices locally."
+    ],
+    "expected_result": "Only retained, authorized attachment content is exposed with format/size/page limits; single-use download capability is not a general file URL.",
+    "writes": false,
+    "api": [
+      "GET /v1/events/{event_ref}/attachments/{index}",
+      "GET /v1/media/content"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/tools.rs",
+        "line": 55,
+        "anchor": "AttachmentArguments",
+        "sha256": "31a5f7cdf1d0db8e3e4efea29450fa80f14a96f7362c9a80f4f99c1d00d91339"
+      },
+      {
+        "path": "api/crates/cmaeg/src/media/source/mod.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e933582e3111d09641d0acffbc1f00e0bc88ddb281523a6211f2f87a9244f6ec"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11940,
+        "anchor": "\"operationId\": \"readEventAttachment\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13434,
+        "anchor": "\"operationId\": \"downloadMedia\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-065",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Media response continuation status",
+    "entry_point": "Channel event -> retained media responses",
+    "steps": [
+      "Generate a fixture event with media processing/continuation.",
+      "Page its retained continuation slots from the owner view and compare response identity/status."
+    ],
+    "expected_result": "Bounded metadata shows each independent response and terminal delivery status without exposing unrelated response text, paths or credentials.",
+    "writes": false,
+    "api": [
+      "GET /v1/channels/{channel_id}/events/{event_id}/media-responses"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/providers/media_continuations.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "d9a45558964633cc9a2938fda9e0f3e0260f2d2a71b8e2de73fa5f7457857dd5"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11277,
+        "anchor": "\"operationId\": \"getEventMediaResponses\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]
