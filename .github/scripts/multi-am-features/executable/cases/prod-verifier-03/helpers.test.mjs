@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cases} from './index.mjs';
-import {rows, eventJoin, delivered, invoke, acquire, pages, openBrowser} from './helpers.mjs';
+import {rows, eventJoin, delivered, invoke, acquire, pages, openBrowser, same, digest} from './helpers.mjs';
 import {executeCase, Blocked} from '../../runner.mjs';
 import {loadRegistry} from '../../registry.mjs';
 
@@ -13,6 +13,13 @@ const turn = {...event, servingAm: 'a', owningAm: 'b', epoch: 3,
   providerAccepted: true, turnCount: 1, effectCount: 1};
 const receipt = {eventId: event.eventId, responseId: event.responseId, destination: event.destination,
   sender: event.expectedSender, contentDigest: event.expectedContentDigest, status: 'delivered', count: 1};
+
+test('receipt equality ignores JSON object field order and screenshot digest hashes bytes', () => {
+  assert.equal(same({id: 'one', version: 3}, {version: 3, id: 'one'}), true);
+  assert.equal(same({version: 3}, {version: '3'}), false);
+  assert.equal(same([1, 2], [2, 1]), false);
+  assert.equal(digest(Buffer.from('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+});
 
 test('author registrations keep frozen IDs, exact steps and explicit dependencies', async () => {
   const registry = await loadRegistry();
