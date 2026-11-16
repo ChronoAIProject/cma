@@ -28,5 +28,9 @@ test('metadata flows use non-owner reads and retain independent artifact and lin
     pass(result);
     assert.ok(result.result.owner_proofs.some(proof=>proof.owner!==proof.ingress));
     assert.ok(result.result.observations.some(value=>value.label==='cross_am_read_attribution'));
+    const worktreeReads=result.events.filter(event=>event.kind==='response' && event.request.path.includes('/worktrees/'));
+    assert.equal(worktreeReads.length,1);
+    for(const event of worktreeReads) assert.ok(result.result.owner_proofs.some(proof=>
+      proof.request_id===event.response.timing.request_id && proof.agent_sha256===hash(fixture.agentId) && proof.verdict==='PASS'));
   }
 });

@@ -12,7 +12,7 @@ const ownerAdapter = {
 };
 export async function execute(number, fixtureName, fixture, handler) {
   const definition = cases.find(value=>value.id.endsWith('-'+String(number).padStart(3,'0')));
-  const calls = [], cleanups = [];
+  const calls = [], cleanups = [], events = [];
   let sequence = 0;
   const transport = {async request(input) {
     calls.push(clone(input));
@@ -21,11 +21,12 @@ export async function execute(number, fixtureName, fixture, handler) {
     return {...response,body:clone(response.body),timing:{am:input.am,request_id:'model-'+sequence++,body_ms:1}};
   }};
   const result = await executeCase(definition,rows.find(row=>row.case_id===definition.id),{...config,transport,adapter:ownerAdapter,
+    record:async event=>{events.push(event);},
     fixtures:{'api-fixtures':{async take(name) {
       assert.equal(name,fixtureName);
       return {...fixture,cleanup:async()=>{cleanups.push(name);await fixture.cleanup?.();}};
     }}}});
-  return {result,calls,cleanups};
+  return {result,calls,cleanups,events};
 }
 export function pass(value) {
   assert.equal(value.result.status,'PASS',value.result.primary_failure);

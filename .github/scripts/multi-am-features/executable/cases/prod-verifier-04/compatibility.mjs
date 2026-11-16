@@ -116,7 +116,7 @@ async function conversationItems(ctx, agentId, version, am = ctx.am) {
 
 const numbers = [24,25,26,27,28,30,31,32,49,50,51,52,84,85];
 export const compatibilityCases = numbers.map(number => caseOf(number, 'agent', ['api-fixtures'], async ctx => {
-  let fixture, before, completed, cancelled, agui, responseIntent, aguiIntent, responseReceipt, created = [];
+  let fixture, before, completed, cancelled, agui, responseIntent, aguiIntent, responseReceipt, launchReceipt, created = [];
   const agentPath = suffix => '/api/v1/agents/' + segment(fixture.agentId) + suffix;
   const opts = () => ({agentId: fixture.agentId, timeout: 120000});
   async function newConversation() {
@@ -159,9 +159,12 @@ export const compatibilityCases = numbers.map(number => caseOf(number, 'agent', 
       && reply.body.features.transport.streaming === true && reply.body.features.transport.resumable === true
       && reply.body.features.custom['cma:terminal'] === false, 'agui_advertised_subset');
   }
-  async function launchEvents() {
-    const reply = await request(ctx, 'GET', '/api/v1/agui/launches/' + segment(fixture.launchId) + '/events?follow=false', undefined,
-      opts());
+  async function launchEvents(previousReceipt) {
+    // This endpoint reads the subject-owned LaunchStore without an Agent lease.
+    // Use actual receipts to compare ingresses; the fixture Agent is unrelated.
+    const path = '/api/v1/agui/launches/' + segment(fixture.launchId) + '/events?follow=false';
+    const reply = previousReceipt ? await readOtherAM(ctx, fixture, {method:'GET', path}, previousReceipt)
+      : await request(ctx, 'GET', path);
     const frames = sseFrames(reply);
     ctx.assert(equal(frames.map(value => value.body), fixture.launchEvents), 'launch_sse_exact_durable_events');
     let previous = 0;
@@ -169,6 +172,7 @@ export const compatibilityCases = numbers.map(number => caseOf(number, 'agent', 
       ctx.assert(Number(frame.id) === frame.body.seq && frame.body.seq > previous, 'launch_sse_cursor_order');
       previous = frame.body.seq;
     }
+    return reply;
   }
   async function readConversation(version = 'v1') {
     const value = (await request(ctx, 'GET', '/api/' + version + '/conversations/' + segment(fixture.agentId), undefined, opts())).body;
@@ -184,7 +188,7 @@ export const compatibilityCases = numbers.map(number => caseOf(number, 'agent', 
       ctx.assert(equal(survived.body, prior.response), 'original_response_survives_restart');
     }
     await newConversation();
-    await capabilities(); await sandbox(); await launchEvents();
+    await capabilities(); await sandbox(); launchReceipt = await launchEvents();
     await readConversation(); await readConversation('v2');
     responseIntent = {conversation: fixture.agentId, input: fixture.responseInput, stream: true};
     const responseKey = key();
@@ -271,8 +275,9 @@ export const compatibilityCases = numbers.map(number => caseOf(number, 'agent', 
       {actor: 'outsider', allowed: [403,404]});
     ctx.assert(typeof deniedCreate.body.code === 'string', 'conversation_foreign_parent_denied');
     const deniedLaunch = await request(ctx, 'GET', '/api/v1/agui/launches/' + segment(fixture.launchId) + '/events?follow=false',
-      undefined, {...opts(), actor: 'outsider', allowed: [404]});
+      undefined, {actor: 'outsider', allowed: [404]});
     ctx.assert(typeof deniedLaunch.body.code === 'string', 'launch_stream_owner_boundary');
+    await launchEvents(launchReceipt);
     await unsupported('DELETE', '', 'delete', 'outsider'); await unsupported('POST', '/cancel', 'background', 'outsider');
     const peer = await readOtherAM(ctx, fixture, {method: 'GET', path: '/api/v1/responses/' + segment(completed.id),
       agentId: fixture.agentId, allowed: [200]}, responseReceipt);

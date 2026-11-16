@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execute, pass} from './test-helpers.mjs';
 import {prepareHierarchy} from './setups.mjs';
+import {hash} from './common.mjs';
 
 test('hierarchy flows use nested Agent creation shapes and clean children before parents',async()=>{
   for(const number of [33,62,63,81,82]) {
@@ -34,6 +35,10 @@ test('hierarchy flows use nested Agent creation shapes and clean children before
     });
     pass(result);assert.deepEqual(cleanupOrder,['agent','workspace','sandbox']);
     assert.deepEqual(retained,[['intent','sandbox'],['resource','sandbox'],['intent','workspace'],['resource','workspace'],['intent','agent'],['resource','agent']]);
+    const worktreeReads=result.events.filter(event=>event.kind==='response' && event.request.path.includes('/worktrees/'));
+    assert.ok(worktreeReads.length>=3);
+    for(const event of worktreeReads) assert.ok(result.result.owner_proofs.some(proof=>
+      proof.request_id===event.response.timing.request_id && proof.agent_sha256===hash('agt') && proof.verdict==='PASS'));
   }
 });
 

@@ -76,6 +76,9 @@ test('compatibility flows retain raw SSE, paged output, exact replay and settled
     pass(result);assert.deepEqual(model.cleaned,[...model.children].reverse().map(value=>value.id));
     assert.ok(result.result.owner_proofs.some(proof=>proof.owner!==proof.ingress));
     assert.ok(result.result.observations.some(value=>value.label==='cross_am_read_attribution'));
+    const launchReads=result.events.filter(event=>event.kind==='response' && event.request.path.includes('/agui/launches/'));
+    assert.deepEqual([...new Set(launchReads.filter(event=>event.request.actor==='user').map(event=>event.response.timing.am))].sort(),['a','b']);
+    for(const event of launchReads) assert.equal(result.result.owner_proofs.some(proof=>proof.request_id===event.response.timing.request_id),false);
     if(number===49) {
       const writes=result.calls.filter(value=>value.path==='/api/v1/responses'&&value.body.input==='response input'&&value.actor==='user');
       assert.deepEqual(writes.map(value=>value.am),['b','a']);
