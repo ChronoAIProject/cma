@@ -1,5 +1,6 @@
 //! Owner-scoped account erasure for independent home backups.
 
+use super::model::validate_holder;
 use super::{
     HomeBackupClock, HomeBackupDeletionPort, HomeBackupErasureReceipt, HomeBackupErasureStore,
     HomeBackupError, OwnerErasureBarrier,
@@ -79,11 +80,7 @@ impl HomeBackupErasureService {
             .checked_sub(start)
             .filter(|seconds| *seconds > 1)
             .ok_or(HomeBackupErasureError::Backup(HomeBackupError::Conflict))?;
-        if holder.is_empty() || holder.trim() != holder {
-            return Err(HomeBackupErasureError::Backup(HomeBackupError::Invalid(
-                "invalid erasure identity",
-            )));
-        }
+        validate_holder(holder).map_err(HomeBackupErasureError::Backup)?;
         self.barrier
             .admit_owner_erasure(subject)
             .await
@@ -95,8 +92,10 @@ impl HomeBackupErasureService {
         }
         let mut receipts = Vec::new();
         for sandbox_id in first {
+            let fence_now = self.current_now().await?;
+            let fence_until = lease_deadline(&fence_now, lease_seconds)?;
             self.backups
-                .fence_sandbox_erasure(&sandbox_id, now, holder, until)
+                .fence_sandbox_erasure(&sandbox_id, &fence_now, holder, &fence_until)
                 .await
                 .map_err(HomeBackupErasureError::Backup)?;
             let backup_ids = self

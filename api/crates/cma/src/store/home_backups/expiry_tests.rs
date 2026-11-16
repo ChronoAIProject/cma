@@ -315,22 +315,21 @@ async fn erasure_fences_schedule_before_a_live_capture_blocks_backup_claim() {
     let fixture = Fixture::new().await;
     let parent = schedule();
     fixture.store.ensure_schedule(&parent).await.unwrap();
-    let mut value = standalone_backup(HomeBackupState::Creating);
-    value.lease = Some(HomeBackupLease {
-        holder: holder(),
-        token: uuid::Uuid::new_v4().to_string(),
-        fence: 1,
-        expires_at: at_offset(600),
-    });
-    value.next_fence = 2;
-    value.revision = 2;
-    fixture
+    let capture_holder = holder();
+    let now = layer2_core::now_rfc3339();
+    let capture = fixture
         .store
-        .backups
-        .insert_one(backup_document(&value).unwrap())
+        .claim_due(&now, &capture_holder, &at_offset(600))
+        .await
+        .unwrap()
+        .unwrap();
+    let intent = backup(&capture);
+    let planned = fixture
+        .store
+        .plan_capture(&capture, &intent, &now)
         .await
         .unwrap();
-    let now = layer2_core::now_rfc3339();
+    let value = planned.backup.clone().unwrap();
     fixture
         .store
         .fence_sandbox_erasure(&parent.id, &now, &holder(), &at_offset(60))
@@ -349,7 +348,28 @@ async fn erasure_fences_schedule_before_a_live_capture_blocks_backup_claim() {
     assert_eq!(
         fixture
             .store
+            .get_schedule(&parent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .next_fence,
+        2
+    );
+    assert_eq!(
+        fixture
+            .store
             .claim_erasure(&value.id, &now, &holder(), &at_offset(60))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
+    let mut creating = value.clone();
+    creating.state = HomeBackupState::Creating;
+    let mut progress = planned.schedule.clone();
+    progress.in_flight.as_mut().unwrap().phase = HomeBackupPhase::Creating;
+    assert_eq!(
+        fixture
+            .store
+            .save_capture(&planned, &progress, &creating, &now)
             .await,
         Err(HomeBackupError::Conflict)
     );
@@ -392,6 +412,13 @@ async fn erasure_claim_rejects_client_or_server_expired_until_and_live_leases() 
             .await,
         Err(HomeBackupError::Conflict)
     );
+    assert_eq!(
+        fixture
+            .store
+            .claim_erasure(&value.id, &at_offset(-60), &holder(), &at_offset(-1))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
     let mut live = value.clone();
     live.lease = Some(HomeBackupLease {
         holder: holder(),
@@ -414,5 +441,88 @@ async fn erasure_claim_rejects_client_or_server_expired_until_and_live_leases() 
             .await,
         Err(HomeBackupError::Conflict)
     );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a real isolated Mongo replica set"]
+async fn erasure_claim_effect_and_receipt_require_fresh_absence_evidence() {
+    let fixture = Fixture::new().await;
+    let parent = schedule();
+    fixture.store.ensure_schedule(&parent).await.unwrap();
+    let value = standalone_backup(HomeBackupState::Ready);
+    fixture
+        .store
+        .backups
+        .insert_one(backup_document(&value).unwrap())
+        .await
+        .unwrap();
+    let now = layer2_core::now_rfc3339();
+    fixture
+        .store
+        .fence_sandbox_erasure(&parent.id, &now, &holder(), &at_offset(60))
+        .await
+        .unwrap();
+    let claimed = fixture
+        .store
+        .claim_erasure(&value.id, &now, &holder(), &at_offset(60))
+        .await
+        .unwrap();
+    let mut present = proof(&claimed);
+    present.absent = false;
+    assert_eq!(
+        fixture.store.save_deletion(&claimed, &present, &now).await,
+        Err(HomeBackupError::Conflict)
+    );
+    let completed = fixture
+        .store
+        .save_deletion(&claimed, &proof(&claimed), &layer2_core::now_rfc3339())
+        .await
+        .unwrap();
+    assert_eq!(completed.state, HomeBackupState::Deleted);
+    assert!(completed.erasure.is_some());
+    assert!(completed.lease.is_none());
+    assert_eq!(
+        fixture.store.get_backup(&value.id).await.unwrap(),
+        Some(completed)
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a real isolated Mongo replica set"]
+async fn erasure_fence_preserves_erasing_state_when_restore_pin_blocks_claim() {
+    let fixture = Fixture::new().await;
+    let parent = schedule();
+    fixture.store.ensure_schedule(&parent).await.unwrap();
+    let mut value = standalone_backup(HomeBackupState::Ready);
+    value.restore_pins = 1;
+    fixture
+        .store
+        .backups
+        .insert_one(backup_document(&value).unwrap())
+        .await
+        .unwrap();
+    let now = layer2_core::now_rfc3339();
+    fixture
+        .store
+        .fence_sandbox_erasure(&parent.id, &now, &holder(), &at_offset(60))
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .claim_erasure(&value.id, &now, &holder(), &at_offset(60))
+            .await,
+        Err(HomeBackupError::Conflict)
+    );
+    let fenced = fixture
+        .store
+        .get_schedule(&parent.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fenced.state, HomeBackupScheduleState::Erasing);
+    assert_eq!(fenced.next_fence, 2);
     fixture.cleanup().await;
 }

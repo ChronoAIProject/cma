@@ -57,4 +57,20 @@ mod tests {
             Ok(())
         );
     }
+
+    struct Unavailable;
+    #[async_trait::async_trait]
+    impl DeletionReplayPort for Unavailable {
+        async fn owner_is_deleted(&self, _: &SubjectId) -> Result<bool, DeletionReplayError> {
+            Err(DeletionReplayError::Unavailable)
+        }
+    }
+
+    #[tokio::test]
+    async fn unavailable_deletion_state_fails_closed() {
+        assert_eq!(
+            reject_deleted_owner(&Unavailable, &SubjectId::new("owner")).await,
+            Err(DeletionReplayError::Unavailable)
+        );
+    }
 }

@@ -355,17 +355,26 @@ fn validate_authority(lease: Option<&HomeBackupLease>, next: u64) -> Result<(), 
     Ok(())
 }
 fn validate_lease(lease: &HomeBackupLease) -> Result<(), HomeBackupError> {
-    let (deployment, attempt) = lease
-        .holder
+    validate_holder(&lease.holder)?;
+    uuid::Uuid::parse_str(&lease.token)
+        .map_err(|_| HomeBackupError::Invalid("invalid lease token"))?;
+    counter(lease.fence)?;
+    timestamp(&lease.expires_at)?;
+    Ok(())
+}
+
+/// Validate the holder identity shared by every lease admission path.
+///
+/// A holder is deployment-scoped and ends in a UUID attempt token. Keeping
+/// this check in the model prevents callers from admitting an irreversible
+/// operation with a value that the lease validator would later reject.
+pub(super) fn validate_holder(holder: &str) -> Result<(), HomeBackupError> {
+    let (deployment, attempt) = holder
         .rsplit_once(':')
         .ok_or(HomeBackupError::Invalid("invalid lease holder"))?;
     nonempty(deployment)?;
     uuid::Uuid::parse_str(attempt)
         .map_err(|_| HomeBackupError::Invalid("invalid holder attempt"))?;
-    uuid::Uuid::parse_str(&lease.token)
-        .map_err(|_| HomeBackupError::Invalid("invalid lease token"))?;
-    counter(lease.fence)?;
-    timestamp(&lease.expires_at)?;
     Ok(())
 }
 fn invalid<T>(reason: &'static str) -> Result<T, HomeBackupError> {
