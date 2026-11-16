@@ -2,6 +2,117 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn home_restore_reader_preserves_nested_shapes_and_refuses_unknown_fields() {
+    let (client, name) = database("restore_reader").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let original = sandbox("sbx_restore_reader");
+    store.create_sandbox(original.clone()).await.unwrap();
+    assert_eq!(
+        store.get_sandbox(&original.id).await.unwrap(),
+        Some(original.clone())
+    );
+    let mut next = original.clone();
+    next.lifecycle.home_restore = Some(Box::new(
+        serde_json::from_value(serde_json::json!({
+            "restore_id": "restore-example", "backup_id": "hb-example-1",
+            "operation_id": "sandbox-lifecycle-v1:sbx_restore_reader:2", "requested_at": NOW,
+            "requested_by": "operator-example", "key_sha256": "a".repeat(64),
+            "evidence": {"kind": "gone", "observed_at": NOW,
+                "observed_storage_generation": "old-generation"},
+            "replace_existing_home": {"storage_generation": "old-generation"},
+            "receipt": {
+                "inventory_sha256": "b".repeat(64), "restored_to": NOW,
+                "completed_at": NOW, "home_identity": "restored-home-example",
+                "source_generation": 1, "covered_agents": ["agent-covered"],
+                "uncovered_agents": ["agent-uncovered"],
+                "missing_workspaces": ["workspace-missing"],
+                "missing_worktrees": ["worktree-missing"],
+                "removed_agent_homes": ["agent-removed"],
+                "removed_worktrees": ["worktree-removed"]
+            }
+        }))
+        .unwrap(),
+    ));
+    let mut old_home = layer2_core::sandbox::SandboxHome::reserve(
+        &next.id,
+        layer3_adapter::HomeVolumePolicy {
+            mode: Default::default(),
+            storage_class: "fixture-storage".into(),
+            capacity_gib: 64,
+            template_name: "fixture-seed".into(),
+            template_generation: "seed-generation".into(),
+        },
+    )
+    .unwrap();
+    old_home
+        .bind(layer3_adapter::HomeVolumeReceipt {
+            native_authority: None,
+            volume_id: old_home.request.volume_id.clone(),
+            request_sha256: old_home.request.computed_sha256(),
+            storage_reference: "old-home-example".into(),
+            storage_generation: "old-generation".into(),
+        })
+        .unwrap();
+    next.lifecycle.runtime_generation_high_water = 1;
+    next.lifecycle.superseded_homes = vec![layer2_core::sandbox::SandboxSupersededHome {
+        restore_id: "restore-example".into(),
+        home_identity: old_home.attachment().unwrap().identity().unwrap(),
+        home: Box::new(old_home),
+        source_generation: 1,
+        superseded_at: NOW.into(),
+    }];
+    next.revision += 1;
+    store
+        .save_sandbox(original.revision, next.clone())
+        .await
+        .unwrap();
+    // A fresh store exercises the actual Mongo serializer/strict reader and a
+    // subsequent whole-record replacement must preserve the retained pin.
+    let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened.get_sandbox(&next.id).await.unwrap(),
+        Some(next.clone())
+    );
+    let revision = next.revision;
+    next.name = "renamed-example".into();
+    next.revision += 1;
+    reopened.save_sandbox(revision, next.clone()).await.unwrap();
+    assert_eq!(
+        reopened.get_sandbox(&next.id).await.unwrap(),
+        Some(next.clone())
+    );
+    let kind = SandboxEventKind::HomeRestored {
+        restore_id: "restore-example".into(),
+        backup_id: "hb-example-1".into(),
+        restored_to: NOW.into(),
+    };
+    reopened
+        .append_sandbox_event(&next.id, NOW.into(), kind.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        reopened.sandbox_events(&next.id, 0, 10).await.unwrap()[0].kind,
+        kind
+    );
+    let corrupted = client
+        .database(&name)
+        .collection::<Document>(SANDBOXES)
+        .update_one(
+            doc! {"_id": next.id.as_str()},
+            doc! {"$set": {"record.lifecycle.home_restore.evidence.future": true}},
+        )
+        .await
+        .unwrap();
+    assert_eq!(corrupted.matched_count, 1);
+    assert!(matches!(
+        reopened.get_sandbox(&next.id).await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn encrypted_credential_round_trip_hides_plaintext_and_rejects_tampering() {
     use mongodb::bson::{spec::BinarySubtype, Binary, Bson};
 
