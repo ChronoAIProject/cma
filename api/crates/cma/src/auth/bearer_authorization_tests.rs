@@ -231,7 +231,7 @@ async fn different_bearers_never_share_provider_evidence() {
 }
 
 #[tokio::test]
-async fn overlapping_unavailability_is_shared_without_caching_provider_failure() {
+async fn overlapping_failures_share_flight_but_only_throttle_backoff_survives_completion() {
     let f = Fixture::new().await;
     for status in [429, 401] {
         f.control.status.store(status, Ordering::SeqCst);
@@ -257,6 +257,17 @@ async fn overlapping_unavailability_is_shared_without_caching_provider_failure()
         }
         *f.control.gate.write().await = None;
         f.control.status.store(200, Ordering::SeqCst);
+        if status == 429 {
+            let before = f.control.introspection_calls.load(Ordering::SeqCst);
+            assert!(matches!(
+                verify_subject(&f.auth, &f.metadata, "fixture-access").await,
+                Err(ProviderVerificationError::RateLimited(_))
+            ));
+            assert_eq!(f.control.introspection_calls.load(Ordering::SeqCst), before);
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(61)).await;
+            tokio::time::resume();
+        }
         let result = verify_subject(&f.auth, &f.metadata, "fixture-access")
             .await
             .unwrap();

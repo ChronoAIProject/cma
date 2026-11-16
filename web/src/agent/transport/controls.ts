@@ -33,7 +33,12 @@ async function submitV2ControlAttempt(
   allowRevisionRetry: boolean,
 ): Promise<V2ResponseControl> {
   const signal = recovery.signal;
-  await recovery.retry(() => authorize(session, command, signal));
+  if (
+    command.type !== 'cancel' ||
+    target === undefined ||
+    session.journal.readControl()?.commandId === null
+  )
+    await recovery.retry(() => authorize(session, command, signal));
   if (target === undefined) throw new Error('This turn does not support response controls.');
   const retained = session.journal.readControl();
   let intent: ControlRecord;
@@ -47,6 +52,8 @@ async function submitV2ControlAttempt(
     intent = retained;
   } else {
     const observed = await recovery.retry(async (retry) => {
+      if (command.type === 'cancel')
+        return observeCancelTarget(session, target.responseId, recovery);
       if (retry > 0) await authorize(session, command, signal);
       return session.responses.observeControls(session.journal.agentId, target.responseId, {
         signal,
@@ -83,6 +90,37 @@ async function submitV2ControlAttempt(
     }
     if (isDefinitiveRefusal(error)) session.journal.refusedControl(intent.key);
     throw error;
+  }
+}
+
+async function observeCancelTarget(
+  session: AgentV2Session,
+  responseId: string,
+  recovery: RequestRecovery,
+) {
+  const attempt = new AbortController();
+  const abort = () => attempt.abort(recovery.signal.reason);
+  recovery.signal.throwIfAborted();
+  recovery.signal.addEventListener('abort', abort, { once: true });
+  try {
+    // Both reads are fresh. Keep the observation private until identity succeeds;
+    // send() still fences the POST and its receipt with separate fresh checks.
+    const [, observed] = await Promise.all([
+      session.authorizeCancel(attempt.signal),
+      Promise.resolve().then(() =>
+        session.responses.observeControls(session.journal.agentId, responseId, {
+          signal: attempt.signal,
+          timeoutMs: recovery.timeoutMs,
+        }),
+      ),
+    ]);
+    attempt.signal.throwIfAborted();
+    session.journal.read();
+    return observed;
+  } finally {
+    recovery.signal.removeEventListener('abort', abort);
+    // A failed read cancels its sibling; Promise.all already handles both errors.
+    attempt.abort();
   }
 }
 
