@@ -181,7 +181,7 @@ async fn prepared_tool_receipt_abort_retries_original_resolve_and_confirm() {
         let original = if confirm {
             Some(
                 f.source
-                    .resolve(&f.runtime, &f.open, 1)
+                    .resolve(&f.runtime, &f.open, f.open_fence())
                     .await
                     .unwrap()
                     .unwrap(),
@@ -197,7 +197,7 @@ async fn prepared_tool_receipt_abort_retries_original_resolve_and_confirm() {
                 .map(|()| binding.clone())
         } else {
             f.source
-                .resolve(&f.runtime, &f.open, 1)
+                .resolve(&f.runtime, &f.open, f.open_fence())
                 .await
                 .map(Option::unwrap)
         };
@@ -233,7 +233,9 @@ async fn tool_start_abort_bound_and_prepared_identity_refusal_preserve_enrollmen
     for failures in [1, 5] {
         let f = Fixture::new(false).await;
         f.abort("update", Some("sandboxes"), failures);
-        let result = f.with_work(f.source.resolve(&f.runtime, &f.open, 1)).await;
+        let result = f
+            .with_work(f.source.resolve(&f.runtime, &f.open, f.open_fence()))
+            .await;
         let (fired, commands) = f.clear().await;
         let count = f
             .independent
@@ -260,7 +262,7 @@ async fn prepared_tool_wrong_conversation_refuses_after_abort_without_changing_r
     let f = Fixture::new(false).await;
     let binding = f
         .source
-        .resolve(&f.runtime, &f.open, 1)
+        .resolve(&f.runtime, &f.open, f.open_fence())
         .await
         .unwrap()
         .unwrap();
@@ -291,7 +293,7 @@ async fn prepared_tool_wrong_conversation_refuses_after_abort_without_changing_r
 async fn tool_unknown_commit_returns_without_second_enrollment_transaction() {
     let f = Fixture::new(false).await;
     f.arm("commitTransaction", None, 5, doc! {"writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"uncertain tool commit"}});
-    let result = f.source.resolve(&f.runtime, &f.open, 1).await;
+    let result = f.source.resolve(&f.runtime, &f.open, f.open_fence()).await;
     let (fired, commands) = f.clear().await;
     let before = f
         .independent
@@ -299,7 +301,7 @@ async fn tool_unknown_commit_returns_without_second_enrollment_transaction() {
         .find_one(doc! {})
         .await
         .unwrap();
-    let replay = f.source.resolve(&f.runtime, &f.open, 1).await;
+    let replay = f.source.resolve(&f.runtime, &f.open, f.open_fence()).await;
     let after = f
         .independent
         .agent_access_tools
@@ -336,7 +338,7 @@ async fn uncertain_duplicate_error_never_authorizes_consent_or_prepared_tool_ret
             )
         } else {
             matches!(
-                f.source.resolve(&f.runtime, &f.open, 1).await,
+                f.source.resolve(&f.runtime, &f.open, f.open_fence()).await,
                 Err(AdapterError::Unavailable(_))
             )
         };
