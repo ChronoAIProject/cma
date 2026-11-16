@@ -3,6 +3,20 @@
 Tracks #1667 and #1802, part of #1543. Request reduction is a client behavior claim;
 compiled fixture results do not prove production capacity or database latency.
 
+## November 15 adjacent identity continuation
+
+`IDENTITY_HANDOFF_ENABLED` is now enabled for adjacent read-only opening and
+history-page continuations. A proof is consumed once within 250ms; preparation
+handoffs, publication, Send before submission and after receipt, and Stop retain
+their fresh identity checks and journal-epoch guards. Expired or consumed proofs
+fall back to a fresh check. This reduces redundant identity requests without
+changing provider Retry-After or server authentication and admission.
+
+The November 13 figures below describe the earlier default and its separate
+activation fixture. They are not new production latency measurements. Production
+Send p95 improvement from this activation remains unverified. Rollback uses the
+previous web image or restores the constant to false.
+
 ## November 13 transport and idle-observation verification
 
 Issues #1799 and #1803 use the compiled public-boundary fixtures with a fixed
@@ -20,9 +34,8 @@ The whole-file Prettier check for `Web_Style.md` has existing upstream failures;
 the candidate introduces no additional formatting changes, and its changelog
 remains append-only.
 
-`IDENTITY_HANDOFF_ENABLED` ships **false** under the owner's default-off directive.
-Fresh-check batching is enabled independently. Switching that constant to true
-requires owner activation; deployment alone does not enable proof reuse. The
+On November 13, `IDENTITY_HANDOFF_ENABLED` shipped **false** under the owner's
+default-off directive. Fresh-check batching was enabled independently. The
 unit suite exercises both states, one-use/250ms expiry, prepared-session
 invalidation, pagination, account switches and mutation barriers.
 

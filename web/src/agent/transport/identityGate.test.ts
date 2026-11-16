@@ -21,9 +21,11 @@ function deferred() {
 
 beforeEach(() => sessionStorage.clear());
 
-it('ships adjacent proof reuse disabled until the owner activates it', () => {
-  expect(IDENTITY_HANDOFF_ENABLED).toBe(false);
-  expect(createIdentityHandoff()()).toBe(false);
+it('enables a single adjacent read continuation without retaining reusable authority', () => {
+  expect(IDENTITY_HANDOFF_ENABLED).toBe(true);
+  const consume = createIdentityHandoff();
+  expect(consume()).toBe(true);
+  expect(consume()).toBe(false);
 });
 
 it('batches synchronous callers into a request started after every call', async () => {
