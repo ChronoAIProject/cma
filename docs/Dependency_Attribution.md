@@ -98,25 +98,3 @@ credential, body, URL, resource identity or upstream error text. Transport and
 credential failures have no upstream status. Successful catalogue reads emit no
 such warning. The parentless final-503 counter from #1457 remains unchanged;
 these request diagnostics are not additional counter increments.
-
-With the default channel mutation custody gate closed, creation regressions
-cover the #1242 existing-Agent report:
-non-reserved creation binds before writing a record and preserves recognized
-400/404/409 refusals; reserved creation retains an encrypted pending reservation,
-refuses ingress with actionable 409 `channel_creation_pending`, and completes on
-an exact original request retry. The current provider contract allows multiple
-bindings to borrow one owner-controlled Agent; the Mongo uniqueness constraint is
-per binding generation. A second borrowing channel is not a binding conflict.
-
-With channel mutation custody enabled, creation always reserves a stable record
-identity and follows [retained mutation recovery](EG_Mutation_Custody.md).
-An ambiguous provider effect remains held; exact retries cannot resend it until
-its original outcome is settled. Pending ingress still returns the explicit
-`channel_creation_pending` refusal. Closing the channel mutation custody gate
-does not erase that custody or authorize a new operation over it.
-
-An exact concurrent create that loses final publication reads the retained
-owner-authorized record and returns the already completed result only when its
-original request fingerprint matches. A still-pending or conflicting record
-remains a typed conflict. Readback does not replay an external effect or clear
-mutation custody.
