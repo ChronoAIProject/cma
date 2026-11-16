@@ -35,9 +35,10 @@ test('browser proxy switches ingress without changing context, keeps attribution
     await session.switchAM('b');
     await fetch(session.origin + '/api/v1/agents/provenance');
     await session.switchAM('a');
-    await fetch(session.origin + '/api/v1/agents/owned', {headers: {Cookie: 'browser-private'}});
+    await fetch(session.origin + '/api/agent-manager/v1/agents/owned', {headers: {Cookie: 'browser-private'}});
+    await fetch(session.origin + '/api/agent-manager/v1/agents/owned', {method: 'POST'});
     const evidence = await fixture.evidence(session.page);
-    assert.deepEqual(calls.map(call => call.am), ['a', 'b', 'b']);
+    assert.deepEqual(calls.map(call => call.am), ['a', 'b', 'a', 'b']);
     assert.equal(contexts.length, 1);
     assert.equal(calls[2].cookie, undefined);
     assert.equal(calls[2].auth, 'Bearer private-marker');
