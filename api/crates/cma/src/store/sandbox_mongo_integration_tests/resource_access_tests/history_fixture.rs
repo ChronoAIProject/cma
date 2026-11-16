@@ -7,7 +7,7 @@ use axum::{
 use layer1_public::agent_v2::{router, AgentV2State};
 use tower::ServiceExt;
 
-struct Authority;
+pub(super) struct Authority;
 #[async_trait::async_trait]
 impl OrganizationAuthority for Authority {
     async fn organization_context(

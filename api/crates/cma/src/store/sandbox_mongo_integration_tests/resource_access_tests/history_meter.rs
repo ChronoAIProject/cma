@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Default)]
 pub(super) struct Stats {
     pub commands: BTreeMap<String, u64>,
+    pub per_agent_heads: BTreeMap<String, Vec<std::time::Instant>>,
     pub checkouts: u64,
     pub snapshots: u64,
     pub auth_commands: u64,
@@ -53,6 +54,26 @@ impl Meter {
                     "log"
                 };
                 let mut stats = observed.stats.lock().unwrap();
+                if event.command_name == "aggregate" && collection == "agents" {
+                    if let Some(ids) = event
+                        .command
+                        .get_array("pipeline")
+                        .ok()
+                        .and_then(|pipeline| pipeline.first())
+                        .and_then(|stage| stage.as_document())
+                        .and_then(|stage| stage.get_document("$match").ok())
+                        .and_then(|filter| filter.get_document("_id").ok())
+                        .and_then(|filter| filter.get_array("$in").ok())
+                    {
+                        for id in ids.iter().filter_map(|id| id.as_str()) {
+                            stats
+                                .per_agent_heads
+                                .entry(id.into())
+                                .or_default()
+                                .push(std::time::Instant::now());
+                        }
+                    }
+                }
                 stats.snapshots +=
                     u64::from(event.command_name == "aggregate" && collection == "agents");
                 stats.auth_commands += u64::from(phase == "authorization");

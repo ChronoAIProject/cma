@@ -17,6 +17,15 @@ impl AgentContextDefaults for Defaults {
 }
 
 fn app(f: &Fixture) -> (Router, Arc<DurableAgentUpdateRecorder>) {
+    let updates = DurableAgentUpdateRecorder::new(Arc::new(f.store.clone()));
+    (app_with_reads(f, f.reads(false), updates.clone()), updates)
+}
+
+pub(super) fn app_with_reads(
+    f: &Fixture,
+    reads: Arc<AgentReadService>,
+    updates: Arc<DurableAgentUpdateRecorder>,
+) -> Router {
     let store = Arc::new(f.store.clone());
     let profiles = Arc::new(layer2_core::profiles::InMemoryProfileStore::default());
     let runtimes = Arc::new(crate::sandbox::LiveAgentRegistry::default());
@@ -38,16 +47,15 @@ fn app(f: &Fixture) -> (Router, Arc<DurableAgentUpdateRecorder>) {
         profiles,
         Arc::new(Defaults),
     );
-    let updates = DurableAgentUpdateRecorder::new(store.clone());
     let state = layer1_public::AgentConversationState::new(
         layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
-        f.reads(false),
+        reads,
         AgentOperationService::new(store, runtimes),
         context,
     )
     .with_bounded_replay(true)
     .with_updates(updates.clone());
-    (layer1_public::agui::router(state), updates)
+    layer1_public::agui::router(state)
 }
 
 async fn open(

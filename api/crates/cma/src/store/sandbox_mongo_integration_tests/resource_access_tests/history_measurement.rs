@@ -170,3 +170,6 @@ fn scans() -> [u64; 4] {
 
 #[path = "history_agui_budget_tests.rs"]
 mod agui_budget_tests;
+
+#[path = "observation_budget_tests.rs"]
+mod observation_budget;
