@@ -1,5 +1,6 @@
 import {define, openBrowser, acquire, egRequest, invoke, visible, uiReceipt, goto, peer, segment, same, digest, pages, poll} from './helpers.mjs';
 import {channelCapabilitiesCase} from './channel-capabilities.mjs';
+import {channelCreateCase, channelRecoveryCase} from './channel-creation.mjs';
 
 const channel = lease => `/v1/channels/${segment(lease.channelId)}`;
 const browserChannel = async (ctx, lease) => {
@@ -14,56 +15,8 @@ const save = async (ctx, lease, body, expected = [200]) => egRequest(ctx, lease,
 
 export const channelCases = [
   channelCapabilitiesCase,
-  define(20, 'browser', ['browser', 'user-fixtures'], async ctx => {
-    let lease, session, record, replay;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_create'); session = await browserChannel(ctx, lease);
-      const body = lease.createBody; ctx.assert(body.record_id === lease.recordId && body.name === lease.channelName,
-        'channel_create_reserved_intent');
-      record = await egRequest(ctx, lease, {method: 'POST', path: '/v1/channels', body, key: lease.keys.create,
-        allowed: [201]});
-      ctx.assert(record.record_id === lease.recordId && record.definition.creation.ready === true
-        && record.channel_id, 'channel_created_durable_record');
-    });
-    await ctx.step('step_2', async () => {
-      replay = await egRequest(ctx, lease, {method: 'POST', path: '/v1/channels', body: lease.createBody,
-        key: lease.keys.create, replica: peer(ctx.am), allowed: [201]});
-      ctx.assert(replay.channel_id === record.channel_id && replay.provider.binding_id === record.provider.binding_id
-        && replay.version === record.version, 'channel_create_replay_same_identity');
-      const read = await egRequest(ctx, lease, {path: channel(lease), replica: peer(ctx.am)});
-      ctx.assert(read.record_id === record.record_id && read.definition.name === record.definition.name,
-        'channel_create_peer_reload');
-    });
-    await ctx.step('expected_result', async () => {
-      ctx.assert(record.definition.owner.subject === lease.expected.ownerSubject, 'channel_owner_identity');
-      const counts = await invoke(lease, 'counters'); ctx.assert(counts.turns === lease.baseline.turns, 'channel_create_no_event_turn');
-      await ctx.observe('channel_create_receipt', async () => ({record_sha256: digest(record.record_id),
-        binding_sha256: digest(record.provider.binding_id), version: record.version})); await uiReceipt(ctx, session.page);
-    });
-  }),
-  define(21, 'eg', ['user-fixtures'], async ctx => {
-    let lease, first, recovered;
-    await ctx.step('step_1', async () => {
-      lease = await acquire(ctx, 'channel_create_uncertain');
-      first = await invoke(lease, 'createChannelDropResponse', {body: lease.createBody, key: lease.keys.create, replica: ctx.am});
-      ctx.assert(first.outcome === 'unknown' && first.recordId === lease.recordId && first.submitAttempts === 1,
-        'channel_uncertain_create_retained');
-    });
-    await ctx.step('step_2', async () => {
-      recovered = await egRequest(ctx, lease, {path: `/v1/channel-records/${segment(lease.recordId)}`,
-        replica: peer(ctx.am), allowed: [200]});
-      ctx.assert(recovered.record_id === lease.recordId && recovered.definition.name === lease.channelName,
-        'channel_uncertain_recovered_by_record');
-      ctx.assert(recovered.version === lease.expected.recordVersion, 'channel_uncertain_version_observed');
-      const changed = await egRequest(ctx, lease, {method: 'POST', path: '/v1/channels', body: {...lease.createBody, name: 'changed'},
-        key: lease.keys.create, allowed: [409]});
-      ctx.assert(changed.code || changed.type, 'channel_uncertain_changed_intent_refused');
-    });
-    await ctx.step('expected_result', async () => {
-      const counts = await invoke(lease, 'counters'); ctx.assert(counts.createAttempts === 1 && counts.channels === 1,
-        'channel_uncertain_no_duplicate_create'); await ctx.observe('channel_recovery', async () => ({record_sha256: digest(recovered.record_id), create_attempts: counts.createAttempts}));
-    });
-  }),
+  channelCreateCase,
+  channelRecoveryCase,
   define(23, 'browser', ['browser', 'user-fixtures'], async ctx => {
     let lease, session, before, saved;
     await ctx.step('step_1', async () => {

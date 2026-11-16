@@ -37,13 +37,17 @@ Run focused offline verification from repository root:
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/helpers.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs
 ```
 
-Focused verification (66 tests in the current source):
+Focused verification (80 tests in the current source):
 
 ```sh
 node --test .github/scripts/multi-am-features/executable/cases/prod-verifier-03/*.test.mjs .github/scripts/multi-am-features/executable/runner.test.mjs .github/scripts/multi-am-features/executable/serving.test.mjs .github/scripts/multi-am-features/executable/eg-evidence.test.mjs
 ```
 
-Latest full executable verification: 294 tests passed, zero failed. The focused suite covers frozen IDs,
+Latest full executable verification: 308 tests passed, zero failed with
+`node --test --test-concurrency=1` over all executable and author test files.
+The first parallel run passed 307/308: the unchanged shared action-timing test
+exceeded its 10 ms synthetic threshold under scheduling contention. That test
+passed in isolation and in the complete serial run; no timing gate was changed. The focused suite covers frozen IDs,
 exact steps, missing prerequisites, wrong event/delivery joins, duplicated effects,
 unsafe-fixture cleanup, cursor cycles, wrong EG replica attribution and shared
 browser evidence custody. These tests do not execute the product. The parent
@@ -73,6 +77,24 @@ schema separation, activation/provider gates, actual EG receipts and write-guard
 cleanup. The sole parent still must supply the retained source and real EG
 browser proxy/cookie/replica-switch bindings described in
 `fixtures.json.channel_capabilities_browser_contract`.
+
+EG-020 and EG-021 now configure the real channel form and exercise accepted
+create-response loss. The browser generates separate record/idempotency UUIDs;
+the case validates the submitted producer, consumer, grouping, reply policy and
+credential hashes, then records cleanup custody before forwarding exactly one
+POST. Recovery uses the actual Check original channel control on the opposite
+observed EG process, compares durable ID/version/binding/definition and keeps
+the original draft locked with explicit uncertainty. Only after that read-only
+reconciliation does the peer UI reload and open the channel from actual list
+responses. Addressed list rows do not require an extra detail GET. Parent
+allocation observations must prove one record/channel/binding, no additional
+create or credential replacement, and no unresolved provider work. These global
+cases declare `eg_only`; the separate parent AM witness remains required.
+Fourteen offline regressions cover intent/credential validation, custody before
+dispatch, cancellation, duplicate mutation refusal, cleanup joins, actual EG
+receipts and list/address recovery. Parent setup needs the low-level methods
+in `fixtures.json.channel_creation_browser_contract`; no high-level creation
+result delegate is accepted and no runtime PASS is claimed.
 
 EG-047 now exercises the real Consumer list and detail UI through AM routes.
 It refreshes and traverses `next_after` pages, checks the complete owned identity

@@ -154,8 +154,8 @@ export async function channelEditSetup(ctx, primitives) {
 
 const scenarioRequirements = Object.freeze({
   channel_capabilities: {fields: ['channelId', 'channelName', 'expected'], methods: ['request', 'counters']},
-  channel_create: {fields: ['recordId', 'channelName', 'createBody', 'keys', 'expected'], methods: ['request']},
-  channel_create_uncertain: {fields: ['recordId', 'channelName', 'createBody', 'keys', 'expected'], methods: ['request', 'createChannelDropResponse']},
+  channel_create: {fields: ['draft', 'expected'], methods: ['fillProviderKey', 'retainChannelIntent', 'channelCreationRecords']},
+  channel_create_uncertain: {fields: ['draft', 'expected'], methods: ['fillProviderKey', 'retainChannelIntent', 'channelCreationRecords']},
   producer_edit: {fields: ['channelId', 'channelName', 'updateBody', 'expected'], methods: ['request']},
   channel_admission: {fields: ['channelId', 'updateBody', 'platform', 'expected'], methods: ['request', 'platformSend', 'counters']},
   consumer_profile: {fields: ['channelId', 'updateBody', 'expected'], methods: ['request', 'providerCard']},
