@@ -13,12 +13,14 @@ import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
 import {retainFailure} from './failure.mjs';
 import {NonOwnerRouter} from './routing.mjs';
+import {writerCoverage} from './writer_coverage.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
 const config = await readConfig(process.stdin);
 const inventory = await loadInventory(join(root, 'inventory'));
 const mappings = JSON.parse(await readFile(join(root, 'case-mapping.json'), 'utf8'));
+const writerRegistry = JSON.parse(await readFile(join(root, 'writer-regressions.json'), 'utf8'));
 await mkdir(config.matrix_output, {recursive: true, mode: 0o700});
 const rows = [], observations = [], adminOwnerProofs = [], apiObservations = [], savedDocuments = [];
 let phase;
@@ -190,12 +192,15 @@ try {
 } finally {
   await admin.close(); await user.close(); await journal.close();
   result.coverage = coverage(inventory, mappings, rows);
-  if (result.verdict !== 'FAIL') result.verdict = result.coverage.verdict;
+  result.writer_coverage = writerCoverage(writerRegistry, rows, result.journey);
+  if (result.verdict !== 'FAIL') result.verdict = result.coverage.verdict === 'PASS'
+    && result.writer_coverage.verdict === 'PASS' ? 'PASS' : 'FAIL';
   result.finished_at = new Date().toISOString();
   await writeFile(join(config.matrix_output, 'result.private.json'), JSON.stringify(result, null, 2), {mode: 0o600});
   // This allowlist is the only suite content eligible for CI artifact upload.
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     ...result.coverage, suite_verdict: result.verdict, source: result.source,
+    writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: result.journey?.steps.some(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS') === true,
   }, null, 2), {mode: 0o600});

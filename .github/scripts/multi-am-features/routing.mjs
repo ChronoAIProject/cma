@@ -14,7 +14,7 @@ export class NonOwnerRouter {
     const observedAt = this.now();
     const owner = await this.adapter.ownerOf({agentId});
     requireValue(owner?.agent_id === agentId && ['a', 'b'].includes(owner.am)
-      && Number.isSafeInteger(owner.epoch) && owner.epoch >= 0
+      && Number.isSafeInteger(owner.epoch) && owner.epoch > 0
       && typeof owner.instance_id === 'string' && owner.instance_id.length > 0
       && typeof owner.pod_uid === 'string' && owner.pod_uid.length > 0,
     'live_owner_required');
@@ -37,6 +37,8 @@ export class NonOwnerRouter {
       const result = await operation(ingress);
       // Raw correlation IDs remain only in private journey evidence.
       proof.request_id = result?.timing?.request_id ?? null;
+      requireValue(typeof proof.request_id === 'string' && proof.request_id.trim().length > 0,
+        'response_request_id_required');
       const after = await this.adapter.ownerOf({agentId});
       requireValue(after?.instance_id === owner.instance_id && after.epoch === owner.epoch
         && after.pod_uid === owner.pod_uid && after.am === owner.am,

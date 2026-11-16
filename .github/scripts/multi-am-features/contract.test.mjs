@@ -80,7 +80,8 @@ const setup = (changes = {}) => {
 };
 test('uses the live non-owner and records independent process identities', async () => {
   const {router, proofs} = setup();
-  assert.equal(await router.dispatch('agent', async am => { assert.equal(am, 'b'); return 202; }), 202);
+  const response = {status: 202, timing: {request_id: 'fixture-request'}};
+  assert.equal(await router.dispatch('agent', async am => { assert.equal(am, 'b'); return response; }), response);
   assert.equal(proofs[0].verdict, 'PASS');
   assert.notEqual(proofs[0].owner_instance_sha256, proofs[0].ingress_instance_sha256);
   assert.ok(!JSON.stringify(proofs).includes('pod-a'));
@@ -95,8 +96,31 @@ test('refuses absent leases and a mismatched topology before executing', async (
 test('owner movement during a write fails attribution without replay', async () => {
   let reads = 0, calls = 0;
   const {router, proofs} = setup({ownerOf: async () => ++reads === 1 ? owner : {...owner, am: 'b', epoch: 4}});
-  await assert.rejects(router.dispatch('agent', async () => ++calls), /owner_changed/);
+  await assert.rejects(router.dispatch('agent', async () => {
+    calls++; return {status: 202, timing: {request_id: 'fixture-request'}};
+  }), /owner_changed/);
   assert.equal(calls, 1); assert.equal(proofs[0].verdict, 'FAIL');
+});
+test('missing request correlation fails attribution after exactly one mutation', async () => {
+  for (const requestId of [undefined, null, '', '   ', 42]) {
+    let calls = 0;
+    const {router, proofs} = setup();
+    await assert.rejects(router.dispatch('agent', async () => {
+      calls++; return {status: 202, timing: {request_id: requestId}};
+    }), /response_request_id_required/);
+    assert.equal(calls, 1);
+    assert.equal(proofs.length, 1);
+    assert.equal(proofs[0].verdict, 'FAIL');
+  }
+});
+test('zero and invalid ownership epochs never execute a mutation', async () => {
+  let calls = 0;
+  for (const epoch of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, '1', undefined]) {
+    const {router, proofs} = setup({ownerOf: async () => ({...owner, epoch})});
+    await assert.rejects(router.dispatch('agent', async () => { calls++; }), /live_owner_required/);
+    assert.equal(proofs.length, 0);
+  }
+  assert.equal(calls, 0);
 });
 test('uncertain mutation is recorded once and never retried', async () => {
   let calls = 0; const {router, proofs} = setup();
