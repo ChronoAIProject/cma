@@ -8,6 +8,7 @@ mod ingress_coordinator_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub bot_effect_reservations: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
@@ -84,6 +85,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            bot_effect_reservations: flag(lookup, "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED")?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
@@ -300,3 +302,6 @@ mod native_create_retry_tests;
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(test)]
+mod bot_effect_tests;
