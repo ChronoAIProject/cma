@@ -2,8 +2,8 @@
 
 Part of #2149. Integration owner: developer-15. Author branch:
 `tl/cma-13b/coverage-prod-verifier-03`. The frozen assignment remains all 79
-rows, EG-001 through EG-079. Currently 36 rows have authored implementations
-and 43 remain UNIMPLEMENTED. This handoff is incomplete. No row has a
+rows, EG-001 through EG-079. Currently 37 rows have authored implementations
+and 42 remain UNIMPLEMENTED. This handoff is incomplete. No row has a
 two-EG/two-AM runtime PASS.
 
 `index.mjs` exports individual definitions with the exact frozen step IDs.
@@ -119,7 +119,7 @@ develop merge; no competing PR or default-branch merge was created.
 | EG-066 | UNIMPLEMENTED | Case authoring remains |
 | EG-067 | UNIMPLEMENTED | Case authoring remains |
 | EG-068 | UNIMPLEMENTED | Case authoring remains |
-| EG-069 | UNIMPLEMENTED | Case authoring remains |
+| EG-069 | Authored; unverified | eg |
 | EG-070 | UNIMPLEMENTED | Case authoring remains |
 | EG-071 | UNIMPLEMENTED | Case authoring remains |
 | EG-072 | UNIMPLEMENTED | Case authoring remains |
