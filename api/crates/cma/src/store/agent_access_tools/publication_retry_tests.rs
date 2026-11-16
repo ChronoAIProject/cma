@@ -370,3 +370,53 @@ async fn uncertain_duplicate_error_never_authorizes_consent_or_prepared_tool_ret
         assert_eq!((requests, tools), (0, 0));
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn consent_publication_retry_preserves_original_body_and_timestamp() {
+    for owner_save in [false, true] {
+        let f = Fixture::new(true).await;
+        // The first insert is held across a wall-clock second before aborting.
+        // A retry must not regenerate the approved/requested timestamp.
+        f.arm(
+            "insert",
+            Some("agent_access_requests"),
+            1,
+            doc! {
+                "errorCode":112_i32, "errorLabels":["TransientTransactionError"],
+                "blockConnection":true, "blockTimeMS":1200_i32,
+            },
+        );
+        let result = if owner_save {
+            f.owner_save(vec![ServiceId::new("original-service")], "stable-payload")
+                .await
+        } else {
+            f.store
+                .request_agent_access(f.requester(), proposal())
+                .await
+        };
+        let (fired, commands) = f.clear().await;
+        let stored = f
+            .independent
+            .agent_access_requests
+            .find_one(doc! {})
+            .await
+            .unwrap();
+        f.cleanup().await;
+        assert!(fired);
+        let result =
+            result.expect("aborted request insert must retry its original immutable payload");
+        assert_starts(&commands, 2);
+        let attempts: Vec<_> = commands
+            .iter()
+            .filter(|command| command.get_str("insert").ok() == Some("agent_access_requests"))
+            .map(|command| command.get_array("documents").unwrap().clone())
+            .collect();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0], attempts[1]);
+        assert_eq!(
+            crate::store::agent_access_requests::read(&stored.unwrap()).unwrap(),
+            result
+        );
+    }
+}
