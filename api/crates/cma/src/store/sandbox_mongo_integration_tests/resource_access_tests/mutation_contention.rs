@@ -1,7 +1,9 @@
 use super::*;
 use crate::store::agent_log_segments as segments;
 use crate::store::sandbox_mongo::TRANSACTION_ATTEMPTS;
+#[path = "mutation_contention/artifacts.rs"]
 mod artifacts;
+#[path = "mutation_contention/support.rs"]
 mod support;
 use support::Fixture;
 
