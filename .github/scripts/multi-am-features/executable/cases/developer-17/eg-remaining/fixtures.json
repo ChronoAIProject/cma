@@ -1,0 +1,207 @@
+{
+  "schema": "eg20-authentic-setup-contract-v1",
+  "issue": 2149,
+  "contribution_owner": "prod-verifier-03",
+  "implementation_author": "developer-17",
+  "integration": "Import this nested index.mjs into prod-verifier-03/index.mjs. Merge setups without replacing existing entries. Do not append to developer-17 USER index.",
+  "execution": "AUTHORING_ONLY; no local-kind runtime or external provider acceptance claimed. Missing authentic inputs throw Blocked before dependent steps; an unsupported product control fails its exact step.",
+  "custody_source": "20b9fc80aa7546a4665e94c187d8136e6074b8eb",
+  "shared_gate_dependency": "developer-15 R1/R2/R3/R6/R8 successor: steady phases, multi-eg-request-v1, evidence_scope=eg_only, parent disposal binding; no current frozen-runtime hotload",
+  "common": {
+    "namespace": "user-fixtures",
+    "primitives.eg": {
+      "scope": "LOCAL_KIND_DISPOSABLE_TWO_AM",
+      "synthetic": true,
+      "topology": "async()->{egs:{a,b}}; each actual Ready Pod forward has origin,pod_uid,instance_id,container_id,ready,draining?,source40,image@sha256",
+      "authorize": "async({actor,method,path,replica})->private Headers; real owner/outsider/originating_agent principals, no printed credentials"
+    },
+    "primitives.egCoverage": {
+      "scope": "LOCAL_KIND_DISPOSABLE_TWO_AM",
+      "synthetic": true,
+      "reserve": "async({caseId,phase,iteration,needs})->exclusive lease below",
+      "openBrowser": "async({actor,am,eg,caseId})->{page,origin,consoleOrigin,switchAM,switchEG,close,evidence}; real Playwright on compiled Web, actual browser_session; independent AM/EG backends; /api/event-gateway/* goes EG, /api/(agent-manager/)?v1/* goes AM; Console/connect paths reach EG; local IdP is allowlisted",
+      "faults": "Only listed bounded network/clock/retention controls; restore returns idempotent cleanup. No canned application replies, fixture.run, database edits or verdict callbacks."
+    },
+    "lease": {
+      "local_kind": true,
+      "exclusive": true,
+      "parent_cleanup_barrier": true,
+      "authority": "ownerSubject,agentKey,channelKey?,provider and profile are real local fixtures; syntheticSecrets lists private values for non-disclosure checks",
+      "retainIntent": "async(raw intent) before any dispatch; private immutable ledger",
+      "capture": "async(actual response) captures accepted IDs before validation; failures remain in custody",
+      "agentRequests": "async()->raw actual provider-to-AM requests for Agent-backed rows, with case_id,agent_id_sha256,request_id,scope=am,full c275-serving-v1 and current owner/epoch proof; no supplied pass booleans",
+      "platform": "synthetic:true; emit(actual local fixture input), journal(actual request/effect records), optional admitSetupEvent/attestConsent",
+      "dispose": "idempotent public cleanup of fixture-owned setup resources; no DB edits",
+      "finality": "independent exact effect/resource ledger; unresolved,in_flight,resources_remaining,private_custody_retained all zero before release; any parent database disposal marker stays pending until integrator binds verified final cleanup",
+      "release": "only after exact cleanup/finality; unknown provider effects are never cleared by timeout or 404"
+    },
+    "browserEvidence": {
+      "schema": "multi-eg-browser-evidence-v1",
+      "real_ui": true,
+      "authentication": "browser_session",
+      "compiled_source": "actual40",
+      "secrets_redacted": true,
+      "requests": "genuine AM receipts only (scope am); no EG-to-AM relabeling",
+      "eg_requests": "R8 EG receipts only, each with scope eg, replica, request_id, started_at, ended_at, serving/serving_after, attribution; snapshots schema c275-eg-serving-v1 with actual process/source/image; no am field",
+      "after_close": "evidence remains available after close joins context/proxy; final errors must reject or appear in failures"
+    }
+  },
+  "cases": [
+    {
+      "id": "C275:EG-019",
+      "setup": "eg20-capabilities",
+      "additional_prerequisites": [
+        "savedDisabledChannel:{recordId,nodeLabel,disabledNotice}; actual retained native source with authoring/intake disabled"
+      ]
+    },
+    {
+      "id": "C275:EG-020",
+      "setup": "eg20-create",
+      "additional_prerequisites": ["normal public channel creation against a real CMA provider"]
+    },
+    {
+      "id": "C275:EG-021",
+      "setup": "eg20-recover",
+      "additional_prerequisites": [
+        "faults.dropAcceptedResponse({method,path,count:1}) -> {join,restore}; join retains actual accepted request/body/status after one dropped response"
+      ]
+    },
+    {
+      "id": "C275:EG-023",
+      "setup": "eg20-sources",
+      "additional_prerequisites": [
+        "additionalSource:{platformLabel,issuer,key_id,route_ids}; actual supported NyxID relay",
+        "compiled UI producer removal is absent at reviewed source: whole row fails that concrete control check"
+      ]
+    },
+    {
+      "id": "C275:EG-024",
+      "setup": "eg20-admission",
+      "additional_prerequisites": [
+        "admissionSource and admissionNodeLabel; actual local verified platform source",
+        "platform.emit accepts sender,conversation,mentioned,text; six distinct inputs include two authorized senders/two chats and negative variants"
+      ]
+    },
+    {
+      "id": "C275:EG-025",
+      "setup": "eg20-profile",
+      "additional_prerequisites": [
+        "profile.context.skills, context.mcp_servers; optional flat scalar environment settings; real catalogue/provider scopes"
+      ]
+    },
+    {
+      "id": "C275:EG-026",
+      "setup": "eg20-routing",
+      "additional_prerequisites": [
+        "routingChannel:{record_id,channel_id}; parent-owned public setup with real additional consumer binding",
+        "additionalConsumer:{id}; raw AM/provider request observer",
+        "platform.emit supports event type, explicit target/mention and handoff envelope; enforce actual sender identity and admission"
+      ]
+    },
+    {
+      "id": "C275:EG-028",
+      "setup": "eg20-activity",
+      "additional_prerequisites": [
+        "faults.disconnectStream, expireActivityCursor, requestCursor; capture actual SSE frames",
+        "expireActivityCursor joins real bounded local retention expiry for supplied original cursor; no DB edits, invented cursor or synthetic reset frames"
+      ]
+    },
+    {
+      "id": "C275:EG-029",
+      "setup": "eg20-outbound-prepare",
+      "additional_prerequisites": [
+        "relaySource,relayNodeLabel; actual saved destination",
+        "publicHttpsMedia:[{url,kind}] exactly four fixture media; preparation must not send"
+      ]
+    },
+    {
+      "id": "C275:EG-030",
+      "setup": "eg20-outbound-send",
+      "additional_prerequisites": [
+        "relaySource,relayNodeLabel",
+        "faults.dropAcceptedResponse; platform journal keyed by original deliveryId; no rekey/replay"
+      ]
+    },
+    {
+      "id": "C275:EG-044",
+      "setup": "eg20-connections",
+      "additional_prerequisites": [
+        "at least two actual connection pages; connectionRef,connectionLabel,connectionSenderIds",
+        "notReadyConnectionRef,nyxidRouteId; owner-bound references remain distinct",
+        "platform.admitSetupEvent for actual bound source"
+      ]
+    },
+    {
+      "id": "C275:EG-045",
+      "setup": "eg20-connection-create",
+      "additional_prerequisites": [
+        "platform.admitSetupEvent -> {record_id,event_ref,activity,owner}",
+        "syntheticTelegramToken for local platform only; actual browser connect/start/submit with HttpOnly cookie and CSRF"
+      ]
+    },
+    {
+      "id": "C275:EG-046",
+      "setup": "eg20-connection-cancel",
+      "additional_prerequisites": [
+        "platform.admitSetupEvent; real one-use setup URL; DELETE has empty 204 body"
+      ]
+    },
+    {
+      "id": "C275:EG-047",
+      "setup": "eg20-consumers",
+      "additional_prerequisites": [
+        "at least two actual Bot inventory pages; consumerId; owner user plus outsider and no_manage_bots actors",
+        "real connection and legacy nyxid-bots lists"
+      ]
+    },
+    {
+      "id": "C275:EG-048",
+      "setup": "eg20-consumer-create",
+      "additional_prerequisites": [
+        "consumer:{connectionRef,connectionLabel,imageLabel,repository?,agent:{model,reasoning_effort,permission_mode,system_prompt,permissions:{services},skills},serviceLabels,skillLabels,senderIds}",
+        "real published image, scopes and skill versions; real wizard and exact durable Bot ID"
+      ]
+    },
+    {
+      "id": "C275:EG-049",
+      "setup": "eg20-father-profile",
+      "additional_prerequisites": [
+        "consumer configuration as above; fatherDraft:{v:1,name,instructions}",
+        "identities.switchBrowserActor({session,actor,preserveStorage:true}) changes real identity without replacing application responses"
+      ]
+    },
+    {
+      "id": "C275:EG-055",
+      "setup": "eg20-father-actions",
+      "additional_prerequisites": [
+        "platform.admitSetupEvent; setupChoiceId; setupCustomization",
+        "platform.attestConsent({eventRef,setupId,revision,planDigest}) creates actual originating-platform consent, never an expected verdict",
+        "bound_consumer actor has the actual event capability"
+      ]
+    },
+    {
+      "id": "C275:EG-070",
+      "setup": "eg20-console-auth",
+      "additional_prerequisites": [
+        "console:{allowedOwner,expiryWaitMs,login:{origin,username,password,usernameLabel,passwordLabel,submitName}}",
+        "actual local NyxID authorization redirect; short configured session TTL naturally elapses within 30000ms"
+      ]
+    },
+    {
+      "id": "C275:EG-071",
+      "setup": "eg20-console-inspect",
+      "additional_prerequisites": [
+        "console login data; missingAddress:{record_id,channel_id} is an actual parent-owned record not yet observed by Console",
+        "console event ring has real emitted event; no raw transcript"
+      ]
+    },
+    {
+      "id": "C275:EG-072",
+      "setup": "eg20-console-sources",
+      "additional_prerequisites": [
+        "console login data; relaySource so attaching a custom source does not duplicate an existing custom slot",
+        "public attach/detach forms, stale revision refusal; parent owns original relay"
+      ]
+    }
+  ]
+}
