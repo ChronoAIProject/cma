@@ -488,3 +488,6 @@ an active checklist step, and its failure remains sticky through deferred joins.
 ADM-043's authentic report/cookie scope and cleanup contract is documented in
 [measured-visibility.md](measured-visibility.md). It replaces fixture verdicts
 with completed-report, inventory, rendered-allocation and exact null-gap evidence.
+
+ADM-044's exact save, unsigned validation, report-prefetch distinction and
+close-before-restoration contract is documented in [retention.md](retention.md).
