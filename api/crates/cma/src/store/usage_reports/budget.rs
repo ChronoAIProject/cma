@@ -1,5 +1,6 @@
 //! Circuit pressure measures individual pool checkouts and connection holds.
 //! Multi-query projection wall time is diagnostic only. Never inspect commands.
+use super::allocation_deadline::REPORTING_HOLD_DEADLINE;
 use super::*;
 use mongodb::event::{cmap::CmapEvent, EventHandler};
 use std::{
@@ -84,7 +85,7 @@ impl Pressure {
                 connection_key = key,
                 elapsed_ms = duration.as_millis() as u64
             );
-            if duration > DB_DEADLINE {
+            if duration > REPORTING_HOLD_DEADLINE {
                 self.open(
                     "connection_hold",
                     "connection_hold_deadline",
@@ -249,6 +250,36 @@ mod tests {
         assert!(pressure.checked_out.lock().unwrap().is_empty());
     }
     #[test]
+    fn allocation_interval_hold_slack_keeps_checkout_protection_and_cooldown() {
+        let pressure = pressure();
+        let start = Instant::now();
+        for duration in [
+            Duration::from_millis(2001),
+            ALLOCATION_DB_DEADLINE,
+            REPORTING_HOLD_DEADLINE,
+        ] {
+            pressure.checkout(1, Duration::from_millis(10), false, start);
+            pressure.returned(1, start + duration);
+            assert_eq!(pressure.circuit.load(Ordering::Relaxed), 0);
+        }
+        pressure.checkout(1, Duration::ZERO, false, start);
+        pressure.returned(
+            1,
+            start + REPORTING_HOLD_DEADLINE + Duration::from_millis(1),
+        );
+        let until = pressure.circuit.swap(0, Ordering::Relaxed);
+        assert!(until > now());
+        assert!(matches!(
+            check(&AtomicU64::new(until), until - 1),
+            Err(MetricsError::Busy)
+        ));
+        assert!(check(&AtomicU64::new(until), until).is_ok());
+        pressure.checkout(2, DB_DEADLINE + Duration::from_millis(1), false, start);
+        assert!(pressure.circuit.swap(0, Ordering::Relaxed) > now());
+        pressure.checkout(0, Duration::ZERO, true, start);
+        assert!(pressure.circuit.load(Ordering::Relaxed) > now());
+    }
+    #[test]
     fn soft_checkout_spikes_recover_but_sustained_pressure_still_opens_circuit() {
         let pressure = pressure();
         let start = Instant::now();
@@ -295,7 +326,10 @@ mod tests {
         let pressure = pressure();
         let start = Instant::now();
         pressure.checkout(1, Duration::ZERO, false, start);
-        pressure.returned(1, start + DB_DEADLINE + Duration::from_millis(1));
+        pressure.returned(
+            1,
+            start + REPORTING_HOLD_DEADLINE + Duration::from_millis(1),
+        );
         assert!(pressure.circuit.swap(0, Ordering::Relaxed) > now());
         pressure.checkout(2, DB_DEADLINE + Duration::from_millis(1), false, start);
         assert!(pressure.circuit.swap(0, Ordering::Relaxed) > now());
@@ -311,7 +345,7 @@ mod tests {
             ("checkout_deadline", Duration::from_millis(2001), false),
             (
                 "connection_hold_deadline",
-                Duration::from_millis(2001),
+                REPORTING_HOLD_DEADLINE + Duration::from_millis(1),
                 false,
             ),
             ("sustained_slow_checkout", Duration::from_millis(251), false),

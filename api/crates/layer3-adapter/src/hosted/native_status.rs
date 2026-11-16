@@ -64,7 +64,7 @@ impl ProviderHostedControlTransport {
                 return Ok(None);
             };
             if proof.pod() != &binding {
-                self.discard_native_slot(&endpoint, &slot).await;
+                self.discard_native_incarnation(&endpoint, &slot).await;
                 return Err(AdapterError::Rejected(
                     "Sandbox Pod changed before HTTP reuse".into(),
                 ));
