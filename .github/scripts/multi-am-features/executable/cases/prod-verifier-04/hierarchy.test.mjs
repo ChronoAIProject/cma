@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execute, pass} from './test-helpers.mjs';
+import {prepareHierarchy} from './setups.mjs';
 
 test('hierarchy flows use nested Agent creation shapes and clean children before parents',async()=>{
   for(const number of [33,62,63,81,82]) {
@@ -34,4 +35,21 @@ test('hierarchy flows use nested Agent creation shapes and clean children before
     pass(result);assert.deepEqual(cleanupOrder,['agent','workspace','sandbox']);
     assert.deepEqual(retained,[['intent','sandbox'],['resource','sandbox'],['intent','workspace'],['resource','workspace'],['intent','agent'],['resource','agent']]);
   }
+});
+
+test('hierarchy cleanup includes the Agent identity on every Agent-bound request', async()=>{
+  const defaults={sandbox_profile:{id:'sbp',revision:1},workspace_profile:{id:'wkp',revision:1},agent_profile:{id:'agp',revision:1}};
+  const calls=[]; let released=0, reads=0;
+  const parent={scope:'LOCAL_DISPOSABLE_TWO_AM',database_disposable:true,single_matrix_writer:true,
+    defaults,sandbox_profile:defaults.sandbox_profile,workspace_profile:defaults.workspace_profile,agent_profile:defaults.agent_profile,
+    async reserve(){return {parent_cleanup_barrier:true,async retainIntent(){},async retainResource(){},async release(){released++;return {released:true};}};},
+    async finality(){return {sandbox_id:'sbx',children_remaining:0,pending_operations:0,cleanup_complete:true};},
+    async readNativeFacts(){return {};},async waitForOwner(){}};
+  const ctx={row:{case_id:'hierarchy-cleanup-fixture'},am:'a',defer(label,operation){this.cleanup=operation;},
+    async request(input){calls.push(input);reads++;return {status:200,body:{id:'agt',status:reads===1?'ready':'deleted'},timing:{am:input.am,request_id:'r'+reads}};}};
+  const fixture=await prepareHierarchy(ctx,{userResources:parent});
+  await fixture.retainResource({kind:'agent',id:'agt',key:'k'});
+  await fixture.cleanupResource(ctx,'agent','agt');
+  assert.deepEqual(calls.map(call=>call.agentId),['agt','agt','agt']);
+  await fixture.cleanup();assert.equal(released,1);
 });

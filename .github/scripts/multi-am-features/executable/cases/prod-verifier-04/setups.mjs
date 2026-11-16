@@ -127,14 +127,17 @@ export async function prepareHierarchy(ctx, primitives) {
       : kind === 'workspace' ? '/api/v1/workspaces/' + segment(id)
         : '/api/v1/agents/' + segment(id);
     const terminal = kind === 'sandbox' ? ['retired'] : kind === 'workspace' ? ['removed'] : ['deleted'];
-    let current = await request(targetCtx, 'GET', path, undefined, {am:otherAM(targetCtx.am), allowed:[200]});
+    const route = kind === 'agent' ? {agentId:id} : {};
+    let current = await request(targetCtx, 'GET', path, undefined,
+      {...route, am:otherAM(targetCtx.am), allowed:[200]});
     check(current.body?.id === id, 'api_hierarchy_cleanup_read_identity');
     if (!terminal.includes(current.body.status)) {
       await request(targetCtx, 'DELETE', path, undefined,
-        {key:key(), am:otherAM(targetCtx.am), allowed:[200,202,204]});
+        {...route, key:key(), am:otherAM(targetCtx.am), allowed:[200,202,204]});
     }
     for (let count = 0; count < 120; count += 1) {
-      current = await request(targetCtx, 'GET', path, undefined, {am:otherAM(targetCtx.am), allowed:[200]});
+      current = await request(targetCtx, 'GET', path, undefined,
+        {...route, am:otherAM(targetCtx.am), allowed:[200]});
       check(current.body?.id === id, 'api_hierarchy_cleanup_read_identity');
       if (terminal.includes(current.body.status)) break;
       if (count === 119) throw Error('api_hierarchy_cleanup_deadline');
