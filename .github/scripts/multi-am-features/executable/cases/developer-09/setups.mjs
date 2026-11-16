@@ -1,4 +1,5 @@
-import {check, requireSetup, request, wait, reserve} from './setup-common.mjs';
+import {check, requireSetup, request, wait, reserve, once, cleanupSteps} from './setup-common.mjs';
+import {completeReport, id} from './helpers.mjs';
 import {prepareUsage, basicUsageCases} from './setup-usage.mjs';
 
 // The parent owns the local auth issuer. These recipes only ask it to read and
@@ -57,6 +58,8 @@ async function replaceGrant(auth, identities, actor, expectedRevision, capabilit
 export async function prepareAdminRoles(ctx, primitives) {
   const auth = requireAuth(primitives), identities = primitives.identities;
   for (const actor of ['admin', 'user', 'outsider', ...roleNames]) requireIdentity(identities, actor);
+  requireSetup(new Set(['admin', 'user', 'outsider', ...roleNames].map(actor => identities[actor].subject)).size
+    === roleNames.length + 3, 'admin09_distinct_role_subjects_required');
   // Role grants are shared local state even when the case does not create a
   // Sandbox. Serialize them under the parent's disposable lease and release
   // it on every exit path before the campaign can proceed.
@@ -64,9 +67,7 @@ export async function prepareAdminRoles(ctx, primitives) {
 
   const original = new Map();
   for (const actor of roleNames) original.set(actor, await readGrant(auth, identities, actor));
-  let restored = false;
-  const restore = async () => {
-    if (restored) return;
+  const restore = once(async () => {
     const failures = [];
     for (const [actor, initial] of original) {
       try {
@@ -76,11 +77,14 @@ export async function prepareAdminRoles(ctx, primitives) {
       } catch (error) { failures.push(error); }
     }
     if (failures.length) throw new AggregateError(failures, 'admin09_auth_restore_failed');
-    restored = true;
-  };
+  });
   // This is registered before the first grant write, including partial setup
   // failures. The returned cleanup below is idempotent for the parent dispatcher.
-  ctx.defer('admin09_auth_restore_partial', restore);
+  let usage;
+  const cleanup = once(() => cleanupSteps(ctx, [
+    ['usage_resources', async () => usage?.cleanup()], ['auth_grants', restore], ['auth_lease_release', lease.release],
+  ]));
+  ctx.defer('admin09_auth_restore_partial', cleanup);
 
   for (const actor of roleNames) {
     const current = await readGrant(auth, identities, actor);
@@ -100,29 +104,22 @@ export async function prepareAdminRoles(ctx, primitives) {
     }
   }
 
-  let usage;
   if (ctx.row.case_id === 'C275:ADM-003') {
-    usage = await prepareUsage(ctx, primitives, true);
-    const made = await request(ctx, {actor: 'admin', method: 'POST', path: '/api/v1/admin/usage/metrics/reports',
+    usage = await prepareUsage(ctx, primitives, {parentLease: lease});
+    const made = await request(ctx, {actor: 'read_operator', method: 'POST', path: '/api/v1/admin/usage/metrics/reports',
       body: usage.report_query, allowed: [200, 202]});
     check(typeof made?.report_id === 'string' && made.report_id.length > 0, 'admin09_role_report_identity');
-    const report = await wait(() => request(ctx, {actor: 'admin', method: 'GET',
-      path: '/api/v1/admin/usage/metrics/reports/' + encodeURIComponent(made.report_id)}),
+    const report = await wait(() => request(ctx, {actor: 'read_operator', method: 'GET',
+      path: '/api/v1/admin/usage/metrics/reports/' + id(made.report_id)}),
       value => value?.status === 'ready' || value?.status === 'failed', 'admin09_role_report_timeout');
-    check(report.status === 'ready', 'admin09_role_report_failed');
+    check(report.report_id === made.report_id && completeReport(report, usage.report_expected, identities.read_operator.subject),
+      'admin09_role_report_failed');
     usage.report_id = made.report_id;
   }
 
-  const cleanup = async () => {
-    let failure;
-    try { await usage?.cleanup?.(); await restore(); }
-    catch (error) { failure = error; }
-    await lease.release();
-    if (failure) throw failure;
-  };
   return {
     scope: 'LOCAL_DISPOSABLE_TWO_AM', cleanup,
-    sandbox_id: usage?.sandbox_ids?.[0] ?? null,
+    sandbox_id: usage?.owned_resources?.[0]?.id ?? null,
     report_id: usage?.report_id ?? null,
     private_markers: usage?.private_markers ?? [],
     revoke: async (actor, capability) => revokeGrant(auth, identities, actor, capability),
@@ -146,7 +143,7 @@ async function revokeGrant(auth, identities, actor, capability) {
 
 export async function prepareBasicUsage(ctx, primitives) {
   requireSetup(basicUsageCases.includes(ctx.row.case_id), 'admin09_advanced_usage_recipe_missing');
-  return prepareUsage(ctx, primitives, false);
+  return prepareUsage(ctx, primitives);
 }
 
 export const setups = Object.freeze({admin_roles: prepareAdminRoles, usage: prepareBasicUsage});

@@ -38,6 +38,7 @@ async function fixture(t, options = {}) {
     server.listen(0, '127.0.0.1'); await once(server, 'listening');
     t.after(() => new Promise(resolve => {server.close(resolve); server.closeAllConnections();}));
     members[slot] = {origin: `http://127.0.0.1:${server.address().port}`, instance: 'process-' + slot,
+      instance_id: 'process-' + slot, pod_uid: 'pod-' + slot, container_id: 'container-' + slot,
       ready: true, image, source};
   }
   const parent = {scope: 'LOCAL_DISPOSABLE_TWO_AM', synthetic: true, shared_database: true,

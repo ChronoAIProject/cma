@@ -2,6 +2,13 @@ import {readFile} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import {loadRegistry} from './registry.mjs';
 import {validServingReceipt} from './serving.mjs';
+import {latencyVerdict} from './latency.mjs';
+import {validEgReceipt, platformComplete} from './evidence-scope.mjs';
+
+// Preserve the canonical checklist phase and repetition requirements.
+export function phaseRequirements(row) {
+  return row.phase_minimum_runs ?? {before_restart: 3, after_restart: 1};
+}
 
 export function coverageCounts(registry, results = [], binding = {}) {
   const rows = [];
@@ -17,23 +24,29 @@ export function coverageCounts(registry, results = [], binding = {}) {
     // recipes below it. Require per-case binding or an actually executed case.
     const ready = binding.executable_case_ids?.includes(row.case_id)
       || exact.some(result => result.status === 'PASS'
-        || (result.status === 'FAIL' && result.requests?.length > 0));
+        || (result.status === 'FAIL' && (result.requests?.length > 0 || result.eg_requests?.length > 0)));
     const executable = !!definition && missing.length === 0 && !!ready;
     let status = !definition ? 'UNIMPLEMENTED' : !executable ? 'BLOCKED' : 'NOT_RUN';
-    if (exact.some(result => result.status === 'FAIL')) status = 'FAIL';
+    if (exact.some(result => result.status === 'FAIL' || (row.target_seconds != null
+      && (result.performance === 'FAIL' || latencyVerdict(row, result) === 'FAIL')))) status = 'FAIL';
     else if (exact.some(result => result.status === 'BLOCKED')) status = 'BLOCKED';
     else if (executable && binding.source && binding.image && binding.owner_restart?.verified === true
       && /^[0-9a-f]{64}$/.test(binding.owner_restart?.evidence_sha256 ?? '')) {
-      const phases = row.phase_minimum_runs ?? {before_restart: 3, after_restart: 1};
+      const phases = phaseRequirements(row);
       const complete = Object.entries(phases).every(([phase, minimum]) => {
         const runs = exact.filter(result => result.phase === phase && result.status === 'PASS'
+          && (row.target_seconds == null || (result.performance === 'PASS' && latencyVerdict(row, result) === 'PASS'))
+          && platformComplete(row.case_id, result)
           && (!result.requires_parent_cleanup || (binding.final_cleanup?.verified === true
             && /^[a-f0-9]{64}$/.test(binding.final_cleanup?.evidence_sha256 ?? '')))
-          && result.requests?.length > 0
+          && (definition.evidence_scope === 'eg_only'
+            ? result.eg_requests?.length > 0 && result.eg_requests.every(validEgReceipt)
+            : result.requests?.length > 0)
           && result.requests.every(request => ['a', 'b'].includes(request.am)
             && typeof request.request_id === 'string' && request.request_id.trim().length > 0
             && validServingReceipt(request))
-          && (definition.scope !== 'agent' || result.owner_proofs?.some(proof => proof.owner !== proof.ingress))
+          && (!['agent', 'eg'].includes(definition.scope) || definition.evidence_scope === 'eg_only'
+            || result.owner_proofs?.some(proof => proof.owner !== proof.ingress))
           && (result.owner_proofs ?? []).every(proof => proof.verdict === 'PASS'
             && (proof.owner !== proof.ingress || proof.kind === 'explicit_ingress'
               || (proof.kind === 'peer_read' && ['GET', 'HEAD'].includes(proof.method)))
@@ -45,7 +58,8 @@ export function coverageCounts(registry, results = [], binding = {}) {
         return new Set(runs.map(result => result.iteration)).size >= minimum;
       });
       const ingresses = new Set(exact.filter(result => result.status === 'PASS')
-        .flatMap(result => result.requests ?? []).map(request => request.am));
+        .flatMap(result => definition.evidence_scope === 'eg_only' ? result.eg_requests ?? [] : result.requests ?? [])
+        .map(request => definition.evidence_scope === 'eg_only' ? request.replica : request.am));
       if (complete && ingresses.has('a') && ingresses.has('b')) status = 'PASS';
     }
     rows.push({id: row.case_id, family: row.family, registered: !!definition,

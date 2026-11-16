@@ -34,7 +34,8 @@ export function define(number, scope, fixtures, run) {
   const id = `C275:EG-${String(number).padStart(3, '0')}`;
   const row = rows.find(row => row.case_id === id);
   if (!row) throw Error('eg_catalog_row_missing');
-  return {id, scope, fixtures, steps: [...row.required_steps], run};
+  return {id, scope, fixtures, steps: [...row.required_steps], run,
+    ...([73, 77, 78].includes(number) ? {evidence_scope: 'eg_only'} : {})};
 }
 
 // Missing adapter methods are prerequisites, never successful observations.
@@ -48,8 +49,10 @@ export async function openBrowser(ctx, actor = 'user', options = {}) {
   const browser = ctx.fixture('browser');
   const session = await invoke(browser, 'open', {actor, am: ctx.am, agentId});
   if (typeof session?.close !== 'function') throw Error('browser_cleanup_custody_missing');
-  ctx.defer('close_browser', () => session.close());
-  ctx.defer('retain_browser_attribution', async () => {
+  ctx.defer('close_and_retain_browser_attribution', async () => {
+    const errors = [];
+    try {await session.close();} catch (error) {errors.push(error);}
+    try {
     const value = await ctx.observe('browser_attribution', () => invoke(browser, 'evidence', session.page));
     if (value.real_ui !== true || value.secrets_redacted !== true
       || !/^[0-9a-f]{40}$/.test(value.compiled_source ?? '')
@@ -59,6 +62,8 @@ export async function openBrowser(ctx, actor = 'user', options = {}) {
     }
     if (['EG-002', 'EG-009', 'EG-070'].includes(ctx.row.id)
       && value.authentication !== 'browser_session') throw new Blocked('browser_session_authentication_required');
+    } catch (error) {errors.push(error);}
+    if (errors.length) throw new AggregateError(errors, 'eg_browser_finalization_failed');
   });
   ctx.assert(typeof session.page?.getByRole === 'function', 'playwright_page_required');
   if (Object.keys(setupOptions).length || ['EG-002', 'EG-007', 'EG-008'].includes(ctx.row.id)) {
@@ -145,6 +150,7 @@ export async function egRequest(ctx, lease, {method = 'GET', path, body, key, ac
     'eg_response_replica_attribution');
   ctx.assert(typeof response.requestId === 'string' && response.requestId.length > 0,
     'eg_request_correlation');
+  await ctx.observe('eg_serving_receipt', async () => ({schema: 'multi-eg-request-v1', receipt: response.eg_receipt}));
   await ctx.observe('eg_http_receipt', async () => ({method, status: response.status,
     replica, instance_sha256: digest(response.instance), request_sha256: digest(response.requestId),
     body_sha256: digest(response.body ?? null)}));

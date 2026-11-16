@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
 import {parentTransport, createParticipant, validateTopology, verifyRestart, provisionalCounts} from './participant.mjs';
 
 const image = 'local/api@sha256:' + '1'.repeat(64), source = '2'.repeat(40);
@@ -36,16 +37,19 @@ test('image, distinct process, actual exit, higher epoch and replacement are req
   assert.throws(() => validateTopology(duplicate, image), /distinct_processes/);
 });
 
-test('participant runs the registry in parent phases and refuses phase replay', async () => {
+for (const parentCleanup of [false, true])
+test('participant runs phases, refuses replay and binds post-disposal finality: ' + parentCleanup, async () => {
   const row = {case_id: 'C275:contract', family: 'user', required_steps: ['expected_result']};
   const def = {id: row.case_id, scope: 'global', steps: row.required_steps, fixtures: [],
     async run(ctx) {await ctx.step('expected_result', async () => {
       const response = await ctx.request({method: 'GET', path: '/api/v1/example'});
       ctx.assert(response.body.ok, 'response_body');
+      if (parentCleanup) await ctx.observe('disposal_pending', async () => ({
+        final_database_cleanup: 'PARENT_MUST_CONFIRM_BEFORE_CAMPAIGN_PASS'}));
     });}};
   const registry = {catalog: {rows: [row]}, rows: new Map([[row.case_id, row]]), cases: new Map([[row.case_id, def]])};
   const participant = await createParticipant({scope: 'LOCAL_DISPOSABLE_TWO_AM', database_disposable: true,
-    run_id: 'contract-campaign',
+    run_id: 'contract-campaign', disposable_database_sha256: 'd'.repeat(64),
     single_matrix_writer: true, restart_authority: 'PARENT_ONLY', bearer: 'private-user',
     expected_api_source: source, expected_api_image: image}, {registry});
   let current = topology(), observedOwner = owner('a', 1, 'a1', 'ia1');
@@ -72,7 +76,24 @@ test('participant runs the registry in parent phases and refuses phase replay', 
   observedOwner = owner('b', 2, 'b1', 'ib1');
   await participant.runPhase({...context, phase: 'after_restart',
     restart: {killed_am: 'a', owner_container_exit_observed: true}});
-  const result = await participant.finalize();
+  let result = await participant.finalize();
+  if (parentCleanup) {
+    assert.equal(result.counts.roles.user.passing, 0);
+    const receipt = {schema: 'multi-am-parent-cleanup-v1', scope: 'LOCAL_DISPOSABLE_TWO_AM',
+      campaign_id: 'contract-campaign', source, image, database_sha256: 'd'.repeat(64),
+      database_disposed: true, owned_children: 0, status: 'PASS', completed_at: new Date().toISOString(),
+      disposal_evidence_sha256: 'e'.repeat(64)};
+    const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+    for (const patch of [{source: 'f'.repeat(40)}, {campaign_id: 'other'}, {image: 'wrong'},
+      {database_sha256: 'f'.repeat(64)}, {database_disposed: false}, {owned_children: 1},
+      {completed_at: '2020-01-01T00:00:00Z'}, {disposal_evidence_sha256: ''}]) {
+      const wrong = {...receipt, ...patch};
+      await assert.rejects(participant.finalize({cleanupReceipt: wrong, cleanupSha256: digest(wrong)}), /cleanup_binding_invalid/);
+    }
+    await assert.rejects(participant.finalize({cleanupReceipt: receipt, cleanupSha256: '0'.repeat(64)}), /cleanup_binding_invalid/);
+    result = await participant.finalize({cleanupReceipt: receipt, cleanupSha256: digest(receipt)});
+    assert.equal((await participant.finalize()).counts.roles.user.passing, 1);
+  }
   assert.equal(result.counts.roles.user.passing, 1);
   assert.equal(result.application_processes_started, 0);
   await assert.rejects(participant.runPhase(context), /phase_order/);
@@ -124,4 +145,31 @@ test('phase budget stops enumeration before spending the reserved cleanup interv
   assert.ok(events.some(event => event.trigger === 'phase_budget_exhausted'));
   assert.equal(events.filter(event => event.trigger === 'case_outcome').length, 1);
   assert.equal((await participant.finalize()).runtime_acceptance, false);
+});
+
+test('actual catalog steady and restart rows keep their exact phase schedules', async () => {
+  const {loadRegistry} = await import('./registry.mjs');
+  const loaded = await loadRegistry();
+  const rows = [loaded.rows.get('C275:cma-user.account.appearance'), loaded.rows.get('C275:ADM-003')];
+  assert.equal(loaded.catalog.rows.filter(row => row.phase_minimum_runs?.steady === 3).length, 66);
+  const seen = [], events = [], registry = {catalog: {rows}, rows: new Map(rows.map(row => [row.case_id, row])),
+    cases: new Map(rows.map(row => [row.case_id, {id: row.case_id, fixtures: [], scope: 'global', steps: row.required_steps,
+      async run(ctx) {
+        seen.push([row.case_id, ctx.phase, ctx.iteration]);
+        for (const step of row.required_steps) await ctx.step(step, async () => ctx.assert(true, 'schedule_probe'));
+        await ctx.observe('schedule_probe', async () => ({observed: true}));
+      }}]))};
+  const participant = await createParticipant({scope: 'LOCAL_DISPOSABLE_TWO_AM', database_disposable: true,
+    run_id: 'catalog-phases', single_matrix_writer: true, restart_authority: 'PARENT_ONLY',
+    expected_api_source: source, expected_api_image: image}, {registry});
+  const context = {phase: 'before_restart', record: {agentId: 'witness'},
+    adapter: {topology: async () => topology(), ownerOf: async () => owner('a', 1, 'a1', 'ia1')},
+    services: {record: async event => events.push(event)}};
+  await participant.runPhase(context);
+  await participant.runPhase({...context, phase: 'after_restart'});
+  assert.deepEqual(seen.filter(([id]) => id === rows[0].case_id).map(([, phase, iteration]) => [phase, iteration]),
+    [['steady', 1], ['steady', 2], ['steady', 3]]);
+  assert.deepEqual(seen.filter(([id]) => id === rows[1].case_id).map(([, phase, iteration]) => [phase, iteration]),
+    [['before_restart', 1], ['before_restart', 2], ['before_restart', 3], ['after_restart', 1]]);
+  assert.equal(events.filter(event => event.trigger === 'case_outcome' && event.phase === 'before_restart').length, 6);
 });
