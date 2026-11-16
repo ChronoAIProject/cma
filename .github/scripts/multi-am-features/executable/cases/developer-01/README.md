@@ -418,8 +418,41 @@ must retain unknown outcome custody; they do not authorize a retry. Browser
 close/drain precedes newer resource cleanup hooks and fresh-CAS policy restoration.
 The parent owns exact public Launch cancellation/root cleanup, native finality
 and database disposal. This adds no automatic factory: six automatic recipes /
-31 parent-required setups remain. Dedicated command rows ADM-075/076 still use
-their older parent occurrence contract and require a separate source correction.
+31 parent-required setups remain.
+
+ADM-075/076 also use actual public Launch state. Their `trigger_commands`
+factory supplies the same published/no-review/no-services/empty-first-message
+Trigger and one original user `launchIntent`, plus `adminSubject` taken from the
+parent-bound admin credential identity. There are no disabled intents or
+synthetic occurrence/scheduler hooks. The parent global lease remains held
+through all cleanup. Before admission the per-trigger user inventory must be
+empty through both AMs.
+
+For pause, the dedicated command first changes a running policy to paused, then
+one admitted Launch must remain blocked with all resources pending. For resume,
+one Launch is first observed paused on both AMs; the dedicated command must
+advance that same Launch to Ready/completed with matching resource identities.
+The whole returned settings snapshot, advanced revision and actual command
+request/serving receipt are retained, with exact both-AM readback. A lost command
+acknowledgement never causes another POST; any original response attached to an
+attribution failure is captured without discarding either error.
+
+Audit correlation uses the fields the API actually exposes: exact actor,
+configure action, resource target `triggers`, command revision, succeeded outcome
+and paused/running detail. It does not invent an audit request-ID field. Complete
+actor-filtered pages are read separately through both AMs, at most twenty pages
+of fifty. Missing, duplicate, repeated-cursor or truncated evidence fails; the
+matching audit must have a fresh ID absent before the command, and both AMs must
+return the same audit ID/timestamp. Full records remain private.
+
+The case and runner join the same original resource-cleanup attempt. A paused
+Launch must be publicly cancelled, with its original identity and pending
+resources read back, before policy restoration can resume work. Completed Launch
+cleanup retires the created roots; Ready Launch records cannot be cancelled by
+this API. Native finality remains the parent's obligation. Fresh-CAS restoration
+and independent cleanup failures are retained; final audit/settings/inventory
+checks cannot substitute for native disposal. These rows add no automatic
+factory or runtime acceptance claim.
 
 Run offline checks with:
 
