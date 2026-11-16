@@ -1,7 +1,16 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
-use axum::{extract::State, routing::get, Json, Router};
-use layer2_core::resource_access::{OrganizationRole, ResourceAccessService};
+use axum::{
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
+use layer2_core::resource_access::{
+    organization_diagnostics, AccessError, MembershipError, OrganizationRole, ResourceAccessError,
+    ResourceAccessService,
+};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -31,13 +40,60 @@ pub(crate) struct OrganizationChoiceView {
 pub(crate) async fn list(
     State(service): State<Arc<ResourceAccessService>>,
     caller: AuthenticatedResourceCaller,
-) -> Result<Json<OrganizationChoicesView>, ResourceProblem> {
-    let choices = service
-        .organization_choices(
-            &caller.context,
-            caller.credential.as_ref().map(DelegatedCredential::value),
-        )
-        .await?;
+) -> Result<Json<OrganizationChoicesView>, Response> {
+    let started = Instant::now();
+    let (result, failure) = organization_diagnostics::capture(service.organization_choices(
+        &caller.context,
+        caller.credential.as_ref().map(DelegatedCredential::value),
+    ))
+    .await;
+    let choices = result
+        .inspect_err(|error| {
+            let reason = match error {
+                ResourceAccessError::Membership(MembershipError::Unavailable)
+                    if caller.credential.is_none() =>
+                {
+                    "credential_missing"
+                }
+                ResourceAccessError::Membership(MembershipError::Unavailable) => "unavailable",
+                ResourceAccessError::Membership(MembershipError::InvalidEvidence) => {
+                    "invalid_evidence"
+                }
+                ResourceAccessError::Access(AccessError::RevalidationRequired) => "revalidation",
+                _ => return,
+            };
+            let context = layer2_core::diagnostic_context::DiagnosticContext::current();
+            // Keep the final request outcome joinable even when a provider call
+            // never starts. No caller, credential, or org payload enters the event.
+            let span = tracing::warn_span!(parent: None, "organization_choices");
+            let _entered = span.enter();
+            tracing::warn!(
+                parent: &span,
+                event = "organization_choices_failure",
+                request_hash = context.request_hash.as_ref(),
+                reason,
+                elapsed_ms = started.elapsed().as_millis() as u64,
+                "Organization choices unavailable"
+            );
+        })
+        .map_err(|error| {
+            if matches!(
+                error,
+                ResourceAccessError::Membership(
+                    MembershipError::Unavailable | MembershipError::InvalidEvidence
+                )
+            ) {
+                if let Some(failure) = failure {
+                    let status = StatusCode::SERVICE_UNAVAILABLE;
+                    let code = "organization_authority_unavailable";
+                    return super::problem_response(
+                        status,
+                        super::problem_document(status, code, &failure.detail(), code),
+                    );
+                }
+            }
+            ResourceProblem(error).into_response()
+        })?;
     Ok(Json(OrganizationChoicesView {
         items: choices
             .into_iter()
