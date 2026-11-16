@@ -14,6 +14,11 @@ import { readAgentProjections } from './projections';
 import type { AuthorizedOpeningReads } from './openingReads';
 import { IdentityChangedError } from './identity';
 
+// The server bounds each snapshot response to 4 MiB and accepts 1..200 rows.
+// Use the largest existing bound so cursor-dependent history needs fewer
+// round trips without changing the fixed-head or authorization fences.
+const OPENING_EVENT_PAGE_LIMIT = 200;
+
 export async function loadV2Agent(
   client: CmaWebClient,
   agentId: string,
@@ -55,6 +60,7 @@ export async function loadV2Agent(
       signal.throwIfAborted();
       v2.journal.read();
       return await v2.events.snapshot(agentId, {
+        limit: OPENING_EVENT_PAGE_LIMIT,
         pageCursor,
         signal,
         messageBindings: true,

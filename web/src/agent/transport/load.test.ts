@@ -84,7 +84,32 @@ it('shows the last reply immediately without replaying historical Thinking as ev
     },
   });
   expect(h.progress).toHaveBeenCalledOnce();
+  expect(
+    new URL(h.snapshot.mock.calls[0]![0], 'https://fixture.invalid').searchParams.get('limit'),
+  ).toBe('200');
+  expect(
+    new URL(h.snapshot.mock.calls[1]![0], 'https://fixture.invalid').searchParams.get('limit'),
+  ).toBe('200');
   expect(h.snapshot.mock.calls[1]![0]).toContain('page_cursor=ags1.');
+});
+
+it('uses the bounded 200-row page for a history that crosses one continuation', async () => {
+  const h = await setup();
+  const first = Array.from({ length: 200 }, (_, index) => item(index + 1, null));
+  h.snapshot.mockImplementation(async (url) => {
+    const request = new URL(url, 'https://fixture.invalid');
+    return request.searchParams.has('page_cursor')
+      ? json(page([item(201, null)], 201))
+      : json(page(first, 201, 200));
+  });
+
+  const result = await h.start();
+
+  expect(result.error).toBeUndefined();
+  expect(result.value?.v2Items).toHaveLength(201);
+  expect(h.snapshot).toHaveBeenCalledTimes(2);
+  for (const [url] of h.snapshot.mock.calls)
+    expect(new URL(url, 'https://fixture.invalid').searchParams.get('limit')).toBe('200');
 });
 
 it('uses the current transcript active turn rather than a historical turn start', async () => {
