@@ -59,7 +59,7 @@ pub(super) async fn claimed(
         .map_err(|error| error.into_store_error(unavailable))
 }
 
-async fn claimed_transaction(
+pub(super) async fn claimed_transaction(
     store: &MongoSandboxStore,
     sandbox: &Sandbox,
     session: &mut ClientSession,

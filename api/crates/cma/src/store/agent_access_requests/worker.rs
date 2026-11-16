@@ -18,7 +18,8 @@ impl MongoSandboxStore {
     ) -> Result<(layer2_core::sandbox::Agent, layer2_core::sandbox::Sandbox), AgentAccessError>
     {
         transaction!(self, session, {
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             fence(self, &snapshot, session).await?;
             Ok((
                 snapshot
@@ -50,6 +51,8 @@ impl MongoSandboxStore {
             return Ok(None);
         }
         let now = now_millis();
+        let at = layer2_core::now_rfc3339();
+        let token = uuid::Uuid::new_v4().to_string();
         let expiry =
             layer2_core::rfc3339_at(std::time::SystemTime::now() - Duration::from_secs(24 * 3600));
         transaction!(self, session, {
@@ -68,10 +71,10 @@ impl MongoSandboxStore {
             let mut record = read(&value)?;
             let revision = record.revision;
             record.revision += 1;
-            record.updated_at = layer2_core::now_rfc3339();
+            record.updated_at = at.clone();
             record.lease = Some(AgentAccessLease {
                 id: record.id.clone(),
-                token: uuid::Uuid::new_v4().to_string(),
+                token: token.clone(),
                 holder: holder.into(),
                 expires_at: now + LEASE_MILLIS,
             });
@@ -84,12 +87,13 @@ impl MongoSandboxStore {
         &self,
         lease: &AgentAccessLease,
     ) -> Result<AgentAccessLease, AgentAccessError> {
+        let expires_at = now_millis() + LEASE_MILLIS;
         transaction!(self, session, {
             let mut record = leased(self, lease, session).await?;
             let revision = record.revision;
             record.revision += 1;
             let current = record.lease.as_mut().ok_or(AgentAccessError::Conflict)?;
-            current.expires_at = now_millis() + LEASE_MILLIS;
+            current.expires_at = expires_at;
             let renewed = current.clone();
             replace_leased(self, lease, revision, &record, session).await?;
             Ok(renewed)
@@ -106,12 +110,14 @@ impl MongoSandboxStore {
         if !legal_transition(expected, next) {
             return Err(AgentAccessError::Invalid);
         }
+        let at = layer2_core::now_rfc3339();
         transaction!(self, session, {
             let mut record = leased(self, lease, session).await?;
             if record.phase != expected || !progress.extends(&record.progress) {
                 return Err(AgentAccessError::Conflict.into());
             }
-            let snapshot = validate_lineage(self, &record.requester, session, false).await?;
+            let snapshot =
+                validate_lineage_transaction(self, &record.requester, session, false).await?;
             validate_progress(&record, next, &progress, &snapshot)?;
             if next.applying() && self.agent_access_requests.count_documents(doc! {
                 "_id":{"$ne":&record.id},"record.requester.sandbox_id":record.requester.sandbox_id.as_str(),
@@ -122,7 +128,7 @@ impl MongoSandboxStore {
             record.revision += 1;
             record.phase = next;
             record.progress = progress.clone();
-            record.updated_at = layer2_core::now_rfc3339();
+            record.updated_at = at.clone();
             if next.terminal() {
                 record.lease = None;
             }
@@ -141,13 +147,15 @@ impl MongoSandboxStore {
         if delay > 24 * 3600 * 1000 {
             return Err(AgentAccessError::Invalid);
         }
+        let retry_at = now_millis() + delay;
+        let at = layer2_core::now_rfc3339();
         transaction!(self, session, {
             let mut record = leased(self, lease, session).await?;
             let revision = record.revision;
             record.revision += 1;
             record.lease = None;
-            record.retry_at = now_millis() + delay;
-            record.updated_at = layer2_core::now_rfc3339();
+            record.retry_at = retry_at;
+            record.updated_at = at.clone();
             replace_leased(self, lease, revision, &record, session).await?;
             Ok(())
         })
@@ -166,6 +174,7 @@ impl MongoSandboxStore {
         {
             return Err(AgentAccessError::Invalid);
         }
+        let at = layer2_core::now_rfc3339();
         transaction!(self, session, {
             let mut record = leased(self, lease, session).await?;
             let revision = record.revision;
@@ -173,7 +182,7 @@ impl MongoSandboxStore {
             record.phase = AgentAccessPhase::Failed;
             record.lease = None;
             record.error = Some(code.into());
-            record.updated_at = layer2_core::now_rfc3339();
+            record.updated_at = at.clone();
             replace_leased(self, lease, revision, &record, session).await?;
             Ok(record)
         })
