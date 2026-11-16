@@ -25,7 +25,8 @@ async fn consent_lineage_abort_retries_exact_owner_save_and_proposal_once() {
         let f = Fixture::new(true).await;
         f.abort("aggregate", Some("agents"), 1);
         let result = if owner_save {
-            f.owner_save(vec![], "owner-key").await
+            f.owner_save(vec![ServiceId::new("original-service")], "owner-key")
+                .await
         } else {
             f.store
                 .request_agent_access(f.requester(), proposal())
@@ -39,7 +40,8 @@ async fn consent_lineage_abort_retries_exact_owner_save_and_proposal_once() {
             .await
             .unwrap();
         let replay = if owner_save {
-            f.owner_save(vec![], "owner-key").await
+            f.owner_save(vec![ServiceId::new("original-service")], "owner-key")
+                .await
         } else {
             f.store
                 .request_agent_access(f.requester(), proposal())
@@ -77,7 +79,9 @@ async fn consent_lineage_abort_retries_exact_owner_save_and_proposal_once() {
 async fn consent_start_fence_abort_retries_with_original_work_claim() {
     let f = Fixture::new(true).await;
     f.abort("update", Some("sandboxes"), 1);
-    let result = f.with_work(f.owner_save(vec![], "start-fence")).await;
+    let result = f
+        .with_work(f.owner_save(vec![ServiceId::new("original-service")], "start-fence"))
+        .await;
     let (fired, commands) = f.clear().await;
     let count = f
         .independent
@@ -101,7 +105,7 @@ async fn consent_abort_bound_and_stale_scope_never_publish_a_new_authority() {
         let result = f
             .owner_save(
                 if persistent {
-                    vec![]
+                    vec![ServiceId::new("original-service")]
                 } else {
                     vec![ServiceId::new("stale")]
                 },
@@ -135,7 +139,12 @@ async fn consent_abort_bound_and_stale_scope_never_publish_a_new_authority() {
 async fn consent_unknown_commit_returns_unavailable_without_mutation_replay() {
     let f = Fixture::new(true).await;
     f.arm("commitTransaction", None, 5, doc! {"writeConcernError":{"code":50_i32,"codeName":"MaxTimeMSExpired","errmsg":"uncertain consent commit"}});
-    let result = f.owner_save(vec![], "unknown-owner-key").await;
+    let result = f
+        .owner_save(
+            vec![ServiceId::new("original-service")],
+            "unknown-owner-key",
+        )
+        .await;
     let (fired, commands) = f.clear().await;
     let record = f
         .independent
@@ -149,7 +158,12 @@ async fn consent_unknown_commit_returns_unavailable_without_mutation_replay() {
         .count_documents(doc! {})
         .await
         .unwrap();
-    let replay = f.owner_save(vec![], "unknown-owner-key").await;
+    let replay = f
+        .owner_save(
+            vec![ServiceId::new("original-service")],
+            "unknown-owner-key",
+        )
+        .await;
     f.cleanup().await;
     assert!(fired);
     assert_eq!(result, Err(AgentAccessError::Unavailable));
@@ -311,4 +325,48 @@ async fn tool_unknown_commit_returns_without_second_enrollment_transaction() {
     assert!(replay.unwrap().is_some());
     assert_eq!(count, 1);
     assert_eq!(before, after);
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn uncertain_duplicate_error_never_authorizes_consent_or_prepared_tool_retry() {
+    for consent in [false, true] {
+        let f = Fixture::new(consent).await;
+        f.arm(if consent {"aggregate"} else {"find"},
+            Some(if consent {"agents"} else {"native_prepared_sandboxes"}), 1,
+            doc! {"errorCode":11000_i32,"errorLabels":["TransientTransactionError","UnknownTransactionCommitResult"]});
+        let unavailable = if consent {
+            matches!(
+                f.owner_save(vec![ServiceId::new("original-service")], "uncertain-label")
+                    .await,
+                Err(AgentAccessError::Unavailable)
+            )
+        } else {
+            matches!(
+                f.source.resolve(&f.runtime, &f.open, 1).await,
+                Err(AdapterError::Unavailable(_))
+            )
+        };
+        let (fired, commands) = f.clear().await;
+        let requests = f
+            .independent
+            .agent_access_requests
+            .count_documents(doc! {})
+            .await
+            .unwrap();
+        let tools = f
+            .independent
+            .agent_access_tools
+            .count_documents(doc! {})
+            .await
+            .unwrap();
+        f.cleanup().await;
+        assert!(fired);
+        assert!(
+            unavailable,
+            "uncertainty must remain unavailable even with duplicate/transient evidence"
+        );
+        assert_starts(&commands, 1);
+        assert_eq!((requests, tools), (0, 0));
+    }
 }

@@ -55,6 +55,14 @@ impl Fixture {
             .unwrap();
         if ready {
             super::super::tests::publish(&independent, &agent.id).await;
+            independent
+                .sandboxes
+                .update_one(
+                    doc! {"_id":agent.sandbox_id.as_str()},
+                    doc! {"$set":{"record.credential.reaches":["original-service"]}},
+                )
+                .await
+                .unwrap();
         }
         let state = independent
             .agent_provenance_snapshot(&agent.id)
