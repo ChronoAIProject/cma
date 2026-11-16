@@ -69,22 +69,36 @@ for (const [option, code] of [
   if (option === 'reservationEffect') h = defaultOwnerPolicyModel({reservationEffect: true});
   if (option === 'wrongAdmission') h.f.admitModelRequest = async () => ({status: 201, owner: h.f.ownerWithoutOverride,
     reservation: {owner: h.f.ownerWithoutOverride, policy: h.f.overridePolicy}, policy: h.f.overridePolicy, provider_requests: 1});
-  if (option === 'wrongOverrideAdmission') h.f.admitModelRequest = async (_ctx, input) => {
+  if (option === 'wrongOverrideAdmission') {
+    const admit = h.f.admitModelRequest;
+    h.f.admitModelRequest = async (_ctx, input) => {
     const owner = typeof input === 'string' ? input : input.owner;
-    const selected = owner === h.f.ownerWithoutOverride ? h.f.policy : h.f.policy;
-    return {status: 201, owner, reservation: {owner, policy: selected}, policy: selected, provider_requests: 1};
-  };
-  if (option === 'wrongProviderEffect') h.f.admitModelRequest = async (_ctx, input) => {
+    const result = await admit(_ctx, input);
+    const selected = h.f.policy;
+    return owner === h.f.ownerWithOverride
+      ? {...result, reservation: {...result.reservation, policy: selected}, policy: selected} : result;
+    };
+  }
+  if (option === 'wrongProviderEffect') {
+    const admit = h.f.admitModelRequest;
+    h.f.admitModelRequest = async (_ctx, input) => {
     const owner = typeof input === 'string' ? input : input.owner;
-    const selected = owner === h.f.ownerWithOverride ? h.f.overridePolicy : h.f.policy;
-    return {status: 201, owner, reservation: {owner, policy: selected}, policy: selected, provider_requests: 0};
-  };
-  if (option === 'wrongRemovedAdmission') h.f.admitModelRequest = async (_ctx, input) => {
+    const result = await admit(_ctx, input);
+    return owner === h.f.ownerWithOverride ? {...result, provider_requests: 0} : result;
+    };
+  }
+  if (option === 'wrongRemovedAdmission') {
+    const admit = h.f.admitModelRequest;
+    h.f.admitModelRequest = async (_ctx, input) => {
     const owner = typeof input === 'string' ? input : input.owner;
     if (h.settings().model_budget.default_policy === undefined)
-      return {status: 201, owner, reservation: {owner, policy: h.f.policy}, policy: h.f.policy, provider_requests: 1};
-    const selected = owner === h.f.ownerWithOverride ? h.f.overridePolicy : h.f.policy;
-    return {status: 201, owner, reservation: {owner, policy: selected}, policy: selected, provider_requests: 1};
-  };
+      return {status: 201, outcome: 'accepted', request_id: 'wrong-removed', surface: h.f.admissionSurface,
+        owner, model: h.f.model, scope: h.f.scope, reservation: {id: 'wrong-removed', owner,
+          model: h.f.model, scope: h.f.scope, provider: h.f.provider, policy: h.f.policy}, policy: h.f.policy,
+        provider_request: {id: 'wrong-provider', reservation_id: 'wrong-removed', owner,
+          model: h.f.model, scope: h.f.scope, provider: h.f.provider}, provider_requests: 1};
+    return await admit(_ctx, input);
+    };
+  }
   await assert.rejects(run(h), new RegExp(code)); await h.cleanup();
 });

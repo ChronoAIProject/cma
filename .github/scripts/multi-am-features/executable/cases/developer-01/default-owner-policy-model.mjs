@@ -18,7 +18,8 @@ export function defaultOwnerPolicyModel(options = {}) {
     {owner: 'owner-with-override', policy: overridePolicy},
   ], request_models: [{model: 'fixture-model', input_overhead_tokens: 5}],
   platform: {period_cap: 10000, period_start: '2026-11-17T00:00:00Z', period_end: '2026-11-18T00:00:00Z',
-    warning_percent: 60, stop_percent: 80, protected_reserve: 100, lag_allowance: 10}}};
+    warning_percent: 60, stop_percent: 80, protected_reserve: 100, lag_allowance: 10,
+    cloud: {run_rate_units_per_day: 100, max_observation_age_seconds: 3600}}}};
   if (options.initialDefault) original.model_budget.default_policy = fPolicy;
   let settings = structuredClone(original), revision = 4, draft, closed = false, active = false, listener;
   let reservationReads = 0;
@@ -26,6 +27,7 @@ export function defaultOwnerPolicyModel(options = {}) {
   const calls = [], actions = [], observations = [], cleanups = [], receipts = [], page = new EventEmitter();
   const f = {scope: 'LOCAL_DISPOSABLE_TWO_AM', createdByRun: true, exclusiveSettings: true, policy: fPolicy,
     overridePolicy, ownerWithoutOverride: 'owner-without-override', ownerWithOverride: 'owner-with-override', model: 'fixture-model',
+    provider: 'fixture-provider', admissionSurface: 'model_request',
     readReservations: async () => {
       reservationReads++;
       return {items: options.reservationEffect && reservationReads > 1 ? [] : structuredClone(reservations)};
@@ -33,11 +35,23 @@ export function defaultOwnerPolicyModel(options = {}) {
     admitModelRequest: async (_ctx, input) => {
       const owner = typeof input === 'string' ? (input === 'with_override' ? f.ownerWithOverride : f.ownerWithoutOverride) : input.owner;
       const current = settings.model_budget;
+      const requestId = 'admission-' + owner;
       if (!current.default_policy && options.wrongRemovedAdmission)
-        return {status: 201, owner, reservation: {owner, policy: fPolicy}, policy: fPolicy, provider_requests: 1};
+        return {status: 201, outcome: 'accepted', request_id: requestId, surface: f.admissionSurface,
+          owner, model: f.model, scope: f.scope, reservation: {id: 'reservation-wrong', owner,
+          model: f.model, scope: f.scope, provider: f.provider, policy: fPolicy}, policy: fPolicy,
+          provider_request: {id: 'provider-wrong', reservation_id: 'reservation-wrong', owner,
+            model: f.model, scope: f.scope, provider: f.provider}, provider_requests: 1};
       const selected = current.owners.find(row => row.owner === owner)?.policy ?? current.default_policy;
-      if (!selected) return {status: 403, owner, reservation: null, policy: null, provider_requests: 0};
-      return {status: 201, owner, reservation: {owner, policy: structuredClone(selected)}, policy: structuredClone(selected), provider_requests: 1};
+      if (!selected) return {status: 402, outcome: 'refused', request_id: requestId, surface: f.admissionSurface,
+        owner, model: f.model, scope: f.scope, reservation: null, provider_request: null, policy: null,
+        provider_requests: 0, error: {type: 'BudgetError', code: 'budget_unavailable', reason: 'unbudgeted'}};
+      const reservationId = 'reservation-' + owner;
+      return {status: 201, outcome: 'accepted', request_id: requestId, surface: f.admissionSurface,
+        owner, model: f.model, scope: f.scope, reservation: {id: reservationId, owner, model: f.model,
+          scope: f.scope, provider: f.provider, policy: structuredClone(selected)}, policy: structuredClone(selected),
+        provider_request: {id: 'provider-' + owner, reservation_id: reservationId, owner, model: f.model,
+          scope: f.scope, provider: f.provider}, provider_requests: 1};
     }, cleanup: async () => {actions.push({op: 'fixture_cleanup'});}};
   const snapshot = () => ({revision, settings: structuredClone(settings), model_budget_writes_available: true,
     model_request_budget_writes_available: true, platform_spend_writes_available: true});
@@ -63,7 +77,8 @@ export function defaultOwnerPolicyModel(options = {}) {
       headerValue: async () => options.unjoined ? 'foreign' : requestId,
       json: async () => {if (options.responseFailure) throw Error('response_failed'); return structuredClone(responseBody);}};
     page.emit('request', request);
-    receipts.push({method, status, request_id: requestId, am: ctx.am,
+    receipts.push({method, status, request_id: requestId, path: request.url(), request_body: structuredClone(body),
+      response_body: structuredClone(responseBody), am: ctx.am,
       serving_am: options.wrongServing ? (ctx.am === 'a' ? 'b' : 'a') : ctx.am,
       serving: {pod_uid: 'model'}, serving_after: {pod_uid: 'model'}, started_at: 'start', ended_at: 'end', attribution: {status: 'proven'}});
     if (options.duplicate) receipts.push(structuredClone(receipts.at(-1)));
