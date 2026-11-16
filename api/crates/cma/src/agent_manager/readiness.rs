@@ -211,8 +211,16 @@ impl AgentManager {
             health,
             termination.clone(),
         )?;
+        Ok(self.spawn_readiness_probe(probe, termination))
+    }
+
+    fn spawn_readiness_probe(
+        self: &Arc<Self>,
+        probe: AdmissionProbe,
+        termination: Termination,
+    ) -> tokio::task::JoinHandle<()> {
         let weak = Arc::downgrade(self);
-        Ok(tokio::spawn(async move {
+        tokio::spawn(async move {
             loop {
                 let Some(manager) = weak.upgrade() else {
                     return;
@@ -240,7 +248,7 @@ impl AgentManager {
                     _ = tokio::time::sleep(Duration::from_secs(1)) => (),
                 }
             }
-        }))
+        })
     }
 }
 
