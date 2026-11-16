@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import migration_profile_fixture as fixture
+import migration_browser_fixture as fixture
 
 
 class MigrationProfileFixtureTests(unittest.TestCase):
@@ -17,11 +17,11 @@ class MigrationProfileFixtureTests(unittest.TestCase):
             responses = [(200, {}, json.dumps({
                 "authenticated": True, "subject": "native-am-fixture-owner"
             }).encode())]
-            with patch.dict(os.environ, {
-                "MATRIX_IDENTITY_URL": "http://127.0.0.1:28080",
-                "MATRIX_AUTH_STATE_FILE": str(state),
-            }, clear=False), patch.object(fixture.Fixture, "_raw", side_effect=responses) as raw:
-                value = fixture.Fixture("http://127.0.0.1:28081", Path(directory))
+            with patch.object(fixture.BrowserFixture, "raw", side_effect=responses) as raw:
+                value = fixture.BrowserFixture("http://127.0.0.1:28081",
+                                               "http://127.0.0.1:28080", state)
+                value.cookies = {"cma_session": "ephemeral"}
+                value.check_session()
             raw.assert_called_once()
             self.assertEqual(value.cookies["cma_session"], "ephemeral")
 
@@ -32,12 +32,11 @@ class MigrationProfileFixtureTests(unittest.TestCase):
             response = (200, {}, json.dumps({
                 "authenticated": True, "subject": "unexpected-subject"
             }).encode())
-            with patch.dict(os.environ, {
-                "MATRIX_IDENTITY_URL": "http://127.0.0.1:28080",
-                "MATRIX_AUTH_STATE_FILE": str(state),
-            }, clear=False), patch.object(fixture.Fixture, "_raw", return_value=response):
-                with self.assertRaisesRegex(RuntimeError, "identity_changed"):
-                    fixture.Fixture("http://127.0.0.1:28081", Path(directory))
+            with patch.object(fixture.BrowserFixture, "raw", return_value=response):
+                value = fixture.BrowserFixture("http://127.0.0.1:28081",
+                                               "http://127.0.0.1:28080", state)
+                with self.assertRaisesRegex(RuntimeError, "subject_changed"):
+                    value.check_session()
 
 
 if __name__ == "__main__":

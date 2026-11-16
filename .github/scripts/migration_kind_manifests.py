@@ -7,8 +7,8 @@ import secrets
 NAMESPACE = "cma-migration"
 RUNTIME = "docker.io/library/alpine@sha256:" + "0" * 64
 # The provider fixture is intentionally a small, immutable amd64 Python
-# image.  The previous cma-runtime image has no Python interpreter and kind's
-# successful load message obscured its subsequent ErrImageNeverPull state.
+# image. A successful kind load message alone does not establish availability;
+# the runner also waits for this dependency to serve its health route.
 IDENTITY = "docker.io/library/python@sha256:48d884813cf44e927cf64c5529dd630dd3b18338c6dc727991eef9b71e934a20"
 IDENTITY_SOURCE = Path(__file__).with_name("multi-am-features").joinpath("owner", "identity.py")
 

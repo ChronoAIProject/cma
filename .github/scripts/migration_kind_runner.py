@@ -18,7 +18,6 @@ import secrets
 import shlex
 import socket
 import subprocess
-import tempfile
 import time
 import uuid
 from urllib.request import urlopen
@@ -127,7 +126,7 @@ class Campaign:
         self.active_reader = None
         self.diagnostic_errors = []
         self.identity_image = None
-        self.auth_state = Path(tempfile.gettempdir()) / ("cma-matrix-auth-" + uuid.uuid4().hex + ".private")
+        self.auth_state = self.output / "browser-custody.ephemeral.private"
         self.auth_state.unlink(missing_ok=True)
         self.auth_state.touch(mode=0o600)
 

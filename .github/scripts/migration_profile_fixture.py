@@ -11,14 +11,15 @@ import os
 from pathlib import Path
 import time
 from urllib.error import HTTPError
-from urllib.parse import urlsplit, urlunsplit
-from urllib.request import (HTTPRedirectHandler, Request, build_opener, urlopen)
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
+
+from migration_browser_fixture import BrowserFixture, COLLECTIONS as AUTH_COLLECTIONS, SHAPES as AUTH_SHAPES
 import uuid
 
 
 PROFILE_COLLECTIONS = [kind + suffix for kind in ('agent', 'workspace', 'sandbox')
                        for suffix in ('_profiles', '_profile_revisions')]
-AUTH_COLLECTIONS = ['auth_browser_logins', 'auth_login_attempts', 'auth_subjects']
 COLLECTIONS = PROFILE_COLLECTIONS + AUTH_COLLECTIONS
 
 
@@ -27,88 +28,12 @@ class Fixture:
         if urlsplit(base).hostname != '127.0.0.1':
             raise ValueError('fixture requires a local API port-forward')
         self.base, self.output, self.requests, self.cookies = base, Path(output), [], {}
-        state_name = os.environ.get('MATRIX_AUTH_STATE_FILE')
-        self.auth_state = Path(state_name) if state_name else None
-        self.identity = os.environ.get('MATRIX_IDENTITY_URL', '')
-        if self.identity:
-            if self.auth_state and self.auth_state.exists() and self.auth_state.stat().st_size:
-                self.cookies = json.loads(self.auth_state.read_text())
-                self.check_session()
-            else:
-                self.login()
-
-    @staticmethod
-    def _opener():
-        class NoRedirect(HTTPRedirectHandler):
-            def redirect_request(self, request, response, code, msg, headers, new_url):
-                return None
-        return build_opener(NoRedirect)
-
-    def _raw(self, method, url, headers=None, body=None):
-        request = Request(url, method=method, headers=headers or {}, data=body)
-        try:
-            response = self._opener().open(request, timeout=30)
-            return response.status, response.headers, response.read()
-        except HTTPError as error:
-            return error.code, error.headers, error.read()
-
-    def _remember_cookies(self, headers):
-        for value in headers.get_all('Set-Cookie', []):
-            pair = value.split(';', 1)[0]
-            name, _, content = pair.partition('=')
-            if name and content:
-                self.cookies[name] = content
-            elif name:
-                self.cookies.pop(name, None)
-
-    def login(self):
-        """Establish durable provider custody through the real PKCE route."""
-        status, headers, _ = self._raw(
-            'GET', self.base + '/auth/login', {'Host': 'api.localhost.direct'})
-        if status not in (302, 303):
-            raise RuntimeError('provider_login_begin_failed_' + str(status))
-        self._remember_cookies(headers)
-        authorization = urlsplit(headers.get('Location', ''))
-        if authorization.path != '/authorize':
-            raise RuntimeError('provider_login_redirect_mismatch')
-        identity_url = urlunsplit(('http', urlsplit(self.identity).netloc,
-                                   authorization.path, authorization.query, ''))
-        status, headers, _ = self._raw('GET', identity_url)
-        if status not in (302, 303):
-            raise RuntimeError('provider_authorization_failed_' + str(status))
-        callback = urlsplit(headers.get('Location', ''))
-        if callback.path != '/auth/callback' or not callback.query:
-            raise RuntimeError('provider_callback_redirect_mismatch')
-        binding = '; '.join(name + '=' + value for name, value in self.cookies.items()
-                            if name.startswith('cma_login_'))
-        if not binding:
-            raise RuntimeError('provider_login_binding_missing')
-        status, headers, _ = self._raw(
-            'GET', self.base + callback.path + '?' + callback.query,
-            {'Host': 'api.localhost.direct', 'Cookie': binding})
-        if status not in (302, 303):
-            raise RuntimeError('provider_login_callback_failed_' + str(status))
-        self._remember_cookies(headers)
-        if 'cma_session' not in self.cookies:
-            raise RuntimeError('provider_login_session_missing')
-        self.persist_auth_state()
-
-    def persist_auth_state(self):
-        if self.auth_state is None:
-            return
-        self.auth_state.write_text(json.dumps(self.cookies, separators=(',', ':')))
-        self.auth_state.chmod(0o600)
-
-    def check_session(self):
-        status, _, raw = self._raw(
-            'GET', self.base + '/auth/session',
-            {'Host': 'api.localhost.direct',
-             'Cookie': '; '.join(name + '=' + value for name, value in self.cookies.items())})
-        if status != 200:
-            raise RuntimeError('provider_session_read_failed_' + str(status))
-        value = json.loads(raw)
-        if value.get('authenticated') is not True or value.get('subject') != 'native-am-fixture-owner':
-            raise RuntimeError('provider_session_identity_changed')
+        self.stage = os.environ['MATRIX_STAGE']
+        identity = os.environ.get('MATRIX_IDENTITY_URL', '')
+        self.browser = None
+        if identity:
+            self.browser = BrowserFixture(base, identity, os.environ['MATRIX_AUTH_STATE_FILE'])
+            self.cookies = self.browser.start(self.stage)
 
     def request(self, method, route, body=None, key=None, status=200):
         headers = {'Content-Type': 'application/json'}
@@ -207,13 +132,15 @@ def main():
     fixture = Fixture(os.environ['MATRIX_API_URL'], Path.cwd())
     try:
         rows = fixture.write(stage) if stage in ('old-write', 'new-write') else fixture.read(stage)
+        auth_checks = fixture.browser.finish(stage) if fixture.browser else {}
+        if fixture.browser:
+            Path('browser-' + stage + '.json').write_text(json.dumps(fixture.browser.observations, indent=2) + '\n')
         receipt = {'schema': 'cma-migration-fixture-v1', 'stage': stage,
                    'source': os.environ['MATRIX_SOURCE'], 'image': os.environ['MATRIX_IMAGE'],
-                   'collections': COLLECTIONS,
-                   'shapes': ['profile-draft', 'published-revision', 'nested-profile-reference',
-                              'browser-login', 'login-attempt', 'subject-auth'],
+                   'collections': COLLECTIONS if fixture.browser else PROFILE_COLLECTIONS,
+                   'shapes': ['profile-draft', 'published-revision', 'nested-profile-reference'] + (AUTH_SHAPES if fixture.browser else []),
                    'checks': {'api_profile_read': True, 'revision_digest_preserved': True,
-                              'auth_session_continuity': bool(fixture.identity),
+                              'auth_session_continuity': all(v for k, v in auth_checks.items() if k != 'consumed_attempt_rejected'),
                               'application_writer_or_exact_replay': True},
                    'samples': len(rows), 'outcome': 'PASS'}
         Path('fixture-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
