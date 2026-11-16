@@ -1,6 +1,10 @@
 //! Delayed replies have distinct FIFO work IDs and retain original capability
 //! authority. A completed parent target is never reopened for a later effect.
+mod abandonment;
+#[cfg(test)]
+mod eg2171_tests;
 mod executor;
+pub(crate) use abandonment::record as abandonment_record;
 mod gate;
 mod model;
 #[cfg(test)]
@@ -27,6 +31,22 @@ use cmaeg_core::{
 use model::Payload;
 use std::{sync::Arc, time::Duration};
 use store::Store;
+
+pub(crate) fn continuation(
+    value: &serde_json::Value,
+    target: &str,
+    work: &str,
+) -> Result<bool, crate::replicas::Error> {
+    if value.get("kind").and_then(|v| v.as_str()) != Some(model::KIND) {
+        return Ok(false);
+    }
+    let root: model::Root =
+        serde_json::from_value(value.clone()).map_err(|_| crate::replicas::Error::Corrupt)?;
+    if root.target != target || root.id != work || root.id != model::work_id(&root.operation) {
+        return Err(crate::replicas::Error::Corrupt);
+    }
+    Ok(true)
+}
 
 impl RoutedToolReplies {
     pub fn replica_effect_executor(self: &Arc<Self>) -> Arc<dyn EffectExecutor> {

@@ -35,6 +35,7 @@ pub mod schema;
 pub mod telegram;
 pub mod threads;
 pub mod tools;
+pub mod unresolved;
 pub mod whatsapp;
 
 pub use crate::channels::management::ManagementState;

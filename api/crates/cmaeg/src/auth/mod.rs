@@ -5,7 +5,7 @@ pub mod owner_keys;
 
 pub use creator::{
     Administrator, Creator, CreatorAuthError, CreatorAuthState, CreatorAuthenticator,
-    IntegrationOwner,
+    IntegrationOwner, PartitionReleaseActor,
 };
 
 pub mod agent;

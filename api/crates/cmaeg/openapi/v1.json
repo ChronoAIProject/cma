@@ -4331,6 +4331,46 @@
         ],
         "type": "string"
       },
+      "HeadPreview": {
+        "properties": {
+          "epoch": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "event_expires_at": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "head": {
+            "type": "string"
+          },
+          "partition_id": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "releasable": {
+            "type": "boolean"
+          },
+          "version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "partition_id",
+          "head",
+          "epoch",
+          "version",
+          "phase",
+          "event_expires_at",
+          "releasable"
+        ],
+        "type": "object"
+      },
       "HistoryAttachmentFacts": {
         "additionalProperties": false,
         "properties": {
@@ -7285,6 +7325,77 @@
         "required": [
           "id",
           "writes_enabled"
+        ],
+        "type": "object"
+      },
+      "ReleaseRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_epoch": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expected_head": {
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "partition_id": {
+            "type": "string"
+          },
+          "provider_terminal_confirmed": {
+            "type": "boolean"
+          },
+          "suppress_delayed_replies": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "partition_id",
+          "expected_head",
+          "expected_epoch",
+          "expected_version",
+          "operation_id",
+          "provider_terminal_confirmed",
+          "suppress_delayed_replies"
+        ],
+        "type": "object"
+      },
+      "ReleaseResult": {
+        "additionalProperties": false,
+        "properties": {
+          "disposition": {
+            "type": "string"
+          },
+          "epoch": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "operation_id": {
+            "type": "string"
+          },
+          "released_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "released_head": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "released_head",
+          "disposition",
+          "epoch",
+          "released_at_ms"
         ],
         "type": "object"
       },
@@ -11647,6 +11758,145 @@
         ]
       }
     },
+    "/channels/{channel_id}/partitions/{partition_id}/head": {
+      "get": {
+        "operationId": "inspectUnresolvedPartitionHead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "partition_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeadPreview"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/partitions/{partition_id}/release": {
+      "post": {
+        "operationId": "releaseUnresolvedPartitionHead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "partition_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseResult"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "summary": "Owner credentials, or a verified organization administrator selecting that\nowner, may explicitly abandon an expired unknown. The request attests that\nthe provider is terminal; this endpoint never treats elapsed time as proof.",
+        "tags": [
+          "channels"
+        ]
+      }
+    },
     "/channels/{channel_id}/rekey": {
       "post": {
         "operationId": "rekeyChannel",
@@ -13888,6 +14138,16 @@
             },
             "description": ""
           },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "routed_reply_in_progress means durable pending custody; repeat the identical key/body after Retry-After. Other conflict codes are not pending."
+          },
           "default": {
             "content": {
               "application/problem+json": {
@@ -13904,6 +14164,7 @@
             "agentBearer": []
           }
         ],
+        "summary": "Pending durable custody returns 409 routed_reply_in_progress and Retry-After.\nPoll by repeating this POST with the identical key and message until its\nreceipt, a definite refusal or capability expiry. Never mint a fresh key.",
         "tags": [
           "provider integration"
         ]
