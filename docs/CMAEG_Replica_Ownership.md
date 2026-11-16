@@ -45,7 +45,8 @@ Each permanent partition head retains an epoch watermark. FIFO insertion and
 its retained item marker commit atomically before ingress can return success.
 Completion and head advancement commit atomically. Exact admission replay
 retains its original position; a completed item cannot be appended again.
-Unknown or Partial delivery does not authorize advancement or blind resend.
+Unknown or Partial delivery does not authorize automatic advancement or blind resend.
+The explicit, audited operator abandonment below is the only additional release authority.
 
 Mongo transactions retry only an explicit `TransientTransactionError`, with
 at most five attempts inside one shared two-second deadline, including backoff
@@ -83,9 +84,60 @@ this interface. Initial effect-root admission is indexed and create-only;
 subsequent effect transitions use `write_effect_fenced`.
 
 The handler receives a mutable captured token. `Journal::renew_partition` may
-extend that same live generation between completed stages; it cannot resurrect
-an expired token. Each stage retains its own snapshot through its awaits. The
-driver uses the handler's renewed token for final completion or release.
+extend that same live generation; it cannot resurrect an expired token. Ordinary
+clones retain their captured deadlines. A scoped owner explicitly publishes fresh
+snapshots of its same claim/epoch during provider acceptance and automatic, tool,
+delayed, webhook and media-delivery waits. Renewal runs in the awaited future,
+never a detached task, and is serialized with gate checks. It updates execution
+or media ownership and the exact reply-guard attempt where applicable. A failed
+renewal cancels further attempts and prevents receipt commit. The driver uses
+only the scope's latest successful snapshot for bounded receipt publication and
+release. A parent retry does not release a healthy Pending tool send's authority.
+Preparation stages keep their existing retained checkpoints and retry behavior.
+
+## Unresolved-head operator contract
+
+`--replica-list-unresolved`, `--replica-abandon-unknown --dry-run|--apply`, and
+`--replica-abandonment-audit` use authenticated loopback requests under the existing
+master-key authority. The ticket binds deployment, port, method/path, deadline and
+body digest. Inspection is read-only. Apply binds exact partition ID, front work
+ID and physical head version, request UUID, reason and dry-run digest. It refuses
+live leases, live receiptless guard attempts, unsupported/missing member capability,
+changed evidence and ineligible states. Eligible states include dispatch Unknown,
+effect Unknown or abandoned Sending, and Accepted with retained delivery/guard
+Unknown or Partial. Starting alone is not eligibility.
+
+One Mongo transaction records `unknown_abandoned`, closes the reply guard,
+quarantines the target, retires the exact FIFO item and advances its head. Original
+TargetState phase, response ID, cursor, frozen input and delivery evidence are not
+rewritten. The immutable audit binds prior evidence, reason, timestamp and the
+master-key ID used to authenticate the operation. Evidence chunks staged before
+this transaction carry no execution authority. An uncertain commit is reconciled
+by the same request UUID; it never authorizes releasing a different head.
+
+New kinds use the existing encrypted connection/interaction stores without new
+roles, migration, discovery kinds or writer flag. An immutable capability companion
+is written once per unique process instance at join; its Member row alone grants
+liveness. Member's strict serialized shape is unchanged. Apply checks fresh live
+members, including draining members whose leases remain live, and refuses a
+missing companion. Scoped renewal is compatible with overlapping older replicas.
+Operator abandonment requires all old writers terminated and rollout/scale/rollback
+frozen: capability inspection cannot atomically prevent a future old process join.
+
+Every reply path, including capability minting and recovery, checks quarantine.
+Older binaries do not. Rollback to a pre-quarantine binary requires BOTH:
+
+- For every abandoned target, the stored event's `expires_at + REPLY_TARGET_TTL`
+  has passed; the TTL is 24 hours. Use the exact printed UTC `rollback_safe_after`,
+  not an estimate or the maximum expiry of currently queued effects.
+- Every quarantined effect has a saved refusal and retired FIFO entry, or its
+  capability has expired. Inspection reports the outstanding count and the
+  deployment-wide maximum rollback timestamp.
+
+The first condition covers fresh keys and capabilities minted while the original
+reference was still valid. Zero outstanding queued effects alone is insufficient.
+See [operations](CMAEG_Operations.md#replica-unresolved-head-recovery) for execution,
+refusals, audit recovery and the required deployment freeze.
 
 ## Native source follow-up
 

@@ -41,6 +41,7 @@ async fn operator_refuses_live_leases_wrong_bindings_and_missing_member_capabili
                 assert!(op.apply(&changed, 1).await.is_err());
             }
             h.nodes[1].hide_capability().await;
+            tokio::time::sleep(Duration::from_millis(3200)).await;
             assert!(op
                 .preview(&req)
                 .await
@@ -150,7 +151,14 @@ async fn operator_retires_abandoned_sending_effect_without_replaying_it() {
                 .await
                 .unwrap();
             let op = operator(h);
-            let req = request(h).await;
+            let mut req = Request {
+                binding: h.nodes[owner].work_binding(&token).await,
+                request_id: uuid::Uuid::new_v4().to_string(),
+                reason: "live effect fixture".into(),
+                plan_digest: None,
+            };
+            req.plan_digest = Some(op.preview(&req).await.unwrap().plan_digest);
+            assert!(!op.preview(&req).await.unwrap().candidate.eligible);
             assert!(matches!(op.apply(&req, 1).await, Err(Error::Busy)));
             h.nodes[owner].partitions.release(&token).await.unwrap();
             let req: Request = request(h).await;
@@ -171,6 +179,81 @@ async fn operator_retires_abandoned_sending_effect_without_replaying_it() {
                 "unknown send is not a fabricated saved refusal"
             );
             assert!(h.rx.try_recv().is_err());
+        })
+    })
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable Mongo replica set"]
+async fn outstanding_quarantine_excludes_prior_confirmed_retired_occurrences() {
+    with_harness(|h| {
+        Box::pin(async move {
+            let (owner, mut parent) = h.accepted().await;
+            h.finish_parent(owner, &mut parent).await;
+            let mut capability = h.capability();
+            capability.issued_at -= 5;
+            let payload = Payload {
+                capability: capability.clone(),
+                caller: caller().key_hash,
+                message: message(),
+            };
+            let store = Store(h.nodes[0].journal());
+            let first = store
+                .admit(&h.plan, h.target(), "already-confirmed", &payload)
+                .await
+                .unwrap();
+            h.nodes[0]
+                .journal()
+                .enqueue_effect(&h.plan, h.target(), &first.id)
+                .await
+                .unwrap();
+            let (sink, sends) = transport(h, Duration::ZERO);
+            super::mongo_tests::execute(h, &first.id).await;
+            assert_eq!(sends.load(std::sync::atomic::Ordering::SeqCst), 1);
+            sink.abort();
+            let mut unknown = store
+                .admit(&h.plan, h.target(), "uncertain", &payload)
+                .await
+                .unwrap();
+            h.nodes[0]
+                .journal()
+                .enqueue_effect(&h.plan, h.target(), &unknown.id)
+                .await
+                .unwrap();
+            let mut held = None;
+            for (index, node) in h.nodes.iter().enumerate() {
+                if let Ok(token) = node.claim_effect(&h.plan, h.target(), &unknown.id).await {
+                    held = Some((index, token));
+                    break;
+                }
+            }
+            let (owner, token) = held.unwrap();
+            Store(h.nodes[owner].journal())
+                .transition(
+                    &mut unknown,
+                    &token,
+                    model::State::Unknown { receipt: None },
+                )
+                .await
+                .unwrap();
+            h.nodes[owner].partitions.release(&token).await.unwrap();
+            let op = operator(h);
+            let req = request(h).await;
+            op.apply(&req, 1).await.unwrap();
+            assert_eq!(
+                op.inspect().await.unwrap().outstanding_quarantined_effects,
+                1
+            );
+            let original = store
+                .read(&first.id, &h.plan, h.target())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(
+                store.receipt(&original).await.unwrap().unwrap().delivery,
+                crate::delivery::intents::DeliveryOutcome::Confirmed { .. }
+            ));
         })
     })
     .await;

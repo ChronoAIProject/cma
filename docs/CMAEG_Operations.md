@@ -3536,3 +3536,133 @@ Verify a compatible NyxID reader and owner surface before claiming that reasons
 are visible there. Older consumers retain their existing HTTP failure behavior.
 No production verification or downstream-reader deployment is established by
 the local refusal, logging, OpenAPI or latency tests.
+
+## Replica unresolved-head recovery
+
+These commands operate on the gateway's existing authenticated loopback listener.
+Run the installed `cmaeg` binary in the authorized gateway environment so it reads
+its existing configuration and master-key custody. Do not put keys or tickets in
+command arguments. They neither contact a provider nor replay or repost output.
+Only the gateway owner may authorize a production abandonment.
+
+First freeze rollout, scale changes and rollback under the deployment's approved
+change procedure. Suspend image/replica-count automation and constrain autoscaling
+to the approved current count. Pausing a Deployment alone does not freeze its HPA.
+Verify all old processes have terminated, including draining predecessors, and
+capture the current pod/image identities. Keep the freeze through the operation
+and its after-capture. The capability check observes the live cohort; it is not an
+atomic barrier preventing a later old process from joining.
+
+From the authorized operator workstation, use this wrapper to run the binary
+directly in the selected pod and retain captures outside its read-only filesystem:
+
+```sh
+gateway_cmaeg() {
+  kubectl --namespace '<namespace>' exec '<gateway-pod>' -- /usr/local/bin/cmaeg "$@"
+}
+```
+
+Capture a read-only before view:
+
+```sh
+gateway_cmaeg --replica-list-unresolved > before-unresolved.json
+jq '.members, .candidates, .abandonments, .rollback_safe_after, .outstanding_quarantined_effects' before-unresolved.json
+jq -e '.members | length > 0 and all(.quarantine == true)' before-unresolved.json
+```
+
+Every live member must advertise `unknown_head_quarantine_v1` through its immutable
+instance companion; the output projects this as `quarantine: true`. A missing
+companion refuses apply. Liveness comes from the unchanged Member row, including
+draining rows with a still-live lease. The build field is the executable's package
+version, not an attestation of a deployed image digest; retain the independently
+captured image identities. New/old overlap supports renewal, but cannot authorize
+abandonment while an old live member remains.
+
+Candidates contain exact `binding.partition`, `binding.head_work` and
+`binding.head_version`, target, typed uncertainty, `age_seconds` since original
+admission, queued effect count, live lease/guard indicators and the exact UTC
+rollback timestamp. Eligible states are dispatch Unknown, delayed effect Unknown
+or abandoned Sending, media effect uncertainty, and Accepted with delivery/guard
+Unknown or Partial. An unexpired receiptless guard is still Pending, not a terminal
+uncertainty. Missing/corrupt/expired evidence fails closed.
+
+Obtain independent evidence appropriate to the target that releasing the head
+will not conflict with a running provider turn. A provider completion is separate
+from a confirmed chat delivery. The gateway command does not make this check by
+calling the provider. Record the operator/ticket and authorization with the capture.
+
+```sh
+gateway_cmaeg --replica-abandon-unknown --dry-run \
+  --partition '<partition-id>' --head-work '<work-id>' --head-version '<version>' \
+  --request-id '<operation-uuid>' --reason '<operator/ticket and reason>' \
+  > abandon-preview.json
+```
+
+Dry run performs no writes or claims. Review the exact candidate, changes, member
+capabilities, `candidate.rollback_safe_after` and `plan_digest`. After authorization,
+repeat all bindings and the same reason/UUID:
+
+```sh
+gateway_cmaeg --replica-abandon-unknown --apply \
+  --partition '<same-partition-id>' --head-work '<same-work-id>' --head-version '<same-version>' \
+  --request-id '<same-operation-uuid>' --reason '<same-operator/ticket and reason>' \
+  --plan-digest '<digest-from-abandon-preview.json>' > abandon-receipt.json
+
+gateway_cmaeg --replica-list-unresolved > after-unresolved.json
+jq '.disposition, .prior_state, .timestamp, .rollback_safe_after, .evidence_sha256' abandon-receipt.json
+jq '.candidates, .abandonments, .outstanding_quarantined_effects' after-unresolved.json
+```
+
+The receipt records `unknown_abandoned`; it is not a confirmed delivery. The exact
+head retires atomically with audit, target quarantine and guard closure. Existing
+acceptance and delivery evidence remains intact. Recovery refuses quarantined
+queued effects without sending, then retires their FIFO entries. Already-uncertain
+sends retain their evidence; they are not rewritten as proof of non-delivery.
+
+A lost/uncertain response must be reconciled by the same UUID:
+
+```sh
+gateway_cmaeg --replica-abandonment-audit --request-id '<same-operation-uuid>' > recovered-receipt.json
+```
+
+An apply response with `operator_outcome_uncertain` also requires this audit lookup;
+it is not proof that the transaction failed. An exact repeat of the original apply returns its retained receipt. A changed body
+under that UUID conflicts. Never respond to a lost acknowledgement by choosing the
+next head or inventing another operation identity.
+
+A changed head/version/digest or live authority returns
+`binding_or_live_authority_conflict`. Missing live-member capability or missing
+retained evidence returns `capability_or_evidence_unavailable`; expired/corrupt
+records and store failures are also refusals. Refresh list/dry run and investigate;
+do not guess versions or edit encrypted records manually. Inspection bounds and
+storage failures cannot be interpreted as an empty or safe deployment. The audit
+index admits at most 512 retained abandonment entries and refuses further writes
+at its bound; it never evicts an unresolved audit to admit a new release.
+
+**Rollback requires both conditions for every abandoned target.** Wait until its
+stored `event.expires_at + REPLY_TARGET_TTL` has passed (24 hours from the last
+possible capability issuance), and verify every quarantined effect has a saved
+refusal and a retired FIFO entry or an expired capability. The list prints the
+individual timestamps, deployment-wide `rollback_safe_after` maximum and
+`outstanding_quarantined_effects`. Require the current UTC time after that maximum
+and the outstanding count zero in a complete successful inspection. Recheck after
+any intervening abandonment. Ordinary event references make this roughly 24.5
+hours after the event, but the stored value is authoritative; never use the estimate.
+
+Old binaries ignore the quarantine sidecar and can admit a fresh key using a
+still-valid capability even after every existing queued effect is refused and
+retired. They can also mint another capability while the original event reference
+is valid. Thus zero outstanding effects alone cannot authorize rollback. Keep a
+quarantine-aware image until both conditions hold; do not relabel TargetState to
+simulate old-reader refusal, disable replica mode, restore old records over accepted
+writes or erase unknown evidence.
+
+`cmaeg_replica_retained_uncertain_heads` and
+`cmaeg_replica_retained_uncertain_oldest_age_seconds` report store-observed unresolved
+heads. Each process emits a structured log when it first observes a head becoming
+retained-uncertain; its bounded in-memory set suppresses repeat-cycle logs. The
+observer performs no provider IO, and failed observation increments
+`cmaeg_replica_uncertainty_observation_failures_total` while preserving the prior
+gauges. Alert on sustained unresolved heads/age and on failed observation. These
+observations do not automatically advance a head. Automatic retained-unknown
+release is not enabled.

@@ -119,6 +119,7 @@ pub(crate) async fn effect(
     let store = super::MediaObligationStore(j.clone());
     let mut evidence = vec![serde_json::to_value(head).map_err(|_| ExecutionError::Corrupt)?];
     let mut uncertain = false;
+    let mut sending = false;
     for n in 0..crate::turns::render_media::attachments(&plan.activity).len() {
         if let Some(obligation) = store.load(plan, target, n as u8).await? {
             for supplement in &obligation.supplements {
@@ -127,7 +128,34 @@ pub(crate) async fn effect(
                         .retained_media_response(&obligation, supplement.artifact.kind)
                         .await?
                     {
-                        uncertain |= super::media_delivery::summary(&state) == "unknown";
+                        if let Some(custom) = &state.custom {
+                            use crate::delivery::intents::DeliveryOutcome;
+                            use crate::delivery::local_stream::LocalStreamOutcome;
+                            sending |= custom.local == Some(LocalStreamOutcome::Pending)
+                                || custom
+                                    .webhooks
+                                    .iter()
+                                    .any(|leg| matches!(leg.status, super::WebhookStatus::Intent));
+                            uncertain |= custom.local == Some(LocalStreamOutcome::Lost)
+                                || custom.webhooks.iter().any(|leg| {
+                                    matches!(
+                                        leg.status,
+                                        super::WebhookStatus::Unknown
+                                            | super::WebhookStatus::Settled {
+                                                outcome: DeliveryOutcome::Unknown { .. }
+                                            }
+                                    )
+                                });
+                        } else {
+                            sending |= matches!(
+                                state.native,
+                                super::media_response_store::NativeOutcome::Intent
+                            );
+                            uncertain |= !matches!(
+                                state.native,
+                                super::media_response_store::NativeOutcome::Intent
+                            ) && super::media_delivery::summary(&state) == "unknown";
+                        }
                         evidence.push(
                             serde_json::to_value(state).map_err(|_| ExecutionError::Corrupt)?,
                         );
@@ -142,10 +170,52 @@ pub(crate) async fn effect(
         1,
         if uncertain {
             "media_effect_unknown"
+        } else if sending {
+            "media_effect_abandoned_sending"
         } else {
             "media_effect_not_uncertain"
         }
         .into(),
-        uncertain,
+        uncertain || sending,
     ))
+}
+
+/// Supplementary media has the original event's shorter reply authority.
+pub(crate) async fn media_custody(
+    j: &Journal,
+    plans: &crate::ingress::routing_store::PlanStore,
+    plan: &AdmittedPlan,
+    target: &StoredTarget,
+) -> Result<Option<(String, bool, bool)>, ExecutionError> {
+    if target.launch.event.expires_at <= (j.clock)() {
+        return Ok(None);
+    }
+    let Some((state, _)) = j.read::<TargetState>(&target.id).await? else {
+        return Ok(None);
+    };
+    if state.body.is_none() {
+        return Ok(None);
+    }
+    let body = j.retained_body(&state).await?;
+    if super::media_schedule::MediaSchedule::read(&body, plan, target)?.is_none() {
+        return Ok(None);
+    }
+    let inactive = super::MediaWorkIndex::new(j.clone(), plans.clone())
+        .load(plan, target)
+        .await?
+        .is_none();
+    let store = super::MediaObligationStore(j.clone());
+    let mut refused = true;
+    for (n, attachment) in crate::turns::render_media::attachments(&plan.activity)
+        .iter()
+        .enumerate()
+    {
+        if attachment.source.is_some() {
+            refused &= store
+                .load(plan, target, n as u8)
+                .await?
+                .is_some_and(|record| record.refusal.is_some());
+        }
+    }
+    Ok(Some((super::media_work::id(target), inactive, refused)))
 }
