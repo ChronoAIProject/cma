@@ -118,3 +118,27 @@ pub(super) fn lifecycle_config(
         title_model: config.default_profiles.agent_model.clone(),
     }
 }
+
+pub(super) fn admin(
+    config: &Config,
+    stores: &MongoStores,
+    (settings, activity, users): (
+        &Arc<layer2_core::PlatformSettingsService>,
+        &Arc<layer2_core::ActivityService>,
+        &Arc<layer2_core::UserDirectory>,
+    ),
+    operators: Arc<layer2_core::sandbox::SandboxOperatorService>,
+    updates: Arc<layer2_core::sandbox::SandboxRuntimeUpdateService>,
+    pools: Arc<NativeWarmPools>,
+) -> layer1_public::rest::admin::AdminState {
+    layer1_public::rest::admin::AdminState::new(settings.clone(), operators, activity.clone())
+        .with_user_directory(users.clone())
+        .with_runtime_updates(updates)
+        .with_maintenance(stores.sandbox_model.clone())
+        .with_warm_pools(pools)
+        .with_platform_spend(super::stores::platform_spend(stores, activity, settings))
+        .with_admission_control(Arc::new(
+            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
+                .with_writes_enabled(config.features.admission_control_writes_enabled),
+        ))
+}

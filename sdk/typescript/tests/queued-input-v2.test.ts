@@ -138,3 +138,124 @@ it('refuses forged or nonadvancing page cursors instead of returning a partial q
   await expect(t.api.listQueuedInputs(agent)).rejects.toBeInstanceOf(ProtocolError);
   expect(t.fetch).toHaveBeenCalledTimes(2);
 });
+
+function pending() {
+  return {
+    error: { code: 'queued_input_outcome_pending', message: 'Keep the original intent.' },
+    recovery: {
+      method: 'POST',
+      url: `/api/v2/agents/${agent}/responses/${response}/queued-input/status`,
+      same_idempotency_key: true,
+      same_body: true,
+    },
+  };
+}
+it('reads pending then retained queued edit status without a second mutation', async () => {
+  const t = harness();
+  t.fetch.mockResolvedValueOnce(json(pending(), 202)).mockResolvedValueOnce(json(accepted()));
+  expect(
+    await t.api.readQueuedInputStatus(agent, response, intent, { idempotencyKey: 'saved-edit' }),
+  ).toEqual(pending());
+  expect(t.fetch).toHaveBeenCalledTimes(1);
+  expect(
+    await t.api.readQueuedInputStatus(agent, response, intent, { idempotencyKey: 'saved-edit' }),
+  ).toEqual(accepted());
+  for (const [url, options] of t.fetch.mock.calls) {
+    expect(String(url)).toBe(`https://cma.example/gateway${pending().recovery.url}`);
+    expect(options!.method).toBe('POST');
+    expect(JSON.parse(String(options!.body))).toEqual(intent);
+    expect(new Headers(options!.headers).get('idempotency-key')).toBe('saved-edit');
+  }
+});
+it('refuses substituted recovery intent and inconsistent status bodies', async () => {
+  for (const [status, body] of [
+    [202, { ...pending(), recovery: { ...pending().recovery, url: '/foreign' } }],
+    [202, { ...pending(), recovery: { ...pending().recovery, same_body: false } }],
+    [202, accepted()],
+    [200, pending()],
+    [200, { ...accepted(), text: 'different' }],
+  ] as const) {
+    const t = harness();
+    t.fetch.mockResolvedValueOnce(json(body, status));
+    await expect(
+      t.api.readQueuedInputStatus(agent, response, intent, { idempotencyKey: 'saved-edit' }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    expect(t.fetch).toHaveBeenCalledTimes(1);
+  }
+});
+it('leaves an unavailable recovery retry to the caller with the original intent', async () => {
+  const t = harness();
+  t.fetch.mockResolvedValueOnce(
+    new Response(JSON.stringify(pending()), {
+      status: 503,
+      headers: { 'content-type': 'application/json', 'retry-after': '2' },
+    }),
+  );
+  await expect(
+    t.api.readQueuedInputStatus(agent, response, intent, { idempotencyKey: 'saved-edit' }),
+  ).rejects.toMatchObject({
+    status: 503,
+    code: 'queued_input_outcome_pending',
+    retryAfterMs: 2000,
+    isRetryable: true,
+  });
+  expect(t.fetch).toHaveBeenCalledTimes(1);
+});
+
+it('preserves uncertain edit recovery for an explicit same-key status lookup', async () => {
+  const t = harness();
+  t.fetch
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify(pending()), {
+        status: 503,
+        headers: {
+          'content-type': 'application/json',
+          'retry-after': '2',
+          'x-request-id': 'edit-uncertain',
+        },
+      }),
+    )
+    .mockResolvedValueOnce(json(accepted()));
+  await expect(
+    t.api.editQueuedInput(agent, response, intent, { idempotencyKey: 'saved-edit' }),
+  ).rejects.toMatchObject({
+    name: 'ApiError',
+    status: 503,
+    code: 'queued_input_outcome_pending',
+    requestId: 'edit-uncertain',
+    retryAfterMs: 2000,
+    isRetryable: true,
+    extensions: { recovery: pending().recovery },
+  });
+  expect(t.fetch).toHaveBeenCalledTimes(1);
+  expect(
+    await t.api.readQueuedInputStatus(agent, response, intent, { idempotencyKey: 'saved-edit' }),
+  ).toEqual(accepted());
+  expect(t.fetch).toHaveBeenCalledTimes(2);
+  expect(String(t.fetch.mock.calls[0]![0])).toBe(
+    `https://cma.example/gateway${pending().recovery.url.slice(0, -7)}`,
+  );
+  expect(String(t.fetch.mock.calls[1]![0])).toBe(
+    `https://cma.example/gateway${pending().recovery.url}`,
+  );
+  for (const [, options] of t.fetch.mock.calls) {
+    expect(options!.method).toBe('POST');
+    expect(JSON.parse(String(options!.body))).toEqual(intent);
+    expect(new Headers(options!.headers).get('idempotency-key')).toBe('saved-edit');
+  }
+});
+it('rejects substituted recovery instructions on the original uncertain edit', async () => {
+  for (const recovery of [
+    { ...pending().recovery, url: '/foreign' },
+    { ...pending().recovery, method: 'DELETE' },
+    { ...pending().recovery, same_body: false },
+    { ...pending().recovery, same_idempotency_key: false },
+  ]) {
+    const t = harness();
+    t.fetch.mockResolvedValueOnce(json({ ...pending(), recovery }, 503));
+    await expect(
+      t.api.editQueuedInput(agent, response, intent, { idempotencyKey: 'saved-edit' }),
+    ).rejects.toBeInstanceOf(ProtocolError);
+    expect(t.fetch).toHaveBeenCalledTimes(1);
+  }
+});

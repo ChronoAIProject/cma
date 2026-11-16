@@ -120,6 +120,16 @@ async fn execute(
             record_outcome("other_refused", attempt);
             return Err(error);
         }
+        if mode == Mode::Lookup {
+            // Receipt observation validates the same consistent resource and
+            // binding snapshot, but cannot commit those validation writes on
+            // a non-owner ingress. Inspect still commits its absence fence.
+            session
+                .abort_transaction()
+                .await
+                .map_err(|_| CommandLedgerError::Unavailable)?;
+            return Ok(result);
+        }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
                 let outcome = match &result {
@@ -195,3 +205,6 @@ fn database_code(error: &mongodb::error::Error) -> Option<i32> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod ownership_tests;

@@ -16,6 +16,12 @@ pub(super) async fn apply(
     request: &QueuedInputReservation,
     session: &mut ClientSession,
 ) -> Result<QueuedInputOutcome, ApplyError> {
+    super::super::reserve::fence_owner(
+        store,
+        &request.cancellation.command.envelope.agent_id,
+        session,
+    )
+    .await?;
     let existing = store
         .agent_commands
         .find_one(

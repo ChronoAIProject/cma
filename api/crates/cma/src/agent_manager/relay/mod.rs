@@ -1,5 +1,7 @@
 //! Authenticated peer relay. Public credentials and durable command IDs survive a hop.
+mod admission;
 mod authentication;
+pub(crate) use admission::AdmissionRouter;
 mod control;
 pub(crate) use control::prestop;
 mod http;
@@ -33,6 +35,7 @@ pub(crate) struct Relay {
     updates: Weak<DurableAgentUpdateRecorder>,
     authentication: authentication::Authentication,
     public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
+    admissions: std::sync::OnceLock<Vec<Arc<AdmissionRouter>>>,
     client: reqwest::Client,
     slots: Arc<Semaphore>,
     body_budget: Arc<Semaphore>,
@@ -57,6 +60,7 @@ impl Relay {
             updates: Arc::downgrade(updates),
             authentication: authentication::Authentication::new(key),
             public_access: std::sync::OnceLock::new(),
+            admissions: std::sync::OnceLock::new(),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
                 .read_timeout(Duration::from_secs(10))
@@ -173,6 +177,10 @@ impl Relay {
                     .route(
                         "/internal/agent-manager/v1/control/{agent}/reopen",
                         axum::routing::post(reopen::serve),
+                    )
+                    .route(
+                        "/internal/agent-manager/v1/control/{agent}/admission/{service}",
+                        axum::routing::post(admission::serve),
                     )
                     .with_state(self.clone()),
             )

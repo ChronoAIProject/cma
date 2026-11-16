@@ -454,3 +454,7 @@ export async function editFirstQueuedInput(
   }
 }
 ```
+
+### Read an uncertain queued edit outcome
+
+Call `readQueuedInputStatus(agentId, responseId, originalBody, { idempotencyKey })` with the original edit body and key to read its outcome without resubmitting the edit. A retained receipt returns the original command identity and text. HTTP 202 returns a typed pending outcome; it does not establish that the edit aborted. The SDK validates the recovery route and same-key/body requirements and never follows them automatically. HTTP 503 remains a typed retryable API error. Keep the original intent while waiting and honor the server retry delay.

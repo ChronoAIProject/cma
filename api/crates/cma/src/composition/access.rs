@@ -24,6 +24,7 @@ use crate::{
 
 pub(super) struct AccessComposition {
     pub commands: Arc<AgentCommandService>,
+    pub callback_commands: Arc<AgentCommandService>,
     pub worker: AgentAccessWorker,
     pub owner_routes: Router,
     pub tool_routes: Router,
@@ -34,6 +35,8 @@ pub(super) struct ToolServices {
     pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
     pub public_origin: String,
     pub task_experience: Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
+    pub owner_admission: Option<Arc<crate::agent_manager::relay::AdmissionRouter>>,
+    pub callback_admission: Option<Arc<crate::agent_manager::relay::AdmissionRouter>>,
 }
 
 pub(super) fn deliverables(
@@ -63,16 +66,27 @@ pub(super) fn compose(
     let commands =
         AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone())
             .with_task_experience(tools.task_experience);
+    // Durable service-access notifications have no browser request. Keep their
+    // retained custody route out of every public projection's command service.
+    let callback_commands = match tools.callback_admission {
+        Some(router) => router.compose(commands.clone()),
+        None => commands.clone(),
+    };
+    let commands = match tools.owner_admission {
+        Some(router) => router.compose(commands),
+        None => commands,
+    };
     let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
     let worker = AgentAccessWorker::new(
         stores.sandbox_model.clone(),
         auth,
         broker,
-        commands.clone(),
+        callback_commands.clone(),
         holder,
     );
     AccessComposition {
         commands,
+        callback_commands,
         worker,
         owner_routes: layer1_public::rest::agent_access_requests_router(service.clone()),
         // Tool capabilities authenticate independently from human browser auth.
@@ -100,4 +114,27 @@ pub(super) fn sandbox_operators(
         )
         .with_maintenance(stores.sandbox_model.clone()),
     )
+}
+
+pub(super) fn hierarchy_services(
+    stores: &MongoStores,
+    policy: Arc<crate::sandbox::LiveSandboxPolicy>,
+    connections: Arc<crate::connections::ConnectionPrerequisite>,
+) -> (
+    Arc<layer2_core::sandbox::SandboxService>,
+    Arc<layer2_core::sandbox::WorkspaceService>,
+) {
+    let sandbox = layer2_core::sandbox::SandboxService::with_policy_source(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+        policy,
+        connections.clone(),
+    );
+    sandbox.attach_platform_spend(stores.sandbox_model.clone());
+    let workspace = layer2_core::sandbox::WorkspaceService::new(
+        stores.sandbox_model.clone(),
+        stores.sandbox_profiles.clone(),
+    )
+    .with_connections(connections);
+    (sandbox, workspace)
 }

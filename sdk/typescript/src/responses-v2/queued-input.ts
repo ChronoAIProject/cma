@@ -1,10 +1,21 @@
 import type { ResolvedConfig } from '../config.js';
-import { ProtocolError, ValidationError } from '../errors.js';
-import { withOperationDeadline, type OperationOptions } from '../http.js';
+import { ApiError, ProtocolError, ValidationError } from '../errors.js';
+import {
+  withOperationDeadline,
+  withDeadline,
+  send,
+  requireSuccess,
+  readJsonBody,
+  errorFromBody,
+  retryAfterMilliseconds,
+  type OperationOptions,
+} from '../http.js';
 import { input, read, query, segment, type CommandOptions } from '../resources.js';
 import { controlIdentifier } from './controls-types.js';
 import {
   v2QueuedInput,
+  v2QueuedInputPending,
+  type V2QueuedInput,
   v2QueuedInputPage,
   v2QueuedInputRequest,
   type V2QueuedInputRequest,
@@ -60,6 +71,28 @@ export async function editQueuedInput(
   body: V2QueuedInputRequest,
   options: CommandOptions,
 ) {
+  const { route, intent, headers } = prepare(agent, response, body, options);
+  return withDeadline(config, options, async (signal, requestId) => {
+    const { response: reply, metadata } = await send(
+      config,
+      route,
+      { ...options, method: 'POST', body: intent, headers },
+      signal,
+      requestId,
+    );
+    if (reply.status !== 503) await requireSuccess(reply, [200], signal, metadata.requestId);
+    const value = await readJsonBody(reply, signal);
+    if (reply.status === 503) decodePending(reply, value, `${route}/status`, metadata.requestId);
+    return validateReceipt(v2QueuedInput(value), agent, response, intent);
+  });
+}
+
+function prepare(
+  agent: string,
+  response: string,
+  body: V2QueuedInputRequest,
+  options: CommandOptions,
+) {
   const route = path(agent, response);
   // Capture immutable intent before credential/network IO or caller mutation.
   const intent = v2QueuedInputRequest(input(v2QueuedInputRequest, body));
@@ -75,13 +108,15 @@ export async function editQueuedInput(
       { cause },
     );
   }
-  const result = await read(config, route, v2QueuedInput, {
-    ...options,
-    method: 'POST',
-    body: intent,
-    headers,
-    expectedStatus: 200,
-  });
+  return { route, intent, headers };
+}
+
+function validateReceipt(
+  result: V2QueuedInput,
+  agent: string,
+  response: string,
+  intent: V2QueuedInputRequest,
+) {
   if (
     result.response.receipt.agent_id !== agent ||
     result.target.response_id !== response ||
@@ -91,4 +126,67 @@ export async function editQueuedInput(
   )
     throw new ProtocolError('queued input receipt did not match the original source intent');
   return result;
+}
+
+/** Read one exact edit outcome without resubmitting the mutation. */
+export async function readQueuedInputStatus(
+  config: ResolvedConfig,
+  agent: string,
+  response: string,
+  body: V2QueuedInputRequest,
+  options: CommandOptions,
+) {
+  const { route, intent, headers } = prepare(agent, response, body, options);
+  const statusRoute = `${route}/status`;
+  return withDeadline(config, options, async (signal, requestId) => {
+    const { response: reply, metadata } = await send(
+      config,
+      statusRoute,
+      {
+        ...options,
+        method: 'POST',
+        body: intent,
+        headers,
+      },
+      signal,
+      requestId,
+    );
+    if (reply.status !== 503) await requireSuccess(reply, [200, 202], signal, metadata.requestId);
+    const value = await readJsonBody(reply, signal);
+    if (reply.status === 200) return validateReceipt(v2QueuedInput(value), agent, response, intent);
+    return decodePending(reply, value, statusRoute, metadata.requestId);
+  });
+}
+
+/** Both mutation and status preserve the same bounded, validated recovery envelope. */
+function decodePending(reply: Response, value: unknown, statusRoute: string, requestId?: string) {
+  if (
+    reply.status === 503 &&
+    (typeof value !== 'object' ||
+      value === null ||
+      !('error' in value) ||
+      typeof value.error !== 'object' ||
+      value.error === null ||
+      !('code' in value.error) ||
+      value.error.code !== 'queued_input_outcome_pending')
+  )
+    throw errorFromBody(reply, value, requestId);
+  const pending = v2QueuedInputPending(value);
+  if (
+    !pending.error.message.trim() ||
+    pending.recovery.url !== statusRoute ||
+    !pending.recovery.same_idempotency_key ||
+    !pending.recovery.same_body
+  )
+    throw new ProtocolError('queued input recovery did not preserve the original route and intent');
+  if (reply.status === 503)
+    throw new ApiError(
+      503,
+      pending.error.message,
+      pending.error.code,
+      requestId,
+      retryAfterMilliseconds(reply),
+      { recovery: pending.recovery },
+    );
+  return pending;
 }

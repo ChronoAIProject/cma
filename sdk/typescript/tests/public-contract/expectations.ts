@@ -38,6 +38,7 @@ export const localCodes = new Map([
   ['queued-input-v2-invalid-revision', 'invalid_queued_input_request'],
   ['queued-input-v2-unknown-field', 'invalid_queued_input_request'],
   ['queued-input-v2-empty-text', 'invalid_queued_input_request'],
+  ['queued-input-v2-status-invalid-text', 'invalid_queued_input_request'],
   ['queued-input-v2-whitespace-text', 'invalid_queued_input_request'],
   ['queued-input-v2-null-text', 'invalid_queued_input_request'],
   ['agent-events-v2-snapshot-invalid', 'invalid_agent_cursor'],

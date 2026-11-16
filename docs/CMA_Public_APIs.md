@@ -495,6 +495,15 @@ runtime dispatch is never editable, including ambiguous delivery. The independen
 terminal edit receipt allows exact recovery after a lost reply. Another key cannot
 reuse the old revision, and the same key cannot change target or text.
 
+`POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status`
+performs a read-only recovery using the original `Idempotency-Key` and exact edit
+body. Under current Agent operation authority it returns the retained receipt with
+HTTP 200, or HTTP 202 with `queued_input_outcome_pending` when no receipt is yet
+available. Temporary lookup failure returns HTTP 503 with the same recovery
+instructions. Pending responses include `Cache-Control: no-store` and
+`Retry-After: 2`. Keep the original key and body: an absent receipt does not prove
+that the original edit aborted. This endpoint never admits or repeats an edit.
+
 The response is `cma.response.queued_input` with `edit`, current `response`, original
 `target`, applied `command_revision` and immutable replacement `text`.
 `queued_input_not_admitted` is a committed stale-intent refusal; clients may refresh

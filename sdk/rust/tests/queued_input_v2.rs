@@ -178,3 +178,168 @@ async fn queued_input_refuses_forged_and_repeated_pagination_cursors() {
     ));
     server.assert_drained();
 }
+
+fn pending() -> Value {
+    json!({"error":{"code":"queued_input_outcome_pending","message":"Keep the original intent."},"recovery":{"method":"POST","url":format!("{EDIT}/status"),"same_idempotency_key":true,"same_body":true}})
+}
+fn status_expected(status: u16, value: Value) -> wire::Expected {
+    let mut result = expected(value);
+    result.path = format!("{EDIT}/status");
+    result.status = status;
+    result
+}
+#[tokio::test]
+async fn queued_status_retains_pending_then_original_receipt_without_resubmission() {
+    use cma_sdk::responses_v2::QueuedInputStatus;
+    let server = WireServer::new().await;
+    server.expect(status_expected(202, pending()));
+    let result = server
+        .client
+        .responses_v2()
+        .read_queued_input_status(AGENT, RESPONSE, &intent(), "saved-edit")
+        .await
+        .unwrap();
+    assert!(matches!(result, QueuedInputStatus::Pending(_)));
+    assert_eq!(server.request_count(), 1);
+    server.expect(status_expected(200, receipt()));
+    let result = server
+        .client
+        .responses_v2()
+        .read_queued_input_status(AGENT, RESPONSE, &intent(), "saved-edit")
+        .await
+        .unwrap();
+    let QueuedInputStatus::Completed(value) = result else {
+        panic!("retained receipt required")
+    };
+    assert_eq!(value.text, intent().text);
+    assert_eq!(server.request_count(), 2);
+    server.assert_drained();
+}
+#[tokio::test]
+async fn queued_status_refuses_changed_intent_and_inconsistent_http_status() {
+    let server = WireServer::new().await;
+    let mut foreign = pending();
+    foreign["recovery"]["url"] = json!("/foreign");
+    let mut changed = pending();
+    changed["recovery"]["same_body"] = json!(false);
+    let mut wrong_receipt = receipt();
+    wrong_receipt["text"] = json!("different");
+    for (status, value) in [
+        (202, foreign),
+        (202, changed),
+        (202, receipt()),
+        (200, pending()),
+        (200, wrong_receipt),
+    ] {
+        server.expect(status_expected(status, value));
+        assert!(matches!(
+            server
+                .client
+                .responses_v2()
+                .read_queued_input_status(AGENT, RESPONSE, &intent(), "saved-edit")
+                .await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    assert_eq!(server.request_count(), 5);
+    server.assert_drained();
+}
+#[tokio::test]
+async fn queued_status_unavailable_does_not_retry_the_original_mutation() {
+    let server = WireServer::new().await;
+    let mut unavailable = status_expected(503, pending());
+    unavailable
+        .response_headers
+        .insert("retry-after".into(), "2".into());
+    server.expect(unavailable);
+    assert!(matches!(
+        server
+            .client
+            .responses_v2()
+            .read_queued_input_status(AGENT, RESPONSE, &intent(), "saved-edit")
+            .await,
+        Err(Error::Api { status: 503, .. })
+    ));
+    assert_eq!(server.request_count(), 1);
+    server.assert_drained();
+}
+
+#[tokio::test]
+async fn uncertain_edit_preserves_recovery_for_explicit_same_key_status_lookup() {
+    use cma_sdk::responses_v2::QueuedInputStatus;
+    let server = WireServer::new().await;
+    let mut unavailable = expected(pending());
+    unavailable.status = 503;
+    unavailable
+        .response_headers
+        .insert("retry-after".into(), "2".into());
+    unavailable
+        .response_headers
+        .insert("x-request-id".into(), "edit-uncertain".into());
+    server.expect(unavailable);
+    let error = server
+        .client
+        .responses_v2()
+        .edit_queued_input(AGENT, RESPONSE, &intent(), "saved-edit")
+        .await
+        .unwrap_err();
+    let Error::Api {
+        status,
+        code,
+        request_id,
+        retry_after,
+        extensions,
+        ..
+    } = error
+    else {
+        panic!("uncertain edit must preserve typed recovery, got {error:?}")
+    };
+    assert_eq!(status, 503);
+    assert_eq!(code.as_deref(), Some("queued_input_outcome_pending"));
+    assert_eq!(request_id.as_deref(), Some("edit-uncertain"));
+    assert_eq!(retry_after, Some(std::time::Duration::from_secs(2)));
+    assert_eq!(extensions.get("recovery"), Some(&pending()["recovery"]));
+    assert_eq!(server.request_count(), 1);
+    server.expect(status_expected(200, receipt()));
+    let result = server
+        .client
+        .responses_v2()
+        .read_queued_input_status(AGENT, RESPONSE, &intent(), "saved-edit")
+        .await
+        .unwrap();
+    let QueuedInputStatus::Completed(value) = result else {
+        panic!("retained receipt required")
+    };
+    assert_eq!(
+        *value,
+        serde_json::from_value::<cma_sdk::responses_v2::QueuedInput>(receipt()).unwrap()
+    );
+    assert_eq!(server.request_count(), 2);
+    server.assert_drained();
+}
+#[tokio::test]
+async fn uncertain_edit_rejects_substituted_recovery_instructions() {
+    let server = WireServer::new().await;
+    for (field, value) in [
+        ("url", json!("/foreign")),
+        ("method", json!("DELETE")),
+        ("same_body", json!(false)),
+        ("same_idempotency_key", json!(false)),
+    ] {
+        let mut body = pending();
+        body["recovery"][field] = value;
+        let mut unavailable = expected(body);
+        unavailable.status = 503;
+        server.expect(unavailable);
+        assert!(matches!(
+            server
+                .client
+                .responses_v2()
+                .edit_queued_input(AGENT, RESPONSE, &intent(), "saved-edit")
+                .await,
+            Err(Error::Protocol { .. })
+        ));
+    }
+    assert_eq!(server.request_count(), 4);
+    server.assert_drained();
+}

@@ -13,6 +13,51 @@ struct Probe {
 
 #[async_trait::async_trait]
 impl public_access::PublicAuthorization for Probe {
+    async fn resolve_delegated(
+        &self,
+        request: public_access::RedemptionRequest<'_>,
+    ) -> Result<Option<AgentId>, StatusCode> {
+        let body: Value =
+            serde_json::from_slice(request.body).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let id = body["path"]
+            .as_str()
+            .and_then(|path| path.strip_prefix("/api/v1/agents/"))
+            .ok_or(StatusCode::FORBIDDEN)?;
+        let id = AgentId(id.into());
+        self.authorize(public_access::PublicRequest {
+            id: &id,
+            method: request.method,
+            uri: request.uri,
+            headers: request.headers,
+            context: request.context,
+            credential: request.credential,
+        })
+        .await?;
+        Ok(Some(id))
+    }
+    async fn resolve_media(
+        &self,
+        request: public_access::PublicMediaRequest<'_>,
+    ) -> Result<AgentId, StatusCode> {
+        if request.path.binding_id != "binding-test"
+            || request.path.conversation_id != "conversation decoded"
+            || request.path.event_id != "event-test"
+            || request.path.attachment_index != 0
+        {
+            return Err(StatusCode::FORBIDDEN);
+        }
+        let id = AgentId("agt-media-parent".into());
+        self.authorize(public_access::PublicRequest {
+            id: &id,
+            method: request.method,
+            uri: request.uri,
+            headers: request.headers,
+            context: request.context,
+            credential: request.credential,
+        })
+        .await?;
+        Ok(id)
+    }
     async fn authorize(&self, request: public_access::PublicRequest<'_>) -> Result<(), StatusCode> {
         self.authorizations.fetch_add(1, Ordering::SeqCst);
         if self.allowed.load(Ordering::SeqCst)
@@ -92,6 +137,42 @@ async fn replicas() -> (Arc<MemoryOwnershipStore>, Vec<Instance>, Vec<Arc<Probe>
             .routes(
                 Router::new()
                     .route("/api/v1/agents/{agent}/files", axum::routing::post(accept))
+                    .route(
+                        "/api/v1/agents/{agent}/preferences",
+                        axum::routing::patch(accept),
+                    )
+                    .route(
+                        "/api/v1/agents/{agent}/settings",
+                        axum::routing::patch(accept),
+                    )
+                    .route("/api/v1/agents/{agent}", axum::routing::delete(accept))
+                    .route("/api/v1/agents/{agent}/stop", axum::routing::post(accept))
+                    .route(
+                        "/api/v1/agents/{agent}/artifacts",
+                        axum::routing::post(accept),
+                    )
+                    .route(
+                        "/api/v1/agents/{agent}/share-links",
+                        axum::routing::post(accept),
+                    )
+                    .route(
+                        "/api/v1/agents/{agent}/share-links/{share}",
+                        axum::routing::delete(accept),
+                    )
+                    .route(
+                        "/api/v1/agents/{agent}/capacity-recovery/{operation}",
+                        axum::routing::post(accept),
+                    )
+                    .route(
+                        "/api/v1/resource-shares/agent/{agent}",
+                        axum::routing::post(accept),
+                    )
+                    .route(
+                        "/api/v1/resource-shares/agent/{agent}/{share}",
+                        axum::routing::patch(accept).delete(accept),
+                    )
+                    .route("/api/v1/agent-delegations/operations", axum::routing::post(accept))
+                    .route("/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment", axum::routing::post(finite::accept_media).layer(axum::extract::DefaultBodyLimit::max(20 * 1024 * 1024)))
                     .with_state(probe.clone()),
             )
             .layer(axum::middleware::from_fn(test_auth));
@@ -119,6 +200,153 @@ fn headers() -> HeaderMap {
         headers.insert(name, value.parse().unwrap());
     }
     headers
+}
+
+#[tokio::test]
+async fn configuration_writes_on_either_ingress_run_under_the_exact_owner() {
+    let (store, instances, probes) = replicas().await;
+    let id = AgentId("agt-configuration-owner".into());
+    let (owner, authority) = acquire(&store, &instances, &id).await;
+    let peer = 1 - owner;
+    let client = client();
+    for (suffix, body) in [
+        (
+            "preferences",
+            br#"{"expected_revision":0,"title":"New title"}"#.as_slice(),
+        ),
+        (
+            "preferences",
+            br#"{"expected_revision":1,"system_prompt":"Be concise"}"#.as_slice(),
+        ),
+        (
+            "settings",
+            br#"{"model":"fixture-model","reasoning_effort":"high","permission_mode":"guarded"}"#
+                .as_slice(),
+        ),
+    ] {
+        for ingress in [owner, peer] {
+            let response = client
+                .patch(format!(
+                    "{}/api/v1/agents/{id}/{suffix}",
+                    instances[ingress].address
+                ))
+                .headers(headers())
+                .body(body.to_vec())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let accepted: Value = response.json().await.unwrap();
+            assert_eq!(accepted["owner"], instances[owner].coordinator.instance_id);
+            assert_eq!(accepted["epoch"], authority.token.epoch);
+            assert_eq!(accepted["relayed"], ingress == peer);
+            assert_eq!(accepted["body"], json!(body.to_vec()));
+            assert_eq!(accepted["request"], "acceptance-request");
+            assert_eq!(accepted["idempotency"], "acceptance-operation");
+        }
+    }
+    assert_eq!(probes[peer].effects.load(Ordering::SeqCst), 0);
+    assert_eq!(probes[owner].effects.load(Ordering::SeqCst), 6);
+
+    // Receiving policy is checked independently after forwarding, so a stale
+    // source-side permission cannot make the owner execute a configuration.
+    probes[owner].allowed.store(false, Ordering::SeqCst);
+    let response = client
+        .patch(format!(
+            "{}/api/v1/agents/{id}/preferences",
+            instances[peer].address
+        ))
+        .headers(headers())
+        .body(br#"{"expected_revision":2,"title":"Revoked"}"#.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(probes[owner].effects.load(Ordering::SeqCst), 6);
+}
+
+#[tokio::test]
+async fn ownerless_stop_and_delete_claim_a_real_owner_before_mutation() {
+    let (store, instances, probes) = replicas().await;
+    let client = client();
+    for (method, suffix, name) in [
+        (Method::POST, "/stop", "stop"),
+        (Method::DELETE, "", "delete"),
+    ] {
+        let id = AgentId(format!("agt-ownerless-{name}"));
+        assert!(store.owner(&id).await.unwrap().is_none());
+        let selected = candidates(&id, &store.membership().await.unwrap(), None).unwrap()[0]
+            .instance_id
+            .clone();
+        let owner = instances
+            .iter()
+            .position(|instance| instance.coordinator.instance_id == selected)
+            .unwrap();
+        for ingress in [1 - owner, owner] {
+            let response = client
+                .request(
+                    method.clone(),
+                    format!("{}/api/v1/agents/{id}{suffix}", instances[ingress].address),
+                )
+                .headers(headers())
+                .body(b"{}".to_vec())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let accepted: Value = response.json().await.unwrap();
+            let lease = store.owner(&id).await.unwrap().unwrap();
+            assert!(lease.token.epoch > 0);
+            assert_eq!(lease.token.instance_id, selected);
+            assert_eq!(accepted["owner"], selected);
+            assert_eq!(accepted["epoch"], lease.token.epoch);
+            assert_eq!(accepted["relayed"], ingress != owner);
+            assert_eq!(accepted["body"], json!(b"{}".to_vec()));
+            assert_eq!(accepted["idempotency"], "acceptance-operation");
+        }
+    }
+    assert_eq!(
+        probes
+            .iter()
+            .map(|probe| probe.effects.load(Ordering::SeqCst))
+            .sum::<usize>(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn a_claim_invitation_does_not_authorize_configuration_publication() {
+    let (store, instances, probes) = replicas().await;
+    let id = AgentId("agt-no-configuration-claim".into());
+    let (owner, authority) = acquire(&store, &instances, &id).await;
+    let mut invitation = authority.token.clone();
+    invitation.epoch = 0;
+    let uri: Uri = format!("/api/v1/agents/{id}/preferences").parse().unwrap();
+    let body = br#"{"expected_revision":0,"title":"Unowned"}"#;
+    let proof = instances[1 - owner]
+        .relay
+        .authentication
+        .sign(
+            &instances[1 - owner].coordinator.instance_id,
+            &invitation,
+            &Method::PATCH,
+            &uri,
+            &headers(),
+            body,
+        )
+        .unwrap();
+    let response = client()
+        .patch(format!("{}{uri}", instances[owner].address))
+        .headers(headers())
+        .header(PROOF, proof)
+        .body(body.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(probes
+        .iter()
+        .all(|probe| probe.effects.load(Ordering::SeqCst) == 0));
 }
 
 #[tokio::test]
@@ -254,3 +482,5 @@ async fn receiver_rejects_tampered_and_replayed_peer_proofs() {
     assert_eq!(probes[owner].effects.load(Ordering::SeqCst), 1);
     assert_eq!(probes[peer].effects.load(Ordering::SeqCst), 0);
 }
+
+mod finite;

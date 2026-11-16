@@ -416,6 +416,7 @@ fn due(bot: &layer2_core::bots::Bot) -> bool {
 mod tests;
 
 pub(super) struct BotSetupComposition {
+    pub(super) setup: Option<Arc<crate::bot_setups::SetupDependencies>>,
     pub(super) router: Router,
     pub(super) actor_continuations: Option<Arc<crate::bot_setups::ActorContinuationWorker>>,
 }
@@ -426,10 +427,14 @@ pub(super) fn compose_setup(
     auth: Arc<AuthState>,
     settings: Arc<PlatformSettingsService>,
     bots: Option<&BotComposition>,
-    command_service: Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
+    (command_service, coordinator): (
+        Arc<layer2_core::sandbox::agent_io::AgentCommandService>,
+        Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    ),
     resource_routes: Router,
 ) -> Result<BotSetupComposition, String> {
     let mut actor_continuations = None;
+    let mut setup = None;
     let resource_routes = if config.bot_father.is_some() {
         let bot_service = bots
             .ok_or("Bot Father requires Bot management")?
@@ -442,13 +447,15 @@ pub(super) fn compose_setup(
             settings,
             bot_service,
         )?;
+        setup = Some(dependencies.clone());
         let service = dependencies.service();
         actor_continuations = Some(crate::bot_setups::ActorContinuationWorker::new(
             dependencies.clone(),
             command_service,
             resource_routes.clone(),
         ));
-        let delegation_routes = dependencies.delegation_router(resource_routes.clone());
+        let delegation_routes =
+            dependencies.delegation_router(resource_routes.clone(), coordinator);
         resource_routes
             .merge(rest::bot_setup_router(service.clone()))
             .merge(delegation_routes)
@@ -457,6 +464,7 @@ pub(super) fn compose_setup(
         resource_routes
     };
     Ok(BotSetupComposition {
+        setup,
         router: resource_routes,
         actor_continuations,
     })

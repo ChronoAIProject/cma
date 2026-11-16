@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 291,
+  "openapi_operations": 292,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3983,6 +3983,18 @@
         "reporting_budget_exceeded",
         "usage_unavailable",
         "report_view_disabled"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input/status": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/public_contract_tests/queued_input_cases.rs# Real handlers recover the exact retained edit using the original key and body, preserve pending outcomes without mutation, and recheck caller authority.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_queued_input_request",
+        "response_not_found"
       ]
     }
   }

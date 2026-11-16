@@ -30,10 +30,10 @@ use crate::{
     trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
 };
 use axum::Router;
-use layer1_public::rest::{self, HierarchyState, ProfilesState};
+use layer1_public::rest::{self, HierarchyState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,
-    sandbox::{AgentContextService, HierarchyReadService, SandboxService, WorkspaceService},
+    sandbox::{AgentContextService, HierarchyReadService},
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
 mod state;
@@ -93,20 +93,15 @@ impl ControlPlaneComposition {
             broker.clone(),
             subscriptions,
         );
-        let sandbox_service = SandboxService::with_policy_source(
-            stores.sandbox_model.clone(),
-            stores.sandbox_profiles.clone(),
+        let (sandbox_service, workspace_service) = access::hierarchy_services(
+            &stores,
             sandbox_policy.clone(),
             connection_prerequisite.clone(),
         );
-        sandbox_service.attach_platform_spend(stores.sandbox_model.clone());
-        let workspace_service = WorkspaceService::new(
-            stores.sandbox_model.clone(),
-            stores.sandbox_profiles.clone(),
-        )
-        .with_connections(connection_prerequisite.clone());
         let live_agents = Arc::new(LiveAgentRegistry::default());
         let agent_manager = agent_manager::register(config, &stores, &live_agents).await?;
+        let [public_admission, access_admission, media_admission] =
+            agent_manager::admission_routers(config, &agent_manager, &auth);
         let resource_access = bindings::resource_access(&stores, auth.clone());
         let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
             .map_err(|error| error.to_string())?;
@@ -172,28 +167,16 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
-        let native_warm_pools = runtime.warm_pools;
-        let admin = layer1_public::rest::admin::AdminState::new(
-            Arc::clone(&settings),
+        let admin = runtime::admin(
+            config,
+            &stores,
+            (&settings, &activity, &users),
             sandbox_operators,
-            Arc::clone(&activity),
-        )
-        .with_user_directory(Arc::clone(&users))
-        .with_runtime_updates(runtime.updates.clone())
-        .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(native_warm_pools.clone())
-        .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
-        .with_admission_control(Arc::new(
-            layer2_core::admission::AdmissionControlService::new(stores.admission_control.clone())
-                .with_writes_enabled(config.features.admission_control_writes_enabled),
-        ));
-        let operations: Arc<dyn OperationStore> = stores.operations.clone();
-        let profiles = ProfilesState::new(
-            stores.sandbox_profiles.clone(),
-            Arc::clone(&operations),
-            Arc::clone(&settings),
-            profile_policy,
+            runtime.updates.clone(),
+            runtime.warm_pools.clone(),
         );
+        let operations: Arc<dyn OperationStore> = stores.operations.clone();
+        let profiles = profiles::routes_state(&stores, &operations, &settings, profile_policy);
         let hierarchy = HierarchyState::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -292,7 +275,11 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             auth.clone(),
             adapter.clone(),
+            media_admission.as_ref(),
         )?;
+        if let (Some(media), Some(manager)) = (&media, &agent_manager) {
+            media.install_ownership(manager.coordinator.clone())?;
+        }
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),
@@ -342,6 +329,8 @@ impl ControlPlaneComposition {
                 deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
                 task_experience: config.task_experience.clone(),
+                owner_admission: public_admission.clone(),
+                callback_admission: access_admission.clone(),
             },
         );
         let command_service = agent_access.commands;
@@ -366,7 +355,7 @@ impl ControlPlaneComposition {
         );
         let resource_routes = rest::profiles_router(profiles)
             .merge(rest::answer_deliverables_router(deliverables))
-            .merge(media::router(media))
+            .merge(media::router(media.clone()))
             .merge(rest::documents_router(documents.clone()))
             .merge(model_routes)
             .merge(agent_access.owner_routes)
@@ -420,6 +409,7 @@ impl ControlPlaneComposition {
             profile_scanner,
         })?;
         let bots::BotSetupComposition {
+            setup,
             router: resource_routes,
             actor_continuations,
         } = bots::compose_setup(
@@ -428,7 +418,12 @@ impl ControlPlaneComposition {
             auth.clone(),
             settings.clone(),
             bots.as_ref(),
-            command_service,
+            (
+                agent_access.callback_commands,
+                agent_manager
+                    .as_ref()
+                    .map(|manager| manager.coordinator.clone()),
+            ),
             resource_routes.merge(bot_routes),
         )?;
         let provenance_backfill =
@@ -437,7 +432,6 @@ impl ControlPlaneComposition {
         let usage_metrics = crate::sandbox_metrics::MetricsWorkers::new(config).await?;
         let resource_routes = resource_routes.merge(usage_metrics.router());
         let tool_routes = agent_access.tool_routes.merge(provider_tool_routes);
-        let worker_observations = runtime::worker_observations(config, &stores);
         let workers = crate::worker_supervision::Workers::new();
         let (health, readiness) =
             agent_manager::health(stores.clone(), workers.clone(), agent_manager.as_ref());
@@ -452,7 +446,13 @@ impl ControlPlaneComposition {
                 projections.reads(),
                 resource_access,
                 adapter.clone(),
+                media.clone(),
+                setup,
             ),
+        )?;
+        agent_manager::install_admissions(
+            &relay,
+            [public_admission, media_admission, access_admission],
         )?;
         let router = routes::compose(
             resource_routes,
@@ -478,7 +478,7 @@ impl ControlPlaneComposition {
             workers,
             readiness,
             document_blob_maintenance,
-            worker_observations,
+            worker_observations: runtime::worker_observations(config, &stores),
             router,
             agent_manager,
             auth,
@@ -492,7 +492,7 @@ impl ControlPlaneComposition {
             command_scheduler,
             sandbox_control_scheduler,
             sandbox_lifecycle,
-            native_warm_pools,
+            native_warm_pools: runtime.warm_pools,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })

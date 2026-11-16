@@ -60,3 +60,44 @@ pub struct QueuedInput {
     /// Original replacement bytes retained for exact recovery.
     pub text: String,
 }
+
+/// Either the retained edit receipt or an unresolved outcome; neither repeats an edit.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum QueuedInputStatus {
+    /// Exact original edit committed.
+    Completed(Box<QueuedInput>),
+    /// No confirmed receipt is available yet.
+    Pending(Box<QueuedInputPending>),
+}
+/// An unresolved original edit outcome under current caller authority.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuedInputPending {
+    /// Typed pending outcome details.
+    pub error: QueuedInputPendingError,
+    /// Original request recovery instructions; never a new mutation.
+    pub recovery: QueuedInputRecovery,
+}
+/// Pending outcome details validated by the status operation.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuedInputPendingError {
+    /// Always queued_input_outcome_pending for a successful pending read.
+    pub code: String,
+    /// Human-readable explanation.
+    pub message: String,
+}
+/// Exact original route and intent required for recovery.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QueuedInputRecovery {
+    /// Always POST; this is a read using the retained body.
+    pub method: String,
+    /// Exact original edit status path; never followed automatically.
+    pub url: String,
+    /// Always true: preserve the original idempotency key.
+    pub same_idempotency_key: bool,
+    /// Always true: preserve the complete original edit body.
+    pub same_body: bool,
+}
