@@ -1,6 +1,7 @@
 use super::super::{
     AgentCommand, AgentCommandService, CommandAdmissionError, CommandLedgerError,
-    CommandSubmission, CommandSubmissionSource, QueuedCancellationReservation,
+    CommandSubmission, CommandSubmissionSource, OwnerCommandMutation, OwnerCommandReply,
+    QueuedCancellationReservation,
 };
 use super::{
     QueuedInputOutcome, QueuedInputReservation, QueuedInputStatusView, QueuedInputSubmission,
@@ -20,6 +21,19 @@ impl AgentCommandService {
             &submission.target,
             &submission.text,
         )?;
+        match self
+            .route_mutation(
+                context,
+                credential,
+                source,
+                OwnerCommandMutation::QueuedInput(submission.clone()),
+            )
+            .await?
+        {
+            Some(OwnerCommandReply::QueuedInput(result)) => return result,
+            Some(_) => return Err(CommandLedgerError::Unavailable.into()),
+            None => {}
+        }
         let (authorized, command) = self
             .prepare(
                 context,

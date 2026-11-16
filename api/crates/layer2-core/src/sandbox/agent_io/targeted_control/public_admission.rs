@@ -3,6 +3,7 @@ use crate::resource_access::{CallerContext, ResourceTarget};
 use super::super::admission_service::command_capability;
 use super::super::{
     AgentCommandService, CommandAdmissionError, CommandLedgerError, CommandSubmissionSource,
+    OwnerCommandMutation, OwnerCommandReply,
 };
 use super::{
     ResponseControlRuntimeSupport, TargetedControlInspection, TargetedControlReservation,
@@ -37,6 +38,24 @@ impl AgentCommandService {
         source: CommandSubmissionSource,
         submission: TargetedControlSubmission,
     ) -> Result<TargetedControlStatusView, TargetedControlError> {
+        submission.target.fingerprint(
+            &submission.agent_id,
+            submission.expected_agent_revision,
+            &submission.command,
+        )?;
+        match self
+            .route_mutation(
+                context,
+                credential,
+                source,
+                OwnerCommandMutation::TargetedControl(submission.clone()),
+            )
+            .await?
+        {
+            Some(OwnerCommandReply::TargetedControl(result)) => return result,
+            Some(_) => return Err(CommandLedgerError::Unavailable.into()),
+            None => {}
+        }
         let (authorized, mut request) = self
             .prepare_targeted(context, credential, source, submission)
             .await?;
