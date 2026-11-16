@@ -24,6 +24,7 @@ nextest_contracts() {
     audit-bounds) selection_filter="package(=cma) and test(=$audit_bounds_test)" ;;
     diagnostics) selection_filter="package(=cma) and test(=$diagnostics_test)" ;;
     scan-cooperation) selection_filter="package(=cma) and test(=$scan_cooperation_test)" ;;
+    agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))' ;;
     agent-lists) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))' ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
     ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test))" ;;
@@ -53,6 +54,8 @@ elif [[ $# == 1 && "$1" == '--diagnostics' ]]; then
   selection='diagnostics'
 elif [[ $# == 1 && "$1" == '--scan-cooperation' ]]; then
   selection='scan-cooperation'
+elif [[ $# == 1 && "$1" == '--agent-list-profile' ]]; then
+  selection='agent-list-profile'
 elif [[ $# == 1 && "$1" == '--agent-lists' ]]; then
   selection='agent-lists'
 elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
@@ -141,7 +144,7 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
-if [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'agent-lists' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
+if [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
 else
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition"

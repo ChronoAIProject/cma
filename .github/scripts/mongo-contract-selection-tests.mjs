@@ -80,7 +80,7 @@ test('focused Agent-list runner keeps the complete ordinary and full selections'
 import json, runpy, sys
 parse = runpy.run_path(sys.argv[1])["mongo_filters"]
 source = sys.argv[2]
-before = "\\n".join(line for line in source.splitlines() if not line.strip().startswith("agent-lists)"))
+before = "\\n".join(line for line in source.splitlines() if not (line.strip().startswith("agent-lists)") or line.strip().startswith("agent-list-profile)")))
 print(json.dumps({"before": parse(before), "after": parse(source)}))
 `, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
     env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
@@ -89,4 +89,6 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   assert.deepEqual(after, before);
   assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
   assert.ok(source.includes(`"$1" == '--agent-lists'`));
+  assert.ok(source.includes("agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))'"));
+  assert.ok(source.includes(`"$1" == '--agent-list-profile'`));
 });
