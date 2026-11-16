@@ -95,6 +95,11 @@ impl ReplyStore {
             )
             .await
         {
+            if self.0.partitions.is_none()
+                || !matches!(error, ExecutionError::Busy | ExecutionError::LostLease)
+            {
+                return Err(error);
+            }
             // A parent can close after reading the durable keyed receipt but
             // before this guard CAS. Read-only confirmation must not turn that
             // exact saved outcome into a failed tool response or overwrite close.
@@ -103,7 +108,8 @@ impl ReplyStore {
                     Kind::Tool => &stored.tool,
                     Kind::Automatic => &stored.automatic,
                 };
-                if version > claim.record.version
+                if stored.closed
+                    && version > claim.record.version
                     && stored.target == next.target
                     && stored.root == next.root
                     && stored.owner == next.owner
