@@ -37,7 +37,8 @@
           "provenance": "compiled-web-manifest",
           "label": "actual BUILD_INFO.label",
           "copyText": "actual BUILD_INFO.copyText"
-        }
+        },
+        "session": "already-open, artifact/identity-verified real browser session; case reuses it"
       }
     },
     "account-authentication": {
@@ -136,8 +137,9 @@
       "data": {
         "cleanup": "async function",
         "draft": "unique harmless draft",
-        "otherLocationPath": "owned Sandbox URL",
-        "otherActor": "outsider"
+        "otherLocationPath": "fresh public Sandbox URL; case opens More actions -> New agent to reach the location-scoped draft",
+        "otherActor": "outsider",
+        "otherSession": "separate subject verified real browser session; case reuses it"
       }
     },
     "task-create": {
@@ -336,8 +338,101 @@
         "messageId": "exact answer identity"
       },
       "setup": "Ready Agent with one final answer containing one code block, no deliverable markup; exact visible text and raw answer content agree; clipboard permissions enabled."
+    },
+    "agent-public-ready": {
+      "setup": "Fresh owned Sandbox/empty Workspace/Agent via public APIs. Exact lifecycle ID joins the Agent; exact unique initial message reaches one completed durable transcript turn. No deterministic streaming/provider fixture required. Agent bootstrap is a transient Starting-only field and is not required on Ready.",
+      "data": {
+        "agentId": "actual lifecycle.agent_id",
+        "agentName": "submitted name (not an invented public Agent.name field)",
+        "historyText": "actual submitted unique owner message, confirmed in completed public transcript",
+        "sandbox": "public Sandbox detail",
+        "workspace": "public Workspace detail",
+        "agent": "public Agent detail",
+        "session": "actual Agent-bound browser",
+        "cleanup": "exact owner/name-checked public Sandbox retirement plus independent child/operation finality"
+      }
+    },
+    "navigation-tasks": {
+      "setup": "agent-public-ready plus actual outsider-owned private Sandbox and denied direct read by user. Public Workspace projection confirms completed task. Real one-shot read fault only armed by case step.",
+      "data": {
+        "sandbox": "public owned Sandbox",
+        "workspace": "public owned Workspace",
+        "agent": "public Agent plus Completed label from task_status=completed projection",
+        "forbiddenNames": ["actual outsider-owned Sandbox name"],
+        "faults": {
+          "failNextNavigationRead": "arm the parent real GET fault; cleanup restores it once"
+        },
+        "session": "actual Agent-bound browser",
+        "cleanup": "both public Sandbox retirements and both real browser sessions"
+      }
     }
   },
   "assignment": "lead-1532-v2: first35 through C275:cma-user.agent.copy-response",
-  "routing_base": "f5d2d08d3: explicit ctx.request am is honored; browser reads follow switchAM while writes route to live non-owner. Cases derive peer from actual last write AM."
+  "routing_base": "f5d2d08d3: explicit ctx.request am is honored; browser reads follow switchAM while writes route to live non-owner. Cases derive peer from actual last write AM.",
+  "implemented_setups": {
+    "account-preferences": [
+      "C275:cma-user.account.appearance",
+      "C275:cma-user.account.text-size",
+      "C275:cma-user.account.build-version",
+      "C275:cma-user.navigation.docs",
+      "C275:cma-user.navigation.legacy-routes"
+    ],
+    "task-draft": ["C275:cma-user.task.draft"],
+    "agent-public-ready": ["C275:cma-user.agent.open"],
+    "navigation-tasks": ["C275:cma-user.navigation.tasks"]
+  },
+  "parent_primitives": {
+    "compiledWeb": {
+      "source": "independent compiled web source: full 40 lowercase hex",
+      "manifestSha256": "independent compiled web artifact manifest sha256:<64 hex> matching browser adapter",
+      "buildInfoSha256": "independent SHA256 of emitted build-info.json bytes: bare 64 hex"
+    },
+    "identities": {
+      "user": {
+        "actor": "user",
+        "subject": "independently known real local NyxID subject"
+      },
+      "outsider": {
+        "actor": "outsider",
+        "subject": "different real local NyxID subject; required for task-draft/navigation-tasks"
+      }
+    },
+    "userResources": {
+      "scope": "LOCAL_DISPOSABLE_TWO_AM",
+      "database_disposable": true,
+      "single_matrix_writer": true,
+      "sandbox_profile": {
+        "id": "existing publicly usable Sandbox profile",
+        "revision": "positive integer exact revision"
+      },
+      "timeout_ms": "optional integer 2000..300000; default240000; polling never faster than2s",
+      "reserve": "async({purpose,caseId})->{parent_cleanup_barrier:true,retainIntent,retainResource,release}. Exclusive per-case custody. Parent owns lease if setup fails or outcome is unknown.",
+      "retainIntent": "async({kind,actor,am,method,path,key,body,parentId?}); durably register BEFORE the single POST. An unknown outcome is never replayed/rekeyed.",
+      "retainResource": "async({kind,id,actor,name?,parentId?,key?,operationId?}); resolve matching intent by key and retain accepted ID. Parent retains raw private IDs; public evidence hashes only.",
+      "release": "async()->{released:true}; called only after all known Sandboxes retire, child/admission finality is verified, and no create is unresolved.",
+      "finality": "async({sandboxId})->{sandbox_id,children_remaining:0,pending_operations:0,cleanup_complete:true}; actual read-only infrastructure observation after public retirement, never a constant result or case oracle.",
+      "navigationReadFault": "navigation-tasks only: async({page,method:GET,path:/api/v1/sandboxes,count:1,status:503})->{restore:async()}. Fail one actual matching inventory GET (canonicalize /api/agent-manager alias and ignore query); no success responses or mutation interception. Parent retains cleanup custody before arming, including exceptions."
+    }
+  },
+  "remaining_unimplemented_setups": [
+    "account-authentication",
+    "navigation-hierarchy",
+    "navigation-inventory",
+    "task-create",
+    "task-existing-location",
+    "task-repository",
+    "task-machine",
+    "task-manual",
+    "task-admission-recovery",
+    "task-limits",
+    "agent-ready",
+    "agent-queue",
+    "agent-pending-recovery",
+    "agent-approval",
+    "agent-commands",
+    "agent-suggestions",
+    "agent-quick-messages",
+    "agent-copy"
+  ],
+  "execution_status": "AUTHORED_ONLY: offline contract tests are not live feature PASS. Parent binds primitives and executes on its next frozen runtime; no current campaign hotload."
 }

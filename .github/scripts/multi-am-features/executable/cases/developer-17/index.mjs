@@ -6,6 +6,8 @@ import { cases as queue } from './queue.mjs';
 import { cases as approvals } from './approvals.mjs';
 import { cases as composer } from './composer.mjs';
 
+export { setups } from './setups.mjs';
+
 export const cases = [
   ...account,
   ...navigation,
