@@ -86,10 +86,35 @@ async fn skill_result_refuses_changed_intent_claim_or_parent_after_native_effect
             "{change:?}"
         );
         let saved = h.stored(&claimed.id).await;
-        assert_eq!(
-            saved.work.live_skills[0].status,
-            AgentSkillInstallStatus::Pending,
-            "{change:?}"
+        let installation = &saved.work.live_skills[0];
+        if matches!(change, Change::Stop) {
+            // Stop owns cancellation even when the native install succeeded.
+            // A late publication must preserve its durable refusal reason.
+            assert_eq!(installation.status, AgentSkillInstallStatus::Failed);
+            assert_eq!(
+                installation.error.as_deref(),
+                Some("agent_stopped_before_skill_confirmation")
+            );
+            assert_eq!(saved.requested_stop_reason, Some(AgentStopReason::Owner));
+            assert_ne!(saved.work.step, AgentWorkStep::InstallSkill);
+        } else {
+            assert_eq!(
+                installation.status,
+                AgentSkillInstallStatus::Pending,
+                "{change:?}"
+            );
+            assert!(installation.error.is_none(), "{change:?}");
+        }
+        let logs = h.store.agent_log(&claimed.id, 0, 100).await.unwrap();
+        assert!(
+            !logs.iter().any(|entry| matches!(
+                entry.kind,
+                AgentLogKind::SkillInstallationChanged {
+                    status: AgentSkillInstallStatus::Installed,
+                    ..
+                }
+            )),
+            "{change:?}: refused publication must not confirm installation"
         );
     }
 }
