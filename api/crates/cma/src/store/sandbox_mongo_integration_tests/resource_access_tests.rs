@@ -1,5 +1,7 @@
 #[path = "resource_access_tests/access_snapshot_session.rs"]
 mod access_snapshot_session;
+#[path = "resource_access_tests/mutation_contention.rs"]
+mod mutation_contention;
 #[path = "resource_access_tests/artifacts.rs"]
 mod artifacts;
 #[path = "resource_access_tests/hierarchy.rs"]
