@@ -1,4 +1,4 @@
-use super::{bounded, Authority};
+use super::{bounded, Authority, OwnershipError};
 use layer3_adapter::owner_protocol::{TransportAuthority, TransportOwner};
 use layer3_adapter::AdapterError;
 use std::time::Duration;
@@ -33,8 +33,9 @@ impl TransportAuthority for Authority {
             return Err(stale());
         }
         let store = self.store.as_ref().ok_or_else(stale)?;
-        if bounded(store.check(&self.token)).await.is_err() {
-            self.revoke();
+        if let Err(error) = bounded(store.check(&self.token)).await {
+            self.receiver_error("receiver_store_check", &error);
+            self.cancel_receiver();
             return Err(stale());
         }
         if self.is_current() {
@@ -51,37 +52,56 @@ impl TransportAuthority for Authority {
         let store = self.store.as_ref().ok_or_else(stale)?;
         let started = tokio::time::Instant::now();
         let result = async {
-            let membership = bounded(store.membership()).await.map_err(|_| stale())?;
+            let membership = bounded(store.membership()).await.inspect_err(|error| {
+                self.receiver_error("receiver_membership", error);
+            })?;
             let lease = bounded(store.renew(&self.token))
                 .await
-                .map_err(|_| stale())?;
+                .inspect_err(|error| {
+                    self.receiver_error("receiver_store_renew", error);
+                })?;
             if lease.token != self.token {
-                return Err(stale());
+                self.receiver_error("receiver_same_token", &OwnershipError::Stale);
+                return Err(OwnershipError::Stale);
             }
             let remaining = lease
                 .expires_at_ms
                 .checked_sub(membership.now_ms)
                 .filter(|remaining| *remaining > 0)
-                .ok_or_else(stale)?;
+                .ok_or_else(|| {
+                    self.receiver_error("receiver_store_deadline", &OwnershipError::Stale);
+                    OwnershipError::Stale
+                })?;
             self.renew_until(started + Duration::from_millis(remaining as u64))
-                .map_err(|_| stale())
+                .inspect_err(|error| self.receiver_error("receiver_local_renew", error))
         }
         .await;
         if result.is_err() {
-            self.revoke();
+            self.cancel_receiver();
         }
-        result
+        result.map_err(|_| stale())
     }
 
     async fn revoked(&self) {
         Authority::revoked(self).await;
     }
     fn revoke(&self) {
-        Authority::revoke(self);
+        self.cancel_receiver();
     }
 }
 
 impl Authority {
+    fn receiver_error(&self, stage: &'static str, error: &OwnershipError) {
+        use sha2::{Digest, Sha256};
+        let agent_sha256 = format!(
+            "{:x}",
+            Sha256::digest(self.token.agent_id.as_str().as_bytes())
+        );
+        let instance_sha256 = format!("{:x}", Sha256::digest(self.token.instance_id.as_bytes()));
+        tracing::warn!(stage, %agent_sha256, %instance_sha256, epoch = self.token.epoch,
+            error = %error, "Receiver ownership operation failed");
+    }
+
     /// Retain every contacted receiver until all revocations succeed. A cancelled
     /// or ambiguous confirmation may have installed authority at the runtime.
     pub async fn revoke_transports(&self) -> Result<(), super::OwnershipError> {

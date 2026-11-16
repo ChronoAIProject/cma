@@ -12,6 +12,7 @@ import { useAgentDraft } from './agent/draft';
 import { AgentSidePanel } from './agent/AgentSidePanel';
 import { useAgentPanel } from './agent/useAgentPanel';
 import { AgentComputerObservation } from './agent/environment/observation';
+import { affectsCurrentAgent } from './agent/resourceChange';
 import { useAgentController } from './agent/controller';
 import type { ConsoleProps } from './ConsoleTypes';
 import { ProfileMenu } from './profile/ProfileMenu';
@@ -125,9 +126,9 @@ function ConsoleContent({
   });
   const actions = useResourceActions(
     client,
-    () => {
+    (target) => {
       refresh();
-      agent.reload();
+      if (affectsCurrentAgent(target, agent.state)) agent.refreshDetail();
     },
     onCreate,
     user.id,
@@ -355,6 +356,7 @@ function ConsoleContent({
               onAccessChanged={agentAccess.reload}
               publicationScope={artifactPublicationScope}
               historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
+              controlReady={agent.controlBaselineReady}
               pending={agent.pending}
               onOpenSandbox={
                 ready === undefined

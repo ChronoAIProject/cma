@@ -4,6 +4,15 @@ use layer3_adapter::{AgentHomeRequest, WorktreeRequest};
 pub(in crate::store) async fn hierarchy(
     store: &MongoSandboxStore,
 ) -> (Agent, Sandbox, Workspace, Worktree) {
+    hierarchy_with_claims(store, false, false, false).await
+}
+
+pub(super) async fn hierarchy_with_claims(
+    store: &MongoSandboxStore,
+    sandbox_claim: bool,
+    workspace_claim: bool,
+    installation_proof: bool,
+) -> (Agent, Sandbox, Workspace, Worktree) {
     let plan = plan();
     store
         .reconcile_native_prepared_target(Some(&plan), 1, NOW)
@@ -18,6 +27,33 @@ pub(in crate::store) async fn hierarchy(
     else {
         panic!("fresh")
     };
+    if installation_proof {
+        let revision = parent.revision;
+        parent.work.prepared_installation_digest =
+            store.completed_installation_digest(&parent).await.unwrap();
+        assert!(parent.work.prepared_installation_digest.is_some());
+        parent.revision += 1;
+        store.save_sandbox(revision, parent.clone()).await.unwrap();
+    }
+    if sandbox_claim {
+        parent = store
+            .clone()
+            .with_renewable_work(true)
+            .claim_sandbox_work(&parent.id, "prepared-parent", NOW.into(), lease_deadline())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    if workspace_claim {
+        // Lifecycle Workspace claims wait for the ordinary parent installation
+        // and credential boundary, including when the runtime was prepared.
+        let previous = parent.revision;
+        parent.status = SandboxStatus::Installing;
+        parent.credential = crate::store::agent_access_fixtures::sandbox("prepared").credential;
+        parent.work.step = SandboxWorkStep::CreateProfileWorkspace(0);
+        parent.revision += 1;
+        store.save_sandbox(previous, parent.clone()).await.unwrap();
+    }
     let (_, profile) = actual_profiles(&plan);
     let mut candidate = crate::store::agent_access_fixtures::workspace(&parent, "prepared");
     candidate.profile = profile;
@@ -40,10 +76,24 @@ pub(in crate::store) async fn hierarchy(
     else {
         panic!("fresh workspace")
     };
+    if workspace_claim {
+        workspace = store
+            .clone()
+            .with_renewable_work(true)
+            .claim_workspace_work(
+                &workspace.id,
+                "prepared-workspace",
+                NOW.into(),
+                lease_deadline(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+    }
     workspace.status = WorkspaceStatus::Ready;
     workspace.resolved_commit = record.payload.workspaces[0].resolved_commit.clone();
     workspace.ready_at = Some(NOW.into());
-    workspace.work.step = WorkspaceWorkStep::None;
+    workspace.work.schedule(WorkspaceWorkStep::None, NOW.into());
     workspace.revision += 1;
     store
         .save_workspace(workspace.revision - 1, workspace.clone())
@@ -55,7 +105,9 @@ pub(in crate::store) async fn hierarchy(
     parent.credential = crate::store::agent_access_fixtures::sandbox("prepared").credential;
     parent.credential.reaches = record.payload.plan.reaches.clone();
     parent.work.execution = Some(record.payload.plan.execution);
-    parent.work.step = SandboxWorkStep::WaitForCredentialRotation;
+    parent
+        .work
+        .schedule(SandboxWorkStep::WaitForCredentialRotation, NOW.into());
     parent.revision += 1;
     store.save_sandbox(previous, parent.clone()).await.unwrap();
     let mut input = crate::store::agent_access_fixtures::admission(&workspace, "prepared");

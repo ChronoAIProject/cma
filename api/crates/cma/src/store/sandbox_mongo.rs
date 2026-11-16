@@ -108,6 +108,7 @@ pub struct MongoSandboxStore {
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
+    pub(super) agent_control_write_coordination: bool,
     pub(crate) agent_ownership: Option<std::sync::Arc<super::agent_ownership::MongoAgentOwnership>>,
     pub(super) agent_manager_instance: Option<String>,
     pub(super) platform: std::sync::Arc<super::platform_write_coordination::PlatformState>,
@@ -170,6 +171,11 @@ impl MongoSandboxStore {
         self
     }
 
+    pub(crate) fn with_agent_control_write_coordination(mut self, enabled: bool) -> Self {
+        self.agent_control_write_coordination = enabled;
+        self
+    }
+
     #[cfg(test)]
     pub(crate) async fn open(client: &Client, name: &str) -> Result<Self, StoreError> {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
@@ -226,6 +232,7 @@ impl MongoSandboxStore {
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
+            agent_control_write_coordination: false,
             agent_ownership: None,
             agent_manager_instance: None,
             platform: Default::default(),
