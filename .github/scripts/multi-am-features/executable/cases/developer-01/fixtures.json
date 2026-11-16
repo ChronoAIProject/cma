@@ -129,5 +129,12 @@
   "runtime_status": "NOT_BOUND_NOT_RUN",
   "built_in_public_setups": ["settings_audit", "settings_conflict", "settings_patch", "settings_read", "settings_retention", "spend_period"],
   "parent_factory_setups": 31,
+  "parent_bound_recipes": {
+    "user_limit": {
+      "factory": "user-limit-setup.mjs::createUserLimitFactory",
+      "inputs": "Exact distinct user/admin subjects; genuinely empty disposable user on each repetition; pinned userResources profile, subordinate reserve, native finality, durable retainRefusal extension. See README.",
+      "automatic_readiness": false
+    }
+  },
   "role_binding": "ctx.request actor uses exact parent config role; absent actor BLOCKED with no fallback"
 }
