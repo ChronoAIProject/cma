@@ -1,0 +1,66 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import {createBrowserAdapter} from './browser.mjs';
+
+async function serve(handler) {
+  const server = http.createServer(handler);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  return {origin: 'http://127.0.0.1:' + server.address().port,
+    close: async () => {server.closeAllConnections(); await new Promise(resolve => server.close(resolve));}};
+}
+
+test('browser proxy switches ingress without changing context, keeps attribution and strips credentials', async () => {
+  const calls = [], contexts = [], recorded = [];
+  const make = am => serve((request, response) => {
+    calls.push({am, auth: request.headers.authorization, cookie: request.headers.cookie});
+    response.writeHead(200, {'Content-Type': 'application/json', 'x-request-id': am + '-request'});
+    response.end(JSON.stringify({am}));
+  });
+  const a = await make('a'), b = await make('b'), web = await serve((_request, response) => response.end('compiled asset'));
+  const browser = {async newContext(options) {
+    const context = {options, route: async () => {}, newPage: async () => ({}), close: async () => {context.closed = true;}};
+    contexts.push(context); return context;
+  }};
+  const adapter = {ownerOf: async ({agentId}) => ({agent_id: agentId, am: 'a', epoch: 1, instance_id: 'ia', pod_uid: 'pa'}),
+    topology: async () => ({shared_database: true, coordination_enabled: true,
+      ams: {a: {ready: true, instance_id: 'ia', pod_uid: 'pa'}, b: {ready: true, instance_id: 'ib', pod_uid: 'pb'}}})};
+  const fixture = createBrowserAdapter({browser, webOrigin: web.origin, ams: {a: a.origin, b: b.origin},
+    actors: {user: {bearer: 'private-marker'}}, adapter, record: async value => recorded.push(value),
+    compiledSource: '1'.repeat(40), compiledManifest: 'sha256:' + '2'.repeat(64),
+    resolveAgent: async ({path}) => path === '/api/v1/agents/owned' ? 'owned' : null});
+  try {
+    const session = await fixture.open({actor: 'user', am: 'a'});
+    await fetch(session.origin + '/api/v1/agents/provenance');
+    await session.switchAM('b');
+    await fetch(session.origin + '/api/v1/agents/provenance');
+    await session.switchAM('a');
+    await fetch(session.origin + '/api/v1/agents/owned', {headers: {Cookie: 'browser-private'}});
+    const evidence = await fixture.evidence(session.page);
+    assert.deepEqual(calls.map(call => call.am), ['a', 'b', 'b']);
+    assert.equal(contexts.length, 1);
+    assert.equal(calls[2].cookie, undefined);
+    assert.equal(calls[2].auth, 'Bearer private-marker');
+    assert.equal(evidence.requests[2].owner_stable, true);
+    assert.equal(JSON.stringify([evidence, recorded]).includes('private-marker'), false);
+    await session.close(); assert.equal(contexts[0].closed, true);
+    await fixture.evidence(session.page);
+  } finally {await fixture.close(); await Promise.all([a.close(), b.close(), web.close()]);}
+});
+
+test('missing response correlation preserves one accepted write and fails evidence', async () => {
+  let writes = 0;
+  const upstream = await serve((_request, response) => {writes++; response.writeHead(202); response.end('accepted');});
+  const unused = await serve((_request, response) => response.end());
+  const fixture = createBrowserAdapter({browser: {newContext: async () => ({route: async () => {}, newPage: async () => ({}), close: async () => {}})},
+    webOrigin: unused.origin, ams: {a: upstream.origin, b: unused.origin}, actors: {user: {bearer: 'private'}},
+    adapter: {}, record: async () => {}, compiledSource: '1'.repeat(40),
+    compiledManifest: 'sha256:' + '2'.repeat(64), resolveAgent: async () => null});
+  try {
+    const session = await fixture.open({actor: 'user', am: 'a'});
+    const response = await fetch(session.origin + '/api/v1/agents', {method: 'POST'});
+    assert.equal(response.status, 202);
+    await assert.rejects(fixture.evidence(session.page), /browser_request_id_missing/);
+    assert.equal(writes, 1);
+  } finally {await fixture.close(); await Promise.all([upstream.close(), unused.close()]);}
+});
