@@ -5,6 +5,9 @@ use crate::agent_ownership::{
 };
 use std::sync::Mutex;
 
+#[path = "command_preparation_ownership_tests.rs"]
+mod preparation;
+
 async fn start(store: Arc<MemoryOwnershipStore>, id: &str) -> Arc<OwnershipCoordinator> {
     OwnershipCoordinator::register(
         store,
