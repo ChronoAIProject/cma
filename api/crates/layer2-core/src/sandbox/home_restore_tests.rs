@@ -158,6 +158,27 @@ fn superseded_home_retains_original_authority_and_cannot_become_current_again() 
     assert_eq!(decoded, sandbox.lifecycle);
     sandbox.lifecycle.home = Some(Box::new(old));
     assert!(sandbox.lifecycle.validate_home_restore(&sandbox).is_err());
+    let mut alias = sandbox.lifecycle.home.as_ref().unwrap().as_ref().clone();
+    alias.request.volume_id = "different-logical-home".into();
+    alias.receipt.as_mut().unwrap().volume_id = alias.request.volume_id.clone();
+    alias.receipt.as_mut().unwrap().request_sha256 = alias.request.computed_sha256();
+    alias.validate(&sandbox.id).unwrap();
+    assert_ne!(
+        alias.attachment().unwrap().identity().unwrap(),
+        sandbox.lifecycle.superseded_homes[0].home_identity
+    );
+    sandbox.lifecycle.home = Some(Box::new(alias));
+    assert!(sandbox.lifecycle.validate_home_restore(&sandbox).is_err());
+    sandbox
+        .lifecycle
+        .home
+        .as_mut()
+        .unwrap()
+        .receipt
+        .as_mut()
+        .unwrap()
+        .storage_generation = "new-storage-incarnation".into();
+    sandbox.lifecycle.validate_home_restore(&sandbox).unwrap();
     let mut invalid = encoded;
     invalid["superseded_homes"][0]["unknown"] = json!(true);
     assert!(serde_json::from_value::<SandboxLifecycleState>(invalid).is_err());

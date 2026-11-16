@@ -145,7 +145,11 @@ impl super::SandboxLifecycleState {
                 || old.source_generation > self.runtime_generation_high_water
                 || seconds_from_rfc3339(&old.superseded_at).is_none()
                 || attachment.identity().map_err(|_| invalid())? != old.home_identity
-                || current.as_ref().is_some_and(|home| home == &attachment)
+                || current.as_ref().is_some_and(|home| {
+                    home.request.scope == attachment.request.scope
+                        && home.receipt.storage_reference == attachment.receipt.storage_reference
+                        && home.receipt.storage_generation == attachment.receipt.storage_generation
+                })
                 || self.superseded_homes[..index]
                     .iter()
                     .any(|other| other.home_identity == old.home_identity)
