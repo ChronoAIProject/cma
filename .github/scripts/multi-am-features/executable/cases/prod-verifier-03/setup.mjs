@@ -114,7 +114,9 @@ export async function channelEditSetup(ctx, primitives) {
   const release = async () => {if (!released) {await authority.close(); released = true;}};
   ctx.defer('release_eg_authority', release);
   required(authority.local === true && authority.synthetic === true && authority.agentKey
-    && authority.profile?.metadata?.owner && authority.provider?.slug, 'eg_authority_seed_required');
+    && typeof authority.profile?.metadata?.owner?.subject === 'string'
+    && authority.profile.metadata.owner.subject.length > 0 && authority.provider?.slug,
+  'eg_authority_seed_required');
   const recordId = randomUUID(), channelName = `EG channel edit ${recordId.slice(0, 8)}`;
   const secret = randomBytes(32).toString('base64'), keyId = 'synthetic-hmac';
   const body = {schema_version: 1, record_id: recordId, name: channelName,
@@ -225,10 +227,12 @@ export async function parentEgSetup(ctx, primitives, scenario) {
   }
   if (scenario === 'channel_delete') {
     const expected = shaped.expected;
-    for (const field of ['ownerSubject', 'unrelatedChannelId', 'unrelatedChannelDigest']) {
-      required(expected?.[field] !== undefined && expected?.[field] !== null,
-        'eg_channel_delete_' + field + '_required');
-    }
+    required(typeof expected?.ownerSubject === 'string' && expected.ownerSubject.length > 0,
+      'eg_channel_delete_ownerSubject_required');
+    required(typeof expected?.unrelatedChannelId === 'string' && expected.unrelatedChannelId.length > 0,
+      'eg_channel_delete_unrelatedChannelId_required');
+    required(/^[a-f0-9]{64}$/.test(expected?.unrelatedChannelDigest ?? ''),
+      'eg_channel_delete_unrelatedChannelDigest_required');
     required(expected.unrelatedChannelId !== shaped.channelId,
       'eg_channel_delete_unrelated_channel_required');
     for (const key of ['turns', 'effects', 'deliveries']) {

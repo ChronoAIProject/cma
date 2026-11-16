@@ -188,7 +188,7 @@ test('channel_delete setup blocks before browser mutation when its parent contra
   const complete = {
     local: true, synthetic: true, replicas: [{ready: true}, {ready: true}],
     channelId: 'owned-channel', channelName: 'owned', baseline: {turns: 0, effects: 0, deliveries: 0},
-    expected: {ownerSubject: 'owner', unrelatedChannelId: 'unrelated', unrelatedChannelDigest: 'digest'},
+    expected: {ownerSubject: 'owner', unrelatedChannelId: 'unrelated', unrelatedChannelDigest: 'a'.repeat(64)},
     request: method, counters: method, platformSend: method, quiesce: method,
     close: async () => calls.push('close'),
   };
