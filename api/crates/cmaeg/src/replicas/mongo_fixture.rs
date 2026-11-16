@@ -233,3 +233,80 @@ impl Node {
         }
     }
 }
+
+impl Node {
+    pub async fn seed_expired_operator_index(&self, entries: usize) {
+        use std::collections::BTreeMap;
+        let now = self
+            .partitions
+            .store
+            .clock()
+            .await
+            .unwrap()
+            .millis
+            .div_euclid(1000);
+        let audits = (0..entries)
+            .map(|_| {
+                super::unresolved::identifier(
+                    "replica-abandonment-v1",
+                    &uuid::Uuid::new_v4().to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let index = super::unresolved::Index {
+            kind: "replica_abandonment_index_v1".into(),
+            deployment: self.partitions.membership.deployment.clone(),
+            deadlines: audits
+                .iter()
+                .map(|id| (id.clone(), now - 60))
+                .collect::<BTreeMap<_, _>>(),
+            audits,
+            rollback_safe_after: Some(super::unresolved::utc(now - 60).unwrap()),
+        };
+        self.partitions
+            .store
+            .write(
+                &super::unresolved::identifier("replica-abandonment-index-v1", &index.deployment),
+                &index.deployment,
+                &index,
+                super::store::Write::default(),
+            )
+            .await
+            .unwrap();
+    }
+    pub async fn operator_index(&self) -> (super::unresolved::Index, u64) {
+        self.partitions
+            .store
+            .read(
+                &super::unresolved::identifier(
+                    "replica-abandonment-index-v1",
+                    &self.partitions.membership.deployment,
+                ),
+                false,
+            )
+            .await
+            .unwrap()
+            .unwrap()
+    }
+    pub async fn head_binding(
+        &self,
+        plan: &crate::ingress::routing_store::AdmittedPlan,
+        target: &crate::ingress::routing_store::StoredTarget,
+    ) -> super::unresolved::Binding {
+        let id = super::partition_model::partition_id(
+            &self.partitions.membership.deployment,
+            plan,
+            target,
+        );
+        let (head, version) = self
+            .partitions
+            .head(&id, &plan.identity.owner)
+            .await
+            .unwrap();
+        super::unresolved::Binding {
+            partition: id,
+            head_work: head.queue.front().unwrap().clone(),
+            head_version: version,
+        }
+    }
+}
