@@ -27,6 +27,17 @@ struct SettingsDoc {
     revision: i64,
 }
 
+pub(super) fn read_settings(document: Document) -> Result<StoredPlatformSettings, StoreError> {
+    let document = mongodb::bson::deserialize_from_document(document)
+        .map_err(|error| StoreError::Malformed(format!("platform settings: {error}")))?;
+    let stored = from_doc(document)?;
+    stored
+        .settings
+        .validate()
+        .map_err(|error| StoreError::Malformed(error.to_string()))?;
+    Ok(stored)
+}
+
 fn from_doc(document: SettingsDoc) -> Result<StoredPlatformSettings, StoreError> {
     schema::require_current(document.document_schema_version)?;
     Ok(StoredPlatformSettings {

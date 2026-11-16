@@ -120,6 +120,8 @@ mod home;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
+mod idle_evidence;
+pub use idle_evidence::agentless_idle_with_children;
 mod inactivity;
 mod interruption;
 mod launch_recovery;
