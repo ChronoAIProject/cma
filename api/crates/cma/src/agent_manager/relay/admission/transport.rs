@@ -151,8 +151,10 @@ impl AgentCommandOwnerRouting for AdmissionRouter {
                     let fresh = self.context(&call).await?;
                     let retained = tokio::time::timeout(
                         Duration::from_secs(5),
-                        self.service()?
-                            .lookup_queued_input(&fresh, credential, source, submission),
+                        Box::pin(
+                            self.service()?
+                                .lookup_queued_input(&fresh, credential, source, submission),
+                        ),
                     )
                     .await
                     .map_err(|_| unavailable())??;

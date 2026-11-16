@@ -44,14 +44,12 @@ impl AgentCommandService {
             submission: submission.clone(),
             binding_policy,
         };
-        match self
-            .route_mutation(context, credential, source, mutation)
-            .await?
-        {
+        // The unused local path must not enlarge every routed caller's future.
+        match Box::pin(self.route_mutation(context, credential, source, mutation)).await? {
             Some(OwnerCommandReply::Admit(result)) => result,
             Some(_) => Err(CommandLedgerError::Unavailable.into()),
             None => {
-                self.admit_inner(context, credential, source, submission, binding_policy)
+                Box::pin(self.admit_inner(context, credential, source, submission, binding_policy))
                     .await
             }
         }
