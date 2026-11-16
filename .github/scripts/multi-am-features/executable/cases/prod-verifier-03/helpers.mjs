@@ -116,8 +116,9 @@ export async function uiReceipt(ctx, page, label = 'browser_receipt') {
 }
 
 export async function acquire(ctx, scenario) {
-  const eg = ctx.fixture('eg');
-  const lease = await invoke(eg, 'acquire', {
+  const lease = ctx.row.id === 'EG-022'
+    ? await invoke(ctx.fixture('user-fixtures'), 'take', scenario, ctx)
+    : await invoke(ctx.fixture('eg'), 'acquire', {
     scenario, caseId: ctx.row.case_id, phase: ctx.phase, iteration: ctx.iteration, am: ctx.am,
   });
   if (typeof lease?.close !== 'function') throw Error('eg_cleanup_custody_missing');
