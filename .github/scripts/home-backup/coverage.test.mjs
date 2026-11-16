@@ -54,6 +54,53 @@ test("coverage binds the exact source and home identity without parsing IDs", ()
   assert.deepEqual(coverage(input).homes[0].reasons, ["source_changed"]);
 });
 
+test("an older superseded home is excluded while current cadence remains provable", () => {
+  const input = fixture();
+  input.sandboxes.splice(1, 1);
+  const superseded = structuredClone(input.home_backups[0]);
+  superseded._id = superseded.id = "hb-a-8";
+  superseded.epoch = 8;
+  superseded.source.pvc_uid = "previous-pvc";
+  superseded.source.home_identity = "previous-home";
+  superseded.cut = { requested_at: "2026-11-16T00:00:00Z",
+    provider_creation_time: "2026-11-16T00:00:00Z", ready_at: "2026-11-16T00:01:00Z" };
+  superseded.storage.storage_handle = "projects/fixture/global/snapshots/a-8";
+  input.home_backups.push(superseded);
+  const report = coverage(input);
+  assert.equal(report.status, "PASS");
+  assert.equal(report.homes[0].capture_gap_seconds, 1800);
+  assert.deepEqual(report.homes[0].reasons, []);
+});
+
+test("a later superseded home cannot substitute current coverage", () => {
+  const input = fixture();
+  input.sandboxes.splice(1, 1);
+  const superseded = structuredClone(input.home_backups[1]);
+  superseded._id = superseded.id = "hb-a-8";
+  superseded.epoch = 8;
+  superseded.source.pvc_uid = "previous-pvc";
+  superseded.source.home_identity = "previous-home";
+  superseded.cut = { requested_at: "2026-11-16T00:50:00Z",
+    provider_creation_time: "2026-11-16T00:50:00Z", ready_at: "2026-11-16T00:51:00Z" };
+  superseded.storage.storage_handle = "projects/fixture/global/snapshots/a-8";
+  input.home_backups.push(superseded);
+  const report = coverage(input);
+  assert.equal(report.status, "FAIL");
+  assert.deepEqual(report.homes[0].reasons, ["source_changed"]);
+  assert.equal(report.homes[0].capture_gap_seconds, null);
+});
+
+test("a superseded earlier record cannot fill the current capture gap", () => {
+  const input = fixture();
+  input.sandboxes.splice(1, 1);
+  input.home_backups[0].source.pvc_uid = "previous-pvc";
+  input.home_backups[0].source.home_identity = "previous-home";
+  const report = coverage(input);
+  assert.equal(report.status, "FAIL");
+  assert.deepEqual(report.homes[0].reasons, ["capture_gap_unknown"]);
+  assert.equal(report.homes[0].capture_gap_seconds, null);
+});
+
 test("non-ready rows may omit a handle while ready rows require one", () => {
   const input = fixture();
   assert.doesNotThrow(() => coverage(input));
