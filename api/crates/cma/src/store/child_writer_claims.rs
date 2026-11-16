@@ -58,6 +58,7 @@ impl ChildWriterClaim {
 enum ClaimError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
+    ParentFenceDriver(mongodb::error::Error),
 }
 
 pub(super) async fn persist(
@@ -69,11 +70,12 @@ pub(super) async fn persist(
         return Err(SandboxStoreError::Conflict);
     }
     let mut last_transient = None;
+    let mut only_parent_fence_aborts = true;
     let mut diagnostics = diagnostics::ClaimDiagnostics::new(&claim);
     for attempt in 0..TRANSACTION_ATTEMPTS {
         // The previous session has been aborted/dropped before this delay.
-        // Keep exhaustion Unavailable: outer claim loops retry domain conflicts
-        // and must not multiply this known-abort transaction budget.
+        // A defer returns false to the scheduler, never a domain Conflict that
+        // would multiply this bounded transaction budget in outer claim loops.
         super::contention::backoff(attempt).await;
         diagnostics.attempt(attempt + 1);
         let mut session = store
@@ -83,6 +85,7 @@ pub(super) async fn persist(
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
         if let Err(error) = start_transaction(&mut session).await {
             if is_transient(&error) {
+                only_parent_fence_aborts = false;
                 last_transient = Some(diagnostics.transient(&error));
                 continue;
             }
@@ -106,12 +109,18 @@ pub(super) async fn persist(
                 let _ = session.abort_transaction().await;
                 return Err(error);
             }
-            Err(ClaimError::Driver(error)) if is_transient(&error) => {
+            Err(ClaimError::ParentFenceDriver(error)) if is_transient(&error) => {
                 let _ = session.abort_transaction().await;
                 last_transient = Some(diagnostics.transient(&error));
                 continue;
             }
-            Err(ClaimError::Driver(error)) => {
+            Err(ClaimError::Driver(error)) if is_transient(&error) => {
+                let _ = session.abort_transaction().await;
+                only_parent_fence_aborts = false;
+                last_transient = Some(diagnostics.transient(&error));
+                continue;
+            }
+            Err(ClaimError::Driver(error) | ClaimError::ParentFenceDriver(error)) => {
                 let _ = session.abort_transaction().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
@@ -119,7 +128,10 @@ pub(super) async fn persist(
         diagnostics.phase = "commit";
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(true),
-            CommitOutcome::Retry(error) => last_transient = Some(diagnostics.transient(&error)),
+            CommitOutcome::Retry(error) => {
+                only_parent_fence_aborts = false;
+                last_transient = Some(diagnostics.transient(&error));
+            }
             CommitOutcome::Unknown(error) => {
                 let snapshot_time = session.operation_time().ok_or_else(|| {
                     SandboxStoreError::Unavailable(format!(
@@ -143,6 +155,16 @@ pub(super) async fn persist(
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         }
+    }
+    if only_parent_fence_aborts {
+        // Every transaction was positively aborted before the child claim was
+        // written. Let the next scheduler turn reread fresh child/parent state;
+        // no work lease or native-effect authority was acquired by this call.
+        tracing::warn!(
+            diagnostics = last_transient.as_deref().unwrap_or("no driver result"),
+            "Writer claim deferred after bounded parent contention"
+        );
+        return Ok(false);
     }
     Err(SandboxStoreError::Unavailable(format!(
         "writer claim exhausted its retry budget: {}",
@@ -227,7 +249,7 @@ async fn apply(
         )
         .session(&mut *session)
         .await
-        .map_err(ClaimError::Driver)?;
+        .map_err(ClaimError::ParentFenceDriver)?;
     if locked.matched_count != 1 {
         return Err(ClaimError::Domain(SandboxStoreError::Conflict));
     }
