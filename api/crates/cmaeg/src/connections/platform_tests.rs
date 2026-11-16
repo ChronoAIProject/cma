@@ -60,6 +60,7 @@ struct Native {
     channel: Arc<ResolvedChannel>,
     peer: Peer,
     server: tokio::task::JoinHandle<()>,
+    api_base: String,
 }
 impl Drop for Native {
     fn drop(&mut self) {
@@ -138,6 +139,10 @@ impl Native {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = Router::new()
             .route("/{token}/{method}", post(platform))
+            .route(
+                "/provider/bindings/{id}",
+                axum::routing::put(binding_provider).delete(binding_provider),
+            )
             .with_state(peer.clone());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
@@ -159,6 +164,7 @@ impl Native {
             channel,
             peer,
             server,
+            api_base: base,
         }
     }
     async fn begin(&self, manager: bool) {
@@ -381,3 +387,18 @@ mod custody_tests;
 
 #[path = "webhook_native_tests.rs"]
 mod native_tests;
+
+async fn binding_provider(
+    State(peer): State<Peer>,
+    Path(id): Path<String>,
+    method: axum::http::Method,
+) -> Json<Value> {
+    peer.calls
+        .lock()
+        .unwrap()
+        .push((format!("provider_{method}"), json!({})));
+    Json(json!({"binding_id":id,"level":"l1","honoured":[],"refused":[]}))
+}
+
+#[path = "channel_custody_native_tests.rs"]
+mod channel_custody_native_tests;

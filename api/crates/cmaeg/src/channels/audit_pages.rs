@@ -8,10 +8,7 @@
 //! compare-and-swap, re-reading once after a version conflict.
 //!
 //! Nothing here prints or logs a definition, secret, blob or owner subject.
-use super::{
-    audit::{AuditError, AuditReport},
-    management::seal_definition,
-};
+use super::audit::{AuditError, AuditReport};
 use crate::records::{RecordClient, RecordError, RecordHead, RecordValue};
 use cmaeg_core::{
     channel::ChannelDefinition,
@@ -135,6 +132,7 @@ pub(super) enum Rewritten<S> {
 /// what is stored now. The write is
 /// keyed by the listed owner, and the stored definition records the version
 /// it was written over, as updates do.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn rewrite<F, S>(
     records: &RecordClient,
     keys: &MasterKeyRing,
@@ -142,20 +140,74 @@ pub(super) async fn rewrite<F, S>(
     mut definition: ChannelDefinition,
     mut version: u64,
     report: &mut AuditReport<F>,
-    mut step: impl AsyncFnMut(ChannelDefinition) -> Result<Step<S>, AuditError>,
+    operation: cmaeg_core::channel::ChannelMutationKind,
+    mut step: impl AsyncFnMut(
+        ChannelDefinition,
+        &mut super::mutation::Reservation,
+    ) -> Result<Step<S>, AuditError>,
 ) -> Result<Rewritten<S>, AuditError> {
     for attempt in 0..2 {
-        let mut next = match step(definition).await? {
-            Step::Done => return Ok(Rewritten::Cleared),
-            Step::Stop(reason) => return Ok(Rewritten::Stopped(reason)),
+        // Routing cleanup's step may unbind several providers. Admit custody
+        // before invoking it; a partial/unknown step retains the whole operation.
+        let reservation = super::mutation::Reservation::acquire(
+            records,
+            keys,
+            &definition,
+            version,
+            super::mutation::Intent {
+                operation,
+                expected_version: super::mutation::original_version(&definition, version),
+                fingerprint: super::mutation::fingerprint(&definition),
+                desired: &definition,
+            },
+        )
+        .await;
+        let mut reservation = match reservation {
+            Ok(reservation) => reservation,
+            Err(
+                super::management::ManagementError::Conflict { .. }
+                | super::management::ManagementError::Record(RecordError::Conflict { .. }),
+            ) => return Ok(Rewritten::Conflict),
+            Err(error) => return Err(mutation_error(error)),
+        };
+        definition.mutation = None;
+        let outcome = step(definition, &mut reservation).await;
+        if outcome.is_err() && !reservation.started() {
+            reservation
+                .release_unsent(records, keys)
+                .await
+                .map_err(mutation_error)?;
+        }
+        let mut next = match outcome? {
+            Step::Done => {
+                reservation
+                    .release_unsent(records, keys)
+                    .await
+                    .map_err(mutation_error)?;
+                return Ok(Rewritten::Cleared);
+            }
+            Step::Stop(reason) => {
+                if !reservation.started() {
+                    reservation
+                        .release_unsent(records, keys)
+                        .await
+                        .map_err(mutation_error)?;
+                }
+                return Ok(Rewritten::Stopped(reason));
+            }
             Step::Write(next) => *next,
         };
         next.version = version;
-        let blob = seal_definition(keys, &next).map_err(|_| AuditError::Seal)?;
-        match records
-            .put(&next.record_id, &head.owner, &blob, Some(version))
+        if head.owner != next.owner.subject {
+            return Err(AuditError::Seal);
+        }
+        match reservation
+            .publish(records, keys, &next)
             .await
-        {
+            .map_err(|error| match error {
+                super::management::ManagementError::Record(error) => error,
+                _ => RecordError::Rejected("channel audit publication failed".into()),
+            }) {
             Ok(_) => return Ok(Rewritten::Cleared),
             Err(RecordError::Conflict { .. }) if attempt == 0 => {
                 match read(records, keys, &next.record_id, report).await? {
@@ -172,4 +224,11 @@ pub(super) async fn rewrite<F, S>(
         }
     }
     Ok(Rewritten::Conflict)
+}
+
+fn mutation_error(error: super::management::ManagementError) -> AuditError {
+    match error {
+        super::management::ManagementError::Record(error) => error.into(),
+        _ => AuditError::Seal,
+    }
 }
