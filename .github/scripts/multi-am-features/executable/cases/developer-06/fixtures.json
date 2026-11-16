@@ -7,9 +7,11 @@
   "browser": {
     "open({actor,am,agentId})": "Returns authenticated real Playwright {page,origin,switchAM(nextAm),close}; page traffic joins current principal, exact image, request IDs and live non-owner fence for Agent routes. actor user/outsider and named recipient/orgMember/readOnly/publisher/nonpublisher sessions are local fixtures.",
     "otherAM(am)": "Returns the other existing ingress, never provisions one.",
-    "evidence(page)": "Returns sanitized {real_ui:true,compiled_source,requests:[{request_id,am,elapsed_ms,agent_id_sha256?,owner?,owner_epoch?,owner_stable?}],secrets_redacted:true}; no URL fragments, cookies, headers, tokens, bodies or clipboard contents. Agent requests must prove a current distinct non-owner.",
+    "evidence(page)": "Returns multi-am-browser-evidence-v1 with exact compiled_source/compiled_manifest, actual method/status/request_id/am/serving_am/elapsed_ms and original owner_proof. Agent writes prove live distinct non-owner; explicit owner-side GET/HEAD requires peer_read proof with matching method. No headers, URLs, tokens, bodies or clipboard data.",
     "responses(page,filter)": "Optional raw in-memory capture, not a case oracle. Filters pathPrefix/since. Only redacted explicit projections may be observed. Page waitForResponse is the default.",
-    "controls": "Real Playwright page/popup/download/filechooser/clipboard APIs. UI failures must propagate; no missing-selector skip. Parent owns lease and capture finality."
+    "controls": "Real Playwright page/popup/download/filechooser/clipboard APIs. UI failures must propagate; no missing-selector skip. Parent owns lease and capture finality.",
+    "switchAM(nextAm)": "Exact read ingress. Cases select the opposite of the observed mutation receipt, then require a later actual GET/HEAD on that AM. Mutations remain routed to observed non-owner.",
+    "authentication": "Connection, share redemption and account flows require actual browser_session authentication; bearer substitution is insufficient for /auth web routes."
   },
   "user-fixtures": {
     "webSource": "Exact compiled UI source SHA from parent artifact selection.",
@@ -202,7 +204,11 @@
       "revision",
       "sourceSha256"
     ],
-    "triggers": ["publisher", "secondPageTitle", "targets"]
+    "triggers": [
+      "publisher",
+      "secondPageTitle",
+      "targets"
+    ]
   },
   "fixture_methods": {
     "readRetained()": "Read-only join of actual runtime home identity, sentinel file bytes/hash, and original conversation transcript hash; returns home_id,file_sha256,history_sha256. Compare independently frozen before and after.",
@@ -218,5 +224,31 @@
     "providerJournal() / effectJournal() / publicationJournal() / inputJournal() / controlJournal() / operationJournal()": "Read independent synthetic upstream/runtime journal entries/counters bound to resource, actor, request/operation ID and time. No precomputed case PASS. Caller asserts effect uniqueness, no unauthorized operations, completed execution, original recovery identity.",
     "cleanup()": "Retire/delete/revoke only run-owned resources through public routes, join children and captures; return complete:true,owned_only:true only at terminal finality. A receipt is additive, never hides original failure."
   },
-  "removed_dependencies": "Usage, Trigger authoring/launch and navigation transferred to Developer16; this package owns no cases for those rows."
+  "removed_dependencies": "Usage, Trigger authoring/launch and navigation transferred to Developer16; this package owns no cases for those rows.",
+  "setup_exports": {
+    "module": "./setups.mjs (also re-exported by index.mjs)",
+    "factory": "createUserFixtureFactories({config,request,finality,readFault?}) -> { [scenario]: async ctx => fixture }",
+    "implemented_scenarios": [
+      "sandbox-always-on",
+      "sandbox-delete",
+      "sandbox-overview",
+      "workspace-empty",
+      "workspace-git",
+      "workspace-delete"
+    ],
+    "config": {
+      "scope": "LOCAL_DISPOSABLE_TWO_AM",
+      "database_disposable": true,
+      "single_matrix_writer": true,
+      "sandbox_profile": "Exact approved existing {id,revision}, available to run actor; no profile changes.",
+      "admin_available": "true only when parent actual admin route is installed; required for Always-on setup.",
+      "repository": "workspace-git requires approved local {url,ref,commit}.",
+      "setup_timeout_ms": "Optional bounded readiness timeout; default 240000."
+    },
+    "request": "Parent authenticated request({actor,am,method,path,body,key}) -> {status,body,timing:{am,request_id}}. Actual transport only, no response fabrication. Separate fixture_request and fixture_creation_custody observations prevent setup being counted as checklist-step coverage.",
+    "finality": "Read-only independent finality({sandboxId,workspaceId?}); exact IDs plus children_remaining and cleanup_complete. Does not delete anything. Required BEFORE setup creates resources.",
+    "readFault": "sandbox-overview only: one genuine read transport fault bound to returned own Sandbox, returns close().",
+    "cleanup": "Registered before first creation; exact resources retired through public routes. Independent child finality required. Any uncertain create stays unresolved for parent; no replay. Every known own Sandbox is attempted even if another cleanup fails.",
+    "remaining_scenarios": "Require parent low-level provider, runtime, multiaccount, document finality and paginated activity fixtures documented above. No default or pass-through fallback."
+  }
 }

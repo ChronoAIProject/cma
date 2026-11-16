@@ -16,3 +16,5 @@ export const cases = [
   ...documents,
   ...triggers,
 ];
+
+export { createUserFixtureFactories, supportedSetupNames } from './setups.mjs';
