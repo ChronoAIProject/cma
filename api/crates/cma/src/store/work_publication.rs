@@ -7,6 +7,9 @@ use super::sandbox_mongo::MongoSandboxStore;
 
 pub(super) mod workspace;
 
+#[cfg(test)]
+mod authority_mongo_tests;
+
 pub(super) fn sandbox(filter: Document, id: &str) -> Result<Document, SandboxStoreError> {
     constrain(filter, id, true)
 }
