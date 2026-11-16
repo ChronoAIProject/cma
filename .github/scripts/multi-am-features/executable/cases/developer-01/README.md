@@ -213,7 +213,9 @@ without replay. The already-owned disposable Sandbox contains all created data,
 and public retirement plus actual native finality owns cleanup on every path.
 
 The ADM-080 browser case opens Agent computer → Files, selects the exact path,
-and downloads through each AM. Each browser response's request ID must join the
+and downloads through each AM. It reads the computer toggle's expanded state
+before clicking, preserving the automatically open desktop panel while opening
+the collapsed narrow layout. Each browser response's request ID must join the
 corresponding shared serving receipt; requested AM labels alone do not qualify.
 Filename and bytes are checked, and full serving evidence is retained. Browser
 read-only checks repeat after close/drain so late mutation receipts prevent PASS.

@@ -27,7 +27,12 @@ export async function readOperatorDownloads(ctx, f, session) {
   for (const am of ['a', 'b']) {
     await session.switchAM(am);
     await session.page.goto(new URL('/agents/' + id(f.agentId), session.origin).href);
-    await session.page.getByRole('button', {name: 'Show Agent computer', exact: true}).click();
+    const computer = session.page.getByRole('button', {name: /^(Show|Hide) Agent computer$/});
+    await computer.waitFor();
+    const expanded = await computer.getAttribute('aria-expanded');
+    ctx.assert(['true', 'false'].includes(expanded), 'admin_cross_read_computer_state');
+    // Desktop starts with the computer open; toggling it would hide Files.
+    if (expanded === 'false') await computer.click();
     await session.page.getByRole('tab', {name: 'Files', exact: true}).click();
     const tree = session.page.getByRole('list', {name: 'Home files', exact: true});
     await tree.waitFor();
