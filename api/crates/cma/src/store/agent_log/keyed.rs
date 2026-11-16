@@ -51,12 +51,18 @@ pub(super) async fn append(
             Err(error) if is_transient(&error) => continue,
             Err(error) => return Err(driver(error)),
         };
+        // Work-authority fencing can establish the transaction snapshot at start.
+        // Its durable attempt must already exist when that snapshot is taken.
+        let claim = claim::Claim::acquire(store, &current, &operation, &entry).await?;
         let mut scope = match TransactionScope::start(&mut session).await {
             Ok(scope) => scope,
-            Err(error) if is_transient(&error) => continue,
+            Err(error) if is_transient(&error) => {
+                let _ = session.abort_transaction().await;
+                claim.release_known_abort(store).await?;
+                continue;
+            }
             Err(error) => return Err(driver(error)),
         };
-        let claim = claim::Claim::acquire(store, &current, &operation, &entry).await?;
         let result = async {
             claim.consume(store, &mut scope).await?;
             publish(
