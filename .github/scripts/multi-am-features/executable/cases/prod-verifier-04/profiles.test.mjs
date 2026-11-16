@@ -9,22 +9,26 @@ import {rows, equal} from './common.mjs';
 // Product verdicts require the actual two-manager run.
 function transportModel(fault) {
   const profiles = new Map(), workers = new Map(), receipts = new Map(), calls = [];
-  let sequence = 0;
+  let sequence = 0, ingress;
   const copy = structuredClone;
-  const result = (status, body) => ({status, body: copy(body), timing: {request_id: 'test-' + sequence++, body_ms: 1}});
+  const result = (status, body) => ({status, body: copy(body), timing: {am: ingress, request_id: 'test-' + sequence++, body_ms: 1}});
   const deny = code => result(404, {code});
   const transport = {async request(r) {
+    ingress = r.am;
     calls.push(copy(r));
     if (fault === 'lost_create' && r.path === '/api/v1/agent-profiles' && r.method === 'POST') throw Error('transport_unknown');
     const url = new URL(r.path, 'http://localhost');
     const parts = url.pathname.split('/').filter(Boolean).slice(2);
     const [collection, id, action, revision] = parts;
+    if (r.actor === 'profile-denied' && !(collection === 'marketplace' && r.method === 'GET')) {
+      return result(403, {code: collection === 'event-worker-profiles' ? 'event_worker_profile_forbidden' : 'forbidden'});
+    }
     const receiptKey = r.actor + ':' + r.key;
     const fingerprint = JSON.stringify([r.method, r.path, r.body]);
     if (r.key && receipts.has(receiptKey)) {
       const receipt = receipts.get(receiptKey);
       if (receipt.fingerprint !== fingerprint) return result(409, {code: 'idempotency_key_reused'});
-      return copy(receipt.response);
+      return result(receipt.response.status, receipt.response.body);
     }
     const respond = (status, body) => {
       const response = result(status, body);
@@ -115,6 +119,23 @@ async function run(definition, fault) {
   });
   return {...model, result};
 }
+
+test('post-restart invocation validates retained original receipts and revisions', async () => {
+  const model = transportModel();
+  const definition = profileCases[0], runState = {};
+  const environment = {iteration:1,am:'a',image:'local@sha256:'+'a'.repeat(64),source:'b'.repeat(40),
+    transport:model.transport,runState};
+  const before = await executeCase(definition,rows.find(r=>r.case_id===definition.id),{...environment,phase:'before_restart'});
+  assert.equal(before.status,'PASS');
+  const retainedIds = runState.profileHistory.map(value=>value.id);
+  const start = model.calls.length;
+  const after = await executeCase(definition,rows.find(r=>r.case_id===definition.id),{...environment,phase:'after_restart'});
+  assert.equal(after.status,'PASS',after.error_code);
+  assert.ok(retainedIds.every(id=>model.calls.slice(start).some(call=>call.method==='GET' && call.path.includes('/'+id+'/revisions/'))));
+  model.profiles.get(retainedIds[0]).revisions[0].content.system_prompt = 'corrupted-after-restart';
+  const corrupt = await executeCase(definition,rows.find(r=>r.case_id===definition.id),{...environment,phase:'after_restart'});
+  assert.equal(corrupt.primary_failure,'original_profile_revision_survives_restart');
+});
 
 test('38 profile cases assert their exact operation and retire every acquired resource', async () => {
   assert.equal(profileCases.length, 38);
