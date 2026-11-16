@@ -40,6 +40,15 @@ pub(super) async fn open(
 
 impl Following {
     pub(super) fn queue_authorized(&mut self, snapshot: AgentEventStreamSnapshot) {
+        if self.observation.is_some() {
+            self.replay_queue.sources.extend(
+                snapshot
+                    .history
+                    .into_iter()
+                    .filter(|entry| entry.seq > self.after),
+            );
+            return;
+        }
         for entry in snapshot.history {
             if self.ended {
                 break;

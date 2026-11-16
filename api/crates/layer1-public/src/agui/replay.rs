@@ -1,3 +1,5 @@
+#[path = "replay_queue.rs"]
+mod replay_queue;
 use crate::stream_telemetry::{self, Kind, Poll};
 use std::{collections::VecDeque, time::Duration};
 
@@ -29,6 +31,10 @@ mod live_tests;
 #[cfg(test)]
 #[path = "replay_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "replay_observation_tests.rs"]
+mod observation_tests;
 
 #[path = "replay_authorized.rs"]
 mod authorized;
@@ -136,7 +142,25 @@ async fn begin(
     run: Option<u64>,
     watching: Option<AgentLiveSubscription>,
 ) -> Response {
-    let (caller, authorization) = authority;
+    let (caller, mut authorization) = authority;
+    if authorization.is_none() {
+        authorization = match state
+            .reads
+            .owner_observation_authorization(&caller, &id)
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => return read_failure(error, "thread_not_found"),
+        };
+    }
+    let observation = if let Some(authorization) = &mut authorization {
+        match state.reads.observe_event_stream(authorization) {
+            Ok(value) => value,
+            Err(error) => return read_failure(error, "thread_not_found"),
+        }
+    } else {
+        None
+    };
     let heads = state.watch_head(&id);
     let mut open = Following {
         state,
@@ -145,6 +169,7 @@ async fn begin(
         after,
         turn: 0,
         pending: VecDeque::new(),
+        replay_queue: Default::default(),
         follow,
         run,
         ended: false,
@@ -152,6 +177,7 @@ async fn begin(
         committed_message_seq: 0,
         held: None,
         authorization,
+        observation,
         cursor: Default::default(),
         header: None,
         through: None,
@@ -199,6 +225,7 @@ struct Following {
     after: u64,
     turn: u64,
     pending: VecDeque<AguiEvent>,
+    replay_queue: replay_queue::ReplayQueue,
     follow: bool,
     run: Option<u64>,
     ended: bool,
@@ -206,6 +233,7 @@ struct Following {
     committed_message_seq: u64,
     held: Option<AgentLiveDelivery>,
     authorization: Option<AgentEventStreamAuthorization>,
+    observation: Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
     cursor: layer2_core::sandbox::AgentHistoryCursor,
     header: Option<layer2_core::sandbox::AgentEventStreamHeader>,
     through: Option<u64>,

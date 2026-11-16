@@ -143,9 +143,10 @@ impl Following {
                 .authorization
                 .as_ref()
                 .and_then(AgentEventStreamAuthorization::revalidation_deadline);
+            let shared = self.observation.is_some();
             tokio::select! {
                 biased;
-                _ = tokio::time::sleep_until(self.fallback_due) => {
+                _ = tokio::time::sleep_until(self.fallback_due), if self.observation.is_none() => {
                     self.fallback_due = tokio::time::Instant::now() + Duration::from_secs(1);
                     break;
                 }
@@ -154,6 +155,14 @@ impl Following {
                     else { pending::<()>().await }
                 } => break,
                 value = async {
+                    match &mut self.observation { Some(observation) => observation.changed().await, None => pending().await }
+                } => {
+                    self.observed_header = Some(value?);
+                    self.observed_at = tokio::time::Instant::now();
+                    break;
+                }
+                value = async {
+                    if shared { return pending().await; }
                     match &mut self.heads { Some(heads) => heads.recv().await, None => pending().await }
                 } => { if value.is_err() { self.heads = None; continue; } force = true; break; }
                 value = async {
@@ -211,6 +220,13 @@ impl Following {
     }
 
     async fn validate(&mut self) -> Result<(), AgentReadError> {
+        if self
+            .observation
+            .as_ref()
+            .is_some_and(|value| !value.current())
+        {
+            return Err(AgentReadError::Unavailable("read custody ended".into()));
+        }
         if let Some(authorization) = &self.authorization {
             if authorization
                 .revalidation_deadline()
@@ -218,7 +234,7 @@ impl Following {
             {
                 return Err(AgentReadError::Forbidden);
             }
-            if !authorization.is_personal_owner() {
+            if self.observation.is_some() || !authorization.is_personal_owner() {
                 // The fresh release fence also observes the head, so a live
                 // batch cannot outlive durable output committed while blocked.
                 self.observe(true).await?;
@@ -251,6 +267,9 @@ impl From<AgentReadError> for OpenError {
 pub(super) fn response(open: Following) -> Response {
     let stream = stream::unfold(open, |mut open| async move {
         loop {
+            if open.prepare_shared_frame().is_err() {
+                return Some(interrupted(open));
+            }
             if let Some(event) = open.pending.pop_front() {
                 if let Err(error) = open.validate().await {
                     if authority_lost(&error) {
@@ -269,6 +288,9 @@ pub(super) fn response(open: Following) -> Response {
             }
             if open.ended {
                 return None;
+            }
+            if !open.replay_queue.empty() {
+                continue;
             }
             let poll = Poll::new(Kind::Agui);
             let result = if open
