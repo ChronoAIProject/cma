@@ -164,9 +164,12 @@ async fn apply(
             .map_err(ClaimError::Domain)?;
     }
     let (id, sandbox_id, owner, _) = claim.identity();
-    crate::store::work_publication::fence(store, session)
+    crate::store::work_publication::fence_transaction(store, session)
         .await
-        .map_err(ClaimError::Domain)?;
+        .map_err(|error| match error {
+            super::work_publication::FenceError::Domain(error) => ClaimError::Domain(error),
+            super::work_publication::FenceError::Driver(error) => ClaimError::Driver(error),
+        })?;
     diagnostics.phase = "parent_read";
     let parent = store
         .sandboxes
