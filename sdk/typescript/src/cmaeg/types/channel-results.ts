@@ -13,6 +13,7 @@ import { ConformanceLevelSchema } from './primitives.js';
 export const ConversationInspectionSchema = object({
   binding_id: text,
   generation: integer,
+  incarnation: optional(integer),
   conversation_id: text,
   agent_id: text,
   state: text,
@@ -146,3 +147,28 @@ export const NativeDiscordActivationSchema = object({
   connection: optional(nullable(NativeDiscordConnectionStatusSchema)),
 });
 export type NativeDiscordActivation = Output<typeof NativeDiscordActivationSchema>;
+
+export const PartitionResetRequestSchema = object({
+  partition_key: text,
+  consumer_id: optional(nullable(text)),
+  expected_version: integer,
+  expected_agent_id: text,
+});
+export type PartitionResetRequest = Output<typeof PartitionResetRequestSchema>;
+export const ConversationResetSchema = object({
+  binding_id: text,
+  generation: integer,
+  conversation_id: text,
+  incarnation: integer,
+  previous_agent_id: text,
+  previous_conversation_id: text,
+  successor_agent_id: text,
+  state: text,
+});
+export type ConversationReset = Output<typeof ConversationResetSchema>;
+export const PartitionResetResponseSchema = object({
+  consumer_id: text,
+  transport_conversation_id: text,
+  reset: ConversationResetSchema,
+});
+export type PartitionResetResponse = Output<typeof PartitionResetResponseSchema>;

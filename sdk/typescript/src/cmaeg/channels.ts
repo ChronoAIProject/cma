@@ -5,6 +5,9 @@ import { input, query, read, segment } from '../resources.js';
 import {
   ChannelPageSchema,
   PartitionInspectionSchema,
+  PartitionResetRequestSchema,
+  PartitionResetResponseSchema,
+  type PartitionResetRequest,
   ChannelCreateRequestSchema,
   ChannelUpdateRequestSchema,
   ChannelResponseSchema,
@@ -69,6 +72,27 @@ export class CmaegChannels {
       }),
       PartitionInspectionSchema,
       options,
+    );
+  }
+
+  resetChannelPartition(
+    channelId: string,
+    body: PartitionResetRequest,
+    idempotencyKey: string,
+    options: OperationOptions = {},
+  ) {
+    if (!/^[\x21-\x7e]{1,128}$/.test(idempotencyKey))
+      throw new ValidationError('idempotencyKey must contain 1–128 visible ASCII bytes');
+    return read(
+      this.config,
+      `/v1/channels/${segment(channelId)}/partition/resets`,
+      PartitionResetResponseSchema,
+      {
+        ...options,
+        method: 'POST',
+        body: input(PartitionResetRequestSchema, body),
+        headers: { 'Idempotency-Key': idempotencyKey },
+      },
     );
   }
 

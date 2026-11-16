@@ -14,6 +14,7 @@ import {
 export * from './provider-binding-preparation.js';
 import {
   array,
+  integer,
   enumeration,
   nullable,
   object,
@@ -74,6 +75,7 @@ const putBinding = object({
 export type ProviderBinding = Output<typeof binding>;
 export type BindingConversation = Output<typeof conversation>;
 export const BindingConversationInspectionSchema = object({
+  incarnation: optional(integer),
   binding_id: text,
   generation: positiveInteger,
   conversation_id: text,

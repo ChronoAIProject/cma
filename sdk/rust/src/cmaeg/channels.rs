@@ -55,6 +55,27 @@ impl Cmaeg {
         request.query = &query;
         self.client.request(request).await
     }
+    /// Reset the exact deleted Agent mapping. Retry uncertain outcomes with the same key and body.
+    pub async fn reset_channel_partition(
+        &self,
+        id: &str,
+        body: &PartitionResetRequest,
+        idempotency_key: &str,
+    ) -> Result<PartitionResetResponse> {
+        if idempotency_key.is_empty()
+            || idempotency_key.len() > 128
+            || !idempotency_key.bytes().all(|b| (33..=126).contains(&b))
+        {
+            return Err(crate::Error::validation(
+                "idempotency key must contain 1..128 visible ASCII bytes",
+            ));
+        }
+        let segments = ["v1", "channels", id, "partition", "resets"];
+        let mut request = Request::operation(Method::POST, &segments, Some(body), StatusCode::OK)?
+            .with_command_key(Some(idempotency_key))?;
+        request.root = true;
+        self.client.request(request).await
+    }
     /// Recover the exact channel after an uncertain reserved-record creation.
     pub async fn recover_channel(&self, record_id: &str) -> Result<ChannelResponse> {
         let segments = ["v1", "channel-records", record_id];

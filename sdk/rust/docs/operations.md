@@ -182,3 +182,22 @@ still needs reconciliation. An HTTP 409 `known_abort` is a typed outcome.
 Other conflict problem documents remain typed API errors. Neither outcome proves input was not executed.
 Named admission, authority and service refusals use the SDK's normal API error.
 Native conversation, runtime and home identities are never response fields.
+
+
+### Repair a deleted channel partition Agent
+
+Use partition inspection and the channel version, then call
+`resetChannelPartition(channelId, body, idempotencyKey)` (TypeScript) or
+`reset_channel_partition(channel_id, &body, idempotency_key)` (Rust). The body
+contains `partition_key`, optional `consumer_id`, `expected_version`, and
+`expected_agent_id`. Management requires `cma-eg:channels:update`; select an
+organization through the client's existing owner option. Keep the same key/body
+for uncertain retries; neither client automatically retries this mutation.
+
+The response reserves the next incarnation; the next event provisions it.
+Inspection includes optional `incarnation` for compatibility with older servers.
+CMA's command admission is the cutoff: admitted predecessor events keep their
+original Agent and cannot execute again; queued events not yet admitted select
+the successor. A reset neither checks gateway idleness nor changes channel
+credentials/version or healthy partition mappings. Named eligibility/gate
+refusals are available in the API problem detail.

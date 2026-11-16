@@ -632,3 +632,36 @@ fn telegram_create_request_preserves_omission_and_rejects_explicit_null() {
         .is_err()
     );
 }
+
+#[tokio::test]
+async fn partition_reset_preserves_exact_body_key_and_incarnation() {
+    let server = WireServer::new().await;
+    let client = client(&server);
+    let body = PartitionResetRequest {
+        partition_key: "oracle".into(),
+        consumer_id: None,
+        expected_version: 5,
+        expected_agent_id: "agt_old".into(),
+    };
+    let result = json!({"consumer_id":"default","transport_conversation_id":"transport","reset":{"binding_id":"binding","generation":1,"conversation_id":"transport","incarnation":2,"previous_agent_id":"agt_old","previous_conversation_id":"internal-old","successor_agent_id":"agt_new","state":"reserved"}});
+    let mut expected = wire::json(
+        "POST",
+        "/v1/channels/opaque%2F+%3F/partition/resets",
+        Some(serde_json::to_value(&body).unwrap()),
+        200,
+        result.clone(),
+        true,
+    );
+    expected
+        .headers
+        .insert("idempotency-key".into(), "same-key".into());
+    server.expect(expected);
+    same(
+        client
+            .reset_channel_partition("opaque/+?", &body, "same-key")
+            .await
+            .unwrap(),
+        result,
+    );
+    server.assert_drained();
+}

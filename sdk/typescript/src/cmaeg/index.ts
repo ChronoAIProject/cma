@@ -20,6 +20,7 @@ import {
   type StreamChannelActivityOptions,
 } from './activity.js';
 import type {
+  PartitionResetRequest,
   ChannelCreateRequest,
   ChannelUpdateRequest,
   CloudEvent,
@@ -127,6 +128,15 @@ export class Cmaeg {
   streamChannelActivity(id: string, options?: StreamChannelActivityOptions) {
     return this.#activity.streamChannelActivity(id, options);
   }
+  resetChannelPartition(
+    channelId: string,
+    body: PartitionResetRequest,
+    idempotencyKey: string,
+    options: OperationOptions = {},
+  ) {
+    return this.#channels.resetChannelPartition(channelId, body, idempotencyKey, options);
+  }
+
   recoverChannel(id: string, options?: OperationOptions) {
     return this.#channels.recoverChannel(id, options);
   }

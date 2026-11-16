@@ -82,6 +82,9 @@ pub struct BindingConversation {
 /// Retained conversation mapping and the current mapped Agent lifecycle.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct BindingConversationInspection {
+    /// Provider-owned incarnation; absent on servers before partition reset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<u64>,
     /// Binding whose current generation contains this mapping.
     pub binding_id: String,
     /// Current binding generation.

@@ -539,3 +539,29 @@ it('creates a Telegram topic without archive duration and manages its returned s
   expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('Idempotency-Key')).toBe('topic-close');
   expect(fetch).toHaveBeenCalledTimes(2);
 });
+
+it('resets one partition with an explicit replay key and preserves incarnation fields', async () => {
+  const reset = {
+    binding_id: 'binding',
+    generation: 1,
+    conversation_id: 'transport',
+    incarnation: 2,
+    previous_agent_id: 'agt_old',
+    previous_conversation_id: 'internal-old',
+    successor_agent_id: 'agt_new',
+    state: 'reserved',
+  };
+  const result = { consumer_id: 'default', transport_conversation_id: 'transport', reset };
+  const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValueOnce(json(result));
+  const client = new Cmaeg({ baseUrl: 'https://gateway.example', fetch });
+  const body = { partition_key: 'oracle', expected_version: 5, expected_agent_id: 'agt_old' };
+  expect(await client.resetChannelPartition('opaque/+?', body, 'same-key')).toEqual(result);
+  expect(fetch.mock.calls[0]?.[0]).toBe(
+    'https://gateway.example/v1/channels/opaque%2F%2B%3F/partition/resets',
+  );
+  expect(fetch.mock.calls[0]?.[1]?.method).toBe('POST');
+  expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).get('Idempotency-Key')).toBe('same-key');
+  expect(JSON.parse(fetch.mock.calls[0]?.[1]?.body as string)).toEqual(body);
+  expect(() => client.resetChannelPartition('id', body, '')).toThrow();
+  expect(fetch).toHaveBeenCalledOnce();
+});
