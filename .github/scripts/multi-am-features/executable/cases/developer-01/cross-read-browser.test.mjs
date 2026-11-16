@@ -15,7 +15,7 @@ function model(options = {}) {
     deniedInput: {text: 'Reply denied-marker-fixture'}, deniedKey: 'denied-key',
     ownerSubject: 'owner-fixture', operatorSubject: 'reader-fixture',
     scope: 'LOCAL_DISPOSABLE_TWO_AM', createdByRun: true, cleanup: async () => {}};
-  const sessions = [], cleanups = [], observations = [], requests = [], downloads = [];
+  const sessions = [], cleanups = [], observations = [], requests = [], downloads = [], panelClicks = [];
   const adapter = {async open({actor, am, agentId}) {
     assert.equal(actor, 'read_operator'); assert.equal(agentId, f.agentId);
     let selected = am, panel = false, files = false, opened = [], responseWait, downloadWait, sequence = 0;
@@ -29,7 +29,13 @@ function model(options = {}) {
       receipts.push(receipt); return receipt;
     };
     const click = async (role, name) => {
-      if (role === 'button' && name === 'Show Agent computer') {panel = true; return;}
+      if (role === 'button' && name === 'Show Agent computer') {
+        assert.equal(panel, false, 'Show Agent computer is absent when the panel is already open');
+        panelClicks.push(name); panel = true; return;
+      }
+      if (role === 'button' && name === 'Hide Agent computer') {
+        assert.equal(panel, true); panelClicks.push(name); panel = false; return;
+      }
       if (role === 'tab' && name === 'Files') {assert.ok(panel, 'computer panel is closed'); files = true; return;}
       if (role === 'file') {
         assert.ok(files, 'Files tab is closed');
@@ -51,11 +57,20 @@ function model(options = {}) {
     };
     const page = {async goto(url) {
       assert.equal(new URL(url).pathname, '/agents/' + f.agentId);
-      panel = false; files = false; opened = []; record();
+      panel = options.panelInitiallyOpen === true; files = false; opened = []; record();
     }, getByRole(role, {name}) {
-      return {click: () => click(role, name), isVisible: async () => name !== 'Send message',
+      const actualName = () => name instanceof RegExp
+        ? panel ? 'Hide Agent computer' : 'Show Agent computer' : name;
+      return {click: () => click(role, actualName()), isVisible: async () => name !== 'Send message',
         isDisabled: async () => true,
-        waitFor: async () => {assert.equal(name, 'Home files'); assert.ok(files);},
+        waitFor: async () => {
+          if (name instanceof RegExp) {assert.equal(role, 'button'); assert.match(actualName(), name);}
+          else {assert.equal(name, 'Home files'); assert.ok(files);}
+        },
+        getAttribute: async attribute => {
+          assert.equal(attribute, 'aria-expanded'); assert.equal(role, 'button');
+          return options.invalidPanelState ? null : String(panel);
+        },
         getByRole(childRole, {name: childName}) {
           assert.equal(role, 'list'); assert.equal(name, 'Home files'); assert.equal(childRole, 'button');
           return {click: () => click('file', childName)};
@@ -85,7 +100,7 @@ function model(options = {}) {
         sha256: digest(content), content_base64: Buffer.from(content).toString('base64')}};
       return {status: 200, body: {id: f.agentId}};
     }};
-  return {ctx, f, sessions, requests, downloads, observations, cleanups,
+  return {ctx, f, sessions, requests, downloads, observations, cleanups, panelClicks,
     async open() {return adapter.open({actor: 'read_operator', am: ctx.am, agentId: f.agentId});},
     async cleanup() {
       const errors = [];
@@ -103,6 +118,22 @@ test('ADM-080 opens the real Files controls and downloads through both AMs', asy
   const retained = h.observations.filter(o => o.label === 'admin_browser_evidence').flatMap(o => o.value.requests);
   assert.ok(retained.every(r => r.serving && r.serving_after && r.started_at && r.ended_at && r.attribution));
   assert.equal(h.observations.filter(o => o.label === 'admin_cross_read_download').length, 2);
+  assert.deepEqual(h.panelClicks, ['Show Agent computer', 'Show Agent computer']);
+});
+
+test('the default desktop panel stays open while downloading through both AMs', async () => {
+  // useAgentPanel starts at browser on widths >= 1024px, including Playwright's default 1280px.
+  const h = model({panelInitiallyOpen: true});
+  await crossOwnerReads.run(h.ctx); await h.cleanup();
+  assert.deepEqual(h.downloads.map(r => r.receipt.am), ['a', 'b']);
+  assert.deepEqual(h.panelClicks, []);
+  assert.ok(h.sessions.every(s => s.closed));
+});
+
+test('an indeterminate computer-panel state fails before downloading', async () => {
+  const h = model({invalidPanelState: true});
+  await assert.rejects(crossOwnerReads.run(h.ctx), /admin_cross_read_computer_state/);
+  await h.cleanup(); assert.equal(h.downloads.length, 0);
 });
 
 test('requested AM labels cannot hide a download pinned to one serving AM', async () => {
